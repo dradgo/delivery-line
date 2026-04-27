@@ -1,0 +1,6 @@
+spring:
+  docker:
+    compose:
+      enabled: false
+      skip:
+        in-tests: true
