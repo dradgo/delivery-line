@@ -48,7 +48,6 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-docker-compose</artifactId>
 			<scope>runtime</scope>
-			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>
@@ -103,6 +102,10 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<excludeDockerCompose>false</excludeDockerCompose>
+					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>

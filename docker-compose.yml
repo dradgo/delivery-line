@@ -1,0 +1,22 @@
+name: deliveryline
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: deliveryline
+      POSTGRES_USER: deliveryline
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - deliveryline-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U deliveryline -d deliveryline"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  deliveryline-postgres-data:
