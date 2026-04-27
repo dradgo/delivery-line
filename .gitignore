@@ -1,0 +1,66 @@
+# DeliveryLine root .gitignore — story 1.1 AC6.
+# Augment, do not replace, the Spring Initializr starter rules.
+
+# === Spring Initializr defaults ===
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+# === DeliveryLine additions (story 1.1 AC6) ===
+
+# Maven
+*.class
+dependency-reduced-pom.xml
+
+# Node (for Epic 2 frontend module)
+node_modules/
+dist/
+.vite/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Env (no secrets in git — see .env.example)
+.env
+.env.*
+.env.local
+!.env.example
+
+# Runtime state — default DELIVERYLINE_HOME subpaths populated by stories 1.12 / 3.x
+runner-work/
+runner-logs/
+artifacts/
+deliveryline-data/
