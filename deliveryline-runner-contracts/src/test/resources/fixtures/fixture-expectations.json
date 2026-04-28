@@ -1,0 +1,59 @@
+{
+  "invalidFixtures": [
+    {
+      "path": "src/test/resources/fixtures/invalid/context-bundle.v1.invalid-missing-required-field.json",
+      "target": "CONTEXT_BUNDLE",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-unknown-schema-version.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-bad-checksum.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-duplicate-runner-execution-a.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "DUPLICATE_RUNNER_EXECUTION_ID"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-duplicate-runner-execution-b.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "DUPLICATE_RUNNER_EXECUTION_ID"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-stale-metadata.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "STALE_METADATA"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-malformed-classification.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-partial-write.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "JSON_PARSE_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-oversized-file.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "FILE_TOO_LARGE"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-path-traversal.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "PATH_TRAVERSAL_DETECTED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-metadata-spoofing.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "METADATA_SPOOFING_DETECTED"
+    }
+  ]
+}

@@ -11,8 +11,25 @@
 	</parent>
 
 	<artifactId>deliveryline-runner-contracts</artifactId>
-	<packaging>pom</packaging>
+	<packaging>jar</packaging>
 	<name>deliveryline-runner-contracts</name>
 	<description>Runner JSON schemas + validator — populated in story 1.6.</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.networknt</groupId>
+			<artifactId>json-schema-validator</artifactId>
+			<version>3.0.2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
 
 </project>

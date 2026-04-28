@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/runner-contracts/context-bundle.v1.schema.json",
+  "title": "DeliveryLine Context Bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workflowRunId",
+    "runnerExecutionId",
+    "ticketSummary",
+    "approvedSpecificationReference",
+    "priorFeedbackReferences",
+    "artifactReferences",
+    "executionConstraints",
+    "classification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "workflowRunId": {
+      "type": "string",
+      "pattern": "^run_[A-Za-z0-9_-]{4,64}$"
+    },
+    "runnerExecutionId": {
+      "type": "string",
+      "pattern": "^rex_[A-Za-z0-9_-]{4,64}$"
+    },
+    "ticketSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticketRef",
+        "title",
+        "summary"
+      ],
+      "properties": {
+        "ticketRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "approvedSpecificationReference": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/artifactReference"
+        }
+      ]
+    },
+    "priorFeedbackReferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "referenceId",
+          "kind"
+        ],
+        "properties": {
+          "referenceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "artifactReferences": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/artifactReference"
+      }
+    },
+    "executionConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeoutSeconds",
+        "allowRawOutput"
+      ],
+      "properties": {
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "allowRawOutput": {
+          "type": "boolean"
+        }
+      }
+    },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "local-only",
+        "shareable-redacted",
+        "shareable-full",
+        "derived-public-safe"
+      ]
+    }
+  },
+  "$defs": {
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "artifactType",
+        "referencePath"
+      ],
+      "properties": {
+        "artifactId": {
+          "type": "string",
+          "pattern": "^art_[A-Za-z0-9_-]{4,64}$"
+        },
+        "artifactType": {
+          "type": "string",
+          "enum": [
+            "spec",
+            "implementationPlan",
+            "prOutput"
+          ]
+        },
+        "referencePath": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

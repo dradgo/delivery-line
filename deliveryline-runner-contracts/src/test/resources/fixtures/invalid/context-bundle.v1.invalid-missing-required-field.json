@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_missing_field",
+  "ticketSummary": {
+    "ticketRef": "DL-101",
+    "title": "Implement schema validation",
+    "summary": "Validate runner contract files before execution."
+  },
+  "approvedSpecificationReference": null,
+  "priorFeedbackReferences": [],
+  "executionConstraints": {
+    "timeoutSeconds": 300,
+    "allowRawOutput": true
+  },
+  "classification": "shareable-redacted"
+}

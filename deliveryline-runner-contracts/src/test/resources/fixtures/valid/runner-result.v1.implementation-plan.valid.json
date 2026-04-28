@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_valid_plan",
+  "artifactReferences": [
+    {
+      "artifactId": "art_plan0001",
+      "artifactType": "implementationPlan",
+      "steps": [
+        "Add schema resources",
+        "Implement validator"
+      ],
+      "contextReferences": [
+        "ctx/ref/1",
+        "ctx/ref/2"
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated implementation plan",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_abcd1234",
+  "ticketSummary": {
+    "ticketRef": "DL-101",
+    "title": "Implement schema validation",
+    "summary": "Validate runner contract files before execution."
+  },
+  "approvedSpecificationReference": null,
+  "priorFeedbackReferences": [
+    {
+      "referenceId": "apr_feedback_1",
+      "kind": "approval-feedback"
+    }
+  ],
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0001",
+      "artifactType": "spec",
+      "referencePath": "artifacts/run_abcd1234/spec.md"
+    }
+  ],
+  "executionConstraints": {
+    "timeoutSeconds": 300,
+    "allowRawOutput": true
+  },
+  "classification": "shareable-redacted"
+}

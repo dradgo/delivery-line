@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_metadata_spoof",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0002",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v2.md"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Authorization: Bearer ghp_secretTokenThatShouldNeverBeShareable",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "classification": "shareable-full",
+  "failureCategory": null
+}

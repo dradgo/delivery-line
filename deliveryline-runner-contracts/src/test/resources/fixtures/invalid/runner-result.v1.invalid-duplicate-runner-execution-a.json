@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_duplicate",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0002",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v2.md"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated specification artifact",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_valid_pr",
+  "artifactReferences": [
+    {
+      "artifactId": "art_pr000001",
+      "artifactType": "prOutput",
+      "branch": "feature/runner-contracts",
+      "commitSha": "abcdef1234567890abcdef1234567890abcdef12",
+      "prReference": "PR-42",
+      "diffReference": "diffs/run_abcd1234/pr-42.diff"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated PR output",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}
