@@ -1,0 +1,93 @@
+{
+  "ownerUntil": "Replace this backend-test placeholder with the real committed OpenAPI snapshot under deliveryline-backend/src/main/resources/openapi/ in stories 1.20/1.21.",
+  "workflowStates": [
+    "Inbox",
+    "Planned",
+    "Investigating",
+    "WaitingForSpecApproval",
+    "Executing",
+    "WaitingForReview",
+    "Completed",
+    "Failed",
+    "Paused",
+    "TakenOver",
+    "Reconciled"
+  ],
+  "actorTypes": [
+    "human",
+    "agent",
+    "system",
+    "service_account"
+  ],
+  "artifactStatuses": [
+    "pending",
+    "available",
+    "failed",
+    "late_or_stale"
+  ],
+  "artifactOperationStatuses": [
+    "pending",
+    "complete",
+    "failed",
+    "failed_orphan"
+  ],
+  "runnerExecutionStatuses": [
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "timed_out",
+    "orphaned"
+  ],
+  "integrationSyncStatuses": [
+    "linked",
+    "synced",
+    "stale",
+    "failed",
+    "superseded"
+  ],
+  "artifactTypes": [
+    "spec",
+    "implementationPlan",
+    "prOutput"
+  ],
+  "dataClassifications": [
+    "local-only",
+    "shareable-redacted",
+    "shareable-full",
+    "derived-public-safe"
+  ],
+  "runnerSchemaVersions": [
+    "1"
+  ],
+  "publicIdPrefixes": {
+    "workflowRun": "run_",
+    "workflowEvent": "evt_",
+    "artifact": "art_",
+    "artifactOperation": "op_",
+    "approval": "apr_",
+    "runnerExecution": "rex_",
+    "integrationLink": "ilk_",
+    "recoveryAction": "rcv_",
+    "idempotencyRecord": "idm_"
+  },
+  "problemTypeUris": {
+    "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",
+    "IDEMPOTENCY_KEY_CONFLICT": "https://deliveryline.local/problems/idempotency-key-conflict",
+    "APPROVAL_VERSION_MISMATCH": "https://deliveryline.local/problems/approval-version-mismatch",
+    "CONCURRENT_TRANSITION_CONFLICT": "https://deliveryline.local/problems/concurrent-transition-conflict",
+    "RUNNER_TIMEOUT": "https://deliveryline.local/problems/runner-timeout",
+    "RUNNER_CONTRACT_VIOLATION": "https://deliveryline.local/problems/runner-contract-violation",
+    "ARTIFACT_PAYLOAD_UNAVAILABLE": "https://deliveryline.local/problems/artifact-payload-unavailable",
+    "UNKNOWN_REGISTRY_VALUE": "https://deliveryline.local/problems/unknown-registry-value",
+    "INVALID_ID_PREFIX": "https://deliveryline.local/problems/invalid-id-prefix",
+    "RUN_NOT_FOUND": "https://deliveryline.local/problems/run-not-found",
+    "DOCTOR_POSTGRES_UNREACHABLE": "https://deliveryline.local/problems/doctor-postgres-unreachable",
+    "DOCTOR_FLYWAY_FAILED": "https://deliveryline.local/problems/doctor-flyway-failed",
+    "DOCTOR_REST_BIND_UNAVAILABLE": "https://deliveryline.local/problems/doctor-rest-bind-unavailable",
+    "DOCTOR_DOCKER_MISSING": "https://deliveryline.local/problems/doctor-docker-missing",
+    "DOCTOR_CONFIG_PERMISSIONS_UNSAFE": "https://deliveryline.local/problems/doctor-config-permissions-unsafe",
+    "DOCTOR_UNSUPPORTED_ENVIRONMENT": "https://deliveryline.local/problems/doctor-unsupported-environment",
+    "DOCTOR_ARTIFACT_DIR_UNWRITABLE": "https://deliveryline.local/problems/doctor-artifact-dir-unwritable"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "ownerUntil": "Replace this placeholder in-place or redirect the drift test to a single frontend-owned canonical file in story 2.14.",
+  "allowedActions": [
+    "approve_spec",
+    "reject_spec",
+    "answer_clarification",
+    "view_only",
+    "await_outcome",
+    "retry",
+    "view_diagnostics",
+    "clear_escalation_marker"
+  ]
+}

@@ -114,7 +114,9 @@ class FlywaySchemaContractTest {
 	@Test
 	void workflowStateAndMeasurementColumnsUseExpectedTypesAndChecks() {
 		assertColumnType("workflow_runs", "current_state", "text");
+		assertColumnType("workflow_runs", "version", "bigint");
 		assertColumnNullable("workflow_runs", "current_state", false);
+		assertColumnNullable("workflow_runs", "version", false);
 		assertColumnType("workflow_events", "stage_duration_ms", "bigint");
 		assertColumnType("workflow_events", "rejection_taxonomy", "text");
 		assertColumnType("approvals", "rejection_taxonomy", "text");
@@ -222,6 +224,7 @@ class FlywaySchemaContractTest {
 	@Test
 	void notNullExpectationsHoldForAuditCriticalColumns() {
 		assertColumnNullable("workflow_runs", "current_state", false);
+		assertColumnNullable("workflow_runs", "version", false);
 		assertColumnNullable("workflow_events", "workflow_run_id", false);
 		assertColumnNullable("workflow_events", "actor_identity", false);
 		assertColumnNullable("workflow_events", "actor_type", false);

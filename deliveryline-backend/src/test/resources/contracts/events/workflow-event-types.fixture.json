@@ -1,0 +1,23 @@
+{
+  "ownerUntil": "Keep runner schema fixtures out of backend resources; this file hands off to the foundation fixture stream in story 1.23.",
+  "workflowEventTypes": [
+    "workflow.stateChanged",
+    "approval.requested",
+    "approval.approved",
+    "approval.rejected",
+    "artifact.available",
+    "artifact.versionCreated",
+    "runner.started",
+    "runner.failed",
+    "recovery.retried",
+    "recovery.reconciled",
+    "integration.linked",
+    "export.created",
+    "clarification.answered",
+    "clarification.accepted",
+    "clarification.incorporated",
+    "clarification.superseded",
+    "clarification.rejectedInvalid",
+    "clarification.noEffectReason"
+  ]
+}
