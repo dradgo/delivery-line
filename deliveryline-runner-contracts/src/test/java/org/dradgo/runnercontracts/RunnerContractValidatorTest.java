@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
@@ -56,7 +57,11 @@ class RunnerContractValidatorTest {
 		RunnerContractValidator validator = new RunnerContractValidator();
 		List<Path> validFixtures = listJsonFiles(VALID_FIXTURE_DIRECTORY);
 
-		assertEquals(4, validFixtures.size());
+		assertTrue(validFixtures.size() >= 4);
+		assertTrue(validFixtures.contains(VALID_FIXTURE_DIRECTORY.resolve("context-bundle.v1.valid.json")));
+		assertTrue(validFixtures.contains(VALID_FIXTURE_DIRECTORY.resolve("runner-result.v1.spec.valid.json")));
+		assertTrue(validFixtures.contains(VALID_FIXTURE_DIRECTORY.resolve("runner-result.v1.implementation-plan.valid.json")));
+		assertTrue(validFixtures.contains(VALID_FIXTURE_DIRECTORY.resolve("runner-result.v1.pr-output.valid.json")));
 
 		for (Path fixture : validFixtures) {
 			ValidationResult result = validator.validateFixture(targetFor(fixture), fixture);
@@ -82,7 +87,7 @@ class RunnerContractValidatorTest {
 				contextForExpectation(expectation));
 
 			assertFalse(result.valid(), () -> fixture + " should be invalid");
-			assertContainsErrorCode(result, expectation.expectedValidationErrorCode());
+			assertOnlyExpectedErrorCode(result, expectation.expectedValidationErrorCode());
 		}
 	}
 
@@ -193,6 +198,13 @@ class RunnerContractValidatorTest {
 		assertTrue(
 			result.errors().stream().anyMatch(error -> error.code() == expectedCode),
 			() -> "Expected error code " + expectedCode + " but got " + result.errors());
+	}
+
+	private static void assertOnlyExpectedErrorCode(ValidationResult result, ValidationErrorCode expectedCode) {
+		Set<ValidationErrorCode> actualCodes = result.errors().stream()
+			.map(ValidationError::code)
+			.collect(java.util.stream.Collectors.toSet());
+		assertEquals(Set.of(expectedCode), actualCodes, () -> "Expected only " + expectedCode + " but got " + result.errors());
 	}
 
 	private static String extractRunnerExecutionId(Path fixture) throws IOException {

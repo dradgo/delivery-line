@@ -117,7 +117,8 @@ public final class RunnerContractValidator {
 				"/runnerExecutionId",
 				"Unknown runnerExecutionId: " + runnerExecutionId));
 		}
-		walk(document, "$", errors);
+		inspectArtifactReferencePaths(document.path("approvedSpecificationReference"), "$/approvedSpecificationReference", errors);
+		inspectArtifactReferencePaths(document.path("artifactReferences"), "$/artifactReferences", errors);
 		String classification = textValue(document, "classification");
 		String documentText = document.toString();
 		if ("shareable-full".equals(classification) && SECRET_PATTERN.matcher(documentText).find()) {
@@ -129,7 +130,10 @@ public final class RunnerContractValidator {
 		return errors;
 	}
 
-	private void walk(JsonNode node, String path, List<ValidationError> errors) {
+	private void inspectArtifactReferencePaths(JsonNode node, String path, List<ValidationError> errors) {
+		if (node == null || node.isMissingNode() || node.isNull()) {
+			return;
+		}
 		if (node.isTextual() && PATH_TRAVERSAL_PATTERN.matcher(node.textValue()).find()) {
 			errors.add(new ValidationError(
 				ValidationErrorCode.PATH_TRAVERSAL_DETECTED,
@@ -137,12 +141,12 @@ public final class RunnerContractValidator {
 				"Path traversal or absolute path detected"));
 		}
 		if (node.isObject()) {
-			node.fields().forEachRemaining(entry -> walk(entry.getValue(), path + "/" + entry.getKey(), errors));
+			node.fields().forEachRemaining(entry -> inspectArtifactReferencePaths(entry.getValue(), path + "/" + entry.getKey(), errors));
 			return;
 		}
 		if (node.isArray()) {
 			for (int index = 0; index < node.size(); index++) {
-				walk(node.get(index), path + "/" + index, errors);
+				inspectArtifactReferencePaths(node.get(index), path + "/" + index, errors);
 			}
 		}
 	}

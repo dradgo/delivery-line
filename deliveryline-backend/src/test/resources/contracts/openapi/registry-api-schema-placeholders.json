@@ -79,6 +79,7 @@
     "RUNNER_TIMEOUT": "https://deliveryline.local/problems/runner-timeout",
     "RUNNER_CONTRACT_VIOLATION": "https://deliveryline.local/problems/runner-contract-violation",
     "ARTIFACT_PAYLOAD_UNAVAILABLE": "https://deliveryline.local/problems/artifact-payload-unavailable",
+    "INVALID_COMMAND_PAYLOAD": "https://deliveryline.local/problems/invalid-command-payload",
     "UNKNOWN_REGISTRY_VALUE": "https://deliveryline.local/problems/unknown-registry-value",
     "INVALID_ID_PREFIX": "https://deliveryline.local/problems/invalid-id-prefix",
     "RUN_NOT_FOUND": "https://deliveryline.local/problems/run-not-found",

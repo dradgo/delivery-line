@@ -109,6 +109,10 @@ public enum PublicIdPrefixes implements RegistryValue {
 		return prefix + suffix;
 	}
 
+	public String next() {
+		return format(java.util.UUID.randomUUID().toString().replace("-", ""));
+	}
+
 	private static DomainException invalidPrefix(String publicId, PublicIdPrefixes expected) {
 		Map<String, Object> details = new LinkedHashMap<>();
 		details.put("registry", "PublicIdPrefixes");

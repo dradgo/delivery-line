@@ -5,7 +5,6 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.adapters.persistence.repository.WorkflowEventRepository;
@@ -54,7 +53,7 @@ public class WorkflowTransitionService {
 		String reason,
 		String idempotencyKey
 	) {
-		transition(runId, targetState, actor, reason, idempotencyKey, null);
+		transition(runId, targetState, actor, reason, idempotencyKey, null, Map.of());
 	}
 
 	public void transition(
@@ -65,10 +64,34 @@ public class WorkflowTransitionService {
 		String idempotencyKey,
 		FailureCategory failureCategory
 	) {
+		transition(runId, targetState, actor, reason, idempotencyKey, failureCategory, Map.of());
+	}
+
+	public void transition(
+		String runId,
+		WorkflowState targetState,
+		TransitionActor actor,
+		String reason,
+		String idempotencyKey,
+		Map<String, Object> eventDetails
+	) {
+		transition(runId, targetState, actor, reason, idempotencyKey, null, eventDetails);
+	}
+
+	public void transition(
+		String runId,
+		WorkflowState targetState,
+		TransitionActor actor,
+		String reason,
+		String idempotencyKey,
+		FailureCategory failureCategory,
+		Map<String, Object> eventDetails
+	) {
 		Objects.requireNonNull(runId, "runId");
 		Objects.requireNonNull(targetState, "targetState");
 		Objects.requireNonNull(actor, "actor");
 		Objects.requireNonNull(idempotencyKey, "idempotencyKey");
+		Objects.requireNonNull(eventDetails, "eventDetails");
 		if (idempotencyKey.isBlank()) {
 			throw new IllegalArgumentException("idempotencyKey must not be blank");
 		}
@@ -79,7 +102,7 @@ public class WorkflowTransitionService {
 
 		try {
 			transactionTemplate.executeWithoutResult(status ->
-				doTransition(runId, targetState, actor, reason, idempotencyKey, failureCategory));
+				doTransition(runId, targetState, actor, reason, idempotencyKey, failureCategory, eventDetails));
 		} catch (OptimisticLockingFailureException exception) {
 			throw concurrentConflict(runId, targetState, idempotencyKey, exception);
 		}
@@ -91,7 +114,8 @@ public class WorkflowTransitionService {
 		TransitionActor actor,
 		String reason,
 		String idempotencyKey,
-		FailureCategory failureCategory
+		FailureCategory failureCategory,
+		Map<String, Object> eventDetails
 	) {
 		WorkflowRunEntity workflowRun = workflowRunRepository.findByPublicId(runId)
 			.orElseThrow(() -> runNotFound(runId));
@@ -107,7 +131,7 @@ public class WorkflowTransitionService {
 		workflowRunRepository.saveAndFlush(workflowRun);
 
 		WorkflowEventEntity event = new WorkflowEventEntity();
-		event.setPublicId(nextEventPublicId());
+		event.setPublicId(PublicIdPrefixes.WORKFLOW_EVENT.next());
 		event.setWorkflowRun(workflowRun);
 		event.setEventType(WorkflowEventType.WORKFLOW_STATE_CHANGED);
 		event.setPriorState(priorState);
@@ -118,12 +142,11 @@ public class WorkflowTransitionService {
 		event.setFailureCategory(failureCategory);
 		event.setInterventionMarker(targetState == WorkflowState.TAKEN_OVER || targetState == WorkflowState.RECONCILED);
 		event.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+		// Caller-supplied eventDetails apply first; the service-supplied idempotencyKey is
+		// the canonical key and wins over any value already present in eventDetails.
+		event.getDetails().putAll(eventDetails);
 		event.getDetails().put("idempotencyKey", idempotencyKey);
 		workflowEventRepository.saveAndFlush(event);
-	}
-
-	private String nextEventPublicId() {
-		return PublicIdPrefixes.WORKFLOW_EVENT.format(UUID.randomUUID().toString().replace("-", ""));
 	}
 
 	private DomainException runNotFound(String runId) {
