@@ -12,4 +12,7 @@ public record SubmitWorkflowCommand(
 	@Size(max = 128) String correlationId,
 	@NotBlank @Size(max = 128) String linearTicketReference
 ) implements WorkflowCommand {
+	public SubmitWorkflowCommand {
+		correlationId = WorkflowCommand.normalizeOptional(correlationId);
+	}
 }

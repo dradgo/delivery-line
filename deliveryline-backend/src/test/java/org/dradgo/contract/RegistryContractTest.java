@@ -23,6 +23,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.dradgo.TestcontainersConfiguration;
+import org.dradgo.adapters.rest.ProblemDetailsCatalog;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
@@ -233,12 +234,19 @@ class RegistryContractTest {
 		Set<String> codes = DomainRegistry.domainErrorCodes();
 		Map<String, String> uris = readObjectNonEmpty(API_PLACEHOLDER_RESOURCE, "problemTypeUris");
 		assertEquals(codes, uris.keySet());
+		assertEquals(codes, ProblemDetailsCatalog.metadataByCode().keySet().stream()
+			.map(DomainErrorCode::value)
+			.collect(Collectors.toCollection(LinkedHashSet::new)));
 
 		Set<String> uniqueUris = new LinkedHashSet<>(uris.values());
 		assertEquals(uris.size(), uniqueUris.size(),
 			"Every error code must map to a unique problem type URI");
 
 		for (Map.Entry<String, String> entry : uris.entrySet()) {
+			assertEquals(
+				entry.getValue(),
+				ProblemDetailsCatalog.metadataFor(DomainErrorCode.valueOf(entry.getKey())).typeUri(),
+				() -> "ProblemDetailsCatalog must own the same type URI as the placeholder manifest for " + entry.getKey());
 			assertTrue(entry.getValue().startsWith(PROBLEM_TYPE_URI_PREFIX),
 				() -> "Problem type URI must start with " + PROBLEM_TYPE_URI_PREFIX
 					+ " for " + entry.getKey());

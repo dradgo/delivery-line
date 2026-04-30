@@ -17,4 +17,7 @@ public record RejectSpecCommand(
 	@Size(max = 128) String correlationId,
 	@NotBlank @Size(max = 512) String reasonText
 ) implements WorkflowCommand {
+	public RejectSpecCommand {
+		correlationId = WorkflowCommand.normalizeOptional(correlationId);
+	}
 }

@@ -74,7 +74,7 @@ public class WorkflowCommandService {
 		event.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 		event.getDetails().putAll(baseDetails(command));
 		event.getDetails().put("linearTicketReference", command.linearTicketReference());
-		workflowEventRepository.saveAndFlush(event);
+		workflowEventRepository.save(event);
 
 		return new SubmitWorkflowResult(
 			workflowRun.getPublicId(),
@@ -172,7 +172,9 @@ public class WorkflowCommandService {
 
 		List<Map<String, Object>> fieldErrors = new ArrayList<>();
 		violations.stream()
-			.sorted(Comparator.comparing(violation -> violation.getPropertyPath().toString()))
+			.sorted(
+				Comparator.comparing((ConstraintViolation<WorkflowCommand> violation) -> violation.getPropertyPath().toString())
+					.thenComparing(violation -> violation.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName()))
 			.forEach(violation -> {
 				Map<String, Object> fieldError = new LinkedHashMap<>();
 				fieldError.put("field", violation.getPropertyPath().toString());

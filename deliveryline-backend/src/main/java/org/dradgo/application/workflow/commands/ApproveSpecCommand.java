@@ -16,4 +16,7 @@ public record ApproveSpecCommand(
 	@NotBlank @Size(max = 256) String idempotencyKey,
 	@Size(max = 128) String correlationId
 ) implements WorkflowCommand {
+	public ApproveSpecCommand {
+		correlationId = WorkflowCommand.normalizeOptional(correlationId);
+	}
 }

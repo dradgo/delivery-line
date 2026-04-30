@@ -1,5 +1,8 @@
 package org.dradgo.adapters.rest;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -17,10 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @Validated
-@RequestMapping(
-	value = "/api/v1/workflows",
-	consumes = MediaType.APPLICATION_JSON_VALUE,
-	produces = MediaType.APPLICATION_JSON_VALUE)
+@RequestMapping("/api/v1/workflows")
 public class WorkflowController {
 
 	private final WorkflowCommandService workflowCommandService;
@@ -29,10 +29,13 @@ public class WorkflowController {
 		this.workflowCommandService = workflowCommandService;
 	}
 
-	@PostMapping("/submit-workflow")
+	@PostMapping(
+		value = "/submit-workflow",
+		consumes = MediaType.APPLICATION_JSON_VALUE,
+		produces = MediaType.APPLICATION_JSON_VALUE)
 	public SubmitWorkflowResponse submit(
-		@RequestHeader("Idempotency-Key") String idempotencyKey,
-		@RequestBody SubmitWorkflowRequest request
+		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@Valid @RequestBody SubmitWorkflowRequest request
 	) {
 		return SubmitWorkflowResponse.from(workflowCommandService.submit(new SubmitWorkflowCommand(
 			request.actorIdentity(),
@@ -42,11 +45,14 @@ public class WorkflowController {
 			request.linearTicketReference())));
 	}
 
-	@PostMapping("/{workflowRunId}/approve-spec")
+	@PostMapping(
+		value = "/{workflowRunId}/approve-spec",
+		consumes = MediaType.APPLICATION_JSON_VALUE,
+		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse approveSpec(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") String idempotencyKey,
-		@RequestBody ApproveSpecRequest request
+		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@Valid @RequestBody ApproveSpecRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.approveSpec(new ApproveSpecCommand(
 			workflowRunId,
@@ -59,11 +65,14 @@ public class WorkflowController {
 			request.correlationId())));
 	}
 
-	@PostMapping("/{workflowRunId}/reject-spec")
+	@PostMapping(
+		value = "/{workflowRunId}/reject-spec",
+		consumes = MediaType.APPLICATION_JSON_VALUE,
+		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse rejectSpec(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") String idempotencyKey,
-		@RequestBody RejectSpecRequest request
+		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@Valid @RequestBody RejectSpecRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.rejectSpec(new RejectSpecCommand(
 			workflowRunId,
@@ -77,11 +86,14 @@ public class WorkflowController {
 			request.reasonText())));
 	}
 
-	@PostMapping("/{workflowRunId}/retry-workflow")
+	@PostMapping(
+		value = "/{workflowRunId}/retry-workflow",
+		consumes = MediaType.APPLICATION_JSON_VALUE,
+		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse retry(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") String idempotencyKey,
-		@RequestBody RetryWorkflowRequest request
+		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@Valid @RequestBody RetryWorkflowRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.retryWorkflow(new RetryWorkflowCommand(
 			workflowRunId,
@@ -92,11 +104,14 @@ public class WorkflowController {
 			request.reasonText())));
 	}
 
-	@PostMapping("/{workflowRunId}/takeover-workflow")
+	@PostMapping(
+		value = "/{workflowRunId}/takeover-workflow",
+		consumes = MediaType.APPLICATION_JSON_VALUE,
+		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse takeover(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") String idempotencyKey,
-		@RequestBody TakeoverWorkflowRequest request
+		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@Valid @RequestBody TakeoverWorkflowRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.takeoverWorkflow(new TakeoverWorkflowCommand(
 			workflowRunId,

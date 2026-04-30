@@ -3,6 +3,7 @@ package org.dradgo.domain.id;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -110,7 +111,7 @@ public enum PublicIdPrefixes implements RegistryValue {
 	}
 
 	public String next() {
-		return format(java.util.UUID.randomUUID().toString().replace("-", ""));
+		return format(UUID.randomUUID().toString().replace("-", ""));
 	}
 
 	private static DomainException invalidPrefix(String publicId, PublicIdPrefixes expected) {

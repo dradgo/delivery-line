@@ -13,4 +13,7 @@ public record TakeoverWorkflowCommand(
 	@Size(max = 128) String correlationId,
 	@Size(max = 512) String reasonText
 ) implements WorkflowCommand {
+	public TakeoverWorkflowCommand {
+		correlationId = WorkflowCommand.normalizeOptional(correlationId);
+	}
 }

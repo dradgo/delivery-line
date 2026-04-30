@@ -189,6 +189,46 @@ class WorkflowCommandServiceContractTest {
 		assertEquals("TakeoverWorkflowCommand", latestDetail(runId, "commandType"));
 	}
 
+	@Test
+	void approveSpecRaisesRunNotFoundForUnknownWorkflowRunId() {
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.approveSpec(new ApproveSpecCommand(
+				"run_missing1234",
+				"art_spec1234",
+				3,
+				2,
+				"alex",
+				ActorType.HUMAN,
+				"idem-approve-missing-1234567890",
+				"corr-approve-missing-1")));
+
+		assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
+		assertEquals("run_missing1234", error.details().get("runId"));
+	}
+
+	@Test
+	void approveSpecRejectsIllegalTransitionWhenRunIsNotWaitingForSpecApproval() {
+		String runId = insertRun("run_illegal1234", WorkflowState.INBOX);
+
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.approveSpec(new ApproveSpecCommand(
+				runId,
+				"art_spec1234",
+				3,
+				2,
+				"alex",
+				ActorType.HUMAN,
+				"idem-approve-illegal-1234567890",
+				"corr-approve-illegal-1")));
+
+		assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
+		assertEquals(runId, error.details().get("runId"));
+		assertEquals(WorkflowState.INBOX.value(), error.details().get("sourceState"));
+		assertEquals(WorkflowState.EXECUTING.value(), error.details().get("targetState"));
+	}
+
 	private void assertFieldErrors(DomainException error, String... expectedFields) {
 		Object rawFieldErrors = error.details().get("fieldErrors");
 		assertNotNull(rawFieldErrors);

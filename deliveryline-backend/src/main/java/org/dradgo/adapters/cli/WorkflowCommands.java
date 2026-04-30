@@ -19,7 +19,10 @@ public class WorkflowCommands {
 		this.workflowCommandService = workflowCommandService;
 	}
 
-	@Command(name = "submit", description = "Submit a workflow ticket for governed execution")
+	@Command(
+		name = "submit",
+		description = "Submit a workflow ticket for governed execution",
+		exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
 	public String submit(
 		@Option(longName = "ticket", description = "Linear ticket reference", required = true) String linearTicketReference,
 		@Option(longName = "actor-identity", description = "Actor identity", required = true) String actorIdentity,
