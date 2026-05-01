@@ -74,7 +74,7 @@ public class WorkflowCommandService {
 		event.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 		event.getDetails().putAll(baseDetails(command));
 		event.getDetails().put("linearTicketReference", command.linearTicketReference());
-		workflowEventRepository.save(event);
+		workflowEventRepository.saveAndFlush(event);
 
 		return new SubmitWorkflowResult(
 			workflowRun.getPublicId(),

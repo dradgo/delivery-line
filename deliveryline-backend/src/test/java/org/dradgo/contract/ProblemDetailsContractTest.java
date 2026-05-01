@@ -199,7 +199,7 @@ class ProblemDetailsContractTest {
 			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
 			.andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
 			.andExpect(jsonPath("$.status").value(500))
-			.andExpect(jsonPath("$.detail").value("An unexpected internal error occurred."))
+			.andExpect(jsonPath("$.retryable").value(false))
 			.andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("SQLSTATE"))))
 			.andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("WorkflowController"))))
 			.andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("C:\\secrets"))));

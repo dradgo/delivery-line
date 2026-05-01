@@ -33,6 +33,17 @@ class WorkflowCliExitStatusExceptionMapperTest {
 	}
 
 	@Test
+	void approvalVersionMismatchMapsToThe200SeriesBand() {
+		ExitStatus status = mapper.apply(new DomainException(
+			DomainErrorCode.APPROVAL_VERSION_MISMATCH,
+			"Artifact version is stale",
+			Map.of("expectedArtifactVersion", 6, "currentArtifactVersion", 7)));
+
+		assertEquals(201, status.code());
+		assertEquals("[APPROVAL_VERSION_MISMATCH] Artifact version is stale", status.description());
+	}
+
+	@Test
 	void runnerAndIntegrationErrorsMapToThe300SeriesBand() {
 		ExitStatus status = mapper.apply(new DomainException(
 			DomainErrorCode.RUNNER_TIMEOUT,

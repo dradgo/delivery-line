@@ -14,14 +14,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSourceResolvable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.Errors;
 import org.springframework.validation.FieldError;
+import org.springframework.validation.ObjectError;
 import org.springframework.validation.method.ParameterErrors;
 import org.springframework.validation.method.ParameterValidationResult;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -29,13 +36,17 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice
 public class ProblemDetailsMapper {
 
+	private static final Logger LOG = LoggerFactory.getLogger(ProblemDetailsMapper.class);
 	private static final String REDACTED_VALUE = "[REDACTED]";
 	private static final String GENERIC_INTERNAL_ERROR_DETAIL = "An unexpected internal error occurred.";
+	private static final String UNKNOWN_FIELD_NAME = "unknown";
+	private static final String DEFAULT_CONSTRAINT = "invalid";
 	private static final Pattern JACKSON_FIELD_PATTERN = Pattern.compile("\\[\"([^\"]+)\"\\]");
 	private static final Pattern JACKSON_STRING_VALUE_PATTERN = Pattern.compile("from String \\\"([^\\\"]+)\\\"");
 
@@ -149,8 +160,57 @@ public class ProblemDetailsMapper {
 		return matcher.find() ? matcher.group(1) : null;
 	}
 
+	@ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+	public ResponseEntity<ProblemDetail> handleHttpRequestMethodNotSupported(
+		HttpRequestMethodNotSupportedException exception,
+		HttpServletRequest request
+	) {
+		return requestShapeProblem(
+			HttpStatus.METHOD_NOT_ALLOWED,
+			"HTTP method not allowed.",
+			request.getRequestURI(),
+			List.of(fieldError("method", exception.getMethod(), "methodNotAllowed")));
+	}
+
+	@ExceptionHandler(NoResourceFoundException.class)
+	public ResponseEntity<ProblemDetail> handleNoResourceFound(
+		NoResourceFoundException exception,
+		HttpServletRequest request
+	) {
+		return requestShapeProblem(
+			HttpStatus.NOT_FOUND,
+			"Resource not found.",
+			request.getRequestURI(),
+			List.of(fieldError("path", exception.getResourcePath(), "notFound")));
+	}
+
+	@ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+	public ResponseEntity<ProblemDetail> handleHttpMediaTypeNotSupported(
+		HttpMediaTypeNotSupportedException exception,
+		HttpServletRequest request
+	) {
+		return requestShapeProblem(
+			HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+			"Unsupported media type.",
+			request.getRequestURI(),
+			List.of(fieldError("Content-Type", String.valueOf(exception.getContentType()), "unsupportedMediaType")));
+	}
+
+	@ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+	public ResponseEntity<ProblemDetail> handleHttpMediaTypeNotAcceptable(
+		HttpMediaTypeNotAcceptableException exception,
+		HttpServletRequest request
+	) {
+		return requestShapeProblem(
+			HttpStatus.NOT_ACCEPTABLE,
+			"Not acceptable.",
+			request.getRequestURI(),
+			List.of(fieldError("Accept", String.valueOf(request.getHeader("Accept")), "notAcceptable")));
+	}
+
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ProblemDetail> handleUnexpectedException(Exception exception, HttpServletRequest request) {
+		LOG.error("Unhandled exception caught by ProblemDetailsMapper; returning 500 INTERNAL_ERROR", exception);
 		ProblemDetailsCatalog.ProblemDetailsMetadata metadata = ProblemDetailsCatalog.metadataFor(DomainErrorCode.INTERNAL_ERROR);
 		return problemResponse(
 			metadata,
@@ -158,6 +218,27 @@ public class ProblemDetailsMapper {
 			GENERIC_INTERNAL_ERROR_DETAIL,
 			request.getRequestURI(),
 			null);
+	}
+
+	private ResponseEntity<ProblemDetail> requestShapeProblem(
+		HttpStatus status,
+		String detail,
+		String requestPath,
+		List<Map<String, Object>> details
+	) {
+		ProblemDetailsCatalog.ProblemDetailsMetadata metadata = ProblemDetailsCatalog.metadataFor(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+		ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(status, detail);
+		problemDetail.setType(URI.create(metadata.typeUri()));
+		problemDetail.setTitle(metadata.title());
+		problemDetail.setInstance(URI.create(requestPath));
+		problemDetail.setProperty("code", DomainErrorCode.INVALID_COMMAND_PAYLOAD.value());
+		problemDetail.setProperty("retryable", metadata.retryable());
+		if (details != null) {
+			problemDetail.setProperty("details", details);
+		}
+		return ResponseEntity.status(status)
+			.contentType(MediaType.APPLICATION_PROBLEM_JSON)
+			.body(problemDetail);
 	}
 
 	private ResponseEntity<ProblemDetail> invalidCommandPayload(String requestPath, List<Map<String, Object>> details) {
@@ -209,9 +290,11 @@ public class ProblemDetailsMapper {
 			if (!(rawFieldError instanceof Map<?, ?> map)) {
 				continue;
 			}
-			String field = String.valueOf(map.get("field"));
+			Object rawField = map.get("field");
+			String field = rawField == null ? UNKNOWN_FIELD_NAME : rawField.toString();
 			Object rejectedValue = map.get("rejectedValue");
-			String constraint = String.valueOf(map.get("code"));
+			Object rawConstraint = map.get("code");
+			String constraint = rawConstraint == null ? DEFAULT_CONSTRAINT : rawConstraint.toString();
 			translated.add(fieldError(field, redactIfSensitive(field, rejectedValue), constraint));
 		}
 		return translated;
@@ -225,7 +308,15 @@ public class ProblemDetailsMapper {
 				redactIfSensitive(fieldError.getField(), fieldError.getRejectedValue()),
 				resolveConstraint(fieldError)));
 		}
+		for (ObjectError objectError : errors.getGlobalErrors()) {
+			details.add(fieldError(objectError.getObjectName(), null, resolveObjectConstraint(objectError)));
+		}
 		return details;
+	}
+
+	private String resolveObjectConstraint(ObjectError objectError) {
+		String code = objectError.getCode();
+		return code == null || code.isBlank() ? DEFAULT_CONSTRAINT : code;
 	}
 
 	private Map<String, Object> fieldError(String field, Object rejectedValue, String constraint) {
@@ -238,7 +329,7 @@ public class ProblemDetailsMapper {
 
 	private String resolveConstraint(FieldError fieldError) {
 		String code = fieldError.getCode();
-		return code == null || code.isBlank() ? "invalid" : code;
+		return code == null || code.isBlank() ? DEFAULT_CONSTRAINT : code;
 	}
 
 	private String resolveParameterName(ParameterValidationResult result) {
