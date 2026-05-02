@@ -44,14 +44,18 @@ class WorkflowAdapterEquivalenceTest {
 			WorkflowState.INBOX,
 			"corr-submit-1"));
 
-		WorkflowCommands cli = new WorkflowCommands(workflowCommandService);
+		WorkflowCommands cli = new WorkflowCommands(
+			workflowCommandService,
+			() -> false,
+			() -> "01964c38-1c45-7000-8000-000000000000");
 
 		String cliOutput = cli.submit(
 			"LIN-123",
 			"alex",
 			ActorType.HUMAN,
 			"idem-submit-1234567890",
-			"corr-submit-1");
+			"corr-submit-1",
+			false);
 
 		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
 				.contentType(MediaType.APPLICATION_JSON)
@@ -84,7 +88,10 @@ class WorkflowAdapterEquivalenceTest {
 			"Invalid command payload");
 		when(workflowCommandService.submit(any())).thenThrow(failure);
 
-		WorkflowCommands cli = new WorkflowCommands(workflowCommandService);
+		WorkflowCommands cli = new WorkflowCommands(
+			workflowCommandService,
+			() -> false,
+			() -> "01964c38-1c45-7000-8000-000000000000");
 
 		DomainException cliError = assertThrows(
 			DomainException.class,
@@ -93,7 +100,8 @@ class WorkflowAdapterEquivalenceTest {
 				"alex",
 				ActorType.HUMAN,
 				"idem-submit-1234567890",
-				"corr-submit-1"));
+				"corr-submit-1",
+				false));
 
 		assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, cliError.errorCode());
 		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
@@ -114,7 +122,12 @@ class WorkflowAdapterEquivalenceTest {
 	}
 
 	@Test
-	void missingIdempotencyHeaderIsRejectedByTheActualWebLayer() throws Exception {
+	void missingIdempotencyHeaderFlowsThroughTheActualWebLayerAsSpecificIdempotencyFailure() throws Exception {
+		when(workflowCommandService.submit(any())).thenThrow(new DomainException(
+			DomainErrorCode.MISSING_IDEMPOTENCY_KEY,
+			"Missing idempotency key",
+			new java.util.LinkedHashMap<>(java.util.Map.of())));
+
 		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
 				.contentType(MediaType.APPLICATION_JSON)
 				.accept(MediaType.APPLICATION_JSON)
@@ -128,7 +141,140 @@ class WorkflowAdapterEquivalenceTest {
 					"""))
 			.andExpect(status().isBadRequest())
 			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
-			.andExpect(jsonPath("$.code").value(DomainErrorCode.INVALID_COMMAND_PAYLOAD.value()));
+			.andExpect(jsonPath("$.code").value(DomainErrorCode.MISSING_IDEMPOTENCY_KEY.value()));
+	}
+
+	@Test
+	void cliAndRestSurfaceTheSameStableErrorCodeWhenIdempotencyKeyIsMalformed() throws Exception {
+		java.util.LinkedHashMap<String, Object> details = new java.util.LinkedHashMap<>();
+		details.put("idempotencyKey", "bad key");
+		details.put("rule", "[A-Za-z0-9-]{16,128} or UUIDv4/UUIDv7");
+		DomainException failure = new DomainException(
+			DomainErrorCode.INVALID_IDEMPOTENCY_KEY,
+			"Invalid idempotency key",
+			details);
+		when(workflowCommandService.submit(any())).thenThrow(failure);
+
+		WorkflowCommands cli = new WorkflowCommands(
+			workflowCommandService,
+			() -> false,
+			() -> "01964c38-1c45-7000-8000-000000000000");
+
+		DomainException cliError = assertThrows(
+			DomainException.class,
+			() -> cli.submit(
+				"LIN-123",
+				"alex",
+				ActorType.HUMAN,
+				"idem-submit-1234567890",
+				"corr-submit-1",
+				false));
+
+		assertEquals(DomainErrorCode.INVALID_IDEMPOTENCY_KEY, cliError.errorCode());
+		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+				.contentType(MediaType.APPLICATION_JSON)
+				.accept(MediaType.APPLICATION_JSON)
+				.header("Idempotency-Key", "idem-submit-1234567890")
+				.content("""
+					{
+					  "linearTicketReference": "LIN-123",
+					  "actorIdentity": "alex",
+					  "actorType": "HUMAN",
+					  "correlationId": "corr-submit-1"
+					}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.code").value(DomainErrorCode.INVALID_IDEMPOTENCY_KEY.value()));
+	}
+
+	@Test
+	void cliAndRestSurfaceTheSameStableErrorCodeOnIdempotencyConflict() throws Exception {
+		java.util.LinkedHashMap<String, Object> details = new java.util.LinkedHashMap<>();
+		details.put("idempotencyKey", "idem-submit-1234567890");
+		details.put("existingFingerprint", "a".repeat(64));
+		details.put("submittedFingerprint", "b".repeat(64));
+		DomainException failure = new DomainException(
+			DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+			"Idempotency key conflict",
+			details);
+		when(workflowCommandService.submit(any())).thenThrow(failure);
+
+		WorkflowCommands cli = new WorkflowCommands(
+			workflowCommandService,
+			() -> false,
+			() -> "01964c38-1c45-7000-8000-000000000000");
+
+		DomainException cliError = assertThrows(
+			DomainException.class,
+			() -> cli.submit(
+				"LIN-123",
+				"alex",
+				ActorType.HUMAN,
+				"idem-submit-1234567890",
+				"corr-submit-1",
+				false));
+
+		assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, cliError.errorCode());
+		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+				.contentType(MediaType.APPLICATION_JSON)
+				.accept(MediaType.APPLICATION_JSON)
+				.header("Idempotency-Key", "idem-submit-1234567890")
+				.content("""
+					{
+					  "linearTicketReference": "LIN-123",
+					  "actorIdentity": "alex",
+					  "actorType": "HUMAN",
+					  "correlationId": "corr-submit-1"
+					}
+					"""))
+			.andExpect(status().isConflict())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.code").value(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT.value()))
+			.andExpect(jsonPath("$.details.existingFingerprint").value("a".repeat(64)))
+			.andExpect(jsonPath("$.details.submittedFingerprint").value("b".repeat(64)));
+	}
+
+	@Test
+	void cliAndRestProduceEquivalentResponsesOnIdempotencyReplay() throws Exception {
+		// Service mock returns the same SubmitWorkflowResult twice, simulating the
+		// replay path where checkAndReserve sees a prior COMPLETED record. The
+		// adapter contract must produce equivalent shapes on both calls — a
+		// genuine retry should not be observable to the caller as a different
+		// response than the original.
+		when(workflowCommandService.submit(any())).thenReturn(new SubmitWorkflowResult(
+			"run_submit1234",
+			WorkflowState.INBOX,
+			"corr-submit-1"));
+
+		WorkflowCommands cli = new WorkflowCommands(
+			workflowCommandService,
+			() -> false,
+			() -> "01964c38-1c45-7000-8000-000000000000");
+
+		String firstCli = cli.submit("LIN-123", "alex", ActorType.HUMAN, "idem-replay-1234567890", "corr-submit-1", false);
+		String secondCli = cli.submit("LIN-123", "alex", ActorType.HUMAN, "idem-replay-1234567890", "corr-submit-1", false);
+		assertEquals(firstCli, secondCli);
+
+		String body = """
+			{
+			  "linearTicketReference": "LIN-123",
+			  "actorIdentity": "alex",
+			  "actorType": "HUMAN",
+			  "correlationId": "corr-submit-1"
+			}
+			""";
+		for (int i = 0; i < 2; i++) {
+			mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+					.contentType(MediaType.APPLICATION_JSON)
+					.accept(MediaType.APPLICATION_JSON)
+					.header("Idempotency-Key", "idem-replay-1234567890")
+					.content(body))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.workflowRunId").value("run_submit1234"))
+				.andExpect(jsonPath("$.currentState").value("Inbox"))
+				.andExpect(jsonPath("$.correlationId").value("corr-submit-1"));
+		}
 	}
 
 	@Test

@@ -10,8 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -46,6 +52,7 @@ class WorkflowCommandServiceContractTest {
 
 	@AfterEach
 	void cleanDatabase() {
+		jdbcTemplate.update("delete from idempotency_records");
 		jdbcTemplate.update("delete from workflow_events");
 		jdbcTemplate.update("delete from workflow_runs");
 	}
@@ -92,6 +99,90 @@ class WorkflowCommandServiceContractTest {
 		assertEquals("idem-submit-1234567890", details.get("idempotencyKey"));
 		assertEquals("corr-submit-1", details.get("correlationId"));
 		assertEquals("SubmitWorkflowCommand", details.get("commandType"));
+	}
+
+	@Test
+	void submitReplayReturnsTheOriginalRunWithoutCreatingDuplicateRows() {
+		SubmitWorkflowCommand command = new SubmitWorkflowCommand(
+			"alex",
+			ActorType.HUMAN,
+			"idem-submit-replay-1234567890",
+			"corr-submit-replay-1",
+			"LIN-123");
+
+		SubmitWorkflowResult first = service.submit(command);
+		SubmitWorkflowResult replay = service.submit(command);
+
+		assertEquals(first, replay);
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+	}
+
+	@Test
+	void approveSpecReplayDoesNotAppendDuplicateEvents() throws IOException {
+		String runId = insertRun("run_replayapprove1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+		ApproveSpecCommand command = new ApproveSpecCommand(
+			runId,
+			"art_spec1234",
+			3,
+			2,
+			"alex",
+			ActorType.HUMAN,
+			"idem-approve-replay-1234567890",
+			"corr-approve-replay-1");
+
+		WorkflowStateChangeResult first = service.approveSpec(command);
+		WorkflowStateChangeResult replay = service.approveSpec(command);
+
+		assertEquals(first, replay);
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+	}
+
+	@Test
+	void concurrentSubmitWithTheSameKeyCreatesOneRunAndOneEvent() throws Exception {
+		SubmitWorkflowCommand command = new SubmitWorkflowCommand(
+			"alex",
+			ActorType.HUMAN,
+			"idem-submit-race-1234567890",
+			"corr-submit-race-1",
+			"LIN-123");
+		CyclicBarrier barrier = new CyclicBarrier(2);
+
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Callable<SubmitWorkflowResult> task = () -> {
+				barrier.await();
+				return service.submit(command);
+			};
+			List<Future<SubmitWorkflowResult>> futures = new ArrayList<>();
+			futures.add(executor.submit(task));
+			futures.add(executor.submit(task));
+
+			SubmitWorkflowResult first = futures.get(0).get();
+			SubmitWorkflowResult second = futures.get(1).get();
+
+			assertEquals(first, second);
+		}
+
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+	}
+
+	@Test
+	void invalidIdempotencyKeysRaiseSpecificGovernedErrors() {
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.submit(new SubmitWorkflowCommand(
+				"alex",
+				ActorType.HUMAN,
+				"bad key with spaces",
+				"corr-submit-invalid-1",
+				"LIN-123")));
+
+		assertEquals(DomainErrorCode.INVALID_IDEMPOTENCY_KEY, error.errorCode());
+		assertEquals("bad key with spaces", error.details().get("idempotencyKey"));
 	}
 
 	@Test

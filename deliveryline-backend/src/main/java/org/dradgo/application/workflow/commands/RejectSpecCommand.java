@@ -6,6 +6,10 @@ import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import org.dradgo.domain.registry.ActorType;
 
+/**
+ * Canonical fingerprint fields after the shared envelope are:
+ * {@code workflowRunId}, {@code artifactId}, {@code artifactVersion}, {@code contextVersion}, {@code reasonText}.
+ */
 public record RejectSpecCommand(
 	@NotBlank @Size(max = 128) String workflowRunId,
 	@NotBlank @Size(max = 128) String artifactId,

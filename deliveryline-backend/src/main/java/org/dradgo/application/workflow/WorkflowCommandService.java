@@ -14,6 +14,9 @@ import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.adapters.persistence.repository.WorkflowEventRepository;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.idempotency.IdempotencyService;
+import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -24,6 +27,7 @@ import org.dradgo.application.workflow.commands.WorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.stereotype.Service;
@@ -36,26 +40,57 @@ public class WorkflowCommandService {
 	private final WorkflowEventRepository workflowEventRepository;
 	private final WorkflowTransitionService workflowTransitionService;
 	private final Validator validator;
+	private final IdempotencyService idempotencyService;
+	private final IdempotencyKeyValidator idempotencyKeyValidator;
+	private final WorkflowCommandFingerprintFactory fingerprintFactory;
 
 	public WorkflowCommandService(
 		WorkflowRunRepository workflowRunRepository,
 		WorkflowEventRepository workflowEventRepository,
 		WorkflowTransitionService workflowTransitionService,
-		Validator validator
+		Validator validator,
+		IdempotencyService idempotencyService,
+		IdempotencyKeyValidator idempotencyKeyValidator,
+		WorkflowCommandFingerprintFactory fingerprintFactory
 	) {
 		this.workflowRunRepository = workflowRunRepository;
 		this.workflowEventRepository = workflowEventRepository;
 		this.workflowTransitionService = workflowTransitionService;
 		this.validator = validator;
+		this.idempotencyService = idempotencyService;
+		this.idempotencyKeyValidator = idempotencyKeyValidator;
+		this.fingerprintFactory = fingerprintFactory;
 	}
 
 	@Transactional
 	public SubmitWorkflowResult submit(SubmitWorkflowCommand command) {
+		return executeIdempotent(command, this::submitInternal, this::replaySubmit);
+	}
+
+	@Transactional
+	public WorkflowStateChangeResult approveSpec(ApproveSpecCommand command) {
+		return executeIdempotent(command, this::approveSpecInternal, this::replayStateChange);
+	}
+
+	@Transactional
+	public WorkflowStateChangeResult rejectSpec(RejectSpecCommand command) {
+		return executeIdempotent(command, this::rejectSpecInternal, this::replayStateChange);
+	}
+
+	@Transactional
+	public WorkflowStateChangeResult retryWorkflow(RetryWorkflowCommand command) {
+		return executeIdempotent(command, this::retryWorkflowInternal, this::replayStateChange);
+	}
+
+	@Transactional
+	public WorkflowStateChangeResult takeoverWorkflow(TakeoverWorkflowCommand command) {
+		return executeIdempotent(command, this::takeoverWorkflowInternal, this::replayStateChange);
+	}
+
+	private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
 		// Initial creation has no prior state, so submit cannot route through
 		// WorkflowTransitionService.transition(prior -> target). It is the documented
 		// exception to the "do not bypass WorkflowTransitionService" scope-discipline rule.
-		validate(command);
-
 		WorkflowRunEntity workflowRun = new WorkflowRunEntity();
 		workflowRun.setPublicId(PublicIdPrefixes.WORKFLOW_RUN.next());
 		workflowRun.setCurrentState(WorkflowState.INBOX);
@@ -82,9 +117,7 @@ public class WorkflowCommandService {
 			normalizeOptional(command.correlationId()));
 	}
 
-	@Transactional
-	public WorkflowStateChangeResult approveSpec(ApproveSpecCommand command) {
-		validate(command);
+	private WorkflowStateChangeResult approveSpecInternal(ApproveSpecCommand command) {
 		transition(
 			command.workflowRunId(),
 			WorkflowState.EXECUTING,
@@ -100,9 +133,7 @@ public class WorkflowCommandService {
 			normalizeOptional(command.correlationId()));
 	}
 
-	@Transactional
-	public WorkflowStateChangeResult rejectSpec(RejectSpecCommand command) {
-		validate(command);
+	private WorkflowStateChangeResult rejectSpecInternal(RejectSpecCommand command) {
 		transition(
 			command.workflowRunId(),
 			WorkflowState.INVESTIGATING,
@@ -118,9 +149,7 @@ public class WorkflowCommandService {
 			normalizeOptional(command.correlationId()));
 	}
 
-	@Transactional
-	public WorkflowStateChangeResult retryWorkflow(RetryWorkflowCommand command) {
-		validate(command);
+	private WorkflowStateChangeResult retryWorkflowInternal(RetryWorkflowCommand command) {
 		transition(
 			command.workflowRunId(),
 			WorkflowState.EXECUTING,
@@ -133,9 +162,7 @@ public class WorkflowCommandService {
 			normalizeOptional(command.correlationId()));
 	}
 
-	@Transactional
-	public WorkflowStateChangeResult takeoverWorkflow(TakeoverWorkflowCommand command) {
-		validate(command);
+	private WorkflowStateChangeResult takeoverWorkflowInternal(TakeoverWorkflowCommand command) {
 		transition(
 			command.workflowRunId(),
 			WorkflowState.TAKEN_OVER,
@@ -146,6 +173,36 @@ public class WorkflowCommandService {
 			command.workflowRunId(),
 			WorkflowState.TAKEN_OVER,
 			normalizeOptional(command.correlationId()));
+	}
+
+	private <T extends DomainResult, C extends WorkflowCommand> T executeIdempotent(
+		C command,
+		java.util.function.Function<C, T> action,
+		java.util.function.BiFunction<String, C, T> replayLoader
+	) {
+		validateForExecution(command);
+		String fingerprint = fingerprintFactory.fingerprintFor(command);
+		IdempotencyService.ReservationOutcome outcome = idempotencyService.checkAndReserve(
+			command.idempotencyKey(),
+			command.commandType(),
+			command.actorIdentity(),
+			fingerprint);
+		if (outcome.decision() == IdempotencyService.ReservationDecision.REPLAY) {
+			return replayLoader.apply(outcome.resultRef(), command);
+		}
+		T result = action.apply(command);
+		idempotencyService.complete(command.idempotencyKey(), result.workflowRunId(), IdempotencyRecordStatus.COMPLETED);
+		return result;
+	}
+
+	private void validateForExecution(WorkflowCommand command) {
+		Set<ConstraintViolation<WorkflowCommand>> violations = validator.validate(command);
+		boolean hasNonIdempotencyViolations = violations.stream()
+			.anyMatch(violation -> !"idempotencyKey".equals(violation.getPropertyPath().toString()));
+		if (hasNonIdempotencyViolations) {
+			throw invalidCommandPayload(command, violations);
+		}
+		idempotencyKeyValidator.requireValid(command.idempotencyKey());
 	}
 
 	private void transition(
@@ -164,12 +221,10 @@ public class WorkflowCommandService {
 			commandDetails(command, extraDetails));
 	}
 
-	private void validate(WorkflowCommand command) {
-		Set<ConstraintViolation<WorkflowCommand>> violations = validator.validate(command);
-		if (violations.isEmpty()) {
-			return;
-		}
-
+	private DomainException invalidCommandPayload(
+		WorkflowCommand command,
+		Set<ConstraintViolation<WorkflowCommand>> violations
+	) {
 		List<Map<String, Object>> fieldErrors = new ArrayList<>();
 		violations.stream()
 			.sorted(
@@ -187,7 +242,7 @@ public class WorkflowCommandService {
 		Map<String, Object> details = new LinkedHashMap<>();
 		details.put("commandType", command.commandType());
 		details.put("fieldErrors", fieldErrors);
-		throw new DomainException(
+		return new DomainException(
 			DomainErrorCode.INVALID_COMMAND_PAYLOAD,
 			"Invalid command payload for " + command.commandType(),
 			details);
@@ -228,5 +283,29 @@ public class WorkflowCommandService {
 	private String fallbackReason(String reason, String fallback) {
 		String normalized = normalizeOptional(reason);
 		return normalized == null ? fallback : normalized;
+	}
+
+	private SubmitWorkflowResult replaySubmit(String resultRef, SubmitWorkflowCommand command) {
+		WorkflowRunEntity workflowRun = findWorkflowRun(resultRef);
+		return new SubmitWorkflowResult(
+			workflowRun.getPublicId(),
+			workflowRun.getCurrentState(),
+			normalizeOptional(command.correlationId()));
+	}
+
+	private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
+		WorkflowRunEntity workflowRun = findWorkflowRun(resultRef);
+		return new WorkflowStateChangeResult(
+			workflowRun.getPublicId(),
+			workflowRun.getCurrentState(),
+			normalizeOptional(command.correlationId()));
+	}
+
+	private WorkflowRunEntity findWorkflowRun(String workflowRunId) {
+		return workflowRunRepository.findByPublicId(workflowRunId)
+			.orElseThrow(() -> new DomainException(
+				DomainErrorCode.RUN_NOT_FOUND,
+				"Workflow run not found: " + workflowRunId,
+				Map.of("runId", workflowRunId)));
 	}
 }

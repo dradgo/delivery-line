@@ -34,6 +34,9 @@ public final class ProblemDetailsCatalog {
 		EnumMap<DomainErrorCode, ProblemDetailsMetadata> metadata = new EnumMap<>(DomainErrorCode.class);
 		register(metadata, DomainErrorCode.ILLEGAL_TRANSITION, HttpStatus.CONFLICT, "Illegal transition", false);
 		register(metadata, DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, HttpStatus.CONFLICT, "Idempotency key conflict", true);
+		register(metadata, DomainErrorCode.MISSING_IDEMPOTENCY_KEY, HttpStatus.BAD_REQUEST, "Missing idempotency key", false);
+		register(metadata, DomainErrorCode.INVALID_IDEMPOTENCY_KEY, HttpStatus.BAD_REQUEST, "Invalid idempotency key", false);
+		register(metadata, DomainErrorCode.STALE_IDEMPOTENCY_RESERVATION, HttpStatus.CONFLICT, "Stale idempotency reservation", true);
 		register(metadata, DomainErrorCode.APPROVAL_VERSION_MISMATCH, HttpStatus.CONFLICT, "Approval version mismatch", false);
 		register(metadata, DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT, HttpStatus.CONFLICT, "Concurrent transition conflict", true);
 		register(metadata, DomainErrorCode.RUNNER_TIMEOUT, HttpStatus.GATEWAY_TIMEOUT, "Runner timeout", true);

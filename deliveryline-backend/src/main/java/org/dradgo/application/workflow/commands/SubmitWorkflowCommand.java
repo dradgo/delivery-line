@@ -5,6 +5,10 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.dradgo.domain.registry.ActorType;
 
+/**
+ * Canonical fingerprint fields after the shared envelope are:
+ * {@code linearTicketReference}.
+ */
 public record SubmitWorkflowCommand(
 	@NotBlank @Size(max = 128) String actorIdentity,
 	@NotNull ActorType actorType,

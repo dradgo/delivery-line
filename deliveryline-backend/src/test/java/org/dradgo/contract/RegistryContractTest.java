@@ -35,6 +35,7 @@ import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -79,6 +80,7 @@ class RegistryContractTest {
 		assertEquals(registryValues(AllowedAction.values()), DomainRegistry.allowedActions());
 		assertEquals(registryValues(DomainErrorCode.values()), DomainRegistry.domainErrorCodes());
 		assertEquals(registryValues(RunnerExecutionStatus.values()), DomainRegistry.runnerExecutionStatuses());
+		assertEquals(registryValues(IdempotencyRecordStatus.values()), DomainRegistry.idempotencyRecordStatuses());
 		assertEquals(registryValues(ArtifactOperationStatus.values()), DomainRegistry.artifactOperationStatuses());
 		assertEquals(registryValues(ArtifactStatus.values()), DomainRegistry.artifactStatuses());
 		assertEquals(registryValues(ArtifactType.values()), DomainRegistry.artifactTypes());
@@ -120,6 +122,10 @@ class RegistryContractTest {
 			extractConstraintValues("ck_runner_executions_status"));
 		assertEquals(DomainRegistry.runnerExecutionStatuses(),
 			readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "runnerExecutionStatuses"));
+		assertEquals(DomainRegistry.idempotencyRecordStatuses(),
+			extractConstraintValues("ck_idempotency_records_status"));
+		assertEquals(DomainRegistry.idempotencyRecordStatuses(),
+			readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "idempotencyRecordStatuses"));
 		assertEquals(DomainRegistry.integrationSyncStatuses(),
 			extractConstraintValues("ck_integration_links_sync_status"));
 		assertEquals(DomainRegistry.integrationSyncStatuses(),
@@ -278,6 +284,7 @@ class RegistryContractTest {
 		registryBoundaries.put("artifact_operations.status", PersistedRegistryValues::artifactOperationStatus);
 		registryBoundaries.put("approvals.actor_type", PersistedRegistryValues::approvalActorType);
 		registryBoundaries.put("runner_executions.status", PersistedRegistryValues::runnerExecutionStatus);
+		registryBoundaries.put("idempotency_records.status", PersistedRegistryValues::idempotencyRecordStatus);
 		registryBoundaries.put("integration_links.sync_status", PersistedRegistryValues::integrationSyncStatus);
 		registryBoundaries.put("recovery_actions.actor_type", PersistedRegistryValues::recoveryActorType);
 

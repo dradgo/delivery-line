@@ -1,8 +1,6 @@
 package org.dradgo.adapters.rest;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -34,7 +32,7 @@ public class WorkflowController {
 		consumes = MediaType.APPLICATION_JSON_VALUE,
 		produces = MediaType.APPLICATION_JSON_VALUE)
 	public SubmitWorkflowResponse submit(
-		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
 		@Valid @RequestBody SubmitWorkflowRequest request
 	) {
 		return SubmitWorkflowResponse.from(workflowCommandService.submit(new SubmitWorkflowCommand(
@@ -51,7 +49,7 @@ public class WorkflowController {
 		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse approveSpec(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
 		@Valid @RequestBody ApproveSpecRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.approveSpec(new ApproveSpecCommand(
@@ -71,7 +69,7 @@ public class WorkflowController {
 		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse rejectSpec(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
 		@Valid @RequestBody RejectSpecRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.rejectSpec(new RejectSpecCommand(
@@ -92,7 +90,7 @@ public class WorkflowController {
 		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse retry(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
 		@Valid @RequestBody RetryWorkflowRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.retryWorkflow(new RetryWorkflowCommand(
@@ -110,7 +108,7 @@ public class WorkflowController {
 		produces = MediaType.APPLICATION_JSON_VALUE)
 	public WorkflowStateChangeResponse takeover(
 		@PathVariable String workflowRunId,
-		@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String idempotencyKey,
+		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
 		@Valid @RequestBody TakeoverWorkflowRequest request
 	) {
 		return WorkflowStateChangeResponse.from(workflowCommandService.takeoverWorkflow(new TakeoverWorkflowCommand(

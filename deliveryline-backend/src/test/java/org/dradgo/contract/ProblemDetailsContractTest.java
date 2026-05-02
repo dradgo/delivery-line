@@ -98,7 +98,12 @@ class ProblemDetailsContractTest {
 	}
 
 	@Test
-	void missingRequiredHeadersBecomeStableInvalidCommandPayloadProblemDetails() throws Exception {
+	void missingRequiredHeadersBecomeSpecificMissingIdempotencyKeyProblemDetails() throws Exception {
+		when(workflowCommandService.submit(any())).thenThrow(new DomainException(
+			DomainErrorCode.MISSING_IDEMPOTENCY_KEY,
+			"Missing idempotency key",
+			new java.util.LinkedHashMap<>(java.util.Map.of())));
+
 		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
 				.contentType(MediaType.APPLICATION_JSON)
 				.accept(MediaType.APPLICATION_JSON)
@@ -112,9 +117,61 @@ class ProblemDetailsContractTest {
 					"""))
 			.andExpect(status().isBadRequest())
 			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
-			.andExpect(jsonPath("$.code").value("INVALID_COMMAND_PAYLOAD"))
-			.andExpect(jsonPath("$.details[0].field").value("Idempotency-Key"))
-			.andExpect(jsonPath("$.details[0].constraint").value("required"));
+			.andExpect(jsonPath("$.code").value("MISSING_IDEMPOTENCY_KEY"))
+			.andExpect(jsonPath("$.retryable").value(false));
+	}
+
+	@Test
+	void malformedIdempotencyKeysBecomeSpecificInvalidIdempotencyKeyProblemDetails() throws Exception {
+		when(workflowCommandService.submit(any())).thenThrow(new DomainException(
+			DomainErrorCode.INVALID_IDEMPOTENCY_KEY,
+			"Invalid idempotency key",
+			Map.of("idempotencyKey", "bad key with spaces")));
+
+		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+				.contentType(MediaType.APPLICATION_JSON)
+				.accept(MediaType.APPLICATION_JSON)
+				.header("Idempotency-Key", "bad key with spaces")
+				.content("""
+					{
+					  "linearTicketReference": "LIN-123",
+					  "actorIdentity": "alex",
+					  "actorType": "HUMAN",
+					  "correlationId": "corr-submit-1"
+					}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.code").value("INVALID_IDEMPOTENCY_KEY"))
+			.andExpect(jsonPath("$.details.idempotencyKey").value("bad key with spaces"));
+	}
+
+	@Test
+	void idempotencyConflictsExposeHashedFingerprintDetails() throws Exception {
+		when(workflowCommandService.submit(any())).thenThrow(new DomainException(
+			DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+			"Idempotency key conflict for key idem-submit-1234567890 (existing=aaaaaaaaaaaaaaaa, submitted=bbbbbbbbbbbbbbbb)",
+			Map.of(
+				"existingFingerprint", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"submittedFingerprint", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")));
+
+		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+				.contentType(MediaType.APPLICATION_JSON)
+				.accept(MediaType.APPLICATION_JSON)
+				.header("Idempotency-Key", "idem-submit-1234567890")
+				.content("""
+					{
+					  "linearTicketReference": "LIN-123",
+					  "actorIdentity": "alex",
+					  "actorType": "HUMAN",
+					  "correlationId": "corr-submit-1"
+					}
+					"""))
+			.andExpect(status().isConflict())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"))
+			.andExpect(jsonPath("$.details.existingFingerprint").value("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+			.andExpect(jsonPath("$.details.submittedFingerprint").value("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
 	}
 
 	@Test

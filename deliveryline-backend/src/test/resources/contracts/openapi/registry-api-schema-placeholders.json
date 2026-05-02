@@ -39,6 +39,11 @@
     "timed_out",
     "orphaned"
   ],
+  "idempotencyRecordStatuses": [
+    "reserved",
+    "completed",
+    "failed"
+  ],
   "integrationSyncStatuses": [
     "linked",
     "synced",
@@ -74,6 +79,9 @@
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",
     "IDEMPOTENCY_KEY_CONFLICT": "https://deliveryline.local/problems/idempotency-key-conflict",
+    "MISSING_IDEMPOTENCY_KEY": "https://deliveryline.local/problems/missing-idempotency-key",
+    "INVALID_IDEMPOTENCY_KEY": "https://deliveryline.local/problems/invalid-idempotency-key",
+    "STALE_IDEMPOTENCY_RESERVATION": "https://deliveryline.local/problems/stale-idempotency-reservation",
     "APPROVAL_VERSION_MISMATCH": "https://deliveryline.local/problems/approval-version-mismatch",
     "CONCURRENT_TRANSITION_CONFLICT": "https://deliveryline.local/problems/concurrent-transition-conflict",
     "RUNNER_TIMEOUT": "https://deliveryline.local/problems/runner-timeout",

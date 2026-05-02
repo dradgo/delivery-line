@@ -33,6 +33,26 @@ class WorkflowCliExitStatusExceptionMapperTest {
 	}
 
 	@Test
+	void specificIdempotencyInputFailuresStayInThe100SeriesBand() {
+		ExitStatus status = mapper.apply(new DomainException(
+			DomainErrorCode.INVALID_IDEMPOTENCY_KEY,
+			"Invalid idempotency key"));
+
+		assertEquals(101, status.code());
+		assertEquals("[INVALID_IDEMPOTENCY_KEY] Invalid idempotency key", status.description());
+	}
+
+	@Test
+	void staleReservationsMapToThe200SeriesBand() {
+		ExitStatus status = mapper.apply(new DomainException(
+			DomainErrorCode.STALE_IDEMPOTENCY_RESERVATION,
+			"Stale idempotency reservation"));
+
+		assertEquals(201, status.code());
+		assertEquals("[STALE_IDEMPOTENCY_RESERVATION] Stale idempotency reservation", status.description());
+	}
+
+	@Test
 	void approvalVersionMismatchMapsToThe200SeriesBand() {
 		ExitStatus status = mapper.apply(new DomainException(
 			DomainErrorCode.APPROVAL_VERSION_MISMATCH,

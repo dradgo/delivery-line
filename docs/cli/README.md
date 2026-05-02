@@ -15,7 +15,15 @@ The non-zero exit code band communicates the error family:
 
 Current mappings in the foundation slice:
 
-- `101`: stable client-side failures such as `INVALID_COMMAND_PAYLOAD`, `ILLEGAL_TRANSITION`, `RUN_NOT_FOUND`, and other governed non-retry transport errors
-- `201`: `IDEMPOTENCY_KEY_CONFLICT`, `CONCURRENT_TRANSITION_CONFLICT`, `APPROVAL_VERSION_MISMATCH`
+- `101`: stable client-side failures such as `INVALID_COMMAND_PAYLOAD`, `ILLEGAL_TRANSITION`, `RUN_NOT_FOUND`, `MISSING_IDEMPOTENCY_KEY`, `INVALID_IDEMPOTENCY_KEY`, and other governed non-retry transport errors
+- `201`: `IDEMPOTENCY_KEY_CONFLICT`, `STALE_IDEMPOTENCY_RESERVATION`, `CONCURRENT_TRANSITION_CONFLICT`, `APPROVAL_VERSION_MISMATCH`
 - `301`: `RUNNER_TIMEOUT`, `RUNNER_CONTRACT_VIOLATION`, `ARTIFACT_PAYLOAD_UNAVAILABLE`
 - `401`: infrastructure and safety failures including `DOCTOR_*` codes and `INTERNAL_ERROR`
+
+## Idempotency Keys
+
+`deliveryline submit` accepts `--idempotency-key` explicitly in all modes.
+
+- Interactive CLI: if `--idempotency-key` is omitted, DeliveryLine generates a UUIDv7 key locally and always surfaces it inline as `[generated-idempotency-key: ...]` so the operator can replay if the response is lost in transit.
+- Non-interactive/scripted CLI: an explicit idempotency key is required.
+- `--verbose`: retained as a no-op for backward compatibility; the auto-generated key is now surfaced regardless.
