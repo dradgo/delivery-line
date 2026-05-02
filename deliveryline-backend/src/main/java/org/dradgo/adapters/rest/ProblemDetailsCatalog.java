@@ -37,6 +37,7 @@ public final class ProblemDetailsCatalog {
 		register(metadata, DomainErrorCode.MISSING_IDEMPOTENCY_KEY, HttpStatus.BAD_REQUEST, "Missing idempotency key", false);
 		register(metadata, DomainErrorCode.INVALID_IDEMPOTENCY_KEY, HttpStatus.BAD_REQUEST, "Invalid idempotency key", false);
 		register(metadata, DomainErrorCode.STALE_IDEMPOTENCY_RESERVATION, HttpStatus.CONFLICT, "Stale idempotency reservation", true);
+		register(metadata, DomainErrorCode.EXPORT_CLASSIFICATION_VIOLATION, HttpStatus.CONFLICT, "Export classification violation", false);
 		register(metadata, DomainErrorCode.APPROVAL_VERSION_MISMATCH, HttpStatus.CONFLICT, "Approval version mismatch", false);
 		register(metadata, DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT, HttpStatus.CONFLICT, "Concurrent transition conflict", true);
 		register(metadata, DomainErrorCode.RUNNER_TIMEOUT, HttpStatus.GATEWAY_TIMEOUT, "Runner timeout", true);

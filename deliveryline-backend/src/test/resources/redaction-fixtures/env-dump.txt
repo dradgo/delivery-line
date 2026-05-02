@@ -1,0 +1,5 @@
+java.lang.IllegalStateException: leaked env
+Environment:
+GITHUB_TOKEN=ghp_1234567890abcdef1234567890abcdef1234
+LINEAR_API_KEY=lin_api_1234567890abcdef1234567890abcdef
+PATH=/usr/local/bin

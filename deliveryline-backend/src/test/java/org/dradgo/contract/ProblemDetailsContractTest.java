@@ -175,6 +175,33 @@ class ProblemDetailsContractTest {
 	}
 
 	@Test
+	void exportClassificationViolationsExposeStableConflictProblemDetails() throws Exception {
+		when(workflowCommandService.submit(any())).thenThrow(new DomainException(
+			DomainErrorCode.EXPORT_CLASSIFICATION_VIOLATION,
+			"Export blocked because payload remains local-only after policy evaluation",
+			Map.of("effectiveClassification", "local-only")));
+
+		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+				.contentType(MediaType.APPLICATION_JSON)
+				.accept(MediaType.APPLICATION_JSON)
+				.header("Idempotency-Key", "idem-submit-1234567890")
+				.content("""
+					{
+					  "linearTicketReference": "LIN-123",
+					  "actorIdentity": "alex",
+					  "actorType": "HUMAN",
+					  "correlationId": "corr-submit-1"
+					}
+					"""))
+			.andExpect(status().isConflict())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.type").value("https://deliveryline.local/problems/export-classification-violation"))
+			.andExpect(jsonPath("$.code").value("EXPORT_CLASSIFICATION_VIOLATION"))
+			.andExpect(jsonPath("$.retryable").value(false))
+			.andExpect(jsonPath("$.details.effectiveClassification").value("local-only"));
+	}
+
+	@Test
 	void enumBindingFailuresBecomeStableInvalidCommandPayloadProblemDetails() throws Exception {
 		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
 				.contentType(MediaType.APPLICATION_JSON)

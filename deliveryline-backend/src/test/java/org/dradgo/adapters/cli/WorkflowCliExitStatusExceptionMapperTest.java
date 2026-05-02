@@ -64,6 +64,18 @@ class WorkflowCliExitStatusExceptionMapperTest {
 	}
 
 	@Test
+	void exportClassificationViolationsMapToThe200SeriesBand() {
+		ExitStatus status = mapper.apply(new DomainException(
+			DomainErrorCode.EXPORT_CLASSIFICATION_VIOLATION,
+			"Export blocked because payload remains local-only after policy evaluation"));
+
+		assertEquals(201, status.code());
+		assertEquals(
+			"[EXPORT_CLASSIFICATION_VIOLATION] Export blocked because payload remains local-only after policy evaluation",
+			status.description());
+	}
+
+	@Test
 	void runnerAndIntegrationErrorsMapToThe300SeriesBand() {
 		ExitStatus status = mapper.apply(new DomainException(
 			DomainErrorCode.RUNNER_TIMEOUT,

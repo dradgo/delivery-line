@@ -1,0 +1,88 @@
+{
+  "fixtures": [
+    {
+      "file": "authorization-header.txt",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
+    },
+    {
+      "file": "dotenv-secret.env",
+      "placeholder": "[REDACTED_ENV_VALUE]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["super-secret-password-123"]
+    },
+    {
+      "file": "env-dump.txt",
+      "placeholder": "[REDACTED_ENVIRONMENT_BLOCK]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234", "lin_api_1234567890abcdef1234567890abcdef"]
+    },
+    {
+      "file": "github-pat.txt",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["github_pat_1234567890abcdefghijklmnopqrstuvwxyzABCDEFG"]
+    },
+    {
+      "file": "github-token.txt",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
+    },
+    {
+      "file": "json-secret.json",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["superSecretApiValue987654321"]
+    },
+    {
+      "file": "linear-api-key.txt",
+      "placeholder": "[REDACTED_LINEAR_API_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["lin_api_1234567890abcdef1234567890abcdef"]
+    },
+    {
+      "file": "metadata-spoofing.json",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
+    },
+    {
+      "file": "query-secret.txt",
+      "placeholder": "[REDACTED_QUERY_SECRET]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["abc123-super-secret-token"]
+    },
+    {
+      "file": "ssh-private-key.pem",
+      "placeholder": "[REDACTED_SSH_PRIVATE_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["very-private-key-material"]
+    },
+    {
+      "file": "ssh-public-key.txt",
+      "placeholder": "[REDACTED_SSH_PUBLIC_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["AAAAC3NzaC1lZDI1NTE5AAAAIOdemoPublicKeyMaterial"]
+    },
+    {
+      "file": "unix-local-path.txt",
+      "placeholder": "[REDACTED_LOCAL_PATH]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["/Users/alex/.ssh/id_ed25519", "/home/alex/.config/app.env"]
+    },
+    {
+      "file": "windows-local-path.txt",
+      "placeholder": "[REDACTED_LOCAL_PATH]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["C:\\Users\\alex\\AppData\\Roaming\\deliveryline\\secrets.env"]
+    },
+    {
+      "file": "yaml-secret.yaml",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["super-secret-yaml-token-123"]
+    }
+  ]
+}
