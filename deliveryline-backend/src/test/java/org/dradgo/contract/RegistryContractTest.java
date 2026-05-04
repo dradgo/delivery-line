@@ -42,6 +42,7 @@ import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -50,6 +51,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
+@Tag("architecture")
 class RegistryContractTest {
 
 	// Postgres normalizes `IN (...)` to `= ANY (ARRAY[...])` in pg_get_constraintdef output, so we

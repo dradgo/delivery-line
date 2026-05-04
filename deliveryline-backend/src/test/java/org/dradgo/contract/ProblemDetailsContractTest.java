@@ -1,18 +1,26 @@
 package org.dradgo.contract;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.dradgo.adapters.rest.WorkflowController;
+import org.dradgo.application.security.RedactionCategory;
+import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -28,6 +36,26 @@ class ProblemDetailsContractTest {
 
 	@MockitoBean
 	private WorkflowCommandService workflowCommandService;
+
+	@MockitoBean
+	private RedactionPolicyService redactionPolicyService;
+
+	private final ObjectMapper objectMapper = new ObjectMapper();
+
+	@BeforeEach
+	void defaultRedactionBehavior() throws Exception {
+		when(redactionPolicyService.redact(org.mockito.ArgumentMatchers.<Map<String, Object>>any(), isNull()))
+			.thenAnswer(invocation -> {
+				Map<String, Object> payload = invocation.getArgument(0);
+				return new RedactionResult(
+					objectMapper.writeValueAsString(payload),
+					objectMapper.valueToTree(payload),
+					null,
+					DataClassification.SHAREABLE_FULL,
+					false,
+					Set.of());
+			});
+	}
 
 	@Test
 	void domainExceptionsAreSerializedAsProblemDetailsWithStableMachineReadableFields() throws Exception {
@@ -241,6 +269,54 @@ class ProblemDetailsContractTest {
 			.andExpect(jsonPath("$.code").value("INVALID_COMMAND_PAYLOAD"))
 			.andExpect(jsonPath("$.details[0].constraint").exists())
 			.andExpect(jsonPath("$.details[0].field").exists());
+	}
+
+	@Test
+	void fieldErrorsDelegateRejectedValueRedactionToThePolicyService() throws Exception {
+		when(redactionPolicyService.redact(org.mockito.ArgumentMatchers.<Map<String, Object>>any(), isNull()))
+			.thenAnswer(invocation -> {
+				Map<String, Object> payload = invocation.getArgument(0);
+				Object rejectedValue = payload.get("actorIdentity");
+				Map<String, Object> sanitizedPayload = Map.of(
+					"actorIdentity",
+					rejectedValue instanceof String value && value.contains("secret")
+						? "[REDACTED]"
+						: rejectedValue);
+				return new RedactionResult(
+					objectMapper.writeValueAsString(sanitizedPayload),
+					objectMapper.valueToTree(sanitizedPayload),
+					null,
+					DataClassification.SHAREABLE_REDACTED,
+					true,
+					Set.of(RedactionCategory.SECRET_FIELD));
+			});
+
+		when(workflowCommandService.submit(any())).thenThrow(new DomainException(
+			DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+			"Invalid command payload for SubmitWorkflowCommand",
+			Map.of(
+				"commandType", "SubmitWorkflowCommand",
+				"fieldErrors", List.of(Map.of(
+					"field", "actorIdentity",
+					"code", "Pattern",
+					"rejectedValue", "secret-token-value",
+					"message", "must match the actor identity policy")))));
+
+		mockMvc.perform(post("/api/v1/workflows/submit-workflow")
+				.contentType(MediaType.APPLICATION_JSON)
+				.accept(MediaType.APPLICATION_JSON)
+				.header("Idempotency-Key", "idem-submit-1234567890")
+				.content("""
+					{
+					  "linearTicketReference": "LIN-123",
+					  "actorIdentity": "alex",
+					  "actorType": "HUMAN",
+					  "correlationId": "corr-submit-1"
+					}
+					"""))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.details[0].field").value("actorIdentity"))
+			.andExpect(jsonPath("$.details[0].rejectedValue").value("[REDACTED]"));
 	}
 
 	@Test

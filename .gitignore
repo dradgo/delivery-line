@@ -64,3 +64,7 @@ runner-work/
 runner-logs/
 artifacts/
 deliveryline-data/
+
+# Local Spring Boot run logs (developer-only, never committed)
+spring-boot-run-local.log
+spring-boot-run-local.err.log

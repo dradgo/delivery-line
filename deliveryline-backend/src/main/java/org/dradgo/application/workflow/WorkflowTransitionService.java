@@ -5,10 +5,10 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
-import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
-import org.dradgo.adapters.persistence.repository.WorkflowEventRepository;
-import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
+import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
+import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
@@ -27,20 +27,23 @@ public class WorkflowTransitionService {
 
 	private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
-	private final WorkflowRunRepository workflowRunRepository;
-	private final WorkflowEventRepository workflowEventRepository;
+	private final WorkflowRunReadPort workflowRunReadPort;
+	private final WorkflowRunStatePort workflowRunStatePort;
+	private final WorkflowEventWritePort workflowEventWritePort;
 	private final WorkflowTransitionTable transitionTable;
 	private final TransactionTemplate transactionTemplate;
 	private final WorkflowTransitionConcurrencyProbe concurrencyProbe;
 
 	public WorkflowTransitionService(
-		WorkflowRunRepository workflowRunRepository,
-		WorkflowEventRepository workflowEventRepository,
+		WorkflowRunReadPort workflowRunReadPort,
+		WorkflowRunStatePort workflowRunStatePort,
+		WorkflowEventWritePort workflowEventWritePort,
 		PlatformTransactionManager transactionManager,
 		ObjectProvider<WorkflowTransitionConcurrencyProbe> concurrencyProbeProvider
 	) {
-		this.workflowRunRepository = workflowRunRepository;
-		this.workflowEventRepository = workflowEventRepository;
+		this.workflowRunReadPort = workflowRunReadPort;
+		this.workflowRunStatePort = workflowRunStatePort;
+		this.workflowEventWritePort = workflowEventWritePort;
 		this.transitionTable = WorkflowTransitionTable.defaultTable();
 		this.transactionTemplate = new TransactionTemplate(transactionManager);
 		this.concurrencyProbe = concurrencyProbeProvider.getIfAvailable(WorkflowTransitionConcurrencyProbe::noop);
@@ -117,36 +120,35 @@ public class WorkflowTransitionService {
 		FailureCategory failureCategory,
 		Map<String, Object> eventDetails
 	) {
-		WorkflowRunEntity workflowRun = workflowRunRepository.findByPublicId(runId)
+		var workflowRun = workflowRunReadPort.findByPublicId(runId)
 			.orElseThrow(() -> runNotFound(runId));
-		if (workflowRun.getArchivedAt() != null) {
+		if (workflowRun.archivedAt() != null) {
 			throw archivedRunRejected(runId, targetState);
 		}
 		concurrencyProbe.afterRunLoaded(runId);
 
-		WorkflowState priorState = workflowRun.getCurrentState();
+		WorkflowState priorState = workflowRun.currentState();
 		transitionTable.assertTransitionAllowed(runId, priorState, targetState, failureCategory, reason);
 
-		workflowRun.setCurrentState(targetState);
-		workflowRunRepository.saveAndFlush(workflowRun);
+		workflowRunStatePort.updateCurrentState(runId, targetState, workflowRun.requiredVersion());
 
-		WorkflowEventEntity event = new WorkflowEventEntity();
-		event.setPublicId(PublicIdPrefixes.WORKFLOW_EVENT.next());
-		event.setWorkflowRun(workflowRun);
-		event.setEventType(WorkflowEventType.WORKFLOW_STATE_CHANGED);
-		event.setPriorState(priorState);
-		event.setResultingState(targetState);
-		event.setActorIdentity(actor.identity());
-		event.setActorType(actor.type());
-		event.setReason(reason);
-		event.setFailureCategory(failureCategory);
-		event.setInterventionMarker(targetState == WorkflowState.TAKEN_OVER || targetState == WorkflowState.RECONCILED);
-		event.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+		Map<String, Object> details = new LinkedHashMap<>(eventDetails);
 		// Caller-supplied eventDetails apply first; the service-supplied idempotencyKey is
 		// the canonical key and wins over any value already present in eventDetails.
-		event.getDetails().putAll(eventDetails);
-		event.getDetails().put("idempotencyKey", idempotencyKey);
-		workflowEventRepository.saveAndFlush(event);
+		details.put("idempotencyKey", idempotencyKey);
+		workflowEventWritePort.append(new WorkflowEventRecord(
+			PublicIdPrefixes.WORKFLOW_EVENT.next(),
+			runId,
+			WorkflowEventType.WORKFLOW_STATE_CHANGED,
+			priorState,
+			targetState,
+			actor.identity(),
+			actor.type(),
+			reason,
+			failureCategory,
+			targetState == WorkflowState.TAKEN_OVER || targetState == WorkflowState.RECONCILED,
+			OffsetDateTime.now(ZoneOffset.UTC),
+			details));
 	}
 
 	private DomainException runNotFound(String runId) {

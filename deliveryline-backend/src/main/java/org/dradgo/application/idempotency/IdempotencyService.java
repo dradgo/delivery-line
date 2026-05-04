@@ -7,13 +7,12 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import org.dradgo.adapters.persistence.entity.IdempotencyRecordEntity;
-import org.dradgo.adapters.persistence.repository.IdempotencyRecordRepository;
+import org.dradgo.application.idempotency.spi.IdempotencyRecordPort;
+import org.dradgo.application.idempotency.spi.IdempotencyRecordSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,13 +22,11 @@ public class IdempotencyService {
 	private static final Duration STALE_RESERVATION_THRESHOLD = Duration.ofMinutes(10);
 	private static final int MAX_RESERVATION_ATTEMPTS = 3;
 
-	private final IdempotencyRecordRepository repository;
-	private final JdbcTemplate jdbcTemplate;
+	private final IdempotencyRecordPort idempotencyRecordPort;
 	private final Clock clock;
 
-	public IdempotencyService(IdempotencyRecordRepository repository, JdbcTemplate jdbcTemplate) {
-		this.repository = repository;
-		this.jdbcTemplate = jdbcTemplate;
+	public IdempotencyService(IdempotencyRecordPort idempotencyRecordPort) {
+		this.idempotencyRecordPort = idempotencyRecordPort;
 		this.clock = Clock.systemUTC();
 	}
 
@@ -40,75 +37,71 @@ public class IdempotencyService {
 		String actorIdentity,
 		String fingerprint
 	) {
-		// Retry the upsert/resolve cycle when a racing winner rolls back between
-		// our 0-affected insert and our pessimistic-read reread (the row vanishes
-		// from under us). 3 attempts is enough for typical rollback timing
-		// without risking pathological loops; the IllegalStateException at the
-		// end is a safety belt that should never trigger under normal contention.
+		// Retry when a racing winner loses its transaction between the reserve write
+		// and the pessimistic reread. That leaves us with "key already taken" on the
+		// write path but no surviving row to inspect on the read path.
 		for (int attempt = 0; attempt < MAX_RESERVATION_ATTEMPTS; attempt++) {
-			int inserted = jdbcTemplate.update(
-				"""
-					insert into idempotency_records (
-						public_id,
-						key,
-						command_type,
-						actor_identity,
-						command_fingerprint,
-						status
-					) values (?, ?, ?, ?, ?, ?)
-					on conflict (key) do nothing
-					""",
+			boolean inserted = idempotencyRecordPort.tryReserve(
 				PublicIdPrefixes.IDEMPOTENCY_RECORD.next(),
 				key,
 				commandType,
 				actorIdentity,
 				fingerprint,
-				IdempotencyRecordStatus.RESERVED.value());
-			if (inserted == 1) {
+				IdempotencyRecordStatus.RESERVED);
+			if (inserted) {
 				return new ReservationOutcome(ReservationDecision.RESERVED, null);
 			}
 			Optional<ReservationOutcome> resolved = tryResolveExistingRecord(key, fingerprint);
 			if (resolved.isPresent()) {
 				return resolved.get();
 			}
-			// Winner rolled back during our resolve — retry the insert.
+			// Winner rolled back during our resolve â€” retry the insert.
 		}
-		throw new IllegalStateException(
-			"Failed to reserve idempotency key after " + MAX_RESERVATION_ATTEMPTS + " attempts: " + key);
+		throw reservationExhausted(key);
 	}
 
 	@Transactional
 	public void complete(String key, String resultRef, IdempotencyRecordStatus status) {
-		IdempotencyRecordEntity record = repository.findWithLockByKey(key)
-			.orElseThrow(() -> missingRecord(key));
-		record.setResultRef(resultRef);
-		record.setStatus(status);
-		record.setCompletedAt(OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC));
-		repository.save(record);
+		idempotencyRecordPort.markCompleted(
+			key,
+			resultRef,
+			status,
+			OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC));
 	}
 
 	private Optional<ReservationOutcome> tryResolveExistingRecord(String key, String fingerprint) {
-		Optional<IdempotencyRecordEntity> maybe = repository.findWithLockByKey(key);
+		Optional<IdempotencyRecordSnapshot> maybe = idempotencyRecordPort.findWithLockByKey(key);
 		if (maybe.isEmpty()) {
 			// Winner rolled back during our resolve; signal the caller to retry the insert.
 			return Optional.empty();
 		}
-		IdempotencyRecordEntity existing = maybe.get();
-		if (!existing.getCommandFingerprint().equals(fingerprint)) {
-			throw fingerprintConflict(key, existing.getCommandFingerprint(), fingerprint);
+		IdempotencyRecordSnapshot existing = maybe.get();
+		if (!existing.commandFingerprint().equals(fingerprint)) {
+			throw fingerprintConflict(key, existing.commandFingerprint(), fingerprint);
 		}
-		if (existing.getStatus() == IdempotencyRecordStatus.COMPLETED) {
-			return Optional.of(new ReservationOutcome(ReservationDecision.REPLAY, existing.getResultRef()));
+		if (existing.status() == IdempotencyRecordStatus.COMPLETED) {
+			return Optional.of(new ReservationOutcome(ReservationDecision.REPLAY, existing.resultRef()));
 		}
-		if (existing.getStatus() == IdempotencyRecordStatus.RESERVED && isStale(existing)) {
-			throw staleReservation(key, existing.getCreatedAt());
+		if (existing.status() == IdempotencyRecordStatus.RESERVED && isStale(existing)) {
+			throw staleReservation(key, existing.createdAt());
 		}
 		throw activeReservationConflict(key, fingerprint);
 	}
 
-	private boolean isStale(IdempotencyRecordEntity existing) {
-		return repository.isReservationStale(existing.getKey(), STALE_RESERVATION_THRESHOLD.toMinutes())
-			.orElse(false);
+	private boolean isStale(IdempotencyRecordSnapshot existing) {
+		return idempotencyRecordPort.isReservationStale(
+			existing.key(),
+			STALE_RESERVATION_THRESHOLD);
+	}
+
+	private DomainException reservationExhausted(String key) {
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("idempotencyKey", key);
+		details.put("maxAttempts", MAX_RESERVATION_ATTEMPTS);
+		return new DomainException(
+			DomainErrorCode.IDEMPOTENCY_RESERVATION_EXHAUSTED,
+			"Failed to reserve idempotency key after " + MAX_RESERVATION_ATTEMPTS + " attempts: " + key,
+			details);
 	}
 
 	private DomainException fingerprintConflict(String key, String existingFingerprint, String submittedFingerprint) {
@@ -143,10 +136,6 @@ public class IdempotencyService {
 			DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
 			"Idempotency key is already reserved for an in-flight command: " + key,
 			details);
-	}
-
-	private IllegalStateException missingRecord(String key) {
-		return new IllegalStateException("Idempotency record disappeared for key " + key);
 	}
 
 	private String abbreviate(String fingerprint) {

@@ -16,6 +16,13 @@ import org.dradgo.domain.registry.WorkflowState;
 @Table(name = "workflow_runs")
 public class WorkflowRunEntity {
 
+	public static WorkflowRunEntity create(String publicId, WorkflowState currentState) {
+		WorkflowRunEntity entity = new WorkflowRunEntity();
+		entity.publicId = publicId;
+		entity.currentState = Objects.requireNonNull(currentState, "currentState").value();
+		return entity;
+	}
+
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
@@ -52,7 +59,7 @@ public class WorkflowRunEntity {
 		return PersistedRegistryValues.workflowRunState(currentState);
 	}
 
-	public void setCurrentState(WorkflowState currentState) {
+	void setCurrentState(WorkflowState currentState) {
 		this.currentState = Objects.requireNonNull(currentState, "currentState").value();
 	}
 

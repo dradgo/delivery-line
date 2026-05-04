@@ -1,6 +1,8 @@
 package org.dradgo.adapters.rest;
 
 import com.fasterxml.jackson.databind.JsonMappingException.Reference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
@@ -8,14 +10,15 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.MessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -34,21 +37,32 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice
 public class ProblemDetailsMapper {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ProblemDetailsMapper.class);
-	private static final String REDACTED_VALUE = "[REDACTED]";
 	private static final String GENERIC_INTERNAL_ERROR_DETAIL = "An unexpected internal error occurred.";
 	private static final String UNKNOWN_FIELD_NAME = "unknown";
 	private static final String DEFAULT_CONSTRAINT = "invalid";
+	private static final String REDACTED_PLACEHOLDER = "[REDACTED]";
 	private static final Pattern JACKSON_FIELD_PATTERN = Pattern.compile("\\[\"([^\"]+)\"\\]");
 	private static final Pattern JACKSON_STRING_VALUE_PATTERN = Pattern.compile("from String \\\"([^\\\"]+)\\\"");
+
+	private final RedactionPolicyService redactionPolicyService;
+	private final ObjectMapper objectMapper;
+
+	public ProblemDetailsMapper(
+		ObjectProvider<RedactionPolicyService> redactionPolicyServiceProvider,
+		ObjectProvider<ObjectMapper> objectMapperProvider
+	) {
+		this.redactionPolicyService = redactionPolicyServiceProvider.getIfAvailable();
+		this.objectMapper = objectMapperProvider.getIfAvailable(ObjectMapper::new);
+	}
 
 	@ExceptionHandler(DomainException.class)
 	public ResponseEntity<ProblemDetail> handleDomainException(DomainException exception, HttpServletRequest request) {
@@ -76,7 +90,7 @@ public class ProblemDetailsMapper {
 				continue;
 			}
 			String field = resolveParameterName(result);
-			Object rejectedValue = redactIfSensitive(field, result.getArgument());
+			Object rejectedValue = sanitizeRejectedValue(field, result.getArgument());
 			String constraint = "invalid";
 			List<MessageSourceResolvable> resolvableErrors = result.getResolvableErrors();
 			if (!resolvableErrors.isEmpty()) {
@@ -106,7 +120,7 @@ public class ProblemDetailsMapper {
 		HttpServletRequest request
 	) {
 		return invalidCommandPayload(request.getRequestURI(), List.of(
-			fieldError(exception.getName(), redactIfSensitive(exception.getName(), exception.getValue()), "typeMismatch")));
+			fieldError(exception.getName(), sanitizeRejectedValue(exception.getName(), exception.getValue()), "typeMismatch")));
 	}
 
 	@ExceptionHandler(HttpMessageNotReadableException.class)
@@ -122,14 +136,14 @@ public class ProblemDetailsMapper {
 				.reduce((first, second) -> second)
 				.orElse("body");
 			return invalidCommandPayload(request.getRequestURI(), List.of(
-				fieldError(field, redactIfSensitive(field, invalidFormatException.getValue()), "typeMismatch")));
+				fieldError(field, sanitizeRejectedValue(field, invalidFormatException.getValue()), "typeMismatch")));
 		}
 		String message = exception.getMessage();
 		if (message != null && message.contains("through reference chain")) {
 			String field = extractJacksonFieldName(message);
 			if (field != null) {
 				return invalidCommandPayload(request.getRequestURI(), List.of(
-					fieldError(field, redactIfSensitive(field, extractJacksonRejectedValue(message)), "typeMismatch")));
+					fieldError(field, sanitizeRejectedValue(field, extractJacksonRejectedValue(message)), "typeMismatch")));
 			}
 		}
 		return invalidCommandPayload(request.getRequestURI(), List.of(fieldError("body", null, "malformedJson")));
@@ -295,7 +309,7 @@ public class ProblemDetailsMapper {
 			Object rejectedValue = map.get("rejectedValue");
 			Object rawConstraint = map.get("code");
 			String constraint = rawConstraint == null ? DEFAULT_CONSTRAINT : rawConstraint.toString();
-			translated.add(fieldError(field, redactIfSensitive(field, rejectedValue), constraint));
+			translated.add(fieldError(field, sanitizeRejectedValue(field, rejectedValue), constraint));
 		}
 		return translated;
 	}
@@ -305,7 +319,7 @@ public class ProblemDetailsMapper {
 		for (FieldError fieldError : errors.getFieldErrors()) {
 			details.add(fieldError(
 				fieldError.getField(),
-				redactIfSensitive(fieldError.getField(), fieldError.getRejectedValue()),
+				sanitizeRejectedValue(fieldError.getField(), fieldError.getRejectedValue()),
 				resolveConstraint(fieldError)));
 		}
 		for (ObjectError objectError : errors.getGlobalErrors()) {
@@ -346,20 +360,25 @@ public class ProblemDetailsMapper {
 		return parameterName == null ? "parameter" : parameterName;
 	}
 
-	private Object redactIfSensitive(String field, Object rejectedValue) {
+	private Object sanitizeRejectedValue(String field, Object rejectedValue) {
 		if (rejectedValue == null) {
 			return null;
 		}
-		String normalizedField = field.toLowerCase(Locale.ROOT);
-		if (normalizedField.contains("secret")
-			|| normalizedField.contains("password")
-			|| normalizedField.contains("token")
-			|| normalizedField.contains("authorization")
-			|| normalizedField.contains("api-key")
-			|| normalizedField.contains("api_key")
-			|| normalizedField.contains("apikey")) {
-			return REDACTED_VALUE;
+		if (field == null) {
+			return rejectedValue;
 		}
-		return rejectedValue;
+		if (redactionPolicyService == null) {
+			return REDACTED_PLACEHOLDER;
+		}
+		try {
+			JsonNode sanitized = redactionPolicyService.redact(Map.of(field, rejectedValue), null).sanitizedJson();
+			if (sanitized == null || !sanitized.has(field)) {
+				return REDACTED_PLACEHOLDER;
+			}
+			return objectMapper.convertValue(sanitized.get(field), Object.class);
+		} catch (RuntimeException exception) {
+			LOG.warn("Rejected-value redaction failed for field {}; falling back to placeholder", field, exception);
+			return REDACTED_PLACEHOLDER;
+		}
 	}
 }

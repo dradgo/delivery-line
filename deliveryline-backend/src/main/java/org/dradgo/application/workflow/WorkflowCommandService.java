@@ -10,14 +10,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
-import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
-import org.dradgo.adapters.persistence.repository.WorkflowEventRepository;
-import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
+import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
+import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
+import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
+import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -36,8 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class WorkflowCommandService {
 
-	private final WorkflowRunRepository workflowRunRepository;
-	private final WorkflowEventRepository workflowEventRepository;
+	private final WorkflowRunReadPort workflowRunReadPort;
+	private final WorkflowRunCreatePort workflowRunCreatePort;
+	private final WorkflowEventWritePort workflowEventWritePort;
 	private final WorkflowTransitionService workflowTransitionService;
 	private final Validator validator;
 	private final IdempotencyService idempotencyService;
@@ -45,16 +47,18 @@ public class WorkflowCommandService {
 	private final WorkflowCommandFingerprintFactory fingerprintFactory;
 
 	public WorkflowCommandService(
-		WorkflowRunRepository workflowRunRepository,
-		WorkflowEventRepository workflowEventRepository,
+		WorkflowRunReadPort workflowRunReadPort,
+		WorkflowRunCreatePort workflowRunCreatePort,
+		WorkflowEventWritePort workflowEventWritePort,
 		WorkflowTransitionService workflowTransitionService,
 		Validator validator,
 		IdempotencyService idempotencyService,
 		IdempotencyKeyValidator idempotencyKeyValidator,
 		WorkflowCommandFingerprintFactory fingerprintFactory
 	) {
-		this.workflowRunRepository = workflowRunRepository;
-		this.workflowEventRepository = workflowEventRepository;
+		this.workflowRunReadPort = workflowRunReadPort;
+		this.workflowRunCreatePort = workflowRunCreatePort;
+		this.workflowEventWritePort = workflowEventWritePort;
 		this.workflowTransitionService = workflowTransitionService;
 		this.validator = validator;
 		this.idempotencyService = idempotencyService;
@@ -88,31 +92,31 @@ public class WorkflowCommandService {
 	}
 
 	private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
-		// Initial creation has no prior state, so submit cannot route through
-		// WorkflowTransitionService.transition(prior -> target). It is the documented
-		// exception to the "do not bypass WorkflowTransitionService" scope-discipline rule.
-		WorkflowRunEntity workflowRun = new WorkflowRunEntity();
-		workflowRun.setPublicId(PublicIdPrefixes.WORKFLOW_RUN.next());
-		workflowRun.setCurrentState(WorkflowState.INBOX);
-		workflowRun = workflowRunRepository.saveAndFlush(workflowRun);
-
-		WorkflowEventEntity event = new WorkflowEventEntity();
-		event.setPublicId(PublicIdPrefixes.WORKFLOW_EVENT.next());
-		event.setWorkflowRun(workflowRun);
-		event.setEventType(WorkflowEventType.WORKFLOW_STATE_CHANGED);
-		event.setPriorState(null);
-		event.setResultingState(WorkflowState.INBOX);
-		event.setActorIdentity(command.actorIdentity());
-		event.setActorType(command.actorType());
-		event.setReason("workflow submitted");
-		event.setInterventionMarker(false);
-		event.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
-		event.getDetails().putAll(baseDetails(command));
-		event.getDetails().put("linearTicketReference", command.linearTicketReference());
-		workflowEventRepository.saveAndFlush(event);
+		// The create path and initial event append must stay inside the surrounding
+		// @Transactional boundary so they commit or roll back together.
+		var workflowRun = workflowRunCreatePort.create(PublicIdPrefixes.WORKFLOW_RUN.next(), WorkflowState.INBOX);
+		if (workflowRun.currentState() != WorkflowState.INBOX) {
+			throw new IllegalStateException(
+				"Workflow run create port must return an INBOX run, but returned " + workflowRun.currentState());
+		}
+		Map<String, Object> details = baseDetails(command);
+		details.put("linearTicketReference", command.linearTicketReference());
+		workflowEventWritePort.append(new WorkflowEventRecord(
+			PublicIdPrefixes.WORKFLOW_EVENT.next(),
+			workflowRun.publicId(),
+			WorkflowEventType.WORKFLOW_STATE_CHANGED,
+			null,
+			WorkflowState.INBOX,
+			command.actorIdentity(),
+			command.actorType(),
+			"workflow submitted",
+			null,
+			false,
+			OffsetDateTime.now(ZoneOffset.UTC),
+			details));
 
 		return new SubmitWorkflowResult(
-			workflowRun.getPublicId(),
+			workflowRun.publicId(),
 			WorkflowState.INBOX,
 			normalizeOptional(command.correlationId()));
 	}
@@ -286,23 +290,23 @@ public class WorkflowCommandService {
 	}
 
 	private SubmitWorkflowResult replaySubmit(String resultRef, SubmitWorkflowCommand command) {
-		WorkflowRunEntity workflowRun = findWorkflowRun(resultRef);
+		var workflowRun = findWorkflowRun(resultRef);
 		return new SubmitWorkflowResult(
-			workflowRun.getPublicId(),
-			workflowRun.getCurrentState(),
+			workflowRun.publicId(),
+			workflowRun.currentState(),
 			normalizeOptional(command.correlationId()));
 	}
 
 	private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
-		WorkflowRunEntity workflowRun = findWorkflowRun(resultRef);
+		var workflowRun = findWorkflowRun(resultRef);
 		return new WorkflowStateChangeResult(
-			workflowRun.getPublicId(),
-			workflowRun.getCurrentState(),
+			workflowRun.publicId(),
+			workflowRun.currentState(),
 			normalizeOptional(command.correlationId()));
 	}
 
-	private WorkflowRunEntity findWorkflowRun(String workflowRunId) {
-		return workflowRunRepository.findByPublicId(workflowRunId)
+	private WorkflowRunSnapshot findWorkflowRun(String workflowRunId) {
+		return workflowRunReadPort.findByPublicId(workflowRunId)
 			.orElseThrow(() -> new DomainException(
 				DomainErrorCode.RUN_NOT_FOUND,
 				"Workflow run not found: " + workflowRunId,

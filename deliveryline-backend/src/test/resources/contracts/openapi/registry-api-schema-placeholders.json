@@ -82,6 +82,8 @@
     "MISSING_IDEMPOTENCY_KEY": "https://deliveryline.local/problems/missing-idempotency-key",
     "INVALID_IDEMPOTENCY_KEY": "https://deliveryline.local/problems/invalid-idempotency-key",
     "STALE_IDEMPOTENCY_RESERVATION": "https://deliveryline.local/problems/stale-idempotency-reservation",
+    "IDEMPOTENCY_RESERVATION_EXHAUSTED": "https://deliveryline.local/problems/idempotency-reservation-exhausted",
+    "IDEMPOTENCY_RECORD_LOST": "https://deliveryline.local/problems/idempotency-record-lost",
     "EXPORT_CLASSIFICATION_VIOLATION": "https://deliveryline.local/problems/export-classification-violation",
     "APPROVAL_VERSION_MISMATCH": "https://deliveryline.local/problems/approval-version-mismatch",
     "CONCURRENT_TRANSITION_CONFLICT": "https://deliveryline.local/problems/concurrent-transition-conflict",
