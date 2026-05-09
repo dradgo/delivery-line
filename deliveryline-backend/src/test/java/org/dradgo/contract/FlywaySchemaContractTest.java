@@ -126,6 +126,12 @@ class FlywaySchemaContractTest {
 		assertColumnType("idempotency_records", "status", "text");
 		assertColumnType("idempotency_records", "expires_at", "timestamp with time zone");
 		assertColumnNullable("idempotency_records", "expires_at", true);
+		assertColumnType("artifacts", "failure_category", "text");
+		assertColumnType("artifacts", "failure_reason", "text");
+		assertColumnNullable("artifacts", "failure_category", true);
+		assertColumnNullable("artifacts", "failure_reason", true);
+		assertColumnType("artifact_operations", "artifact_type", "text");
+		assertColumnNullable("artifact_operations", "artifact_type", false);
 
 		// Probe the state CHECK structurally rather than string-matching pg_get_constraintdef output.
 		List<String> requiredStates = List.of(
@@ -256,8 +262,51 @@ class FlywaySchemaContractTest {
 		assertTrue(uniqueConstraintNames.contains("uq_approvals_idempotency_key"));
 		assertTrue(uniqueConstraintNames.contains("uq_recovery_actions_idempotency_key"));
 		assertTrue(uniqueConstraintNames.contains("uq_idempotency_records_key"));
-		assertTrue(uniqueConstraintNames.contains("uq_artifact_operations_idem_key_op_type_artifact_id"));
+		assertTrue(uniqueConstraintNames.contains("uq_artifact_operations_idem_key_op_type_workflow_run"));
 		assertTrue(uniqueConstraintNames.contains("uq_artifacts_id_version"));
+	}
+
+	@Test
+	void artifactOperationsPartialUniqueIndexEnforcesSinglePendingOperationPerArtifact() {
+		// V4 added a partial unique index so the application can rely on "≤1 pending op per artifact"
+		// instead of resolving the unique pending op via a createdAt tiebreak.
+		List<Map<String, Object>> indexes = jdbcTemplate.queryForList(
+			"""
+				select indexname, indexdef
+				from pg_indexes
+				where schemaname = 'public'
+				  and tablename = 'artifact_operations'
+				  and indexname = 'uq_artifact_operations_pending_per_artifact'
+				""");
+		assertEquals(1, indexes.size(),
+			() -> "V4 partial unique index uq_artifact_operations_pending_per_artifact must exist");
+		String indexDef = (String) indexes.get(0).get("indexdef");
+		assertTrue(indexDef.toLowerCase().contains("unique"),
+			() -> "Index must be UNIQUE: " + indexDef);
+		assertTrue(indexDef.contains("artifact_id"),
+			() -> "Index must cover artifact_id: " + indexDef);
+		assertTrue(indexDef.toLowerCase().contains("where") && indexDef.contains("'pending'"),
+			() -> "Index must be partial on status='pending': " + indexDef);
+	}
+
+	@Test
+	void artifactFailureColumnsKeepStructuralChecksAndOperationIdempotencyScopeWidensByArtifactType() {
+		assertConstraintDefinitionContains("ck_artifacts_failure_category", "failure_category");
+		assertConstraintDefinitionContains("ck_artifacts_failure_category", "length");
+		assertConstraintDefinitionContains("ck_artifacts_failure_reason_paired", "failure_reason");
+		assertConstraintDefinitionContains("ck_artifacts_failure_reason_paired", "failure_category");
+		assertConstraintDefinitionContains(
+			"uq_artifact_operations_idem_key_op_type_workflow_run",
+			"workflow_run_id");
+		assertConstraintDefinitionContains(
+			"uq_artifact_operations_idem_key_op_type_workflow_run",
+			"artifact_type");
+		assertConstraintDefinitionContains(
+			"uq_artifact_operations_idem_key_op_type_workflow_run",
+			"idempotency_key");
+		assertConstraintDefinitionContains(
+			"uq_artifact_operations_idem_key_op_type_workflow_run",
+			"operation_type");
 	}
 
 	@Test
@@ -348,6 +397,21 @@ class FlywaySchemaContractTest {
 		String expected = expectedNullable ? "YES" : "NO";
 		assertEquals(expected, rows.get(0),
 			() -> tableName + "." + columnName + " nullability mismatch");
+	}
+
+	private void assertConstraintDefinitionContains(String constraintName, String fragment) {
+		List<String> defs = jdbcTemplate.queryForList(
+			"""
+				select pg_get_constraintdef(oid)
+				from pg_constraint
+				where conname = ?
+				""",
+			String.class,
+			constraintName);
+		assertEquals(1, defs.size(), () -> "Constraint not found: " + constraintName);
+		assertTrue(
+			defs.get(0).contains(fragment),
+			() -> "Constraint " + constraintName + " should contain '" + fragment + "' but was: " + defs.get(0));
 	}
 
 	private void assertStateAccepted(String state) {

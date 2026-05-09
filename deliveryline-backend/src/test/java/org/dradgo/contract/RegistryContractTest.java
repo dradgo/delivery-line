@@ -29,6 +29,7 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.ArtifactOperationStatus;
+import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
@@ -84,6 +85,7 @@ class RegistryContractTest {
 		assertEquals(registryValues(RunnerExecutionStatus.values()), DomainRegistry.runnerExecutionStatuses());
 		assertEquals(registryValues(IdempotencyRecordStatus.values()), DomainRegistry.idempotencyRecordStatuses());
 		assertEquals(registryValues(ArtifactOperationStatus.values()), DomainRegistry.artifactOperationStatuses());
+		assertEquals(registryValues(ArtifactOperationType.values()), DomainRegistry.artifactOperationTypes());
 		assertEquals(registryValues(ArtifactStatus.values()), DomainRegistry.artifactStatuses());
 		assertEquals(registryValues(ArtifactType.values()), DomainRegistry.artifactTypes());
 		assertEquals(registryValues(DataClassification.values()), DomainRegistry.dataClassifications());
@@ -120,6 +122,8 @@ class RegistryContractTest {
 			extractConstraintValues("ck_artifact_operations_status"));
 		assertEquals(DomainRegistry.artifactOperationStatuses(),
 			readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "artifactOperationStatuses"));
+		assertEquals(DomainRegistry.artifactOperationTypes(),
+			extractConstraintValues("ck_artifact_operations_operation_type"));
 		assertEquals(DomainRegistry.runnerExecutionStatuses(),
 			extractConstraintValues("ck_runner_executions_status"));
 		assertEquals(DomainRegistry.runnerExecutionStatuses(),
@@ -148,11 +152,18 @@ class RegistryContractTest {
 
 	@Test
 	void failureCategoryRegistryRemainsCataloguedEvenWithoutSqlOrApiChecks() {
-		// FailureCategory still has no SQL CHECK (workflow_events.failure_category is just length>0)
-		// and is not yet in the API manifest. Story 1.5 does consume it in the workflow transition
-		// path, but the drift gate is still registry-vs-itself until a later story tightens schema/API.
+		// FailureCategory still has no enum-constraining SQL CHECK and is not yet in the API manifest.
+		// The database only enforces structural shape (non-empty / paired columns), so the drift gate
+		// remains registry-vs-itself until a later story tightens schema/API.
 		assertFalse(DomainRegistry.failureCategories().isEmpty(),
 			"FailureCategory registry must not be empty even without external consumers");
+	}
+
+	@Test
+	void artifactTypesExposeStableDefaultClassificationPolicy() {
+		assertEquals(DataClassification.SHAREABLE_REDACTED, ArtifactType.SPEC.defaultClassification());
+		assertEquals(DataClassification.SHAREABLE_REDACTED, ArtifactType.IMPLEMENTATION_PLAN.defaultClassification());
+		assertEquals(DataClassification.SHAREABLE_REDACTED, ArtifactType.PR_OUTPUT.defaultClassification());
 	}
 
 	@Test
@@ -283,7 +294,10 @@ class RegistryContractTest {
 		registryBoundaries.put("artifacts.artifact_type", PersistedRegistryValues::artifactType);
 		registryBoundaries.put("artifacts.classification", PersistedRegistryValues::artifactClassification);
 		registryBoundaries.put("artifacts.status", PersistedRegistryValues::artifactStatus);
+		registryBoundaries.put("artifacts.failure_category", PersistedRegistryValues::artifactFailureCategory);
 		registryBoundaries.put("artifact_operations.status", PersistedRegistryValues::artifactOperationStatus);
+		registryBoundaries.put("artifact_operations.operation_type", PersistedRegistryValues::artifactOperationType);
+		registryBoundaries.put("artifact_operations.failure_category", PersistedRegistryValues::artifactOperationFailureCategory);
 		registryBoundaries.put("approvals.actor_type", PersistedRegistryValues::approvalActorType);
 		registryBoundaries.put("runner_executions.status", PersistedRegistryValues::runnerExecutionStatus);
 		registryBoundaries.put("idempotency_records.status", PersistedRegistryValues::idempotencyRecordStatus);
@@ -345,11 +359,14 @@ class RegistryContractTest {
 		assertNull(PersistedRegistryValues.workflowEventPriorState(null));
 		assertNull(PersistedRegistryValues.workflowEventResultingState(null));
 		assertNull(PersistedRegistryValues.workflowEventFailureCategory(null));
+		assertNull(PersistedRegistryValues.artifactFailureCategory(null));
 
 		// Valid value passes through.
 		assertInstanceOf(WorkflowState.class, PersistedRegistryValues.workflowEventResultingState("Inbox"));
 		assertInstanceOf(FailureCategory.class,
 			PersistedRegistryValues.workflowEventFailureCategory("runner_timeout"));
+		assertInstanceOf(FailureCategory.class,
+			PersistedRegistryValues.artifactFailureCategory("orphan"));
 
 		// Unknown still fails fast even on the nullable path.
 		DomainException unknown = assertThrows(DomainException.class,
@@ -365,6 +382,11 @@ class RegistryContractTest {
 		DomainException emptyFailureCategory = assertThrows(DomainException.class,
 			() -> PersistedRegistryValues.workflowEventFailureCategory(""));
 		assertEquals("", emptyFailureCategory.details().get("value"));
+
+		DomainException emptyArtifactFailureCategory = assertThrows(DomainException.class,
+			() -> PersistedRegistryValues.artifactFailureCategory(""));
+		assertEquals("", emptyArtifactFailureCategory.details().get("value"));
+		assertEquals("artifacts.failure_category", emptyArtifactFailureCategory.details().get("field"));
 	}
 
 	@Test

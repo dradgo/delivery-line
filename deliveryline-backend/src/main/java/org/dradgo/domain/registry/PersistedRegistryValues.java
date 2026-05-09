@@ -41,8 +41,20 @@ public final class PersistedRegistryValues {
 		return ArtifactStatus.fromValue(rawValue, "artifacts.status");
 	}
 
+	public static FailureCategory artifactFailureCategory(String rawValue) {
+		return FailureCategory.fromNullableValue(rawValue, "artifacts.failure_category");
+	}
+
 	public static ArtifactOperationStatus artifactOperationStatus(String rawValue) {
 		return ArtifactOperationStatus.fromValue(rawValue, "artifact_operations.status");
+	}
+
+	public static ArtifactOperationType artifactOperationType(String rawValue) {
+		return ArtifactOperationType.fromValue(rawValue, "artifact_operations.operation_type");
+	}
+
+	public static FailureCategory artifactOperationFailureCategory(String rawValue) {
+		return FailureCategory.fromNullableValue(rawValue, "artifact_operations.failure_category");
 	}
 
 	public static ActorType approvalActorType(String rawValue) {

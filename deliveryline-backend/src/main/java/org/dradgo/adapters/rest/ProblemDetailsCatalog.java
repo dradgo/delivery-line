@@ -45,6 +45,14 @@ public final class ProblemDetailsCatalog {
 		register(metadata, DomainErrorCode.RUNNER_TIMEOUT, HttpStatus.GATEWAY_TIMEOUT, "Runner timeout", true);
 		register(metadata, DomainErrorCode.RUNNER_CONTRACT_VIOLATION, HttpStatus.BAD_GATEWAY, "Runner contract violation", false);
 		register(metadata, DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE, "Artifact payload unavailable", true);
+		register(metadata, DomainErrorCode.ARTIFACT_LINEAGE_ALREADY_EXISTS, HttpStatus.CONFLICT, "Artifact lineage already exists", false);
+		register(metadata, DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND, HttpStatus.NOT_FOUND, "Artifact record not found", false);
+		register(metadata, DomainErrorCode.ARTIFACT_OPERATION_CONFLICT, HttpStatus.CONFLICT, "Artifact operation conflict", true);
+		register(metadata, DomainErrorCode.ARTIFACT_INVALID_FILENAME, HttpStatus.BAD_REQUEST, "Artifact payload reference is invalid", false);
+		register(metadata, DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION, HttpStatus.CONFLICT, "Artifact state transition not allowed", false);
+		register(metadata, DomainErrorCode.ARTIFACT_CHECKSUM_MISMATCH, HttpStatus.CONFLICT, "Artifact checksum mismatch", false);
+		register(metadata, DomainErrorCode.WORKFLOW_RUN_TERMINAL, HttpStatus.CONFLICT, "Workflow run is terminal", false);
+		register(metadata, DomainErrorCode.RUNNER_EXECUTION_NOT_FOUND, HttpStatus.NOT_FOUND, "Runner execution not found", false);
 		register(metadata, DomainErrorCode.INVALID_COMMAND_PAYLOAD, HttpStatus.BAD_REQUEST, "Invalid command payload", false);
 		register(metadata, DomainErrorCode.INTERNAL_ERROR, HttpStatus.INTERNAL_SERVER_ERROR, "Internal error", false);
 		register(metadata, DomainErrorCode.UNKNOWN_REGISTRY_VALUE, HttpStatus.BAD_REQUEST, "Unknown registry value", false);

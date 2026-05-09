@@ -1,0 +1,9 @@
+deliveryline:
+  home: ${java.io.tmpdir}/deliveryline-test-home
+
+spring:
+  docker:
+    compose:
+      enabled: false
+      skip:
+        in-tests: true

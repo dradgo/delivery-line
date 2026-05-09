@@ -22,6 +22,7 @@ public final class DomainRegistry {
 	private static final Set<String> RUNNER_EXECUTION_STATUSES = valuesOf(RunnerExecutionStatus.values());
 	private static final Set<String> IDEMPOTENCY_RECORD_STATUSES = valuesOf(IdempotencyRecordStatus.values());
 	private static final Set<String> ARTIFACT_OPERATION_STATUSES = valuesOf(ArtifactOperationStatus.values());
+	private static final Set<String> ARTIFACT_OPERATION_TYPES = valuesOf(ArtifactOperationType.values());
 	private static final Set<String> ARTIFACT_STATUSES = valuesOf(ArtifactStatus.values());
 	private static final Set<String> ARTIFACT_TYPES = valuesOf(ArtifactType.values());
 	private static final Set<String> DATA_CLASSIFICATIONS = valuesOf(DataClassification.values());
@@ -60,6 +61,10 @@ public final class DomainRegistry {
 
 	public static Set<String> artifactOperationStatuses() {
 		return ARTIFACT_OPERATION_STATUSES;
+	}
+
+	public static Set<String> artifactOperationTypes() {
+		return ARTIFACT_OPERATION_TYPES;
 	}
 
 	public static Set<String> artifactStatuses() {

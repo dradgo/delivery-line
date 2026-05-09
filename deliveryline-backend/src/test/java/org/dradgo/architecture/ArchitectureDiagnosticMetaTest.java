@@ -73,6 +73,7 @@ class ArchitectureDiagnosticMetaTest {
 
 		assertTrue(error.getMessage().contains("artifact writes must go through ArtifactOperationService"));
 		assertTrue(error.getMessage().contains(InvalidArtifactWriteAdapter.class.getName()));
+		assertTrue(error.getMessage().contains("org.dradgo.adapters.files.LocalArtifactStore"));
 	}
 
 	@Test
@@ -87,5 +88,6 @@ class ArchitectureDiagnosticMetaTest {
 
 		assertTrue(error.getMessage().contains("artifact writes must go through ArtifactOperationService"));
 		assertTrue(error.getMessage().contains(InvalidArtifactWriteHelper.class.getName()));
+		assertTrue(error.getMessage().contains("org.dradgo.adapters.files.LocalArtifactStore"));
 	}
 }
