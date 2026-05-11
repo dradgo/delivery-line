@@ -13,5 +13,5 @@ public record ActorContext(String actorIdentity, ActorType actorType, String cor
 		}
 	}
 
-	public static final ActorContext SYSTEM = new ActorContext("system", ActorType.SYSTEM, null);
+	static final ActorContext SYSTEM = new ActorContext("system", ActorType.SYSTEM, null);
 }

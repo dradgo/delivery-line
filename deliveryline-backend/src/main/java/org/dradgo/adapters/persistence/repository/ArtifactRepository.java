@@ -9,7 +9,7 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
 
 	Optional<ArtifactEntity> findByPublicId(String publicId);
 
-	Optional<ArtifactEntity> findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+	Optional<ArtifactEntity> findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
 		String workflowRunPublicId,
 		String artifactType
 	);

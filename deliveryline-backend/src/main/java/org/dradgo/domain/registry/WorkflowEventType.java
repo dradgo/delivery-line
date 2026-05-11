@@ -15,6 +15,7 @@ public enum WorkflowEventType implements RegistryValue {
 	RUNNER_FAILED("runner.failed"),
 	RECOVERY_RETRIED("recovery.retried"),
 	RECOVERY_RECONCILED("recovery.reconciled"),
+	ARTIFACT_LINEAGE_RECOVERED("artifact.lineageRecovered"),
 	INTEGRATION_LINKED("integration.linked"),
 	EXPORT_CREATED("export.created"),
 	CLARIFICATION_ANSWERED("clarification.answered"),

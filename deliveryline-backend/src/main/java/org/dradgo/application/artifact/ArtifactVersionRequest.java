@@ -11,6 +11,9 @@ public record ArtifactVersionRequest(
 ) {
 
 	public ArtifactVersionRequest {
+		if (lineageMemberArtifactId == null || lineageMemberArtifactId.isBlank()) {
+			throw new IllegalArgumentException("lineageMemberArtifactId must not be blank");
+		}
 		if (actor == null) {
 			throw new IllegalArgumentException("actor must not be null");
 		}

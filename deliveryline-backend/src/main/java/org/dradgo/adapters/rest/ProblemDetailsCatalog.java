@@ -51,6 +51,9 @@ public final class ProblemDetailsCatalog {
 		register(metadata, DomainErrorCode.ARTIFACT_INVALID_FILENAME, HttpStatus.BAD_REQUEST, "Artifact payload reference is invalid", false);
 		register(metadata, DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION, HttpStatus.CONFLICT, "Artifact state transition not allowed", false);
 		register(metadata, DomainErrorCode.ARTIFACT_CHECKSUM_MISMATCH, HttpStatus.CONFLICT, "Artifact checksum mismatch", false);
+		register(metadata, DomainErrorCode.ARTIFACT_WORKFLOW_RUN_NOT_FOUND, HttpStatus.NOT_FOUND, "Workflow run not found for artifact operation", false);
+		register(metadata, DomainErrorCode.ARTIFACT_RUNNER_EXECUTION_TIMED_OUT, HttpStatus.CONFLICT, "Runner execution timed out", false);
+		register(metadata, DomainErrorCode.ARTIFACT_OPERATION_INTENT_CONFLICT, HttpStatus.CONFLICT, "Artifact operation intent conflict", false);
 		register(metadata, DomainErrorCode.WORKFLOW_RUN_TERMINAL, HttpStatus.CONFLICT, "Workflow run is terminal", false);
 		register(metadata, DomainErrorCode.RUNNER_EXECUTION_NOT_FOUND, HttpStatus.NOT_FOUND, "Runner execution not found", false);
 		register(metadata, DomainErrorCode.INVALID_COMMAND_PAYLOAD, HttpStatus.BAD_REQUEST, "Invalid command payload", false);

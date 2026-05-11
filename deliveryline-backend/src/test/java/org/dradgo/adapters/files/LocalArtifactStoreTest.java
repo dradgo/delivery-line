@@ -41,6 +41,17 @@ class LocalArtifactStoreTest {
 	// ---------- H1: home configuration must be explicit, never silently defaulted ----------
 
 	@Test
+	void constructorCreatesHomeDirectoryWhenItDoesNotExistYet() throws Exception {
+		Path nonExistent = tempDir.resolve("auto-created-home");
+
+		LocalArtifactStore store = new LocalArtifactStore(nonExistent.toString());
+		byte[] payload = "hello".getBytes(StandardCharsets.UTF_8);
+
+		String storageRef = store.write("run_1234", "art_1234", 1, "file.txt", payload);
+		assertTrue(Files.exists(nonExistent.resolve(storageRef)));
+	}
+
+	@Test
 	void blankHomeConfigurationIsRejectedInsteadOfFallingBackToProcessWorkingDirectory() {
 		IllegalArgumentException error = assertThrows(
 			IllegalArgumentException.class,

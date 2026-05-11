@@ -1,11 +1,15 @@
 package org.dradgo.adapters.persistence;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.dradgo.adapters.persistence.entity.ArtifactEntity;
 import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
@@ -25,6 +29,7 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.WorkflowEventType;
+import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,6 +40,14 @@ import org.springframework.transaction.annotation.Transactional;
 public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 
 	private static final Logger log = LoggerFactory.getLogger(ArtifactRecordPersistenceAdapter.class);
+
+	private static final Set<WorkflowState> TERMINAL_RUN_STATES = EnumSet.of(
+		WorkflowState.COMPLETED,
+		WorkflowState.FAILED,
+		WorkflowState.RECONCILED);
+
+	@PersistenceContext
+	private EntityManager entityManager;
 
 	private final ArtifactRepository artifactRepository;
 	private final WorkflowRunRepository workflowRunRepository;
@@ -54,6 +67,16 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 	}
 
 	@Override
+	@Transactional
+	public void lockLineageForUpdate(String workflowRunId, String artifactType) {
+		// D10: use hashtext() (PostgreSQL's own stable string hash → int4, cast to bigint) so the
+		// lock key is consistent across JVMs, JVM versions, and process restarts.
+		entityManager.createNativeQuery("SELECT pg_advisory_xact_lock(hashtext(:lockKey)::bigint)")
+			.setParameter("lockKey", workflowRunId + ":" + artifactType)
+			.getSingleResult();
+	}
+
+	@Override
 	@Transactional(readOnly = true)
 	public Optional<ArtifactRecordSnapshot> findByPublicId(String artifactId) {
 		return artifactRepository.findByPublicId(artifactId)
@@ -63,7 +86,7 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 	@Override
 	@Transactional(readOnly = true)
 	public Optional<ArtifactRecordSnapshot> findLatestByWorkflowRunIdAndArtifactType(String workflowRunId, String artifactType) {
-		return artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(workflowRunId, artifactType)
+		return artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(workflowRunId, artifactType)
 			.map(artifactEntityMapper::toSnapshot);
 	}
 
@@ -74,20 +97,8 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 		if (member.isEmpty()) {
 			return Optional.empty();
 		}
-		ArtifactEntity memberEntity = member.get();
-		List<ArtifactEntity> siblings = artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
-			memberEntity.getWorkflowRun().getPublicId(),
-			memberEntity.getArtifactType().value());
-		// Siblings are ordered version DESC, so the first one whose ancestor chain contains
-		// lineageMemberArtifactId is the highest-version descendant of the requested member.
-		// Multiple lineages can coexist within (workflow_run, artifact_type) when a fresh draft
-		// is started after a FAILED leaf; the chain walk filters out wrong-lineage candidates.
-		for (ArtifactEntity candidate : siblings) {
-			if (belongsToLineage(candidate, lineageMemberArtifactId)) {
-				return Optional.of(artifactEntityMapper.toSnapshot(candidate));
-			}
-		}
-		return Optional.empty();
+		return findLatestActiveLineageMemberEntity(member.get())
+			.map(artifactEntityMapper::toSnapshot);
 	}
 
 	@Override
@@ -108,7 +119,7 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 				request.idempotencyKey(),
 				request.runnerExecutionId(),
 				Map.of("artifactType", request.artifactType().value()))));
-		int nextVersion = artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		int nextVersion = artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
 			request.workflowRunId(),
 			request.artifactType().value())
 			.map(existing -> existing.getVersion() + 1)
@@ -121,7 +132,28 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 		entity.setClassification(request.classification());
 		entity.setStatus(ArtifactStatus.PENDING);
 		entity.setLinkedEvent(linkedEvent);
-		ArtifactRecordSnapshot persisted = artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(entity));
+		ArtifactRecordSnapshot persisted;
+		try {
+			persisted = artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(entity));
+		} catch (DataIntegrityViolationException collision) {
+			// Concurrent createDraft calls for the same (workflow_run_id, artifact_type, version)
+			// collide on uq_artifacts_workflow_run_id_artifact_type_version. The pessimistic lock
+			// acquired via requireWorkflowRunForUpdate above serializes within a run, so a collision
+			// here indicates an unexpected bypass (e.g., dropped constraint, manual insert). Surface
+			// as a retryable ARTIFACT_OPERATION_CONFLICT so callers see a stable typed error.
+			log.warn("createDraft conflict on artifact version unique constraint workflowRunId={} artifactType={} attemptedVersion={} cause={}",
+				request.workflowRunId(), request.artifactType().value(), nextVersion,
+				collision.getMostSpecificCause().getClass().getSimpleName());
+			throw new DomainException(
+				DomainErrorCode.ARTIFACT_OPERATION_CONFLICT,
+				"Concurrent artifact draft creation conflict for workflowRunId=" + request.workflowRunId()
+					+ ", artifactType=" + request.artifactType().value(),
+				Map.of(
+					"workflowRunId", request.workflowRunId(),
+					"artifactType", request.artifactType().value(),
+					"attemptedVersion", nextVersion),
+				collision);
+		}
 		log.info("artifact draft persisted artifactId={} workflowRunId={} artifactType={} version={} status=pending",
 			persisted.publicId(), request.workflowRunId(), request.artifactType().value(), persisted.version());
 		return persisted;
@@ -132,10 +164,13 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 	public ArtifactRecordSnapshot createNextVersion(ArtifactVersionRequest request) {
 		ArtifactEntity requestedMember = requireArtifact(request.lineageMemberArtifactId());
 		requireWorkflowRunForUpdate(requestedMember.getWorkflowRun().getPublicId());
-		ArtifactEntity lineageHead = artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		ArtifactEntity latestActiveArtifact = artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
 			requestedMember.getWorkflowRun().getPublicId(),
 			requestedMember.getArtifactType().value())
 			.orElse(requestedMember);
+		ArtifactEntity lineageHead = findLatestActiveLineageMemberEntity(requestedMember)
+			.orElse(latestActiveArtifact);
+		int nextVersion = latestActiveArtifact.getVersion() + 1;
 		WorkflowEventEntity linkedEvent = workflowEventRepository.saveAndFlush(newArtifactEvent(
 			requestedMember.getWorkflowRun(),
 			WorkflowEventType.ARTIFACT_VERSION_CREATED,
@@ -156,7 +191,7 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 		entity.setPublicId(PublicIdPrefixes.ARTIFACT.next());
 		entity.setWorkflowRun(requestedMember.getWorkflowRun());
 		entity.setArtifactType(requestedMember.getArtifactType());
-		entity.setVersion(lineageHead.getVersion() + 1);
+		entity.setVersion(nextVersion);
 		entity.setParentArtifact(lineageHead);
 		entity.setClassification(lineageHead.getClassification());
 		entity.setStatus(ArtifactStatus.PENDING);
@@ -173,7 +208,7 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 			log.warn("createNextVersion conflict on artifact version unique constraint workflowRunId={} artifactType={} attemptedVersion={} cause={}",
 				requestedMember.getWorkflowRun().getPublicId(),
 				requestedMember.getArtifactType().value(),
-				lineageHead.getVersion() + 1,
+				nextVersion,
 				collision.getMostSpecificCause().getClass().getSimpleName());
 			throw new DomainException(
 				DomainErrorCode.ARTIFACT_OPERATION_CONFLICT,
@@ -184,7 +219,7 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 					"workflowRunId", requestedMember.getWorkflowRun().getPublicId(),
 					"artifactType", requestedMember.getArtifactType().value(),
 					"lineageMemberArtifactId", request.lineageMemberArtifactId(),
-					"attemptedVersion", lineageHead.getVersion() + 1),
+					"attemptedVersion", nextVersion),
 				collision);
 		}
 		log.info("artifact next-version persisted artifactId={} parentArtifactId={} workflowRunId={} artifactType={} version={}",
@@ -247,11 +282,27 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 	}
 
 	private WorkflowRunEntity requireWorkflowRunForUpdate(String workflowRunId) {
-		return workflowRunRepository.findByPublicIdForUpdate(workflowRunId)
+		WorkflowRunEntity run = workflowRunRepository.findByPublicIdForUpdate(workflowRunId)
 			.orElseThrow(() -> new DomainException(
 				DomainErrorCode.RUN_NOT_FOUND,
 				"Workflow run not found: " + workflowRunId,
 				Map.of("runId", workflowRunId)));
+		// Re-validate terminal state INSIDE the pessimistic lock. The pre-lock check in
+		// ArtifactOperationService is a TOCTOU window: a run that became terminal between the
+		// pre-lock read and the lock acquisition would otherwise slip through. Reading
+		// currentState from the already-fetched entity avoids a second query.
+		WorkflowState currentState = run.getCurrentState();
+		if (TERMINAL_RUN_STATES.contains(currentState)) {
+			log.warn("createDraft/createNextVersion rejected: workflow run is terminal (post-lock recheck) workflowRunId={} workflowRunState={}",
+				workflowRunId, currentState.value());
+			throw new DomainException(
+				DomainErrorCode.WORKFLOW_RUN_TERMINAL,
+				"Workflow run is in a terminal state and cannot accept artifact operations: " + currentState.value(),
+				Map.of(
+					"workflowRunId", workflowRunId,
+					"workflowRunState", currentState.value()));
+		}
+		return run;
 	}
 
 	private ArtifactEntity requireArtifact(String artifactId) {
@@ -284,6 +335,22 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 			cursor = cursor.getParentArtifact();
 		}
 		return false;
+	}
+
+	private Optional<ArtifactEntity> findLatestActiveLineageMemberEntity(ArtifactEntity memberEntity) {
+		List<ArtifactEntity> siblings = artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+			memberEntity.getWorkflowRun().getPublicId(),
+			memberEntity.getArtifactType().value());
+		// Siblings are ordered version DESC, so the first non-archived candidate whose ancestor
+		// chain contains the requested lineage member is the active leaf for that lineage.
+		// Multiple lineages can coexist within (workflow_run, artifact_type) when a fresh draft
+		// is started after a FAILED leaf; the chain walk filters out wrong-lineage candidates.
+		for (ArtifactEntity candidate : siblings) {
+			if (candidate.getArchivedAt() == null && belongsToLineage(candidate, memberEntity.getPublicId())) {
+				return Optional.of(candidate);
+			}
+		}
+		return Optional.empty();
 	}
 
 	private WorkflowEventEntity newArtifactEvent(

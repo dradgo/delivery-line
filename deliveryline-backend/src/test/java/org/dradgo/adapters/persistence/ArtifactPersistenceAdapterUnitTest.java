@@ -4,9 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -77,7 +80,7 @@ class ArtifactPersistenceAdapterUnitTest {
 				ArtifactType.SPEC,
 				"spec.md",
 				DataClassification.LOCAL_ONLY,
-				ActorContext.SYSTEM,
+				new ActorContext("system", ActorType.SYSTEM, null),
 				null,
 				null,
 				null,
@@ -104,7 +107,7 @@ class ArtifactPersistenceAdapterUnitTest {
 		when(workflowRunRepository.findByPublicIdForUpdate("run_ready1234")).thenReturn(Optional.of(run));
 		when(workflowEventRepository.saveAndFlush(any())).thenReturn(linkedEvent);
 		when(artifactRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
-		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
 			"run_ready1234",
 			ArtifactType.SPEC.value()))
 			.thenReturn(Optional.empty())
@@ -117,7 +120,7 @@ class ArtifactPersistenceAdapterUnitTest {
 			ArtifactType.SPEC,
 			"spec.md",
 			DataClassification.LOCAL_ONLY,
-			ActorContext.SYSTEM,
+			new ActorContext("system", ActorType.SYSTEM, null),
 			null,
 			null,
 			null,
@@ -125,7 +128,7 @@ class ArtifactPersistenceAdapterUnitTest {
 		var next = adapter.createNextVersion(new ArtifactVersionRequest(
 			"art_draft1234",
 			"spec-v2.md",
-			ActorContext.SYSTEM,
+			new ActorContext("system", ActorType.SYSTEM, null),
 			null,
 			null,
 			null,
@@ -216,7 +219,7 @@ class ArtifactPersistenceAdapterUnitTest {
 		when(artifactRepository.findByPublicId("art_member1234")).thenReturn(Optional.of(member));
 		when(workflowRunRepository.findByPublicIdForUpdate("run_ready1234")).thenReturn(Optional.of(run));
 		when(workflowEventRepository.saveAndFlush(any())).thenReturn(linkedEvent);
-		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
 			"run_ready1234",
 			ArtifactType.SPEC.value()))
 			.thenReturn(Optional.of(member));
@@ -229,7 +232,7 @@ class ArtifactPersistenceAdapterUnitTest {
 			() -> adapter.createNextVersion(new ArtifactVersionRequest(
 				"art_member1234",
 				"spec-v2.md",
-				ActorContext.SYSTEM,
+				new ActorContext("system", ActorType.SYSTEM, null),
 				null,
 				null,
 				null,
@@ -262,7 +265,7 @@ class ArtifactPersistenceAdapterUnitTest {
 		when(artifactRepository.findByPublicId("art_root1234")).thenReturn(Optional.of(root));
 		when(workflowRunRepository.findByPublicIdForUpdate("run_ready1234")).thenReturn(Optional.of(run));
 		when(workflowEventRepository.saveAndFlush(any())).thenReturn(linkedEvent);
-		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
 			"run_ready1234",
 			ArtifactType.SPEC.value()))
 			.thenReturn(Optional.of(leaf));
@@ -272,7 +275,7 @@ class ArtifactPersistenceAdapterUnitTest {
 		var next = adapter.createNextVersion(new ArtifactVersionRequest(
 			"art_root1234",
 			"spec-v4.md",
-			ActorContext.SYSTEM,
+			new ActorContext("system", ActorType.SYSTEM, null),
 			null,
 			null,
 			null,
@@ -281,6 +284,83 @@ class ArtifactPersistenceAdapterUnitTest {
 		// Adapter must silently chain off the leaf (art_leaf1234, v3), not the supplied member (art_root1234, v1).
 		assertEquals(4, next.version());
 		assertEquals("art_leaf1234", next.parentArtifactId());
+	}
+
+	@Test
+	void createNextVersionUsesRequestedLineageLeafAsParentWhenAnotherLineageHasTheGlobalLatestVersion() {
+		ArtifactRepository artifactRepository = mock(ArtifactRepository.class);
+		WorkflowRunRepository workflowRunRepository = mock(WorkflowRunRepository.class);
+		WorkflowEventRepository workflowEventRepository = mock(WorkflowEventRepository.class);
+		ArtifactRecordPersistenceAdapter adapter = new ArtifactRecordPersistenceAdapter(
+			artifactRepository,
+			workflowRunRepository,
+			workflowEventRepository,
+			new ArtifactEntityMapper());
+		WorkflowRunEntity run = WorkflowRunEntity.create("run_ready1234", WorkflowState.INBOX);
+		WorkflowEventEntity linkedEvent = workflowEvent("evt_link1234", run);
+		ArtifactEntity oldRoot = artifactEntity("art_oldroot1234", run, linkedEvent, null, 1);
+		ArtifactEntity oldLeaf = artifactEntity("art_oldleaf1234", run, linkedEvent, oldRoot, 2);
+		ArtifactEntity freshRoot = artifactEntity("art_fresh1234", run, linkedEvent, null, 3);
+
+		when(artifactRepository.findByPublicId("art_oldroot1234")).thenReturn(Optional.of(oldRoot));
+		when(workflowRunRepository.findByPublicIdForUpdate("run_ready1234")).thenReturn(Optional.of(run));
+		when(workflowEventRepository.saveAndFlush(any())).thenReturn(linkedEvent);
+		when(artifactRepository.findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
+			"run_ready1234",
+			ArtifactType.SPEC.value()))
+			.thenReturn(Optional.of(freshRoot));
+		when(artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+			"run_ready1234",
+			ArtifactType.SPEC.value()))
+			.thenReturn(List.of(freshRoot, oldLeaf, oldRoot));
+		when(artifactRepository.saveAndFlush(any(ArtifactEntity.class)))
+			.thenAnswer(invocation -> invocation.getArgument(0));
+
+		var next = adapter.createNextVersion(new ArtifactVersionRequest(
+			"art_oldroot1234",
+			"spec-v4.md",
+			new ActorContext("system", ActorType.SYSTEM, null),
+			null,
+			null,
+			null,
+			null));
+
+		assertEquals(4, next.version());
+		assertEquals("art_oldleaf1234", next.parentArtifactId());
+	}
+
+	@Test
+	void createDraftRejectsTerminalWorkflowRunAfterPostLockRecheck() {
+		ArtifactRepository artifactRepository = mock(ArtifactRepository.class);
+		WorkflowRunRepository workflowRunRepository = mock(WorkflowRunRepository.class);
+		WorkflowEventRepository workflowEventRepository = mock(WorkflowEventRepository.class);
+		ArtifactRecordPersistenceAdapter adapter = new ArtifactRecordPersistenceAdapter(
+			artifactRepository,
+			workflowRunRepository,
+			workflowEventRepository,
+			new ArtifactEntityMapper());
+		WorkflowRunEntity run = WorkflowRunEntity.create("run_done1234", WorkflowState.COMPLETED);
+
+		when(workflowRunRepository.findByPublicIdForUpdate("run_done1234")).thenReturn(Optional.of(run));
+
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> adapter.createDraft(new ArtifactDraftRequest(
+				"run_done1234",
+				ArtifactType.SPEC,
+				"spec.md",
+				DataClassification.LOCAL_ONLY,
+				new ActorContext("alex", ActorType.HUMAN, "corr-terminal"),
+				null,
+				null,
+				null,
+				null)));
+
+		assertEquals(DomainErrorCode.WORKFLOW_RUN_TERMINAL, error.errorCode());
+		assertEquals("run_done1234", error.details().get("workflowRunId"));
+		assertEquals(WorkflowState.COMPLETED.value(), error.details().get("workflowRunState"));
+		verifyNoInteractions(workflowEventRepository);
+		verify(artifactRepository, never()).saveAndFlush(any(ArtifactEntity.class));
 	}
 
 	@Test
@@ -418,6 +498,9 @@ class ArtifactPersistenceAdapterUnitTest {
 		WorkflowEventEntity linkedEvent = workflowEvent("evt_link1234", run);
 		ArtifactEntity artifact = artifactEntity("art_ready1234", run, linkedEvent, null, 1);
 		ArtifactOperationEntity pending = operationEntity("op_ready1234", run, artifact, linkedEvent, "create");
+		// Separate entity for markFailed — the op-level state-machine guard (fix 3) now rejects
+		// markFailed on a COMPLETE operation, so we use a distinct PENDING entity here.
+		ArtifactOperationEntity failPending = operationEntity("op_fail1234", run, artifact, linkedEvent, "update");
 		ArtifactOperationEntity stalePending = operationEntity("op_stale1234", run, artifact, linkedEvent, "replace");
 
 		when(workflowRunRepository.findByPublicId("run_ready1234")).thenReturn(Optional.of(run));
@@ -434,9 +517,10 @@ class ArtifactPersistenceAdapterUnitTest {
 			"create"))
 			.thenReturn(Optional.of(pending));
 		when(operationRepository.findByPublicId("op_ready1234")).thenReturn(Optional.of(pending));
-		when(operationRepository.findByStatusAndCreatedAtBefore(
+		when(operationRepository.findByPublicId("op_fail1234")).thenReturn(Optional.of(failPending));
+		when(operationRepository.findByStatusAndCreatedAtOlderThanSeconds(
 			ArtifactOperationStatus.PENDING.value(),
-			OffsetDateTime.of(2026, 5, 7, 14, 0, 0, 0, ZoneOffset.UTC)))
+			900L))
 			.thenReturn(List.of(stalePending));
 		when(operationRepository.findByPublicId("op_stale1234")).thenReturn(Optional.of(stalePending));
 
@@ -453,12 +537,12 @@ class ArtifactPersistenceAdapterUnitTest {
 			"idem-1234567890",
 			"create").orElseThrow();
 		ArtifactOperationSnapshot complete = adapter.markComplete("op_ready1234");
+		// markFailed on a separate PENDING operation — cannot re-use op_ready1234 (already COMPLETE)
 		ArtifactOperationSnapshot failed = adapter.markFailed(
-			"op_ready1234",
+			"op_fail1234",
 			FailureCategory.RUNNER_CRASH,
 			"runner exited before payload write");
-		List<ArtifactOperationSnapshot> stale = adapter.findPendingCreatedBefore(
-			OffsetDateTime.of(2026, 5, 7, 14, 0, 0, 0, ZoneOffset.UTC));
+		List<ArtifactOperationSnapshot> stale = adapter.findPendingOlderThan(Duration.ofMinutes(15));
 		ArtifactOperationSnapshot orphaned = adapter.markFailedOrphan(
 			"op_stale1234",
 			"artifact payload never materialized");

@@ -48,7 +48,20 @@ public class ArtifactService {
 				artifactId, artifact.storageRef());
 			return false;
 		}
-		Optional<String> recomputed = ArtifactChecksum.digestHex(artifact.checksumAlgorithm(), payload);
+		String canonical = ArtifactChecksum.canonicalAlgorithm(artifact.checksumAlgorithm());
+		if (canonical == null || !ArtifactChecksum.ALLOWED_ALGORITHMS.contains(canonical)) {
+			log.warn("isApprovalEligible=false artifactId={} checksumAlgorithm={} reason=unknownAlgorithm",
+				artifactId, artifact.checksumAlgorithm());
+			return false;
+		}
+		Optional<String> recomputed;
+		try {
+			recomputed = ArtifactChecksum.digestHex(artifact.checksumAlgorithm(), payload);
+		} catch (IllegalStateException jvmError) {
+			log.warn("isApprovalEligible=false artifactId={} checksumAlgorithm={} reason=digestFailed cause={}",
+				artifactId, artifact.checksumAlgorithm(), jvmError.getMessage());
+			return false;
+		}
 		if (recomputed.isEmpty()) {
 			log.warn("isApprovalEligible=false artifactId={} checksumAlgorithm={} reason=unknownAlgorithm",
 				artifactId, artifact.checksumAlgorithm());

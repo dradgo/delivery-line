@@ -1,6 +1,7 @@
 package org.dradgo.adapters.files;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -8,6 +9,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Map;
@@ -41,7 +43,16 @@ public class LocalArtifactStore implements ArtifactPayloadStore {
 		if (deliverylineHome == null || deliverylineHome.trim().isEmpty()) {
 			throw new IllegalArgumentException("deliveryline.home must be configured");
 		}
-		this.deliverylineHome = Path.of(deliverylineHome.trim()).toAbsolutePath().normalize();
+		Path normalized = Path.of(deliverylineHome.trim()).toAbsolutePath().normalize();
+		Path resolved;
+		try {
+			Files.createDirectories(normalized);
+			resolved = normalized.toRealPath();
+		} catch (IOException error) {
+			throw new IllegalArgumentException(
+				"deliveryline.home could not be created or resolved: " + deliverylineHome.trim(), error);
+		}
+		this.deliverylineHome = resolved;
 	}
 
 	@Override
@@ -67,6 +78,12 @@ public class LocalArtifactStore implements ArtifactPayloadStore {
 					StandardCopyOption.REPLACE_EXISTING);
 			} catch (AtomicMoveNotSupportedException atomicUnsupported) {
 				Files.move(tempTarget, target, StandardCopyOption.REPLACE_EXISTING);
+			}
+			try (FileChannel dir = FileChannel.open(target.getParent(), StandardOpenOption.READ)) {
+				dir.force(true);
+			} catch (IOException ignored) {
+				// Directory fsync is not supported on all OS/filesystem combinations (e.g. Windows).
+				// The atomic rename already provides the best available durability on those platforms.
 			}
 		} catch (IOException error) {
 			log.error("artifact payload write failed workflowRunId={} artifactId={} version={} payloadBytes={} cause={}",
@@ -114,7 +131,7 @@ public class LocalArtifactStore implements ArtifactPayloadStore {
 		} catch (IOException error) {
 			return false;
 		}
-		if (!resolvedReal.startsWith(deliverylineHome.toAbsolutePath().normalize())) {
+		if (!resolvedReal.startsWith(deliverylineHome)) {
 			return false;
 		}
 		return Files.isRegularFile(resolvedReal) && Files.isReadable(resolvedReal);
@@ -131,7 +148,7 @@ public class LocalArtifactStore implements ArtifactPayloadStore {
 			// Re-check containment after toRealPath: between isReadable() and here a symlink swap
 			// can repoint the resolved real path outside deliverylineHome. Without this guard the
 			// link-swap window would let readBytes leak a file outside home.
-			if (!target.startsWith(deliverylineHome.toAbsolutePath().normalize())) {
+			if (!target.startsWith(deliverylineHome)) {
 				return Optional.empty();
 			}
 			if (!Files.isRegularFile(target)) {

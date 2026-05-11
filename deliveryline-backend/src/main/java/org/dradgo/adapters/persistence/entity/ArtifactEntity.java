@@ -75,6 +75,9 @@ public class ArtifactEntity {
 	@Column(name = "archived_at")
 	private OffsetDateTime archivedAt;
 
+	@Column(name = "lineage_recovery", nullable = false)
+	private boolean lineageRecovery;
+
 	public Long getId() {
 		return id;
 	}
@@ -193,6 +196,14 @@ public class ArtifactEntity {
 
 	public void setArchivedAt(OffsetDateTime archivedAt) {
 		this.archivedAt = archivedAt;
+	}
+
+	public boolean isLineageRecovery() {
+		return lineageRecovery;
+	}
+
+	public void setLineageRecovery(boolean lineageRecovery) {
+		this.lineageRecovery = lineageRecovery;
 	}
 
 	@PrePersist

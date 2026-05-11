@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -49,7 +52,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -127,7 +130,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -197,7 +200,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -235,7 +238,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -271,7 +274,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -340,7 +343,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -404,7 +407,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -476,7 +479,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -552,7 +555,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -624,7 +627,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -651,7 +654,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -764,7 +767,8 @@ class ArtifactOperationServiceUnitTest {
 			FailureCategory.ORPHAN,
 			"stale_pending",
 			ArtifactStatus.FAILED,
-			null);
+			null,
+			false);
 		ArtifactRecordSnapshot freshDraft = new ArtifactRecordSnapshot(
 			"art_fresh1234",
 			"run_recover1234",
@@ -861,13 +865,14 @@ class ArtifactOperationServiceUnitTest {
 	}
 
 	@Test
-	void recordOperationRetriesReplayWhenIdempotencyConstraintTrips() {
+	void recordOperationReplaysWinnerAfterIdempotencyConstraintCollisionUsingRequiresNewTemplate() {
 		ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
 		ArtifactOperationPort artifactOperationPort = mock(ArtifactOperationPort.class);
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
 		ArtifactWorkflowRunStatePort runStatePort = mock(ArtifactWorkflowRunStatePort.class);
+		TransactionTemplate raceReplayTemplate = callthroughTemplate();
 		ArtifactOperationService service = new ArtifactOperationService(
 			artifactRecordPort,
 			artifactOperationPort,
@@ -875,6 +880,7 @@ class ArtifactOperationServiceUnitTest {
 			artifactEventPort,
 			artifactRunnerExecutionPort,
 			runStatePort);
+		service.setRaceReplayTemplate(raceReplayTemplate);
 
 		ArtifactRecordSnapshot draft = new ArtifactRecordSnapshot(
 			"art_race1234",
@@ -939,6 +945,7 @@ class ArtifactOperationServiceUnitTest {
 
 		assertEquals(winningArtifact, result.artifact());
 		assertEquals(winningOperation, result.operation());
+		verify(raceReplayTemplate).execute(any(TransactionCallback.class));
 	}
 
 	@Test
@@ -1002,7 +1009,7 @@ class ArtifactOperationServiceUnitTest {
 	}
 
 	@Test
-	void recordOperationReplaysPriorFailedOperationAsTypedFailureResult() {
+	void recordOperationFailedReplaySurfacesAsOperationConflict() {
 		ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
 		ArtifactOperationPort artifactOperationPort = mock(ArtifactOperationPort.class);
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
@@ -1030,7 +1037,8 @@ class ArtifactOperationServiceUnitTest {
 			FailureCategory.RUNNER_CRASH,
 			"runner crashed",
 			ArtifactStatus.FAILED,
-			null);
+			null,
+			false);
 		ArtifactOperationSnapshot priorOperation = new ArtifactOperationSnapshot(
 			"op_failed-replay1234",
 			"run_replay-fail1234",
@@ -1051,21 +1059,22 @@ class ArtifactOperationServiceUnitTest {
 		when(artifactRecordPort.findByPublicId("art_failed-replay1234"))
 			.thenReturn(java.util.Optional.of(priorArtifact));
 
-		RecordArtifactOperationResult result = service.recordOperation(new RecordArtifactOperationCommand(
-			"run_replay-fail1234",
-			ArtifactType.SPEC,
-			ArtifactOperationType.CREATE,
-			"idem-replayfail-1234567890",
-			"spec.md",
-			"spec body".getBytes(),
-			"alex",
-			ActorType.HUMAN,
-			"corr-replayfail",
-			null));
+		DomainException error = assertThrows(DomainException.class, () -> service.recordOperation(
+			new RecordArtifactOperationCommand(
+				"run_replay-fail1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.CREATE,
+				"idem-replayfail-1234567890",
+				"spec.md",
+				"spec body".getBytes(),
+				"alex",
+				ActorType.HUMAN,
+				"corr-replayfail",
+				null)));
 
-		assertEquals(true, result.isFailure());
-		assertEquals(priorArtifact, result.failure().artifact());
-		assertEquals(priorOperation, result.failure().operation());
+		assertEquals(DomainErrorCode.ARTIFACT_OPERATION_CONFLICT, error.errorCode());
+		assertEquals("idem-replayfail-1234567890", error.details().get("idempotencyKey"));
+		assertEquals("op_failed-replay1234", error.details().get("priorOperationId"));
 		verify(artifactOperationPort, org.mockito.Mockito.never())
 			.createPending(any(), any(), any(), any(), any(), any());
 	}
@@ -1131,7 +1140,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1178,7 +1187,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1197,7 +1206,8 @@ class ArtifactOperationServiceUnitTest {
 			FailureCategory.RUNNER_CRASH,
 			"runner exited",
 			ArtifactStatus.FAILED,
-			null);
+			null,
+			false);
 		ArtifactOperationSnapshot pending = new ArtifactOperationSnapshot(
 			"op_failed1234",
 			"run_ready1234",
@@ -1257,7 +1267,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1284,7 +1294,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1327,7 +1337,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1371,7 +1381,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1400,7 +1410,8 @@ class ArtifactOperationServiceUnitTest {
 				"artifacts/run_ready1234/art_ready1234/v1/spec.md",
 				OPERATOR_ACTOR));
 
-		assertEquals(DomainErrorCode.ARTIFACT_CHECKSUM_MISMATCH, error.errorCode());
+		// P15: unsupported checksum algorithms → INVALID_COMMAND_PAYLOAD (not a checksum mismatch)
+		assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
 		assertEquals("MD5", error.details().get("checksumAlgorithm"));
 		verifyNoInteractions(artifactEventPort);
 	}
@@ -1412,7 +1423,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1449,7 +1460,7 @@ class ArtifactOperationServiceUnitTest {
 		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			artifactRecordPort,
 			artifactOperationPort,
 			artifactPayloadStore,
@@ -1504,4 +1515,128 @@ class ArtifactOperationServiceUnitTest {
 			eq("spec.md"),
 			eq(payload));
 	}
+
+	@Test
+	void recordOperationIdempotencyConstraintCollisionWithMatchingConstraintNameSurfacesAsConflict() {
+		ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+		ArtifactOperationPort artifactOperationPort = mock(ArtifactOperationPort.class);
+		ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
+		ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
+		ArtifactRunnerExecutionPort artifactRunnerExecutionPort = mock(ArtifactRunnerExecutionPort.class);
+		ArtifactWorkflowRunStatePort runStatePort = mock(ArtifactWorkflowRunStatePort.class);
+		ArtifactOperationService service = new ArtifactOperationService(
+			artifactRecordPort,
+			artifactOperationPort,
+			artifactPayloadStore,
+			artifactEventPort,
+			artifactRunnerExecutionPort,
+			runStatePort);
+
+		ArtifactRecordSnapshot draft = new ArtifactRecordSnapshot(
+			"art_race2_1234",
+			"run_race2_1234",
+			ArtifactType.SPEC,
+			1,
+			null,
+			DataClassification.LOCAL_ONLY,
+			null,
+			null,
+			null,
+			ArtifactStatus.PENDING,
+			null);
+
+		when(artifactOperationPort.findReplay(
+			"run_race2_1234",
+			ArtifactType.SPEC,
+			"idem-race2-1234567890",
+			"create"))
+			.thenReturn(java.util.Optional.empty());
+		when(runStatePort.currentState("run_race2_1234")).thenReturn(java.util.Optional.of(WorkflowState.EXECUTING));
+		when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType("run_race2_1234", ArtifactType.SPEC.value()))
+			.thenReturn(java.util.Optional.empty());
+		when(artifactRecordPort.createDraft(any())).thenReturn(draft);
+		when(artifactOperationPort.createPending(any(), eq("run_race2_1234"), eq(ArtifactType.SPEC), eq("art_race2_1234"), eq("create"), eq("idem-race2-1234567890")))
+			.thenThrow(new DataIntegrityViolationException("uq_artifact_operations_idem_key_op_type_workflow_run"));
+
+		// P1: idempotency constraint collision → ARTIFACT_OPERATION_CONFLICT, no race-replay
+		DomainException error = assertThrows(DomainException.class, () -> service.recordOperation(
+			new RecordArtifactOperationCommand(
+				"run_race2_1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.CREATE,
+				"idem-race2-1234567890",
+				"spec.md",
+				"spec body".getBytes(),
+				"alex",
+				ActorType.HUMAN,
+				"corr-race2",
+				null)));
+
+		assertEquals(DomainErrorCode.ARTIFACT_OPERATION_CONFLICT, error.errorCode());
+		assertEquals("idem-race2-1234567890", error.details().get("idempotencyKey"));
+	}
+
+	@Test
+	void recordArtifactOperationCommandRejectsBlankIdempotencyKey() {
+		assertThrows(
+			IllegalArgumentException.class,
+			() -> new RecordArtifactOperationCommand(
+				"run_ready1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.CREATE,
+				"   ",
+				"spec.md",
+				null,
+				"alex",
+				ActorType.HUMAN,
+				null,
+				null));
+	}
+
+	@Test
+	void recordArtifactOperationCommandRejectsIdempotencyKeyExceedingMaxLength() {
+		String oversized = "x".repeat(257);
+		IllegalArgumentException error = assertThrows(
+			IllegalArgumentException.class,
+			() -> new RecordArtifactOperationCommand(
+				"run_ready1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.CREATE,
+				oversized,
+				"spec.md",
+				null,
+				"alex",
+				ActorType.HUMAN,
+				null,
+				null));
+		assertEquals(true, error.getMessage().contains("idempotencyKey"));
+	}
+
+	@Test
+	void recordArtifactOperationCommandRejectsCorrelationIdExceedingMaxLength() {
+		String oversized = "c".repeat(257);
+		IllegalArgumentException error = assertThrows(
+			IllegalArgumentException.class,
+			() -> new RecordArtifactOperationCommand(
+				"run_ready1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.CREATE,
+				"idem-valid",
+				"spec.md",
+				null,
+				"alex",
+				ActorType.HUMAN,
+				oversized,
+				null));
+		assertEquals(true, error.getMessage().contains("correlationId"));
+	}
+
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private static TransactionTemplate callthroughTemplate() {
+		TransactionTemplate template = mock(TransactionTemplate.class);
+		when(template.execute(any(TransactionCallback.class)))
+			.thenAnswer(invocation -> ((TransactionCallback) invocation.getArgument(0)).doInTransaction(null));
+		return template;
+	}
+
 }

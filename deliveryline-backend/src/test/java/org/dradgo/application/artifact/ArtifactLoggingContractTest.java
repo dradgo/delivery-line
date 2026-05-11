@@ -57,7 +57,7 @@ class ArtifactLoggingContractTest {
 		ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort eventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			recordPort, operationPort, payloadStore, eventPort, runnerPort);
 
 		ArtifactRecordSnapshot draft = pendingArtifact("art_log1234", "run_log1234");
@@ -103,7 +103,7 @@ class ArtifactLoggingContractTest {
 		ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort eventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			recordPort, operationPort, payloadStore, eventPort, runnerPort);
 
 		ArtifactRecordSnapshot draft = pendingArtifact("art_late9999", "run_late9999");
@@ -144,7 +144,7 @@ class ArtifactLoggingContractTest {
 		ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);
 		ArtifactEventPort eventPort = mock(ArtifactEventPort.class);
 		ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
-		ArtifactOperationService service = new ArtifactOperationService(
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
 			recordPort, operationPort, payloadStore, eventPort, runnerPort);
 
 		ArtifactRecordSnapshot draft = pendingArtifact("art_conflict7777", "run_conflict7777");
@@ -171,9 +171,9 @@ class ArtifactLoggingContractTest {
 
 		assertTrue(operationServiceAppender.list.stream().anyMatch(e ->
 			e.getLevel() == Level.WARN
-				&& e.getFormattedMessage().contains("recordOperation conflict no-replay")
+				&& e.getFormattedMessage().contains("recordOperation unrelated constraint violation")
 				&& e.getFormattedMessage().contains("idempotencyKey=idem-conflict-7777777777")),
-			"expected WARN conflict log; events=" + operationServiceAppender.list);
+			"expected WARN unrelated constraint violation log; events=" + operationServiceAppender.list);
 	}
 
 	@Test

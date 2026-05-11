@@ -19,7 +19,8 @@ public record ArtifactRecordSnapshot(
 	FailureCategory failureCategory,
 	String failureReason,
 	ArtifactStatus status,
-	OffsetDateTime archivedAt
+	OffsetDateTime archivedAt,
+	boolean lineageRecovery
 ) {
 	/**
 	 * Convenience constructor that zeroes {@code failureCategory} and {@code failureReason}.
@@ -62,7 +63,8 @@ public record ArtifactRecordSnapshot(
 			null,
 			null,
 			status,
-			archivedAt);
+			archivedAt,
+			false);
 	}
 
 	/**
@@ -71,9 +73,10 @@ public record ArtifactRecordSnapshot(
 	 * <p>Use only when the caller is provably outside any failure-bearing read path —
 	 * tests that exercise success or pending flows, fixtures that drive non-failed
 	 * lineage seeds, etc. The persistence-mapper read path must keep calling the
-	 * canonical 13-arg constructor so failure metadata stored on the entity is never
+	 * canonical 14-arg constructor so failure metadata stored on the entity is never
 	 * silently discarded.
 	 */
+	@Deprecated(forRemoval = false)
 	public static ArtifactRecordSnapshot withoutFailureMetadata(
 		String publicId,
 		String workflowRunId,
@@ -100,6 +103,7 @@ public record ArtifactRecordSnapshot(
 			null,
 			null,
 			status,
-			archivedAt);
+			archivedAt,
+			false);
 	}
 }

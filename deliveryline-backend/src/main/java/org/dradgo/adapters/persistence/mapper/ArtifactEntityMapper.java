@@ -21,6 +21,7 @@ public class ArtifactEntityMapper {
 			entity.getFailureCategory(),
 			entity.getFailureReason(),
 			entity.getStatus(),
-			entity.getArchivedAt());
+			entity.getArchivedAt(),
+			entity.isLineageRecovery());
 	}
 }

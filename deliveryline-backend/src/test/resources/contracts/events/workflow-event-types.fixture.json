@@ -13,6 +13,7 @@
     "runner.failed",
     "recovery.retried",
     "recovery.reconciled",
+    "artifact.lineageRecovered",
     "integration.linked",
     "export.created",
     "clarification.answered",

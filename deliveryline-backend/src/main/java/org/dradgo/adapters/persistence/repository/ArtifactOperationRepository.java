@@ -1,6 +1,5 @@
 package org.dradgo.adapters.persistence.repository;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.ArtifactOperationEntity;
@@ -25,11 +24,13 @@ public interface ArtifactOperationRepository extends JpaRepository<ArtifactOpera
 		String artifactPublicId
 	);
 
-	List<ArtifactOperationEntity> findByStatusAndCreatedAtBefore(String status, OffsetDateTime threshold);
-
-	@Query(value = "SELECT * FROM artifact_operations "
-		+ "WHERE status = :status AND created_at < (now() - make_interval(secs => :seconds)) "
-		+ "ORDER BY created_at ASC",
+	@Query(value = "SELECT ao.* FROM artifact_operations ao "
+		+ "JOIN artifacts a ON a.id = ao.artifact_id "
+		+ "WHERE ao.status = :status "
+		+ "AND ao.created_at < (now() - make_interval(secs => :seconds)) "
+		+ "AND a.archived_at IS NULL "
+		+ "ORDER BY ao.created_at ASC "
+		+ "LIMIT 500",
 		nativeQuery = true)
 	List<ArtifactOperationEntity> findByStatusAndCreatedAtOlderThanSeconds(
 		@Param("status") String status,

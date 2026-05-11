@@ -30,7 +30,10 @@ public record ArtifactChecksum(
 			MessageDigest digest = MessageDigest.getInstance(canonical);
 			return Optional.of(HexFormat.of().formatHex(digest.digest(payload)));
 		} catch (NoSuchAlgorithmException error) {
-			return Optional.empty();
+			// All algorithms in ALLOWED_ALGORITHMS are mandated by the Java SE spec and must be
+			// present in every conformant JVM. A NoSuchAlgorithmException here indicates a broken
+			// JVM installation, not a runtime caller error.
+			throw new IllegalStateException("JVM does not provide required digest algorithm: " + canonical, error);
 		}
 	}
 }

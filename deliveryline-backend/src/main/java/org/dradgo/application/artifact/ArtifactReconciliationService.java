@@ -7,10 +7,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.dradgo.application.artifact.spi.ArtifactEventPort;
 import org.dradgo.application.artifact.spi.ArtifactOperationPort;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
@@ -66,6 +68,23 @@ public class ArtifactReconciliationService {
 		Duration stalePendingThreshold,
 		TransactionTemplate perItemTransactionTemplate
 	) {
+		// P24: validate constructor parameters at construction time.
+		if (artifactOperationPort == null) {
+			throw new IllegalArgumentException("artifactOperationPort must not be null");
+		}
+		if (artifactRecordPort == null) {
+			throw new IllegalArgumentException("artifactRecordPort must not be null");
+		}
+		if (artifactEventPort == null) {
+			throw new IllegalArgumentException("artifactEventPort must not be null");
+		}
+		if (clock == null) {
+			throw new IllegalArgumentException("clock must not be null");
+		}
+		if (stalePendingThreshold == null || stalePendingThreshold.compareTo(Duration.ofMinutes(1)) < 0) {
+			throw new IllegalArgumentException(
+				"stalePendingThreshold must be at least 1 minute but was: " + stalePendingThreshold);
+		}
 		if (perItemTransactionTemplate == null) {
 			throw new IllegalArgumentException(
 				"perItemTransactionTemplate must not be null; tests must stub a callthrough TransactionTemplate "
@@ -94,8 +113,15 @@ public class ArtifactReconciliationService {
 			stalePendingThreshold, stale.size());
 		List<ArtifactOperationSnapshot> orphaned = new ArrayList<>();
 		for (ArtifactOperationSnapshot operation : stale) {
-			Optional<ArtifactOperationSnapshot> result = reconcileWithIsolation(operation);
-			result.ifPresent(orphaned::add);
+			// P23: per-item exception isolation. A failure on one item must not abort the entire
+			// batch — log and continue so the remaining candidates are still processed.
+			try {
+				Optional<ArtifactOperationSnapshot> result = reconcileWithIsolation(operation);
+				result.ifPresent(orphaned::add);
+			} catch (Exception error) {
+				log.error("reconcileStalePendingOperations item failed operationId={} artifactId={} cause={}",
+					operation.publicId(), operation.artifactId(), error.toString());
+			}
 		}
 		log.info("reconcileStalePendingOperations done stalePendingThreshold={} candidateCount={} orphanedCount={}",
 			stalePendingThreshold, stale.size(), orphaned.size());
@@ -108,56 +134,112 @@ public class ArtifactReconciliationService {
 
 	Optional<ArtifactOperationSnapshot> reconcileSingleOperation(ArtifactOperationSnapshot operation) {
 		Optional<ArtifactRecordSnapshot> currentArtifact = artifactRecordPort.findByPublicId(operation.artifactId());
-		if (currentArtifact.isEmpty() || currentArtifact.get().status() != ArtifactStatus.PENDING) {
-			log.info("reconcileSingleOperation skip operationId={} artifactId={} reason=artifactNoLongerPending",
+		if (currentArtifact.isEmpty()) {
+			log.info("reconcileSingleOperation skip operationId={} artifactId={} reason=artifactAbsent",
 				operation.publicId(), operation.artifactId());
 			return Optional.empty();
 		}
+		ArtifactStatus artifactStatus = currentArtifact.get().status();
 		ArtifactOperationSnapshot orphaned;
-		try {
-			artifactRecordPort.markFailed(operation.artifactId(), FailureCategory.ORPHAN, "stale_pending");
+		if (artifactStatus == ArtifactStatus.PENDING) {
+			// Full flip: artifact → FAILED, then operation → FAILED_ORPHAN.
+			// Scope catch to markFailed only: a state-race on the artifact side means a peer already
+			// took ownership and this run should skip. A failure in markFailedOrphan after a
+			// successful markFailed would leave torn state (artifact failed, operation still pending)
+			// and must propagate so the caller can alert/retry rather than silently swallowing it.
+			try {
+				artifactRecordPort.markFailed(operation.artifactId(), FailureCategory.ORPHAN, "stale_pending");
+			} catch (DomainException error) {
+				if (error.errorCode() == DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION) {
+					log.info("reconcileSingleOperation skip operationId={} artifactId={} reason=artifactStateRaceWonByPeer",
+						operation.publicId(), operation.artifactId());
+					return Optional.empty();
+				}
+				throw error;
+			}
 			orphaned = artifactOperationPort.markFailedOrphan(
 				operation.publicId(),
 				"artifact payload never materialized");
-		} catch (DomainException error) {
-			if (error.errorCode() == DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION) {
-				log.info("reconcileSingleOperation skip operationId={} artifactId={} reason=artifactStateRaceWonByPeer",
-					operation.publicId(), operation.artifactId());
+			// P20: for PENDING artifacts, emit BOTH ARTIFACT_FAILED and RECOVERY_RECONCILED so
+			// existing consumers subscribed to ARTIFACT_FAILED see the flip without having to
+			// learn about the new reconciliation event type.
+			// P18: use a fresh per-tick UUID correlationId; do NOT reuse ActorContext.SYSTEM.correlationId.
+			String correlationId = UUID.randomUUID().toString();
+			OffsetDateTime now = OffsetDateTime.now(clock);
+			artifactEventPort.append(new ArtifactEventRecord(
+				orphaned.workflowRunId(),
+				WorkflowEventType.ARTIFACT_FAILED,
+				ActorContext.SYSTEM.actorIdentity(),
+				ActorContext.SYSTEM.actorType(),
+				"stale_pending",
+				FailureCategory.ORPHAN,
+				now,
+				Map.of(
+					"artifactId", orphaned.artifactId(),
+					"operationId", orphaned.publicId(),
+					"failureCategory", FailureCategory.ORPHAN.value(),
+					"failureReason", "stale_pending",
+					"correlationId", correlationId)));
+			artifactEventPort.append(new ArtifactEventRecord(
+				orphaned.workflowRunId(),
+				WorkflowEventType.RECOVERY_RECONCILED,
+				ActorContext.SYSTEM.actorIdentity(),
+				ActorContext.SYSTEM.actorType(),
+				"artifact reconciliation detected stale pending operation",
+				FailureCategory.ORPHAN,
+				now,
+				Map.of(
+					"artifactId", orphaned.artifactId(),
+					"operationId", orphaned.publicId(),
+					"stalePendingThreshold", stalePendingThreshold.toString(),
+					"correlationId", correlationId)));
+		} else if (artifactStatus == ArtifactStatus.LATE_OR_STALE) {
+			// Artifact already flagged late-or-stale by the runner-timeout guard. The artifact record
+			// is not in PENDING and must not be touched here — only close the dangling operation row.
+			try {
+				orphaned = artifactOperationPort.markFailedOrphan(
+					operation.publicId(),
+					"artifact payload never materialized");
+			} catch (DomainException closeError) {
+				log.info("reconcileSingleOperation skip late-or-stale operationId={} artifactId={} reason={}",
+					operation.publicId(), operation.artifactId(), closeError.getMessage());
 				return Optional.empty();
 			}
-			throw error;
+			// P20: for LATE_OR_STALE, emit only RECOVERY_RECONCILED — do NOT emit ARTIFACT_FAILED
+			// since the artifact status already reflects the failure; a second ARTIFACT_FAILED event
+			// would mislead consumers into thinking the artifact just transitioned to failed.
+			String correlationId = UUID.randomUUID().toString();
+			OffsetDateTime now = OffsetDateTime.now(clock);
+			artifactEventPort.append(new ArtifactEventRecord(
+				orphaned.workflowRunId(),
+				WorkflowEventType.RECOVERY_RECONCILED,
+				ActorContext.SYSTEM.actorIdentity(),
+				ActorContext.SYSTEM.actorType(),
+				"artifact reconciliation closed stale late-or-stale operation",
+				FailureCategory.ORPHAN,
+				now,
+				Map.of(
+					"artifactId", orphaned.artifactId(),
+					"operationId", orphaned.publicId(),
+					"stalePendingThreshold", stalePendingThreshold.toString(),
+					"correlationId", correlationId)));
+		} else {
+			// P14: artifact is FAILED, AVAILABLE, or ARCHIVED — it is no longer PENDING or LATE_OR_STALE,
+			// but the operation row may still be dangling (zombie). Close it as FAILED_ORPHAN so it does
+			// not interfere with the single-pending invariant or show up in future reconciliation passes.
+			try {
+				orphaned = artifactOperationPort.markFailedOrphan(
+					operation.publicId(),
+					"zombie operation: artifact reached terminal/available state without completing the operation");
+			} catch (DomainException closeError) {
+				log.info("reconcileSingleOperation skip zombie operationId={} artifactId={} artifactStatus={} reason={}",
+					operation.publicId(), operation.artifactId(), artifactStatus.value(), closeError.getMessage());
+				return Optional.empty();
+			}
+			log.info("reconcileSingleOperation closed zombie operationId={} artifactId={} artifactStatus={}",
+				orphaned.publicId(), orphaned.artifactId(), artifactStatus.value());
+			return Optional.of(orphaned);
 		}
-		// D2 (round-5 decision): append BOTH ARTIFACT_FAILED and RECOVERY_RECONCILED so existing
-		// consumers subscribed to ARTIFACT_FAILED see the orphan flip without having to learn
-		// about the new reconciliation event type. Both events sit on the same DB clock as the
-		// preceding artifact/operation flips because they're emitted inside the per-item
-		// REQUIRES_NEW transaction.
-		OffsetDateTime now = OffsetDateTime.now(clock);
-		artifactEventPort.append(new ArtifactEventRecord(
-			orphaned.workflowRunId(),
-			WorkflowEventType.ARTIFACT_FAILED,
-			ActorContext.SYSTEM.actorIdentity(),
-			ActorContext.SYSTEM.actorType(),
-			"stale_pending",
-			FailureCategory.ORPHAN,
-			now,
-			Map.of(
-				"artifactId", orphaned.artifactId(),
-				"operationId", orphaned.publicId(),
-				"failureCategory", FailureCategory.ORPHAN.value(),
-				"failureReason", "stale_pending")));
-		artifactEventPort.append(new ArtifactEventRecord(
-			orphaned.workflowRunId(),
-			WorkflowEventType.RECOVERY_RECONCILED,
-			ActorContext.SYSTEM.actorIdentity(),
-			ActorContext.SYSTEM.actorType(),
-			"artifact reconciliation detected stale pending operation",
-			FailureCategory.ORPHAN,
-			now,
-			Map.of(
-				"artifactId", orphaned.artifactId(),
-				"operationId", orphaned.publicId(),
-				"stalePendingThreshold", stalePendingThreshold.toString())));
 		log.warn("reconcileSingleOperation flipped artifact to failed/orphan operationId={} artifactId={} workflowRunId={} stalePendingThreshold={}",
 			orphaned.publicId(), orphaned.artifactId(), orphaned.workflowRunId(), stalePendingThreshold);
 		return Optional.of(orphaned);

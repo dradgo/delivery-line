@@ -1,7 +1,6 @@
 package org.dradgo.adapters.persistence;
 
 import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -117,6 +116,7 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 	@Override
 	public ArtifactOperationSnapshot markComplete(String operationPublicId) {
 		ArtifactOperationEntity operation = requireOperation(operationPublicId);
+		requireOperationSourceStatus(operation, ArtifactOperationStatus.PENDING, "markComplete");
 		operation.setStatus(ArtifactOperationStatus.COMPLETE);
 		ArtifactOperationSnapshot persisted = artifactOperationEntityMapper.toSnapshot(artifactOperationRepository.saveAndFlush(operation));
 		log.info("artifact_operation marked complete operationId={} artifactId={}", persisted.publicId(), persisted.artifactId());
@@ -126,6 +126,7 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 	@Override
 	public ArtifactOperationSnapshot markFailed(String operationPublicId, FailureCategory failureCategory, String reason) {
 		ArtifactOperationEntity operation = requireOperation(operationPublicId);
+		requireOperationSourceStatus(operation, ArtifactOperationStatus.PENDING, "markFailed");
 		operation.setStatus(ArtifactOperationStatus.FAILED);
 		operation.setFailureCategory(failureCategory);
 		operation.setReason(reason);
@@ -133,16 +134,6 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 		log.warn("artifact_operation marked failed operationId={} artifactId={} failureCategory={} reason={}",
 			persisted.publicId(), persisted.artifactId(), failureCategory.value(), reason);
 		return persisted;
-	}
-
-	@Override
-	@Transactional(readOnly = true)
-	public List<ArtifactOperationSnapshot> findPendingCreatedBefore(OffsetDateTime threshold) {
-		return artifactOperationRepository.findByStatusAndCreatedAtBefore(
-			ArtifactOperationStatus.PENDING.value(),
-			threshold).stream()
-			.map(artifactOperationEntityMapper::toSnapshot)
-			.toList();
 	}
 
 	@Override
@@ -159,6 +150,7 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 	@Override
 	public ArtifactOperationSnapshot markFailedOrphan(String operationPublicId, String reason) {
 		ArtifactOperationEntity operation = requireOperation(operationPublicId);
+		requireOperationSourceStatus(operation, ArtifactOperationStatus.PENDING, "markFailedOrphan");
 		operation.setStatus(ArtifactOperationStatus.FAILED_ORPHAN);
 		operation.setFailureCategory(FailureCategory.ORPHAN);
 		operation.setReason(reason);
@@ -190,5 +182,25 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 				DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
 				"Artifact operation not found: " + operationPublicId,
 				Map.of("operationId", operationPublicId)));
+	}
+
+	private void requireOperationSourceStatus(
+		ArtifactOperationEntity operation,
+		ArtifactOperationStatus required,
+		String transition
+	) {
+		if (operation.getStatus() != required) {
+			log.warn("artifact_operation state transition rejected operationId={} currentStatus={} requiredStatus={} transition={}",
+				operation.getPublicId(), operation.getStatus().value(), required.value(), transition);
+			throw new DomainException(
+				DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION,
+				"Artifact operation " + transition + " requires status " + required.value()
+					+ " but current status is " + operation.getStatus().value(),
+				Map.of(
+					"operationId", operation.getPublicId(),
+					"currentStatus", operation.getStatus().value(),
+					"requiredStatus", required.value(),
+					"transition", transition));
+		}
 	}
 }

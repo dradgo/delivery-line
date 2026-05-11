@@ -1,7 +1,6 @@
 package org.dradgo.application.artifact.spi;
 
 import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.artifact.ArtifactOperationSnapshot;
@@ -17,6 +16,14 @@ public interface ArtifactOperationPort {
 		String operationType
 	);
 
+	/**
+	 * Returns the single PENDING operation for the given artifact, if one exists.
+	 *
+	 * <p><strong>Invariant:</strong> at most one PENDING operation may exist per artifact at any
+	 * time. This is enforced by {@code uq_artifact_operations_pending_per_artifact} (V4 partial
+	 * unique index). If the index is absent or bypassed and multiple PENDING rows are found, the
+	 * adapter must surface an {@code INTERNAL_ERROR} rather than silently tiebreak by timestamp.
+	 */
 	Optional<ArtifactOperationSnapshot> findPendingByArtifactId(String artifactId);
 
 	ArtifactOperationSnapshot createPending(
@@ -31,8 +38,6 @@ public interface ArtifactOperationPort {
 	ArtifactOperationSnapshot markComplete(String operationPublicId);
 
 	ArtifactOperationSnapshot markFailed(String operationPublicId, FailureCategory failureCategory, String reason);
-
-	List<ArtifactOperationSnapshot> findPendingCreatedBefore(OffsetDateTime threshold);
 
 	/**
 	 * Finds pending operations whose {@code created_at} is older than {@code now - threshold},
