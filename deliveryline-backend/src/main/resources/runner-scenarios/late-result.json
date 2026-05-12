@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_lateresult00001",
+      "artifactType": "spec",
+      "contentReference": "spec/v1.json"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Late result delivered after broker marked the runner-execution timed_out.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "00000000000000000000000000000000000000000000000000000000000000cc"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

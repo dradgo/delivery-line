@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_malformedoutput",
+      "artifactType": "spec",
+      "contentReference": "spec/v1.json"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Result bytes are truncated mid-JSON to simulate malformed output.",
+    "outcome": "failure"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "00000000000000000000000000000000000000000000000000000000000000ee"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

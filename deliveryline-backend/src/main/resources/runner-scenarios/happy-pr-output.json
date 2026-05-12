@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_mockproutput0001",
+      "artifactType": "prOutput",
+      "branch": "feature/mock-pr",
+      "commitSha": "abcdef0123456789abcdef0123456789abcdef01",
+      "prReference": "mock-org/mock-repo#1",
+      "diffReference": "pr/v1.diff"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Mock execution produced a PR output.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "0000000000000000000000000000000000000000000000000000000000000003"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

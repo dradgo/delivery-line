@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_mockspec00000001",
+      "artifactType": "spec",
+      "contentReference": "spec/v1.json"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Mock investigation completed; spec drafted.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

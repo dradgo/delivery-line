@@ -65,6 +65,10 @@ public final class PersistedRegistryValues {
 		return RunnerExecutionStatus.fromValue(rawValue, "runner_executions.status");
 	}
 
+	public static RunnerStage runnerExecutionStage(String rawValue) {
+		return RunnerStage.fromValue(rawValue, "runner_executions.stage");
+	}
+
 	public static IdempotencyRecordStatus idempotencyRecordStatus(String rawValue) {
 		return IdempotencyRecordStatus.fromValue(rawValue, "idempotency_records.status");
 	}

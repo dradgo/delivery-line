@@ -1,3 +1,25 @@
 spring:
   application:
     name: deliveryline
+  profiles:
+    group:
+      local: [runners.mock]
+      test: [runners.mock]
+      demo: [runners.mock]
+
+deliveryline:
+  runner:
+    stale-threshold-multiplier: 2.0
+    timeout-scan-interval-ms: 10000
+    timeout-scan-batch-size: 50
+    stage-timeouts:
+      investigation: 600s
+      execution: 600s
+    recovery:
+      batch-size: 100
+    mock:
+      default-scenario:
+        investigation: happy-spec
+        execution: happy-implementation-plan
+    scheduling:
+      enabled: true

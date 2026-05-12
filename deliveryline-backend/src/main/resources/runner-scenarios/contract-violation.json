@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_contractviolation",
+      "artifactType": "spec"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Schema-violating mock result (missing contentReference on spec artifact).",
+    "outcome": "failure"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "00000000000000000000000000000000000000000000000000000000000000ff"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

@@ -29,6 +29,7 @@ public final class DomainRegistry {
 	private static final Set<String> FAILURE_CATEGORIES = valuesOf(FailureCategory.values());
 	private static final Set<String> INTEGRATION_SYNC_STATUSES = valuesOf(IntegrationSyncStatus.values());
 	private static final Set<String> RUNNER_SCHEMA_VERSIONS = valuesOf(RunnerSchemaVersion.values());
+	private static final Set<String> RUNNER_STAGES = valuesOf(RunnerStage.values());
 	private static final Set<String> WORKFLOW_EVENT_TYPES = valuesOf(WorkflowEventType.values());
 	private static final Map<String, String> PUBLIC_ID_PREFIXES = PublicIdPrefixes.prefixMap();
 
@@ -89,6 +90,10 @@ public final class DomainRegistry {
 
 	public static Set<String> runnerSchemaVersions() {
 		return RUNNER_SCHEMA_VERSIONS;
+	}
+
+	public static Set<String> runnerStages() {
+		return RUNNER_STAGES;
 	}
 
 	public static Set<String> workflowEventTypes() {

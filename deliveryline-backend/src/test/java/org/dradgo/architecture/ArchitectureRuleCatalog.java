@@ -237,8 +237,10 @@ final class ArchitectureRuleCatalog {
 
 	static final ArchRule CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY = namedRule(
 		"credential-detection regex catalogs and predicates may only live in application.security",
-		"Remediation: delegate credential detection and redaction heuristics to application.security instead of reimplementing them in adapters or other layers.",
+		"Remediation: delegate credential detection and redaction heuristics to application.security instead of reimplementing them in adapters or other layers."
+			+ " The runner-contracts module is exempt: RunnerContractValidator legitimately owns the runner-result schema's secret-pattern guard and cannot move into application.security without a circular module dependency.",
 		classes().that().resideOutsideOfPackage(SECURITY_PACKAGE)
+			.and().resideOutsideOfPackage("org.dradgo.runnercontracts..")
 			.should(notDeclareSensitiveDetectionArtifacts()));
 
 	private ArchitectureRuleCatalog() {

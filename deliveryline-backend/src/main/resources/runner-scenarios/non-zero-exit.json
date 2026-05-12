@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_nonzeroexit00001",
+      "artifactType": "spec",
+      "contentReference": "spec/v1.json"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Runner returned non-zero exit; result file is valid but reports failure.",
+    "outcome": "failure"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "00000000000000000000000000000000000000000000000000000000000000aa"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": "runner_non_zero_exit"
+}

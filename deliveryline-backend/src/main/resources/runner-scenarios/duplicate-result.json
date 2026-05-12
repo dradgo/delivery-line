@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_duplicateresult",
+      "artifactType": "spec",
+      "contentReference": "spec/v1.json"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Duplicate result emitted for the same runnerExecutionId.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "00000000000000000000000000000000000000000000000000000000000000dd"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

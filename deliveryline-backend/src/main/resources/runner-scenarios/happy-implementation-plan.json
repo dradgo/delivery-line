@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_mockplan00000001",
+      "artifactType": "implementationPlan",
+      "steps": [
+        "Review approved specification",
+        "Implement validated changes",
+        "Run automated checks"
+      ],
+      "contextReferences": [
+        "spec/v1.json"
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Mock execution produced an implementation plan.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "0000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

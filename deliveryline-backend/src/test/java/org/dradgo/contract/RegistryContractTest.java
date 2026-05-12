@@ -41,6 +41,7 @@ import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
+import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Tag;
@@ -92,6 +93,7 @@ class RegistryContractTest {
 		assertEquals(registryValues(FailureCategory.values()), DomainRegistry.failureCategories());
 		assertEquals(registryValues(IntegrationSyncStatus.values()), DomainRegistry.integrationSyncStatuses());
 		assertEquals(registryValues(RunnerSchemaVersion.values()), DomainRegistry.runnerSchemaVersions());
+		assertEquals(registryValues(RunnerStage.values()), DomainRegistry.runnerStages());
 		assertEquals(registryValues(WorkflowEventType.values()), DomainRegistry.workflowEventTypes());
 		assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
 	}
@@ -300,6 +302,7 @@ class RegistryContractTest {
 		registryBoundaries.put("artifact_operations.failure_category", PersistedRegistryValues::artifactOperationFailureCategory);
 		registryBoundaries.put("approvals.actor_type", PersistedRegistryValues::approvalActorType);
 		registryBoundaries.put("runner_executions.status", PersistedRegistryValues::runnerExecutionStatus);
+		registryBoundaries.put("runner_executions.stage", PersistedRegistryValues::runnerExecutionStage);
 		registryBoundaries.put("idempotency_records.status", PersistedRegistryValues::idempotencyRecordStatus);
 		registryBoundaries.put("integration_links.sync_status", PersistedRegistryValues::integrationSyncStatus);
 		registryBoundaries.put("recovery_actions.actor_type", PersistedRegistryValues::recoveryActorType);
