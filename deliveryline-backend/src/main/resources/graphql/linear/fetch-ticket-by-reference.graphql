@@ -1,17 +1,22 @@
-query FetchTicketByReference($identifier: String!) {
-  issue(id: $identifier) {
-    identifier
-    title
-    description
-    createdAt
-    updatedAt
-    creator {
-      email
-      displayName
-    }
-    labels {
-      nodes {
-        name
+query FetchTicketByReference($teamKey: String!, $number: Float!) {
+  issues(
+    filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } }
+    first: 1
+  ) {
+    nodes {
+      identifier
+      title
+      description
+      createdAt
+      updatedAt
+      creator {
+        email
+        displayName
+      }
+      labels {
+        nodes {
+          name
+        }
       }
     }
   }

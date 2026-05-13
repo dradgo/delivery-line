@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -117,8 +118,9 @@ class IntegrationLoggingContractTest {
 	@Test
 	void pollingFailureEmitsWarnWithCategoryAndPreservesCursor() {
 		LinearAdapter linearAdapter = mock(LinearAdapter.class);
+		IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
 		Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
-		LinearPollingHost host = new LinearPollingHost(linearAdapter, clock);
+		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, clock);
 		when(linearAdapter.pollNewTickets(Instant.parse("2026-05-13T12:00:00Z")))
 			.thenThrow(new LinearAdapterException(IntegrationFailureCategory.NETWORK_API_FAILURE, "rate limited"));
 
@@ -128,6 +130,48 @@ class IntegrationLoggingContractTest {
 		assertContains(pollingAppender.list, Level.WARN, "category=network_api_failure");
 		assertTrue(host.lastPollAt().equals(Instant.parse("2026-05-13T12:00:00Z")),
 			"poll failure must preserve the existing cursor");
+	}
+
+	@Test
+	void pollingTouchFailurePreservesCursor() {
+		LinearAdapter linearAdapter = mock(LinearAdapter.class);
+		IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
+		Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
+		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, clock);
+		LinearTicket ticket = new LinearTicket(
+			"LIN-102",
+			"Add retry",
+			"Persist touch path",
+			"dev@example.com",
+			Instant.parse("2026-05-12T08:00:00Z"),
+			Instant.parse("2026-05-13T12:05:00Z"),
+			Map.of());
+		when(linearAdapter.pollNewTickets(Instant.parse("2026-05-13T12:00:00Z")))
+			.thenReturn(List.of(ticket));
+		when(port.touchLastSyncAtByTypeAndExternalRef("linear", "LIN-102", ticket.updatedAt()))
+			.thenThrow(new IllegalStateException("db unavailable"));
+
+		host.pollLinear();
+
+		assertTrue(host.lastPollAt().equals(Instant.parse("2026-05-13T12:00:00Z")),
+			"touch failure must preserve the existing cursor");
+		assertContains(pollingAppender.list, Level.WARN, "linear_real polling_cursor_preserved");
+	}
+
+	@Test
+	void seedWatermarkFallsBackToSafeFloorWhenLookupFails() {
+		LinearAdapter linearAdapter = mock(LinearAdapter.class);
+		IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
+		Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
+		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, clock);
+		when(port.findMaxLastSyncAtForType("linear")).thenThrow(new IllegalStateException("db unavailable"));
+
+		host.seedWatermark();
+
+		assertTrue(host.lastPollAt().equals(Instant.EPOCH),
+			"seed failure must fall back to the safe floor");
+		assertContains(pollingAppender.list, Level.WARN, "linear_real polling_watermark seed_failed");
+		verifyNoInteractions(linearAdapter);
 	}
 
 	private static void assertContains(List<ILoggingEvent> events, Level level, String fragment) {

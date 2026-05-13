@@ -63,6 +63,30 @@ public interface IntegrationLinkRecordPort {
 	IntegrationLink markArchived(String publicId, Instant archivedAt);
 
 	/**
+	 * Return the maximum {@code last_sync_at} across all active rows for the given integration
+	 * type. Used by {@code LinearPollingHost} on startup to seed its watermark so a JVM restart
+	 * does not lose the polling window (story 1.14 finding 2: in-memory cursor).
+	 *
+	 * <p>"Active" follows the same definition as {@link #findActiveByTypeAndExternalRef}: not
+	 * archived, not superseded. Returns empty when no active rows exist (the polling host then
+	 * falls back to a fresh cursor seeded from the system clock).
+	 */
+	Optional<Instant> findMaxLastSyncAtForType(String integrationType);
+
+	/**
+	 * Update {@code last_sync_at} for the active row matching {@code (integrationType, externalRef)}.
+	 * No-op (returns {@code false}) when no active row matches. Does NOT change
+	 * {@code sync_status}. Used by {@code LinearPollingHost} to satisfy AC9 "last_sync_at is
+	 * updated on each successful poll" without forcing a state transition (the polling loop is a
+	 * watcher, not an ingester — state transitions remain owned by
+	 * {@code IntegrationLinkService}).
+	 */
+	boolean touchLastSyncAtByTypeAndExternalRef(
+		String integrationType,
+		String externalRef,
+		Instant lastSyncAt);
+
+	/**
 	 * Project the active integration link for a workflow run as a {@link TicketSummaryProjection}
 	 * (raw redacted {@code external_metadata} bytes + the external reference). Used by
 	 * {@code IntegrationLinkTicketSummaryProvider} to keep the application layer free of any

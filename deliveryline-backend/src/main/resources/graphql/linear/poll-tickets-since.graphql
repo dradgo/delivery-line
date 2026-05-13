@@ -1,8 +1,9 @@
-query PollTicketsSince($since: DateTime!, $first: Int!) {
+query PollTicketsSince($since: DateTime!, $first: Int!, $after: String) {
   issues(
     filter: { updatedAt: { gt: $since } }
     orderBy: updatedAt
     first: $first
+    after: $after
   ) {
     nodes {
       identifier
@@ -19,6 +20,10 @@ query PollTicketsSince($since: DateTime!, $first: Int!) {
           name
         }
       }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
     }
   }
 }

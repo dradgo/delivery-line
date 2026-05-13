@@ -27,7 +27,7 @@ import javax.sql.DataSource;
 
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "linear-mock"})
 class FlywaySchemaContractTest {
 
 	private static final List<String> CORE_TABLES = List.of(

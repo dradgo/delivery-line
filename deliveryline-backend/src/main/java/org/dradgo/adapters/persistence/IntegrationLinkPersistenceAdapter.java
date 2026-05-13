@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Persistence-adapter implementation of {@link IntegrationLinkRecordPort}. Wraps Spring Data JPA
@@ -219,6 +220,33 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
 		IntegrationLinkEntity persisted = integrationLinkRepository.saveAndFlush(entity);
 		log.info("integration_link transitioned publicId={} from={} to={}", publicId, current.value(), newStatus.value());
 		return mapper.toDomain(persisted);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<Instant> findMaxLastSyncAtForType(String integrationType) {
+		if (integrationType == null || integrationType.isBlank()) {
+			throw new IllegalArgumentException("integrationType must be non-blank");
+		}
+		return integrationLinkRepository
+			.findMaxLastSyncAtForType(integrationType)
+			.map(OffsetDateTime::toInstant);
+	}
+
+	@Override
+	@Transactional
+	public boolean touchLastSyncAtByTypeAndExternalRef(
+		String integrationType,
+		String externalRef,
+		Instant lastSyncAt
+	) {
+		validateLookupArgs(integrationType, externalRef);
+		Objects.requireNonNull(lastSyncAt, "lastSyncAt");
+		int updated = integrationLinkRepository.touchLastSyncAtByTypeAndExternalRef(
+			integrationType,
+			externalRef,
+			OffsetDateTime.ofInstant(lastSyncAt, ZoneOffset.UTC));
+		return updated > 0;
 	}
 
 	@Override

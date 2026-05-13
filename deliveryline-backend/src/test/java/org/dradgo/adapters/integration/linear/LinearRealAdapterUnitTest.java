@@ -59,14 +59,16 @@ class LinearRealAdapterUnitTest {
 			.andRespond(withSuccess("""
 				{
 				  "data": {
-				    "issue": {
-				      "identifier": "LIN-501",
-				      "title": "Add caching layer",
-				      "description": "Bounded feature with low risk",
-				      "createdAt": "2026-05-01T10:00:00Z",
-				      "updatedAt": "2026-05-02T12:30:00Z",
-				      "creator": { "email": "dev@example.com", "displayName": "Dev" },
-				      "labels": { "nodes": [{ "name": "feature" }, { "name": "caching" }] }
+				    "issues": {
+				      "nodes": [{
+				        "identifier": "LIN-501",
+				        "title": "Add caching layer",
+				        "description": "Bounded feature with low risk",
+				        "createdAt": "2026-05-01T10:00:00Z",
+				        "updatedAt": "2026-05-02T12:30:00Z",
+				        "creator": { "email": "dev@example.com", "displayName": "Dev" },
+				        "labels": { "nodes": [{ "name": "feature" }, { "name": "caching" }] }
+				      }]
 				    }
 				  }
 				}
@@ -84,14 +86,23 @@ class LinearRealAdapterUnitTest {
 	}
 
 	@Test
-	void fetchReturnsEmptyWhenGraphqlIssueIsNull() {
+	void fetchReturnsEmptyWhenIssuesNodesIsEmpty() {
 		mockServer.expect(requestTo(BASE_URL))
 			.andExpect(method(HttpMethod.POST))
-			.andRespond(withSuccess("{\"data\":{\"issue\":null}}", MediaType.APPLICATION_JSON));
+			.andRespond(withSuccess("{\"data\":{\"issues\":{\"nodes\":[]}}}", MediaType.APPLICATION_JSON));
 
-		Optional<LinearTicket> ticket = adapter.fetchTicketByReference("LIN-MISSING");
+		Optional<LinearTicket> ticket = adapter.fetchTicketByReference("LIN-404");
 
 		assertTrue(ticket.isEmpty());
+		mockServer.verify();
+	}
+
+	@Test
+	void fetchOnMalformedRefRaisesSyncFailureWithoutCallingLinear() {
+		LinearAdapterException error = assertThrows(LinearAdapterException.class,
+			() -> adapter.fetchTicketByReference("not-a-valid-ref"));
+		assertEquals(IntegrationFailureCategory.SYNC_FAILURE, error.failureCategory());
+		// mockServer received no expectations and no calls — implicit verification of "no network".
 		mockServer.verify();
 	}
 
@@ -102,7 +113,7 @@ class LinearRealAdapterUnitTest {
 			.andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
 		LinearAdapterException error = assertThrows(LinearAdapterException.class,
-			() -> adapter.fetchTicketByReference("LIN-AUTH"));
+			() -> adapter.fetchTicketByReference("LIN-401"));
 		assertEquals(IntegrationFailureCategory.LINK_FAILURE, error.failureCategory());
 		mockServer.verify();
 	}
@@ -114,7 +125,7 @@ class LinearRealAdapterUnitTest {
 			.andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
 		LinearAdapterException error = assertThrows(LinearAdapterException.class,
-			() -> adapter.fetchTicketByReference("LIN-RATE"));
+			() -> adapter.fetchTicketByReference("LIN-429"));
 		assertEquals(IntegrationFailureCategory.NETWORK_API_FAILURE, error.failureCategory());
 		mockServer.verify();
 	}
@@ -126,7 +137,7 @@ class LinearRealAdapterUnitTest {
 			.andRespond(withException(new SocketTimeoutException("read timed out")));
 
 		LinearAdapterException error = assertThrows(LinearAdapterException.class,
-			() -> adapter.fetchTicketByReference("LIN-TIMEOUT"));
+			() -> adapter.fetchTicketByReference("LIN-504"));
 		assertEquals(IntegrationFailureCategory.NETWORK_API_FAILURE, error.failureCategory());
 		mockServer.verify();
 	}
@@ -142,7 +153,7 @@ class LinearRealAdapterUnitTest {
 				""", MediaType.APPLICATION_JSON));
 
 		LinearAdapterException error = assertThrows(LinearAdapterException.class,
-			() -> adapter.fetchTicketByReference("LIN-GQL-RATE"));
+			() -> adapter.fetchTicketByReference("LIN-430"));
 		assertEquals(IntegrationFailureCategory.NETWORK_API_FAILURE, error.failureCategory());
 		mockServer.verify();
 	}
@@ -158,7 +169,7 @@ class LinearRealAdapterUnitTest {
 				""", MediaType.APPLICATION_JSON));
 
 		LinearAdapterException error = assertThrows(LinearAdapterException.class,
-			() -> adapter.fetchTicketByReference("LIN-GQL-INVALID"));
+			() -> adapter.fetchTicketByReference("LIN-400"));
 		assertEquals(IntegrationFailureCategory.SYNC_FAILURE, error.failureCategory());
 		mockServer.verify();
 	}
@@ -168,11 +179,89 @@ class LinearRealAdapterUnitTest {
 		mockServer.expect(requestTo(BASE_URL))
 			.andExpect(method(HttpMethod.POST))
 			.andRespond(withSuccess("""
-				{"data":{"issues":{"nodes":[]}}}
+				{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}
 				""", MediaType.APPLICATION_JSON));
 
 		List<LinearTicket> tickets = adapter.pollNewTickets(Instant.parse("2026-05-01T00:00:00Z"));
 		assertTrue(tickets.isEmpty());
+		mockServer.verify();
+	}
+
+	@Test
+	void pollNewTicketsDrainsAllPagesAndSortsAscendingByUpdatedAt() {
+		// Page 1 — newest first (Linear orderBy defaults to DESC), pageInfo.hasNextPage=true.
+		mockServer.expect(requestTo(BASE_URL))
+			.andExpect(method(HttpMethod.POST))
+			.andRespond(withSuccess("""
+				{
+				  "data": {
+				    "issues": {
+				      "nodes": [
+				        { "identifier":"LIN-301","title":"newer","description":"",
+				          "createdAt":"2026-05-02T10:00:00Z","updatedAt":"2026-05-02T10:00:00Z",
+				          "creator":{"email":"a@example.com","displayName":"A"},
+				          "labels":{"nodes":[]}}
+				      ],
+				      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" }
+				    }
+				  }
+				}
+				""", MediaType.APPLICATION_JSON));
+		// Page 2 — older item, pageInfo.hasNextPage=false ends the drain.
+		mockServer.expect(requestTo(BASE_URL))
+			.andExpect(method(HttpMethod.POST))
+			.andRespond(withSuccess("""
+				{
+				  "data": {
+				    "issues": {
+				      "nodes": [
+				        { "identifier":"LIN-300","title":"older","description":"",
+				          "createdAt":"2026-05-01T10:00:00Z","updatedAt":"2026-05-01T10:00:00Z",
+				          "creator":{"email":"b@example.com","displayName":"B"},
+				          "labels":{"nodes":[]}}
+				      ],
+				      "pageInfo": { "hasNextPage": false, "endCursor": "cursor-2" }
+				    }
+				  }
+				}
+				""", MediaType.APPLICATION_JSON));
+
+		List<LinearTicket> tickets = adapter.pollNewTickets(Instant.parse("2026-04-30T00:00:00Z"));
+
+		assertEquals(2, tickets.size());
+		// Adapter sorts ASC by updatedAt — older item first, newer item last (the watermark).
+		assertEquals("LIN-300", tickets.get(0).ticketRef());
+		assertEquals("LIN-301", tickets.get(1).ticketRef());
+		mockServer.verify();
+	}
+
+	@Test
+	void pollNewTicketsFailsClosedWhenPageCapWouldTruncateWindow() {
+		for (int page = 1; page <= 20; page++) {
+			String body = """
+				{
+				  "data": {
+				    "issues": {
+				      "nodes": [
+				        { "identifier":"LIN-%1$d","title":"ticket-%1$d","description":"",
+				          "createdAt":"2026-05-02T10:00:00Z","updatedAt":"2026-05-02T10:00:00Z",
+				          "creator":{"email":"cap@example.com","displayName":"Cap"},
+				          "labels":{"nodes":[]}}
+				      ],
+				      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-%1$d" }
+				    }
+				  }
+				}
+				""".formatted(page);
+			mockServer.expect(requestTo(BASE_URL))
+				.andExpect(method(HttpMethod.POST))
+				.andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+		}
+
+		LinearAdapterException error = assertThrows(LinearAdapterException.class,
+			() -> adapter.pollNewTickets(Instant.parse("2026-04-30T00:00:00Z")));
+
+		assertEquals(IntegrationFailureCategory.SYNC_FAILURE, error.failureCategory());
 		mockServer.verify();
 	}
 
@@ -213,7 +302,7 @@ class LinearRealAdapterUnitTest {
 		mockServer.expect(requestTo(BASE_URL))
 			.andExpect(method(HttpMethod.POST))
 			.andRespond(withSuccess("""
-				{"data":{"issue":{"comments":{"nodes":[]}}}}
+				{"data":{"issue":{"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}
 				""", MediaType.APPLICATION_JSON));
 		// Second call: commentCreate returns success.
 		mockServer.expect(requestTo(BASE_URL))
@@ -229,6 +318,39 @@ class LinearRealAdapterUnitTest {
 			DataClassification.SHAREABLE_REDACTED);
 
 		adapter.postGovernedRunComment("LIN-POST", summary);
+
+		mockServer.verify();
+	}
+
+	@Test
+	void postCommentPaginatesListCommentsAndFindsMarkerOnLaterPage() {
+		// Page 1 of existing comments — does NOT contain the fingerprint marker; signals hasNextPage.
+		mockServer.expect(requestTo(BASE_URL))
+			.andExpect(method(HttpMethod.POST))
+			.andRespond(withSuccess("""
+				{"data":{"issue":{"comments":{
+				  "nodes":[{"body":"unrelated chatter"}],
+				  "pageInfo":{"hasNextPage":true,"endCursor":"page-1-end"}
+				}}}}
+				""", MediaType.APPLICATION_JSON));
+		// Page 2 — contains the marker. Adapter must short-circuit without POSTing.
+		mockServer.expect(requestTo(BASE_URL))
+			.andExpect(method(HttpMethod.POST))
+			.andRespond(withSuccess("""
+				{"data":{"issue":{"comments":{
+				  "nodes":[{"body":"earlier note\\n<!-- deliveryline:run=run_p2 fp=fp-p2 -->\\nbody"}],
+				  "pageInfo":{"hasNextPage":false,"endCursor":"page-2-end"}
+				}}}}
+				""", MediaType.APPLICATION_JSON));
+		// No commentCreate expected — pagination scan locates the marker on page 2.
+
+		GovernedRunComment summary = new GovernedRunComment(
+			"run_p2",
+			"fp-p2",
+			"Body the adapter must skip.",
+			DataClassification.SHAREABLE_REDACTED);
+
+		adapter.postGovernedRunComment("LIN-PAGED", summary);
 
 		mockServer.verify();
 	}

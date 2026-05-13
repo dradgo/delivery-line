@@ -1,10 +1,12 @@
 package org.dradgo.adapters.persistence.repository;
 
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import jakarta.persistence.LockModeType;
 import org.dradgo.adapters.persistence.entity.IntegrationLinkEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -49,5 +51,31 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
 		""")
 	Optional<IntegrationLinkEntity> findFirstActiveByWorkflowRunPublicId(
 		@Param("workflowRunPublicId") String workflowRunPublicId
+	);
+
+	@Query("""
+		select max(integrationLink.lastSyncAt)
+		from IntegrationLinkEntity integrationLink
+		where integrationLink.integrationType = :integrationType
+		  and integrationLink.archivedAt is null
+		  and integrationLink.syncStatus <> 'superseded'
+		""")
+	Optional<OffsetDateTime> findMaxLastSyncAtForType(
+		@Param("integrationType") String integrationType
+	);
+
+	@Modifying
+	@Query("""
+		update IntegrationLinkEntity integrationLink
+		   set integrationLink.lastSyncAt = :lastSyncAt
+		 where integrationLink.integrationType = :integrationType
+		   and integrationLink.externalRef = :externalRef
+		   and integrationLink.archivedAt is null
+		   and integrationLink.syncStatus <> 'superseded'
+		""")
+	int touchLastSyncAtByTypeAndExternalRef(
+		@Param("integrationType") String integrationType,
+		@Param("externalRef") String externalRef,
+		@Param("lastSyncAt") OffsetDateTime lastSyncAt
 	);
 }

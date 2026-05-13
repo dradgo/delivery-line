@@ -41,7 +41,7 @@ import org.springframework.test.context.ActiveProfiles;
 	WorkflowTransitionServiceContractTest.WorkflowTransitionServiceTestConfiguration.class
 })
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "linear-mock"})
 class WorkflowTransitionServiceContractTest {
 
 	@Autowired

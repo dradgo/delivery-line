@@ -1,8 +1,12 @@
-query ListComments($issueId: String!, $first: Int!) {
+query ListComments($issueId: String!, $first: Int!, $after: String) {
   issue(id: $issueId) {
-    comments(first: $first) {
+    comments(first: $first, after: $after) {
       nodes {
         body
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
       }
     }
   }

@@ -9,12 +9,16 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.dradgo.application.integration.linear.GovernedRunComment;
 import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAdapterException;
@@ -67,8 +71,24 @@ public class LinearRealAdapter implements LinearAdapter {
 	private static final String POST_COMMENT_QUERY_RESOURCE = "graphql/linear/post-comment.graphql";
 	private static final String LIST_COMMENTS_QUERY_RESOURCE = "graphql/linear/list-comments.graphql";
 
-	/** Number of existing comments to scan for the fingerprint marker during idempotency check. */
-	private static final int IDEMPOTENCY_SCAN_DEPTH = 100;
+	/** Per-page size when scanning existing comments for the fingerprint marker. */
+	private static final int IDEMPOTENCY_SCAN_PAGE_SIZE = 100;
+
+	/** Hard cap on how many pages the idempotency marker scan will walk. */
+	private static final int IDEMPOTENCY_SCAN_MAX_PAGES = 10;
+
+	/**
+	 * Hard cap on pages drained per {@link #pollNewTickets(Instant)} call. Hitting the cap is
+	 * treated as a sync failure so callers preserve their watermark instead of silently truncating
+	 * the observation window.
+	 */
+	private static final int POLL_MAX_PAGES = 20;
+
+	/**
+	 * Parses Linear human references like {@code LIN-123}. Group 1 = team key (uppercase letters,
+	 * digits, underscore — Linear team keys are typically 3–5 letters); group 2 = ticket number.
+	 */
+	private static final Pattern TICKET_REF_PATTERN = Pattern.compile("^([A-Z][A-Z0-9_]*)-([0-9]+)$");
 
 	private final RestClient linearRestClient;
 	private final LinearProperties properties;
@@ -77,6 +97,14 @@ public class LinearRealAdapter implements LinearAdapter {
 	private final String pollQuery;
 	private final String postCommentQuery;
 	private final String listCommentsQuery;
+
+	/**
+	 * Per-ticket lock guarding the (scan existing comments + create comment) sequence so
+	 * concurrent reposts of the same fingerprint serialize within a single JVM. Across multiple
+	 * JVM instances Linear's API has no native serialization primitive; the embedded fingerprint
+	 * marker remains the cross-instance backstop.
+	 */
+	private final ConcurrentHashMap<String, CommentLockState> commentLocks = new ConcurrentHashMap<>();
 
 	public LinearRealAdapter(
 		@Qualifier("linearRestClient") RestClient linearRestClient,
@@ -93,35 +121,63 @@ public class LinearRealAdapter implements LinearAdapter {
 	@Override
 	public Optional<LinearTicket> fetchTicketByReference(String ticketRef) {
 		Objects.requireNonNull(ticketRef, "ticketRef");
-		Map<String, Object> variables = Map.of("identifier", ticketRef);
+		ParsedTicketRef parsed = parseTicketRef(ticketRef);
+		Map<String, Object> variables = Map.of(
+			"teamKey", parsed.teamKey(),
+			"number", parsed.number());
 		long startedAt = System.nanoTime();
 		JsonNode response = executeGraphQL(fetchQuery, variables, "fetchTicketByReference");
 		log.info("linear_real fetch ticketRef={} durationMs={}", ticketRef, elapsedMs(startedAt));
-		JsonNode issue = response.path("data").path("issue");
-		if (issue.isMissingNode() || issue.isNull()) {
+		JsonNode nodes = response.path("data").path("issues").path("nodes");
+		if (!nodes.isArray() || nodes.isEmpty()) {
 			log.info("linear_real fetch ticketRef={} resolution=not_found", ticketRef);
 			return Optional.empty();
 		}
-		return Optional.of(toLinearTicket(issue));
+		return Optional.of(toLinearTicket(nodes.get(0)));
 	}
 
 	@Override
 	public List<LinearTicket> pollNewTickets(Instant since) {
 		Objects.requireNonNull(since, "since");
 		int batchSize = Math.max(1, properties.pollBatchSize());
-		Map<String, Object> variables = Map.of("since", since.toString(), "first", batchSize);
 		long startedAt = System.nanoTime();
-		JsonNode response = executeGraphQL(pollQuery, variables, "pollNewTickets");
-		JsonNode nodes = response.path("data").path("issues").path("nodes");
-		List<LinearTicket> tickets = new ArrayList<>();
-		if (nodes.isArray()) {
-			for (JsonNode node : nodes) {
-				tickets.add(toLinearTicket(node));
+		List<LinearTicket> collected = new ArrayList<>();
+		String afterCursor = null;
+		int pages = 0;
+		boolean hasNextPage = false;
+		do {
+			Map<String, Object> variables = new LinkedHashMap<>();
+			variables.put("since", since.toString());
+			variables.put("first", batchSize);
+			if (afterCursor != null) {
+				variables.put("after", afterCursor);
 			}
+			JsonNode response = executeGraphQL(pollQuery, variables, "pollNewTickets");
+			JsonNode issuesNode = response.path("data").path("issues");
+			JsonNode nodes = issuesNode.path("nodes");
+			if (nodes.isArray()) {
+				for (JsonNode node : nodes) {
+					collected.add(toLinearTicket(node));
+				}
+			}
+			pages++;
+			JsonNode pageInfo = issuesNode.path("pageInfo");
+			hasNextPage = pageInfo.path("hasNextPage").asBoolean(false);
+			String endCursor = pageInfo.path("endCursor").asText("");
+			afterCursor = endCursor.isBlank() ? null : endCursor;
+		} while (hasNextPage && afterCursor != null && pages < POLL_MAX_PAGES);
+		if (hasNextPage && pages >= POLL_MAX_PAGES) {
+			log.warn("linear_real poll page_cap_hit since={} pages={} maxPages={} collected={} action=fail_closed",
+				since, pages, POLL_MAX_PAGES, collected.size());
+			throw new LinearAdapterException(
+				IntegrationFailureCategory.SYNC_FAILURE,
+				"Linear poll exceeded page cap for since=" + since + " (pages=" + pages + ", maxPages="
+					+ POLL_MAX_PAGES + ")");
 		}
-		log.info("linear_real poll since={} returned={} tickets durationMs={}",
-			since, tickets.size(), elapsedMs(startedAt));
-		return tickets;
+		collected.sort(Comparator.comparing(LinearTicket::updatedAt));
+		log.info("linear_real poll since={} returned={} tickets pages={} durationMs={}",
+			since, collected.size(), pages, elapsedMs(startedAt));
+		return collected;
 	}
 
 	@Override
@@ -129,45 +185,86 @@ public class LinearRealAdapter implements LinearAdapter {
 		Objects.requireNonNull(ticketRef, "ticketRef");
 		Objects.requireNonNull(summary, "summary");
 		String marker = fingerprintMarker(summary);
-		if (isAlreadyPosted(ticketRef, marker)) {
-			log.info("linear_real comment skipped ticketRef={} fingerprint={} reason=already_posted",
-				ticketRef, summary.fingerprint());
-			return;
-		}
-		String body = marker + System.lineSeparator() + summary.body();
-		Map<String, Object> variables = Map.of("issueId", ticketRef, "body", body);
-		long startedAt = System.nanoTime();
-		JsonNode response = executeGraphQL(postCommentQuery, variables, "postGovernedRunComment");
-		boolean success = response.path("data").path("commentCreate").path("success").asBoolean(false);
-		log.info("linear_real comment_posted ticketRef={} fingerprint={} success={} durationMs={}",
-			ticketRef, summary.fingerprint(), success, elapsedMs(startedAt));
-		if (!success) {
-			throw new LinearAdapterException(
-				IntegrationFailureCategory.SYNC_FAILURE,
-				"Linear commentCreate returned success=false for ticketRef=" + ticketRef);
+		CommentLockState lockState = acquireCommentLock(ticketRef);
+		synchronized (lockState.monitor()) {
+			try {
+				if (isAlreadyPosted(ticketRef, marker)) {
+					log.info("linear_real comment skipped ticketRef={} fingerprint={} reason=already_posted",
+						ticketRef, summary.fingerprint());
+					return;
+				}
+				String body = marker + System.lineSeparator() + summary.body();
+				Map<String, Object> variables = Map.of("issueId", ticketRef, "body", body);
+				long startedAt = System.nanoTime();
+				JsonNode response = executeGraphQL(postCommentQuery, variables, "postGovernedRunComment");
+				boolean success = response.path("data").path("commentCreate").path("success").asBoolean(false);
+				log.info("linear_real comment_posted ticketRef={} fingerprint={} success={} durationMs={}",
+					ticketRef, summary.fingerprint(), success, elapsedMs(startedAt));
+				if (!success) {
+					throw new LinearAdapterException(
+						IntegrationFailureCategory.SYNC_FAILURE,
+						"Linear commentCreate returned success=false for ticketRef=" + ticketRef);
+				}
+			} finally {
+				releaseCommentLock(ticketRef, lockState);
+			}
 		}
 	}
 
-	private boolean isAlreadyPosted(String ticketRef, String marker) {
-		Map<String, Object> variables = Map.of("issueId", ticketRef, "first", IDEMPOTENCY_SCAN_DEPTH);
-		try {
-			JsonNode response = executeGraphQL(listCommentsQuery, variables, "listComments");
-			JsonNode nodes = response.path("data").path("issue").path("comments").path("nodes");
-			if (!nodes.isArray()) {
-				return false;
+	private CommentLockState acquireCommentLock(String ticketRef) {
+		return commentLocks.compute(ticketRef, (key, existing) -> {
+			CommentLockState state = existing == null ? new CommentLockState() : existing;
+			state.incrementWaiters();
+			return state;
+		});
+	}
+
+	private void releaseCommentLock(String ticketRef, CommentLockState lockState) {
+		commentLocks.computeIfPresent(ticketRef, (key, existing) -> {
+			if (existing != lockState) {
+				return existing;
 			}
-			for (JsonNode node : nodes) {
-				String existingBody = node.path("body").asText("");
-				if (existingBody.contains(marker)) {
-					return true;
+			return existing.decrementWaitersAndIsIdle() ? null : existing;
+		});
+	}
+
+	private boolean isAlreadyPosted(String ticketRef, String marker) {
+		String afterCursor = null;
+		int pages = 0;
+		boolean hasNextPage = false;
+		do {
+			Map<String, Object> variables = new LinkedHashMap<>();
+			variables.put("issueId", ticketRef);
+			variables.put("first", IDEMPOTENCY_SCAN_PAGE_SIZE);
+			if (afterCursor != null) {
+				variables.put("after", afterCursor);
+			}
+			JsonNode response = executeGraphQL(listCommentsQuery, variables, "listComments");
+			JsonNode comments = response.path("data").path("issue").path("comments");
+			JsonNode nodes = comments.path("nodes");
+			if (nodes.isArray()) {
+				for (JsonNode node : nodes) {
+					String existingBody = node.path("body").asText("");
+					if (existingBody.contains(marker)) {
+						return true;
+					}
 				}
 			}
-			return false;
-		} catch (LinearAdapterException error) {
-			// A failure to list comments is itself a posting failure — surface it rather than
-			// risking a duplicate write.
-			throw error;
+			pages++;
+			JsonNode pageInfo = comments.path("pageInfo");
+			hasNextPage = pageInfo.path("hasNextPage").asBoolean(false);
+			String endCursor = pageInfo.path("endCursor").asText("");
+			afterCursor = endCursor.isBlank() ? null : endCursor;
+		} while (hasNextPage && afterCursor != null && pages < IDEMPOTENCY_SCAN_MAX_PAGES);
+		if (hasNextPage && pages >= IDEMPOTENCY_SCAN_MAX_PAGES) {
+			// If we hit the scan cap without finding the marker, treat as "not posted" rather than
+			// raise — duplicating a comment is recoverable; missing the post is worse for AC3
+			// "best-effort write-back". The cap is high enough (10 pages × 100 = 1000 comments)
+			// that this is an extreme outlier.
+			log.warn("linear_real listComments scan_cap_hit ticketRef={} pages={} maxPages={}",
+				ticketRef, pages, IDEMPOTENCY_SCAN_MAX_PAGES);
 		}
+		return false;
 	}
 
 	private JsonNode executeGraphQL(String query, Map<String, Object> variables, String operation) {
@@ -307,6 +404,47 @@ public class LinearRealAdapter implements LinearAdapter {
 
 	private static long elapsedMs(long startedAtNanos) {
 		return (System.nanoTime() - startedAtNanos) / 1_000_000L;
+	}
+
+	private static ParsedTicketRef parseTicketRef(String ticketRef) {
+		Matcher matcher = TICKET_REF_PATTERN.matcher(ticketRef);
+		if (!matcher.matches()) {
+			throw new LinearAdapterException(
+				IntegrationFailureCategory.SYNC_FAILURE,
+				"Linear ticket reference must match team-key/number shape (e.g. LIN-123): " + ticketRef);
+		}
+		String teamKey = matcher.group(1);
+		long number;
+		try {
+			number = Long.parseLong(matcher.group(2));
+		} catch (NumberFormatException error) {
+			throw new LinearAdapterException(
+				IntegrationFailureCategory.SYNC_FAILURE,
+				"Linear ticket reference carries a non-numeric ticket number: " + ticketRef, error);
+		}
+		return new ParsedTicketRef(teamKey, number);
+	}
+
+	private record ParsedTicketRef(String teamKey, long number) {
+	}
+
+	private static final class CommentLockState {
+
+		private final Object monitor = new Object();
+		private int waiters;
+
+		private Object monitor() {
+			return monitor;
+		}
+
+		private void incrementWaiters() {
+			waiters++;
+		}
+
+		private boolean decrementWaitersAndIsIdle() {
+			waiters--;
+			return waiters == 0;
+		}
 	}
 
 	private static String loadQuery(String resource) {

@@ -21,7 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "linear-mock"})
 class IdempotencyServiceContractTest {
 
 	@Autowired
