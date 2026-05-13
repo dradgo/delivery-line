@@ -1,0 +1,7 @@
+{
+  "marker": "auth-failure-simulation",
+  "ticketRef": "LIN-AUTH-FAILURE",
+  "behaviour": "AUTH_FAILURE",
+  "expectedFailureCategory": "link_failure",
+  "description": "Mock throws LinearAdapterException(LINK_FAILURE) on fetch. Simulates real adapter's 401/403 path (AC6)."
+}

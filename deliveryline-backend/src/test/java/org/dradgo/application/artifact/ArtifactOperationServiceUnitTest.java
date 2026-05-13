@@ -1072,7 +1072,10 @@ class ArtifactOperationServiceUnitTest {
 				"corr-replayfail",
 				null)));
 
-		assertEquals(DomainErrorCode.ARTIFACT_OPERATION_CONFLICT, error.errorCode());
+		// The service surfaces a failed-prior-operation replay as ARTIFACT_OPERATION_INTENT_CONFLICT
+		// (not the broader ARTIFACT_OPERATION_CONFLICT) so callers can distinguish "key was used
+		// for a prior FAILED op" from generic operation conflicts. ArtifactOperationService line 457.
+		assertEquals(DomainErrorCode.ARTIFACT_OPERATION_INTENT_CONFLICT, error.errorCode());
 		assertEquals("idem-replayfail-1234567890", error.details().get("idempotencyKey"));
 		assertEquals("op_failed-replay1234", error.details().get("priorOperationId"));
 		verify(artifactOperationPort, org.mockito.Mockito.never())

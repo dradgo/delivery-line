@@ -235,6 +235,17 @@ final class ArchitectureRuleCatalog {
 		classes().that().doNotHaveFullyQualifiedName("org.dradgo.application.artifact.ArtifactOperationService")
 			.should(notCallFutureArtifactWriteMethods()));
 
+	static final ArchRule LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT = namedRule(
+		"Linear-specific GraphQL types must not leak through the application.integration.linear port",
+		"Remediation: keep Linear GraphQL DTOs, Linear SDK types, and HTTP-client surface inside adapters.integration.linear; the application port "
+			+ "may only depend on domain-shaped records (LinearTicket, GovernedRunComment, IntegrationLink). Story 1.14 AC1 invariant.",
+		noClasses().that().resideInAPackage("org.dradgo.application.integration..")
+			.should().dependOnClassesThat().resideInAnyPackage(
+				"com.linear..",
+				"linear.api..",
+				"org.springframework.web.client..",
+				"org.springframework.http.client.."));
+
 	static final ArchRule CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY = namedRule(
 		"credential-detection regex catalogs and predicates may only live in application.security",
 		"Remediation: delegate credential detection and redaction heuristics to application.security instead of reimplementing them in adapters or other layers."

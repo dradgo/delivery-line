@@ -44,6 +44,8 @@ public final class ProblemDetailsCatalog {
 		register(metadata, DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT, HttpStatus.CONFLICT, "Concurrent transition conflict", true);
 		register(metadata, DomainErrorCode.RUNNER_TIMEOUT, HttpStatus.GATEWAY_TIMEOUT, "Runner timeout", true);
 		register(metadata, DomainErrorCode.RUNNER_CONTRACT_VIOLATION, HttpStatus.BAD_GATEWAY, "Runner contract violation", false);
+		register(metadata, DomainErrorCode.LINEAR_TICKET_NOT_FOUND, HttpStatus.NOT_FOUND, "Linear ticket not found", false);
+		register(metadata, DomainErrorCode.INTEGRATION_LINK_CONFLICT, HttpStatus.CONFLICT, "Integration link conflict", false);
 		register(metadata, DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE, "Artifact payload unavailable", true);
 		register(metadata, DomainErrorCode.ARTIFACT_LINEAGE_ALREADY_EXISTS, HttpStatus.CONFLICT, "Artifact lineage already exists", false);
 		register(metadata, DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND, HttpStatus.NOT_FOUND, "Artifact record not found", false);

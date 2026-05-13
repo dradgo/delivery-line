@@ -27,6 +27,8 @@ public final class DomainRegistry {
 	private static final Set<String> ARTIFACT_TYPES = valuesOf(ArtifactType.values());
 	private static final Set<String> DATA_CLASSIFICATIONS = valuesOf(DataClassification.values());
 	private static final Set<String> FAILURE_CATEGORIES = valuesOf(FailureCategory.values());
+	private static final Set<String> INTEGRATION_FAILURE_CATEGORIES =
+		valuesOf(IntegrationFailureCategory.values());
 	private static final Set<String> INTEGRATION_SYNC_STATUSES = valuesOf(IntegrationSyncStatus.values());
 	private static final Set<String> RUNNER_SCHEMA_VERSIONS = valuesOf(RunnerSchemaVersion.values());
 	private static final Set<String> RUNNER_STAGES = valuesOf(RunnerStage.values());
@@ -82,6 +84,10 @@ public final class DomainRegistry {
 
 	public static Set<String> failureCategories() {
 		return FAILURE_CATEGORIES;
+	}
+
+	public static Set<String> integrationFailureCategories() {
+		return INTEGRATION_FAILURE_CATEGORIES;
 	}
 
 	public static Set<String> integrationSyncStatuses() {

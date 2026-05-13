@@ -1,0 +1,9 @@
+query ListComments($issueId: String!, $first: Int!) {
+  issue(id: $issueId) {
+    comments(first: $first) {
+      nodes {
+        body
+      }
+    }
+  }
+}

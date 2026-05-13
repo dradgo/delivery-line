@@ -1,0 +1,13 @@
+{
+  "ticketRef": "LIN-101",
+  "title": "Add /healthz endpoint to the worker pool",
+  "summary": "Expose a bounded GET /healthz returning 200 when worker pool is accepting jobs, 503 when draining. Bounded low-risk feature: only one endpoint, no schema changes, no auth surface.",
+  "authorIdentity": "amelia@deliveryline.local",
+  "createdAt": "2026-04-20T08:30:00Z",
+  "updatedAt": "2026-04-21T14:15:00Z",
+  "labels": {
+    "type": "feature",
+    "risk": "low",
+    "area": "worker-pool"
+  }
+}

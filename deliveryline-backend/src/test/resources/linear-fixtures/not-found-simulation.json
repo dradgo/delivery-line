@@ -1,0 +1,7 @@
+{
+  "marker": "not-found-simulation",
+  "ticketRef": "LIN-NOT-FOUND",
+  "behaviour": "NOT_FOUND",
+  "expectedFailureCategory": null,
+  "description": "Mock returns Optional.empty() from fetchTicketByReference (AC7 routes this to LINEAR_TICKET_NOT_FOUND at the command layer)."
+}

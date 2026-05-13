@@ -1,0 +1,24 @@
+query PollTicketsSince($since: DateTime!, $first: Int!) {
+  issues(
+    filter: { updatedAt: { gt: $since } }
+    orderBy: updatedAt
+    first: $first
+  ) {
+    nodes {
+      identifier
+      title
+      description
+      createdAt
+      updatedAt
+      creator {
+        email
+        displayName
+      }
+      labels {
+        nodes {
+          name
+        }
+      }
+    }
+  }
+}

@@ -37,6 +37,7 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
+import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -50,9 +51,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
+@ActiveProfiles("test")
 @Tag("architecture")
 class RegistryContractTest {
 
@@ -91,6 +94,8 @@ class RegistryContractTest {
 		assertEquals(registryValues(ArtifactType.values()), DomainRegistry.artifactTypes());
 		assertEquals(registryValues(DataClassification.values()), DomainRegistry.dataClassifications());
 		assertEquals(registryValues(FailureCategory.values()), DomainRegistry.failureCategories());
+		assertEquals(registryValues(IntegrationFailureCategory.values()),
+			DomainRegistry.integrationFailureCategories());
 		assertEquals(registryValues(IntegrationSyncStatus.values()), DomainRegistry.integrationSyncStatuses());
 		assertEquals(registryValues(RunnerSchemaVersion.values()), DomainRegistry.runnerSchemaVersions());
 		assertEquals(registryValues(RunnerStage.values()), DomainRegistry.runnerStages());

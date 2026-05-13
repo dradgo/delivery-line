@@ -1,0 +1,7 @@
+{
+  "marker": "malformed-response-simulation",
+  "ticketRef": "LIN-MALFORMED",
+  "behaviour": "MALFORMED_RESPONSE",
+  "expectedFailureCategory": "sync_failure",
+  "description": "Mock throws LinearAdapterException(SYNC_FAILURE) on fetch. Simulates GraphQL response with unexpected shape at the real adapter (AC6)."
+}

@@ -1,0 +1,13 @@
+{
+  "ticketRef": "LIN-102",
+  "title": "Fix off-by-one in artifact pagination cursor",
+  "summary": "Pagination cursor returns N+1 rows when limit equals page size; trim the surplus row at the repository boundary and add a regression test.",
+  "authorIdentity": "winston@deliveryline.local",
+  "createdAt": "2026-04-22T09:00:00Z",
+  "updatedAt": "2026-04-22T11:45:00Z",
+  "labels": {
+    "type": "bug",
+    "severity": "minor",
+    "area": "artifact-pagination"
+  }
+}

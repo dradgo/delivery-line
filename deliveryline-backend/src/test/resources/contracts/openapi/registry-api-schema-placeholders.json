@@ -89,6 +89,8 @@
     "CONCURRENT_TRANSITION_CONFLICT": "https://deliveryline.local/problems/concurrent-transition-conflict",
     "RUNNER_TIMEOUT": "https://deliveryline.local/problems/runner-timeout",
     "RUNNER_CONTRACT_VIOLATION": "https://deliveryline.local/problems/runner-contract-violation",
+    "LINEAR_TICKET_NOT_FOUND": "https://deliveryline.local/problems/linear-ticket-not-found",
+    "INTEGRATION_LINK_CONFLICT": "https://deliveryline.local/problems/integration-link-conflict",
     "ARTIFACT_PAYLOAD_UNAVAILABLE": "https://deliveryline.local/problems/artifact-payload-unavailable",
     "ARTIFACT_LINEAGE_ALREADY_EXISTS": "https://deliveryline.local/problems/artifact-lineage-already-exists",
     "ARTIFACT_RECORD_NOT_FOUND": "https://deliveryline.local/problems/artifact-record-not-found",

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "linear-ticket-mock.v1.schema.json",
+  "title": "Linear Mock Ticket Fixture",
+  "description": "Wire form of a single Linear ticket fixture used by LinearMockAdapter (story 1.14). Project-internal; not shared with the runner contracts module.",
+  "type": "object",
+  "required": ["ticketRef", "title", "summary", "authorIdentity", "createdAt", "updatedAt", "labels"],
+  "additionalProperties": false,
+  "properties": {
+    "ticketRef": {
+      "type": "string",
+      "pattern": "^[A-Z]+-[A-Z0-9_-]+$",
+      "minLength": 3,
+      "maxLength": 64,
+      "description": "Stable, deterministic reference (e.g. LIN-101). Matches the LinearTicket port shape."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "authorIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Linear-user identity string (email or Linear user public id). Never a GraphQL DTO."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp. pollNewTickets(since) orders by this field ascending."
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "maxProperties": 32,
+      "description": "Flat label tags. Preserved into LinearTicket.labels."
+    }
+  }
+}

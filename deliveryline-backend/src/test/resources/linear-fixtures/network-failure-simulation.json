@@ -1,0 +1,7 @@
+{
+  "marker": "network-failure-simulation",
+  "ticketRef": "LIN-NETWORK-FAILURE",
+  "behaviour": "NETWORK_FAILURE",
+  "expectedFailureCategory": "network_api_failure",
+  "description": "Mock throws LinearAdapterException(NETWORK_API_FAILURE) on fetch. Simulates timeout/connection-refused/DNS at the real adapter (AC6)."
+}

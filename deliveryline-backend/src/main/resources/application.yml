@@ -3,11 +3,21 @@ spring:
     name: deliveryline
   profiles:
     group:
-      local: [runners.mock]
-      test: [runners.mock]
-      demo: [runners.mock]
+      local: [runners.mock, linear-mock]
+      test: [runners.mock, linear-mock]
+      demo: [runners.mock, linear-mock]
 
 deliveryline:
+  linear:
+    base-url: https://api.linear.app/graphql
+    poll-interval-ms: 60000
+    poll-batch-size: 50
+    stale-threshold-multiplier: 2.0
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
+    polling:
+      enabled: true
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000

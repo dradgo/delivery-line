@@ -38,7 +38,11 @@ class RunnerApplicationSeamContractTest {
 		assertEquals(1, countMethodsNamed(executionService, "recordFailed"));
 		assertEquals(1, countMethodsNamed(executionService, "recordTimedOut"));
 		assertEquals(1, countMethodsNamed(executionService, "recordOrphaned"));
-		assertEquals(1, countMethodsNamed(executionService, "touchActivity"));
+		// touchActivity has two intentional overloads: a 2-arg (id, staleWindow) convenience for
+		// poll-driven "running" pings, and a 3-arg (id, activityAt, staleWindow) for heartbeat
+		// payloads that carry an explicit timestamp. Both are wired by RunnerBroker.processSinglePoll.
+		assertNotNull(findMethod(executionService, "touchActivity", 2));
+		assertNotNull(findMethod(executionService, "touchActivity", 3));
 
 		assertNotNull(findMethod(contextBundleService, "create", 7));
 	}

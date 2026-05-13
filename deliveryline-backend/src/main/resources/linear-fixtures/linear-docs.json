@@ -1,0 +1,13 @@
+{
+  "ticketRef": "LIN-103",
+  "title": "Document the recovery-runbook for stale runner executions",
+  "summary": "Capture the operational playbook for triaging runner executions stuck in pending/running beyond the configured stale threshold. Pure documentation work.",
+  "authorIdentity": "paige@deliveryline.local",
+  "createdAt": "2026-04-23T13:10:00Z",
+  "updatedAt": "2026-04-24T07:55:00Z",
+  "labels": {
+    "type": "docs",
+    "audience": "operator",
+    "area": "recovery"
+  }
+}

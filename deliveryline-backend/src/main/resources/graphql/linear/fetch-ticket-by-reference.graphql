@@ -1,0 +1,18 @@
+query FetchTicketByReference($identifier: String!) {
+  issue(id: $identifier) {
+    identifier
+    title
+    description
+    createdAt
+    updatedAt
+    creator {
+      email
+      displayName
+    }
+    labels {
+      nodes {
+        name
+      }
+    }
+  }
+}

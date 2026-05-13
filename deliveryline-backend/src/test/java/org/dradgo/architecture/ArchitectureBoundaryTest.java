@@ -103,4 +103,8 @@ class ArchitectureBoundaryTest {
 	@ArchTest
 	static final ArchRule artifact_writes_must_go_through_artifact_operation_service =
 		ArchitectureRuleCatalog.ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE;
+
+	@ArchTest
+	static final ArchRule linear_types_must_not_leak_through_port =
+		ArchitectureRuleCatalog.LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT;
 }

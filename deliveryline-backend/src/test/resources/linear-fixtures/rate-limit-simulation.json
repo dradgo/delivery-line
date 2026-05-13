@@ -1,0 +1,7 @@
+{
+  "marker": "rate-limit-simulation",
+  "ticketRef": "LIN-RATE-LIMITED",
+  "behaviour": "RATE_LIMITED",
+  "expectedFailureCategory": "network_api_failure",
+  "description": "Mock throws LinearAdapterException(NETWORK_API_FAILURE) on fetch. Simulates real adapter's 429 path (AC6)."
+}
