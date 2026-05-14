@@ -39,6 +39,7 @@ final class ArchitectureRuleCatalog {
 	private static final String FILES_ADAPTER_PACKAGE = "org.dradgo.adapters.files..";
 	private static final String RUNNER_ADAPTER_PACKAGE = "org.dradgo.adapters.runner..";
 	private static final String INTEGRATION_ADAPTER_PACKAGE = "org.dradgo.adapters.integration..";
+	private static final String DIAGNOSTICS_ADAPTER_PACKAGE = "org.dradgo.adapters.diagnostics..";
 	private static final String INFRASTRUCTURE_PACKAGE = "org.dradgo.infrastructure..";
 	private static final String SECURITY_PACKAGE = "org.dradgo.application.security..";
 	private static final String PERSISTENCE_ENTITY_PACKAGE = "org.dradgo.adapters.persistence.entity..";
@@ -69,7 +70,7 @@ final class ArchitectureRuleCatalog {
 
 	static final ArchRule ADAPTER_PACKAGE_LAYOUT = namedRule(
 		"adapter classes must stay inside the reserved adapter package layout",
-		"Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, or adapters.integration.",
+		"Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, or adapters.diagnostics.",
 		classes().that().resideInAPackage(ADAPTERS_PACKAGE)
 			.should().resideInAnyPackage(
 				CLI_ADAPTER_PACKAGE,
@@ -77,7 +78,8 @@ final class ArchitectureRuleCatalog {
 				PERSISTENCE_ADAPTER_PACKAGE,
 				FILES_ADAPTER_PACKAGE,
 				RUNNER_ADAPTER_PACKAGE,
-				INTEGRATION_ADAPTER_PACKAGE));
+				INTEGRATION_ADAPTER_PACKAGE,
+				DIAGNOSTICS_ADAPTER_PACKAGE));
 
 	static final ArchRule DOMAIN_PACKAGE_MUST_EXIST = namedRule(
 		"domain package must contain production code",

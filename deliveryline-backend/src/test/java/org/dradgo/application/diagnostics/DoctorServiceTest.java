@@ -1,0 +1,252 @@
+package org.dradgo.application.diagnostics;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.lang.reflect.Method;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.dradgo.application.diagnostics.spi.DoctorProbePort;
+import org.dradgo.application.diagnostics.spi.ProbeResult;
+import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.domain.DomainException;
+import org.dradgo.domain.registry.DomainErrorCode;
+import org.junit.jupiter.api.Test;
+import org.springframework.transaction.annotation.Transactional;
+
+class DoctorServiceTest {
+
+	private final Clock fixedClock = Clock.fixed(Instant.parse("2026-05-14T10:00:00Z"), ZoneOffset.UTC);
+	private final DoctorProbePort probes = mock(DoctorProbePort.class);
+	private final RedactionPolicyService redaction = new RedactionPolicyService(new DataClassificationService());
+	private final DoctorService service = new DoctorService(probes, redaction, fixedClock);
+
+	@Test
+	void runDiagnosticsReturnsAllChecksInCanonicalOrder() {
+		stubAllProbesPass();
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		assertThat(report.schemaVersion()).isEqualTo(1);
+		assertThat(report.overallStatus()).isEqualTo(DiagnosticsStatus.PASS);
+		assertThat(report.checks()).hasSize(DoctorService.STATIC_ORDER.size());
+		assertThat(report.checks().stream().map(DiagnosticsCheck::name).toList())
+			.isEqualTo(DoctorService.STATIC_ORDER);
+	}
+
+	@Test
+	void onlyFilterPreservesCanonicalOrder() {
+		stubAllProbesPass();
+
+		DoctorRunRequest request = new DoctorRunRequest(
+			Set.of(DoctorService.CHECK_FLYWAY_STATE, DoctorService.CHECK_POSTGRES_CONNECTIVITY),
+			Set.of(),
+			"corr-1");
+		DiagnosticsReport report = service.runDiagnostics(request);
+
+		assertThat(report.checks().stream().map(DiagnosticsCheck::name).toList())
+			.containsExactly(DoctorService.CHECK_POSTGRES_CONNECTIVITY, DoctorService.CHECK_FLYWAY_STATE);
+	}
+
+	@Test
+	void excludeFilterRendersSkippedChecksWithExcludeSummary() {
+		stubAllProbesPass();
+
+		DoctorRunRequest request = new DoctorRunRequest(
+			Set.of(),
+			Set.of(DoctorService.CHECK_DOCKER_AVAILABILITY),
+			null);
+		DiagnosticsReport report = service.runDiagnostics(request);
+
+		DiagnosticsCheck dockerCheck = findCheck(report, DoctorService.CHECK_DOCKER_AVAILABILITY);
+		assertThat(dockerCheck.status()).isEqualTo(DiagnosticsStatus.SKIP);
+		assertThat(dockerCheck.summary()).isEqualTo("Excluded via --exclude");
+	}
+
+	@Test
+	void unknownOnlyCheckNameRaisesInvalidCommandPayload() {
+		assertThatThrownBy(() -> service.runDiagnostics(
+			new DoctorRunRequest(Set.of("not-a-check"), Set.of(), null)))
+			.isInstanceOf(DomainException.class)
+			.satisfies(t -> {
+				DomainException de = (DomainException) t;
+				assertThat(de.errorCode()).isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+				assertThat(de.details()).containsEntry("unknownCheck", "not-a-check");
+			});
+	}
+
+	@Test
+	void mutuallyExclusiveOnlyAndExcludeRaisesInvalidCommandPayload() {
+		assertThatThrownBy(() -> service.runDiagnostics(
+			new DoctorRunRequest(
+				Set.of(DoctorService.CHECK_POSTGRES_CONNECTIVITY),
+				Set.of(DoctorService.CHECK_FLYWAY_STATE),
+				null)))
+			.isInstanceOf(DomainException.class)
+			.satisfies(t -> {
+				DomainException de = (DomainException) t;
+				assertThat(de.errorCode()).isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+				assertThat(de.details()).containsEntry("rule", "--only and --exclude are mutually exclusive");
+			});
+	}
+
+	@Test
+	void overallStatusIsFailWhenAnyCheckFails() {
+		when(probes.probeJavaVersion()).thenReturn(ProbeResult.pass("Java 21"));
+		when(probes.probeSpringProfiles()).thenReturn(ProbeResult.pass("local"));
+		when(probes.probePostgresConnectivity()).thenReturn(ProbeResult.fail(
+			"Postgres unreachable",
+			DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE.value(),
+			Map.of()));
+		when(probes.probeFlywayState()).thenReturn(ProbeResult.pass("Flyway up"));
+		when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
+		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
+		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.warn(
+			"Docker unreachable", DomainErrorCode.DOCTOR_DOCKER_MISSING.value(), Map.of()));
+		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		assertThat(report.overallStatus()).isEqualTo(DiagnosticsStatus.FAIL);
+		DiagnosticsCheck postgres = findCheck(report, DoctorService.CHECK_POSTGRES_CONNECTIVITY);
+		assertThat(postgres.remediation()).contains("docker compose up -d postgres");
+		assertThat(postgres.errorCode()).isEqualTo("DOCTOR_POSTGRES_UNREACHABLE");
+	}
+
+	@Test
+	void artifactDirectoryRemediationIncludesResolvedPathContext() {
+		when(probes.probeJavaVersion()).thenReturn(ProbeResult.pass("Java 21"));
+		when(probes.probeSpringProfiles()).thenReturn(ProbeResult.pass("local"));
+		when(probes.probePostgresConnectivity()).thenReturn(ProbeResult.pass("Postgres up"));
+		when(probes.probeFlywayState()).thenReturn(ProbeResult.pass("Flyway up"));
+		when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.fail(
+			"Artifact directory unwritable: AccessDeniedException",
+			DomainErrorCode.DOCTOR_ARTIFACT_DIR_UNWRITABLE.value(),
+			Map.of("artifactRoot", "/var/tmp/deliveryline/artifacts")));
+		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
+		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		DiagnosticsCheck artifactDirectory = findCheck(report, DoctorService.CHECK_ARTIFACT_DIRECTORY);
+		assertThat(artifactDirectory.remediation())
+			.contains("Ensure the artifact root directory exists and is writable:")
+			.isNotEqualTo("Ensure the artifact root directory exists and is writable.");
+	}
+
+	@Test
+	void overallStatusIsWarnWhenAnyWarnAndNoFail() {
+		stubAllProbesPass();
+		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.warn(
+			"Docker unreachable", DomainErrorCode.DOCTOR_DOCKER_MISSING.value(), Map.of()));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		assertThat(report.overallStatus()).isEqualTo(DiagnosticsStatus.WARN);
+	}
+
+	@Test
+	void overallStatusIsPassWhenAllChecksPassOrSkip() {
+		stubAllProbesPass();
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		assertThat(report.overallStatus()).isEqualTo(DiagnosticsStatus.PASS);
+	}
+
+	@Test
+	void runnerImageFrontendAndSupportedEnvironmentChecksAreReservedAsSkip() {
+		stubAllProbesPass();
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		assertThat(findCheck(report, DoctorService.CHECK_RUNNER_IMAGE_AVAILABILITY).status())
+			.isEqualTo(DiagnosticsStatus.SKIP);
+		assertThat(findCheck(report, DoctorService.CHECK_FRONTEND_ASSET_PRESENCE).status())
+			.isEqualTo(DiagnosticsStatus.SKIP);
+		assertThat(findCheck(report, DoctorService.CHECK_SUPPORTED_ENVIRONMENT).status())
+			.isEqualTo(DiagnosticsStatus.SKIP);
+	}
+
+	@Test
+	void summaryRemediationAndDetailsArePassedThroughRedaction() {
+		when(probes.probeJavaVersion()).thenReturn(ProbeResult.pass("Java 21"));
+		when(probes.probeSpringProfiles()).thenReturn(ProbeResult.pass("local"));
+		Map<String, String> details = new LinkedHashMap<>();
+		details.put("authHeader", "Authorization: Bearer ghp_aaaaaaaaaaaaaaaaaaaa");
+		when(probes.probePostgresConnectivity()).thenReturn(ProbeResult.fail(
+			"Postgres unreachable; saw github_pat_abcdefghij1234567890 in env",
+			DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE.value(),
+			details));
+		when(probes.probeFlywayState()).thenReturn(ProbeResult.pass("Flyway up"));
+		when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
+		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
+		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		DiagnosticsCheck postgres = findCheck(report, DoctorService.CHECK_POSTGRES_CONNECTIVITY);
+		assertThat(postgres.summary()).doesNotContain("github_pat_");
+		assertThat(postgres.details().get("authHeader")).doesNotContain("ghp_");
+	}
+
+	@Test
+	void probeExceptionsAreTrappedAndSurfacedAsFail() {
+		when(probes.probeJavaVersion()).thenReturn(ProbeResult.pass("Java 21"));
+		when(probes.probeSpringProfiles()).thenReturn(ProbeResult.pass("local"));
+		when(probes.probePostgresConnectivity()).thenThrow(new RuntimeException("boom"));
+		when(probes.probeFlywayState()).thenReturn(ProbeResult.pass("Flyway up"));
+		when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
+		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
+		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		DiagnosticsCheck postgres = findCheck(report, DoctorService.CHECK_POSTGRES_CONNECTIVITY);
+		assertThat(postgres.status()).isEqualTo(DiagnosticsStatus.FAIL);
+		assertThat(postgres.errorCode()).isEqualTo(DomainErrorCode.INTERNAL_ERROR.value());
+		assertThat(report.overallStatus()).isEqualTo(DiagnosticsStatus.FAIL);
+	}
+
+	@Test
+	void doctorServiceCarriesReadOnlyTransactionalAnnotation() {
+		Transactional annotation = DoctorService.class.getAnnotation(Transactional.class);
+		assertThat(annotation).isNotNull();
+		assertThat(annotation.readOnly()).isTrue();
+	}
+
+	@Test
+	void runDiagnosticsMethodSignatureMatchesContract() throws NoSuchMethodException {
+		Method method = DoctorService.class.getMethod("runDiagnostics", DoctorRunRequest.class);
+		assertThat(method.getReturnType()).isEqualTo(DiagnosticsReport.class);
+	}
+
+	private void stubAllProbesPass() {
+		when(probes.probeJavaVersion()).thenReturn(ProbeResult.pass("Java 21"));
+		when(probes.probeSpringProfiles()).thenReturn(ProbeResult.pass("local"));
+		when(probes.probePostgresConnectivity()).thenReturn(ProbeResult.pass("Postgres up"));
+		when(probes.probeFlywayState()).thenReturn(ProbeResult.pass("Flyway up"));
+		when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
+		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
+		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+	}
+
+	private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {
+		return report.checks().stream()
+			.filter(c -> name.equals(c.name()))
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("Check not found: " + name));
+	}
+}

@@ -3,6 +3,9 @@
 The workflow commands (`submit`, `status`, `history`) are documented in
 [`workflow-commands.md`](workflow-commands.md).
 
+The diagnostic `doctor` command is documented in
+[`doctor.md`](doctor.md).
+
 ## Exit Code Bands
 
 DeliveryLine shell commands keep successful output unchanged. When a command fails with a governed `DomainException`, the CLI emits a single-line machine-readable error in this format:

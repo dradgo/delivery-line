@@ -1,0 +1,47 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://deliveryline.local/schemas/cli/doctor-report.v1",
+	"title": "DoctorReportV1",
+	"type": "object",
+	"required": ["schemaVersion", "generatedAt", "overallStatus", "checks"],
+	"additionalProperties": false,
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"generatedAt": {
+			"type": "string",
+			"description": "ISO-8601 timestamp in UTC"
+		},
+		"overallStatus": {
+			"type": "string",
+			"enum": ["PASS", "WARN", "FAIL", "SKIP"]
+		},
+		"checks": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["name", "status", "summary"],
+				"additionalProperties": false,
+				"properties": {
+					"name": {
+						"type": "string",
+						"pattern": "^[a-z0-9][a-z0-9-]*$"
+					},
+					"status": {
+						"type": "string",
+						"enum": ["PASS", "WARN", "FAIL", "SKIP"]
+					},
+					"summary": { "type": "string" },
+					"remediation": { "type": "string" },
+					"errorCode": {
+						"type": "string",
+						"pattern": "^[A-Z][A-Z0-9_]*$"
+					},
+					"details": {
+						"type": "object",
+						"additionalProperties": { "type": "string" }
+					}
+				}
+			}
+		}
+	}
+}
