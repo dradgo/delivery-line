@@ -59,6 +59,7 @@ class DoctorLoggingContractTest {
 		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
 		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
 		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+		when(probes.probeSupportedEnvironment()).thenReturn(ProbeResult.pass("Supported environment in matrix"));
 		DoctorService service = new DoctorService(
 			probes,
 			new RedactionPolicyService(new DataClassificationService()),

@@ -70,7 +70,11 @@ public class DoctorService {
 		Map.entry(CHECK_REST_BIND_ADDRESS,
 			"Bind server.address to a loopback (e.g. 127.0.0.1) or free the configured port."),
 		Map.entry(CHECK_SPRING_PROFILE,
-			"Set spring.profiles.active=local in application-local.yml (or pass --spring.profiles.active=local).")
+			"Set spring.profiles.active=local in application-local.yml (or pass --spring.profiles.active=local)."),
+		Map.entry(CHECK_SUPPORTED_ENVIRONMENT,
+			"To run DeliveryLine on this OS+shell combination, see docs/supported-environments.md for currently"
+				+ " supported combinations — this combination is not tested and may require contributions to the"
+				+ " scripts under `scripts/`.")
 	);
 
 	private static final String SHAREABLE_REDACTED = DataClassification.SHAREABLE_REDACTED.value();
@@ -182,8 +186,7 @@ public class DoctorService {
 				case CHECK_REST_BIND_ADDRESS -> probes.probeRestBindAddress();
 				case CHECK_FRONTEND_ASSET_PRESENCE -> ProbeResult.skip(
 					"Frontend asset check populated in story 2.28");
-				case CHECK_SUPPORTED_ENVIRONMENT -> ProbeResult.skip(
-					"Supported environment matrix check populated in story 1.17");
+				case CHECK_SUPPORTED_ENVIRONMENT -> probes.probeSupportedEnvironment();
 				default -> ProbeResult.skip("Unknown check: " + name);
 			};
 		} catch (RuntimeException re) {
@@ -216,6 +219,16 @@ public class DoctorService {
 			String artifactRoot = details.get("artifactRoot");
 			if (artifactRoot != null && !artifactRoot.isBlank()) {
 				return "Ensure the artifact root directory exists and is writable: " + artifactRoot + ".";
+			}
+		}
+		if (CHECK_SUPPORTED_ENVIRONMENT.equals(name)) {
+			String os = details.get("os");
+			String shell = details.get("shell");
+			if (os != null && !os.isBlank() && shell != null && !shell.isBlank()) {
+				return "To run DeliveryLine on " + os + "+" + shell
+					+ ", see docs/supported-environments.md for currently supported combinations —"
+					+ " this combination is not tested and may require contributions to the scripts"
+					+ " under `scripts/`.";
 			}
 		}
 		return REMEDIATION.get(name);

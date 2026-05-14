@@ -1,0 +1,52 @@
+# .github/workflows/ci.yml
+# Story 1.17 — OS-matrix doctor smoke. Story 1.21 expands this to the full 9-tier pipeline
+# (format-static-checks -> runner-contract-fixtures -> frontend-build-tests -> backend-unit-tests
+#  -> backend-contract-tests -> runner-image-compat -> jar-packaging -> bundled-jar-smoke
+#  -> export-redaction-verify). Keep this file minimal so 1.21 can extend cleanly.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  doctor-smoke:
+    name: doctor-smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # docker-availability is included so CI actually exercises the Docker-WARN
+      # tolerance from AC8: ubuntu-latest ships with Docker (probe PASSes); windows-latest
+      # has no Docker Desktop (probe WARNs with DOCTOR_DOCKER_MISSING). Both runners must
+      # still exit 0 because DoctorService.aggregate() only returns FAIL when a check FAILs
+      # and DoctorCommands only throws on FAIL — see deliveryline-backend DoctorService:261
+      # and DoctorCommands:88.
+      #
+      # supported-environment expectations on hosted runners:
+      #   ubuntu-latest  → PASS (Ubuntu 22.04+, bash, Docker Engine 24+).
+      #   windows-latest → WARN, not PASS. GitHub's `windows-latest` image is
+      #     Windows Server 2022 (os.version "10.0"), not Windows 11. classifyWindows
+      #     emits WARN with matrixRow=win10-nearmiss, which keeps the job at exit 0.
+      #     AC8 requires exit 0 with Docker WARN tolerated; PASS is not required.
+      - name: Doctor smoke (Ubuntu)
+        if: runner.os == 'Linux'
+        run: ./scripts/doctor.sh --only supported-environment,java-version,docker-availability --format json
+
+      - name: Doctor smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/doctor.ps1 --only supported-environment,java-version,docker-availability --format json

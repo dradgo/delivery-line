@@ -5,6 +5,10 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,6 +16,9 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 import org.dradgo.application.diagnostics.DiagnosticsStatus;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
@@ -24,6 +31,7 @@ import org.flywaydb.core.api.MigrationState;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.mock.env.MockEnvironment;
 
@@ -198,6 +206,203 @@ class DoctorProbeAdapterTest {
 	}
 
 	@Test
+	void probeSupportedEnvironmentReturnsPassOnWindows11() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Windows 11", "10.0", "amd64",
+			path -> Optional.empty(),
+			() -> "7.4.1",
+			() -> "unknown");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+		assertThat(result.details()).containsEntry("os", "windows");
+		assertThat(result.details()).containsEntry("shell", "powershell");
+		assertThat(result.details()).containsEntry("matrixRow", "win11");
+	}
+
+	@Test
+	void probeSupportedEnvironmentReturnsPassOnUbuntu2204() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Linux", "5.15.0-105-generic", "amd64",
+			path -> path.endsWith("os-release")
+				? Optional.of("ID=ubuntu\nVERSION_ID=\"22.04\"\n")
+				: Optional.of("Linux version 5.15.0-105-generic (buildd@lcy02-amd64-031)"),
+			() -> "unknown",
+			() -> "/bin/bash");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+		assertThat(result.details()).containsEntry("os", "linux");
+		assertThat(result.details()).containsEntry("shell", "bash");
+		assertThat(result.details()).containsEntry("matrixRow", "ubuntu2204");
+		assertThat(result.details()).containsEntry("dockerRuntime", "engine");
+	}
+
+	@Test
+	void probeSupportedEnvironmentReturnsPassOnMacOs14() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Mac OS X", "14.5", "aarch64",
+			path -> Optional.empty(),
+			() -> "unknown",
+			() -> "/bin/zsh");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+		assertThat(result.details()).containsEntry("os", "macos");
+		assertThat(result.details()).containsEntry("shell", "zsh");
+		assertThat(result.details()).containsEntry("matrixRow", "macos14");
+		assertThat(result.details()).containsEntry("dockerRuntime", "desktop");
+	}
+
+	@Test
+	void probeSupportedEnvironmentWarnsOnUbuntu2004() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Linux", "5.4.0-170-generic", "amd64",
+			path -> path.endsWith("os-release")
+				? Optional.of("ID=ubuntu\nVERSION_ID=\"20.04\"\n")
+				: Optional.of("Linux version 5.4.0-170-generic (buildd@lcy02-amd64-031)"),
+			() -> "unknown",
+			() -> "/bin/bash");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.WARN);
+		assertThat(result.details()).containsEntry("matrixRow", "ubuntu2004");
+		assertThat(result.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_UNSUPPORTED_ENVIRONMENT.value());
+	}
+
+	@Test
+	void probeSupportedEnvironmentFailsOnNonUbuntuLinux() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Linux", "6.6.0", "amd64",
+			path -> path.endsWith("os-release")
+				? Optional.of("ID=debian\nVERSION_ID=\"12\"\n")
+				: Optional.of("Linux version 6.6.0-generic"),
+			() -> "unknown",
+			() -> "/bin/bash");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.FAIL);
+		assertThat(result.details()).containsEntry("matrixRow", "none");
+		assertThat(result.summary()).contains("debian");
+	}
+
+	@Test
+	void probeSupportedEnvironmentReturnsWarnOnWindows10() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Windows 10", "10.0", "amd64",
+			path -> Optional.empty(),
+			() -> "5.1.22000.4123",
+			() -> "unknown");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.WARN);
+		assertThat(result.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_UNSUPPORTED_ENVIRONMENT.value());
+		assertThat(result.summary()).contains("near-miss");
+	}
+
+	@Test
+	void probeSupportedEnvironmentReturnsWarnOnMacOs13() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Mac OS X", "13.6", "aarch64",
+			path -> Optional.empty(),
+			() -> "unknown",
+			() -> "/bin/zsh");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.WARN);
+		assertThat(result.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_UNSUPPORTED_ENVIRONMENT.value());
+	}
+
+	@Test
+	void probeSupportedEnvironmentReturnsFailOnUnknownOs() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"SolarisHaiku", "1.0", "sparc",
+			path -> Optional.empty(),
+			() -> "unknown",
+			() -> "/bin/tcsh");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.FAIL);
+		assertThat(result.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_UNSUPPORTED_ENVIRONMENT.value());
+		assertThat(result.details()).containsEntry("matrixRow", "none");
+		assertThat(result.details()).containsEntry("os", "solarishaiku");
+		assertThat(result.details()).containsEntry("shell", "tcsh");
+	}
+
+	@Test
+	void probeSupportedEnvironmentDetectsWsl2ViaProcVersion() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Linux", "5.15.146.1-microsoft-standard-WSL2", "amd64",
+			path -> path.endsWith("os-release")
+				? Optional.of("ID=ubuntu\nVERSION_ID=\"22.04\"\n")
+				: Optional.of("Linux version 5.15.146.1-microsoft-standard-WSL2 (root@WSL)"),
+			() -> "unknown",
+			() -> "/bin/bash");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+		assertThat(result.details()).containsEntry("os", "wsl2");
+		assertThat(result.details()).containsEntry("matrixRow", "wsl2");
+		assertThat(result.details()).containsEntry("dockerRuntime", "desktop");
+		assertThat(result.details().get("notes")).contains("WSL2");
+	}
+
+	@Test
+	void probeSupportedEnvironmentFailsWhenShellIsOutsideSupportedMatrix() {
+		DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+			"Mac OS X", "14.5", "aarch64",
+			path -> Optional.empty(),
+			() -> "unknown",
+			() -> "/bin/tcsh");
+
+		ProbeResult result = adapter.probeSupportedEnvironment();
+
+		assertThat(result.status()).isEqualTo(DiagnosticsStatus.FAIL);
+		assertThat(result.summary()).contains("tcsh");
+		assertThat(result.details()).containsEntry("shell", "tcsh");
+	}
+
+	@Test
+	void probeSupportedEnvironmentEmitsDebugLogOnEntryExit() {
+		Logger logger = (Logger) LoggerFactory.getLogger(DoctorProbeAdapter.class);
+		Level previous = logger.getLevel();
+		logger.setLevel(Level.DEBUG);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			DoctorProbeAdapter adapter = newAdapterWithEnvSeams(
+				"Linux", "5.15.0", "amd64",
+				path -> path.endsWith("os-release")
+					? Optional.of("ID=ubuntu\nVERSION_ID=\"22.04\"\n")
+					: Optional.empty(),
+				() -> "unknown",
+				() -> "/bin/bash");
+
+			adapter.probeSupportedEnvironment();
+
+			boolean hasDebugSummary = appender.list.stream()
+				.filter(e -> e.getLevel() == Level.DEBUG)
+				.anyMatch(e -> e.getFormattedMessage().contains("probeSupportedEnvironment")
+					&& e.getFormattedMessage().contains("osBucket=linux")
+					&& e.getFormattedMessage().contains("matrixRow=ubuntu2204"));
+			assertThat(hasDebugSummary).isTrue();
+		} finally {
+			logger.detachAppender(appender);
+			logger.setLevel(previous);
+		}
+	}
+
+	@Test
 	void dockerProbeWarnsOnIoException() {
 		ProcessLauncher throwing = pb -> {
 			throw new IOException("docker not found");
@@ -269,6 +474,33 @@ class DoctorProbeAdapterTest {
 			8080,
 			Path.of("."),
 			failingFactory());
+	}
+
+	private DoctorProbeAdapter newAdapterWithEnvSeams(
+		String osName,
+		String osVersion,
+		String osArch,
+		Function<Path, Optional<String>> procVersionReader,
+		Supplier<String> powerShellVersionSupplier,
+		Supplier<String> shellEnvSupplier
+	) {
+		return new DoctorProbeAdapter(
+			new MockEnvironment(),
+			mock(DataSource.class),
+			mock(Flyway.class),
+			uuidV7Generator,
+			Path.of(System.getProperty("java.io.tmpdir"), "deliveryline-doctor-test"),
+			"localhost",
+			8080,
+			Path.of("."),
+			failingFactory(),
+			() -> osName,
+			() -> osVersion,
+			() -> osArch,
+			procVersionReader,
+			procVersionReader,
+			powerShellVersionSupplier,
+			shellEnvSupplier);
 	}
 
 	private static ProcessLauncher failingFactory() {

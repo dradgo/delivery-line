@@ -49,7 +49,7 @@ is safe even on `FAIL`.
 | `runner-image-availability` | Reserved (populated in story 3.1) | SKIP |
 | `rest-bind-address` | `server.address` resolves to a loopback address | FAIL on non-loopback. **Port-availability sub-check is skipped** in story 1.16; production bind failures still surface on Spring Boot startup. |
 | `frontend-asset-presence` | Reserved (populated in story 2.28) | SKIP |
-| `supported-environment` | Reserved (populated in story 1.17) | SKIP |
+| `supported-environment` | OS+shell+runtime combination matches [`docs/supported-environments.md`](../supported-environments.md) | FAIL on outside-matrix (`DOCTOR_UNSUPPORTED_ENVIRONMENT`); WARN on near-miss (Windows 10, macOS 13, Ubuntu 20.04) |
 
 ## JSON schema
 
@@ -76,7 +76,7 @@ docker-availability: PASS Docker reachable
 runner-image-availability: SKIP Runner image availability check populated in story 3.1
 rest-bind-address: PASS REST bind address resolves to loopback
 frontend-asset-presence: SKIP Frontend asset check populated in story 2.28
-supported-environment: SKIP Supported environment matrix check populated in story 1.17
+supported-environment: PASS Windows 11 + PowerShell 7.4 + Docker Desktop
 overall: PASS
 ```
 
@@ -143,3 +143,26 @@ check still appears in the JSON output with `status = SKIP`.
 The `docker-availability` check defaults to `WARN` on missing daemon because
 runners are only required in Epic 3; CI agents without Docker do not gate the
 build.
+
+## Supported-environment check
+
+Story 1.17 wires the `supported-environment` check to a runtime probe that
+reads `os.name` / `os.version` / `os.arch`, sniffs the active shell, and reads
+`/proc/version` on Linux to detect WSL2. The detected combination is compared
+against the matrix in
+[`docs/supported-environments.md`](../supported-environments.md):
+
+- `PASS` when the OS+shell+runtime combination matches a matrix row exactly.
+- `WARN` for documented near-misses (Windows 10, macOS 13 Ventura, Ubuntu 20.04
+  LTS); the report carries `errorCode = "DOCTOR_UNSUPPORTED_ENVIRONMENT"` but
+  `overall` is not flipped to `FAIL` on `WARN`.
+- `FAIL` with `errorCode = "DOCTOR_UNSUPPORTED_ENVIRONMENT"` and exit code
+  `401` for any OS bucket outside `{windows, macos, linux, wsl2}` or for
+  matrix-row failures (e.g., Ubuntu < 20.04, macOS < 13). The remediation hint
+  carries the detected OS+shell so the operator knows what is unsupported.
+
+The probe is a lightweight read (≤ 200 ms) and does **not** re-invoke
+`docker version`; that is the `docker-availability` check's responsibility. On
+WSL2 the report carries an extra `notes` field reminding the operator to
+enable Docker Desktop's WSL2 integration if the standalone Docker probe is
+unreachable.

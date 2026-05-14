@@ -6,6 +6,10 @@ The workflow commands (`submit`, `status`, `history`) are documented in
 The diagnostic `doctor` command is documented in
 [`doctor.md`](doctor.md).
 
+The supported-environment matrix (OS / shell / container-runtime / Java / Node) consumed by the
+`doctor` `supported-environment` check is documented in
+[`../supported-environments.md`](../supported-environments.md).
+
 ## Exit Code Bands
 
 DeliveryLine shell commands keep successful output unchanged. When a command fails with a governed `DomainException`, the CLI emits a single-line machine-readable error in this format:

@@ -112,6 +112,7 @@ class DoctorServiceTest {
 		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.warn(
 			"Docker unreachable", DomainErrorCode.DOCTOR_DOCKER_MISSING.value(), Map.of()));
 		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+		when(probes.probeSupportedEnvironment()).thenReturn(ProbeResult.pass("Supported environment in matrix"));
 
 		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -134,6 +135,7 @@ class DoctorServiceTest {
 		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
 		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
 		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+		when(probes.probeSupportedEnvironment()).thenReturn(ProbeResult.pass("Supported environment in matrix"));
 
 		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -164,7 +166,7 @@ class DoctorServiceTest {
 	}
 
 	@Test
-	void runnerImageFrontendAndSupportedEnvironmentChecksAreReservedAsSkip() {
+	void runnerImageAndFrontendChecksAreReservedAsSkip() {
 		stubAllProbesPass();
 
 		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
@@ -173,8 +175,43 @@ class DoctorServiceTest {
 			.isEqualTo(DiagnosticsStatus.SKIP);
 		assertThat(findCheck(report, DoctorService.CHECK_FRONTEND_ASSET_PRESENCE).status())
 			.isEqualTo(DiagnosticsStatus.SKIP);
-		assertThat(findCheck(report, DoctorService.CHECK_SUPPORTED_ENVIRONMENT).status())
-			.isEqualTo(DiagnosticsStatus.SKIP);
+	}
+
+	@Test
+	void supportedEnvironmentSlotInvokesProbe() {
+		stubAllProbesPass();
+		when(probes.probeSupportedEnvironment()).thenReturn(new ProbeResult(
+			DiagnosticsStatus.PASS,
+			"Windows 11 + PowerShell 7.4 + Docker Desktop",
+			null,
+			Map.of("os", "windows", "shell", "powershell", "matrixRow", "win11")));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		DiagnosticsCheck supportedEnv = findCheck(report, DoctorService.CHECK_SUPPORTED_ENVIRONMENT);
+		assertThat(supportedEnv.status()).isEqualTo(DiagnosticsStatus.PASS);
+		assertThat(supportedEnv.summary()).contains("Windows 11");
+		assertThat(supportedEnv.details()).containsEntry("matrixRow", "win11");
+	}
+
+	@Test
+	void supportedEnvironmentFailRendersDetectedOsShellInRemediation() {
+		stubAllProbesPass();
+		when(probes.probeSupportedEnvironment()).thenReturn(new ProbeResult(
+			DiagnosticsStatus.FAIL,
+			"Unsupported OS detected; combination is outside the supported matrix",
+			DomainErrorCode.DOCTOR_UNSUPPORTED_ENVIRONMENT.value(),
+			Map.of("os", "freebsd", "shell", "tcsh", "matrixRow", "none")));
+
+		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+		DiagnosticsCheck supportedEnv = findCheck(report, DoctorService.CHECK_SUPPORTED_ENVIRONMENT);
+		assertThat(supportedEnv.status()).isEqualTo(DiagnosticsStatus.FAIL);
+		assertThat(supportedEnv.errorCode()).isEqualTo("DOCTOR_UNSUPPORTED_ENVIRONMENT");
+		assertThat(supportedEnv.remediation())
+			.contains("freebsd+tcsh")
+			.contains("docs/supported-environments.md");
+		assertThat(report.overallStatus()).isEqualTo(DiagnosticsStatus.FAIL);
 	}
 
 	@Test
@@ -192,6 +229,7 @@ class DoctorServiceTest {
 		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
 		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
 		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+		when(probes.probeSupportedEnvironment()).thenReturn(ProbeResult.pass("Supported environment in matrix"));
 
 		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -210,6 +248,7 @@ class DoctorServiceTest {
 		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
 		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
 		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+		when(probes.probeSupportedEnvironment()).thenReturn(ProbeResult.pass("Supported environment in matrix"));
 
 		DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -241,6 +280,7 @@ class DoctorServiceTest {
 		when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
 		when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
 		when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
+		when(probes.probeSupportedEnvironment()).thenReturn(ProbeResult.pass("Supported environment in matrix"));
 	}
 
 	private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

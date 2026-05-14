@@ -17,4 +17,6 @@ public interface DoctorProbePort {
 	ProbeResult probeDockerAvailability();
 
 	ProbeResult probeRestBindAddress();
+
+	ProbeResult probeSupportedEnvironment();
 }
