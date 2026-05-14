@@ -35,6 +35,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -115,8 +116,8 @@ public class IntegrationLinkService {
 
 		String fingerprint = computeFingerprint(LINEAR_INTEGRATION_TYPE, linearTicketRef, workflowRunPublicId);
 		log.info(
-			"linkTicket entry workflowRunId={} externalRef={} actorIdentity={} idempotencyKey={}",
-			workflowRunPublicId, linearTicketRef, actor.actorIdentity(), idempotencyKey);
+			"linkTicket entry workflowRunId={} actorIdentity={}",
+			workflowRunPublicId, actor.actorIdentity());
 
 		ReservationOutcome outcome = idempotencyService.checkAndReserve(
 			idempotencyKey,
@@ -133,7 +134,7 @@ public class IntegrationLinkService {
 			}
 			IntegrationLink existing = integrationLinkRecordPort.findByPublicId(priorRef)
 				.orElseThrow(() -> replayedRecordMissing(idempotencyKey, priorRef));
-			log.info("linkTicket replay idempotencyKey={} resultRef={}", idempotencyKey, priorRef);
+			log.info("linkTicket replay resultRef={}", priorRef);
 			return existing;
 		}
 
@@ -148,14 +149,14 @@ public class IntegrationLinkService {
 					existing.publicId(),
 					IdempotencyRecordStatus.COMPLETED);
 				log.info(
-					"linkTicket idempotent_same_run workflowRunId={} externalRef={} existingPublicId={}",
-					workflowRunPublicId, linearTicketRef, existing.publicId());
+					"linkTicket idempotent_same_run workflowRunId={} existingPublicId={}",
+					workflowRunPublicId, existing.publicId());
 				return existing;
 			}
 			completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
 			log.warn(
-				"linkTicket cross_run_conflict workflowRunId={} externalRef={} existingRunId={}",
-				workflowRunPublicId, linearTicketRef, existing.workflowRunPublicId());
+				"linkTicket cross_run_conflict workflowRunId={} existingRunId={}",
+				workflowRunPublicId, existing.workflowRunPublicId());
 			throw crossRunConflict(linearTicketRef, existing);
 		}
 
@@ -165,16 +166,15 @@ public class IntegrationLinkService {
 			Optional<LinearTicket> fetched = linearAdapter.fetchTicketByReference(linearTicketRef);
 			if (fetched.isEmpty()) {
 				completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
-				log.warn("linkTicket ticket_not_found workflowRunId={} externalRef={}",
-					workflowRunPublicId, linearTicketRef);
+				log.warn("linkTicket ticket_not_found workflowRunId={}", workflowRunPublicId);
 				throw linearTicketNotFound(linearTicketRef);
 			}
 			ticket = fetched.get();
 		} catch (LinearAdapterException error) {
 			completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
 			log.warn(
-				"linkTicket adapter_failure workflowRunId={} externalRef={} category={}",
-				workflowRunPublicId, linearTicketRef, error.failureCategory().value());
+				"linkTicket adapter_failure workflowRunId={} category={}",
+				workflowRunPublicId, error.failureCategory().value());
 			throw adapterFailure(linearTicketRef, error);
 		}
 
@@ -194,8 +194,8 @@ public class IntegrationLinkService {
 			now));
 		idempotencyService.complete(idempotencyKey, inserted.publicId(), IdempotencyRecordStatus.COMPLETED);
 		log.info(
-			"linkTicket success workflowRunId={} externalRef={} integrationLinkPublicId={} effectiveClassification={}",
-			workflowRunPublicId, linearTicketRef, inserted.publicId(),
+			"linkTicket success workflowRunId={} integrationLinkPublicId={} effectiveClassification={}",
+			workflowRunPublicId, inserted.publicId(),
 			redacted.effectiveClassification().value());
 		return inserted;
 	}
@@ -216,6 +216,86 @@ public class IntegrationLinkService {
 		TransactionTemplate template = new TransactionTemplate(transactionManager);
 		template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		return template;
+	}
+
+	/**
+	 * Variant of {@link #linkTicket} that is invoked from within an already-open transaction
+	 * (e.g. {@code WorkflowCommandService.submit}) where the parent's idempotency layer already
+	 * guarantees exactly-once execution. Skips {@link IdempotencyService} entirely — the parent
+	 * transaction owns commit/rollback. Performs fetch, conflict detection (with pessimistic
+	 * lock), redaction, and insert in the caller's transaction.
+	 *
+	 * <p>Throws {@code LINEAR_TICKET_NOT_FOUND} when the adapter returns empty for the supplied
+	 * ref, {@code INTEGRATION_LINK_CONFLICT} when another active row exists for the same ticket
+	 * but a different run, and propagates {@link LinearAdapterException} as a typed
+	 * {@code INTEGRATION_LINK_CONFLICT} carrying {@code failureCategory}.
+	 */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public IntegrationLink linkTicketWithinTransaction(
+		String workflowRunPublicId,
+		String linearTicketRef,
+		ActorContext actor
+	) {
+		PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+		Objects.requireNonNull(linearTicketRef, "linearTicketRef");
+		Objects.requireNonNull(actor, "actor");
+		log.info(
+			"linkTicketWithinTransaction entry workflowRunId={} actorIdentity={}",
+			workflowRunPublicId, actor.actorIdentity());
+
+		Optional<IntegrationLink> activeLink = integrationLinkRecordPort
+			.findActiveByTypeAndExternalRefForUpdate(LINEAR_INTEGRATION_TYPE, linearTicketRef);
+		if (activeLink.isPresent()) {
+			IntegrationLink existing = activeLink.get();
+			if (existing.workflowRunPublicId().equals(workflowRunPublicId)) {
+				log.info(
+					"linkTicketWithinTransaction idempotent_same_run workflowRunId={} existingPublicId={}",
+					workflowRunPublicId, existing.publicId());
+				return existing;
+			}
+			log.warn(
+				"linkTicketWithinTransaction cross_run_conflict workflowRunId={} existingRunId={}",
+				workflowRunPublicId, existing.workflowRunPublicId());
+			throw crossRunConflict(linearTicketRef, existing);
+		}
+
+		String publicId = PublicIdPrefixes.INTEGRATION_LINK.next();
+		LinearTicket ticket;
+		try {
+			Optional<LinearTicket> fetched = linearAdapter.fetchTicketByReference(linearTicketRef);
+			if (fetched.isEmpty()) {
+				log.warn(
+					"linkTicketWithinTransaction ticket_not_found workflowRunId={}",
+					workflowRunPublicId);
+				throw linearTicketNotFound(linearTicketRef);
+			}
+			ticket = fetched.get();
+		} catch (LinearAdapterException error) {
+			log.warn(
+				"linkTicketWithinTransaction adapter_failure workflowRunId={} category={}",
+				workflowRunPublicId, error.failureCategory().value());
+			throw adapterFailure(linearTicketRef, error);
+		}
+
+		Map<String, Object> rawMetadata = buildExternalMetadata(ticket);
+		RedactionResult redacted = redactionPolicyService.redact(
+			rawMetadata, DataClassification.SHAREABLE_REDACTED.value());
+		byte[] metadataBytes = serializeRedactedMetadata(redacted.sanitizedJson());
+
+		Instant now = Instant.now();
+		IntegrationLink inserted = integrationLinkRecordPort.insert(new NewIntegrationLink(
+			publicId,
+			workflowRunPublicId,
+			LINEAR_INTEGRATION_TYPE,
+			linearTicketRef,
+			metadataBytes,
+			now,
+			now));
+		log.info(
+			"linkTicketWithinTransaction success workflowRunId={} integrationLinkPublicId={} effectiveClassification={}",
+			workflowRunPublicId, inserted.publicId(),
+			redacted.effectiveClassification().value());
+		return inserted;
 	}
 
 	/**

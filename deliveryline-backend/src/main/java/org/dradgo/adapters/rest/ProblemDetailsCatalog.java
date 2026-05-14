@@ -59,6 +59,8 @@ public final class ProblemDetailsCatalog {
 		register(metadata, DomainErrorCode.WORKFLOW_RUN_TERMINAL, HttpStatus.CONFLICT, "Workflow run is terminal", false);
 		register(metadata, DomainErrorCode.RUNNER_EXECUTION_NOT_FOUND, HttpStatus.NOT_FOUND, "Runner execution not found", false);
 		register(metadata, DomainErrorCode.INVALID_COMMAND_PAYLOAD, HttpStatus.BAD_REQUEST, "Invalid command payload", false);
+		register(metadata, DomainErrorCode.INVALID_TIME_RANGE, HttpStatus.BAD_REQUEST, "Invalid time range", false);
+		register(metadata, DomainErrorCode.HISTORY_TOO_LARGE, HttpStatus.BAD_REQUEST, "Workflow history exceeds inspection ceiling", false);
 		register(metadata, DomainErrorCode.INTERNAL_ERROR, HttpStatus.INTERNAL_SERVER_ERROR, "Internal error", false);
 		register(metadata, DomainErrorCode.UNKNOWN_REGISTRY_VALUE, HttpStatus.BAD_REQUEST, "Unknown registry value", false);
 		register(metadata, DomainErrorCode.INVALID_ID_PREFIX, HttpStatus.BAD_REQUEST, "Invalid public ID prefix", false);

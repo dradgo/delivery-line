@@ -82,9 +82,14 @@ class IntegrationLoggingContractTest {
 
 		assertContains(serviceAppender.list, Level.INFO, "linkTicket entry");
 		assertContains(serviceAppender.list, Level.INFO, "workflowRunId=" + RUN_ID);
-		assertContains(serviceAppender.list, Level.INFO, "idempotencyKey=" + IDEMPOTENCY_KEY);
 		assertContains(serviceAppender.list, Level.INFO, "linkTicket success");
 		assertContains(serviceAppender.list, Level.INFO, "integrationLinkPublicId=ilk_log12345678");
+		assertTrue(serviceAppender.list.stream().noneMatch(event ->
+			event.getFormattedMessage().contains(IDEMPOTENCY_KEY)),
+			"idempotency keys must not reach the log surface");
+		assertTrue(serviceAppender.list.stream().noneMatch(event ->
+			event.getFormattedMessage().contains(TICKET_REF)),
+			"raw external ticket references must not reach the log surface");
 	}
 
 	@Test
@@ -112,7 +117,9 @@ class IntegrationLoggingContractTest {
 		}
 
 		assertContains(serviceAppender.list, Level.WARN, "linkTicket ticket_not_found");
-		assertContains(serviceAppender.list, Level.WARN, "externalRef=" + TICKET_REF);
+		assertTrue(serviceAppender.list.stream().noneMatch(event ->
+			event.getFormattedMessage().contains(TICKET_REF)),
+			"raw external ticket references must not reach the log surface");
 	}
 
 	@Test

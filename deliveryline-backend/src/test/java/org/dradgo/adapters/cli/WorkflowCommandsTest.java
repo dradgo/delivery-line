@@ -1,6 +1,7 @@
 package org.dradgo.adapters.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -71,6 +72,31 @@ class WorkflowCommandsTest {
 		assertEquals(
 			"run_submit1234 submitted (state: Inbox) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
 			output);
+	}
+
+	@Test
+	void interactiveSubmitWithoutCorrelationIdDoesNotInjectTheGeneratedCorrelationIntoTheCommand() {
+		WorkflowCommandService service = mock(WorkflowCommandService.class);
+		when(service.submit(any())).thenReturn(new SubmitWorkflowResult(
+			"run_submit1234",
+			WorkflowState.INBOX,
+			null));
+		WorkflowCommands commands = new WorkflowCommands(
+			service,
+			() -> true,
+			() -> "01964c38-1c45-7000-8000-000000000000");
+
+		commands.submit(
+			"LIN-123",
+			"alex",
+			ActorType.HUMAN,
+			null,
+			null,
+			false);
+
+		ArgumentCaptor<SubmitWorkflowCommand> captor = ArgumentCaptor.forClass(SubmitWorkflowCommand.class);
+		verify(service).submit(captor.capture());
+		assertNull(captor.getValue().correlationId());
 	}
 
 	@Test

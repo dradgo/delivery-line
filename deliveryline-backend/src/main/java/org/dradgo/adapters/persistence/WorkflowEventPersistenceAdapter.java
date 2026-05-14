@@ -1,17 +1,25 @@
 package org.dradgo.adapters.persistence;
 
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
 import org.dradgo.adapters.persistence.mapper.WorkflowEventEntityMapper;
 import org.dradgo.adapters.persistence.repository.WorkflowEventRepository;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 @Component
-public class WorkflowEventPersistenceAdapter implements WorkflowEventWritePort {
+public class WorkflowEventPersistenceAdapter implements WorkflowEventWritePort, WorkflowEventReadPort {
 
 	private final WorkflowEventRepository workflowEventRepository;
 	private final WorkflowRunRepository workflowRunRepository;
@@ -36,5 +44,39 @@ public class WorkflowEventPersistenceAdapter implements WorkflowEventWritePort {
 				Map.of("runId", eventRecord.workflowRunPublicId())));
 		workflowEventRepository.saveAndFlush(
 			workflowEventEntityMapper.toEntity(eventRecord, workflowRun));
+	}
+
+	@Override
+	public Optional<WorkflowEventRecord> findLatestByWorkflowRunPublicId(String workflowRunPublicId) {
+		return workflowEventRepository
+			.findFirstLatestByWorkflowRunPublicId(workflowRunPublicId)
+			.map(workflowEventEntityMapper::toRecord);
+	}
+
+	@Override
+	public List<WorkflowEventRecord> listByWorkflowRunPublicId(
+		String workflowRunPublicId,
+		OffsetDateTime sinceInclusive
+	) {
+		// Ask for HISTORY_CEILING + 1 so we can detect "exceeds the ceiling" without re-querying.
+		PageRequest page = PageRequest.of(0, HISTORY_CEILING + 1);
+		List<WorkflowEventEntity> entities = sinceInclusive == null
+			? workflowEventRepository.findByWorkflowRunPublicIdOrderByCreatedAtAscIdAsc(workflowRunPublicId, page)
+			: workflowEventRepository.findByWorkflowRunPublicIdAndCreatedAtGreaterThanEqualOrderByCreatedAtAscIdAsc(
+				workflowRunPublicId, sinceInclusive, page);
+		if (entities.size() > HISTORY_CEILING) {
+			Map<String, Object> details = new LinkedHashMap<>();
+			details.put("runId", workflowRunPublicId);
+			details.put("ceiling", HISTORY_CEILING);
+			throw new DomainException(
+				DomainErrorCode.HISTORY_TOO_LARGE,
+				"Run history exceeds " + HISTORY_CEILING + " events; pass --since to narrow.",
+				details);
+		}
+		List<WorkflowEventRecord> records = new ArrayList<>(entities.size());
+		for (WorkflowEventEntity entity : entities) {
+			records.add(workflowEventEntityMapper.toRecord(entity));
+		}
+		return records;
 	}
 }

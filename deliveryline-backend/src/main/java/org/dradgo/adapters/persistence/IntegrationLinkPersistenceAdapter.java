@@ -123,18 +123,16 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
 			persisted = integrationLinkRepository.saveAndFlush(entity);
 		} catch (DataIntegrityViolationException collision) {
 			log.warn(
-				"insert conflict integrationType={} externalRef={} workflowRunId={} cause={}",
+				"insert conflict integrationType={} workflowRunId={} cause={}",
 				request.integrationType(),
-				request.externalRef(),
 				request.workflowRunPublicId(),
 				collision.getMostSpecificCause().getClass().getSimpleName());
 			throw conflict(request, collision);
 		}
 		log.info(
-			"persisting integration_link publicId={} integrationType={} externalRef={} workflowRunId={}",
+			"persisting integration_link publicId={} integrationType={} workflowRunId={}",
 			persisted.getPublicId(),
 			persisted.getIntegrationType(),
-			persisted.getExternalRef(),
 			persisted.getWorkflowRun().getPublicId());
 		return mapper.toDomain(persisted);
 	}

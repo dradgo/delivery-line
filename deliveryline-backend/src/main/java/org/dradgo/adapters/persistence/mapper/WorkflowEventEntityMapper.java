@@ -27,4 +27,22 @@ public class WorkflowEventEntityMapper {
 			: new LinkedHashMap<>(eventRecord.details()));
 		return entity;
 	}
+
+	public WorkflowEventRecord toRecord(WorkflowEventEntity entity) {
+		return new WorkflowEventRecord(
+			entity.getPublicId(),
+			entity.getWorkflowRun().getPublicId(),
+			entity.getEventType(),
+			entity.getPriorState(),
+			entity.getResultingState(),
+			entity.getActorIdentity(),
+			entity.getActorType(),
+			entity.getReason(),
+			entity.getFailureCategory(),
+			entity.isInterventionMarker(),
+			entity.getCreatedAt(),
+			entity.getDetails() == null
+				? new LinkedHashMap<>()
+				: new LinkedHashMap<>(entity.getDetails()));
+	}
 }

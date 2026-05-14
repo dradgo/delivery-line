@@ -10,9 +10,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
+import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
@@ -32,7 +34,12 @@ import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class WorkflowCommandService {
@@ -45,6 +52,10 @@ public class WorkflowCommandService {
 	private final IdempotencyService idempotencyService;
 	private final IdempotencyKeyValidator idempotencyKeyValidator;
 	private final WorkflowCommandFingerprintFactory fingerprintFactory;
+	private final IntegrationLinkService integrationLinkService;
+	private final TransactionTemplate failureCompletionTemplate;
+	private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
+	private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
 
 	public WorkflowCommandService(
 		WorkflowRunReadPort workflowRunReadPort,
@@ -52,18 +63,22 @@ public class WorkflowCommandService {
 		WorkflowEventWritePort workflowEventWritePort,
 		WorkflowTransitionService workflowTransitionService,
 		Validator validator,
+		PlatformTransactionManager transactionManager,
 		IdempotencyService idempotencyService,
 		IdempotencyKeyValidator idempotencyKeyValidator,
-		WorkflowCommandFingerprintFactory fingerprintFactory
+		WorkflowCommandFingerprintFactory fingerprintFactory,
+		IntegrationLinkService integrationLinkService
 	) {
 		this.workflowRunReadPort = workflowRunReadPort;
 		this.workflowRunCreatePort = workflowRunCreatePort;
 		this.workflowEventWritePort = workflowEventWritePort;
 		this.workflowTransitionService = workflowTransitionService;
 		this.validator = validator;
+		this.failureCompletionTemplate = requiresNewTemplate(transactionManager);
 		this.idempotencyService = idempotencyService;
 		this.idempotencyKeyValidator = idempotencyKeyValidator;
 		this.fingerprintFactory = fingerprintFactory;
+		this.integrationLinkService = integrationLinkService;
 	}
 
 	@Transactional
@@ -92,8 +107,10 @@ public class WorkflowCommandService {
 	}
 
 	private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
-		// The create path and initial event append must stay inside the surrounding
-		// @Transactional boundary so they commit or roll back together.
+		// The create path, initial event append, and integration_link creation must stay inside the
+		// surrounding @Transactional boundary so they commit or roll back together. If linking the
+		// source ticket fails (LINEAR_TICKET_NOT_FOUND / INTEGRATION_LINK_CONFLICT / adapter
+		// failure), the workflow_run row is rolled back too — the run never existed.
 		var workflowRun = workflowRunCreatePort.create(PublicIdPrefixes.WORKFLOW_RUN.next(), WorkflowState.INBOX);
 		if (workflowRun.currentState() != WorkflowState.INBOX) {
 			throw new IllegalStateException(
@@ -114,6 +131,14 @@ public class WorkflowCommandService {
 			false,
 			OffsetDateTime.now(ZoneOffset.UTC),
 			details));
+
+		integrationLinkService.linkTicketWithinTransaction(
+			workflowRun.publicId(),
+			command.linearTicketReference(),
+			new ActorContext(
+				command.actorIdentity(),
+				command.actorType(),
+				normalizeOptional(command.correlationId())));
 
 		return new SubmitWorkflowResult(
 			workflowRun.publicId(),
@@ -186,17 +211,62 @@ public class WorkflowCommandService {
 	) {
 		validateForExecution(command);
 		String fingerprint = fingerprintFactory.fingerprintFor(command);
-		IdempotencyService.ReservationOutcome outcome = idempotencyService.checkAndReserve(
-			command.idempotencyKey(),
-			command.commandType(),
-			command.actorIdentity(),
-			fingerprint);
+		IdempotencyService.ReservationOutcome outcome = checkAndReserveInIndependentTransaction(command, fingerprint);
 		if (outcome.decision() == IdempotencyService.ReservationDecision.REPLAY) {
 			return replayLoader.apply(outcome.resultRef(), command);
 		}
-		T result = action.apply(command);
-		idempotencyService.complete(command.idempotencyKey(), result.workflowRunId(), IdempotencyRecordStatus.COMPLETED);
-		return result;
+		try {
+			T result = action.apply(command);
+			completeWhenTransactionFinishes(command.idempotencyKey(), result.workflowRunId());
+			return result;
+		} catch (RuntimeException error) {
+			completeFailedInIndependentTransaction(command.idempotencyKey(), error);
+			throw error;
+		}
+	}
+
+	private <C extends WorkflowCommand> IdempotencyService.ReservationOutcome checkAndReserveInIndependentTransaction(
+		C command,
+		String fingerprint
+	) {
+		return failureCompletionTemplate.execute(ignored -> idempotencyService.checkAndReserve(
+			command.idempotencyKey(),
+			command.commandType(),
+			command.actorIdentity(),
+			fingerprint));
+	}
+
+	private void completeWhenTransactionFinishes(String idempotencyKey, String workflowRunId) {
+		completeInIndependentTransaction(idempotencyKey, workflowRunId, IdempotencyRecordStatus.COMPLETED);
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCompletion(int status) {
+					if (status != STATUS_COMMITTED) {
+						completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
+					}
+				}
+			});
+		}
+	}
+
+	private void completeFailedInIndependentTransaction(String idempotencyKey, RuntimeException original) {
+		try {
+			completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
+		} catch (RuntimeException completionError) {
+			original.addSuppressed(completionError);
+		}
+	}
+
+	private void completeInIndependentTransaction(
+		String idempotencyKey,
+		String resultRef,
+		IdempotencyRecordStatus status
+	) {
+		failureCompletionTemplate.execute(ignored -> {
+			idempotencyService.complete(idempotencyKey, resultRef, status);
+			return null;
+		});
 	}
 
 	private void validateForExecution(WorkflowCommand command) {
@@ -290,7 +360,7 @@ public class WorkflowCommandService {
 	}
 
 	private SubmitWorkflowResult replaySubmit(String resultRef, SubmitWorkflowCommand command) {
-		var workflowRun = findWorkflowRun(resultRef);
+		var workflowRun = findWorkflowRunForReplay(resultRef);
 		return new SubmitWorkflowResult(
 			workflowRun.publicId(),
 			workflowRun.currentState(),
@@ -298,18 +368,42 @@ public class WorkflowCommandService {
 	}
 
 	private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
-		var workflowRun = findWorkflowRun(resultRef);
+		var workflowRun = findWorkflowRunForReplay(resultRef);
 		return new WorkflowStateChangeResult(
 			workflowRun.publicId(),
 			workflowRun.currentState(),
 			normalizeOptional(command.correlationId()));
 	}
 
-	private WorkflowRunSnapshot findWorkflowRun(String workflowRunId) {
-		return workflowRunReadPort.findByPublicId(workflowRunId)
-			.orElseThrow(() -> new DomainException(
-				DomainErrorCode.RUN_NOT_FOUND,
-				"Workflow run not found: " + workflowRunId,
-				Map.of("runId", workflowRunId)));
+	private WorkflowRunSnapshot findWorkflowRunForReplay(String workflowRunId) {
+		for (int attempt = 0; attempt < REPLAY_LOOKUP_ATTEMPTS; attempt++) {
+			var workflowRun = workflowRunReadPort.findByPublicId(workflowRunId);
+			if (workflowRun.isPresent()) {
+				return workflowRun.get();
+			}
+			pauseBeforeReplayLookup();
+		}
+		throw new DomainException(
+			DomainErrorCode.RUN_NOT_FOUND,
+			"Workflow run not found: " + workflowRunId,
+			Map.of("runId", workflowRunId));
+	}
+
+	private void pauseBeforeReplayLookup() {
+		try {
+			Thread.sleep(REPLAY_LOOKUP_DELAY_MS);
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			throw new DomainException(
+				DomainErrorCode.INTERNAL_ERROR,
+				"Interrupted while waiting for workflow run replay visibility",
+				Map.of("delayMs", REPLAY_LOOKUP_DELAY_MS));
+		}
+	}
+
+	private static TransactionTemplate requiresNewTemplate(PlatformTransactionManager transactionManager) {
+		TransactionTemplate template = new TransactionTemplate(transactionManager);
+		template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+		return template;
 	}
 }

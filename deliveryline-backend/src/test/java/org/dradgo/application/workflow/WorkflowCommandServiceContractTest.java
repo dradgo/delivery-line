@@ -53,6 +53,7 @@ class WorkflowCommandServiceContractTest {
 	@AfterEach
 	void cleanDatabase() {
 		jdbcTemplate.update("delete from idempotency_records");
+		jdbcTemplate.update("delete from integration_links");
 		jdbcTemplate.update("delete from workflow_events");
 		jdbcTemplate.update("delete from workflow_runs");
 	}
@@ -64,7 +65,7 @@ class WorkflowCommandServiceContractTest {
 			ActorType.HUMAN,
 			"idem-submit-1234567890",
 			"corr-submit-1",
-			"LIN-123"));
+			"LIN-101"));
 
 		assertTrue(result.workflowRunId().startsWith("run_"));
 		assertEquals(WorkflowState.INBOX, result.currentState());
@@ -95,7 +96,7 @@ class WorkflowCommandServiceContractTest {
 			event.get("details").toString(),
 			new TypeReference<>() {
 			});
-		assertEquals("LIN-123", details.get("linearTicketReference"));
+		assertEquals("LIN-101", details.get("linearTicketReference"));
 		assertEquals("idem-submit-1234567890", details.get("idempotencyKey"));
 		assertEquals("corr-submit-1", details.get("correlationId"));
 		assertEquals("SubmitWorkflowCommand", details.get("commandType"));
@@ -108,7 +109,7 @@ class WorkflowCommandServiceContractTest {
 			ActorType.HUMAN,
 			"idem-submit-replay-1234567890",
 			"corr-submit-replay-1",
-			"LIN-123");
+			"LIN-101");
 
 		SubmitWorkflowResult first = service.submit(command);
 		SubmitWorkflowResult replay = service.submit(command);
@@ -147,7 +148,7 @@ class WorkflowCommandServiceContractTest {
 			ActorType.HUMAN,
 			"idem-submit-race-1234567890",
 			"corr-submit-race-1",
-			"LIN-123");
+			"LIN-101");
 		CyclicBarrier barrier = new CyclicBarrier(2);
 
 		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
@@ -179,7 +180,7 @@ class WorkflowCommandServiceContractTest {
 				ActorType.HUMAN,
 				"bad key with spaces",
 				"corr-submit-invalid-1",
-				"LIN-123")));
+				"LIN-101")));
 
 		assertEquals(DomainErrorCode.INVALID_IDEMPOTENCY_KEY, error.errorCode());
 		assertEquals("bad key with spaces", error.details().get("idempotencyKey"));
@@ -199,6 +200,71 @@ class WorkflowCommandServiceContractTest {
 		assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
 		assertEquals("SubmitWorkflowCommand", error.details().get("commandType"));
 		assertFieldErrors(error, "actorIdentity", "actorType", "idempotencyKey", "linearTicketReference");
+	}
+
+	@Test
+	void submitRaisesLinearTicketNotFoundForUnknownTicketReferenceAndRollsBackRun() {
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.submit(new SubmitWorkflowCommand(
+				"alex",
+				ActorType.HUMAN,
+				"idem-submit-missing-1234567890",
+				"corr-submit-missing-1",
+				"LIN-DOES-NOT-EXIST")));
+
+		assertEquals(DomainErrorCode.LINEAR_TICKET_NOT_FOUND, error.errorCode());
+		assertEquals(0, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+		assertEquals(0, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+		assertEquals(0, jdbcTemplate.queryForObject("select count(*) from integration_links", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+		assertEquals("failed", idempotencyStatus("idem-submit-missing-1234567890"));
+	}
+
+	@Test
+	void submitRaisesIntegrationLinkConflictWhenTicketIsAlreadyLinkedToADifferentRun() {
+		service.submit(new SubmitWorkflowCommand(
+			"alex",
+			ActorType.HUMAN,
+			"idem-submit-first-1234567890",
+			"corr-submit-first-1",
+			"LIN-101"));
+
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.submit(new SubmitWorkflowCommand(
+				"alex",
+				ActorType.HUMAN,
+				"idem-submit-second-1234567890",
+				"corr-submit-second-1",
+				"LIN-101")));
+
+		assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from integration_links", Integer.class));
+		assertEquals(2, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+		assertEquals("failed", idempotencyStatus("idem-submit-second-1234567890"));
+	}
+
+	@Test
+	void submitPersistsIntegrationLinkRowForTheSubmittedTicket() {
+		SubmitWorkflowResult result = service.submit(new SubmitWorkflowCommand(
+			"alex",
+			ActorType.HUMAN,
+			"idem-submit-link-1234567890",
+			"corr-submit-link-1",
+			"LIN-101"));
+
+		Map<String, Object> link = jdbcTemplate.queryForMap(
+			"""
+				select integration_type, external_ref, sync_status
+				from integration_links
+				where workflow_run_id = (select id from workflow_runs where public_id = ?)
+				""",
+			result.workflowRunId());
+		assertEquals("linear", link.get("integration_type"));
+		assertEquals("LIN-101", link.get("external_ref"));
+		assertEquals("linked", link.get("sync_status"));
 	}
 
 	@Test
@@ -364,5 +430,12 @@ class WorkflowCommandServiceContractTest {
 		Map<String, Object> details = objectMapper.readValue(detailsJson, new TypeReference<>() {
 		});
 		return details.get(detailKey).toString();
+	}
+
+	private String idempotencyStatus(String key) {
+		return jdbcTemplate.queryForObject(
+			"select status from idempotency_records where key = ?",
+			String.class,
+			key);
 	}
 }

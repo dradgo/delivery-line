@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/workflow-history.v1",
+  "title": "WorkflowHistoryViewV1",
+  "type": "object",
+  "required": ["schemaVersion", "workflowRunId", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "workflowRunId": { "type": "string", "pattern": "^run_" },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "publicId",
+          "eventType",
+          "resultingState",
+          "actorIdentity",
+          "actorType",
+          "interventionMarker",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "publicId": { "type": "string", "pattern": "^evt_" },
+          "eventType": { "type": "string" },
+          "priorState": { "type": ["string", "null"] },
+          "resultingState": { "type": ["string", "null"] },
+          "actorIdentity": { "type": "string" },
+          "actorType": { "type": "string" },
+          "reason": { "type": ["string", "null"] },
+          "failureCategory": { "type": ["string", "null"] },
+          "interventionMarker": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "details": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "linearTicketReference": { "type": "string" },
+              "artifactId": { "type": "string" },
+              "artifactVersion": { "type": "integer" },
+              "contextVersion": { "type": "integer" },
+              "correlationId": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

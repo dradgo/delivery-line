@@ -1,11 +1,9 @@
 package org.dradgo.adapters.persistence.repository;
 
 import java.util.Optional;
-import jakarta.persistence.LockModeType;
 import org.dradgo.adapters.persistence.entity.IdempotencyRecordEntity;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -39,7 +37,6 @@ public interface IdempotencyRecordRepository extends JpaRepository<IdempotencyRe
 		@Param("status") String status
 	);
 
-	@Lock(LockModeType.PESSIMISTIC_READ)
 	Optional<IdempotencyRecordEntity> findWithLockByKey(String key);
 
 	// Compute staleness in SQL so the database clock is the single source of

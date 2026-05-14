@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/workflow-status.v1",
+  "title": "WorkflowStatusViewV1",
+  "type": "object",
+  "required": ["schemaVersion", "workflowRunId", "currentState", "latestArtifacts", "nextSafeAction"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "workflowRunId": { "type": "string", "pattern": "^run_" },
+    "currentState": { "type": "string" },
+    "currentActor": {
+      "type": ["object", "null"],
+      "required": ["identity", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "identity": { "type": "string" },
+        "type": { "type": "string" }
+      }
+    },
+    "lastEvent": {
+      "type": ["object", "null"],
+      "required": ["eventType", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "eventType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "latestArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifactType", "version", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "artifactType": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 },
+          "status": { "type": "string" }
+        }
+      }
+    },
+    "linkedTicket": {
+      "type": ["object", "null"],
+      "required": ["integrationType", "externalRef", "syncStatus"],
+      "additionalProperties": false,
+      "properties": {
+        "integrationType": { "type": "string" },
+        "externalRef": { "type": "string" },
+        "syncStatus": { "type": "string" }
+      }
+    },
+    "nextSafeAction": { "type": "string" }
+  }
+}

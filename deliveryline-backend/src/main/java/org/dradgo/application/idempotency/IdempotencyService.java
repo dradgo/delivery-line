@@ -20,7 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class IdempotencyService {
 
 	private static final Duration STALE_RESERVATION_THRESHOLD = Duration.ofMinutes(10);
-	private static final int MAX_RESERVATION_ATTEMPTS = 3;
+	private static final int MAX_RESERVATION_ATTEMPTS = 200;
+	private static final Duration RESERVATION_RETRY_DELAY = Duration.ofMillis(10);
 
 	private final IdempotencyRecordPort idempotencyRecordPort;
 	private final Clock clock;
@@ -37,9 +38,9 @@ public class IdempotencyService {
 		String actorIdentity,
 		String fingerprint
 	) {
-		// Retry when a racing winner loses its transaction between the reserve write
-		// and the pessimistic reread. That leaves us with "key already taken" on the
-		// write path but no surviving row to inspect on the read path.
+		// Retry when a racing winner has already committed the reservation but has not yet
+		// completed the command. Once the winner flips the row to COMPLETED or FAILED, we can
+		// deterministically replay or reject instead of surfacing a transient in-flight conflict.
 		for (int attempt = 0; attempt < MAX_RESERVATION_ATTEMPTS; attempt++) {
 			boolean inserted = idempotencyRecordPort.tryReserve(
 				PublicIdPrefixes.IDEMPOTENCY_RECORD.next(),
@@ -55,7 +56,7 @@ public class IdempotencyService {
 			if (resolved.isPresent()) {
 				return resolved.get();
 			}
-			// Winner rolled back during our resolve â€” retry the insert.
+			pauseBeforeRetry();
 		}
 		throw reservationExhausted(key);
 	}
@@ -72,7 +73,7 @@ public class IdempotencyService {
 	private Optional<ReservationOutcome> tryResolveExistingRecord(String key, String fingerprint) {
 		Optional<IdempotencyRecordSnapshot> maybe = idempotencyRecordPort.findWithLockByKey(key);
 		if (maybe.isEmpty()) {
-			// Winner rolled back during our resolve; signal the caller to retry the insert.
+			// Winner rolled back after we lost the reserve race; retry the insert path.
 			return Optional.empty();
 		}
 		IdempotencyRecordSnapshot existing = maybe.get();
@@ -82,8 +83,14 @@ public class IdempotencyService {
 		if (existing.status() == IdempotencyRecordStatus.COMPLETED) {
 			return Optional.of(new ReservationOutcome(ReservationDecision.REPLAY, existing.resultRef()));
 		}
+		if (existing.status() == IdempotencyRecordStatus.FAILED) {
+			throw priorAttemptFailed(key);
+		}
 		if (existing.status() == IdempotencyRecordStatus.RESERVED && isStale(existing)) {
 			throw staleReservation(key, existing.createdAt());
+		}
+		if (existing.status() == IdempotencyRecordStatus.RESERVED) {
+			return Optional.empty();
 		}
 		throw activeReservationConflict(key, fingerprint);
 	}
@@ -102,6 +109,18 @@ public class IdempotencyService {
 			DomainErrorCode.IDEMPOTENCY_RESERVATION_EXHAUSTED,
 			"Failed to reserve idempotency key after " + MAX_RESERVATION_ATTEMPTS + " attempts: " + key,
 			details);
+	}
+
+	private void pauseBeforeRetry() {
+		try {
+			Thread.sleep(RESERVATION_RETRY_DELAY);
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			throw new DomainException(
+				DomainErrorCode.INTERNAL_ERROR,
+				"Interrupted while waiting for idempotency reservation resolution",
+				Map.of("retryDelayMs", RESERVATION_RETRY_DELAY.toMillis()));
+		}
 	}
 
 	private DomainException fingerprintConflict(String key, String existingFingerprint, String submittedFingerprint) {
@@ -135,6 +154,16 @@ public class IdempotencyService {
 		return new DomainException(
 			DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
 			"Idempotency key is already reserved for an in-flight command: " + key,
+			details);
+	}
+
+	private DomainException priorAttemptFailed(String key) {
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("idempotencyKey", key);
+		details.put("reason", "prior_attempt_failed_terminally");
+		return new DomainException(
+			DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+			"Prior command attempt for this idempotency key failed terminally; submit with a fresh key",
 			details);
 	}
 
