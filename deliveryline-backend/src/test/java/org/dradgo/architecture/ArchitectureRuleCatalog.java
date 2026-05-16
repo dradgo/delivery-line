@@ -8,15 +8,21 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaField;
 import com.tngtech.archunit.core.domain.JavaMethod;
+import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import jakarta.persistence.Entity;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.workflow.DomainResult;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
@@ -237,6 +243,16 @@ final class ArchitectureRuleCatalog {
 		classes().that().doNotHaveFullyQualifiedName("org.dradgo.application.artifact.ArtifactOperationService")
 			.should(notCallFutureArtifactWriteMethods()));
 
+	static final ArchRule RECOVERY_SERVICE_IS_SCOPE_PROTECTED = namedRule(
+		"RecoveryService must expose only the Epic-1 baseline public method signatures",
+		"Remediation: Epic 4 will add resume/rerun/reconcile/pause/classifyFailure/takeover. "
+			+ "Changing RecoveryService's public surface without an Epic-4 story is a scope "
+			+ "violation — update the story and this guard together.",
+		classes().that().haveFullyQualifiedName("org.dradgo.application.recovery.RecoveryService")
+			.should(exposeOnlyPublicMethodSignatures(
+				methodSignature("retry", String.class, String.class, ActorContext.class, String.class),
+				methodSignature("describeFailure", String.class))));
+
 	static final ArchRule LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT = namedRule(
 		"Linear-specific GraphQL types must not leak through the application.integration.linear port",
 		"Remediation: keep Linear GraphQL DTOs, Linear SDK types, and HTTP-client surface inside adapters.integration.linear; the application port "
@@ -284,6 +300,90 @@ final class ArchitectureRuleCatalog {
 				events.add(SimpleConditionEvent.satisfied(item, item.getName() + " is present"));
 			}
 		};
+	}
+
+	private static ArchCondition<JavaClass> exposeOnlyPublicMethods(String... allowed) {
+		Set<String> allowedSet = new LinkedHashSet<>(Arrays.asList(allowed));
+		String description = "expose only the public methods " + allowedSet;
+		return new ArchCondition<>(description) {
+			@Override
+			public void check(JavaClass item, ConditionEvents events) {
+				Collection<JavaMethod> methods = item.getMethods();
+				for (JavaMethod method : methods) {
+					if (!method.getModifiers().contains(JavaModifier.PUBLIC)) {
+						continue;
+					}
+					String methodName = method.getName();
+					if ("<init>".equals(methodName)) {
+						continue;
+					}
+					if (method.getOwner().getName().equals("java.lang.Object")) {
+						continue;
+					}
+					if (!allowedSet.contains(methodName)) {
+						events.add(SimpleConditionEvent.violated(
+							method,
+							item.getName() + " exposes disallowed public method '" + methodName
+								+ "'; allowed=" + allowedSet
+								+ " (Epic-4 scope creep — see Javadoc on RecoveryService)"));
+					}
+				}
+			}
+		};
+	}
+
+	private static ArchCondition<JavaClass> exposeOnlyPublicMethodSignatures(String... allowed) {
+		Set<String> allowedSet = new LinkedHashSet<>(Arrays.asList(allowed));
+		String description = "expose only the public method signatures " + allowedSet;
+		return new ArchCondition<>(description) {
+			@Override
+			public void check(JavaClass item, ConditionEvents events) {
+				Collection<JavaMethod> methods = item.getMethods();
+				for (JavaMethod method : methods) {
+					if (!method.getModifiers().contains(JavaModifier.PUBLIC)) {
+						continue;
+					}
+					String methodName = method.getName();
+					if ("<init>".equals(methodName)) {
+						continue;
+					}
+					if (method.getOwner().getName().equals("java.lang.Object")) {
+						continue;
+					}
+					String actualSignature = methodSignature(method);
+					if (!allowedSet.contains(actualSignature)) {
+						events.add(SimpleConditionEvent.violated(
+							method,
+							item.getName() + " exposes disallowed public signature '" + actualSignature
+								+ "'; allowed=" + allowedSet
+								+ " (Epic-4 scope creep — see Javadoc on RecoveryService)"));
+					}
+				}
+			}
+		};
+	}
+
+	private static String methodSignature(String methodName, Class<?>... parameterTypes) {
+		StringBuilder out = new StringBuilder(methodName).append('(');
+		for (int index = 0; index < parameterTypes.length; index++) {
+			if (index > 0) {
+				out.append(',');
+			}
+			out.append(parameterTypes[index].getName());
+		}
+		return out.append(')').toString();
+	}
+
+	private static String methodSignature(JavaMethod method) {
+		StringBuilder out = new StringBuilder(method.getName()).append('(');
+		List<JavaClass> parameterTypes = method.getRawParameterTypes();
+		for (int index = 0; index < parameterTypes.size(); index++) {
+			if (index > 0) {
+				out.append(',');
+			}
+			out.append(parameterTypes.get(index).getName());
+		}
+		return out.append(')').toString();
 	}
 
 	private static ArchCondition<JavaClass> notDeclareSensitiveDetectionArtifacts() {

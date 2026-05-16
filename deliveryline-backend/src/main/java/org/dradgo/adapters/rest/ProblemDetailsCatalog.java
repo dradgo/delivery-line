@@ -72,6 +72,7 @@ public final class ProblemDetailsCatalog {
 		register(metadata, DomainErrorCode.DOCTOR_CONFIG_PERMISSIONS_UNSAFE, HttpStatus.INTERNAL_SERVER_ERROR, "Unsafe configuration permissions", false);
 		register(metadata, DomainErrorCode.DOCTOR_UNSUPPORTED_ENVIRONMENT, HttpStatus.SERVICE_UNAVAILABLE, "Unsupported environment", false);
 		register(metadata, DomainErrorCode.DOCTOR_ARTIFACT_DIR_UNWRITABLE, HttpStatus.INTERNAL_SERVER_ERROR, "Artifact directory unwritable", false);
+		register(metadata, DomainErrorCode.RETRY_NOT_APPLICABLE, HttpStatus.CONFLICT, "Retry not applicable", false);
 
 		if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
 			throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

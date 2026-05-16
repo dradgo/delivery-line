@@ -148,6 +148,12 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 	}
 
 	@Override
+	@Transactional(readOnly = true)
+	public boolean hasFailedOrFailedOrphanForRun(String workflowRunPublicId) {
+		return artifactOperationRepository.existsFailedOrFailedOrphanByWorkflowRunPublicId(workflowRunPublicId);
+	}
+
+	@Override
 	public ArtifactOperationSnapshot markFailedOrphan(String operationPublicId, String reason) {
 		ArtifactOperationEntity operation = requireOperation(operationPublicId);
 		requireOperationSourceStatus(operation, ArtifactOperationStatus.PENDING, "markFailedOrphan");

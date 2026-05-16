@@ -12,6 +12,7 @@
     "runner.started",
     "runner.failed",
     "recovery.retried",
+    "recovery.dispatchFailed",
     "recovery.reconciled",
     "artifact.lineageRecovered",
     "integration.linked",

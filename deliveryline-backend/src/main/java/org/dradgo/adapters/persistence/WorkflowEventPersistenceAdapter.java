@@ -54,6 +54,22 @@ public class WorkflowEventPersistenceAdapter implements WorkflowEventWritePort, 
 	}
 
 	@Override
+	public Optional<WorkflowEventRecord> findLatestFailureEvent(String workflowRunPublicId) {
+		return workflowEventRepository
+			.findFirstLatestFailureEvent(workflowRunPublicId)
+			.map(workflowEventEntityMapper::toRecord);
+	}
+
+	@Override
+	public Optional<String> findLatestCorrelationId(String workflowRunPublicId) {
+		// Pushes the newest-first non-null/non-blank correlationId scan to the database, with
+		// LIMIT 1 so the DB stops at the first match — no in-memory walk, no event-count cap.
+		// PostgreSQL-native (the project's only production target). Replaces a prior cap of 100
+		// events that could miss the latest stored correlationId on long-lived runs. (review F528)
+		return workflowEventRepository.findLatestCorrelationIdInDetails(workflowRunPublicId);
+	}
+
+	@Override
 	public List<WorkflowEventRecord> listByWorkflowRunPublicId(
 		String workflowRunPublicId,
 		OffsetDateTime sinceInclusive

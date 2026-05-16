@@ -21,6 +21,8 @@ import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.recovery.FailureDescription;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
@@ -51,8 +53,14 @@ class WorkflowInspectionServiceTest {
 	private final ArtifactRecordPort artifacts = mock(ArtifactRecordPort.class);
 	private final IntegrationLinkService links = mock(IntegrationLinkService.class);
 	private final RedactionPolicyService redaction = new RedactionPolicyService(new DataClassificationService());
+	private final RecoveryService recovery = mock(RecoveryService.class);
 	private final WorkflowInspectionService service =
-		new WorkflowInspectionService(runs, events, artifacts, links, redaction);
+		new WorkflowInspectionService(runs, events, artifacts, links, redaction, recovery);
+
+	private void stubNonFailedDescribe(String runId, WorkflowState currentState, String nextSafeAction) {
+		when(recovery.describeFailure(runId)).thenReturn(new FailureDescription(
+			runId, currentState, null, null, null, null, null, nextSafeAction, null));
+	}
 
 	@Test
 	void getStatusReturnsHappyPathViewWithLatestEventArtifactsAndLink() {
@@ -79,6 +87,7 @@ class WorkflowInspectionServiceTest {
 			Instant.now(),
 			Instant.now(),
 			null)));
+		stubNonFailedDescribe(RUN, WorkflowState.EXECUTING, "await_outcome");
 
 		WorkflowStatusView view = service.getStatus(RUN);
 
@@ -95,7 +104,12 @@ class WorkflowInspectionServiceTest {
 		assertEquals(ArtifactStatus.AVAILABLE.value(), spec.status());
 		assertNotNull(view.linkedTicket());
 		assertEquals("LIN-101", view.linkedTicket().externalRef());
-		assertEquals(WorkflowInspectionService.NEXT_SAFE_ACTION_PLACEHOLDER, view.nextSafeAction());
+		assertEquals("await_outcome", view.nextSafeAction());
+		assertNull(view.failedStage());
+		assertNull(view.lastSuccessfulStage());
+		assertNull(view.failureTimestamp());
+		assertNull(view.failureCategory());
+		assertNull(view.lastActivityTimestamp());
 	}
 
 	@Test
@@ -105,6 +119,7 @@ class WorkflowInspectionServiceTest {
 		when(events.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
 		when(artifacts.findLatestByWorkflowRunIdAndArtifactType(eq(RUN), any())).thenReturn(Optional.empty());
 		when(links.findActiveLinkByWorkflowRun(RUN)).thenReturn(Optional.empty());
+		stubNonFailedDescribe(RUN, WorkflowState.INBOX, "await_outcome");
 
 		WorkflowStatusView view = service.getStatus(RUN);
 
@@ -114,6 +129,8 @@ class WorkflowInspectionServiceTest {
 		assertNull(view.lastEventAt());
 		assertTrue(view.latestArtifacts().isEmpty());
 		assertNull(view.linkedTicket());
+		assertNull(view.failedStage());
+		assertEquals("await_outcome", view.nextSafeAction());
 	}
 
 	@Test
@@ -146,6 +163,59 @@ class WorkflowInspectionServiceTest {
 		assertEquals("corr-1", renderedDetails.get("correlationId"));
 		assertNull(renderedDetails.get("idempotencyKey"), "idempotencyKey must never reach a rendered details payload");
 		assertNull(renderedDetails.get("someUnknownKey"), "unlisted keys must be dropped");
+	}
+
+	@Test
+	void listHistorySurfacesRecoveryAuditKeysFromDispatchFailedAndRetriedEvents() {
+		when(runs.findByPublicId(RUN)).thenReturn(Optional.of(
+			new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 5L)));
+		// recovery.retried writes failedStage/triggeringEventId/idempotencyKey/reason +
+		// (when MDC is set) correlationId. idempotencyKey must still be stripped; the rest
+		// belong in `history` output for operator triage.
+		Map<String, Object> retriedDetails = new LinkedHashMap<>();
+		retriedDetails.put("failedStage", "execution");
+		retriedDetails.put("triggeringEventId", "evt_failure-aaaa1");
+		retriedDetails.put("idempotencyKey", "idem-secret-12345");
+		retriedDetails.put("correlationId", "corr-retry-99");
+		retriedDetails.put("reason", "transient broker outage cleared at 12:00");
+		// recovery.dispatchFailed adds errorCode/errorClass/recoveryActionId/recoveryRetriedEventId
+		// (+ optional compensationFailed flag).
+		Map<String, Object> dispatchFailedDetails = new LinkedHashMap<>();
+		dispatchFailedDetails.put("failedStage", "execution");
+		dispatchFailedDetails.put("recoveryActionId", "rcv_recov-aaaaa");
+		dispatchFailedDetails.put("recoveryRetriedEventId", "evt_recret-bbbbb");
+		dispatchFailedDetails.put("idempotencyKey", "idem-secret-12345");
+		dispatchFailedDetails.put("errorCode", "RUNNER_CONTRACT_VIOLATION");
+		dispatchFailedDetails.put("errorClass", "DomainException");
+		dispatchFailedDetails.put("compensationFailed", true);
+		dispatchFailedDetails.put("correlationId", "corr-retry-99");
+		when(events.listByWorkflowRunPublicId(RUN, null)).thenReturn(List.of(
+			eventRecord("evt_retried-aaaaa", WorkflowEventType.RECOVERY_RETRIED,
+				WorkflowState.FAILED, WorkflowState.EXECUTING, retriedDetails),
+			eventRecord("evt_dispfail-bbbbb", WorkflowEventType.RECOVERY_DISPATCH_FAILED,
+				WorkflowState.EXECUTING, WorkflowState.EXECUTING, dispatchFailedDetails)));
+
+		WorkflowHistoryView history = service.listHistory(RUN, null);
+
+		assertEquals(2, history.events().size());
+		Map<String, Object> retried = history.events().get(0).details();
+		assertEquals("execution", retried.get("failedStage"));
+		assertEquals("evt_failure-aaaa1", retried.get("triggeringEventId"));
+		assertEquals("transient broker outage cleared at 12:00", retried.get("reason"));
+		assertEquals("corr-retry-99", retried.get("correlationId"));
+		assertNull(retried.get("idempotencyKey"),
+			"idempotencyKey must never reach the rendered history payload, even on recovery events");
+
+		Map<String, Object> dispatchFailed = history.events().get(1).details();
+		assertEquals("execution", dispatchFailed.get("failedStage"));
+		assertEquals("rcv_recov-aaaaa", dispatchFailed.get("recoveryActionId"));
+		assertEquals("evt_recret-bbbbb", dispatchFailed.get("recoveryRetriedEventId"));
+		assertEquals("RUNNER_CONTRACT_VIOLATION", dispatchFailed.get("errorCode"));
+		assertEquals("DomainException", dispatchFailed.get("errorClass"));
+		assertEquals(true, dispatchFailed.get("compensationFailed"));
+		assertEquals("corr-retry-99", dispatchFailed.get("correlationId"));
+		assertNull(dispatchFailed.get("idempotencyKey"),
+			"idempotencyKey must never reach the rendered history payload, even on recovery events");
 	}
 
 	@Test

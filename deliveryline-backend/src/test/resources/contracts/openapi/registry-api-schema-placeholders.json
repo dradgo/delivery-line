@@ -116,6 +116,7 @@
     "DOCTOR_DOCKER_MISSING": "https://deliveryline.local/problems/doctor-docker-missing",
     "DOCTOR_CONFIG_PERMISSIONS_UNSAFE": "https://deliveryline.local/problems/doctor-config-permissions-unsafe",
     "DOCTOR_UNSUPPORTED_ENVIRONMENT": "https://deliveryline.local/problems/doctor-unsupported-environment",
-    "DOCTOR_ARTIFACT_DIR_UNWRITABLE": "https://deliveryline.local/problems/doctor-artifact-dir-unwritable"
+    "DOCTOR_ARTIFACT_DIR_UNWRITABLE": "https://deliveryline.local/problems/doctor-artifact-dir-unwritable",
+    "RETRY_NOT_APPLICABLE": "https://deliveryline.local/problems/retry-not-applicable"
   }
 }

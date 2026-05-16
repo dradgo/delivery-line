@@ -71,8 +71,26 @@ public class WorkflowCommandOutputs {
 				.append(view.linkedTicket().externalRef())
 				.append('\n');
 		}
+		// Story 1.18 failure-diagnostic block — emitted only when at least one of the five
+		// failed*/last*Activity* fields is non-null (which is true precisely when currentState ==
+		// Failed and the failure event / last failed runner_execution were locatable).
+		if (hasFailureDiagnostics(view)) {
+			out.append("failed stage: ").append(nullableString(view.failedStage())).append('\n');
+			out.append("last successful stage: ").append(nullableString(view.lastSuccessfulStage())).append('\n');
+			out.append("failure timestamp: ").append(formatTimestamp(view.failureTimestamp())).append('\n');
+			out.append("failure category: ").append(nullableString(view.failureCategory())).append('\n');
+			out.append("last activity timestamp: ").append(formatTimestamp(view.lastActivityTimestamp())).append('\n');
+		}
 		out.append("next safe action: ").append(view.nextSafeAction());
 		return out.toString();
+	}
+
+	private static boolean hasFailureDiagnostics(WorkflowStatusView view) {
+		return view.failedStage() != null
+			|| view.lastSuccessfulStage() != null
+			|| view.failureTimestamp() != null
+			|| view.failureCategory() != null
+			|| view.lastActivityTimestamp() != null;
 	}
 
 	/**
@@ -125,6 +143,13 @@ public class WorkflowCommandOutputs {
 		} else {
 			payload.put("linkedTicket", null);
 		}
+		// Story 1.18 failure-diagnostic fields — always emitted (JSON null on non-Failed runs) so
+		// the schema's `additionalProperties: false` + `required` contract pins the field set.
+		payload.put("failedStage", view.failedStage());
+		payload.put("lastSuccessfulStage", view.lastSuccessfulStage());
+		payload.put("failureTimestamp", view.failureTimestamp() == null ? null : canonicalUtcIso(view.failureTimestamp()));
+		payload.put("failureCategory", view.failureCategory());
+		payload.put("lastActivityTimestamp", view.lastActivityTimestamp() == null ? null : canonicalUtcIso(view.lastActivityTimestamp()));
 		payload.put("nextSafeAction", view.nextSafeAction());
 		return writeJson(payload);
 	}
@@ -146,11 +171,14 @@ public class WorkflowCommandOutputs {
 			if (event.reason() != null && !event.reason().isBlank()) {
 				out.append(" reason=\"").append(escapeQuotedValue(event.reason())).append('"');
 			}
+			if (event.failureCategory() != null && !event.failureCategory().isBlank()) {
+				out.append(" failureCategory=").append(escapeForText(event.failureCategory()));
+			}
 			if (event.interventionMarker()) {
 				out.append(" [intervention]");
 			}
 			if (event.details() != null && !event.details().isEmpty()) {
-				out.append(" details=").append(event.details());
+				out.append(" details=").append(renderDetailsForText(event.details()));
 			}
 			out.append('\n');
 		}
@@ -264,5 +292,36 @@ public class WorkflowCommandOutputs {
 			return "";
 		}
 		return escapeForText(value).replace("\"", "\\\"");
+	}
+
+	/**
+	 * Render a per-event {@code details} map for the one-line history surface using the same
+	 * {@code {key=value, key=value}} shape that {@link java.util.LinkedHashMap#toString()}
+	 * produces, but routing every value through {@link #escapeForText(String)} so CR / LF / TAB
+	 * characters inside allow-listed details (e.g. an operator-supplied {@code --correlation-id})
+	 * cannot split one event across multiple lines (story 1.18 review F7). Non-string values use
+	 * {@link Object#toString()} directly because allow-listed numeric / boolean values cannot
+	 * carry control characters.
+	 */
+	private static String renderDetailsForText(Map<String, Object> details) {
+		StringBuilder out = new StringBuilder().append('{');
+		boolean first = true;
+		for (Map.Entry<String, Object> entry : details.entrySet()) {
+			if (!first) {
+				out.append(", ");
+			}
+			first = false;
+			out.append(entry.getKey()).append('=');
+			Object value = entry.getValue();
+			if (value == null) {
+				out.append("null");
+			} else if (value instanceof String text) {
+				out.append(escapeForText(text));
+			} else {
+				out.append(value);
+			}
+		}
+		out.append('}');
+		return out.toString();
 	}
 }

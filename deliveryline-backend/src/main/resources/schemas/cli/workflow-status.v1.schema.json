@@ -3,7 +3,18 @@
   "$id": "https://deliveryline.local/schemas/cli/workflow-status.v1",
   "title": "WorkflowStatusViewV1",
   "type": "object",
-  "required": ["schemaVersion", "workflowRunId", "currentState", "latestArtifacts", "nextSafeAction"],
+  "required": [
+    "schemaVersion",
+    "workflowRunId",
+    "currentState",
+    "latestArtifacts",
+    "failedStage",
+    "lastSuccessfulStage",
+    "failureTimestamp",
+    "failureCategory",
+    "lastActivityTimestamp",
+    "nextSafeAction"
+  ],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": 1 },
@@ -50,6 +61,11 @@
         "syncStatus": { "type": "string" }
       }
     },
+    "failedStage": { "type": ["string", "null"], "$comment": "added in story 1.18" },
+    "lastSuccessfulStage": { "type": ["string", "null"], "$comment": "added in story 1.18" },
+    "failureTimestamp": { "type": ["string", "null"], "format": "date-time", "$comment": "added in story 1.18" },
+    "failureCategory": { "type": ["string", "null"], "$comment": "added in story 1.18" },
+    "lastActivityTimestamp": { "type": ["string", "null"], "format": "date-time", "$comment": "added in story 1.18" },
     "nextSafeAction": { "type": "string" }
   }
 }

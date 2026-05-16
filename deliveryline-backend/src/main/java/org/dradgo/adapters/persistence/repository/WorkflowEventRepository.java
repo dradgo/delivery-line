@@ -11,6 +11,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEntity, Long> {
 
+	Optional<WorkflowEventEntity> findByPublicId(String publicId);
+
 	@Query("""
 		select event from WorkflowEventEntity event
 		where event.workflowRun.publicId = :publicId
@@ -49,4 +51,43 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
 			org.springframework.data.domain.PageRequest.of(0, 1));
 		return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
 	}
+
+	@Query("""
+		select event from WorkflowEventEntity event
+		where event.workflowRun.publicId = :publicId
+		  and event.archivedAt is null
+		  and event.resultingState = 'Failed'
+		  and event.priorState is not null
+		order by event.createdAt desc, event.id desc
+		""")
+	List<WorkflowEventEntity> findLatestFailureEvent(
+		@Param("publicId") String publicId,
+		Pageable pageable);
+
+	default Optional<WorkflowEventEntity> findFirstLatestFailureEvent(String publicId) {
+		List<WorkflowEventEntity> top = findLatestFailureEvent(
+			publicId,
+			org.springframework.data.domain.PageRequest.of(0, 1));
+		return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
+	}
+
+	/**
+	 * Returns the most-recent non-blank {@code details->>'correlationId'} for the run, walking
+	 * the full event history newest-first at the DB layer. Filters on {@code archived_at IS NULL}
+	 * to ignore soft-deleted rows. PostgreSQL-native (uses {@code jsonb->>}) — the project's only
+	 * production target. Replaces the prior in-memory cap of 100 events that could miss the
+	 * latest stored correlation id on long-lived runs. (review F528)
+	 */
+	@Query(value = """
+		SELECT we.details->>'correlationId'
+		  FROM workflow_events we
+		  JOIN workflow_runs wr ON wr.id = we.workflow_run_id
+		 WHERE wr.public_id = :publicId
+		   AND we.archived_at IS NULL
+		   AND we.details->>'correlationId' IS NOT NULL
+		   AND we.details->>'correlationId' <> ''
+		 ORDER BY we.created_at DESC, we.id DESC
+		 LIMIT 1
+		""", nativeQuery = true)
+	Optional<String> findLatestCorrelationIdInDetails(@Param("publicId") String publicId);
 }

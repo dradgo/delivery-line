@@ -7,8 +7,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
+import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.RetryRecoveryResult;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
@@ -48,6 +51,7 @@ public class WorkflowCommands {
 	private final Supplier<String> generatedKeySupplier;
 	private final Supplier<String> correlationIdSupplier;
 	private final IdempotencyKeyValidator idempotencyKeyValidator;
+	private final RecoveryService recoveryService;
 
 	@Autowired
 	public WorkflowCommands(
@@ -56,7 +60,8 @@ public class WorkflowCommands {
 		WorkflowCommandOutputs outputs,
 		CliInteractivityDetector cliInteractivityDetector,
 		UuidV7Generator uuidV7Generator,
-		IdempotencyKeyValidator idempotencyKeyValidator
+		IdempotencyKeyValidator idempotencyKeyValidator,
+		RecoveryService recoveryService
 	) {
 		this(
 			workflowCommandService,
@@ -65,14 +70,15 @@ public class WorkflowCommands {
 			cliInteractivityDetector::isInteractive,
 			uuidV7Generator::generate,
 			uuidV7Generator::generate,
-			idempotencyKeyValidator);
+			idempotencyKeyValidator,
+			recoveryService);
 	}
 
 	/**
 	 * Three-arg constructor kept for backward compatibility with the existing
 	 * {@link org.dradgo.adapters.cli.WorkflowCommandsTest} unit tests. The {@code submit}-only path
-	 * does not need the inspection service, so callers can pass nulls for the inspection
-	 * dependencies as long as they only invoke {@link #submit}.
+	 * does not need the inspection or recovery services, so callers can pass nulls as long as they
+	 * only invoke {@link #submit}.
 	 */
 	public WorkflowCommands(
 		WorkflowCommandService workflowCommandService,
@@ -86,7 +92,8 @@ public class WorkflowCommands {
 			interactivityDetector,
 			generatedKeySupplier,
 			generatedKeySupplier,
-			new IdempotencyKeyValidator());
+			new IdempotencyKeyValidator(),
+			null);
 	}
 
 	public WorkflowCommands(
@@ -96,7 +103,8 @@ public class WorkflowCommands {
 		BooleanSupplier interactivityDetector,
 		Supplier<String> generatedKeySupplier,
 		Supplier<String> correlationIdSupplier,
-		IdempotencyKeyValidator idempotencyKeyValidator
+		IdempotencyKeyValidator idempotencyKeyValidator,
+		RecoveryService recoveryService
 	) {
 		this.workflowCommandService = workflowCommandService;
 		this.workflowInspectionService = workflowInspectionService;
@@ -105,6 +113,7 @@ public class WorkflowCommands {
 		this.generatedKeySupplier = generatedKeySupplier;
 		this.correlationIdSupplier = correlationIdSupplier;
 		this.idempotencyKeyValidator = idempotencyKeyValidator;
+		this.recoveryService = recoveryService;
 	}
 
 	@Command(
@@ -170,6 +179,59 @@ public class WorkflowCommands {
 			throw de;
 		} catch (RuntimeException re) {
 			emitFailure("workflow status", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+			throw re;
+		} finally {
+			MDC.remove(MDC_CORRELATION_ID);
+		}
+	}
+
+	@Command(
+		name = "retry",
+		description = "Retry the last failed step of a Failed governed workflow run. Deeper recovery (reconcile, take over, rerun-from-arbitrary-step, failure-taxonomy classification, operator console) arrives in a later epic.",
+		exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+	public String retry(
+		@Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+		@Option(longName = "actor-identity", description = "Actor identity", required = true) String actorIdentity,
+		@Option(longName = "actor-type", description = "Actor type", required = true) ActorType actorType,
+		@Option(longName = "idempotency-key", description = "Idempotency key", required = false) String idempotencyKey,
+		@Option(longName = "correlation-id", description = "Correlation ID", required = false) String correlationId,
+		@Option(longName = "reason", description = "Operator-supplied reason text (optional)", required = false) String reason,
+		@Option(longName = "verbose", description = "Print additional command metadata", required = false, defaultValue = "false") boolean verbose
+	) {
+		requireRecoveryWired();
+		long start = System.nanoTime();
+		String resolvedCorrelation = pushCorrelation(correlationId);
+		try {
+			String resolvedIdempotencyKey = idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+			ActorContext actor = new ActorContext(actorIdentity, actorType, resolvedCorrelation);
+			RetryRecoveryResult result = recoveryService.retry(runId, resolvedIdempotencyKey, actor, reason);
+			StringBuilder output = new StringBuilder();
+			output.append(result.recoveryActionPublicId()).append(" retry submitted (state: Executing)");
+			if (result.newRunnerExecutionPublicId() != null) {
+				output.append(" [runner-execution: ").append(result.newRunnerExecutionPublicId()).append(']');
+			} else if (result.replayed()) {
+				output.append(" [replayed]");
+			}
+			if (verbose) {
+				output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+				if (result.recoveryRetriedEventPublicId() != null) {
+					output.append(" [recovery-event: ").append(result.recoveryRetriedEventPublicId()).append(']');
+				}
+				if (idempotencyKey == null) {
+					output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+				}
+			}
+			emitSuccess("workflow retry", runId, resolvedCorrelation, start);
+			if (reason != null && !reason.isBlank()) {
+				log.info("workflow retry operator reason supplied correlationId={} workflowRunId={} reasonLength={}",
+					resolvedCorrelation, runId, reason.length());
+			}
+			return output.toString();
+		} catch (DomainException de) {
+			emitFailure("workflow retry", runId, resolvedCorrelation, start, codeFor(de));
+			throw de;
+		} catch (RuntimeException re) {
+			emitFailure("workflow retry", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
 			throw re;
 		} finally {
 			MDC.remove(MDC_CORRELATION_ID);
@@ -272,6 +334,17 @@ public class WorkflowCommands {
 				DomainErrorCode.INTERNAL_ERROR,
 				"WorkflowCommands was constructed with the legacy submit-only constructor; "
 					+ "inject WorkflowInspectionService and WorkflowCommandOutputs to use status/history",
+				details);
+		}
+	}
+
+	private void requireRecoveryWired() {
+		if (recoveryService == null) {
+			Map<String, Object> details = new LinkedHashMap<>();
+			details.put("reason", "legacy_constructor_invoked_for_retry_command");
+			throw new DomainException(
+				DomainErrorCode.INTERNAL_ERROR,
+				"WorkflowCommands was constructed without RecoveryService; inject RecoveryService to use retry",
 				details);
 		}
 	}

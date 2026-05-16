@@ -1,7 +1,11 @@
 # DeliveryLine CLI
 
-The workflow commands (`submit`, `status`, `history`) are documented in
+The workflow commands (`submit`, `status`, `history`, `retry`) are documented in
 [`workflow-commands.md`](workflow-commands.md).
+
+For the failure-recovery walkthrough — when a run hits `Failed` and the operator decides between
+`retry`, `await_manual_reconciliation`, and Epic-4 deeper-recovery options — see
+[`../failure-recovery-walkthrough.md`](../failure-recovery-walkthrough.md).
 
 The diagnostic `doctor` command is documented in
 [`doctor.md`](doctor.md).
@@ -26,7 +30,7 @@ The non-zero exit code band communicates the error family:
 Current mappings in the foundation slice:
 
 - `101`: stable client-side failures such as `INVALID_COMMAND_PAYLOAD`, `ILLEGAL_TRANSITION`, `RUN_NOT_FOUND`, `MISSING_IDEMPOTENCY_KEY`, `INVALID_IDEMPOTENCY_KEY`, `INVALID_TIME_RANGE`, `HISTORY_TOO_LARGE`, and other governed non-retry transport errors
-- `201`: `IDEMPOTENCY_KEY_CONFLICT`, `STALE_IDEMPOTENCY_RESERVATION`, `CONCURRENT_TRANSITION_CONFLICT`, `APPROVAL_VERSION_MISMATCH`, `EXPORT_CLASSIFICATION_VIOLATION`
+- `201`: `IDEMPOTENCY_KEY_CONFLICT`, `STALE_IDEMPOTENCY_RESERVATION`, `CONCURRENT_TRANSITION_CONFLICT`, `APPROVAL_VERSION_MISMATCH`, `EXPORT_CLASSIFICATION_VIOLATION`, `RETRY_NOT_APPLICABLE`
 - `301`: `RUNNER_TIMEOUT`, `RUNNER_CONTRACT_VIOLATION`, `ARTIFACT_PAYLOAD_UNAVAILABLE`
 - `401`: infrastructure and safety failures including `DOCTOR_*` codes and `INTERNAL_ERROR`
 

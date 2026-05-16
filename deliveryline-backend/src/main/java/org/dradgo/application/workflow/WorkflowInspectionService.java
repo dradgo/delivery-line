@@ -12,6 +12,8 @@ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.recovery.FailureDescription;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
@@ -23,6 +25,7 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,37 +34,40 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Application service that materializes the CLI/REST inspection views for a workflow run (story
- * 1-15 Task 1). Read-only: never mutates state, never logs raw event details.
+ * 1-15 Task 1, extended in story 1.18 Task 4). Read-only: never mutates state, never logs raw
+ * event details.
  *
- * <p>Story 1.18 will replace {@link #nextSafeActionFor(WorkflowState)} with real recovery
- * inspection logic; for 1-15 the field is a stable placeholder so the view contract is
- * backward-compatible when 1.18 lands.
+ * <p>Story 1.18 wires {@link RecoveryService#describeFailure(String)} into the {@code status}
+ * surface so the previously-stubbed {@code nextSafeAction} now carries the real
+ * {@code retry / await_manual_reconciliation / await_outcome / view_only} value, plus five
+ * failure-diagnostic fields populated only when {@code currentState == Failed}.
  */
 @Service
 public class WorkflowInspectionService {
 
 	private static final Logger log = LoggerFactory.getLogger(WorkflowInspectionService.class);
 
-	static final String NEXT_SAFE_ACTION_PLACEHOLDER = "pending (story 1.18)";
-
 	private final WorkflowRunReadPort workflowRunReadPort;
 	private final WorkflowEventReadPort workflowEventReadPort;
 	private final ArtifactRecordPort artifactRecordPort;
 	private final IntegrationLinkService integrationLinkService;
 	private final RedactionPolicyService redactionPolicyService;
+	private final RecoveryService recoveryService;
 
 	public WorkflowInspectionService(
 		WorkflowRunReadPort workflowRunReadPort,
 		WorkflowEventReadPort workflowEventReadPort,
 		ArtifactRecordPort artifactRecordPort,
 		IntegrationLinkService integrationLinkService,
-		RedactionPolicyService redactionPolicyService
+		RedactionPolicyService redactionPolicyService,
+		RecoveryService recoveryService
 	) {
 		this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
 		this.workflowEventReadPort = Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
 		this.artifactRecordPort = Objects.requireNonNull(artifactRecordPort, "artifactRecordPort");
 		this.integrationLinkService = Objects.requireNonNull(integrationLinkService, "integrationLinkService");
 		this.redactionPolicyService = Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
+		this.recoveryService = Objects.requireNonNull(recoveryService, "recoveryService");
 	}
 
 	@Transactional(readOnly = true)
@@ -93,6 +99,8 @@ public class WorkflowInspectionService {
 			.map(WorkflowInspectionService::toLinkedTicket)
 			.orElse(null);
 
+		FailureDescription failure = recoveryService.describeFailure(workflowRunPublicId);
+
 		WorkflowStatusView view = new WorkflowStatusView(
 			run.publicId(),
 			run.currentState(),
@@ -102,7 +110,12 @@ public class WorkflowInspectionService {
 			latest.map(WorkflowEventRecord::createdAt).orElse(null),
 			List.copyOf(latestArtifacts),
 			linkedTicket,
-			nextSafeActionFor(run.currentState()));
+			failure.failedStage(),
+			failure.lastSuccessfulStage(),
+			failure.failureTimestamp(),
+			failure.failureCategory(),
+			failure.lastActivityTimestamp(),
+			failure.nextSafeAction());
 		log.info("inspecting workflow_run snapshot success workflowRunId={} currentState={}",
 			workflowRunPublicId, run.currentState().value());
 		return view;
@@ -142,17 +155,17 @@ public class WorkflowInspectionService {
 
 	/**
 	 * Allow-listed keys that may flow from {@code workflow_events.details} into a rendered CLI
-	 * payload (story 1-15 Task 4). Everything else is dropped before render.
+	 * payload (story 1-15 Task 4). Everything else is dropped before render. Sourced from
+	 * {@link WorkflowEventDetailKeys#ALLOW_LISTED_KEYS} — the single source of truth shared with
+	 * {@code RecoveryService} (producer), {@code workflow-history.v1.schema.json} (transport
+	 * contract), and {@code WorkflowEventRepository} (PostgreSQL-native filter). Story 1.18
+	 * review batch 3 (D1) centralized the keys.
 	 *
 	 * <p>{@code idempotencyKey} is intentionally omitted — it is operator-only and surfaced on
-	 * stdout by {@code submit}, never echoed through {@code status} or {@code history}.
+	 * stdout by {@code submit}/{@code retry}, never echoed through {@code status} or
+	 * {@code history}. {@link WorkflowEventDetailKeys#SERVER_ONLY_KEYS} lists the stripped set.
 	 */
-	static final List<String> ALLOWED_DETAIL_KEYS = List.of(
-		"linearTicketReference",
-		"artifactId",
-		"artifactVersion",
-		"contextVersion",
-		"correlationId");
+	static final List<String> ALLOWED_DETAIL_KEYS = WorkflowEventDetailKeys.ALLOW_LISTED_KEYS;
 
 	private Map<String, Object> redactDetails(Map<String, Object> filtered) {
 		// Defense-in-depth: the allow-list above strips dangerous KEYS, but a caller could still
@@ -203,12 +216,6 @@ public class WorkflowInspectionService {
 		return filtered;
 	}
 
-	static String nextSafeActionFor(WorkflowState currentState) {
-		// Story 1.18 replaces this with real recovery inspection; for 1-15 we emit a stable
-		// placeholder so the view contract is locked.
-		return NEXT_SAFE_ACTION_PLACEHOLDER;
-	}
-
 	private static LinkedTicketView toLinkedTicket(IntegrationLink link) {
 		return new LinkedTicketView(
 			link.integrationType(),
@@ -225,7 +232,13 @@ public class WorkflowInspectionService {
 			details);
 	}
 
-	/** Application-facing status snapshot. Transport adapters render this view. */
+	/**
+	 * Application-facing status snapshot. Transport adapters render this view.
+	 *
+	 * <p>The five {@code failed*} / {@code last*Activity*} fields (story 1.18) are non-null only
+	 * when {@code currentState == Failed}; on non-Failed runs they are all null and
+	 * {@code nextSafeAction} reflects the canonical non-Failed value.
+	 */
 	public record WorkflowStatusView(
 		String workflowRunId,
 		WorkflowState currentState,
@@ -235,6 +248,11 @@ public class WorkflowInspectionService {
 		OffsetDateTime lastEventAt,
 		List<LatestArtifactView> latestArtifacts,
 		LinkedTicketView linkedTicket,
+		String failedStage,
+		String lastSuccessfulStage,
+		OffsetDateTime failureTimestamp,
+		String failureCategory,
+		OffsetDateTime lastActivityTimestamp,
 		String nextSafeAction
 	) {
 	}

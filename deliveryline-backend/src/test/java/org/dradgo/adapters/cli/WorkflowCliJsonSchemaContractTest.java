@@ -1,6 +1,7 @@
 package org.dradgo.adapters.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
@@ -42,7 +44,8 @@ class WorkflowCliJsonSchemaContractTest {
 		() -> false,
 		() -> "01964c38-1c45-7000-8000-000000000000",
 		() -> "01964c38-1c45-7000-8000-000000000001",
-		new IdempotencyKeyValidator());
+		new IdempotencyKeyValidator(),
+		mock(RecoveryService.class));
 	private final SchemaRegistry schemaRegistry = SchemaRegistry.withDefaultDialect(
 		SpecificationVersion.DRAFT_2020_12);
 
@@ -57,7 +60,8 @@ class WorkflowCliJsonSchemaContractTest {
 			OffsetDateTime.parse("2026-05-13T10:00:00Z"),
 			List.of(new LatestArtifactView("spec", 2, "available")),
 			new LinkedTicketView("linear", "LIN-101", "linked"),
-			"pending (story 1.18)");
+			null, null, null, null, null,
+			"await_outcome");
 		when(inspection.getStatus("run_status12345")).thenReturn(view);
 
 		String json = commands.status("run_status12345", "json", "corr-status-1");
@@ -66,6 +70,92 @@ class WorkflowCliJsonSchemaContractTest {
 		assertEquals(1, payload.get("schemaVersion").asInt());
 		assertTrue(payload.get("workflowRunId").asText().startsWith("run_"));
 		assertSchemaValid(STATUS_SCHEMA_LOCATION, json);
+	}
+
+	@Test
+	void statusJsonValidatesPopulatedFailedRunFixtureWithAllFailureDiagnosticFields() throws Exception {
+		WorkflowStatusView view = new WorkflowStatusView(
+			"run_failed01234",
+			WorkflowState.FAILED,
+			"system",
+			"system",
+			"workflow.stateChanged",
+			OffsetDateTime.parse("2026-05-13T10:00:00Z"),
+			List.of(new LatestArtifactView("spec", 1, "available")),
+			null,
+			"execution",
+			"Executing",
+			OffsetDateTime.parse("2026-05-13T10:00:00Z"),
+			"runner_timeout",
+			OffsetDateTime.parse("2026-05-13T09:59:30Z"),
+			"retry");
+		when(inspection.getStatus("run_failed01234")).thenReturn(view);
+
+		String json = commands.status("run_failed01234", "json", "corr-status-failed");
+		JsonNode payload = mapper.readTree(json);
+
+		assertEquals("execution", payload.get("failedStage").asText());
+		assertEquals("Executing", payload.get("lastSuccessfulStage").asText());
+		assertEquals("2026-05-13T10:00:00Z", payload.get("failureTimestamp").asText());
+		assertEquals("runner_timeout", payload.get("failureCategory").asText());
+		assertEquals("2026-05-13T09:59:30Z", payload.get("lastActivityTimestamp").asText());
+		assertEquals("retry", payload.get("nextSafeAction").asText());
+		assertSchemaValid(STATUS_SCHEMA_LOCATION, json);
+	}
+
+	@Test
+	void historyJsonValidatesFailedAndRetriedTimelineFixture() throws Exception {
+		WorkflowHistoryView view = new WorkflowHistoryView("run_failretried", List.of(
+			new WorkflowEventView(
+				"evt_failed-12345",
+				"workflow.stateChanged",
+				"Executing",
+				"Failed",
+				"system",
+				"system",
+				"runner failure",
+				"runner_timeout",
+				false,
+				OffsetDateTime.parse("2026-05-13T10:00:00Z"),
+				Map.of()),
+			new WorkflowEventView(
+				"evt_runfail-1234",
+				"runner.failed",
+				null,
+				null,
+				"system",
+				"system",
+				null,
+				"runner_timeout",
+				false,
+				OffsetDateTime.parse("2026-05-13T10:00:01Z"),
+				Map.of()),
+			new WorkflowEventView(
+				"evt_retried-1234",
+				"recovery.retried",
+				"Failed",
+				"Executing",
+				"alex",
+				"human",
+				"retry from failed execution",
+				null,
+				true,
+				OffsetDateTime.parse("2026-05-13T10:05:00Z"),
+				Map.of())));
+		when(inspection.listHistory("run_failretried", null)).thenReturn(view);
+
+		String json = commands.history("run_failretried", "json", null, "corr-failhist-1");
+		JsonNode payload = mapper.readTree(json);
+
+		assertEquals(3, payload.get("events").size());
+		assertEquals("workflow.stateChanged", payload.get("events").get(0).get("eventType").asText());
+		assertEquals("Failed", payload.get("events").get(0).get("resultingState").asText());
+		assertEquals("runner_timeout", payload.get("events").get(0).get("failureCategory").asText());
+		assertEquals("runner.failed", payload.get("events").get(1).get("eventType").asText());
+		assertEquals("runner_timeout", payload.get("events").get(1).get("failureCategory").asText());
+		assertEquals("recovery.retried", payload.get("events").get(2).get("eventType").asText());
+		assertTrue(payload.get("events").get(2).get("interventionMarker").asBoolean());
+		assertSchemaValid(HISTORY_SCHEMA_LOCATION, json);
 	}
 
 	@Test
@@ -79,7 +169,8 @@ class WorkflowCliJsonSchemaContractTest {
 			null,
 			List.of(),
 			null,
-			"pending (story 1.18)");
+			null, null, null, null, null,
+			"await_outcome");
 		when(inspection.getStatus("run_emptystatus12345")).thenReturn(view);
 
 		String json = commands.status("run_emptystatus12345", "json", null);
@@ -121,6 +212,67 @@ class WorkflowCliJsonSchemaContractTest {
 	}
 
 	@Test
+	void historyJsonValidatesRecoveryDispatchFailedEventWithFullAuditKeySet() throws Exception {
+		// Pin the schema + allow-list contract for recovery.dispatchFailed: every audit key the
+		// service stamps must survive filtering and validate against workflow-history.v1.
+		// (review F530)
+		Map<String, Object> retriedDetails = new LinkedHashMap<>();
+		retriedDetails.put("failedStage", "execution");
+		retriedDetails.put("triggeringEventId", "evt_failure-aaaa1");
+		retriedDetails.put("correlationId", "corr-disp-1");
+		retriedDetails.put("reason", "transient broker outage cleared at 12:00");
+		Map<String, Object> dispatchFailedDetails = new LinkedHashMap<>();
+		dispatchFailedDetails.put("failedStage", "execution");
+		dispatchFailedDetails.put("recoveryActionId", "rcv_recov-aaaaa");
+		dispatchFailedDetails.put("recoveryRetriedEventId", "evt_recret-bbbbb");
+		dispatchFailedDetails.put("errorCode", "RUNNER_CONTRACT_VIOLATION");
+		dispatchFailedDetails.put("errorClass", "DomainException");
+		dispatchFailedDetails.put("compensationFailed", true);
+		dispatchFailedDetails.put("correlationId", "corr-disp-1");
+		WorkflowHistoryView view = new WorkflowHistoryView("run_dispatchfail", List.of(
+			new WorkflowEventView(
+				"evt_retried-aaaaa",
+				"recovery.retried",
+				"Failed",
+				"Executing",
+				"alex",
+				"human",
+				"retry from failed execution",
+				null,
+				true,
+				OffsetDateTime.parse("2026-05-13T10:05:00Z"),
+				retriedDetails),
+			new WorkflowEventView(
+				"evt_dispfail-bbbbb",
+				"recovery.dispatchFailed",
+				"Executing",
+				"Executing",
+				"alex",
+				"human",
+				"broker dispatch failed: RUNNER_CONTRACT_VIOLATION",
+				null,
+				true,
+				OffsetDateTime.parse("2026-05-13T10:05:01Z"),
+				dispatchFailedDetails)));
+		when(inspection.listHistory("run_dispatchfail", null)).thenReturn(view);
+
+		String json = commands.history("run_dispatchfail", "json", null, "corr-disp-1");
+		JsonNode payload = mapper.readTree(json);
+
+		JsonNode dispatchFailed = payload.get("events").get(1);
+		assertEquals("recovery.dispatchFailed", dispatchFailed.get("eventType").asText());
+		JsonNode renderedDetails = dispatchFailed.get("details");
+		assertEquals("execution", renderedDetails.get("failedStage").asText());
+		assertEquals("rcv_recov-aaaaa", renderedDetails.get("recoveryActionId").asText());
+		assertEquals("evt_recret-bbbbb", renderedDetails.get("recoveryRetriedEventId").asText());
+		assertEquals("RUNNER_CONTRACT_VIOLATION", renderedDetails.get("errorCode").asText());
+		assertEquals("DomainException", renderedDetails.get("errorClass").asText());
+		assertTrue(renderedDetails.get("compensationFailed").asBoolean());
+		assertEquals("corr-disp-1", renderedDetails.get("correlationId").asText());
+		assertSchemaValid(HISTORY_SCHEMA_LOCATION, json);
+	}
+
+	@Test
 	void historyJsonAcceptsEmptyDetailsObject() throws Exception {
 		WorkflowHistoryView view = new WorkflowHistoryView("run_dropkey12345", List.of(
 			new WorkflowEventView(
@@ -142,6 +294,43 @@ class WorkflowCliJsonSchemaContractTest {
 		assertTrue(payload.get("events").get(0).get("details").isObject());
 		assertTrue(payload.get("events").get(0).get("resultingState").isNull());
 		assertSchemaValid(HISTORY_SCHEMA_LOCATION, json);
+	}
+
+	@Test
+	void historySchemaRejectsLeakedIdempotencyKeyAsAdditionalPropertyDefenseInDepth() throws Exception {
+		// Defense-in-depth: `additionalProperties: false` on events[].details is the schema-level
+		// safety net for the CLI render allow-list. If a future refactor regresses
+		// WorkflowInspectionService.filterAllowedDetails and lets `idempotencyKey` leak through,
+		// the schema must reject the payload before it reaches a CLI consumer. Simulate the
+		// regression by constructing a view with idempotencyKey in details (bypassing the real
+		// inspection-layer strip via the mock), serialize through `commands.history`, and assert
+		// schema validation FAILS. (review A4 / 2026-05-16)
+		Map<String, Object> leakingDetails = new LinkedHashMap<>();
+		leakingDetails.put("correlationId", "corr-leak-1");
+		leakingDetails.put("idempotencyKey", "idem-this-should-have-been-stripped");
+		WorkflowHistoryView view = new WorkflowHistoryView("run_schemaleak", List.of(
+			new WorkflowEventView(
+				"evt_leakkey-aaaa1",
+				"recovery.retried",
+				"Failed",
+				"Executing",
+				"alex",
+				"human",
+				"retry from failed execution",
+				null,
+				true,
+				OffsetDateTime.parse("2026-05-13T10:05:00Z"),
+				leakingDetails)));
+		when(inspection.listHistory("run_schemaleak", null)).thenReturn(view);
+
+		String json = commands.history("run_schemaleak", "json", null, "corr-leak-1");
+
+		Schema schema = schemaRegistry.getSchema(SchemaLocation.of(HISTORY_SCHEMA_LOCATION));
+		Result validation = schema.walk(json, InputFormat.JSON, true);
+		assertFalse(
+			validation.getErrors().isEmpty(),
+			"workflow-history.v1 schema MUST reject a leaked idempotencyKey in events[].details — "
+				+ "additionalProperties:false is the defense-in-depth backstop for the allow-list strip");
 	}
 
 	private void assertSchemaValid(String schemaLocation, String json) {

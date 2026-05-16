@@ -107,4 +107,8 @@ class ArchitectureBoundaryTest {
 	@ArchTest
 	static final ArchRule linear_types_must_not_leak_through_port =
 		ArchitectureRuleCatalog.LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT;
+
+	@ArchTest
+	static final ArchRule recovery_service_is_scope_protected =
+		ArchitectureRuleCatalog.RECOVERY_SERVICE_IS_SCOPE_PROTECTED;
 }

@@ -39,4 +39,13 @@ public interface ArtifactOperationRepository extends JpaRepository<ArtifactOpera
 	Optional<ArtifactOperationEntity> findFirstByArtifactPublicIdOrderByCreatedAtDesc(String artifactPublicId);
 
 	List<ArtifactOperationEntity> findByArtifactPublicIdAndStatusOrderByCreatedAtDesc(String artifactPublicId, String status);
+
+	@Query("""
+		select count(op) > 0
+		from ArtifactOperationEntity op
+		where op.workflowRun.publicId = :workflowRunPublicId
+		  and op.status in ('failed', 'failed_orphan')
+		""")
+	boolean existsFailedOrFailedOrphanByWorkflowRunPublicId(
+		@Param("workflowRunPublicId") String workflowRunPublicId);
 }

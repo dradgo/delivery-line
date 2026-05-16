@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,8 @@ class WorkflowCliCommandRegistrationIT {
 			() -> false,
 			() -> "01964c38-1c45-7000-8000-000000000000",
 			() -> "01964c38-1c45-7000-8000-000000000001",
-			new IdempotencyKeyValidator()));
+			new IdempotencyKeyValidator(),
+			mock(RecoveryService.class)));
 
 	@Test
 	void deliverylinePrefixedWorkflowCommandsAreRegisteredInTheRuntimeShellRegistry() {
@@ -48,6 +50,7 @@ class WorkflowCliCommandRegistrationIT {
 			assertTrue(commandNames.contains("deliveryline submit"), () -> "registered commands: " + commandNames);
 			assertTrue(commandNames.contains("deliveryline status"), () -> "registered commands: " + commandNames);
 			assertTrue(commandNames.contains("deliveryline history"), () -> "registered commands: " + commandNames);
+			assertTrue(commandNames.contains("deliveryline retry"), () -> "registered commands: " + commandNames);
 		});
 	}
 

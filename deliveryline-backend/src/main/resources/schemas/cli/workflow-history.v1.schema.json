@@ -41,7 +41,15 @@
               "artifactId": { "type": "string" },
               "artifactVersion": { "type": "integer" },
               "contextVersion": { "type": "integer" },
-              "correlationId": { "type": "string" }
+              "correlationId": { "type": "string" },
+              "failedStage": { "type": "string" },
+              "triggeringEventId": { "type": "string", "pattern": "^evt_" },
+              "reason": { "type": "string" },
+              "errorCode": { "type": "string" },
+              "errorClass": { "type": "string" },
+              "recoveryActionId": { "type": "string", "pattern": "^rcv_" },
+              "recoveryRetriedEventId": { "type": "string", "pattern": "^evt_" },
+              "compensationFailed": { "type": "boolean" }
             }
           }
         }

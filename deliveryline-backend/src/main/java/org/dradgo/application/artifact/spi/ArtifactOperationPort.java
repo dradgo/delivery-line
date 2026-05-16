@@ -51,4 +51,13 @@ public interface ArtifactOperationPort {
 	List<ArtifactOperationSnapshot> findPendingOlderThan(Duration threshold);
 
 	ArtifactOperationSnapshot markFailedOrphan(String operationPublicId, String reason);
+
+	/**
+	 * Returns {@code true} if any {@code artifact_operations} row exists for the given workflow
+	 * run with {@code status} in {@code (failed, failed_orphan)}. Used by
+	 * {@link org.dradgo.application.recovery.RecoveryService#describeFailure(String)} for AC8 —
+	 * when an artifact-operation failure exists alongside a workflow Failed state, the safe next
+	 * action is {@code await_manual_reconciliation}, not blind {@code retry}.
+	 */
+	boolean hasFailedOrFailedOrphanForRun(String workflowRunPublicId);
 }

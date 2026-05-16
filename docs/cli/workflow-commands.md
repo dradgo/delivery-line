@@ -1,7 +1,7 @@
 # DeliveryLine Workflow CLI Commands
 
-This reference covers the three foundation Spring Shell commands shipped by story 1-15:
-`deliveryline submit`, `deliveryline status`, and `deliveryline history`.
+This reference covers the four Spring Shell commands shipped through story 1-18:
+`deliveryline submit`, `deliveryline status`, `deliveryline history`, and `deliveryline retry`.
 
 Each command is a thin Spring Shell adapter over an application service. Orchestration,
 persistence, redaction, and approval logic live behind `WorkflowCommandService` and
@@ -50,8 +50,15 @@ deliveryline status <runId> [--format text|json] [--correlation-id <c>]
 
 Text mode emits, in order: `current state`, `current actor`, `last event type`, `last event
 timestamp` (ISO-8601 UTC), `latest artifact <type> v<version>` (one line per artifact type that
-has any record), `linked ticket: <type>:<externalRef>` (omitted if no active link), and `next safe
-action: pending (story 1.18)` (placeholder until story 1.18 lands real recovery inspection).
+has any record), `linked ticket: <type>:<externalRef>` (omitted if no active link), and a
+**failure-diagnostic block** (only on `Failed` runs) carrying `failed stage`, `last successful
+stage`, `failure timestamp`, `failure category`, and `last activity timestamp`, followed by the
+final `next safe action: <retry | await_manual_reconciliation | await_outcome | view_only>` line.
+
+JSON mode always emits the five failure-diagnostic fields (`failedStage`, `lastSuccessfulStage`,
+`failureTimestamp`, `failureCategory`, `lastActivityTimestamp`) — `null` on non-Failed runs — so
+the schema's `required` + `additionalProperties:false` contract pins a stable shape across
+states.
 
 JSON mode emits a single `application/json`-compatible object conforming to the
 [`workflow-status.v1`](../../deliveryline-backend/src/main/resources/schemas/cli/workflow-status.v1.schema.json)
@@ -86,6 +93,86 @@ Text mode emits one line per event:
 JSON mode emits a single object conforming to the
 [`workflow-history.v1`](../../deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json)
 schema.
+
+---
+
+## `deliveryline retry`
+
+Retry the last failed step of a `Failed` governed workflow run.
+
+```
+deliveryline retry <runId> \
+  --actor-identity <id> \
+  --actor-type <type> \
+  [--idempotency-key <k>] \
+  [--correlation-id <c>] \
+  [--reason <text>] \
+  [--verbose]
+```
+
+Successful output (single line):
+
+```
+{recoveryActionId} retry submitted (state: Executing) [runner-execution: {newRunnerExecutionId}]
+```
+
+Replay output (when the same `--idempotency-key` is reused — no second dispatch, no second
+`recovery_actions` row):
+
+```
+{priorRecoveryActionId} retry submitted (state: Executing) [replayed]
+```
+
+`--verbose` appends `[correlation-id: ...]`, `[recovery-event: evt_...]`, and (when
+`--idempotency-key` was auto-generated in interactive mode) `[generated-idempotency-key: ...]`.
+
+### Exit codes
+
+- `201` `RETRY_NOT_APPLICABLE` — the run is not in state `Failed`. Inspect with
+  `deliveryline status <runId>` and verify the run actually failed before retrying.
+- `201` `IDEMPOTENCY_KEY_CONFLICT` — the idempotency key was already used for a different
+  workflow command; pick a fresh key.
+- `101` `MISSING_IDEMPOTENCY_KEY` / `INVALID_IDEMPOTENCY_KEY` — same UX as `submit`.
+
+### Dispatch-failure audit (`recovery.dispatchFailed`)
+
+The recovery flow commits its prep work — workflow state transition, `recovery.retried` event
+append, and `recovery_actions` insert — before invoking `RunnerBroker.dispatch(...)`. If dispatch
+then fails, the typed broker error reaches the audit trail through a second appended event,
+`recovery.dispatchFailed`, instead of mutating the already-committed `recovery.retried` row
+(NFR4 append-only). The new event carries `prior_state=resulting_state=Executing`,
+`intervention_marker=true`, and `details` with `errorCode`, `errorClass`, `failedStage`,
+`recoveryActionId`, `recoveryRetriedEventId`, `idempotencyKey`, and (when present)
+`correlationId`, `reason`, and `compensationFailed`. The CLI propagates the original broker
+exception as the visible failure; the dispatch-failed event surfaces in `deliveryline history`
+so operators can correlate the audit trail with the CLI error.
+
+### Scope (Epic 1 baseline)
+
+`retry` is the only recovery action in the Epic 1 CLI. Deeper recovery —
+`reconcile`, `take over`, `rerun-from-arbitrary-step`, failure-taxonomy classification, the full
+operator console, and the REST recovery endpoints — arrive in Epic 4. The `RecoveryService`
+class is scope-protected by an ArchUnit rule
+(`RECOVERY_SERVICE_IS_SCOPE_PROTECTED`) so an Epic-4 method cannot be added without an Epic-4
+story.
+
+### `next safe action` matrix
+
+The `status` command's `next safe action` field reflects the recommended operator action:
+
+| Current state | Has artifact-op `failed`/`failed_orphan`? | `next safe action` |
+|---|---|---|
+| `Failed` | yes | `await_manual_reconciliation` |
+| `Failed` | no | `retry` |
+| `Inbox` / `Planned` / `Investigating` / `WaitingForSpecApproval` / `Executing` / `WaitingForReview` / `Paused` | (irrelevant) | `await_outcome` |
+| `Completed` / `TakenOver` / `Reconciled` | (irrelevant) | `view_only` |
+
+`await_manual_reconciliation` is intentionally not in the `AllowedAction` registry — it is a
+CLI-surface label, not a frontend action enum. Epic 4 introduces the formal `AllowedAction` for
+operator reconciliation; until then, the CLI prints the literal string and the operator follows
+the Epic 4 takeover/reconcile playbook.
+
+---
 
 ### Redaction contract for `details`
 
@@ -136,4 +223,4 @@ deliveryline history run_<<from step 2>> --format json
 ```
 
 Story 1.22 owns the full quickstart and pilot-setup walkthrough — this page only documents the
-three commands themselves.
+four commands themselves.
