@@ -158,10 +158,13 @@ class ArtifactPersistenceAdapterUnitTest {
 		ArtifactEntity leaf = artifactEntity("art_leaf1234", run, linkedEvent, middle, 3);
 
 		when(artifactRepository.findByPublicId("art_root1234")).thenReturn(Optional.of(root));
-		when(artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		// Story 1.12c (AC1+AC2): adapter delegates leaf resolution to the bounded native CTE.
+		// Mock returns the leaf the CTE would have computed DB-side.
+		when(artifactRepository.findActiveLineageLeaf(
 			"run_ready1234",
-			ArtifactType.SPEC.value()))
-			.thenReturn(List.of(leaf, middle, root));
+			ArtifactType.SPEC.value(),
+			"art_root1234"))
+			.thenReturn(Optional.of(leaf));
 
 		var latest = adapter.findLatestByParentArtifactId("art_root1234").orElseThrow();
 
@@ -189,10 +192,13 @@ class ArtifactPersistenceAdapterUnitTest {
 		ArtifactEntity freshRoot = artifactEntity("art_fresh1234", run, linkedEvent, null, 3);
 
 		when(artifactRepository.findByPublicId("art_oldroot1234")).thenReturn(Optional.of(oldRoot));
-		when(artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		// Story 1.12c (AC1+AC2): the CTE's wrong-lineage filter (chain reaches the target's public
+		// id, not just any sibling) replaces the JVM-side walk. Mock the DB-resolved leaf directly.
+		when(artifactRepository.findActiveLineageLeaf(
 			"run_ready1234",
-			ArtifactType.SPEC.value()))
-			.thenReturn(List.of(freshRoot, oldLeaf, oldRoot));
+			ArtifactType.SPEC.value(),
+			"art_oldroot1234"))
+			.thenReturn(Optional.of(oldLeaf));
 
 		// The old lineage's actual leaf (art_oldleaf1234, version 2) must be returned, not
 		// the fresh-lineage leaf (art_fresh1234, version 3) which doesn't descend from art_oldroot1234.
@@ -309,10 +315,15 @@ class ArtifactPersistenceAdapterUnitTest {
 			"run_ready1234",
 			ArtifactType.SPEC.value()))
 			.thenReturn(Optional.of(freshRoot));
-		when(artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
+		// Story 1.12c (AC1+AC2): the CTE resolves the requested lineage leaf — even when another
+		// lineage holds the global latest version. The "active leaf in the requested lineage,
+		// version monotonic across the artifact family" guarantee from Bundle 13 of story 1.12 is
+		// preserved by the CTE's cursor_public_id match on the requested member's lineage.
+		when(artifactRepository.findActiveLineageLeaf(
 			"run_ready1234",
-			ArtifactType.SPEC.value()))
-			.thenReturn(List.of(freshRoot, oldLeaf, oldRoot));
+			ArtifactType.SPEC.value(),
+			"art_oldroot1234"))
+			.thenReturn(Optional.of(oldLeaf));
 		when(artifactRepository.saveAndFlush(any(ArtifactEntity.class)))
 			.thenAnswer(invocation -> invocation.getArgument(0));
 

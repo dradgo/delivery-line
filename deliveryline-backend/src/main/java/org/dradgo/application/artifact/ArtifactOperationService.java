@@ -610,25 +610,35 @@ public class ArtifactOperationService {
 		Optional<ArtifactRecordSnapshot> latestArtifact
 	) {
 		return switch (operation.operationType()) {
-			case REPLACE, UPDATE -> latestArtifact
-				.map(existing -> artifactRecordPort.createNextVersion(new ArtifactVersionRequest(
-					existing.publicId(),
+			case REPLACE, UPDATE -> {
+				if (latestArtifact.isEmpty()) {
+					// Story 1.12c AC3 (formerly F10): UPDATE/REPLACE against empty lineage used to
+					// silently bootstrap a v1 draft. Reject with a typed intent-conflict so SPI
+					// callers exercising the wrong operation type surface a clear domain error
+					// instead of getting a "wrong" v1 draft. Symmetric counterpart to the CREATE
+					// branch which already raises ARTIFACT_LINEAGE_ALREADY_EXISTS against a
+					// non-FAILED leaf below.
+					log.warn("recordOperation rejected: UPDATE/REPLACE against empty lineage workflowRunId={} artifactType={} operationType={} idempotencyKey={}",
+						operation.workflowRunId(), operation.artifactType().value(), operationTypeValue, operation.idempotencyKey());
+					throw new DomainException(
+						DomainErrorCode.ARTIFACT_OPERATION_INTENT_CONFLICT,
+						"Cannot " + operationTypeValue + " a non-existent artifact lineage for workflowRunId="
+							+ operation.workflowRunId() + ", artifactType=" + operation.artifactType().value()
+							+ ". Use CREATE to bootstrap a lineage.",
+						Map.of(
+							"workflowRunId", operation.workflowRunId(),
+							"artifactType", operation.artifactType().value(),
+							"operationType", operationTypeValue));
+				}
+				yield artifactRecordPort.createNextVersion(new ArtifactVersionRequest(
+					latestArtifact.get().publicId(),
 					operation.payloadRef(),
 					actor,
 					operationTypeValue,
 					operationPublicId,
 					operation.idempotencyKey(),
-					operation.runnerExecutionId())))
-				.orElseGet(() -> artifactRecordPort.createDraft(new ArtifactDraftRequest(
-					operation.workflowRunId(),
-					operation.artifactType(),
-					operation.payloadRef(),
-					operation.artifactType().defaultClassification(),
-					actor,
-					operationTypeValue,
-					operationPublicId,
-					operation.idempotencyKey(),
-					operation.runnerExecutionId())));
+					operation.runnerExecutionId()));
+			}
 			case CREATE -> {
 				if (latestArtifact.isPresent() && latestArtifact.get().status() != ArtifactStatus.FAILED) {
 					ArtifactRecordSnapshot existing = latestArtifact.get();

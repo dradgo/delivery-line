@@ -6,7 +6,6 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -313,44 +312,22 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 				Map.of("artifactId", artifactId)));
 	}
 
-	private boolean belongsToLineage(ArtifactEntity candidate, String lineageMemberArtifactId) {
-		// Defense-in-depth: the schema's ck_artifacts_no_self_parent + insert-only parent_artifact_id
-		// make graph cycles unreachable today, but a hypothetical 2-cycle would otherwise loop
-		// forever inside this read-only walk. Bound by visited-set to fail loudly instead.
-		java.util.Set<String> visited = new java.util.HashSet<>();
-		ArtifactEntity cursor = candidate;
-		while (cursor != null) {
-			String publicId = cursor.getPublicId();
-			if (publicId.equals(lineageMemberArtifactId)) {
-				return true;
-			}
-			if (!visited.add(publicId)) {
-				throw new DomainException(
-					DomainErrorCode.INTERNAL_ERROR,
-					"Artifact lineage walk detected a cycle starting from artifactId=" + candidate.getPublicId(),
-					Map.of(
-						"artifactId", candidate.getPublicId(),
-						"cycleNodeId", publicId));
-			}
-			cursor = cursor.getParentArtifact();
-		}
-		return false;
-	}
-
 	private Optional<ArtifactEntity> findLatestActiveLineageMemberEntity(ArtifactEntity memberEntity) {
-		List<ArtifactEntity> siblings = artifactRepository.findByWorkflowRunPublicIdAndArtifactTypeOrderByVersionDesc(
-			memberEntity.getWorkflowRun().getPublicId(),
-			memberEntity.getArtifactType().value());
-		// Siblings are ordered version DESC, so the first non-archived candidate whose ancestor
-		// chain contains the requested lineage member is the active leaf for that lineage.
-		// Multiple lineages can coexist within (workflow_run, artifact_type) when a fresh draft
-		// is started after a FAILED leaf; the chain walk filters out wrong-lineage candidates.
-		for (ArtifactEntity candidate : siblings) {
-			if (candidate.getArchivedAt() == null && belongsToLineage(candidate, memberEntity.getPublicId())) {
-				return Optional.of(candidate);
-			}
-		}
-		return Optional.empty();
+		// Story 1.12c (AC1+AC2): leaf resolution + parent-chain check are pushed down into a single
+		// PostgreSQL recursive CTE — no unbounded sibling load, no N+1 lazy parent walk. Cycle
+		// defense survives via the CTE depth bound (10000), replacing the previous JVM-side
+		// visited-set guard. See ArtifactRepository#findActiveLineageLeaf javadoc.
+		String workflowRunPublicId = memberEntity.getWorkflowRun().getPublicId();
+		String artifactTypeValue = memberEntity.getArtifactType().value();
+		String lineageMemberPublicId = memberEntity.getPublicId();
+		log.debug("findActiveLineageLeaf entry workflowRunId={} artifactType={} lineageMemberArtifactId={}",
+			workflowRunPublicId, artifactTypeValue, lineageMemberPublicId);
+		Optional<ArtifactEntity> leaf = artifactRepository.findActiveLineageLeaf(
+			workflowRunPublicId, artifactTypeValue, lineageMemberPublicId);
+		log.debug("findActiveLineageLeaf exit workflowRunId={} artifactType={} lineageMemberArtifactId={} leafArtifactId={}",
+			workflowRunPublicId, artifactTypeValue, lineageMemberPublicId,
+			leaf.map(ArtifactEntity::getPublicId).orElse(null));
+		return leaf;
 	}
 
 	private WorkflowEventEntity newArtifactEvent(

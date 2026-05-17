@@ -247,6 +247,45 @@ class ArtifactLoggingContractTest {
 	}
 
 	@Test
+	void recordOperationUpdateAgainstEmptyLineageEmitsWarnIdentifyingTheIntentConflict() {
+		// Story 1.12c AC3: UPDATE/REPLACE against empty lineage rejects with
+		// ARTIFACT_OPERATION_INTENT_CONFLICT; the WARN line must pin workflowRunId, artifactType,
+		// operationType, and idempotencyKey so operators can diagnose buggy callers without
+		// reproducing.
+		ArtifactRecordPort recordPort = mock(ArtifactRecordPort.class);
+		ArtifactOperationPort operationPort = mock(ArtifactOperationPort.class);
+		ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);
+		ArtifactEventPort eventPort = mock(ArtifactEventPort.class);
+		ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
+		ArtifactOperationService service = ArtifactOperationService.withoutWorkflowRunStateGuard(
+			recordPort, operationPort, payloadStore, eventPort, runnerPort);
+
+		when(recordPort.findLatestByWorkflowRunIdAndArtifactType("run_intent1234", ArtifactType.SPEC.value()))
+			.thenReturn(Optional.empty());
+
+		assertThrows(DomainException.class, () -> service.recordOperation(new RecordArtifactOperationCommand(
+			"run_intent1234",
+			ArtifactType.SPEC,
+			ArtifactOperationType.UPDATE,
+			"idem-intent-1234567890",
+			"spec.md",
+			"spec body".getBytes(),
+			"alex",
+			ActorType.HUMAN,
+			"corr-intent",
+			null)));
+
+		assertTrue(operationServiceAppender.list.stream().anyMatch(e ->
+			e.getLevel() == Level.WARN
+				&& e.getFormattedMessage().contains("UPDATE/REPLACE against empty lineage")
+				&& e.getFormattedMessage().contains("workflowRunId=run_intent1234")
+				&& e.getFormattedMessage().contains("artifactType=spec")
+				&& e.getFormattedMessage().contains("operationType=update")
+				&& e.getFormattedMessage().contains("idempotencyKey=idem-intent-1234567890")),
+			"expected WARN intent-conflict log carrying all four context keys; events=" + operationServiceAppender.list);
+	}
+
+	@Test
 	void isApprovalEligibleChecksumMismatchEmitsWarnWithoutLeakingPayloadBytes() {
 		ArtifactRecordPort recordPort = mock(ArtifactRecordPort.class);
 		ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);

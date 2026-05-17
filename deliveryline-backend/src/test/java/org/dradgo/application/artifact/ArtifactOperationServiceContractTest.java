@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import jakarta.persistence.EntityManagerFactory;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -23,6 +24,8 @@ import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,7 +35,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@SpringBootTest(properties = {
+	// Story 1.12c AC1+AC2: enable Hibernate Statistics so the deep-lineage and parent-chain
+	// regressions can assert query/entity-load counts are bounded by a small constant.
+	"spring.jpa.properties.hibernate.generate_statistics=true"
+})
 @ActiveProfiles({"test", "linear-mock"})
 class ArtifactOperationServiceContractTest {
 
@@ -44,6 +51,9 @@ class ArtifactOperationServiceContractTest {
 
 	@Autowired
 	private ArtifactReconciliationService reconciliationService;
+
+	@Autowired
+	private EntityManagerFactory entityManagerFactory;
 
 	@AfterEach
 	void cleanDatabase() {
@@ -322,11 +332,187 @@ class ArtifactOperationServiceContractTest {
 		assertEquals("run_done1234", error.details().get("workflowRunId"));
 	}
 
+	@Test
+	void newVersionOnDeepLineageDoesNotLoadAllSiblingsIntoMemory() {
+		// Story 1.12c AC1 (formerly F11): the legacy adapter loaded every sibling for
+		// (workflowRun, artifactType) into memory before filtering. The CTE rewrite returns only
+		// the active lineage leaf — entity loads must be a small constant regardless of lineage
+		// depth, and the call must succeed (no heap blow-up) against a deep chain.
+		insertRun("run_deeplin1234", WorkflowState.EXECUTING);
+		String leafPublicId = seedDeepLineage("run_deeplin1234", 60);
+
+		Statistics statistics = hibernateStatistics();
+		statistics.clear();
+
+		ArtifactRecordSnapshot next = service.newVersion(
+			leafPublicId,
+			"spec-v61.md",
+			new ActorContext("alex", ActorType.HUMAN, "corr-deeplin"));
+
+		assertEquals(61, next.version());
+		// 60-deep chain, but the CTE returns just one ArtifactEntity row. The adapter loads
+		// {requireArtifact, latestActive, CTE leaf} = 3 ArtifactEntity rows (+ 1 for the newly
+		// inserted row on the write). Stay generous (< depth/4) so future micro-additions don't
+		// trip the assertion, while still rejecting the legacy O(depth) behavior.
+		long artifactLoads = statistics.getEntityStatistics(
+			"org.dradgo.adapters.persistence.entity.ArtifactEntity").getLoadCount();
+		// Lower bound (>= 1) rejects a future regression that short-circuits the lineage
+		// resolution path entirely (e.g., caching the result, returning before requireArtifact).
+		// The native CTE bypasses Hibernate entity-load tracking, so the observed count is
+		// just the leading requireArtifact load (1); the upper bound (< 15) still rejects
+		// the legacy O(depth) sibling-load regression.
+		assertTrue(artifactLoads >= 1 && artifactLoads < 15,
+			"AC1: ArtifactEntity load count must be a small constant (>=1 confirming the path ran, regardless of lineage depth); observed=" + artifactLoads);
+	}
+
+	@Test
+	void newVersionOnDeepLineageEmitsSmallConstantSqlAgainstArtifactsRegardlessOfChainDepth() {
+		// Story 1.12c AC2 (formerly F12): the legacy adapter triggered an N+1 lazy load via
+		// ArtifactEntity.parentArtifact while walking belongsToLineage. The CTE rewrite pushes
+		// the entire parent-chain check DB-side, so prepare-statement counts against `artifacts`
+		// must be bounded by a small constant regardless of depth D.
+		insertRun("run_chainqc1234", WorkflowState.EXECUTING);
+		String leafPublicId = seedDeepLineage("run_chainqc1234", 30);
+
+		Statistics statistics = hibernateStatistics();
+		statistics.clear();
+
+		long beforePrepares = statistics.getPrepareStatementCount();
+		service.newVersion(
+			leafPublicId,
+			"spec-v31.md",
+			new ActorContext("alex", ActorType.HUMAN, "corr-chainqc"));
+		long afterPrepares = statistics.getPrepareStatementCount();
+		long delta = afterPrepares - beforePrepares;
+
+		// newVersion path: requireArtifact + requireWorkflowRunForUpdate + advisory-lock query +
+		// findFirstLatestActive + CTE leaf resolver + insert event + insert artifact = roughly
+		// 7-9 statements. With the legacy N+1, a 30-deep chain would issue 30+ extra parent-walk
+		// SELECTs. Generous ceiling rejects the O(D) regression while tolerating minor framework
+		// chatter.
+		// Lower bound (≥ 4) rejects a future regression that short-circuits the path
+		// (cached result, early-exit on Optional.empty()) which would otherwise pass a
+		// ceiling-only check by emitting zero statements.
+		assertTrue(delta >= 4 && delta < 20,
+			"AC2: total prepare-statement count for newVersion on 30-deep chain must be a small constant (≥4 confirming the path ran, ≤20 rejecting O(D) regression); observed delta=" + delta);
+	}
+
+	@Test
+	void recordOperationRejectsUpdateAgainstEmptyLineageWithIntentConflict() {
+		// Story 1.12c AC3 (formerly F10): UPDATE against an empty (workflowRun, artifactType)
+		// lineage used to silently bootstrap a v1 draft. It now rejects with the typed
+		// ARTIFACT_OPERATION_INTENT_CONFLICT code — symmetric with the CREATE→ALREADY_EXISTS path.
+		insertRun("run_updempt1234", WorkflowState.EXECUTING);
+
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.recordOperation(new RecordArtifactOperationCommand(
+				"run_updempt1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.UPDATE,
+				"idem-updempt-" + System.nanoTime(),
+				"spec.md",
+				"payload".getBytes(),
+				"alex",
+				ActorType.HUMAN,
+				"corr-updempt",
+				null)));
+
+		assertEquals(DomainErrorCode.ARTIFACT_OPERATION_INTENT_CONFLICT, error.errorCode());
+		assertEquals("run_updempt1234", error.details().get("workflowRunId"));
+		assertEquals(ArtifactType.SPEC.value(), error.details().get("artifactType"));
+		assertEquals("update", error.details().get("operationType"));
+		assertTrue(error.getMessage().contains("Use CREATE to bootstrap"),
+			"AC3: rejection message must guide callers toward CREATE; got=" + error.getMessage());
+	}
+
+	@Test
+	void recordOperationRejectsReplaceAgainstEmptyLineageWithIntentConflict() {
+		// Story 1.12c AC3 mirror case: REPLACE against empty lineage must reject identically.
+		insertRun("run_repempt1234", WorkflowState.EXECUTING);
+
+		DomainException error = assertThrows(
+			DomainException.class,
+			() -> service.recordOperation(new RecordArtifactOperationCommand(
+				"run_repempt1234",
+				ArtifactType.SPEC,
+				ArtifactOperationType.REPLACE,
+				"idem-repempt-" + System.nanoTime(),
+				"spec.md",
+				"payload".getBytes(),
+				"alex",
+				ActorType.HUMAN,
+				"corr-repempt",
+				null)));
+
+		assertEquals(DomainErrorCode.ARTIFACT_OPERATION_INTENT_CONFLICT, error.errorCode());
+		assertEquals("replace", error.details().get("operationType"));
+	}
+
 	private void insertRun(String publicId, WorkflowState state) {
 		jdbcTemplate.update(
 			"insert into workflow_runs (public_id, current_state) values (?, ?)",
 			publicId,
 			state.value());
+	}
+
+	/**
+	 * Seeds {@code depth} chained artifact versions for {@code (workflowRunPublicId, SPEC)} via
+	 * raw JdbcTemplate inserts, returning the public_id of the deepest leaf. Bypasses the
+	 * service to keep deep-lineage setup fast for AC1/AC2 regressions.
+	 *
+	 * <p>Each version gets its own {@code workflow_events} row (mirroring production shape:
+	 * one event per artifact version) so the seeded data exercises the same FK/index plans
+	 * as real lineage history. Public ids carry a per-call nonce so concurrent or sequential
+	 * tests cannot collide via shared substrings of the workflow_run public id.
+	 */
+	private String seedDeepLineage(String workflowRunPublicId, int depth) {
+		Long workflowRunId = jdbcTemplate.queryForObject(
+			"select id from workflow_runs where public_id = ?",
+			Long.class, workflowRunPublicId);
+		long seedNonce = System.nanoTime();
+		Long parentId = null;
+		String leafPublicId = null;
+		for (int v = 1; v <= depth; v++) {
+			Long linkedEventId = jdbcTemplate.queryForObject(
+				"insert into workflow_events (public_id, workflow_run_id, event_type, actor_identity, actor_type) "
+					+ "values (?, ?, 'artifact.draftCreated', 'seed', 'system') returning id",
+				Long.class,
+				"evt_seed" + seedNonce + "_v" + v,
+				workflowRunId);
+			if (linkedEventId == null) {
+				throw new IllegalStateException(
+					"seedDeepLineage: workflow_events insert returned no row at v=" + v);
+			}
+			String publicId = "art_seed" + seedNonce + "_v" + v;
+			Long id = jdbcTemplate.queryForObject(
+				"insert into artifacts (public_id, workflow_run_id, artifact_type, version, parent_artifact_id, "
+					+ "classification, status, linked_event_id) "
+					+ "values (?, ?, ?, ?, ?, ?, ?, ?) returning id",
+				Long.class,
+				publicId,
+				workflowRunId,
+				ArtifactType.SPEC.value(),
+				v,
+				parentId,
+				ArtifactType.SPEC.defaultClassification().value(),
+				"available",
+				linkedEventId);
+			if (id == null) {
+				throw new IllegalStateException(
+					"seedDeepLineage: artifacts insert returned no row at v=" + v);
+			}
+			parentId = id;
+			leafPublicId = publicId;
+		}
+		return leafPublicId;
+	}
+
+	private Statistics hibernateStatistics() {
+		// Statistics is already enabled at class level via the
+		// `spring.jpa.properties.hibernate.generate_statistics=true` property on
+		// @SpringBootTest. Just unwrap and return — no need to flip the global flag.
+		return entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
 	}
 
 	private record ArtifactLineageRow(String publicId, int version, String parentPublicId) {
