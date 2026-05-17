@@ -9,7 +9,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearTicket;
+import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -62,53 +64,71 @@ public class LinearPollingHost {
 
 	private final LinearAdapter linearAdapter;
 	private final IntegrationLinkRecordPort integrationLinkRecordPort;
+	private final UuidV7Generator uuidV7Generator;
 	private final Clock clock;
 	private final AtomicReference<Instant> lastPollAt;
 
 	public LinearPollingHost(
 		LinearAdapter linearAdapter,
-		IntegrationLinkRecordPort integrationLinkRecordPort
+		IntegrationLinkRecordPort integrationLinkRecordPort,
+		UuidV7Generator uuidV7Generator
 	) {
-		this(linearAdapter, integrationLinkRecordPort, Clock.systemUTC());
+		this(linearAdapter, integrationLinkRecordPort, uuidV7Generator, Clock.systemUTC());
 	}
 
 	LinearPollingHost(
 		LinearAdapter linearAdapter,
 		IntegrationLinkRecordPort integrationLinkRecordPort,
+		UuidV7Generator uuidV7Generator,
 		Clock clock
 	) {
 		this.linearAdapter = Objects.requireNonNull(linearAdapter, "linearAdapter");
 		this.integrationLinkRecordPort = Objects.requireNonNull(
 			integrationLinkRecordPort, "integrationLinkRecordPort");
+		this.uuidV7Generator = Objects.requireNonNull(uuidV7Generator, "uuidV7Generator");
 		this.clock = Objects.requireNonNull(clock, "clock");
 		this.lastPollAt = new AtomicReference<>(Instant.now(clock));
 	}
 
 	@PostConstruct
 	void seedWatermark() {
-		Instant noActiveLinksFallback = Instant.now(clock);
-		Instant seed;
+		String priorCorrelationMdc = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, uuidV7Generator.generate());
 		try {
-			seed = integrationLinkRecordPort
-				.findMaxLastSyncAtForType(INTEGRATION_TYPE_LINEAR)
-				.orElse(noActiveLinksFallback);
-		} catch (RuntimeException error) {
-			log.warn("linear_real polling_watermark seed_failed cause={} fallback=safe_floor",
-				error.getClass().getSimpleName());
-			seed = SAFE_WATERMARK_FLOOR;
+			Instant noActiveLinksFallback = Instant.now(clock);
+			Instant seed;
+			try {
+				seed = integrationLinkRecordPort
+					.findMaxLastSyncAtForType(INTEGRATION_TYPE_LINEAR)
+					.orElse(noActiveLinksFallback);
+			} catch (RuntimeException error) {
+				log.warn("linear_real polling_watermark seed_failed cause={} fallback=safe_floor",
+					error.getClass().getSimpleName());
+				seed = SAFE_WATERMARK_FLOOR;
+			}
+			lastPollAt.set(seed);
+			log.info("linear_real polling_watermark seeded={} source={}",
+				seed,
+				seed.equals(SAFE_WATERMARK_FLOOR)
+					? "safe_floor_after_seed_failure"
+					: seed.equals(noActiveLinksFallback)
+						? "clock_fallback_no_active_links"
+						: "integration_links_max_last_sync_at");
+		} finally {
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
 		}
-		lastPollAt.set(seed);
-		log.info("linear_real polling_watermark seeded={} source={}",
-			seed,
-			seed.equals(SAFE_WATERMARK_FLOOR)
-				? "safe_floor_after_seed_failure"
-				: seed.equals(noActiveLinksFallback)
-					? "clock_fallback_no_active_links"
-					: "integration_links_max_last_sync_at");
 	}
 
 	@Scheduled(fixedDelayString = "${deliveryline.linear.poll-interval-ms:60000}")
 	public void pollLinear() {
+		String priorCorrelationMdc = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, uuidV7Generator.generate());
+		try {
+			pollLinearInternal();
+		} finally {
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
+		}
+	}
+
+	private void pollLinearInternal() {
 		Instant since = lastPollAt.get();
 		List<LinearTicket> tickets;
 		try {

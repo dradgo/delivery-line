@@ -27,6 +27,7 @@ import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -78,6 +79,8 @@ public class WorkflowInspectionService {
 		// (b) the input cannot carry control characters (CR/LF/TAB) into MDC or log interpolation
 		//     because the registered SUFFIX_PATTERN restricts allowed characters to [A-Za-z0-9_-].
 		PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+		try {
 		log.info("inspecting workflow_run snapshot workflowRunId={}", workflowRunPublicId);
 		WorkflowRunSnapshot run = workflowRunReadPort.findByPublicId(workflowRunPublicId)
 			.orElseThrow(() -> runNotFound(workflowRunPublicId));
@@ -119,6 +122,9 @@ public class WorkflowInspectionService {
 		log.info("inspecting workflow_run snapshot success workflowRunId={} currentState={}",
 			workflowRunPublicId, run.currentState().value());
 		return view;
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+		}
 	}
 
 	@Transactional(readOnly = true)
@@ -126,6 +132,8 @@ public class WorkflowInspectionService {
 		// See getStatus() for the prefix-validation rationale (covers governed error surface +
 		// log-injection defense in one check).
 		PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+		try {
 		log.info("inspecting workflow_run history workflowRunId={} sinceInclusive={}",
 			workflowRunPublicId, sinceInclusive);
 		WorkflowRunSnapshot run = workflowRunReadPort.findByPublicId(workflowRunPublicId)
@@ -151,6 +159,9 @@ public class WorkflowInspectionService {
 		log.info("inspecting workflow_run history success workflowRunId={} eventCount={}",
 			workflowRunPublicId, rendered.size());
 		return new WorkflowHistoryView(run.publicId(), List.copyOf(rendered));
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+		}
 	}
 
 	/**

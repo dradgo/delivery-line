@@ -41,3 +41,12 @@ Current mappings in the foundation slice:
 - Interactive CLI: if `--idempotency-key` is omitted, DeliveryLine generates a UUIDv7 key locally and always surfaces it inline as `[generated-idempotency-key: ...]` so the operator can replay if the response is lost in transit.
 - Non-interactive/scripted CLI: an explicit idempotency key is required.
 - `--verbose`: retained as a no-op for backward compatibility; the auto-generated key is now surfaced regardless.
+
+## Correlation IDs (story 1.19)
+
+Every CLI command and REST request carries a stable `correlationId` that flows through structured logs end-to-end.
+
+- **CLI:** `submit`, `status`, `history`, `retry`, and `doctor` accept `--correlation-id <uuid>` (any UUID version). If omitted, a fresh UUIDv7 is generated. When `--verbose` is supplied, the resolved value is appended to stdout as `[correlation-id: <uuid>]` so operators can grep the log surface for it (`grep correlationId=<uuid> deliveryline.log`).
+- **REST:** clients can supply `X-Correlation-Id: <uuid>` on any request; the value is echoed on the response header and stamped on the structured-log MDC. Invalid or absent values trigger generation of a fresh UUIDv7.
+- **Problem Details:** any `application/problem+json` response carries a top-level `correlationId` extension populated from MDC at the catch site. The `instance` field stays as the request path.
+- **Log schema:** see [`../observability/log-schema.md`](../observability/log-schema.md) for the demo-profile JSON shape and the stable MDC key surface.

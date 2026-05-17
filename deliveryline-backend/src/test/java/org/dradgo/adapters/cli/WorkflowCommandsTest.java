@@ -45,7 +45,7 @@ class WorkflowCommandsTest {
 		verify(service).submit(captor.capture());
 		assertEquals("01964c38-1c45-7000-8000-000000000000", captor.getValue().idempotencyKey());
 		assertEquals(
-			"run_submit1234 submitted (state: Inbox) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
+			"run_submit1234 submitted (state: Inbox) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000] [correlation-id: corr-submit-1]",
 			output);
 	}
 

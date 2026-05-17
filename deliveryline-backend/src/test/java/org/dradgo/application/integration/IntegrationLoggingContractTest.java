@@ -127,7 +127,7 @@ class IntegrationLoggingContractTest {
 		LinearAdapter linearAdapter = mock(LinearAdapter.class);
 		IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
 		Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
-		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, clock);
+		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, new org.dradgo.application.idempotency.UuidV7Generator(), clock);
 		when(linearAdapter.pollNewTickets(Instant.parse("2026-05-13T12:00:00Z")))
 			.thenThrow(new LinearAdapterException(IntegrationFailureCategory.NETWORK_API_FAILURE, "rate limited"));
 
@@ -137,6 +137,14 @@ class IntegrationLoggingContractTest {
 		assertContains(pollingAppender.list, Level.WARN, "category=network_api_failure");
 		assertTrue(host.lastPollAt().equals(Instant.parse("2026-05-13T12:00:00Z")),
 			"poll failure must preserve the existing cursor");
+
+		// Story 1.19 backfill: LinearPollingHost.pollLinear stamps a fresh correlationId per
+		// cycle. Each captured event MUST carry the correlationId MDC key.
+		ILoggingEvent pollingFailure = pollingAppender.list.stream()
+			.filter(e -> e.getFormattedMessage().contains("linear_real polling_failed"))
+			.findFirst().orElseThrow();
+		assertTrue(pollingFailure.getMDCPropertyMap().get("correlationId") != null,
+			"correlationId MDC key must be stamped on every polling log line");
 	}
 
 	@Test
@@ -144,7 +152,7 @@ class IntegrationLoggingContractTest {
 		LinearAdapter linearAdapter = mock(LinearAdapter.class);
 		IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
 		Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
-		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, clock);
+		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, new org.dradgo.application.idempotency.UuidV7Generator(), clock);
 		LinearTicket ticket = new LinearTicket(
 			"LIN-102",
 			"Add retry",
@@ -170,7 +178,7 @@ class IntegrationLoggingContractTest {
 		LinearAdapter linearAdapter = mock(LinearAdapter.class);
 		IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
 		Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
-		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, clock);
+		LinearPollingHost host = new LinearPollingHost(linearAdapter, port, new org.dradgo.application.idempotency.UuidV7Generator(), clock);
 		when(port.findMaxLastSyncAtForType("linear")).thenThrow(new IllegalStateException("db unavailable"));
 
 		host.seedWatermark();

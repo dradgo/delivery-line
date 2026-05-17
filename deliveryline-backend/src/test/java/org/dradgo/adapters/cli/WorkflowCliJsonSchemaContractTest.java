@@ -64,7 +64,7 @@ class WorkflowCliJsonSchemaContractTest {
 			"await_outcome");
 		when(inspection.getStatus("run_status12345")).thenReturn(view);
 
-		String json = commands.status("run_status12345", "json", "corr-status-1");
+		String json = commands.status("run_status12345", "json", "corr-status-1", false);
 		JsonNode payload = mapper.readTree(json);
 
 		assertEquals(1, payload.get("schemaVersion").asInt());
@@ -91,7 +91,7 @@ class WorkflowCliJsonSchemaContractTest {
 			"retry");
 		when(inspection.getStatus("run_failed01234")).thenReturn(view);
 
-		String json = commands.status("run_failed01234", "json", "corr-status-failed");
+		String json = commands.status("run_failed01234", "json", "corr-status-failed", false);
 		JsonNode payload = mapper.readTree(json);
 
 		assertEquals("execution", payload.get("failedStage").asText());
@@ -144,7 +144,7 @@ class WorkflowCliJsonSchemaContractTest {
 				Map.of())));
 		when(inspection.listHistory("run_failretried", null)).thenReturn(view);
 
-		String json = commands.history("run_failretried", "json", null, "corr-failhist-1");
+		String json = commands.history("run_failretried", "json", null, "corr-failhist-1", false);
 		JsonNode payload = mapper.readTree(json);
 
 		assertEquals(3, payload.get("events").size());
@@ -173,7 +173,7 @@ class WorkflowCliJsonSchemaContractTest {
 			"await_outcome");
 		when(inspection.getStatus("run_emptystatus12345")).thenReturn(view);
 
-		String json = commands.status("run_emptystatus12345", "json", null);
+		String json = commands.status("run_emptystatus12345", "json", null, false);
 		JsonNode payload = mapper.readTree(json);
 
 		assertTrue(payload.get("currentActor").isNull());
@@ -202,7 +202,7 @@ class WorkflowCliJsonSchemaContractTest {
 				details)));
 		when(inspection.listHistory("run_hist12345", null)).thenReturn(view);
 
-		String json = commands.history("run_hist12345", "json", null, "corr-hist-1");
+		String json = commands.history("run_hist12345", "json", null, "corr-hist-1", false);
 		JsonNode payload = mapper.readTree(json);
 
 		assertEquals(1, payload.get("schemaVersion").asInt());
@@ -256,7 +256,7 @@ class WorkflowCliJsonSchemaContractTest {
 				dispatchFailedDetails)));
 		when(inspection.listHistory("run_dispatchfail", null)).thenReturn(view);
 
-		String json = commands.history("run_dispatchfail", "json", null, "corr-disp-1");
+		String json = commands.history("run_dispatchfail", "json", null, "corr-disp-1", false);
 		JsonNode payload = mapper.readTree(json);
 
 		JsonNode dispatchFailed = payload.get("events").get(1);
@@ -289,7 +289,7 @@ class WorkflowCliJsonSchemaContractTest {
 				Map.of())));
 		when(inspection.listHistory("run_dropkey12345", null)).thenReturn(view);
 
-		String json = commands.history("run_dropkey12345", "json", null, null);
+		String json = commands.history("run_dropkey12345", "json", null, null, false);
 		JsonNode payload = mapper.readTree(json);
 		assertTrue(payload.get("events").get(0).get("details").isObject());
 		assertTrue(payload.get("events").get(0).get("resultingState").isNull());
@@ -323,7 +323,7 @@ class WorkflowCliJsonSchemaContractTest {
 				leakingDetails)));
 		when(inspection.listHistory("run_schemaleak", null)).thenReturn(view);
 
-		String json = commands.history("run_schemaleak", "json", null, "corr-leak-1");
+		String json = commands.history("run_schemaleak", "json", null, "corr-leak-1", false);
 
 		Schema schema = schemaRegistry.getSchema(SchemaLocation.of(HISTORY_SCHEMA_LOCATION));
 		Result validation = schema.walk(json, InputFormat.JSON, true);

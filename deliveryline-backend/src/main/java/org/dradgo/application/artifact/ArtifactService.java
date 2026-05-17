@@ -4,6 +4,7 @@ import java.util.Optional;
 import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.domain.registry.ArtifactStatus;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,10 @@ public class ArtifactService {
 	}
 
 	public boolean isApprovalEligible(String artifactId) {
+		return MdcKeys.withKey(MdcKeys.ARTIFACT_ID, artifactId, () -> isApprovalEligibleInternal(artifactId));
+	}
+
+	private boolean isApprovalEligibleInternal(String artifactId) {
 		Optional<ArtifactRecordSnapshot> maybeArtifact = artifactRecordPort.findByPublicId(artifactId)
 			.filter(artifact -> artifact.status() == ArtifactStatus.AVAILABLE)
 			.filter(artifact -> artifact.checksumAlgorithm() != null && !artifact.checksumAlgorithm().isBlank())

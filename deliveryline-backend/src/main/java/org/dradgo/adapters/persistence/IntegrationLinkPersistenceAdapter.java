@@ -18,6 +18,7 @@ import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkStateMachine;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.TicketSummaryProjection;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -122,9 +123,15 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
 		try {
 			persisted = integrationLinkRepository.saveAndFlush(entity);
 		} catch (DataIntegrityViolationException collision) {
+			// F19 from story 1.15 review: externalRef is permitted in this log line because
+			// CLI render also surfaces it (allow-list parity); the redaction layout (story
+			// 1.19 AC5) scrubs any embedded secret-shaped substring. P3 (story 1.19 review):
+			// sanitize at the call site so CR/LF/TAB in attacker-supplied ticket refs cannot
+			// forge a synthetic log line.
 			log.warn(
-				"insert conflict integrationType={} workflowRunId={} cause={}",
+				"insert conflict integrationType={} externalRef={} workflowRunId={} cause={}",
 				request.integrationType(),
+				MdcKeys.sanitizeForLog(request.externalRef()),
 				request.workflowRunPublicId(),
 				collision.getMostSpecificCause().getClass().getSimpleName());
 			throw conflict(request, collision);

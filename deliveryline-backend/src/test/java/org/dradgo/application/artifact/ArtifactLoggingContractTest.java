@@ -135,6 +135,17 @@ class ArtifactLoggingContractTest {
 				&& e.getFormattedMessage().contains("artifactId=art_late9999")
 				&& e.getFormattedMessage().contains("runnerExecutionId=rex_late9999")),
 			"expected WARN late_or_stale log; events=" + operationServiceAppender.list);
+
+		// Story 1.19 backfill: ArtifactOperationService stamps artifactId / artifactOperationId
+		// on MDC inside doRecordOperationInTransaction. The late-or-stale WARN log line is
+		// emitted while both scopes are active, so the captured event MUST carry both keys.
+		ILoggingEvent lateOrStale = operationServiceAppender.list.stream()
+			.filter(e -> e.getFormattedMessage().contains("flagging artifact as late_or_stale"))
+			.findFirst().orElseThrow();
+		assertEquals("art_late9999", lateOrStale.getMDCPropertyMap().get("artifactId"));
+		assertTrue(lateOrStale.getMDCPropertyMap().get("artifactOperationId") != null,
+			"artifactOperationId MDC key must be stamped");
+		assertEquals("run_late9999", lateOrStale.getMDCPropertyMap().get("workflowRunId"));
 	}
 
 	@Test

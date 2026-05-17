@@ -101,6 +101,11 @@ class DoctorLoggingContractTest {
 			.contains("correlationId=corr-success")
 			.contains("outcome=success")
 			.contains("checksRun=1");
+
+		// Story 1.19 backfill: DoctorCommands.doctor stamps correlationId on MDC at entry. The
+		// completion line is emitted before the finally-block cleanup, so the captured event
+		// MUST carry the correlationId MDC key.
+		assertThat(infoEvents.get(0).getMDCPropertyMap()).containsEntry("correlationId", "corr-success");
 	}
 
 	@Test

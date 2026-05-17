@@ -21,9 +21,9 @@ import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.shell.core.command.annotation.Argument;
 import org.springframework.shell.core.command.annotation.Command;
@@ -37,7 +37,6 @@ public class WorkflowCommands {
 
 	private static final Logger log = LoggerFactory.getLogger(WorkflowCommands.class);
 
-	private static final String MDC_CORRELATION_ID = "correlationId";
 	private static final String OUTCOME_SUCCESS = "success";
 	private static final String OUTCOME_FAILURE_PREFIX = "failure:";
 	private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -129,7 +128,8 @@ public class WorkflowCommands {
 		@Option(longName = "verbose", description = "Print additional command metadata", required = false, defaultValue = "false") boolean verbose
 	) {
 		long start = System.nanoTime();
-		String resolvedCorrelation = pushCorrelation(correlationId);
+		CorrelationScope scope = pushCorrelation(correlationId);
+		String resolvedCorrelation = scope.resolved();
 		String runId = null;
 		try {
 			String resolvedIdempotencyKey = resolveIdempotencyKey(idempotencyKey);
@@ -144,6 +144,9 @@ public class WorkflowCommands {
 			if (idempotencyKey == null) {
 				output += " [generated-idempotency-key: " + resolvedIdempotencyKey + "]";
 			}
+			if (verbose) {
+				output += " [correlation-id: " + resolvedCorrelation + "]";
+			}
 			emitSuccess("workflow submit", runId, resolvedCorrelation, start);
 			return output;
 		} catch (DomainException de) {
@@ -153,7 +156,7 @@ public class WorkflowCommands {
 			emitFailure("workflow submit", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
 			throw re;
 		} finally {
-			MDC.remove(MDC_CORRELATION_ID);
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
 		}
 	}
 
@@ -164,14 +167,19 @@ public class WorkflowCommands {
 	public String status(
 		@Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
 		@Option(longName = "format", description = "Output format: text or json", required = false, defaultValue = FORMAT_TEXT) String format,
-		@Option(longName = "correlation-id", description = "Correlation ID", required = false) String correlationId
+		@Option(longName = "correlation-id", description = "Correlation ID", required = false) String correlationId,
+		@Option(longName = "verbose", description = "Print additional command metadata", required = false, defaultValue = "false") boolean verbose
 	) {
 		requireInspectionWired();
 		long start = System.nanoTime();
-		String resolvedCorrelation = pushCorrelation(correlationId);
+		CorrelationScope scope = pushCorrelation(correlationId);
+		String resolvedCorrelation = scope.resolved();
 		try {
 			WorkflowStatusView view = workflowInspectionService.getStatus(runId);
 			String rendered = renderStatus(view, format);
+			if (verbose) {
+				rendered = appendCorrelationSuffix(rendered, resolvedCorrelation);
+			}
 			emitSuccess("workflow status", runId, resolvedCorrelation, start);
 			return rendered;
 		} catch (DomainException de) {
@@ -181,7 +189,7 @@ public class WorkflowCommands {
 			emitFailure("workflow status", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
 			throw re;
 		} finally {
-			MDC.remove(MDC_CORRELATION_ID);
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
 		}
 	}
 
@@ -200,7 +208,8 @@ public class WorkflowCommands {
 	) {
 		requireRecoveryWired();
 		long start = System.nanoTime();
-		String resolvedCorrelation = pushCorrelation(correlationId);
+		CorrelationScope scope = pushCorrelation(correlationId);
+		String resolvedCorrelation = scope.resolved();
 		try {
 			String resolvedIdempotencyKey = idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
 			ActorContext actor = new ActorContext(actorIdentity, actorType, resolvedCorrelation);
@@ -234,7 +243,7 @@ public class WorkflowCommands {
 			emitFailure("workflow retry", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
 			throw re;
 		} finally {
-			MDC.remove(MDC_CORRELATION_ID);
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
 		}
 	}
 
@@ -246,15 +255,20 @@ public class WorkflowCommands {
 		@Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
 		@Option(longName = "format", description = "Output format: text or json", required = false, defaultValue = FORMAT_TEXT) String format,
 		@Option(longName = "since", description = "ISO-8601 timestamp; only show events with created_at >= since", required = false) String since,
-		@Option(longName = "correlation-id", description = "Correlation ID", required = false) String correlationId
+		@Option(longName = "correlation-id", description = "Correlation ID", required = false) String correlationId,
+		@Option(longName = "verbose", description = "Print additional command metadata", required = false, defaultValue = "false") boolean verbose
 	) {
 		requireInspectionWired();
 		long start = System.nanoTime();
-		String resolvedCorrelation = pushCorrelation(correlationId);
+		CorrelationScope scope = pushCorrelation(correlationId);
+		String resolvedCorrelation = scope.resolved();
 		try {
 			OffsetDateTime sinceInclusive = parseSince(since);
 			WorkflowHistoryView view = workflowInspectionService.listHistory(runId, sinceInclusive);
 			String rendered = renderHistory(view, format);
+			if (verbose) {
+				rendered = appendCorrelationSuffix(rendered, resolvedCorrelation);
+			}
 			emitSuccess("workflow history", runId, resolvedCorrelation, start);
 			return rendered;
 		} catch (DomainException de) {
@@ -264,7 +278,7 @@ public class WorkflowCommands {
 			emitFailure("workflow history", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
 			throw re;
 		} finally {
-			MDC.remove(MDC_CORRELATION_ID);
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
 		}
 	}
 
@@ -306,7 +320,27 @@ public class WorkflowCommands {
 		throw idempotencyKeyValidator.missingKeyException();
 	}
 
-	private String pushCorrelation(String supplied) {
+	private static String appendCorrelationSuffix(String rendered, String correlationId) {
+		String suffix = "[correlation-id: " + correlationId + "]";
+		if (rendered == null || rendered.isEmpty()) {
+			return suffix;
+		}
+		if (rendered.endsWith("\n")) {
+			return rendered + suffix;
+		}
+		return rendered + " " + suffix;
+	}
+
+	/**
+	 * Resolve the caller-supplied correlation id (or mint a fresh UUIDv7), sanitise for log
+	 * injection, and stamp it on MDC via {@link MdcKeys#beginScope} so the prior value can be
+	 * restored in a finally block. Callers must invoke
+	 * {@code MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior())} in their finally — this
+	 * preserves any outer scope's correlation id when the CLI is used as a library, instead of
+	 * the previous blanket {@code MDC.remove} which destroyed nested scopes. See P5 of the
+	 * story 1.19 review.
+	 */
+	private CorrelationScope pushCorrelation(String supplied) {
 		String resolved = supplied;
 		if (resolved == null || resolved.isBlank()) {
 			resolved = correlationIdSupplier.get();
@@ -314,17 +348,12 @@ public class WorkflowCommands {
 		// Strip CR/LF/TAB to prevent log injection through MDC and SLF4J interpolation —
 		// a value like `abc\nworkflow command completed correlationId=fake outcome=success`
 		// would otherwise forge a synthetic completion line in the structured log stream.
-		resolved = sanitizeForLog(resolved);
-		MDC.put(MDC_CORRELATION_ID, resolved);
-		return resolved;
+		resolved = MdcKeys.sanitizeForLog(resolved);
+		String prior = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, resolved);
+		return new CorrelationScope(resolved, prior);
 	}
 
-	private static String sanitizeForLog(String value) {
-		if (value == null) {
-			return null;
-		}
-		return value.replaceAll("[\\r\\n\\t]", "_");
-	}
+	record CorrelationScope(String resolved, String prior) {}
 
 	private void requireInspectionWired() {
 		if (workflowInspectionService == null || outputs == null) {

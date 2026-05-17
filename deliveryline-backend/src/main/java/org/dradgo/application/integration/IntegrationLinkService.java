@@ -20,6 +20,7 @@ import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.domain.DomainException;
@@ -114,6 +115,9 @@ public class IntegrationLinkService {
 		Objects.requireNonNull(actor, "actor");
 		Objects.requireNonNull(idempotencyKey, "idempotencyKey");
 
+		String priorCorrelationMdc = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, actor.correlationId());
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+		try {
 		String fingerprint = computeFingerprint(LINEAR_INTEGRATION_TYPE, linearTicketRef, workflowRunPublicId);
 		log.info(
 			"linkTicket entry workflowRunId={} actorIdentity={}",
@@ -198,6 +202,10 @@ public class IntegrationLinkService {
 			workflowRunPublicId, inserted.publicId(),
 			redacted.effectiveClassification().value());
 		return inserted;
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
+		}
 	}
 
 	private void completeInIndependentTransaction(

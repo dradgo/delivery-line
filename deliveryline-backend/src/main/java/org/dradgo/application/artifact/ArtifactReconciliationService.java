@@ -11,6 +11,7 @@ import java.util.UUID;
 import org.dradgo.application.artifact.spi.ArtifactEventPort;
 import org.dradgo.application.artifact.spi.ArtifactOperationPort;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactStatus;
@@ -133,6 +134,9 @@ public class ArtifactReconciliationService {
 	}
 
 	Optional<ArtifactOperationSnapshot> reconcileSingleOperation(ArtifactOperationSnapshot operation) {
+		String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, operation.artifactId());
+		String priorOperationMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_OPERATION_ID, operation.publicId());
+		try {
 		Optional<ArtifactRecordSnapshot> currentArtifact = artifactRecordPort.findByPublicId(operation.artifactId());
 		if (currentArtifact.isEmpty()) {
 			log.info("reconcileSingleOperation skip operationId={} artifactId={} reason=artifactAbsent",
@@ -243,5 +247,9 @@ public class ArtifactReconciliationService {
 		log.warn("reconcileSingleOperation flipped artifact to failed/orphan operationId={} artifactId={} workflowRunId={} stalePendingThreshold={}",
 			orphaned.publicId(), orphaned.artifactId(), orphaned.workflowRunId(), stalePendingThreshold);
 		return Optional.of(orphaned);
+		} finally {
+			MdcKeys.endScope(MdcKeys.ARTIFACT_OPERATION_ID, priorOperationMdc);
+			MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+		}
 	}
 }

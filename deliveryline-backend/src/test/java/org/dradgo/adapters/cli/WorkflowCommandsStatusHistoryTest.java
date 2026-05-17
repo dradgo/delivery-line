@@ -66,7 +66,7 @@ class WorkflowCommandsStatusHistoryTest {
 			"await_outcome");
 		when(inspection.getStatus("run_status12345")).thenReturn(view);
 
-		String rendered = commands.status("run_status12345", "text", "corr-status-1");
+		String rendered = commands.status("run_status12345", "text", "corr-status-1", false);
 		assertTrue(rendered.startsWith("current state: Executing"));
 		verify(inspection).getStatus("run_status12345");
 	}
@@ -74,7 +74,7 @@ class WorkflowCommandsStatusHistoryTest {
 	@Test
 	void statusRejectsUnsupportedFormatValues() {
 		DomainException error = assertThrows(DomainException.class,
-			() -> commands.status("run_status12345", "yaml", "corr-status-1"));
+			() -> commands.status("run_status12345", "yaml", "corr-status-1", false));
 		assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
 		assertEquals("yaml", error.details().get("format"));
 	}
@@ -90,7 +90,7 @@ class WorkflowCommandsStatusHistoryTest {
 			null, null, null, null, null,
 			"await_outcome"));
 
-		String rendered = commands.status("run_status12345", "json", null);
+		String rendered = commands.status("run_status12345", "json", null, false);
 		assertTrue(rendered.startsWith("{") && rendered.endsWith("}"),
 			() -> "JSON output should be a single object, was: " + rendered);
 		assertTrue(rendered.contains("\"schemaVersion\":1"));
@@ -114,7 +114,7 @@ class WorkflowCommandsStatusHistoryTest {
 				Map.of())));
 		when(inspection.listHistory(eq("run_hist12345"), any())).thenReturn(view);
 
-		String rendered = commands.history("run_hist12345", "text", "2026-05-13T09:00:00Z", null);
+		String rendered = commands.history("run_hist12345", "text", "2026-05-13T09:00:00Z", null, false);
 		assertTrue(rendered.contains("workflow.stateChanged"));
 		verify(inspection).listHistory(eq("run_hist12345"), eq(OffsetDateTime.parse("2026-05-13T09:00:00Z")));
 	}
@@ -122,7 +122,7 @@ class WorkflowCommandsStatusHistoryTest {
 	@Test
 	void historyRaisesInvalidTimeRangeOnUnparseableSince() {
 		DomainException error = assertThrows(DomainException.class,
-			() -> commands.history("run_hist12345", "text", "not-a-date", null));
+			() -> commands.history("run_hist12345", "text", "not-a-date", null, false));
 		assertEquals(DomainErrorCode.INVALID_TIME_RANGE, error.errorCode());
 		assertEquals("not-a-date", error.details().get("since"));
 	}
@@ -134,7 +134,7 @@ class WorkflowCommandsStatusHistoryTest {
 				new java.util.LinkedHashMap<>(Map.of("runId", "run_missing12345"))));
 
 		DomainException error = assertThrows(DomainException.class,
-			() -> commands.status("run_missing12345", "text", null));
+			() -> commands.status("run_missing12345", "text", null, false));
 		assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
 	}
 
@@ -149,7 +149,7 @@ class WorkflowCommandsStatusHistoryTest {
 			null, null, null, null, null,
 			"await_outcome"));
 
-		commands.status("run_status12345", "json", "corr-status-42");
+		commands.status("run_status12345", "json", "corr-status-42", false);
 
 		assertTrue(output.getOut().contains(
 			"workflow command completed correlationId=corr-status-42 commandName=workflow status workflowRunId=run_status12345 outcome=success"));
@@ -163,7 +163,7 @@ class WorkflowCommandsStatusHistoryTest {
 				"missing",
 				new java.util.LinkedHashMap<>(Map.of("runId", "run_missing12345"))));
 
-		assertThrows(DomainException.class, () -> commands.status("run_missing12345", "text", null));
+		assertThrows(DomainException.class, () -> commands.status("run_missing12345", "text", null, false));
 
 		assertTrue(output.getOut().contains(
 			"workflow command completed correlationId=01964c38-1c45-7000-8000-000000000001 commandName=workflow status workflowRunId=run_missing12345 outcome=failure:RUN_NOT_FOUND"));

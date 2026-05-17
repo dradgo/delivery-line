@@ -27,6 +27,7 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -221,21 +222,26 @@ public class ArtifactOperationService {
 	}
 
 	public RecordArtifactOperationResult recordOperation(RecordArtifactOperationCommand operation) {
-		ActorContext actor = new ActorContext(operation.actorIdentity(), operation.actorType(), operation.correlationId());
-		String operationTypeValue = operation.operationType().value();
-		log.info("recordOperation start workflowRunId={} artifactType={} operationType={} idempotencyKey={} actorIdentity={} correlationId={} runnerExecutionId={}",
-			operation.workflowRunId(), operation.artifactType().value(), operationTypeValue,
-			operation.idempotencyKey(), operation.actorIdentity(), operation.correlationId(), operation.runnerExecutionId());
-
-		Optional<RecordArtifactOperationResult> replayed = replayIfPresent(operation, operationTypeValue);
-		if (replayed.isPresent()) {
-			return finalizeReplay(operation, operationTypeValue, replayed.get());
-		}
-
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, operation.workflowRunId());
 		try {
-			return executeRecordOperation(operation, operationTypeValue, actor);
-		} catch (DataIntegrityViolationException duplicate) {
-			return handleRecordOperationConstraintCollision(operation, operationTypeValue, duplicate);
+			ActorContext actor = new ActorContext(operation.actorIdentity(), operation.actorType(), operation.correlationId());
+			String operationTypeValue = operation.operationType().value();
+			log.info("recordOperation start workflowRunId={} artifactType={} operationType={} idempotencyKey={} actorIdentity={} correlationId={} runnerExecutionId={}",
+				operation.workflowRunId(), operation.artifactType().value(), operationTypeValue,
+				operation.idempotencyKey(), operation.actorIdentity(), operation.correlationId(), operation.runnerExecutionId());
+
+			Optional<RecordArtifactOperationResult> replayed = replayIfPresent(operation, operationTypeValue);
+			if (replayed.isPresent()) {
+				return finalizeReplay(operation, operationTypeValue, replayed.get());
+			}
+
+			try {
+				return executeRecordOperation(operation, operationTypeValue, actor);
+			} catch (DataIntegrityViolationException duplicate) {
+				return handleRecordOperationConstraintCollision(operation, operationTypeValue, duplicate);
+			}
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
 		}
 	}
 
@@ -249,6 +255,8 @@ public class ArtifactOperationService {
 		requireActor(actor);
 		validateStorageRef(storageRef);
 		validateChecksum(checksum);
+		String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactId);
+		try {
 		log.info("markAvailable start artifactId={} storageRef={} checksumAlgorithm={} actorIdentity={} correlationId={}",
 			artifactId, storageRef, checksum.algorithm(), actor.actorIdentity(), actor.correlationId());
 
@@ -334,6 +342,9 @@ public class ArtifactOperationService {
 		log.info("markAvailable success artifactId={} operationId={} workflowRunId={} version={}",
 			artifact.publicId(), operation.publicId(), artifact.workflowRunId(), artifact.version());
 		return new ArtifactAvailabilityResult(artifact, operation);
+		} finally {
+			MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+		}
 	}
 
 	@Transactional
@@ -345,6 +356,8 @@ public class ArtifactOperationService {
 	) {
 		requireActor(actor);
 		validateFailureReason(reason);
+		String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactId);
+		try {
 		log.info("markFailed start artifactId={} failureCategory={} actorIdentity={} correlationId={}",
 			artifactId, failureCategory.value(), actor.actorIdentity(), actor.correlationId());
 
@@ -390,6 +403,9 @@ public class ArtifactOperationService {
 		log.warn("markFailed applied artifactId={} operationId={} workflowRunId={} failureCategory={} failureReason={}",
 			artifact.publicId(), operation.publicId(), artifact.workflowRunId(), failureCategory.value(), reason);
 		return new ArtifactFailureResult(artifact, operation);
+		} finally {
+			MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+		}
 	}
 
 	@Transactional
@@ -497,32 +513,41 @@ public class ArtifactOperationService {
 			operation.workflowRunId(),
 			operation.artifactType().value());
 		String operationPublicId = PublicIdPrefixes.ARTIFACT_OPERATION.next();
-		ArtifactRecordSnapshot artifact = createOrAdvanceArtifact(operation, operationTypeValue, operationPublicId, actor, latestArtifact);
+		String priorOpMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_OPERATION_ID, operationPublicId);
+		try {
+			ArtifactRecordSnapshot artifact = createOrAdvanceArtifact(operation, operationTypeValue, operationPublicId, actor, latestArtifact);
+			String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifact.publicId());
+			try {
+				if (operation.runnerExecutionId() != null && artifactRunnerExecutionPort.isTimedOut(operation.runnerExecutionId())) {
+					log.warn("recordOperation flagging artifact as late_or_stale workflowRunId={} artifactId={} runnerExecutionId={}",
+						operation.workflowRunId(), artifact.publicId(), operation.runnerExecutionId());
+					artifact = artifactRecordPort.markLateOrStale(artifact.publicId());
+				}
 
-		if (operation.runnerExecutionId() != null && artifactRunnerExecutionPort.isTimedOut(operation.runnerExecutionId())) {
-			log.warn("recordOperation flagging artifact as late_or_stale workflowRunId={} artifactId={} runnerExecutionId={}",
-				operation.workflowRunId(), artifact.publicId(), operation.runnerExecutionId());
-			artifact = artifactRecordPort.markLateOrStale(artifact.publicId());
+				ArtifactOperationSnapshot pending = artifactOperationPort.createPending(
+					operationPublicId,
+					operation.workflowRunId(),
+					operation.artifactType(),
+					artifact.publicId(),
+					operationTypeValue,
+					operation.idempotencyKey());
+				if (operation.payloadContent() != null) {
+					artifactPayloadStore.write(
+						operation.workflowRunId(),
+						artifact.publicId(),
+						artifact.version(),
+						operation.payloadRef(),
+						operation.payloadContent());
+				}
+				log.info("recordOperation success workflowRunId={} artifactId={} operationId={} operationType={} idempotencyKey={}",
+					operation.workflowRunId(), artifact.publicId(), pending.publicId(), operationTypeValue, operation.idempotencyKey());
+				return new RecordArtifactOperationResult(artifact, pending);
+			} finally {
+				MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+			}
+		} finally {
+			MdcKeys.endScope(MdcKeys.ARTIFACT_OPERATION_ID, priorOpMdc);
 		}
-
-		ArtifactOperationSnapshot pending = artifactOperationPort.createPending(
-			operationPublicId,
-			operation.workflowRunId(),
-			operation.artifactType(),
-			artifact.publicId(),
-			operationTypeValue,
-			operation.idempotencyKey());
-		if (operation.payloadContent() != null) {
-			artifactPayloadStore.write(
-				operation.workflowRunId(),
-				artifact.publicId(),
-				artifact.version(),
-				operation.payloadRef(),
-				operation.payloadContent());
-		}
-		log.info("recordOperation success workflowRunId={} artifactId={} operationId={} operationType={} idempotencyKey={}",
-			operation.workflowRunId(), artifact.publicId(), pending.publicId(), operationTypeValue, operation.idempotencyKey());
-		return new RecordArtifactOperationResult(artifact, pending);
 	}
 
 	private RecordArtifactOperationResult handleRecordOperationConstraintCollision(

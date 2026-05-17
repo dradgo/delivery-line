@@ -16,9 +16,9 @@ import org.dradgo.application.diagnostics.DoctorService;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.shell.core.command.annotation.Command;
 import org.springframework.shell.core.command.annotation.CommandGroup;
@@ -31,7 +31,6 @@ public class DoctorCommands {
 
 	private static final Logger log = LoggerFactory.getLogger(DoctorCommands.class);
 
-	private static final String MDC_CORRELATION_ID = "correlationId";
 	private static final String COMMAND_NAME = "doctor";
 	private static final String OUTCOME_SUCCESS = "success";
 	private static final String OUTCOME_FAILURE_PREFIX = "failure:";
@@ -73,7 +72,8 @@ public class DoctorCommands {
 		@Option(longName = "correlation-id", description = "Correlation ID", required = false) String correlationId
 	) {
 		long start = System.nanoTime();
-		String resolvedCorrelation = pushCorrelation(correlationId);
+		CorrelationScope scope = pushCorrelation(correlationId);
+		String resolvedCorrelation = scope.resolved();
 		int checksRun = 0;
 		try {
 			String normalizedFormat = normalizeFormat(format);
@@ -86,6 +86,7 @@ public class DoctorCommands {
 			String rendered = render(report, normalizedFormat);
 
 			if (report.overallStatus() == DiagnosticsStatus.FAIL) {
+				// TODO(story-2.30): replace System.out.println with structured CLI output channel — see Checkstyle rule
 				System.out.println(rendered);
 				throw failureException(report);
 			}
@@ -98,7 +99,7 @@ public class DoctorCommands {
 			emitFailure(checksRun, resolvedCorrelation, start, OUTCOME_UNKNOWN);
 			throw re;
 		} finally {
-			MDC.remove(MDC_CORRELATION_ID);
+			MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
 		}
 	}
 
@@ -174,22 +175,17 @@ public class DoctorCommands {
 		return DomainErrorCode.INTERNAL_ERROR;
 	}
 
-	private String pushCorrelation(String supplied) {
+	private CorrelationScope pushCorrelation(String supplied) {
 		String resolved = supplied;
 		if (resolved == null || resolved.isBlank()) {
 			resolved = correlationIdSupplier.get();
 		}
-		resolved = sanitizeForLog(resolved);
-		MDC.put(MDC_CORRELATION_ID, resolved);
-		return resolved;
+		resolved = MdcKeys.sanitizeForLog(resolved);
+		String prior = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, resolved);
+		return new CorrelationScope(resolved, prior);
 	}
 
-	private static String sanitizeForLog(String value) {
-		if (value == null) {
-			return null;
-		}
-		return value.replaceAll("[\\r\\n\\t]", "_");
-	}
+	record CorrelationScope(String resolved, String prior) {}
 
 	private static void emitSuccess(int checksRun, String correlationId, long startNanos) {
 		long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;

@@ -33,6 +33,7 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.application.observability.MdcKeys;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -116,92 +117,117 @@ public class WorkflowCommandService {
 			throw new IllegalStateException(
 				"Workflow run create port must return an INBOX run, but returned " + workflowRun.currentState());
 		}
-		Map<String, Object> details = baseDetails(command);
-		details.put("linearTicketReference", command.linearTicketReference());
-		workflowEventWritePort.append(new WorkflowEventRecord(
-			PublicIdPrefixes.WORKFLOW_EVENT.next(),
-			workflowRun.publicId(),
-			WorkflowEventType.WORKFLOW_STATE_CHANGED,
-			null,
-			WorkflowState.INBOX,
-			command.actorIdentity(),
-			command.actorType(),
-			"workflow submitted",
-			null,
-			false,
-			OffsetDateTime.now(ZoneOffset.UTC),
-			details));
-
-		integrationLinkService.linkTicketWithinTransaction(
-			workflowRun.publicId(),
-			command.linearTicketReference(),
-			new ActorContext(
+		String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRun.publicId());
+		try {
+			Map<String, Object> details = baseDetails(command);
+			details.put("linearTicketReference", command.linearTicketReference());
+			workflowEventWritePort.append(new WorkflowEventRecord(
+				PublicIdPrefixes.WORKFLOW_EVENT.next(),
+				workflowRun.publicId(),
+				WorkflowEventType.WORKFLOW_STATE_CHANGED,
+				null,
+				WorkflowState.INBOX,
 				command.actorIdentity(),
 				command.actorType(),
-				normalizeOptional(command.correlationId())));
+				"workflow submitted",
+				null,
+				false,
+				OffsetDateTime.now(ZoneOffset.UTC),
+				details));
 
-		return new SubmitWorkflowResult(
-			workflowRun.publicId(),
-			WorkflowState.INBOX,
-			normalizeOptional(command.correlationId()));
+			integrationLinkService.linkTicketWithinTransaction(
+				workflowRun.publicId(),
+				command.linearTicketReference(),
+				new ActorContext(
+					command.actorIdentity(),
+					command.actorType(),
+					normalizeOptional(command.correlationId())));
+
+			return new SubmitWorkflowResult(
+				workflowRun.publicId(),
+				WorkflowState.INBOX,
+				normalizeOptional(command.correlationId()));
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+		}
 	}
 
 	private WorkflowStateChangeResult approveSpecInternal(ApproveSpecCommand command) {
-		transition(
-			command.workflowRunId(),
-			WorkflowState.EXECUTING,
-			command,
-			"approve specification",
-			Map.of(
-				"artifactId", command.artifactId(),
-				"artifactVersion", command.artifactVersion(),
-				"contextVersion", command.contextVersion()));
-		return new WorkflowStateChangeResult(
-			command.workflowRunId(),
-			WorkflowState.EXECUTING,
-			normalizeOptional(command.correlationId()));
+		String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+		try {
+			transition(
+				command.workflowRunId(),
+				WorkflowState.EXECUTING,
+				command,
+				"approve specification",
+				Map.of(
+					"artifactId", command.artifactId(),
+					"artifactVersion", command.artifactVersion(),
+					"contextVersion", command.contextVersion()));
+			return new WorkflowStateChangeResult(
+				command.workflowRunId(),
+				WorkflowState.EXECUTING,
+				normalizeOptional(command.correlationId()));
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+		}
 	}
 
 	private WorkflowStateChangeResult rejectSpecInternal(RejectSpecCommand command) {
-		transition(
-			command.workflowRunId(),
-			WorkflowState.INVESTIGATING,
-			command,
-			command.reasonText(),
-			Map.of(
-				"artifactId", command.artifactId(),
-				"artifactVersion", command.artifactVersion(),
-				"contextVersion", command.contextVersion()));
-		return new WorkflowStateChangeResult(
-			command.workflowRunId(),
-			WorkflowState.INVESTIGATING,
-			normalizeOptional(command.correlationId()));
+		String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+		try {
+			transition(
+				command.workflowRunId(),
+				WorkflowState.INVESTIGATING,
+				command,
+				command.reasonText(),
+				Map.of(
+					"artifactId", command.artifactId(),
+					"artifactVersion", command.artifactVersion(),
+					"contextVersion", command.contextVersion()));
+			return new WorkflowStateChangeResult(
+				command.workflowRunId(),
+				WorkflowState.INVESTIGATING,
+				normalizeOptional(command.correlationId()));
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+		}
 	}
 
 	private WorkflowStateChangeResult retryWorkflowInternal(RetryWorkflowCommand command) {
-		transition(
-			command.workflowRunId(),
-			WorkflowState.EXECUTING,
-			command,
-			fallbackReason(command.reasonText(), "retry workflow"),
-			Map.of());
-		return new WorkflowStateChangeResult(
-			command.workflowRunId(),
-			WorkflowState.EXECUTING,
-			normalizeOptional(command.correlationId()));
+		String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+		try {
+			transition(
+				command.workflowRunId(),
+				WorkflowState.EXECUTING,
+				command,
+				fallbackReason(command.reasonText(), "retry workflow"),
+				Map.of());
+			return new WorkflowStateChangeResult(
+				command.workflowRunId(),
+				WorkflowState.EXECUTING,
+				normalizeOptional(command.correlationId()));
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+		}
 	}
 
 	private WorkflowStateChangeResult takeoverWorkflowInternal(TakeoverWorkflowCommand command) {
-		transition(
-			command.workflowRunId(),
-			WorkflowState.TAKEN_OVER,
-			command,
-			fallbackReason(command.reasonText(), "take over workflow"),
-			Map.of());
-		return new WorkflowStateChangeResult(
-			command.workflowRunId(),
-			WorkflowState.TAKEN_OVER,
-			normalizeOptional(command.correlationId()));
+		String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+		try {
+			transition(
+				command.workflowRunId(),
+				WorkflowState.TAKEN_OVER,
+				command,
+				fallbackReason(command.reasonText(), "take over workflow"),
+				Map.of());
+			return new WorkflowStateChangeResult(
+				command.workflowRunId(),
+				WorkflowState.TAKEN_OVER,
+				normalizeOptional(command.correlationId()));
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+		}
 	}
 
 	private <T extends DomainResult, C extends WorkflowCommand> T executeIdempotent(

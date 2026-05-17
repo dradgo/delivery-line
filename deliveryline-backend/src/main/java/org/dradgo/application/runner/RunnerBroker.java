@@ -42,6 +42,7 @@ import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.runnercontracts.RunnerContractValidator;
 import org.dradgo.runnercontracts.RunnerContractValidator.ValidationTarget;
 import org.dradgo.runnercontracts.ValidationContext;
@@ -176,7 +177,10 @@ public class RunnerBroker {
 			throw new IllegalArgumentException("idempotencyKey must not be blank");
 		}
 
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
 		String reservedRexId = PublicIdPrefixes.RUNNER_EXECUTION.next();
+		String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, reservedRexId);
+		try {
 		int nextContextBundleVersion = recordPort.nextContextBundleVersion(workflowRunId, stage);
 		String fingerprint = dispatchFingerprint(workflowRunId, stage, nextContextBundleVersion);
 
@@ -230,6 +234,10 @@ public class RunnerBroker {
 		log.info("dispatch ok workflowRunId={} stage={} runnerExecutionId={} contextBundleVersion={} adapterRef={}",
 			workflowRunId, stage.value(), reservedRexId, nextContextBundleVersion, ack.adapterRef());
 		return new RunnerDispatchResult.Dispatched(toHandle(inserted), ack);
+		} finally {
+			MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+		}
 	}
 
 	// =====================================================================
@@ -246,6 +254,9 @@ public class RunnerBroker {
 		RunnerExecutionSnapshot row = recordPort.findByPublicId(runnerExecutionId)
 			.orElseThrow(() -> runnerExecutionNotFound(runnerExecutionId));
 		String workflowRunId = row.workflowRunPublicId();
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+		String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+		try {
 
 		// AC5 split (late-result branch): a row that has already been marked TIMED_OUT or ORPHANED
 		// cannot legally transition further. A result arriving now is, by definition, late — emit
@@ -284,6 +295,10 @@ public class RunnerBroker {
 		}
 
 		handleSuccess(runnerExecutionId, workflowRunId, row, parsed);
+		} finally {
+			MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+		}
 	}
 
 	private void handleSuccess(String runnerExecutionId, String workflowRunId, RunnerExecutionSnapshot row, JsonNode parsed) {

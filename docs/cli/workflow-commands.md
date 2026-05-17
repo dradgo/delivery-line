@@ -38,6 +38,13 @@ surfaces it on stdout as `[generated-idempotency-key: <uuid>]` so the operator c
 response is ever lost. In non-interactive (scripted) mode, omitting `--idempotency-key` fails fast
 with `[MISSING_IDEMPOTENCY_KEY] ...` and exit code `101`.
 
+`--verbose` additionally appends `[correlation-id: <uuid>]` (the resolved correlation ID — the
+caller-supplied value if `--correlation-id` was provided, otherwise the auto-generated UUIDv7)
+so the operator can copy/paste it into a `grep correlationId=<uuid> deliveryline.log` invocation
+to trace this submit end-to-end. The plain (non-verbose) output never prints the correlation ID
+— see [`../observability/log-schema.md`](../observability/log-schema.md) for the structured-log
+surface.
+
 ---
 
 ## `deliveryline status`
@@ -45,8 +52,12 @@ with `[MISSING_IDEMPOTENCY_KEY] ...` and exit code `101`.
 Print the current state of a governed workflow run.
 
 ```
-deliveryline status <runId> [--format text|json] [--correlation-id <c>]
+deliveryline status <runId> [--format text|json] [--correlation-id <c>] [--verbose]
 ```
+
+When `--verbose` is supplied the rendered output is followed by `[correlation-id: <uuid>]` so
+operators can grep the structured log surface for the resolved correlation ID. Non-verbose
+output is unchanged.
 
 Text mode emits, in order: `current state`, `current actor`, `last event type`, `last event
 timestamp` (ISO-8601 UTC), `latest artifact <type> v<version>` (one line per artifact type that
@@ -75,7 +86,7 @@ deliveryline status run_abc1234 --format json
 List append-only workflow events for a run in chronological order.
 
 ```
-deliveryline history <runId> [--format text|json] [--since <iso-8601>] [--correlation-id <c>]
+deliveryline history <runId> [--format text|json] [--since <iso-8601>] [--correlation-id <c>] [--verbose]
 ```
 
 `--since` filters to events with `created_at >= since`; values must parse as `OffsetDateTime`

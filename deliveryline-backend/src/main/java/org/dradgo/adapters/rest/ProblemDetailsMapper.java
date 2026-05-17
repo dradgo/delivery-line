@@ -16,8 +16,10 @@ import java.util.regex.Pattern;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.MessageSourceResolvable;
 import org.springframework.http.HttpStatus;
@@ -278,6 +280,10 @@ public class ProblemDetailsMapper {
 		problemDetail.setInstance(URI.create(requestPath));
 		problemDetail.setProperty("code", code.value());
 		problemDetail.setProperty("retryable", metadata.retryable());
+		String correlationId = MDC.get(MdcKeys.CORRELATION_ID);
+		if (correlationId != null && !correlationId.isBlank() && correlationId.length() <= 64) {
+			problemDetail.setProperty(MdcKeys.CORRELATION_ID, correlationId);
+		}
 		if (details != null) {
 			problemDetail.setProperty("details", details);
 		}

@@ -124,6 +124,12 @@ class RecoveryLoggingContractTest {
 		assertTrue(success.getFormattedMessage().contains("recoveryActionId=rcv_log1-aaaaa"));
 		assertTrue(success.getFormattedMessage().contains("newRunnerExecutionId=rex_log1-bbbbb"));
 		assertTrue(success.getFormattedMessage().contains("durationMs="));
+
+		// Story 1.19 backfill: MDC stamp for workflowRunId is set inside RecoveryService.retry.
+		// The log captures the MDC at emission time, so both the start and success lines must
+		// carry the workflowRunId key.
+		assertEquals(RUN, start.getMDCPropertyMap().get("workflowRunId"));
+		assertEquals(RUN, success.getMDCPropertyMap().get("workflowRunId"));
 	}
 
 	@Test

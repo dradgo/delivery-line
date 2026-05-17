@@ -34,6 +34,7 @@ import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.application.observability.MdcKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -232,6 +233,8 @@ public class RecoveryService {
 	) {
 		PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
 		Objects.requireNonNull(actor, "actor");
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+		try {
 		String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(idempotencyKey);
 		long start = System.nanoTime();
 		log.info("recovery retry start workflowRunId={} idempotencyKey={} actorIdentity={}",
@@ -454,6 +457,9 @@ public class RecoveryService {
 			newRunnerExecutionId,
 			correlationId,
 			false);
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+		}
 	}
 
 	private RetryPrep performRetryPrep(
@@ -617,6 +623,8 @@ public class RecoveryService {
 	@Transactional(readOnly = true)
 	public FailureDescription describeFailure(String workflowRunId) {
 		PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+		String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+		try {
 		log.info("describe failure workflowRunId={}", workflowRunId);
 		WorkflowRunSnapshot run = workflowRunReadPort.findByPublicId(workflowRunId)
 			.orElseThrow(() -> runNotFound(workflowRunId));
@@ -687,6 +695,9 @@ public class RecoveryService {
 			lastActivityTimestamp,
 			safeAction,
 			diagnosticReferenceCorrelationId);
+		} finally {
+			MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+		}
 	}
 
 	private Optional<RunnerExecutionSnapshot> findLastFailedRunner(String workflowRunId) {
