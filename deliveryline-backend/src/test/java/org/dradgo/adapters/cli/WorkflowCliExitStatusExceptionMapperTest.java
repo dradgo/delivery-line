@@ -10,89 +10,101 @@ import org.springframework.shell.core.command.ExitStatus;
 
 class WorkflowCliExitStatusExceptionMapperTest {
 
-	private final WorkflowCliExitStatusExceptionMapper mapper = new WorkflowCliExitStatusExceptionMapper();
+  private final WorkflowCliExitStatusExceptionMapper mapper =
+      new WorkflowCliExitStatusExceptionMapper();
 
-	@Test
-	void clientLikeDomainErrorsMapToThe100SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.INVALID_COMMAND_PAYLOAD,
-			"Invalid command payload"));
+  @Test
+  void clientLikeDomainErrorsMapToThe100SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Invalid command payload"));
 
-		assertEquals(101, status.code());
-		assertEquals("[INVALID_COMMAND_PAYLOAD] Invalid command payload", status.description());
-	}
+    assertEquals(101, status.code());
+    assertEquals("[INVALID_COMMAND_PAYLOAD] Invalid command payload", status.description());
+  }
 
-	@Test
-	void concurrencyAndIdempotencyErrorsMapToThe200SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT,
-			"Workflow changed concurrently"));
+  @Test
+  void concurrencyAndIdempotencyErrorsMapToThe200SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT, "Workflow changed concurrently"));
 
-		assertEquals(201, status.code());
-		assertEquals("[CONCURRENT_TRANSITION_CONFLICT] Workflow changed concurrently", status.description());
-	}
+    assertEquals(201, status.code());
+    assertEquals(
+        "[CONCURRENT_TRANSITION_CONFLICT] Workflow changed concurrently", status.description());
+  }
 
-	@Test
-	void specificIdempotencyInputFailuresStayInThe100SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.INVALID_IDEMPOTENCY_KEY,
-			"Invalid idempotency key"));
+  @Test
+  void specificIdempotencyInputFailuresStayInThe100SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.INVALID_IDEMPOTENCY_KEY, "Invalid idempotency key"));
 
-		assertEquals(101, status.code());
-		assertEquals("[INVALID_IDEMPOTENCY_KEY] Invalid idempotency key", status.description());
-	}
+    assertEquals(101, status.code());
+    assertEquals("[INVALID_IDEMPOTENCY_KEY] Invalid idempotency key", status.description());
+  }
 
-	@Test
-	void staleReservationsMapToThe200SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.STALE_IDEMPOTENCY_RESERVATION,
-			"Stale idempotency reservation"));
+  @Test
+  void staleReservationsMapToThe200SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.STALE_IDEMPOTENCY_RESERVATION, "Stale idempotency reservation"));
 
-		assertEquals(201, status.code());
-		assertEquals("[STALE_IDEMPOTENCY_RESERVATION] Stale idempotency reservation", status.description());
-	}
+    assertEquals(201, status.code());
+    assertEquals(
+        "[STALE_IDEMPOTENCY_RESERVATION] Stale idempotency reservation", status.description());
+  }
 
-	@Test
-	void approvalVersionMismatchMapsToThe200SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.APPROVAL_VERSION_MISMATCH,
-			"Artifact version is stale",
-			Map.of("expectedArtifactVersion", 6, "currentArtifactVersion", 7)));
+  @Test
+  void approvalVersionMismatchMapsToThe200SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.APPROVAL_VERSION_MISMATCH,
+                "Artifact version is stale",
+                Map.of("expectedArtifactVersion", 6, "currentArtifactVersion", 7)));
 
-		assertEquals(201, status.code());
-		assertEquals("[APPROVAL_VERSION_MISMATCH] Artifact version is stale", status.description());
-	}
+    assertEquals(201, status.code());
+    assertEquals("[APPROVAL_VERSION_MISMATCH] Artifact version is stale", status.description());
+  }
 
-	@Test
-	void exportClassificationViolationsMapToThe200SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.EXPORT_CLASSIFICATION_VIOLATION,
-			"Export blocked because payload remains local-only after policy evaluation"));
+  @Test
+  void exportClassificationViolationsMapToThe200SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.EXPORT_CLASSIFICATION_VIOLATION,
+                "Export blocked because payload remains local-only after policy evaluation"));
 
-		assertEquals(201, status.code());
-		assertEquals(
-			"[EXPORT_CLASSIFICATION_VIOLATION] Export blocked because payload remains local-only after policy evaluation",
-			status.description());
-	}
+    assertEquals(201, status.code());
+    assertEquals(
+        "[EXPORT_CLASSIFICATION_VIOLATION] Export blocked because payload remains local-only after policy evaluation",
+        status.description());
+  }
 
-	@Test
-	void runnerAndIntegrationErrorsMapToThe300SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.RUNNER_TIMEOUT,
-			"Runner timed out"));
+  @Test
+  void runnerAndIntegrationErrorsMapToThe300SeriesBand() {
+    ExitStatus status =
+        mapper.apply(new DomainException(DomainErrorCode.RUNNER_TIMEOUT, "Runner timed out"));
 
-		assertEquals(301, status.code());
-		assertEquals("[RUNNER_TIMEOUT] Runner timed out", status.description());
-	}
+    assertEquals(301, status.code());
+    assertEquals("[RUNNER_TIMEOUT] Runner timed out", status.description());
+  }
 
-	@Test
-	void infrastructureAndUnknownFailuresMapToThe400SeriesBand() {
-		ExitStatus status = mapper.apply(new DomainException(
-			DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE,
-			"Postgres unreachable",
-			Map.of("host", "localhost")));
+  @Test
+  void infrastructureAndUnknownFailuresMapToThe400SeriesBand() {
+    ExitStatus status =
+        mapper.apply(
+            new DomainException(
+                DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE,
+                "Postgres unreachable",
+                Map.of("host", "localhost")));
 
-		assertEquals(401, status.code());
-		assertEquals("[DOCTOR_POSTGRES_UNREACHABLE] Postgres unreachable", status.description());
-	}
+    assertEquals(401, status.code());
+    assertEquals("[DOCTOR_POSTGRES_UNREACHABLE] Postgres unreachable", status.description());
+  }
 }

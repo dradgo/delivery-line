@@ -21,35 +21,36 @@ import org.junit.jupiter.api.Test;
 
 class WorkflowEventPersistenceAdapterTest {
 
-	@Test
-	void appendTranslatesMissingRunIntoStableRunNotFoundError() {
-		WorkflowEventRepository workflowEventRepository = mock(WorkflowEventRepository.class);
-		WorkflowRunRepository workflowRunRepository = mock(WorkflowRunRepository.class);
-		WorkflowEventEntityMapper mapper = new WorkflowEventEntityMapper();
-		WorkflowEventPersistenceAdapter adapter = new WorkflowEventPersistenceAdapter(
-			workflowEventRepository,
-			workflowRunRepository,
-			mapper);
+  @Test
+  void appendTranslatesMissingRunIntoStableRunNotFoundError() {
+    WorkflowEventRepository workflowEventRepository = mock(WorkflowEventRepository.class);
+    WorkflowRunRepository workflowRunRepository = mock(WorkflowRunRepository.class);
+    WorkflowEventEntityMapper mapper = new WorkflowEventEntityMapper();
+    WorkflowEventPersistenceAdapter adapter =
+        new WorkflowEventPersistenceAdapter(workflowEventRepository, workflowRunRepository, mapper);
 
-		when(workflowRunRepository.findByPublicId("run_missing1234")).thenReturn(Optional.empty());
+    when(workflowRunRepository.findByPublicId("run_missing1234")).thenReturn(Optional.empty());
 
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> adapter.append(new WorkflowEventRecord(
-				"evt_missing1234",
-				"run_missing1234",
-				WorkflowEventType.WORKFLOW_STATE_CHANGED,
-				WorkflowState.INBOX,
-				WorkflowState.EXECUTING,
-				"alex",
-				ActorType.HUMAN,
-				"transition",
-				null,
-				false,
-				OffsetDateTime.now(),
-				Map.of("idempotencyKey", "idem-1234567890"))));
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                adapter.append(
+                    new WorkflowEventRecord(
+                        "evt_missing1234",
+                        "run_missing1234",
+                        WorkflowEventType.WORKFLOW_STATE_CHANGED,
+                        WorkflowState.INBOX,
+                        WorkflowState.EXECUTING,
+                        "alex",
+                        ActorType.HUMAN,
+                        "transition",
+                        null,
+                        false,
+                        OffsetDateTime.now(),
+                        Map.of("idempotencyKey", "idem-1234567890"))));
 
-		assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
-		assertEquals("run_missing1234", error.details().get("runId"));
-	}
+    assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
+    assertEquals("run_missing1234", error.details().get("runId"));
+  }
 }

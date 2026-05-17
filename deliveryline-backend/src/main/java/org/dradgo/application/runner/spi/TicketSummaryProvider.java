@@ -11,5 +11,5 @@ import org.dradgo.application.runner.TicketSummary;
  */
 public interface TicketSummaryProvider {
 
-	TicketSummary fetchByWorkflowRun(String workflowRunPublicId);
+  TicketSummary fetchByWorkflowRun(String workflowRunPublicId);
 }

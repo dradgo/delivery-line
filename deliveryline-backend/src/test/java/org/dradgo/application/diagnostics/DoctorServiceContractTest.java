@@ -13,32 +13,31 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(properties = {
-	"spring.jpa.properties.hibernate.generate_statistics=true",
-	"spring.shell.interactive.enabled=false",
-	"spring.shell.script.enabled=false"
-})
+@SpringBootTest(
+    properties = {
+      "spring.jpa.properties.hibernate.generate_statistics=true",
+      "spring.shell.interactive.enabled=false",
+      "spring.shell.script.enabled=false"
+    })
 @ActiveProfiles({"test", "linear-mock"})
 class DoctorServiceContractTest {
 
-	@Autowired
-	private DoctorService doctorService;
+  @Autowired private DoctorService doctorService;
 
-	@Autowired
-	private EntityManagerFactory entityManagerFactory;
+  @Autowired private EntityManagerFactory entityManagerFactory;
 
-	@Test
-	void runDiagnosticsDoesNotWriteManagedEntities() {
-		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
-		Statistics statistics = sessionFactory.getStatistics();
-		statistics.setStatisticsEnabled(true);
-		statistics.clear();
+  @Test
+  void runDiagnosticsDoesNotWriteManagedEntities() {
+    SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+    Statistics statistics = sessionFactory.getStatistics();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
 
-		DiagnosticsReport report = doctorService.runDiagnostics(DoctorRunRequest.all());
+    DiagnosticsReport report = doctorService.runDiagnostics(DoctorRunRequest.all());
 
-		assertThat(report.checks()).isNotEmpty();
-		assertThat(statistics.getEntityInsertCount()).isZero();
-		assertThat(statistics.getEntityUpdateCount()).isZero();
-		assertThat(statistics.getEntityDeleteCount()).isZero();
-	}
+    assertThat(report.checks()).isNotEmpty();
+    assertThat(statistics.getEntityInsertCount()).isZero();
+    assertThat(statistics.getEntityUpdateCount()).isZero();
+    assertThat(statistics.getEntityDeleteCount()).isZero();
+  }
 }

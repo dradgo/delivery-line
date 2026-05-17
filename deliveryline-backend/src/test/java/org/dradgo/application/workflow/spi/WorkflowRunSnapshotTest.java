@@ -12,17 +12,17 @@ import org.junit.jupiter.api.Test;
 
 class WorkflowRunSnapshotTest {
 
-	@Test
-	void requiredVersionFailsClosedWhenTheSnapshotCarriesNoOptimisticLockValue() throws Exception {
-		WorkflowRunSnapshot snapshot = new WorkflowRunSnapshot("run_missingversion1234", WorkflowState.INBOX, null, null);
-		Method method = WorkflowRunSnapshot.class.getMethod("requiredVersion");
+  @Test
+  void requiredVersionFailsClosedWhenTheSnapshotCarriesNoOptimisticLockValue() throws Exception {
+    WorkflowRunSnapshot snapshot =
+        new WorkflowRunSnapshot("run_missingversion1234", WorkflowState.INBOX, null, null);
+    Method method = WorkflowRunSnapshot.class.getMethod("requiredVersion");
 
-		InvocationTargetException error = assertThrows(
-			InvocationTargetException.class,
-			() -> method.invoke(snapshot));
+    InvocationTargetException error =
+        assertThrows(InvocationTargetException.class, () -> method.invoke(snapshot));
 
-		DomainException cause = (DomainException) error.getCause();
-		assertEquals(DomainErrorCode.INTERNAL_ERROR, cause.errorCode());
-		assertEquals("run_missingversion1234", cause.details().get("runId"));
-	}
+    DomainException cause = (DomainException) error.getCause();
+    assertEquals(DomainErrorCode.INTERNAL_ERROR, cause.errorCode());
+    assertEquals("run_missingversion1234", cause.details().get("runId"));
+  }
 }

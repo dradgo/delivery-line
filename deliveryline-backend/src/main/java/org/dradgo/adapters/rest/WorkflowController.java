@@ -21,102 +21,107 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/workflows")
 public class WorkflowController {
 
-	private final WorkflowCommandService workflowCommandService;
+  private final WorkflowCommandService workflowCommandService;
 
-	public WorkflowController(WorkflowCommandService workflowCommandService) {
-		this.workflowCommandService = workflowCommandService;
-	}
+  public WorkflowController(WorkflowCommandService workflowCommandService) {
+    this.workflowCommandService = workflowCommandService;
+  }
 
-	@PostMapping(
-		value = "/submit-workflow",
-		consumes = MediaType.APPLICATION_JSON_VALUE,
-		produces = MediaType.APPLICATION_JSON_VALUE)
-	public SubmitWorkflowResponse submit(
-		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
-		@Valid @RequestBody SubmitWorkflowRequest request
-	) {
-		return SubmitWorkflowResponse.from(workflowCommandService.submit(new SubmitWorkflowCommand(
-			request.actorIdentity(),
-			request.actorType(),
-			idempotencyKey,
-			request.correlationId(),
-			request.linearTicketReference())));
-	}
+  @PostMapping(
+      value = "/submit-workflow",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  public SubmitWorkflowResponse submit(
+      @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+      @Valid @RequestBody SubmitWorkflowRequest request) {
+    return SubmitWorkflowResponse.from(
+        workflowCommandService.submit(
+            new SubmitWorkflowCommand(
+                request.actorIdentity(),
+                request.actorType(),
+                idempotencyKey,
+                request.correlationId(),
+                request.linearTicketReference())));
+  }
 
-	@PostMapping(
-		value = "/{workflowRunId}/approve-spec",
-		consumes = MediaType.APPLICATION_JSON_VALUE,
-		produces = MediaType.APPLICATION_JSON_VALUE)
-	public WorkflowStateChangeResponse approveSpec(
-		@PathVariable String workflowRunId,
-		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
-		@Valid @RequestBody ApproveSpecRequest request
-	) {
-		return WorkflowStateChangeResponse.from(workflowCommandService.approveSpec(new ApproveSpecCommand(
-			workflowRunId,
-			request.artifactId(),
-			request.artifactVersion(),
-			request.contextVersion(),
-			request.actorIdentity(),
-			request.actorType(),
-			idempotencyKey,
-			request.correlationId())));
-	}
+  @PostMapping(
+      value = "/{workflowRunId}/approve-spec",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  public WorkflowStateChangeResponse approveSpec(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+      @Valid @RequestBody ApproveSpecRequest request) {
+    return WorkflowStateChangeResponse.from(
+        workflowCommandService.approveSpec(
+            new ApproveSpecCommand(
+                workflowRunId,
+                request.artifactId(),
+                request.artifactVersion(),
+                request.contextVersion(),
+                request.actorIdentity(),
+                request.actorType(),
+                idempotencyKey,
+                request.correlationId())));
+  }
 
-	@PostMapping(
-		value = "/{workflowRunId}/reject-spec",
-		consumes = MediaType.APPLICATION_JSON_VALUE,
-		produces = MediaType.APPLICATION_JSON_VALUE)
-	public WorkflowStateChangeResponse rejectSpec(
-		@PathVariable String workflowRunId,
-		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
-		@Valid @RequestBody RejectSpecRequest request
-	) {
-		return WorkflowStateChangeResponse.from(workflowCommandService.rejectSpec(new RejectSpecCommand(
-			workflowRunId,
-			request.artifactId(),
-			request.artifactVersion(),
-			request.contextVersion(),
-			request.actorIdentity(),
-			request.actorType(),
-			idempotencyKey,
-			request.correlationId(),
-			request.reasonText())));
-	}
+  @PostMapping(
+      value = "/{workflowRunId}/reject-spec",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  public WorkflowStateChangeResponse rejectSpec(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+      @Valid @RequestBody RejectSpecRequest request) {
+    return WorkflowStateChangeResponse.from(
+        workflowCommandService.rejectSpec(
+            new RejectSpecCommand(
+                workflowRunId,
+                request.artifactId(),
+                request.artifactVersion(),
+                request.contextVersion(),
+                request.actorIdentity(),
+                request.actorType(),
+                idempotencyKey,
+                request.correlationId(),
+                request.reasonText())));
+  }
 
-	@PostMapping(
-		value = "/{workflowRunId}/retry-workflow",
-		consumes = MediaType.APPLICATION_JSON_VALUE,
-		produces = MediaType.APPLICATION_JSON_VALUE)
-	public WorkflowStateChangeResponse retry(
-		@PathVariable String workflowRunId,
-		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
-		@Valid @RequestBody RetryWorkflowRequest request
-	) {
-		return WorkflowStateChangeResponse.from(workflowCommandService.retryWorkflow(new RetryWorkflowCommand(
-			workflowRunId,
-			request.actorIdentity(),
-			request.actorType(),
-			idempotencyKey,
-			request.correlationId(),
-			request.reasonText())));
-	}
+  @PostMapping(
+      value = "/{workflowRunId}/retry-workflow",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  public WorkflowStateChangeResponse retry(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+      @Valid @RequestBody RetryWorkflowRequest request) {
+    return WorkflowStateChangeResponse.from(
+        workflowCommandService.retryWorkflow(
+            new RetryWorkflowCommand(
+                workflowRunId,
+                request.actorIdentity(),
+                request.actorType(),
+                idempotencyKey,
+                request.correlationId(),
+                request.reasonText())));
+  }
 
-	@PostMapping(
-		value = "/{workflowRunId}/takeover-workflow",
-		consumes = MediaType.APPLICATION_JSON_VALUE,
-		produces = MediaType.APPLICATION_JSON_VALUE)
-	public WorkflowStateChangeResponse takeover(
-		@PathVariable String workflowRunId,
-		@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
-		@Valid @RequestBody TakeoverWorkflowRequest request
-	) {
-		return WorkflowStateChangeResponse.from(workflowCommandService.takeoverWorkflow(new TakeoverWorkflowCommand(
-			workflowRunId,
-			request.actorIdentity(),
-			request.actorType(),
-			idempotencyKey,
-			request.correlationId(),
-			request.reasonText())));
-	}
+  @PostMapping(
+      value = "/{workflowRunId}/takeover-workflow",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  public WorkflowStateChangeResponse takeover(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+      @Valid @RequestBody TakeoverWorkflowRequest request) {
+    return WorkflowStateChangeResponse.from(
+        workflowCommandService.takeoverWorkflow(
+            new TakeoverWorkflowCommand(
+                workflowRunId,
+                request.actorIdentity(),
+                request.actorType(),
+                idempotencyKey,
+                request.correlationId(),
+                request.reasonText())));
+  }
 }

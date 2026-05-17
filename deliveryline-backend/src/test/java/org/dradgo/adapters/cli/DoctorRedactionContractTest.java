@@ -28,68 +28,75 @@ import org.junit.jupiter.api.TestFactory;
 
 class DoctorRedactionContractTest {
 
-	private static final String FIXTURE_ROOT = "redaction-fixtures/";
-	private static final String MANIFEST_RESOURCE = FIXTURE_ROOT + "fixtures-manifest.json";
+  private static final String FIXTURE_ROOT = "redaction-fixtures/";
+  private static final String MANIFEST_RESOURCE = FIXTURE_ROOT + "fixtures-manifest.json";
 
-	private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
-	private final RedactionPolicyService redaction = new RedactionPolicyService(new DataClassificationService());
-	private final DoctorReportRenderer renderer = new DoctorReportRenderer(objectMapper, redaction);
+  private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+  private final RedactionPolicyService redaction =
+      new RedactionPolicyService(new DataClassificationService());
+  private final DoctorReportRenderer renderer = new DoctorReportRenderer(objectMapper, redaction);
 
-	@TestFactory
-	Stream<DynamicTest> doctorJsonPipelineRedactsSecretFixtureCorpus() throws IOException {
-		FixtureManifest manifest = readManifest();
-		return manifest.fixtures().stream()
-			.map(fixture -> DynamicTest.dynamicTest(fixture.file(), () -> {
-				String raw = readResource(FIXTURE_ROOT + fixture.file());
-				DoctorProbePort probes = mock(DoctorProbePort.class);
-				when(probes.probePostgresConnectivity()).thenReturn(ProbeResult.fail(
-					raw,
-					DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE.value(),
-					Map.of("fixture", raw)));
-				DoctorService service = new DoctorService(
-					probes,
-					redaction,
-					Clock.fixed(Instant.parse("2026-05-14T10:00:00Z"), ZoneOffset.UTC));
+  @TestFactory
+  Stream<DynamicTest> doctorJsonPipelineRedactsSecretFixtureCorpus() throws IOException {
+    FixtureManifest manifest = readManifest();
+    return manifest.fixtures().stream()
+        .map(
+            fixture ->
+                DynamicTest.dynamicTest(
+                    fixture.file(),
+                    () -> {
+                      String raw = readResource(FIXTURE_ROOT + fixture.file());
+                      DoctorProbePort probes = mock(DoctorProbePort.class);
+                      when(probes.probePostgresConnectivity())
+                          .thenReturn(
+                              ProbeResult.fail(
+                                  raw,
+                                  DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE.value(),
+                                  Map.of("fixture", raw)));
+                      DoctorService service =
+                          new DoctorService(
+                              probes,
+                              redaction,
+                              Clock.fixed(Instant.parse("2026-05-14T10:00:00Z"), ZoneOffset.UTC));
 
-				DiagnosticsReport report = service.runDiagnostics(new DoctorRunRequest(
-					Set.of(DoctorService.CHECK_POSTGRES_CONNECTIVITY),
-					Set.of(),
-					"corr-redaction"));
-				String json = renderer.renderJson(report);
+                      DiagnosticsReport report =
+                          service.runDiagnostics(
+                              new DoctorRunRequest(
+                                  Set.of(DoctorService.CHECK_POSTGRES_CONNECTIVITY),
+                                  Set.of(),
+                                  "corr-redaction"));
+                      String json = renderer.renderJson(report);
 
-				assertThat(json).contains(fixture.placeholder());
-				for (String forbiddenSnippet : fixture.forbiddenSnippets()) {
-					assertThat(json).doesNotContain(forbiddenSnippet);
-				}
-			}));
-	}
+                      assertThat(json).contains(fixture.placeholder());
+                      for (String forbiddenSnippet : fixture.forbiddenSnippets()) {
+                        assertThat(json).doesNotContain(forbiddenSnippet);
+                      }
+                    }));
+  }
 
-	private FixtureManifest readManifest() throws IOException {
-		try (InputStream stream = getClass().getClassLoader().getResourceAsStream(MANIFEST_RESOURCE)) {
-			if (stream == null) {
-				throw new IllegalStateException("Missing fixture manifest " + MANIFEST_RESOURCE);
-			}
-			return objectMapper.readValue(stream, FixtureManifest.class);
-		}
-	}
+  private FixtureManifest readManifest() throws IOException {
+    try (InputStream stream = getClass().getClassLoader().getResourceAsStream(MANIFEST_RESOURCE)) {
+      if (stream == null) {
+        throw new IllegalStateException("Missing fixture manifest " + MANIFEST_RESOURCE);
+      }
+      return objectMapper.readValue(stream, FixtureManifest.class);
+    }
+  }
 
-	private String readResource(String resource) throws IOException {
-		try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource)) {
-			if (stream == null) {
-				throw new IllegalStateException("Missing fixture " + resource);
-			}
-			return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-		}
-	}
+  private String readResource(String resource) throws IOException {
+    try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resource)) {
+      if (stream == null) {
+        throw new IllegalStateException("Missing fixture " + resource);
+      }
+      return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
 
-	record FixtureManifest(List<FixtureEntry> fixtures) {
-	}
+  record FixtureManifest(List<FixtureEntry> fixtures) {}
 
-	record FixtureEntry(
-		String file,
-		String placeholder,
-		String minimumClassification,
-		List<String> forbiddenSnippets
-	) {
-	}
+  record FixtureEntry(
+      String file,
+      String placeholder,
+      String minimumClassification,
+      List<String> forbiddenSnippets) {}
 }

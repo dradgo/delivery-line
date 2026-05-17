@@ -10,15 +10,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class ArtifactWorkflowRunStatePersistenceAdapter implements ArtifactWorkflowRunStatePort {
 
-	private final WorkflowRunRepository workflowRunRepository;
+  private final WorkflowRunRepository workflowRunRepository;
 
-	public ArtifactWorkflowRunStatePersistenceAdapter(WorkflowRunRepository workflowRunRepository) {
-		this.workflowRunRepository = workflowRunRepository;
-	}
+  public ArtifactWorkflowRunStatePersistenceAdapter(WorkflowRunRepository workflowRunRepository) {
+    this.workflowRunRepository = workflowRunRepository;
+  }
 
-	@Override
-	@Transactional(readOnly = true)
-	public Optional<WorkflowState> currentState(String workflowRunId) {
-		return workflowRunRepository.findByPublicId(workflowRunId).map(run -> run.getCurrentState());
-	}
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<WorkflowState> currentState(String workflowRunId) {
+    return workflowRunRepository.findByPublicId(workflowRunId).map(run -> run.getCurrentState());
+  }
 }

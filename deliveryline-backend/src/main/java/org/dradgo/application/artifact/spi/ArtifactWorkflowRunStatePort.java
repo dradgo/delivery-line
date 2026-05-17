@@ -5,5 +5,5 @@ import org.dradgo.domain.registry.WorkflowState;
 
 public interface ArtifactWorkflowRunStatePort {
 
-	Optional<WorkflowState> currentState(String workflowRunId);
+  Optional<WorkflowState> currentState(String workflowRunId);
 }

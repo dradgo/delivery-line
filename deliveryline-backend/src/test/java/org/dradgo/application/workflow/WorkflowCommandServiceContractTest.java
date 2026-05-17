@@ -42,400 +42,436 @@ import org.springframework.test.context.ActiveProfiles;
 @ActiveProfiles({"test", "linear-mock"})
 class WorkflowCommandServiceContractTest {
 
-	@Autowired
-	private JdbcTemplate jdbcTemplate;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
-	@Autowired
-	private WorkflowCommandService service;
+  @Autowired private WorkflowCommandService service;
 
-	private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
-	@AfterEach
-	void cleanDatabase() {
-		jdbcTemplate.update("delete from idempotency_records");
-		jdbcTemplate.update("delete from integration_links");
-		jdbcTemplate.update("delete from workflow_events");
-		jdbcTemplate.update("delete from workflow_runs");
-	}
+  @AfterEach
+  void cleanDatabase() {
+    jdbcTemplate.update("delete from idempotency_records");
+    jdbcTemplate.update("delete from integration_links");
+    jdbcTemplate.update("delete from workflow_events");
+    jdbcTemplate.update("delete from workflow_runs");
+  }
 
-	@Test
-	void submitCreatesInboxRunAndInitialWorkflowEvent() throws IOException {
-		SubmitWorkflowResult result = service.submit(new SubmitWorkflowCommand(
-			"alex",
-			ActorType.HUMAN,
-			"idem-submit-1234567890",
-			"corr-submit-1",
-			"LIN-101"));
+  @Test
+  void submitCreatesInboxRunAndInitialWorkflowEvent() throws IOException {
+    SubmitWorkflowResult result =
+        service.submit(
+            new SubmitWorkflowCommand(
+                "alex", ActorType.HUMAN, "idem-submit-1234567890", "corr-submit-1", "LIN-101"));
 
-		assertTrue(result.workflowRunId().startsWith("run_"));
-		assertEquals(WorkflowState.INBOX, result.currentState());
-		assertEquals("corr-submit-1", result.correlationId());
+    assertTrue(result.workflowRunId().startsWith("run_"));
+    assertEquals(WorkflowState.INBOX, result.currentState());
+    assertEquals("corr-submit-1", result.correlationId());
 
-		assertEquals(
-			WorkflowState.INBOX.value(),
-			jdbcTemplate.queryForObject(
-				"select current_state from workflow_runs where public_id = ?",
-				String.class,
-				result.workflowRunId()));
+    assertEquals(
+        WorkflowState.INBOX.value(),
+        jdbcTemplate.queryForObject(
+            "select current_state from workflow_runs where public_id = ?",
+            String.class,
+            result.workflowRunId()));
 
-		Map<String, Object> event = jdbcTemplate.queryForMap(
-			"""
+    Map<String, Object> event =
+        jdbcTemplate.queryForMap(
+            """
 				select event_type, prior_state, resulting_state, actor_identity, actor_type, reason, details::text as details
 				from workflow_events
 				where workflow_run_id = (select id from workflow_runs where public_id = ?)
 				""",
-			result.workflowRunId());
-		assertEquals(WorkflowEventType.WORKFLOW_STATE_CHANGED.value(), event.get("event_type"));
-		assertNull(event.get("prior_state"));
-		assertEquals(WorkflowState.INBOX.value(), event.get("resulting_state"));
-		assertEquals("alex", event.get("actor_identity"));
-		assertEquals(ActorType.HUMAN.value(), event.get("actor_type"));
-		assertEquals("workflow submitted", event.get("reason"));
+            result.workflowRunId());
+    assertEquals(WorkflowEventType.WORKFLOW_STATE_CHANGED.value(), event.get("event_type"));
+    assertNull(event.get("prior_state"));
+    assertEquals(WorkflowState.INBOX.value(), event.get("resulting_state"));
+    assertEquals("alex", event.get("actor_identity"));
+    assertEquals(ActorType.HUMAN.value(), event.get("actor_type"));
+    assertEquals("workflow submitted", event.get("reason"));
 
-		Map<String, Object> details = objectMapper.readValue(
-			event.get("details").toString(),
-			new TypeReference<>() {
-			});
-		assertEquals("LIN-101", details.get("linearTicketReference"));
-		assertEquals("idem-submit-1234567890", details.get("idempotencyKey"));
-		assertEquals("corr-submit-1", details.get("correlationId"));
-		assertEquals("SubmitWorkflowCommand", details.get("commandType"));
-	}
+    Map<String, Object> details =
+        objectMapper.readValue(event.get("details").toString(), new TypeReference<>() {});
+    assertEquals("LIN-101", details.get("linearTicketReference"));
+    assertEquals("idem-submit-1234567890", details.get("idempotencyKey"));
+    assertEquals("corr-submit-1", details.get("correlationId"));
+    assertEquals("SubmitWorkflowCommand", details.get("commandType"));
+  }
 
-	@Test
-	void submitReplayReturnsTheOriginalRunWithoutCreatingDuplicateRows() {
-		SubmitWorkflowCommand command = new SubmitWorkflowCommand(
-			"alex",
-			ActorType.HUMAN,
-			"idem-submit-replay-1234567890",
-			"corr-submit-replay-1",
-			"LIN-101");
+  @Test
+  void submitReplayReturnsTheOriginalRunWithoutCreatingDuplicateRows() {
+    SubmitWorkflowCommand command =
+        new SubmitWorkflowCommand(
+            "alex",
+            ActorType.HUMAN,
+            "idem-submit-replay-1234567890",
+            "corr-submit-replay-1",
+            "LIN-101");
 
-		SubmitWorkflowResult first = service.submit(command);
-		SubmitWorkflowResult replay = service.submit(command);
+    SubmitWorkflowResult first = service.submit(command);
+    SubmitWorkflowResult replay = service.submit(command);
 
-		assertEquals(first, replay);
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
-	}
+    assertEquals(first, replay);
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+  }
 
-	@Test
-	void approveSpecReplayDoesNotAppendDuplicateEvents() throws IOException {
-		String runId = insertRun("run_replayapprove1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
-		ApproveSpecCommand command = new ApproveSpecCommand(
-			runId,
-			"art_spec1234",
-			3,
-			2,
-			"alex",
-			ActorType.HUMAN,
-			"idem-approve-replay-1234567890",
-			"corr-approve-replay-1");
+  @Test
+  void approveSpecReplayDoesNotAppendDuplicateEvents() throws IOException {
+    String runId = insertRun("run_replayapprove1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    ApproveSpecCommand command =
+        new ApproveSpecCommand(
+            runId,
+            "art_spec1234",
+            3,
+            2,
+            "alex",
+            ActorType.HUMAN,
+            "idem-approve-replay-1234567890",
+            "corr-approve-replay-1");
 
-		WorkflowStateChangeResult first = service.approveSpec(command);
-		WorkflowStateChangeResult replay = service.approveSpec(command);
+    WorkflowStateChangeResult first = service.approveSpec(command);
+    WorkflowStateChangeResult replay = service.approveSpec(command);
 
-		assertEquals(first, replay);
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
-	}
+    assertEquals(first, replay);
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+  }
 
-	@Test
-	void concurrentSubmitWithTheSameKeyCreatesOneRunAndOneEvent() throws Exception {
-		SubmitWorkflowCommand command = new SubmitWorkflowCommand(
-			"alex",
-			ActorType.HUMAN,
-			"idem-submit-race-1234567890",
-			"corr-submit-race-1",
-			"LIN-101");
-		CyclicBarrier barrier = new CyclicBarrier(2);
+  @Test
+  void concurrentSubmitWithTheSameKeyCreatesOneRunAndOneEvent() throws Exception {
+    SubmitWorkflowCommand command =
+        new SubmitWorkflowCommand(
+            "alex",
+            ActorType.HUMAN,
+            "idem-submit-race-1234567890",
+            "corr-submit-race-1",
+            "LIN-101");
+    CyclicBarrier barrier = new CyclicBarrier(2);
 
-		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-			Callable<SubmitWorkflowResult> task = () -> {
-				barrier.await();
-				return service.submit(command);
-			};
-			List<Future<SubmitWorkflowResult>> futures = new ArrayList<>();
-			futures.add(executor.submit(task));
-			futures.add(executor.submit(task));
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Callable<SubmitWorkflowResult> task =
+          () -> {
+            barrier.await();
+            return service.submit(command);
+          };
+      List<Future<SubmitWorkflowResult>> futures = new ArrayList<>();
+      futures.add(executor.submit(task));
+      futures.add(executor.submit(task));
 
-			SubmitWorkflowResult first = futures.get(0).get();
-			SubmitWorkflowResult second = futures.get(1).get();
+      SubmitWorkflowResult first = futures.get(0).get();
+      SubmitWorkflowResult second = futures.get(1).get();
 
-			assertEquals(first, second);
-		}
+      assertEquals(first, second);
+    }
 
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
-	}
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+  }
 
-	@Test
-	void invalidIdempotencyKeysRaiseSpecificGovernedErrors() {
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> service.submit(new SubmitWorkflowCommand(
-				"alex",
-				ActorType.HUMAN,
-				"bad key with spaces",
-				"corr-submit-invalid-1",
-				"LIN-101")));
+  @Test
+  void invalidIdempotencyKeysRaiseSpecificGovernedErrors() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.submit(
+                    new SubmitWorkflowCommand(
+                        "alex",
+                        ActorType.HUMAN,
+                        "bad key with spaces",
+                        "corr-submit-invalid-1",
+                        "LIN-101")));
 
-		assertEquals(DomainErrorCode.INVALID_IDEMPOTENCY_KEY, error.errorCode());
-		assertEquals("bad key with spaces", error.details().get("idempotencyKey"));
-	}
+    assertEquals(DomainErrorCode.INVALID_IDEMPOTENCY_KEY, error.errorCode());
+    assertEquals("bad key with spaces", error.details().get("idempotencyKey"));
+  }
 
-	@Test
-	void invalidCommandPayloadsRaiseStableDomainErrorsWithFieldDetails() {
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> service.submit(new SubmitWorkflowCommand(
-				" ",
-				null,
-				" ",
-				"corr-submit-2",
-				" ")));
+  @Test
+  void invalidCommandPayloadsRaiseStableDomainErrorsWithFieldDetails() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () -> service.submit(new SubmitWorkflowCommand(" ", null, " ", "corr-submit-2", " ")));
 
-		assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
-		assertEquals("SubmitWorkflowCommand", error.details().get("commandType"));
-		assertFieldErrors(error, "actorIdentity", "actorType", "idempotencyKey", "linearTicketReference");
-	}
+    assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
+    assertEquals("SubmitWorkflowCommand", error.details().get("commandType"));
+    assertFieldErrors(
+        error, "actorIdentity", "actorType", "idempotencyKey", "linearTicketReference");
+  }
 
-	@Test
-	void submitRaisesLinearTicketNotFoundForUnknownTicketReferenceAndRollsBackRun() {
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> service.submit(new SubmitWorkflowCommand(
-				"alex",
-				ActorType.HUMAN,
-				"idem-submit-missing-1234567890",
-				"corr-submit-missing-1",
-				"LIN-DOES-NOT-EXIST")));
+  @Test
+  void submitRaisesLinearTicketNotFoundForUnknownTicketReferenceAndRollsBackRun() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.submit(
+                    new SubmitWorkflowCommand(
+                        "alex",
+                        ActorType.HUMAN,
+                        "idem-submit-missing-1234567890",
+                        "corr-submit-missing-1",
+                        "LIN-DOES-NOT-EXIST")));
 
-		assertEquals(DomainErrorCode.LINEAR_TICKET_NOT_FOUND, error.errorCode());
-		assertEquals(0, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
-		assertEquals(0, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
-		assertEquals(0, jdbcTemplate.queryForObject("select count(*) from integration_links", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
-		assertEquals("failed", idempotencyStatus("idem-submit-missing-1234567890"));
-	}
+    assertEquals(DomainErrorCode.LINEAR_TICKET_NOT_FOUND, error.errorCode());
+    assertEquals(
+        0, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+    assertEquals(
+        0, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+    assertEquals(
+        0, jdbcTemplate.queryForObject("select count(*) from integration_links", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+    assertEquals("failed", idempotencyStatus("idem-submit-missing-1234567890"));
+  }
 
-	@Test
-	void submitRaisesIntegrationLinkConflictWhenTicketIsAlreadyLinkedToADifferentRun() {
-		service.submit(new SubmitWorkflowCommand(
-			"alex",
-			ActorType.HUMAN,
-			"idem-submit-first-1234567890",
-			"corr-submit-first-1",
-			"LIN-101"));
+  @Test
+  void submitRaisesIntegrationLinkConflictWhenTicketIsAlreadyLinkedToADifferentRun() {
+    service.submit(
+        new SubmitWorkflowCommand(
+            "alex",
+            ActorType.HUMAN,
+            "idem-submit-first-1234567890",
+            "corr-submit-first-1",
+            "LIN-101"));
 
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> service.submit(new SubmitWorkflowCommand(
-				"alex",
-				ActorType.HUMAN,
-				"idem-submit-second-1234567890",
-				"corr-submit-second-1",
-				"LIN-101")));
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.submit(
+                    new SubmitWorkflowCommand(
+                        "alex",
+                        ActorType.HUMAN,
+                        "idem-submit-second-1234567890",
+                        "corr-submit-second-1",
+                        "LIN-101")));
 
-		assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
-		assertEquals(1, jdbcTemplate.queryForObject("select count(*) from integration_links", Integer.class));
-		assertEquals(2, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
-		assertEquals("failed", idempotencyStatus("idem-submit-second-1234567890"));
-	}
+    assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from workflow_runs", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from integration_links", Integer.class));
+    assertEquals(
+        2, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+    assertEquals("failed", idempotencyStatus("idem-submit-second-1234567890"));
+  }
 
-	@Test
-	void submitPersistsIntegrationLinkRowForTheSubmittedTicket() {
-		SubmitWorkflowResult result = service.submit(new SubmitWorkflowCommand(
-			"alex",
-			ActorType.HUMAN,
-			"idem-submit-link-1234567890",
-			"corr-submit-link-1",
-			"LIN-101"));
+  @Test
+  void submitPersistsIntegrationLinkRowForTheSubmittedTicket() {
+    SubmitWorkflowResult result =
+        service.submit(
+            new SubmitWorkflowCommand(
+                "alex",
+                ActorType.HUMAN,
+                "idem-submit-link-1234567890",
+                "corr-submit-link-1",
+                "LIN-101"));
 
-		Map<String, Object> link = jdbcTemplate.queryForMap(
-			"""
+    Map<String, Object> link =
+        jdbcTemplate.queryForMap(
+            """
 				select integration_type, external_ref, sync_status
 				from integration_links
 				where workflow_run_id = (select id from workflow_runs where public_id = ?)
 				""",
-			result.workflowRunId());
-		assertEquals("linear", link.get("integration_type"));
-		assertEquals("LIN-101", link.get("external_ref"));
-		assertEquals("linked", link.get("sync_status"));
-	}
+            result.workflowRunId());
+    assertEquals("linear", link.get("integration_type"));
+    assertEquals("LIN-101", link.get("external_ref"));
+    assertEquals("linked", link.get("sync_status"));
+  }
 
-	@Test
-	void approveSpecTransitionsWaitingForSpecApprovalToExecutingAndCarriesMetadata() throws IOException {
-		String runId = insertRun("run_approve1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+  @Test
+  void approveSpecTransitionsWaitingForSpecApprovalToExecutingAndCarriesMetadata()
+      throws IOException {
+    String runId = insertRun("run_approve1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
 
-		WorkflowStateChangeResult result = service.approveSpec(new ApproveSpecCommand(
-			runId,
-			"art_spec1234",
-			3,
-			2,
-			"alex",
-			ActorType.HUMAN,
-			"idem-approve-1234567890",
-			"corr-approve-1"));
+    WorkflowStateChangeResult result =
+        service.approveSpec(
+            new ApproveSpecCommand(
+                runId,
+                "art_spec1234",
+                3,
+                2,
+                "alex",
+                ActorType.HUMAN,
+                "idem-approve-1234567890",
+                "corr-approve-1"));
 
-		assertEquals(runId, result.workflowRunId());
-		assertEquals(WorkflowState.EXECUTING, result.currentState());
-		assertEquals("corr-approve-1", result.correlationId());
-		assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
-		assertEquals("corr-approve-1", latestDetail(runId, "correlationId"));
-		assertEquals("ApproveSpecCommand", latestDetail(runId, "commandType"));
-	}
+    assertEquals(runId, result.workflowRunId());
+    assertEquals(WorkflowState.EXECUTING, result.currentState());
+    assertEquals("corr-approve-1", result.correlationId());
+    assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
+    assertEquals("corr-approve-1", latestDetail(runId, "correlationId"));
+    assertEquals("ApproveSpecCommand", latestDetail(runId, "commandType"));
+  }
 
-	@Test
-	void rejectSpecTransitionsWaitingForSpecApprovalToInvestigating() throws IOException {
-		String runId = insertRun("run_reject1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+  @Test
+  void rejectSpecTransitionsWaitingForSpecApprovalToInvestigating() throws IOException {
+    String runId = insertRun("run_reject1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
 
-		WorkflowStateChangeResult result = service.rejectSpec(new RejectSpecCommand(
-			runId,
-			"art_spec1234",
-			3,
-			2,
-			"alex",
-			ActorType.HUMAN,
-			"idem-reject-1234567890",
-			"corr-reject-1",
-			"Needs more detail"));
+    WorkflowStateChangeResult result =
+        service.rejectSpec(
+            new RejectSpecCommand(
+                runId,
+                "art_spec1234",
+                3,
+                2,
+                "alex",
+                ActorType.HUMAN,
+                "idem-reject-1234567890",
+                "corr-reject-1",
+                "Needs more detail"));
 
-		assertEquals(runId, result.workflowRunId());
-		assertEquals(WorkflowState.INVESTIGATING, result.currentState());
-		assertEquals(WorkflowState.INVESTIGATING.value(), currentState(runId));
-		assertEquals("RejectSpecCommand", latestDetail(runId, "commandType"));
-	}
+    assertEquals(runId, result.workflowRunId());
+    assertEquals(WorkflowState.INVESTIGATING, result.currentState());
+    assertEquals(WorkflowState.INVESTIGATING.value(), currentState(runId));
+    assertEquals("RejectSpecCommand", latestDetail(runId, "commandType"));
+  }
 
-	@Test
-	void retryWorkflowTransitionsFailedToExecuting() throws IOException {
-		String runId = insertRun("run_retry1234", WorkflowState.FAILED);
+  @Test
+  void retryWorkflowTransitionsFailedToExecuting() throws IOException {
+    String runId = insertRun("run_retry1234", WorkflowState.FAILED);
 
-		WorkflowStateChangeResult result = service.retryWorkflow(new RetryWorkflowCommand(
-			runId,
-			"alex",
-			ActorType.HUMAN,
-			"idem-retry-1234567890",
-			"corr-retry-1",
-			"retry failed run"));
+    WorkflowStateChangeResult result =
+        service.retryWorkflow(
+            new RetryWorkflowCommand(
+                runId,
+                "alex",
+                ActorType.HUMAN,
+                "idem-retry-1234567890",
+                "corr-retry-1",
+                "retry failed run"));
 
-		assertEquals(runId, result.workflowRunId());
-		assertEquals(WorkflowState.EXECUTING, result.currentState());
-		assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
-		assertEquals("RetryWorkflowCommand", latestDetail(runId, "commandType"));
-	}
+    assertEquals(runId, result.workflowRunId());
+    assertEquals(WorkflowState.EXECUTING, result.currentState());
+    assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
+    assertEquals("RetryWorkflowCommand", latestDetail(runId, "commandType"));
+  }
 
-	@Test
-	void takeoverWorkflowTransitionsNonTerminalRunToTakenOver() throws IOException {
-		String runId = insertRun("run_takeover1234", WorkflowState.PLANNED);
+  @Test
+  void takeoverWorkflowTransitionsNonTerminalRunToTakenOver() throws IOException {
+    String runId = insertRun("run_takeover1234", WorkflowState.PLANNED);
 
-		WorkflowStateChangeResult result = service.takeoverWorkflow(new TakeoverWorkflowCommand(
-			runId,
-			"alex",
-			ActorType.HUMAN,
-			"idem-takeover-1234567890",
-			"corr-takeover-1",
-			"manual takeover"));
+    WorkflowStateChangeResult result =
+        service.takeoverWorkflow(
+            new TakeoverWorkflowCommand(
+                runId,
+                "alex",
+                ActorType.HUMAN,
+                "idem-takeover-1234567890",
+                "corr-takeover-1",
+                "manual takeover"));
 
-		assertEquals(runId, result.workflowRunId());
-		assertEquals(WorkflowState.TAKEN_OVER, result.currentState());
-		assertEquals(WorkflowState.TAKEN_OVER.value(), currentState(runId));
-		assertEquals("TakeoverWorkflowCommand", latestDetail(runId, "commandType"));
-	}
+    assertEquals(runId, result.workflowRunId());
+    assertEquals(WorkflowState.TAKEN_OVER, result.currentState());
+    assertEquals(WorkflowState.TAKEN_OVER.value(), currentState(runId));
+    assertEquals("TakeoverWorkflowCommand", latestDetail(runId, "commandType"));
+  }
 
-	@Test
-	void approveSpecRaisesRunNotFoundForUnknownWorkflowRunId() {
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> service.approveSpec(new ApproveSpecCommand(
-				"run_missing1234",
-				"art_spec1234",
-				3,
-				2,
-				"alex",
-				ActorType.HUMAN,
-				"idem-approve-missing-1234567890",
-				"corr-approve-missing-1")));
+  @Test
+  void approveSpecRaisesRunNotFoundForUnknownWorkflowRunId() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.approveSpec(
+                    new ApproveSpecCommand(
+                        "run_missing1234",
+                        "art_spec1234",
+                        3,
+                        2,
+                        "alex",
+                        ActorType.HUMAN,
+                        "idem-approve-missing-1234567890",
+                        "corr-approve-missing-1")));
 
-		assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
-		assertEquals("run_missing1234", error.details().get("runId"));
-	}
+    assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
+    assertEquals("run_missing1234", error.details().get("runId"));
+  }
 
-	@Test
-	void approveSpecRejectsIllegalTransitionWhenRunIsNotWaitingForSpecApproval() {
-		String runId = insertRun("run_illegal1234", WorkflowState.INBOX);
+  @Test
+  void approveSpecRejectsIllegalTransitionWhenRunIsNotWaitingForSpecApproval() {
+    String runId = insertRun("run_illegal1234", WorkflowState.INBOX);
 
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> service.approveSpec(new ApproveSpecCommand(
-				runId,
-				"art_spec1234",
-				3,
-				2,
-				"alex",
-				ActorType.HUMAN,
-				"idem-approve-illegal-1234567890",
-				"corr-approve-illegal-1")));
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.approveSpec(
+                    new ApproveSpecCommand(
+                        runId,
+                        "art_spec1234",
+                        3,
+                        2,
+                        "alex",
+                        ActorType.HUMAN,
+                        "idem-approve-illegal-1234567890",
+                        "corr-approve-illegal-1")));
 
-		assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
-		assertEquals(runId, error.details().get("runId"));
-		assertEquals(WorkflowState.INBOX.value(), error.details().get("sourceState"));
-		assertEquals(WorkflowState.EXECUTING.value(), error.details().get("targetState"));
-	}
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
+    assertEquals(runId, error.details().get("runId"));
+    assertEquals(WorkflowState.INBOX.value(), error.details().get("sourceState"));
+    assertEquals(WorkflowState.EXECUTING.value(), error.details().get("targetState"));
+  }
 
-	private void assertFieldErrors(DomainException error, String... expectedFields) {
-		Object rawFieldErrors = error.details().get("fieldErrors");
-		assertNotNull(rawFieldErrors);
-		List<?> fieldErrors = assertInstanceOf(List.class, rawFieldErrors);
-		List<String> fieldNames = fieldErrors.stream()
-			.map(Map.class::cast)
-			.map(errorEntry -> errorEntry.get("field").toString())
-			.toList();
-		for (String expectedField : expectedFields) {
-			assertTrue(
-				fieldNames.contains(expectedField),
-				() -> "Expected field error for " + expectedField + " but got " + fieldNames);
-		}
-	}
+  private void assertFieldErrors(DomainException error, String... expectedFields) {
+    Object rawFieldErrors = error.details().get("fieldErrors");
+    assertNotNull(rawFieldErrors);
+    List<?> fieldErrors = assertInstanceOf(List.class, rawFieldErrors);
+    List<String> fieldNames =
+        fieldErrors.stream()
+            .map(Map.class::cast)
+            .map(errorEntry -> errorEntry.get("field").toString())
+            .toList();
+    for (String expectedField : expectedFields) {
+      assertTrue(
+          fieldNames.contains(expectedField),
+          () -> "Expected field error for " + expectedField + " but got " + fieldNames);
+    }
+  }
 
-	private String insertRun(String publicId, WorkflowState state) {
-		jdbcTemplate.update(
-			"insert into workflow_runs (public_id, current_state) values (?, ?)",
-			publicId,
-			state.value());
-		return publicId;
-	}
+  private String insertRun(String publicId, WorkflowState state) {
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, ?)",
+        publicId,
+        state.value());
+    return publicId;
+  }
 
-	private String currentState(String runId) {
-		return jdbcTemplate.queryForObject(
-			"select current_state from workflow_runs where public_id = ?",
-			String.class,
-			runId);
-	}
+  private String currentState(String runId) {
+    return jdbcTemplate.queryForObject(
+        "select current_state from workflow_runs where public_id = ?", String.class, runId);
+  }
 
-	private String latestDetail(String runId, String detailKey) throws IOException {
-		String detailsJson = jdbcTemplate.queryForObject(
-			"""
+  private String latestDetail(String runId, String detailKey) throws IOException {
+    String detailsJson =
+        jdbcTemplate.queryForObject(
+            """
 				select details::text
 				from workflow_events
 				where workflow_run_id = (select id from workflow_runs where public_id = ?)
 				order by id desc
 				limit 1
 				""",
-			String.class,
-			runId);
-		Map<String, Object> details = objectMapper.readValue(detailsJson, new TypeReference<>() {
-		});
-		return details.get(detailKey).toString();
-	}
+            String.class,
+            runId);
+    Map<String, Object> details = objectMapper.readValue(detailsJson, new TypeReference<>() {});
+    return details.get(detailKey).toString();
+  }
 
-	private String idempotencyStatus(String key) {
-		return jdbcTemplate.queryForObject(
-			"select status from idempotency_records where key = ?",
-			String.class,
-			key);
-	}
+  private String idempotencyStatus(String key) {
+    return jdbcTemplate.queryForObject(
+        "select status from idempotency_records where key = ?", String.class, key);
+  }
 }

@@ -14,33 +14,39 @@ import org.springframework.stereotype.Component;
 @Component
 public class ArtifactEventPersistenceAdapter implements ArtifactEventPort {
 
-	private static final Logger log = LoggerFactory.getLogger(ArtifactEventPersistenceAdapter.class);
+  private static final Logger log = LoggerFactory.getLogger(ArtifactEventPersistenceAdapter.class);
 
-	private final WorkflowEventWritePort workflowEventWritePort;
+  private final WorkflowEventWritePort workflowEventWritePort;
 
-	public ArtifactEventPersistenceAdapter(WorkflowEventWritePort workflowEventWritePort) {
-		this.workflowEventWritePort = workflowEventWritePort;
-	}
+  public ArtifactEventPersistenceAdapter(WorkflowEventWritePort workflowEventWritePort) {
+    this.workflowEventWritePort = workflowEventWritePort;
+  }
 
-	@Override
-	public void append(ArtifactEventRecord eventRecord) {
-		String publicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
-		workflowEventWritePort.append(new WorkflowEventRecord(
-			publicId,
-			eventRecord.workflowRunId(),
-			eventRecord.eventType(),
-			null,
-			null,
-			eventRecord.actorIdentity(),
-			eventRecord.actorType(),
-			eventRecord.reason(),
-			eventRecord.failureCategory(),
-			false,
-			eventRecord.createdAt() == null ? OffsetDateTime.now(ZoneOffset.UTC) : eventRecord.createdAt(),
-			eventRecord.details()));
-		log.info("artifact event appended eventId={} workflowRunId={} eventType={} actorIdentity={} failureCategory={}",
-			publicId, eventRecord.workflowRunId(), eventRecord.eventType().value(),
-			eventRecord.actorIdentity(),
-			eventRecord.failureCategory() == null ? null : eventRecord.failureCategory().value());
-	}
+  @Override
+  public void append(ArtifactEventRecord eventRecord) {
+    String publicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            publicId,
+            eventRecord.workflowRunId(),
+            eventRecord.eventType(),
+            null,
+            null,
+            eventRecord.actorIdentity(),
+            eventRecord.actorType(),
+            eventRecord.reason(),
+            eventRecord.failureCategory(),
+            false,
+            eventRecord.createdAt() == null
+                ? OffsetDateTime.now(ZoneOffset.UTC)
+                : eventRecord.createdAt(),
+            eventRecord.details()));
+    log.info(
+        "artifact event appended eventId={} workflowRunId={} eventType={} actorIdentity={} failureCategory={}",
+        publicId,
+        eventRecord.workflowRunId(),
+        eventRecord.eventType().value(),
+        eventRecord.actorIdentity(),
+        eventRecord.failureCategory() == null ? null : eventRecord.failureCategory().value());
+  }
 }

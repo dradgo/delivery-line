@@ -3,8 +3,5 @@ package org.dradgo.application.workflow;
 import org.dradgo.domain.registry.WorkflowState;
 
 public record WorkflowStateChangeResult(
-	String workflowRunId,
-	WorkflowState currentState,
-	String correlationId
-) implements DomainResult {
-}
+    String workflowRunId, WorkflowState currentState, String correlationId)
+    implements DomainResult {}

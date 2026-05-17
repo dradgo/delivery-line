@@ -6,26 +6,23 @@ import org.dradgo.domain.registry.FailureCategory;
 
 public sealed interface RunnerPollStatus {
 
-	record Running() implements RunnerPollStatus {
-	}
+  record Running() implements RunnerPollStatus {}
 
-	record HeartbeatTouched(OffsetDateTime activityTimestamp) implements RunnerPollStatus {
+  record HeartbeatTouched(OffsetDateTime activityTimestamp) implements RunnerPollStatus {
 
-		public HeartbeatTouched {
-			Objects.requireNonNull(activityTimestamp, "activityTimestamp");
-		}
-	}
+    public HeartbeatTouched {
+      Objects.requireNonNull(activityTimestamp, "activityTimestamp");
+    }
+  }
 
-	record Completed() implements RunnerPollStatus {
-	}
+  record Completed() implements RunnerPollStatus {}
 
-	record Failed(FailureCategory failureCategory) implements RunnerPollStatus {
+  record Failed(FailureCategory failureCategory) implements RunnerPollStatus {
 
-		public Failed {
-			Objects.requireNonNull(failureCategory, "failureCategory");
-		}
-	}
+    public Failed {
+      Objects.requireNonNull(failureCategory, "failureCategory");
+    }
+  }
 
-	record Unknown() implements RunnerPollStatus {
-	}
+  record Unknown() implements RunnerPollStatus {}
 }

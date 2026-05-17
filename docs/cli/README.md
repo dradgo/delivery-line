@@ -14,6 +14,11 @@ The supported-environment matrix (OS / shell / container-runtime / Java / Node) 
 `doctor` `supported-environment` check is documented in
 [`../supported-environments.md`](../supported-environments.md).
 
+The CI pipeline that gates every merge into `main` is documented in
+[`../ci-pipeline.md`](../ci-pipeline.md). Operational steps for marking `foundation-gate` as a
+required status check on `main` branch protection are in
+[`../ci-branch-protection.md`](../ci-branch-protection.md).
+
 ## Exit Code Bands
 
 DeliveryLine shell commands keep successful output unchanged. When a command fails with a governed `DomainException`, the CLI emits a single-line machine-readable error in this format:

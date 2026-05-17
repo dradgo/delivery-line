@@ -4,9 +4,9 @@ import org.dradgo.domain.registry.WorkflowState;
 
 public sealed interface DomainResult permits SubmitWorkflowResult, WorkflowStateChangeResult {
 
-	String workflowRunId();
+  String workflowRunId();
 
-	WorkflowState currentState();
+  WorkflowState currentState();
 
-	String correlationId();
+  String correlationId();
 }

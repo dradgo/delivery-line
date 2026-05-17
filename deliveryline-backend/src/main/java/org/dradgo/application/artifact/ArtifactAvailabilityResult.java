@@ -1,7 +1,4 @@
 package org.dradgo.application.artifact;
 
 public record ArtifactAvailabilityResult(
-	ArtifactRecordSnapshot artifact,
-	ArtifactOperationSnapshot operation
-) {
-}
+    ArtifactRecordSnapshot artifact, ArtifactOperationSnapshot operation) {}

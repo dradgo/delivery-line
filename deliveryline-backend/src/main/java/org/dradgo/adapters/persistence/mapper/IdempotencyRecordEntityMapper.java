@@ -7,12 +7,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class IdempotencyRecordEntityMapper {
 
-	public IdempotencyRecordSnapshot toSnapshot(IdempotencyRecordEntity entity) {
-		return new IdempotencyRecordSnapshot(
-			entity.getKey(),
-			entity.getCommandFingerprint(),
-			entity.getStatus(),
-			entity.getResultRef(),
-			entity.getCreatedAt());
-	}
+  public IdempotencyRecordSnapshot toSnapshot(IdempotencyRecordEntity entity) {
+    return new IdempotencyRecordSnapshot(
+        entity.getKey(),
+        entity.getCommandFingerprint(),
+        entity.getStatus(),
+        entity.getResultRef(),
+        entity.getCreatedAt());
+  }
 }

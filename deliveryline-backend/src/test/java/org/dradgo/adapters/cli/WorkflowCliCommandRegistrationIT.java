@@ -25,65 +25,74 @@ import org.springframework.shell.core.command.annotation.CommandGroup;
 
 class WorkflowCliCommandRegistrationIT {
 
-	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-		.withConfiguration(AutoConfigurations.of(
-			CommandRegistryAutoConfiguration.class,
-			SpringShellAutoConfiguration.class))
-		.withBean(WorkflowCommands.class, () -> new WorkflowCommands(
-			mock(WorkflowCommandService.class),
-			mock(WorkflowInspectionService.class),
-			new WorkflowCommandOutputs(new ObjectMapper().findAndRegisterModules()),
-			() -> false,
-			() -> "01964c38-1c45-7000-8000-000000000000",
-			() -> "01964c38-1c45-7000-8000-000000000001",
-			new IdempotencyKeyValidator(),
-			mock(RecoveryService.class)));
+  private final ApplicationContextRunner contextRunner =
+      new ApplicationContextRunner()
+          .withConfiguration(
+              AutoConfigurations.of(
+                  CommandRegistryAutoConfiguration.class, SpringShellAutoConfiguration.class))
+          .withBean(
+              WorkflowCommands.class,
+              () ->
+                  new WorkflowCommands(
+                      mock(WorkflowCommandService.class),
+                      mock(WorkflowInspectionService.class),
+                      new WorkflowCommandOutputs(new ObjectMapper().findAndRegisterModules()),
+                      () -> false,
+                      () -> "01964c38-1c45-7000-8000-000000000000",
+                      () -> "01964c38-1c45-7000-8000-000000000001",
+                      new IdempotencyKeyValidator(),
+                      mock(RecoveryService.class)));
 
-	@Test
-	void deliverylinePrefixedWorkflowCommandsAreRegisteredInTheRuntimeShellRegistry() {
-		contextRunner.run(context -> {
-			CommandRegistry registry = context.getBean(CommandRegistry.class);
-			Set<String> commandNames = registry.getCommands().stream()
-				.map(Command::getName)
-				.collect(Collectors.toSet());
+  @Test
+  void deliverylinePrefixedWorkflowCommandsAreRegisteredInTheRuntimeShellRegistry() {
+    contextRunner.run(
+        context -> {
+          CommandRegistry registry = context.getBean(CommandRegistry.class);
+          Set<String> commandNames =
+              registry.getCommands().stream().map(Command::getName).collect(Collectors.toSet());
 
-			assertTrue(commandNames.contains("deliveryline submit"), () -> "registered commands: " + commandNames);
-			assertTrue(commandNames.contains("deliveryline status"), () -> "registered commands: " + commandNames);
-			assertTrue(commandNames.contains("deliveryline history"), () -> "registered commands: " + commandNames);
-			assertTrue(commandNames.contains("deliveryline retry"), () -> "registered commands: " + commandNames);
-		});
-	}
+          assertTrue(
+              commandNames.contains("deliveryline submit"),
+              () -> "registered commands: " + commandNames);
+          assertTrue(
+              commandNames.contains("deliveryline status"),
+              () -> "registered commands: " + commandNames);
+          assertTrue(
+              commandNames.contains("deliveryline history"),
+              () -> "registered commands: " + commandNames);
+          assertTrue(
+              commandNames.contains("deliveryline retry"),
+              () -> "registered commands: " + commandNames);
+        });
+  }
 
-	@Test
-	void workflowCommandsCarryTheExpectedGroupAndPositionalArgumentMetadata() throws Exception {
-		CommandGroup group = WorkflowCommands.class.getAnnotation(CommandGroup.class);
-		assertNotNull(group);
-		assertEquals("workflow", group.name());
-		assertEquals("deliveryline", group.prefix());
+  @Test
+  void workflowCommandsCarryTheExpectedGroupAndPositionalArgumentMetadata() throws Exception {
+    CommandGroup group = WorkflowCommands.class.getAnnotation(CommandGroup.class);
+    assertNotNull(group);
+    assertEquals("workflow", group.name());
+    assertEquals("deliveryline", group.prefix());
 
-		Argument statusArgument = method("status").getParameters()[0].getAnnotation(Argument.class);
-		Argument historyArgument = method("history").getParameters()[0].getAnnotation(Argument.class);
+    Argument statusArgument = method("status").getParameters()[0].getAnnotation(Argument.class);
+    Argument historyArgument = method("history").getParameters()[0].getAnnotation(Argument.class);
 
-		assertNotNull(statusArgument);
-		assertEquals(0, statusArgument.index());
-		assertNotNull(historyArgument);
-		assertEquals(0, historyArgument.index());
-	}
+    assertNotNull(statusArgument);
+    assertEquals(0, statusArgument.index());
+    assertNotNull(historyArgument);
+    assertEquals(0, historyArgument.index());
+  }
 
-	private static Method method(String methodName) throws Exception {
-		return switch (methodName) {
-			case "status" -> WorkflowCommands.class.getMethod(
-				"status",
-				String.class,
-				String.class,
-				String.class);
-			case "history" -> WorkflowCommands.class.getMethod(
-				"history",
-				String.class,
-				String.class,
-				String.class,
-				String.class);
-			default -> throw new IllegalArgumentException("Unknown method: " + methodName);
-		};
-	}
+  private static Method method(String methodName) throws Exception {
+    // Story 1.21 — story 1.19 added `--verbose` to status/history; the reflective lookup
+    // signature must match the current 4-arg shape.
+    return switch (methodName) {
+      case "status" ->
+          WorkflowCommands.class.getMethod(
+              "status", String.class, String.class, String.class, boolean.class);
+      case "history" ->
+          WorkflowCommands.class.getMethod(
+              "history", String.class, String.class, String.class, String.class, boolean.class);
+      default -> throw new IllegalArgumentException("Unknown method: " + methodName);
+    };
+  }
 }

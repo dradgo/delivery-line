@@ -2,21 +2,21 @@ package org.dradgo.application.diagnostics.spi;
 
 public interface DoctorProbePort {
 
-	ProbeResult probeJavaVersion();
+  ProbeResult probeJavaVersion();
 
-	ProbeResult probeSpringProfiles();
+  ProbeResult probeSpringProfiles();
 
-	ProbeResult probePostgresConnectivity();
+  ProbeResult probePostgresConnectivity();
 
-	ProbeResult probeFlywayState();
+  ProbeResult probeFlywayState();
 
-	ProbeResult probeArtifactDirectory();
+  ProbeResult probeArtifactDirectory();
 
-	ProbeResult probeConfigFilePermissions();
+  ProbeResult probeConfigFilePermissions();
 
-	ProbeResult probeDockerAvailability();
+  ProbeResult probeDockerAvailability();
 
-	ProbeResult probeRestBindAddress();
+  ProbeResult probeRestBindAddress();
 
-	ProbeResult probeSupportedEnvironment();
+  ProbeResult probeSupportedEnvironment();
 }

@@ -1,7 +1,5 @@
 package org.dradgo.adapters.persistence.entity;
 
-import java.time.OffsetDateTime;
-import java.util.Objects;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -9,6 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.OffsetDateTime;
+import java.util.Objects;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.WorkflowState;
 
@@ -16,66 +16,66 @@ import org.dradgo.domain.registry.WorkflowState;
 @Table(name = "workflow_runs")
 public class WorkflowRunEntity {
 
-	public static WorkflowRunEntity create(String publicId, WorkflowState currentState) {
-		WorkflowRunEntity entity = new WorkflowRunEntity();
-		entity.publicId = publicId;
-		entity.currentState = Objects.requireNonNull(currentState, "currentState").value();
-		return entity;
-	}
+  public static WorkflowRunEntity create(String publicId, WorkflowState currentState) {
+    WorkflowRunEntity entity = new WorkflowRunEntity();
+    entity.publicId = publicId;
+    entity.currentState = Objects.requireNonNull(currentState, "currentState").value();
+    return entity;
+  }
 
-	@Id
-	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-	@Column(name = "public_id", nullable = false)
-	private String publicId;
+  @Column(name = "public_id", nullable = false)
+  private String publicId;
 
-	@Column(name = "current_state", nullable = false)
-	private String currentState;
+  @Column(name = "current_state", nullable = false)
+  private String currentState;
 
-	@Column(name = "created_at", nullable = false, insertable = false, updatable = false)
-	private OffsetDateTime createdAt;
+  @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
+  private OffsetDateTime createdAt;
 
-	@Column(name = "archived_at")
-	private OffsetDateTime archivedAt;
+  @Column(name = "archived_at")
+  private OffsetDateTime archivedAt;
 
-	@Version
-	@Column(name = "version", nullable = false)
-	private Long version = 0L;
+  @Version
+  @Column(name = "version", nullable = false)
+  private Long version = 0L;
 
-	public Long getId() {
-		return id;
-	}
+  public Long getId() {
+    return id;
+  }
 
-	public String getPublicId() {
-		return publicId;
-	}
+  public String getPublicId() {
+    return publicId;
+  }
 
-	public void setPublicId(String publicId) {
-		this.publicId = publicId;
-	}
+  public void setPublicId(String publicId) {
+    this.publicId = publicId;
+  }
 
-	public WorkflowState getCurrentState() {
-		return PersistedRegistryValues.workflowRunState(currentState);
-	}
+  public WorkflowState getCurrentState() {
+    return PersistedRegistryValues.workflowRunState(currentState);
+  }
 
-	void setCurrentState(WorkflowState currentState) {
-		this.currentState = Objects.requireNonNull(currentState, "currentState").value();
-	}
+  void setCurrentState(WorkflowState currentState) {
+    this.currentState = Objects.requireNonNull(currentState, "currentState").value();
+  }
 
-	public OffsetDateTime getCreatedAt() {
-		return createdAt;
-	}
+  public OffsetDateTime getCreatedAt() {
+    return createdAt;
+  }
 
-	public OffsetDateTime getArchivedAt() {
-		return archivedAt;
-	}
+  public OffsetDateTime getArchivedAt() {
+    return archivedAt;
+  }
 
-	public void setArchivedAt(OffsetDateTime archivedAt) {
-		this.archivedAt = archivedAt;
-	}
+  public void setArchivedAt(OffsetDateTime archivedAt) {
+    this.archivedAt = archivedAt;
+  }
 
-	public Long getVersion() {
-		return version;
-	}
+  public Long getVersion() {
+    return version;
+  }
 }

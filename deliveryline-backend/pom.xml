@@ -123,7 +123,115 @@
 					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
 				</configuration>
 			</plugin>
+
+			<!-- Story 1.21 — quality plugins (versions from root pluginManagement). -->
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-checkstyle-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>checkstyle-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>com.github.spotbugs</groupId>
+				<artifactId>spotbugs-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>spotbugs-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+			</plugin>
+
+			<!-- Story 1.21 — Surefire (unit tests): pure JUnit5 unit tests. Excludes
+			     @Tag('architecture'|'integration'|'contract'|'known-failure').
+			     argLine pins UTC + UTF-8 (1.17 deferral).
+			     archunit engine excluded because ArchUnitTestEngine does not honor
+			     JUnit Platform tag filters — @ArchTest fields would otherwise leak
+			     into Surefire despite the class-level @Tag('architecture'). The
+			     same tests run under Failsafe (which keeps the archunit engine). -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<argLine>@{argLine} -Duser.timezone=UTC -Dfile.encoding=UTF-8</argLine>
+					<excludedGroups>architecture,integration,contract,known-failure</excludedGroups>
+					<!-- Surefire JUnit Platform provider expects a comma-separated string,
+					     NOT a nested <exclude> element. Earlier nested syntax was silently
+					     ignored by Maven; the archunit engine was leaking into Surefire. -->
+					<excludeJUnit5Engines>archunit</excludeJUnit5Engines>
+				</configuration>
+			</plugin>
+
+			<!-- Story 1.21 — Failsafe (integration tier): ArchUnit + Testcontainers +
+			     contract + integration. File-pattern filtering (NOT tag-group) because
+			     the ArchUnit JUnit 5 engine does not propagate the class-level
+			     @Tag('architecture') to its @ArchTest descriptors — a <groups> filter
+			     would silently exclude them. Pattern-based discovery keeps the engine
+			     reachable. <excludedGroups>known-failure</excludedGroups> tags F17
+			     out symmetrically with Surefire.
+			     Spring Boot starter parent already binds failsafe's integration-test +
+			     verify goals to the verify phase via its default execution; we configure
+			     at the plugin level so the inherited binding inherits the filter set. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<argLine>@{argLine} -Duser.timezone=UTC -Dfile.encoding=UTF-8</argLine>
+					<excludedGroups>known-failure</excludedGroups>
+					<includes>
+						<include>**/*IT.java</include>
+						<include>**/IT*.java</include>
+						<include>**/*ITCase.java</include>
+						<include>**/*ContractTest.java</include>
+						<include>**/*AppendOnlyTest.java</include>
+						<include>**/architecture/**/*Test.java</include>
+					</includes>
+				</configuration>
+			</plugin>
 		</plugins>
 	</build>
+
+	<profiles>
+		<!-- Story 1.21 — `-Parch` runs ArchUnit subset standalone for AC7 triage.
+		     TODO(archunit-engine-tags): the <groups>architecture</groups> filter
+		     below is currently a NO-OP because ArchUnitTestEngine does not honor
+		     JUnit Platform tag filters (the engine does not propagate @Tag from the
+		     containing class to its @ArchTest field descriptors). Profile is kept
+		     for spec compliance (Task 7) and forward compatibility once the engine
+		     supports tag propagation. To run only the ArchUnit subset today, use
+		     `mvn failsafe:integration-test -Dit.test='**/architecture/**/*Test'`. -->
+		<profile>
+			<id>arch</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<groups>architecture</groups>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>

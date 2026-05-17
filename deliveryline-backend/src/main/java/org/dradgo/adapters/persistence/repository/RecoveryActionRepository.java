@@ -6,7 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface RecoveryActionRepository extends JpaRepository<RecoveryActionEntity, Long> {
 
-	Optional<RecoveryActionEntity> findByPublicId(String publicId);
+  Optional<RecoveryActionEntity> findByPublicId(String publicId);
 
-	Optional<RecoveryActionEntity> findByIdempotencyKey(String idempotencyKey);
+  Optional<RecoveryActionEntity> findByIdempotencyKey(String idempotencyKey);
 }

@@ -6,9 +6,7 @@ import jakarta.validation.constraints.Size;
 import org.dradgo.domain.registry.ActorType;
 
 public record TakeoverWorkflowRequest(
-	@NotBlank @Size(max = 128) String actorIdentity,
-	@NotNull ActorType actorType,
-	@Size(max = 128) String correlationId,
-	@Size(max = 512) String reasonText
-) {
-}
+    @NotBlank @Size(max = 128) String actorIdentity,
+    @NotNull ActorType actorType,
+    @Size(max = 128) String correlationId,
+    @Size(max = 512) String reasonText) {}

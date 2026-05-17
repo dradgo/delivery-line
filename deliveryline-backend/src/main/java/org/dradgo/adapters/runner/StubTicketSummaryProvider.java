@@ -10,17 +10,17 @@ import org.springframework.stereotype.Component;
  * summary keyed by {@code workflowRunPublicId}. Story 1.14 replaces this with the production
  * adapter that reads from {@code integration_links} and Linear.
  *
- * <p>Guarded by {@link ConditionalOnMissingBean} so any environment that registers a real
- * {@link TicketSummaryProvider} bean takes precedence automatically.
+ * <p>Guarded by {@link ConditionalOnMissingBean} so any environment that registers a real {@link
+ * TicketSummaryProvider} bean takes precedence automatically.
  */
 @Component
 public class StubTicketSummaryProvider implements TicketSummaryProvider {
 
-	@Override
-	public TicketSummary fetchByWorkflowRun(String workflowRunPublicId) {
-		return new TicketSummary(
-			"ticket-" + workflowRunPublicId,
-			"Pending ticket summary",
-			"Ticket-summary lookup is not yet wired for this workflow run; story 1.14 ships the real adapter.");
-	}
+  @Override
+  public TicketSummary fetchByWorkflowRun(String workflowRunPublicId) {
+    return new TicketSummary(
+        "ticket-" + workflowRunPublicId,
+        "Pending ticket summary",
+        "Ticket-summary lookup is not yet wired for this workflow run; story 1.14 ships the real adapter.");
+  }
 }

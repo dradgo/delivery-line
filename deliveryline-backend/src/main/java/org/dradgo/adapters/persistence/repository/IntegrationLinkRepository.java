@@ -1,8 +1,8 @@
 package org.dradgo.adapters.persistence.repository;
 
+import jakarta.persistence.LockModeType;
 import java.time.OffsetDateTime;
 import java.util.Optional;
-import jakarta.persistence.LockModeType;
 import org.dradgo.adapters.persistence.entity.IntegrationLinkEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -12,9 +12,10 @@ import org.springframework.data.repository.query.Param;
 
 public interface IntegrationLinkRepository extends JpaRepository<IntegrationLinkEntity, Long> {
 
-	Optional<IntegrationLinkEntity> findByPublicId(String publicId);
+  Optional<IntegrationLinkEntity> findByPublicId(String publicId);
 
-	@Query("""
+  @Query(
+      """
 		select integrationLink
 		from IntegrationLinkEntity integrationLink
 		where integrationLink.integrationType = :integrationType
@@ -22,13 +23,12 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
 		  and integrationLink.archivedAt is null
 		  and integrationLink.syncStatus <> 'superseded'
 		""")
-	Optional<IntegrationLinkEntity> findActiveByTypeAndExternalRef(
-		@Param("integrationType") String integrationType,
-		@Param("externalRef") String externalRef
-	);
+  Optional<IntegrationLinkEntity> findActiveByTypeAndExternalRef(
+      @Param("integrationType") String integrationType, @Param("externalRef") String externalRef);
 
-	@Lock(LockModeType.PESSIMISTIC_WRITE)
-	@Query("""
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      """
 		select integrationLink
 		from IntegrationLinkEntity integrationLink
 		where integrationLink.integrationType = :integrationType
@@ -36,12 +36,11 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
 		  and integrationLink.archivedAt is null
 		  and integrationLink.syncStatus <> 'superseded'
 		""")
-	Optional<IntegrationLinkEntity> findActiveByTypeAndExternalRefForUpdate(
-		@Param("integrationType") String integrationType,
-		@Param("externalRef") String externalRef
-	);
+  Optional<IntegrationLinkEntity> findActiveByTypeAndExternalRefForUpdate(
+      @Param("integrationType") String integrationType, @Param("externalRef") String externalRef);
 
-	@Query("""
+  @Query(
+      """
 		select integrationLink
 		from IntegrationLinkEntity integrationLink
 		where integrationLink.workflowRun.publicId = :workflowRunPublicId
@@ -49,23 +48,23 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
 		  and integrationLink.syncStatus <> 'superseded'
 		order by integrationLink.integrationType asc, integrationLink.createdAt asc
 		""")
-	Optional<IntegrationLinkEntity> findFirstActiveByWorkflowRunPublicId(
-		@Param("workflowRunPublicId") String workflowRunPublicId
-	);
+  Optional<IntegrationLinkEntity> findFirstActiveByWorkflowRunPublicId(
+      @Param("workflowRunPublicId") String workflowRunPublicId);
 
-	@Query("""
+  @Query(
+      """
 		select max(integrationLink.lastSyncAt)
 		from IntegrationLinkEntity integrationLink
 		where integrationLink.integrationType = :integrationType
 		  and integrationLink.archivedAt is null
 		  and integrationLink.syncStatus <> 'superseded'
 		""")
-	Optional<OffsetDateTime> findMaxLastSyncAtForType(
-		@Param("integrationType") String integrationType
-	);
+  Optional<OffsetDateTime> findMaxLastSyncAtForType(
+      @Param("integrationType") String integrationType);
 
-	@Modifying
-	@Query("""
+  @Modifying
+  @Query(
+      """
 		update IntegrationLinkEntity integrationLink
 		   set integrationLink.lastSyncAt = :lastSyncAt
 		 where integrationLink.integrationType = :integrationType
@@ -73,9 +72,8 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
 		   and integrationLink.archivedAt is null
 		   and integrationLink.syncStatus <> 'superseded'
 		""")
-	int touchLastSyncAtByTypeAndExternalRef(
-		@Param("integrationType") String integrationType,
-		@Param("externalRef") String externalRef,
-		@Param("lastSyncAt") OffsetDateTime lastSyncAt
-	);
+  int touchLastSyncAtByTypeAndExternalRef(
+      @Param("integrationType") String integrationType,
+      @Param("externalRef") String externalRef,
+      @Param("lastSyncAt") OffsetDateTime lastSyncAt);
 }

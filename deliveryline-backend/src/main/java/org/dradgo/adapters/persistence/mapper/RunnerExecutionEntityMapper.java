@@ -7,18 +7,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class RunnerExecutionEntityMapper {
 
-	public RunnerExecutionSnapshot toSnapshot(RunnerExecutionEntity entity) {
-		return new RunnerExecutionSnapshot(
-			entity.getPublicId(),
-			entity.getWorkflowRun().getPublicId(),
-			entity.getStage(),
-			entity.getStatus(),
-			entity.getContextBundleVersion(),
-			entity.getLastActivityAt(),
-			entity.getTimeoutAt(),
-			entity.getFailureCategory(),
-			entity.getCompletedAt(),
-			entity.getCreatedAt(),
-			entity.getArchivedAt());
-	}
+  public RunnerExecutionSnapshot toSnapshot(RunnerExecutionEntity entity) {
+    return new RunnerExecutionSnapshot(
+        entity.getPublicId(),
+        entity.getWorkflowRun().getPublicId(),
+        entity.getStage(),
+        entity.getStatus(),
+        entity.getContextBundleVersion(),
+        entity.getLastActivityAt(),
+        entity.getTimeoutAt(),
+        entity.getFailureCategory(),
+        entity.getCompletedAt(),
+        entity.getCreatedAt(),
+        entity.getArchivedAt());
+  }
 }

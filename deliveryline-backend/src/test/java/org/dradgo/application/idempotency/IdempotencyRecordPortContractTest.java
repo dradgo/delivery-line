@@ -10,16 +10,17 @@ import org.junit.jupiter.api.Test;
 
 class IdempotencyRecordPortContractTest {
 
-	@Test
-	void staleReservationCheckUsesDurationInsteadOfPrimitiveMinutes() {
-		Method method = java.util.Arrays.stream(IdempotencyRecordPort.class.getMethods())
-			.filter(candidate -> candidate.getName().equals("isReservationStale"))
-			.findFirst()
-			.orElseThrow();
+  @Test
+  void staleReservationCheckUsesDurationInsteadOfPrimitiveMinutes() {
+    Method method =
+        java.util.Arrays.stream(IdempotencyRecordPort.class.getMethods())
+            .filter(candidate -> candidate.getName().equals("isReservationStale"))
+            .findFirst()
+            .orElseThrow();
 
-		assertEquals(2, method.getParameterCount());
-		assertEquals(String.class, method.getParameterTypes()[0]);
-		assertEquals(Duration.class, method.getParameterTypes()[1]);
-		assertNotNull(method.getAnnotation(Deprecated.class) == null);
-	}
+    assertEquals(2, method.getParameterCount());
+    assertEquals(String.class, method.getParameterTypes()[0]);
+    assertEquals(Duration.class, method.getParameterTypes()[1]);
+    assertNotNull(method.getAnnotation(Deprecated.class) == null);
+  }
 }

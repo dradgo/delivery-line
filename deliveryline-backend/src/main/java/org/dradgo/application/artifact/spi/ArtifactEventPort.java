@@ -4,5 +4,5 @@ import org.dradgo.application.artifact.ArtifactEventRecord;
 
 public interface ArtifactEventPort {
 
-	void append(ArtifactEventRecord eventRecord);
+  void append(ArtifactEventRecord eventRecord);
 }

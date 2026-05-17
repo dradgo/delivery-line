@@ -1,8 +1,31 @@
 # .github/workflows/ci.yml
-# Story 1.17 — OS-matrix doctor smoke. Story 1.21 expands this to the full 9-tier pipeline
-# (format-static-checks -> runner-contract-fixtures -> frontend-build-tests -> backend-unit-tests
-#  -> backend-contract-tests -> runner-image-compat -> jar-packaging -> bundled-jar-smoke
-#  -> export-redaction-verify). Keep this file minimal so 1.21 can extend cleanly.
+# Story 1.21 — Tiered CI pipeline implementing AR28's gate sequence.
+#
+# Tier order (AR28, _bmad-output/planning-artifacts/architecture.md:213):
+#   format-static-checks
+#     -> runner-contract-fixtures
+#       -> frontend-build-tests
+#         -> backend-unit-tests
+#           -> backend-contract-tests
+#             -> runner-image-compat
+#               -> jar-packaging
+#                 -> bundled-jar-smoke   (push:main only — AC8 cost control)
+#                 -> export-redaction-verify
+#                   -> foundation-gate    (placeholder — story 1.23 fills body)
+#
+# Story 1.17 doctor-smoke matrix job is preserved unchanged as the AC3
+# "doctor-invoking smoke jobs" entrypoint and is also wired into foundation-gate.
+#
+# OS-matrix policy (AC3):
+#   - Linux + Windows: format-static-checks, backend-unit-tests, doctor-smoke.
+#   - Linux only:      runner-contract-fixtures, frontend-build-tests,
+#                      backend-contract-tests, runner-image-compat,
+#                      jar-packaging, bundled-jar-smoke, export-redaction-verify.
+#     (Docker-backed Testcontainers + buildx require Linux; macOS/Windows
+#      runner Docker is excluded for cost/flakiness — see AC3.)
+#
+# Flake policy (AC5): no blanket retries. Container-pull retries are scoped
+# narrowly and inline-documented where used.
 name: ci
 
 on:
@@ -10,7 +33,489 @@ on:
   push:
     branches: [main]
 
+# Least-privilege token policy — workflow inherits read-only `GITHUB_TOKEN`.
+# Individual jobs that need to publish (e.g. future release-readiness tiers)
+# must escalate explicitly with their own `permissions:` block.
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same PR/ref. Do NOT cancel `main` push
+# runs — they feed bundled-jar-smoke release-readiness (AC8, Open Clarif. 7).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Tier 1: format-static-checks (Spotless + Checkstyle + SpotBugs)
+  # OS matrix: Linux + Windows. Each plugin invoked as a separate Maven goal
+  # for per-plugin log clarity (epics.md:981). Failure annotations include the
+  # `mvn spotless:apply` self-fix hint.
+  # ---------------------------------------------------------------------------
+  format-static-checks:
+    name: format-static-checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Spotless check
+        id: spotless
+        shell: bash
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am spotless:check
+
+      - name: Spotless apply hint
+        if: failure() && steps.spotless.outcome == 'failure'
+        shell: bash
+        run: echo "::error::Run \`./mvnw spotless:apply\` locally to fix formatting violations."
+
+      - name: Checkstyle check
+        id: checkstyle
+        shell: bash
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am checkstyle:check
+
+      - name: Checkstyle failure hint
+        if: failure() && steps.checkstyle.outcome == 'failure'
+        shell: bash
+        run: echo "::error::Checkstyle violations above. Run \`./mvnw checkstyle:check\` locally for the full report at deliveryline-backend/target/checkstyle-result.xml."
+
+      - name: SpotBugs check
+        id: spotbugs
+        shell: bash
+        # spotbugs:spotbugs materializes target/spotbugs.html for the artifact
+        # upload below; spotbugs:check fails the build on threshold violations.
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am spotbugs:spotbugs spotbugs:check
+
+      - name: SpotBugs failure hint
+        if: failure() && steps.spotbugs.outcome == 'failure'
+        shell: bash
+        run: echo "::error::SpotBugs findings above. Run \`./mvnw spotbugs:gui\` locally to triage, or inspect deliveryline-backend/target/spotbugs.html in the uploaded artifact."
+
+      - name: Upload SpotBugs report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotbugs-report-${{ matrix.os }}
+          path: |
+            deliveryline-backend/target/spotbugsXml.xml
+            deliveryline-backend/target/spotbugs.html
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 2: runner-contract-fixtures
+  # Schema v1 fixture validation against RunnerContractValidator. Linux-only;
+  # no Docker. Fast (<2 min target).
+  # ---------------------------------------------------------------------------
+  runner-contract-fixtures:
+    name: runner-contract-fixtures
+    needs: [format-static-checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Validate runner contract fixtures
+        run: ./mvnw -B -ntp -pl deliveryline-runner-contracts test
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-contract-fixtures-reports
+          path: deliveryline-runner-contracts/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 3: frontend-build-tests
+  # Placeholder until story 2.1 scaffolds Vite/React/TS. Current
+  # deliveryline-frontend/pom.xml is <packaging>pom</packaging> so `mvn verify`
+  # passes trivially. DO NOT delete — pins the tier slot in the needs: chain.
+  # ---------------------------------------------------------------------------
+  frontend-build-tests:
+    name: frontend-build-tests
+    needs: [runner-contract-fixtures]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node (story 2.1 will activate)
+        if: hashFiles('deliveryline-frontend/package-lock.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: deliveryline-frontend/package-lock.json
+
+      - name: Frontend module verify (no-op until story 2.1)
+        run: ./mvnw -B -ntp -pl deliveryline-frontend verify
+
+      - name: Upload frontend build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-tests-reports
+          path: deliveryline-frontend/target/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 4: backend-unit-tests
+  # Surefire only — pure unit tests. Excludes @Tag(architecture|integration|
+  # contract|known-failure). OS matrix: Linux + Windows.
+  # ---------------------------------------------------------------------------
+  backend-unit-tests:
+    name: backend-unit-tests (${{ matrix.os }})
+    needs: [frontend-build-tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Backend unit tests
+        shell: bash
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am -DskipITs test
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unit-tests-reports-${{ matrix.os }}
+          path: deliveryline-backend/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 5: backend-contract-tests
+  # Failsafe — ArchUnit + Testcontainers + contract + integration. Linux-only
+  # (Testcontainers needs Docker). AC7: ArchUnit fails loudly via
+  # ArchitectureBoundaryTest assertion messages.
+  #
+  # AC5: no blanket retries on Failsafe. If container-cold-start flakes are
+  # observed, add a narrow retry on the container-pull step ONLY, with inline
+  # justification — do NOT wrap test execution.
+  #
+  # OpenAPI snapshot drift check (Task 12, AC6) lives at the tail of this job
+  # as a graceful no-op until story 6.9 wires springdoc.
+  # ---------------------------------------------------------------------------
+  backend-contract-tests:
+    name: backend-contract-tests
+    needs: [backend-unit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Backend integration + ArchUnit + contract tests (Failsafe)
+        # Open Clarification 4 default: run the full `verify` lifecycle but skip
+        # Surefire (unit tests already ran in the backend-unit-tests tier).
+        # Avoids inventing a custom `-DskipUnitTests` property the POM would have
+        # to wire up.
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am verify -Dsurefire.skip=true
+
+      # AC6 — TODO(story-6.9): activates when springdoc-openapi is wired and
+      # backend/src/main/resources/openapi/openapi.json snapshot is committed.
+      - name: OpenAPI snapshot drift check
+        if: always()
+        run: |
+          if [ -f deliveryline-backend/src/main/resources/openapi/openapi.json ]; then
+            ./mvnw -B -ntp -pl deliveryline-backend springdoc:generate -DoutputDir=target/openapi
+            diff -q deliveryline-backend/src/main/resources/openapi/openapi.json \
+                    deliveryline-backend/target/openapi/openapi.json
+          else
+            echo "OpenAPI snapshot not yet wired (owned by story 6.9); skipping drift check."
+          fi
+
+      - name: Upload failsafe reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-contract-tests-reports
+          path: deliveryline-backend/target/failsafe-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-jacoco
+          path: deliveryline-backend/target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 6: runner-image-compat
+  # Builds both FROM-scratch runner Dockerfiles (E1 placeholders; E3 fills
+  # entrypoints) then re-runs RunnerContractValidatorTest against schema v1
+  # fixtures — AC4 stub-contract-drift gate.
+  # ---------------------------------------------------------------------------
+  runner-image-compat:
+    name: runner-image-compat
+    needs: [backend-contract-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build codex runner image
+        run: docker build -t deliveryline/runners-codex:ci runners/codex
+
+      - name: Build claude runner image
+        run: docker build -t deliveryline/runners-claude:ci runners/claude
+
+      - name: Re-validate runner contract fixtures against schema v1
+        run: ./mvnw -B -ntp -pl deliveryline-runner-contracts -am test -Dtest='RunnerContractValidatorTest'
+
+      - name: Upload validator reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-image-compat-reports
+          path: deliveryline-runner-contracts/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 7: jar-packaging
+  # Spring Boot Maven plugin executable jar. Linux-only — Spring Boot's bundled
+  # output is platform-agnostic. java -jar ... --help validates structural jar
+  # without booting Postgres (Spring Shell exits 0 on --help).
+  # ---------------------------------------------------------------------------
+  jar-packaging:
+    name: jar-packaging
+    needs: [runner-image-compat]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Package executable jar
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am -DskipTests package
+
+      - name: Verify jar is executable
+        # Pin the glob — Spring Boot's `repackage` leaves a `*.jar.original`
+        # next to the bootable jar; passing both to `java -jar` misparses.
+        run: |
+          JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
+          if [ -z "$JAR" ]; then
+            echo "::error::No bootable jar produced under deliveryline-backend/target/"
+            ls -la deliveryline-backend/target/ || true
+            exit 1
+          fi
+          echo "Booting $JAR"
+          java -jar "$JAR" --help
+
+      - name: Upload packaged jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar-packaging-artifact
+          path: deliveryline-backend/target/deliveryline-backend-*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Tier 8: bundled-jar-smoke
+  # AC8 — runs only on push:main (release-readiness signal, cost control on
+  # PRs). Boots Postgres via docker-compose, runs the packaged jar, invokes
+  # `deliveryline doctor` against it. Tolerates WARN per 1.17 AC8 semantics.
+  # ---------------------------------------------------------------------------
+  bundled-jar-smoke:
+    name: bundled-jar-smoke
+    needs: [jar-packaging]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      POSTGRES_PASSWORD: deliveryline-ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Download packaged jar
+        uses: actions/download-artifact@v4
+        with:
+          name: jar-packaging-artifact
+          path: deliveryline-backend/target/
+
+      - name: Start Postgres via docker-compose
+        run: |
+          docker compose up -d postgres
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U deliveryline -d deliveryline > /dev/null 2>&1; then
+              echo "postgres ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "postgres failed to become ready within 30s"
+          docker compose logs postgres
+          exit 1
+
+      - name: Boot jar and run doctor smoke
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/deliveryline
+          SPRING_DATASOURCE_USERNAME: deliveryline
+          SPRING_DATASOURCE_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        run: |
+          mkdir -p bundled-jar-smoke-logs
+          JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
+          if [ -z "$JAR" ]; then
+            echo "::error::No bootable jar found at deliveryline-backend/target/"
+            ls -la deliveryline-backend/target/ || true
+            exit 1
+          fi
+          set +e
+          java -jar "$JAR" \
+               doctor --format json --only supported-environment,java-version,docker-availability \
+               > bundled-jar-smoke-logs/doctor.json 2>bundled-jar-smoke-logs/doctor.err
+          rc=$?
+          set -e
+          cat bundled-jar-smoke-logs/doctor.json
+          if [ $rc -ne 0 ]; then
+            echo "::error::doctor exited $rc"
+            cat bundled-jar-smoke-logs/doctor.err
+            exit $rc
+          fi
+          # Read the aggregate `.status` field via jq (pre-installed on
+          # ubuntu-latest). The previous `grep -o ... | head -1` approach picked
+          # the FIRST per-check status, not the aggregate — masking aggregate
+          # FAILs and over-reporting per-check FAILs.
+          status=$(jq -r '.status' bundled-jar-smoke-logs/doctor.json)
+          echo "doctor aggregate status: $status"
+          if [ "$status" = "FAIL" ]; then
+            echo "::error::doctor reported aggregate FAIL"
+            exit 1
+          fi
+
+      - name: Tear down docker-compose
+        if: always()
+        run: docker compose down -v
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundled-jar-smoke-logs
+          path: bundled-jar-smoke-logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Tier 9: export-redaction-verify
+  # Until stories 5.1–5.4 land the export service, this tier exercises the
+  # redaction-policy contract tests and asserts deterministic-redaction unit
+  # tests are green. Story 5.1 will extend to bundle-level redaction checks.
+  # ---------------------------------------------------------------------------
+  export-redaction-verify:
+    name: export-redaction-verify
+    needs: [jar-packaging]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Redaction policy + logging redaction contract tests
+        run: |
+          ./mvnw -B -ntp -pl deliveryline-backend -am test \
+            -Dtest='*RedactionContractTest,*RedactionPolicyService*Test,RedactingMessageConverterUnitTest' \
+            -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: export-redaction-verify-reports
+          path: deliveryline-backend/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Story 1.17 doctor-smoke — preserved unchanged. Anchors AC3's "doctor-invoking
+  # smoke jobs" entry. Wired into foundation-gate alongside the 9 new tiers.
+  # ---------------------------------------------------------------------------
   doctor-smoke:
     name: doctor-smoke (${{ matrix.os }})
     strategy:
@@ -18,6 +523,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,18 +536,15 @@ jobs:
           cache: maven
 
       # docker-availability is included so CI actually exercises the Docker-WARN
-      # tolerance from AC8: ubuntu-latest ships with Docker (probe PASSes); windows-latest
-      # has no Docker Desktop (probe WARNs with DOCTOR_DOCKER_MISSING). Both runners must
-      # still exit 0 because DoctorService.aggregate() only returns FAIL when a check FAILs
-      # and DoctorCommands only throws on FAIL — see deliveryline-backend DoctorService:261
-      # and DoctorCommands:88.
+      # tolerance from 1.17 AC8: ubuntu-latest ships with Docker (probe PASSes);
+      # windows-latest has no Docker Desktop (probe WARNs with
+      # DOCTOR_DOCKER_MISSING). Both runners must still exit 0 because
+      # DoctorService.aggregate() only returns FAIL when a check FAILs and
+      # DoctorCommands only throws on FAIL.
       #
-      # supported-environment expectations on hosted runners:
+      # supported-environment on hosted runners:
       #   ubuntu-latest  → PASS (Ubuntu 22.04+, bash, Docker Engine 24+).
-      #   windows-latest → WARN, not PASS. GitHub's `windows-latest` image is
-      #     Windows Server 2022 (os.version "10.0"), not Windows 11. classifyWindows
-      #     emits WARN with matrixRow=win10-nearmiss, which keeps the job at exit 0.
-      #     AC8 requires exit 0 with Docker WARN tolerated; PASS is not required.
+      #   windows-latest → WARN (matrixRow=win10-nearmiss), exit 0.
       - name: Doctor smoke (Ubuntu)
         if: runner.os == 'Linux'
         run: ./scripts/doctor.sh --only supported-environment,java-version,docker-availability --format json
@@ -50,3 +553,59 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/doctor.ps1 --only supported-environment,java-version,docker-availability --format json
+
+  # ---------------------------------------------------------------------------
+  # foundation-gate (placeholder body — story 1.23 fills in real verification).
+  #
+  # Aggregator job that depends on all 9 tiers + doctor-smoke. Story 1.23
+  # replaces the echo body with deterministic-fixture event-stream verification.
+  # AC9: this is the required-status-check name; docs/ci-branch-protection.md
+  # ships the gh-api command for the repo admin.
+  #
+  # bundled-jar-smoke is intentionally NOT in needs: — it only runs on
+  # push:main, and foundation-gate must succeed on PR runs.
+  # ---------------------------------------------------------------------------
+  foundation-gate:
+    name: foundation-gate
+    # `if: always() && !cancelled()` ensures this job runs even when one of its
+    # needs is `failure` or `skipped`, so the assertion step below can convert
+    # those outcomes into an explicit fail. Without this, a matrix tier failing
+    # on a single OS would mark foundation-gate `skipped`, which some
+    # branch-protection configurations treat as success — silently unblocking
+    # merges despite a failed tier.
+    if: ${{ always() && !cancelled() }}
+    needs:
+      - format-static-checks
+      - runner-contract-fixtures
+      - frontend-build-tests
+      - backend-unit-tests
+      - backend-contract-tests
+      - runner-image-compat
+      - jar-packaging
+      - export-redaction-verify
+      - doctor-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Assert all required tiers succeeded
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          echo "needs: $NEEDS_JSON"
+          # Fail if any required tier ended in anything other than 'success'.
+          # This converts skipped/failure/cancelled into an explicit exit 1 so
+          # branch protection treats foundation-gate as failed in all those
+          # cases (story 1.23 will replace the placeholder body below).
+          failures=$(echo "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"')
+          if [ -n "$failures" ]; then
+            echo "::error::foundation-gate failing — non-success tiers detected:"
+            echo "$failures"
+            exit 1
+          fi
+          echo "All prerequisite tiers reported success."
+
+      - name: foundation-gate placeholder
+        run: |
+          echo "foundation-gate passed: all prerequisite tiers green"
+          echo "Note: story 1.23 replaces this body with deterministic-fixture"
+          echo "      event-stream verification."

@@ -15,24 +15,25 @@ import org.junit.jupiter.api.Test;
 
 class IdempotencyPersistenceAdapterTest {
 
-	@Test
-	void markCompletedTranslatesMissingRecordIntoStableGovernedError() {
-		IdempotencyRecordRepository repository = mock(IdempotencyRecordRepository.class);
-		IdempotencyPersistenceAdapter adapter = new IdempotencyPersistenceAdapter(
-			repository,
-			new IdempotencyRecordEntityMapper());
+  @Test
+  void markCompletedTranslatesMissingRecordIntoStableGovernedError() {
+    IdempotencyRecordRepository repository = mock(IdempotencyRecordRepository.class);
+    IdempotencyPersistenceAdapter adapter =
+        new IdempotencyPersistenceAdapter(repository, new IdempotencyRecordEntityMapper());
 
-		when(repository.findWithLockByKey("idem-missing-1234567890")).thenReturn(Optional.empty());
+    when(repository.findWithLockByKey("idem-missing-1234567890")).thenReturn(Optional.empty());
 
-		DomainException error = assertThrows(
-			DomainException.class,
-			() -> adapter.markCompleted(
-				"idem-missing-1234567890",
-				"run_submit1234",
-				IdempotencyRecordStatus.COMPLETED,
-				OffsetDateTime.now()));
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                adapter.markCompleted(
+                    "idem-missing-1234567890",
+                    "run_submit1234",
+                    IdempotencyRecordStatus.COMPLETED,
+                    OffsetDateTime.now()));
 
-		assertEquals("IDEMPOTENCY_RECORD_LOST", error.errorCode().name());
-		assertEquals("idem-missing-1234567890", error.details().get("idempotencyKey"));
-	}
+    assertEquals("IDEMPOTENCY_RECORD_LOST", error.errorCode().name());
+    assertEquals("idem-missing-1234567890", error.details().get("idempotencyKey"));
+  }
 }

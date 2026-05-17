@@ -14,29 +14,30 @@ import java.util.Objects;
  *
  * <p>{@code labels} is stored as an immutable {@link Map} of label-name → label-value (Linear
  * labels are flat tags; we keep a map shape so future label metadata can attach without breaking
- * the wire form). {@code authorIdentity} carries the Linear-user identity string (e.g.,
- * {@code user@example.com} or the Linear user public id) — never a GraphQL user DTO.
+ * the wire form). {@code authorIdentity} carries the Linear-user identity string (e.g., {@code
+ * user@example.com} or the Linear user public id) — never a GraphQL user DTO.
  */
 public record LinearTicket(
-	String ticketRef,
-	String title,
-	String summary,
-	String authorIdentity,
-	Instant createdAt,
-	Instant updatedAt,
-	Map<String, String> labels) {
+    String ticketRef,
+    String title,
+    String summary,
+    String authorIdentity,
+    Instant createdAt,
+    Instant updatedAt,
+    Map<String, String> labels) {
 
-	public LinearTicket {
-		if (ticketRef == null || ticketRef.isBlank()) {
-			throw new IllegalArgumentException("ticketRef must be non-blank");
-		}
-		Objects.requireNonNull(title, "title");
-		Objects.requireNonNull(summary, "summary");
-		Objects.requireNonNull(authorIdentity, "authorIdentity");
-		Objects.requireNonNull(createdAt, "createdAt");
-		Objects.requireNonNull(updatedAt, "updatedAt");
-		labels = labels == null
-			? Collections.emptyMap()
-			: Collections.unmodifiableMap(new LinkedHashMap<>(labels));
-	}
+  public LinearTicket {
+    if (ticketRef == null || ticketRef.isBlank()) {
+      throw new IllegalArgumentException("ticketRef must be non-blank");
+    }
+    Objects.requireNonNull(title, "title");
+    Objects.requireNonNull(summary, "summary");
+    Objects.requireNonNull(authorIdentity, "authorIdentity");
+    Objects.requireNonNull(createdAt, "createdAt");
+    Objects.requireNonNull(updatedAt, "updatedAt");
+    labels =
+        labels == null
+            ? Collections.emptyMap()
+            : Collections.unmodifiableMap(new LinkedHashMap<>(labels));
+  }
 }

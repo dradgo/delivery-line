@@ -32,4 +32,15 @@
 		</dependency>
 	</dependencies>
 
+	<build>
+		<plugins>
+			<!-- Story 1.21 — Spotless enabled for formatting consistency with backend module.
+			     Config inherited from root pluginManagement. -->
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
 </project>

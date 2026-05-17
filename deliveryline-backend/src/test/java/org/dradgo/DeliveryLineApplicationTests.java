@@ -10,8 +10,6 @@ import org.springframework.test.context.ActiveProfiles;
 @ActiveProfiles({"test", "linear-mock"})
 class DeliveryLineApplicationTests {
 
-	@Test
-	void contextLoads() {
-	}
-
+  @Test
+  void contextLoads() {}
 }

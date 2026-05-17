@@ -14,15 +14,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class IntegrationLinkEntityMapper {
 
-	public IntegrationLink toDomain(IntegrationLinkEntity entity) {
-		return new IntegrationLink(
-			entity.getPublicId(),
-			entity.getWorkflowRun().getPublicId(),
-			entity.getIntegrationType(),
-			entity.getExternalRef(),
-			entity.getSyncStatus(),
-			entity.getCreatedAt().toInstant(),
-			entity.getLastSyncAt() == null ? null : entity.getLastSyncAt().toInstant(),
-			entity.getArchivedAt() == null ? null : entity.getArchivedAt().toInstant());
-	}
+  public IntegrationLink toDomain(IntegrationLinkEntity entity) {
+    return new IntegrationLink(
+        entity.getPublicId(),
+        entity.getWorkflowRun().getPublicId(),
+        entity.getIntegrationType(),
+        entity.getExternalRef(),
+        entity.getSyncStatus(),
+        entity.getCreatedAt().toInstant(),
+        entity.getLastSyncAt() == null ? null : entity.getLastSyncAt().toInstant(),
+        entity.getArchivedAt() == null ? null : entity.getArchivedAt().toInstant());
+  }
 }

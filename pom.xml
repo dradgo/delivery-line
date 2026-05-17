@@ -26,6 +26,13 @@
 	<properties>
 		<java.version>21</java.version>
 		<spring-shell.version>4.0.2</spring-shell.version>
+		<!-- Story 1.21 — quality plugin versions (centralized so modules opt in by <plugin> declaration only). -->
+		<spotless-maven-plugin.version>2.46.1</spotless-maven-plugin.version>
+		<google-java-format.version>1.27.0</google-java-format.version>
+		<maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
+		<checkstyle.version>10.21.4</checkstyle.version>
+		<spotbugs-maven-plugin.version>4.9.4.2</spotbugs-maven-plugin.version>
+		<jacoco-maven-plugin.version>0.8.13</jacoco-maven-plugin.version>
 	</properties>
 
 	<dependencyManagement>
@@ -39,5 +46,104 @@
 			</dependency>
 		</dependencies>
 	</dependencyManagement>
+
+	<build>
+		<pluginManagement>
+			<plugins>
+				<!-- Story 1.21 — format-static-checks tier. Spotless / Checkstyle / SpotBugs
+				     are declared here with conservative defaults; modules opt in by adding
+				     a <plugin> entry without a version. -->
+				<plugin>
+					<groupId>com.diffplug.spotless</groupId>
+					<artifactId>spotless-maven-plugin</artifactId>
+					<version>${spotless-maven-plugin.version}</version>
+					<configuration>
+						<java>
+							<includes>
+								<include>src/main/java/**/*.java</include>
+								<include>src/test/java/**/*.java</include>
+							</includes>
+							<googleJavaFormat>
+								<version>${google-java-format.version}</version>
+								<style>GOOGLE</style>
+							</googleJavaFormat>
+							<removeUnusedImports/>
+							<trimTrailingWhitespace/>
+							<endWithNewline/>
+						</java>
+					</configuration>
+				</plugin>
+
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-checkstyle-plugin</artifactId>
+					<version>${maven-checkstyle-plugin.version}</version>
+					<dependencies>
+						<dependency>
+							<groupId>com.puppycrawl.tools</groupId>
+							<artifactId>checkstyle</artifactId>
+							<version>${checkstyle.version}</version>
+						</dependency>
+					</dependencies>
+					<configuration>
+						<configLocation>google_checks.xml</configLocation>
+						<sourceDirectories>
+							<sourceDirectory>${project.build.sourceDirectory}</sourceDirectory>
+						</sourceDirectories>
+						<consoleOutput>true</consoleOutput>
+						<failsOnError>true</failsOnError>
+						<failOnViolation>true</failOnViolation>
+						<violationSeverity>error</violationSeverity>
+					</configuration>
+				</plugin>
+
+				<plugin>
+					<groupId>com.github.spotbugs</groupId>
+					<artifactId>spotbugs-maven-plugin</artifactId>
+					<version>${spotbugs-maven-plugin.version}</version>
+					<configuration>
+						<!-- Story 1.21 — threshold=Medium so MEDIUM bugs are reported (warns
+						     non-blocking) per epics.md:980. failOnError=false here lets the
+						     `:check` goal own the build-fail decision; goal-level config below
+						     restricts that to HIGH-severity findings only. -->
+						<effort>Max</effort>
+						<threshold>Medium</threshold>
+						<failOnError>false</failOnError>
+						<xmlOutput>true</xmlOutput>
+						<htmlOutput>true</htmlOutput>
+					</configuration>
+				</plugin>
+
+				<!-- Story 1.21 — coverage artifact only. No threshold gate here; story 2.32
+				     wires the gate per epics.md:1028. -->
+				<plugin>
+					<groupId>org.jacoco</groupId>
+					<artifactId>jacoco-maven-plugin</artifactId>
+					<version>${jacoco-maven-plugin.version}</version>
+					<executions>
+						<execution>
+							<id>jacoco-prepare-agent</id>
+							<goals>
+								<goal>prepare-agent</goal>
+							</goals>
+						</execution>
+						<execution>
+							<id>jacoco-prepare-agent-integration</id>
+							<goals>
+								<goal>prepare-agent-integration</goal>
+							</goals>
+						</execution>
+						<execution>
+							<id>jacoco-report</id>
+							<phase>verify</phase>
+							<goals>
+								<goal>report</goal>
+							</goals>
+						</execution>
+					</executions>
+				</plugin>
+			</plugins>
+		</pluginManagement>
+	</build>
 
 </project>
