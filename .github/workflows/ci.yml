@@ -449,6 +449,14 @@ jobs:
     timeout-minutes: 15
     env:
       POSTGRES_PASSWORD: deliveryline-ci
+      DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-bundled
+      # test profile group activates runners.mock,linear-mock so the bean
+      # graph closes without external services.
+      SPRING_PROFILES_ACTIVE: test
+      DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
+      DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
+      SPRING_SHELL_INTERACTIVE_ENABLED: "false"
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -482,7 +490,6 @@ jobs:
 
       - name: Boot jar and run doctor smoke
         env:
-          SPRING_PROFILES_ACTIVE: test
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/deliveryline
           SPRING_DATASOURCE_USERNAME: deliveryline
           SPRING_DATASOURCE_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
@@ -494,28 +501,37 @@ jobs:
             ls -la deliveryline-backend/target/ || true
             exit 1
           fi
+          # Command path is `deliveryline doctor` — DoctorCommands has
+          # @CommandGroup(prefix="deliveryline"). The NonInteractiveShellRunner
+          # does not call System.exit and at least one bean holds a non-daemon
+          # thread, so bound the JVM with `timeout` and assert success via the
+          # JSON envelope (overallStatus). SIGTERM after a passing run is OK.
           set +e
-          java -jar "$JAR" \
-               doctor --format json --only supported-environment,java-version,docker-availability \
+          timeout 240s java -jar "$JAR" \
+               deliveryline doctor --format json --only supported-environment,java-version,docker-availability \
                > bundled-jar-smoke-logs/doctor.json 2>bundled-jar-smoke-logs/doctor.err
           rc=$?
           set -e
+          echo "java -jar exit: $rc"
+          echo "----- stdout -----"
           cat bundled-jar-smoke-logs/doctor.json
-          if [ $rc -ne 0 ]; then
-            echo "::error::doctor exited $rc"
-            cat bundled-jar-smoke-logs/doctor.err
-            exit $rc
-          fi
-          # Read the aggregate `.status` field via jq (pre-installed on
-          # ubuntu-latest). The previous `grep -o ... | head -1` approach picked
-          # the FIRST per-check status, not the aggregate — masking aggregate
-          # FAILs and over-reporting per-check FAILs.
-          status=$(jq -r '.status' bundled-jar-smoke-logs/doctor.json)
-          echo "doctor aggregate status: $status"
-          if [ "$status" = "FAIL" ]; then
-            echo "::error::doctor reported aggregate FAIL"
+          echo "----- stderr (tail) -----"
+          tail -40 bundled-jar-smoke-logs/doctor.err || true
+          # Extract the JSON envelope: stdout may contain Spring log lines
+          # before the JSON payload, so capture the first line that starts
+          # with { for jq.
+          JSON_LINE=$(grep -m1 '^{' bundled-jar-smoke-logs/doctor.json || true)
+          if [ -z "$JSON_LINE" ]; then
+            echo "::error::no JSON envelope on stdout"
             exit 1
           fi
+          status=$(printf '%s' "$JSON_LINE" | jq -r '.overallStatus')
+          echo "doctor overallStatus: $status"
+          if [ "$status" = "FAIL" ]; then
+            echo "::error::doctor reported overallStatus=FAIL"
+            exit 1
+          fi
+          # PASS or WARN is acceptable per 1.17 AC8 semantics.
 
       - name: Tear down docker-compose
         if: always()
