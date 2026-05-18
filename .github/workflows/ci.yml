@@ -532,6 +532,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    # Spring Boot 4's docker-compose autoconfig tries to parse docker-compose.yml
+    # before the `doctor` CLI command runs, and the compose file references
+    # ${POSTGRES_PASSWORD} which is unset in CI (no .env file). Disable the
+    # integration job-wide — doctor is a diagnostic and never needs the
+    # compose-managed Postgres.
+    env:
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
