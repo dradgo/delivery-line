@@ -374,8 +374,11 @@ jobs:
         # Spring fully which would otherwise trigger spring-boot-docker-compose
         # autoconfig on the project's docker-compose.yml (interpolation fails
         # on POSTGRES_PASSWORD).
+        # SPRING_PROFILES_ACTIVE=demo: deactivates the %redactedMsg log wrapper
+        # so failure analyzer output is readable when something goes wrong.
         env:
           SPRING_DOCKER_COMPOSE_ENABLED: "false"
+          SPRING_PROFILES_ACTIVE: demo
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -563,6 +566,14 @@ jobs:
       # github.workspace (not runner.temp) — the `runner` context isn't
       # resolvable at job-level env, only within step contexts.
       DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-doctor
+      # Activate a real profile so logback-spring.xml's `local,test,!demo`
+      # springProfile block — which wraps log output in the %redactedMsg
+      # converter — evaluates false. Without this, every error message
+      # (including Spring's failure analyzer output) becomes the literal
+      # "[redaction-pending]" sentinel because RedactionLayoutHolder isn't
+      # wired (context refresh failed before @PostConstruct could run),
+      # making CI failures un-diagnosable.
+      SPRING_PROFILES_ACTIVE: demo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
