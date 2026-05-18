@@ -398,6 +398,7 @@ jobs:
           # so the process terminates immediately on shell completion.
           SPRING_MAIN_WEB_APPLICATION_TYPE: none
         run: |
+          set -o pipefail
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
             echo "::error::No bootable jar produced under deliveryline-backend/target/"
@@ -408,8 +409,23 @@ jobs:
           # Spring Shell's `help` is the built-in list-commands command; it
           # runs in the non-interactive runner and exits 0. `--help` does NOT
           # work here — Spring Shell treats it as a command name and throws
-          # CommandNotFoundException.
-          java -jar "$JAR" help
+          # CommandNotFoundException. The NonInteractiveShellRunner does not
+          # call System.exit(), and at least one bean (docker-compose
+          # lifecycle / data layer) leaves a non-daemon thread running, so we
+          # bound the JVM with `timeout` and assert success by grepping the
+          # captured output for the AVAILABLE COMMANDS banner.
+          LOG=$(mktemp)
+          set +e
+          timeout 240s java -jar "$JAR" help 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "java -jar raw exit: $rc"
+          if grep -q "AVAILABLE COMMANDS" "$LOG" && grep -q "deliveryline doctor" "$LOG"; then
+            echo "jar boots, shell registers commands"
+            exit 0
+          fi
+          echo "::error::jar smoke output missing AVAILABLE COMMANDS / deliveryline doctor"
+          exit 1
 
       - name: Upload packaged jar
         uses: actions/upload-artifact@v4
@@ -615,7 +631,27 @@ jobs:
       # cleanly. The Windows-runner DOCTOR_DOCKER_MISSING WARN coverage from
       # 1.17 AC8 is recorded in deferred-work.md.
       - name: Doctor smoke (Ubuntu)
-        run: ./scripts/doctor.sh --only supported-environment,java-version,docker-availability --format json
+        # NonInteractiveShellRunner returns from ApplicationRunner.run() but
+        # does not call System.exit(); even with web disabled some bean (most
+        # likely a spring-boot-docker-compose lifecycle thread) keeps the JVM
+        # alive past the job's 15-min timeout. We bound the JVM lifetime with
+        # `timeout` and assert success by grepping for the doctor JSON envelope
+        # in the captured output. SIGTERM (124) after a successful run is
+        # treated as success; any other non-zero exit fails the step.
+        run: |
+          set -o pipefail
+          LOG=$(mktemp)
+          set +e
+          timeout 300s ./scripts/doctor.sh --only supported-environment,java-version,docker-availability --format json 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "doctor.sh raw exit: $rc"
+          if grep -q '"overallStatus":"PASS"' "$LOG"; then
+            echo "doctor PASS detected in output"
+            exit 0
+          fi
+          echo "::error::doctor did not report overallStatus=PASS"
+          exit 1
 
   # ---------------------------------------------------------------------------
   # foundation-gate (placeholder body — story 1.23 fills in real verification).
