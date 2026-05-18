@@ -15,16 +15,19 @@ public class TestcontainersConfiguration {
   // image. Tracked in deferred-work.md.
   //
   // Singleton container — shared across all @SpringBootTest ApplicationContexts
-  // and lifecycle-managed by Testcontainers' JVM shutdown hook. `.withReuse(true)`
-  // lets developers reuse the container across `./mvnw test` invocations locally
-  // (requires `testcontainers.reuse.enable=true` in ~/.testcontainers.properties;
-  // CI containers are always fresh per workflow run).
+  // and lifecycle-managed by Spring Boot's @ServiceConnection ContextCustomizer
+  // (calls start() on first bean access, stop() on context shutdown).
+  // `.withReuse(true)` lets developers reuse the container across `./mvnw test`
+  // invocations locally (requires `testcontainers.reuse.enable=true` in
+  // ~/.testcontainers.properties; CI containers are always fresh per workflow run).
+  //
+  // No `static { CONTAINER.start(); }` block — eager class-init start crashes the
+  // Windows backend-unit-tests CI job (no Docker) when Spring auto-discovers this
+  // @TestConfiguration via flywayContainerConnectionDetailsForPostgresContainer.
+  // Spring's @ServiceConnection wiring starts the container lazily on first use,
+  // which is what we want on every OS.
   private static final PostgreSQLContainer<?> CONTAINER =
       new PostgreSQLContainer<>(DockerImageName.parse("postgres:17.2")).withReuse(true);
-
-  static {
-    CONTAINER.start();
-  }
 
   @Bean
   @ServiceConnection
