@@ -29,10 +29,16 @@ done
 printf -v RUN_ARGS '%s,' "${run_args[@]}"
 RUN_ARGS="${RUN_ARGS%,}"
 
-# `-am` ("also-make") forces Maven to compile sibling modules (notably
-# deliveryline-runner-contracts) before spring-boot:run, so a fresh checkout
-# without prior `mvn install` can resolve the SNAPSHOT dep. CI hits this path
-# because GitHub Actions starts with an empty local repo per run.
-exec "${REPO_ROOT}/mvnw" -pl deliveryline-backend -am spring-boot:run \
+# Step 1 — compile upstream siblings (runner-contracts) into the reactor so
+# backend's classpath resolves on a fresh CI checkout where ~/.m2 is empty.
+# Done as a separate invocation because `-am spring-boot:run` would also try
+# to run the spring-boot:run goal on the parent pom and runner-contracts —
+# neither has a main class, so the goal fails on those modules.
+"${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend -am compile
+
+# Step 2 — run the backend only. No `-am`, so spring-boot:run is invoked
+# strictly on deliveryline-backend, which is the only module with a main
+# class. Upstream classes are already on the reactor classpath from step 1.
+exec "${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend spring-boot:run \
   "-Ddeliveryline.shell=${DETECTED_SHELL}" \
   "-Dspring-boot.run.arguments=${RUN_ARGS}"
