@@ -1,8 +1,12 @@
 # Failure-Recovery Walkthrough (Epic 1 baseline)
 
-This walkthrough shows what an operator does when a governed run hits `Failed` in the **CLI
-minimum-viable-recovery baseline** shipped in story 1.18. Story 1.22 will polish this into the
-full pilot-ops handbook; for now this is the CLI subset.
+> **Pilot-installer validator:** `_____________________________` (to be named before Epic 1 close)
+
+This walkthrough is the **Epic-1 pilot-ops handbook for failed governed runs**. Epic 4 will
+extend it with the operator console plus `reconcile` / `takeover` / `resume` / `rerun` actions;
+for now, `retry` is the only CLI-driven recovery action shipped (story 1.18 minimum-viable
+baseline). It pairs with [`quickstart.md`](quickstart.md) (the happy path) as the two docs the
+pilot installer is expected to read end-to-end.
 
 For the command syntax see [`cli/workflow-commands.md`](cli/workflow-commands.md). For the full
 exit-code matrix see [`cli/README.md`](cli/README.md).
@@ -72,6 +76,93 @@ informational:
 The `await_manual_reconciliation` label is intentionally **not** in the `AllowedAction` registry
 yet — it is a CLI-surface label that signals "operator must intervene; the CLI cannot help
 further". Epic 4 introduces the formal `reconcile` and `takeover` surfaces.
+
+---
+
+## How to interpret each `failure category`
+
+The `failure category` value on a `Failed` run identifies **why** the run failed — the
+classification axis lives in the `FailureCategory` registry
+(`deliveryline-backend/src/main/java/org/dradgo/domain/registry/FailureCategory.java`). Each
+value below maps to a one-line "what it means" plus a one-line "operator action". The per-category
+advice is **subordinate to `next safe action`** — if Step 2's `next safe action` says
+`await_manual_reconciliation`, do not retry regardless of category. Use the categories to
+understand *why* the run failed; use `next safe action` to decide *what to do next*.
+
+- **`runner_timeout`** — the runner stage exceeded its configured timeout (default 600s per
+  `application.yml`'s `deliveryline.runner.stage-timeouts`). **Operator action:** retry — no
+  artifact write is in flight, the timeout fires from the timeout-scan loop before the runner
+  can post output.
+- **`runner_crash`** — the runner process exited abnormally without posting a result.
+  **Operator action:** retry — the workflow state machine wrote no partial artifact.
+- **`runner_contract_violation`** — the runner posted output but it failed the runner-contract
+  v1 schema validation (forbidden field, path traversal, oversized payload, metadata spoof,
+  stale metadata). **Operator action:** do **not** blind-retry — the runner adapter or the
+  upstream prompt is misbehaving. File a ticket; if `next safe action` says `retry` you can
+  retry once to rule out transient corruption, but a second `runner_contract_violation`
+  warrants triage.
+- **`runner_non_zero_exit`** — the runner exited non-zero without violating the contract.
+  **Operator action:** retry if `next safe action` is `retry` — these are typically transient
+  (adapter glitch, sub-process kill). If two retries in a row report the same category, file a
+  ticket.
+- **`runner_late_result`** — the runner posted a result **after** the stale-result threshold
+  (`stale-threshold-multiplier × stage-timeout`). The result is rejected. **Operator action:**
+  obey `next safe action` first. If it says `await_manual_reconciliation`, do not retry — a
+  partial artifact may be on disk. If it says `retry`, the inspection service has already
+  confirmed there is no in-flight artifact write; a single retry is safe, but a second
+  `runner_late_result` warrants triage (clock skew or persistent network partition).
+- **`runner_duplicate_result`** — the runner posted two results for the same execution.
+  **Operator action:** do **not** retry, even if `next safe action: retry` appears — the runner
+  adapter has an at-least-once delivery bug. File a ticket; Epic 4 reconciliation will resolve
+  the artifact lineage.
+- **`runner_malformed_output`** — the runner output failed JSON parsing or schema validation
+  with a non-contract-violation root cause (UTF-8 corruption, truncated stream).
+  **Operator action:** file a ticket. Retry once if `next safe action` is `retry`; persistent
+  failures here indicate runner-side I/O issues.
+- **`orphan`** — the runner execution is detected as orphaned (no recent activity, no posted
+  result) by the orphan-scan loop. **Operator action:** retry — orphan detection itself rolls
+  the workflow back to `Failed` without a partial write, so a fresh dispatch is safe.
+- **`artifact_payload_unavailable`** *(surfaced as a `DomainErrorCode`, not a `FailureCategory`
+  enum value)* — the runner reported success but the persisted artifact payload could not be
+  fetched (storage outage, lost write, corrupted reference). This appears in the `errorCode`
+  field of the `workflow.stateChanged → Failed` event details, not in the `failure category`
+  column. **Operator action:** treat as `await_manual_reconciliation` — do not retry. The
+  inspection service flags partial-artifact-write risk and Epic 4's `reconcile` command will
+  resolve the lineage. Listed here per AC3(b) to keep the operator's mental model complete;
+  the `FailureCategory` registry itself is the runtime source of truth for the dropdown of
+  enum-typed categories.
+
+Categories listed above are sourced from `FailureCategory.java` (with the
+`artifact_payload_unavailable` `DomainErrorCode` cross-listed for completeness). If a CLI
+output line shows a `failure category` value not listed here, the registry was extended
+without an update to this doc — file an issue.
+
+---
+
+## Decision tree: retry vs wait
+
+The two questions to ask in order:
+
+1. **What does `next safe action` say?** Trust that field first — it is computed by the
+   inspection service from the workflow state + artifact-operation history, not from the
+   `failure category` alone.
+   - `retry` → safe to retry. Continue to question 2.
+   - `await_manual_reconciliation` → **do not retry**. An `artifact_operations` row is in
+     `failed` or `failed_orphan` state; partial bytes may be on disk. Open an Epic-4
+     reconciliation ticket and wait.
+   - `await_outcome` → the run is still progressing — watch, don't act.
+   - `view_only` → terminal run; nothing to do.
+
+2. **What does `failure category` say?** Use the table above to understand *why* the run
+   failed; the table never overrides Q1's `next safe action`. Even when Q1 says `retry`,
+   certain categories warrant immediate triage rather than mechanical re-dispatch:
+   `runner_contract_violation`, `runner_duplicate_result`, and `runner_malformed_output`
+   should not be retried more than once — the same category recurring means the underlying
+   adapter bug needs investigation, not a fresh dispatch.
+
+The full `next safe action` matrix (current state × artifact-op state → recommended action)
+lives in [`cli/workflow-commands.md`](cli/workflow-commands.md#next-safe-action-matrix). Read
+it once when this doc still feels new; defer to that table over prose if they ever diverge.
 
 ---
 
@@ -184,8 +275,8 @@ when present) are rendered alongside the standard event fields so operators can 
 2026-05-15T10:05:00Z recovery.dispatchFailed alex/human Executing->Executing reason="broker dispatch failed: RUNNER_CONTRACT_VIOLATION" [intervention] details={failedStage=execution, recoveryActionId=rcv_recov-aaaaa, recoveryRetriedEventId=evt_recret-bbbbb, errorCode=RUNNER_CONTRACT_VIOLATION, errorClass=DomainException, correlationId=ops-2026-05-15-1}
 ```
 
-The `recovery_actions` table itself is not yet exposed via a CLI command — story 1.22 will
-extend the operator surface, and Epic 4 ships the `reconcile` / `takeover` audit views.
+The `recovery_actions` table itself is not yet exposed via a CLI command — Epic 4 ships the
+`reconcile` / `takeover` audit views and the operator-console surface.
 
 ---
 

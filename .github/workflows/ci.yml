@@ -127,6 +127,78 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
+  # Tier 1.5: docs-link-check (story 1.22 AC8)
+  # Runs lychee across docs/**/*.md + README.md. Two-pass policy:
+  #   1. Internal-link pass (--exclude '^https?://')      -> FAIL the job on
+  #      missing-file / broken-anchor links. Internal-link failures gate merges
+  #      because the docs site must stay self-consistent.
+  #   2. External-link smoke (--include '^https?://')     -> WARN-only via
+  #      continue-on-error. Third-party rate limits and intermittent outages
+  #      must not block PR merges; the JSON artifact captures the failures for
+  #      operator follow-up.
+  #
+  # `.lycheeignore` at repo root silences known-flaky external URL patterns
+  # (docs.docker.com redirect chains, GitHub anchor-link false positives).
+  #
+  # Tier slot: parallel with runner-contract-fixtures (both depend only on
+  # format-static-checks). Wired into foundation-gate `needs:` chain so story
+  # 1.23 picks it up automatically as a required tier.
+  # ---------------------------------------------------------------------------
+  docs-link-check:
+    name: docs-link-check
+    needs: [format-static-checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Internal link check (FAIL on broken file/anchor)
+        id: lychee-internal
+        uses: lycheeverse/lychee-action@v2.8.0
+        with:
+          # `--exclude ^https?://` restricts the run to relative paths and
+          # in-file anchors. Internal failures gate the build (AC8 contract).
+          # File-list expanded explicitly (`docs/*.md docs/**/*.md`) because
+          # `docs/**/*.md` alone may not match top-level `docs/*.md` files
+          # under some glob implementations. The regex argument is unquoted
+          # because lychee-action passes `args:` through `shlex.split()`,
+          # which would otherwise leave literal single quotes on the regex
+          # and silently match nothing.
+          # `--output` is pinned to `${{ github.workspace }}` so the JSON
+          # report lands in a path the artifact-upload step can resolve.
+          args: --no-progress --max-concurrency 4 --accept 200,206,429 --exclude ^https?:// --output ${{ github.workspace }}/lychee-internal.json --format json docs/*.md docs/**/*.md README.md
+          fail: true
+
+      - name: External link smoke (WARN on third-party outage)
+        id: lychee-external
+        continue-on-error: true
+        uses: lycheeverse/lychee-action@v2.8.0
+        with:
+          # `--include ^https?://` restricts the run to http(s) URLs only.
+          # External failures emit a workflow annotation but do not fail the
+          # job — third-party outages and rate-limits must not block merges.
+          # Same regex-unquoting and workspace-pin notes as the internal pass.
+          args: --no-progress --max-concurrency 4 --accept 200,206,429 --include ^https?:// --output ${{ github.workspace }}/lychee-external.json --format json docs/*.md docs/**/*.md README.md
+          fail: false
+
+      - name: Annotate external failures (WARN)
+        if: always() && steps.lychee-external.outcome == 'failure'
+        run: |
+          echo "::warning::lychee external-link smoke reported failures; see docs-link-check-report artifact (lychee-external.json) for details. External failures are non-blocking by design (story 1.22 AC8 — third-party outages must not block merges)."
+
+      - name: Upload lychee reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-link-check-report
+          path: |
+            ${{ github.workspace }}/lychee-internal.json
+            ${{ github.workspace }}/lychee-external.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
   # Tier 2: runner-contract-fixtures
   # Schema v1 fixture validation against RunnerContractValidator. Linux-only;
   # no Docker. Fast (<2 min target).
@@ -691,6 +763,7 @@ jobs:
     if: ${{ always() && !cancelled() }}
     needs:
       - format-static-checks
+      - docs-link-check
       - runner-contract-fixtures
       - frontend-build-tests
       - backend-unit-tests
