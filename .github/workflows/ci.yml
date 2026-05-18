@@ -370,6 +370,12 @@ jobs:
       - name: Verify jar is executable
         # Pin the glob — Spring Boot's `repackage` leaves a `*.jar.original`
         # next to the bootable jar; passing both to `java -jar` misparses.
+        # SPRING_DOCKER_COMPOSE_ENABLED=false: `java -jar ... --help` boots
+        # Spring fully which would otherwise trigger spring-boot-docker-compose
+        # autoconfig on the project's docker-compose.yml (interpolation fails
+        # on POSTGRES_PASSWORD).
+        env:
+          SPRING_DOCKER_COMPOSE_ENABLED: "false"
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -552,6 +558,10 @@ jobs:
         org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,
         org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,
         org.springframework.boot.data.jpa.autoconfigure.JpaRepositoriesAutoConfiguration
+      # @Value("${deliveryline.home}") in DoctorProbeAdapter has no default;
+      # doctor never writes to this dir, so any path that exists is fine.
+      # RUNNER_TEMP is provided by GitHub Actions on both OS runners.
+      DELIVERYLINE_HOME: ${{ runner.temp }}/deliveryline
     steps:
       - name: Checkout
         uses: actions/checkout@v4
