@@ -31,15 +31,14 @@ import org.springframework.test.context.ActiveProfiles;
  * surface against the live Postgres schema:
  *
  * <ul>
- *   <li>Precondition errors raise stable {@link DomainErrorCode}s with the documented
- *       {@code details} keys.
- *   <li>{@link RecoveryService#describeFailure(String)} reads from the live {@code
- *       workflow_events} / {@code workflow_runs} tables and returns the correct {@code
- *       next_safe_action}.
- *   <li>A successful retry returns {@link RetryRecoveryResult} with {@code replayed=false} and
- *       the full id surface; a follow-up call with the SAME idempotency key returns {@code
- *       replayed=true} pointing at the original recovery_actions row — the idempotency contract
- *       the CLI depends on.
+ *   <li>Precondition errors raise stable {@link DomainErrorCode}s with the documented {@code
+ *       details} keys.
+ *   <li>{@link RecoveryService#describeFailure(String)} reads from the live {@code workflow_events}
+ *       / {@code workflow_runs} tables and returns the correct {@code next_safe_action}.
+ *   <li>A successful retry returns {@link RetryRecoveryResult} with {@code replayed=false} and the
+ *       full id surface; a follow-up call with the SAME idempotency key returns {@code
+ *       replayed=true} pointing at the original recovery_actions row — the idempotency contract the
+ *       CLI depends on.
  * </ul>
  */
 @Import(TestcontainersConfiguration.class)

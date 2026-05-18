@@ -49,13 +49,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       result_status} is immutable.
  *   <li>Inserting a different idempotency key produces a brand-new row; re-inserting the same key
  *       raises {@code IDEMPOTENCY_KEY_CONFLICT}.
- *   <li><b>N+2 events delta on a successful {@code retry()}</b> — exactly two new events
- *       ({@code workflow.stateChanged Failed→Executing} + {@code recovery.retried}) land in
- *       {@code workflow_events}, no prior row is mutated, a new {@code recovery_actions} row
- *       reaches {@code result_status=succeeded}, and a fresh {@code runner_executions} row is
- *       appended rather than the prior failed one being revived. Exercises the broker via the
- *       {@code runners.mock} profile's default {@code happy-execution} scenario — no real
- *       container.
+ *   <li><b>N+2 events delta on a successful {@code retry()}</b> — exactly two new events ({@code
+ *       workflow.stateChanged Failed→Executing} + {@code recovery.retried}) land in {@code
+ *       workflow_events}, no prior row is mutated, a new {@code recovery_actions} row reaches
+ *       {@code result_status=succeeded}, and a fresh {@code runner_executions} row is appended
+ *       rather than the prior failed one being revived. Exercises the broker via the {@code
+ *       runners.mock} profile's default {@code happy-execution} scenario — no real container.
  * </ul>
  */
 @Import(TestcontainersConfiguration.class)
@@ -326,8 +325,7 @@ class RecoveryServiceAppendOnlyTest {
         Integer.valueOf(1),
         stateChangedEvents,
         "must emit exactly one workflow.stateChanged → Executing event");
-    assertEquals(
-        Integer.valueOf(1), retriedEvents, "must emit exactly one recovery.retried event");
+    assertEquals(Integer.valueOf(1), retriedEvents, "must emit exactly one recovery.retried event");
     assertEquals(
         Integer.valueOf(1),
         otherNewEvents,
@@ -459,9 +457,7 @@ class RecoveryServiceAppendOnlyTest {
     assertNotNull(workflowRunId);
     Long failureEventDbId =
         jdbcTemplate.queryForObject(
-            "select id from workflow_events where public_id=?",
-            Long.class,
-            failureEventPublicId);
+            "select id from workflow_events where public_id=?", Long.class, failureEventPublicId);
     assertNotNull(failureEventDbId);
     jdbcTemplate.update(
         """

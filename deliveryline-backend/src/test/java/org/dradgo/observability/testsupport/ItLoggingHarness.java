@@ -18,14 +18,15 @@ import org.slf4j.MDC;
  * each IT logs on entry + outcome with the {@code correlationId} + {@code workflowRunId} MDC keys
  * (the two keys that exist in {@link MdcKeys}, per the contract pinned by {@code
  * LoggingMdcContractTest}) plus {@code idempotencyKey} as a structured message argument (it is
- * deliberately NOT promoted to MDC — adding it would break the {@code MdcKeys.ALL} closed set).
- * The harness attaches a Logback {@link ListAppender} so the entry/outcome lines are pinned with a
+ * deliberately NOT promoted to MDC — adding it would break the {@code MdcKeys.ALL} closed set). The
+ * harness attaches a Logback {@link ListAppender} so the entry/outcome lines are pinned with a
  * focused assertion: each emitted line carries the required keys.
  *
  * <p>Usage: instantiate per test class, call {@link #attach} in {@code @BeforeEach} with the test
- * method's correlationId / workflowRunId / idempotencyKey, and {@link #detach} in {@code
- * @AfterEach}. The detach call asserts the entry/outcome lines were emitted with the expected MDC
- * surface — a missing scope clear or a renamed MDC key fails the test loudly rather than silently.
+ * method's correlationId / workflowRunId / idempotencyKey, and {@link #detach} in
+ * {@code @AfterEach}. The detach call asserts the entry/outcome lines were emitted with the
+ * expected MDC surface — a missing scope clear or a renamed MDC key fails the test loudly rather
+ * than silently.
  */
 public final class ItLoggingHarness {
 
