@@ -560,8 +560,9 @@ jobs:
         org.springframework.boot.data.jpa.autoconfigure.JpaRepositoriesAutoConfiguration
       # @Value("${deliveryline.home}") in DoctorProbeAdapter has no default;
       # doctor never writes to this dir, so any path that exists is fine.
-      # RUNNER_TEMP is provided by GitHub Actions on both OS runners.
-      DELIVERYLINE_HOME: ${{ runner.temp }}/deliveryline
+      # github.workspace (not runner.temp) — the `runner` context isn't
+      # resolvable at job-level env, only within step contexts.
+      DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-doctor
     steps:
       - name: Checkout
         uses: actions/checkout@v4
