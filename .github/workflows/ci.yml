@@ -387,6 +387,11 @@ jobs:
           POSTGRES_PASSWORD: deliveryline-ci
           DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-jar
           SPRING_PROFILES_ACTIVE: test
+          # Disable background pollers so `java -jar ... --help` exits cleanly
+          # after printing help — Spring Shell processes the command, but the
+          # scheduler / Linear poller would otherwise keep the JVM alive.
+          DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
+          DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -564,6 +569,11 @@ jobs:
       # application.yml profile groups) — supplies LinearMockAdapter and
       # MockRunnerAdapter so the bean graph closes without external services.
       SPRING_PROFILES_ACTIVE: test
+      # Disable background pollers so `mvnw spring-boot:run` exits as soon as
+      # the doctor CLI command completes. Without these the scheduler /
+      # Linear poller keep the JVM alive forever (15-min timeout-canceled).
+      DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
+      DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
