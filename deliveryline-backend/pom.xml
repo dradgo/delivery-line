@@ -173,9 +173,26 @@
 				<configuration>
 					<argLine>@{argLine} -Duser.timezone=UTC -Dfile.encoding=UTF-8</argLine>
 					<excludedGroups>architecture,integration,contract,known-failure</excludedGroups>
+					<!-- File-pattern exclusion mirrors Failsafe's <includes> below. Tag-based
+					     exclusion (excludedGroups) only catches tests that remembered to add
+					     @Tag('contract')/@Tag('integration'); many *ContractTest.java files
+					     have @Import(TestcontainersConfiguration.class) + @SpringBootTest but
+					     no @Tag, so they leak into Surefire and crash on Windows runners
+					     (no Docker). File-pattern exclusion makes the naming convention
+					     self-enforcing — adding a new *ContractTest.java automatically
+					     routes it to Failsafe without needing the author to also tag it. -->
+					<excludes>
+						<exclude>**/*IT.java</exclude>
+						<exclude>**/IT*.java</exclude>
+						<exclude>**/*ITCase.java</exclude>
+						<exclude>**/*ContractTest.java</exclude>
+						<exclude>**/*AppendOnlyTest.java</exclude>
+						<exclude>**/architecture/**/*Test.java</exclude>
+					</excludes>
 					<!-- Surefire JUnit Platform provider expects a comma-separated string,
-					     NOT a nested <exclude> element. Earlier nested syntax was silently
-					     ignored by Maven; the archunit engine was leaking into Surefire. -->
+					     NOT a nested <exclude> element for the engines list. Earlier nested
+					     syntax was silently ignored by Maven; the archunit engine was leaking
+					     into Surefire. -->
 					<excludeJUnit5Engines>archunit</excludeJUnit5Engines>
 				</configuration>
 			</plugin>
