@@ -24,12 +24,13 @@ fi
 
 # Command path is `deliveryline doctor` — the @CommandGroup prefix on
 # DoctorCommands prepends "deliveryline" to every command in the group.
-run_args=("deliveryline" "doctor")
+# Spring Boot Maven plugin's `-Dspring-boot.run.arguments=...` is split on
+# WHITESPACE (RunArguments → CommandLineUtils.translateCommandline), so the
+# tokens here must be space-separated, not comma-separated.
+RUN_ARGS="deliveryline doctor"
 for arg in "$@"; do
-  run_args+=("${arg//,/\\,}")
+  RUN_ARGS="${RUN_ARGS} ${arg}"
 done
-printf -v RUN_ARGS '%s,' "${run_args[@]}"
-RUN_ARGS="${RUN_ARGS%,}"
 
 # Step 1 — install upstream siblings (notably deliveryline-runner-contracts)
 # into the local Maven repo. `install` (not `compile`) is required because

@@ -393,6 +393,10 @@ jobs:
           DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
           DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
           SPRING_SHELL_INTERACTIVE_ENABLED: "false"
+          # Tomcat's non-daemon acceptor keeps the JVM alive after `help`
+          # exits cleanly — disable the embedded web server for the CLI smoke
+          # so the process terminates immediately on shell completion.
+          SPRING_MAIN_WEB_APPLICATION_TYPE: none
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -586,6 +590,12 @@ jobs:
       # exits. SPRING_SHELL_INTERACTIVE_ENABLED=false routes the args through
       # ScriptShellRunner / NonInteractiveShellRunner instead.
       SPRING_SHELL_INTERACTIVE_ENABLED: "false"
+      # Disable the embedded web server: with spring-boot-starter-web on the
+      # classpath, Spring Boot auto-detects WebApplicationType.SERVLET and
+      # starts Tomcat, whose non-daemon acceptor thread keeps the JVM alive
+      # after the shell command exits successfully. The CLI doctor flow does
+      # not need HTTP, so disable web autodetection here.
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -18,13 +18,16 @@ if (-not (Test-Path $MvnwCmd)) {
 
 # Command path is `deliveryline doctor` — the @CommandGroup prefix on
 # DoctorCommands prepends "deliveryline" to every command in the group.
+# Spring Boot Maven plugin's `-Dspring-boot.run.arguments=...` is split on
+# WHITESPACE (RunArguments -> CommandLineUtils.translateCommandline), so the
+# tokens here must be space-separated, not comma-separated.
 $RunArgsList = [System.Collections.Generic.List[string]]::new()
 $RunArgsList.Add('deliveryline')
 $RunArgsList.Add('doctor')
 foreach ($arg in $args) {
-    $RunArgsList.Add(($arg -replace ',', '\,'))
+    $RunArgsList.Add($arg)
 }
-$RunArgs = [string]::Join(',', $RunArgsList)
+$RunArgs = [string]::Join(' ', $RunArgsList)
 $PowerShellVersion = $PSVersionTable.PSVersion.ToString()
 
 # Step 1 — install upstream siblings (notably deliveryline-runner-contracts)
