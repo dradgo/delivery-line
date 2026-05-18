@@ -22,7 +22,9 @@ if [ -z "${DETECTED_SHELL}" ]; then
   DETECTED_SHELL="unknown"
 fi
 
-run_args=("doctor")
+# Command path is `deliveryline doctor` — the @CommandGroup prefix on
+# DoctorCommands prepends "deliveryline" to every command in the group.
+run_args=("deliveryline" "doctor")
 for arg in "$@"; do
   run_args+=("${arg//,/\\,}")
 done

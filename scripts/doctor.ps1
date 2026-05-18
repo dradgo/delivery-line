@@ -16,7 +16,10 @@ if (-not (Test-Path $MvnwCmd)) {
     exit 1
 }
 
+# Command path is `deliveryline doctor` — the @CommandGroup prefix on
+# DoctorCommands prepends "deliveryline" to every command in the group.
 $RunArgsList = [System.Collections.Generic.List[string]]::new()
+$RunArgsList.Add('deliveryline')
 $RunArgsList.Add('doctor')
 foreach ($arg in $args) {
     $RunArgsList.Add(($arg -replace ',', '\,'))

@@ -401,7 +401,11 @@ jobs:
             exit 1
           fi
           echo "Booting $JAR"
-          java -jar "$JAR" --help
+          # Spring Shell's `help` is the built-in list-commands command; it
+          # runs in the non-interactive runner and exits 0. `--help` does NOT
+          # work here — Spring Shell treats it as a command name and throws
+          # CommandNotFoundException.
+          java -jar "$JAR" help
 
       - name: Upload packaged jar
         uses: actions/upload-artifact@v4
