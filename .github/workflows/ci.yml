@@ -387,11 +387,12 @@ jobs:
           POSTGRES_PASSWORD: deliveryline-ci
           DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-jar
           SPRING_PROFILES_ACTIVE: test
-          # Disable background pollers so `java -jar ... --help` exits cleanly
-          # after printing help — Spring Shell processes the command, but the
-          # scheduler / Linear poller would otherwise keep the JVM alive.
+          # Disable background pollers + force non-interactive Spring Shell
+          # so `java -jar ... --help` actually processes the --help arg and
+          # exits, rather than booting into InteractiveShellRunner.
           DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
           DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
+          SPRING_SHELL_INTERACTIVE_ENABLED: "false"
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -571,9 +572,16 @@ jobs:
       SPRING_PROFILES_ACTIVE: test
       # Disable background pollers so `mvnw spring-boot:run` exits as soon as
       # the doctor CLI command completes. Without these the scheduler /
-      # Linear poller keep the JVM alive forever (15-min timeout-canceled).
+      # Linear poller keep the JVM alive past timeout.
       DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
       DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
+      # Force non-interactive Spring Shell. By default Spring Shell starts
+      # InteractiveShellRunner which waits for stdin (logs "Running in
+      # interactive mode, arguments will be ignored") — the `doctor` command
+      # passed via -Dspring-boot.run.arguments is dropped and the JVM never
+      # exits. SPRING_SHELL_INTERACTIVE_ENABLED=false routes the args through
+      # ScriptShellRunner / NonInteractiveShellRunner instead.
+      SPRING_SHELL_INTERACTIVE_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
