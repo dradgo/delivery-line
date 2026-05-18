@@ -24,6 +24,10 @@ foreach ($arg in $args) {
 $RunArgs = [string]::Join(',', $RunArgsList)
 $PowerShellVersion = $PSVersionTable.PSVersion.ToString()
 
+# `-am` ("also-make") forces Maven to compile sibling modules (notably
+# deliveryline-runner-contracts) before spring-boot:run, so a fresh checkout
+# without prior `mvn install` can resolve the SNAPSHOT dep. CI hits this path
+# because GitHub Actions starts with an empty local repo per run.
 & $MvnwCmd "-Ddeliveryline.shell=powershell" "-Ddeliveryline.shell.version=$PowerShellVersion" `
-    -pl deliveryline-backend spring-boot:run "-Dspring-boot.run.arguments=$RunArgs"
+    -pl deliveryline-backend -am spring-boot:run "-Dspring-boot.run.arguments=$RunArgs"
 exit $LASTEXITCODE

@@ -29,6 +29,10 @@ done
 printf -v RUN_ARGS '%s,' "${run_args[@]}"
 RUN_ARGS="${RUN_ARGS%,}"
 
-exec "${REPO_ROOT}/mvnw" -pl deliveryline-backend spring-boot:run \
+# `-am` ("also-make") forces Maven to compile sibling modules (notably
+# deliveryline-runner-contracts) before spring-boot:run, so a fresh checkout
+# without prior `mvn install` can resolve the SNAPSHOT dep. CI hits this path
+# because GitHub Actions starts with an empty local repo per run.
+exec "${REPO_ROOT}/mvnw" -pl deliveryline-backend -am spring-boot:run \
   "-Ddeliveryline.shell=${DETECTED_SHELL}" \
   "-Dspring-boot.run.arguments=${RUN_ARGS}"
