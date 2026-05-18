@@ -58,6 +58,11 @@
 					<artifactId>spotless-maven-plugin</artifactId>
 					<version>${spotless-maven-plugin.version}</version>
 					<configuration>
+						<!-- Pin LF explicitly so spotless:apply produces identical output on
+						     Windows + Linux runners (and stops Windows devs from seeing ~285
+						     stat-only "modified" entries after apply when core.autocrlf=true
+						     re-injects CRLF on checkout). -->
+						<lineEndings>UNIX</lineEndings>
 						<java>
 							<includes>
 								<include>src/main/java/**/*.java</include>
