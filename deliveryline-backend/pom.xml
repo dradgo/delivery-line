@@ -188,6 +188,10 @@
 						<exclude>**/*ContractTest.java</exclude>
 						<exclude>**/*AppendOnlyTest.java</exclude>
 						<exclude>**/architecture/**/*Test.java</exclude>
+						<!-- Spring Boot smoke "context loads" test boots the full
+						     application context with @Import(TestcontainersConfiguration),
+						     so it needs Docker — Failsafe (Linux-only) is the right slice. -->
+						<exclude>**/*ApplicationTests.java</exclude>
 					</excludes>
 					<!-- Surefire JUnit Platform provider expects a comma-separated string,
 					     NOT a nested <exclude> element for the engines list. Earlier nested
@@ -220,6 +224,7 @@
 						<include>**/*ContractTest.java</include>
 						<include>**/*AppendOnlyTest.java</include>
 						<include>**/architecture/**/*Test.java</include>
+						<include>**/*ApplicationTests.java</include>
 					</includes>
 				</configuration>
 			</plugin>

@@ -537,8 +537,21 @@ jobs:
     # ${POSTGRES_PASSWORD} which is unset in CI (no .env file). Disable the
     # integration job-wide — doctor is a diagnostic and never needs the
     # compose-managed Postgres.
+    #
+    # SPRING_AUTOCONFIGURE_EXCLUDE additionally skips the JPA/Flyway/DataSource
+    # autoconfig classes — without a real datasource, `entityManagerFactory`
+    # bean creation fails at context refresh. Doctor only invokes diagnostic
+    # checks (supported-environment, java-version, docker-availability) that
+    # don't touch the persistence layer, so excluding these is safe for this
+    # smoke. (bundled-jar-smoke is the path that exercises full JPA boot
+    # against a real Postgres.)
     env:
       SPRING_DOCKER_COMPOSE_ENABLED: "false"
+      SPRING_AUTOCONFIGURE_EXCLUDE: >-
+        org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,
+        org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,
+        org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,
+        org.springframework.boot.data.jpa.autoconfigure.JpaRepositoriesAutoConfiguration
     steps:
       - name: Checkout
         uses: actions/checkout@v4
