@@ -375,13 +375,18 @@ jobs:
         # Pin the glob — Spring Boot's `repackage` leaves a `*.jar.original`
         # next to the bootable jar; passing both to `java -jar` misparses.
         # `java -jar ... --help` boots the full Spring context (so the
-        # transitive bean graph — services → repositories — can wire), which
-        # in turn triggers Spring's docker-compose autoconfig against the
-        # repo-root docker-compose.yml. POSTGRES_PASSWORD interpolates the
-        # compose file's ${POSTGRES_PASSWORD:?...} placeholder; the
-        # compose-managed Postgres lets JPA / Flyway bootstrap cleanly.
+        # transitive bean graph — services → repositories → mock adapters —
+        # can wire). Spring's docker-compose autoconfig runs against the
+        # repo-root docker-compose.yml; POSTGRES_PASSWORD interpolates the
+        # ${POSTGRES_PASSWORD:?...} placeholder. DELIVERYLINE_HOME satisfies
+        # the unguarded @Value("${deliveryline.home}") in DoctorProbeAdapter.
+        # SPRING_PROFILES_ACTIVE=test activates `runners.mock,linear-mock`,
+        # providing the LinearAdapter / RunnerAdapter beans that bean
+        # creation transitively requires.
         env:
           POSTGRES_PASSWORD: deliveryline-ci
+          DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-jar
+          SPRING_PROFILES_ACTIVE: test
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -555,6 +560,10 @@ jobs:
       # var is missing.
       POSTGRES_PASSWORD: deliveryline-ci
       DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-doctor
+      # `test` profile activates `runners.mock,linear-mock` (see
+      # application.yml profile groups) — supplies LinearMockAdapter and
+      # MockRunnerAdapter so the bean graph closes without external services.
+      SPRING_PROFILES_ACTIVE: test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
