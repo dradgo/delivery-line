@@ -18,6 +18,8 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
+import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
@@ -29,6 +31,9 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.infrastructure.observability.RedactionLayoutHolder;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -36,6 +41,34 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 @ExtendWith(OutputCaptureExtension.class)
 class WorkflowCommandsStatusHistoryTest {
+
+  // Wire an identity RedactionPolicyService into RedactionLayoutHolder so the
+  // %redactedMsg converter (active via logback-spring.xml's local,test,!demo
+  // springProfile block) passes log messages through verbatim. Without this
+  // bridge, the holder's `service` field is null on plain JUnit tests and the
+  // converter emits the fail-closed sentinel "[redaction-pending]" — which
+  // causes CapturedOutput.contains(...) assertions to fail on Linux CI where
+  // the springProfile block evaluates true (empty profile set → `!demo` is
+  // true). Precedent: LoggingForbiddenPayloadContractTest +
+  // LoggingRedactionContractTest +  JsonSchemaStabilityTest use this same
+  // capture-and-restore pattern (story 1.19 review, P16).
+  private static RedactionPolicyService priorService;
+
+  @BeforeAll
+  static void wireRedactionHolder() {
+    priorService = RedactionLayoutHolder.currentForTesting();
+    RedactionLayoutHolder.setRedactionService(
+        new RedactionPolicyService(new DataClassificationService()));
+  }
+
+  @AfterAll
+  static void unwireRedactionHolder() {
+    if (priorService == null) {
+      RedactionLayoutHolder.clearForTesting();
+    } else {
+      RedactionLayoutHolder.setRedactionService(priorService);
+    }
+  }
 
   private final WorkflowCommandService submitService = mock(WorkflowCommandService.class);
   private final WorkflowInspectionService inspection = mock(WorkflowInspectionService.class);

@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 
 import java.nio.file.Path;
 import org.dradgo.adapters.diagnostics.DoctorProbeAdapter;
+import org.dradgo.adapters.diagnostics.ProcessLauncher;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -85,13 +86,18 @@ class PathHandlingContractTest {
   }
 
   private DoctorProbeAdapter newAdapter(Path home) {
+    // Use the package-private 9-arg test constructor — the @Autowired entry now
+    // takes ObjectProvider<DataSource>/ObjectProvider<Flyway>, so feeding raw
+    // mocks via the public constructor no longer typechecks.
     return new DoctorProbeAdapter(
         new MockEnvironment(),
         mock(javax.sql.DataSource.class),
         mock(Flyway.class),
         new UuidV7Generator(),
-        home.toString(),
+        home,
         "localhost",
-        8080);
+        8080,
+        Path.of(System.getProperty("user.dir")),
+        (ProcessLauncher) ProcessBuilder::start);
   }
 }

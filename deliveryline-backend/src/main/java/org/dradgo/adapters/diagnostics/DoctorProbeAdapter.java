@@ -36,8 +36,10 @@ import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.MigrationState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
@@ -57,8 +59,11 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   private static final List<String> CONFIG_GLOBS = List.of(".env", "application-*.yml");
 
   private final Environment environment;
-  private final DataSource dataSource;
-  private final Flyway flyway;
+  // Nullable so the adapter can be wired in lean Spring contexts (e.g. the
+  // doctor-smoke CI job) where DataSource/Flyway autoconfig is excluded.
+  // Probes that need these beans return SKIP rather than crashing.
+  @Nullable private final DataSource dataSource;
+  @Nullable private final Flyway flyway;
   private final UuidV7Generator uuidV7Generator;
   private final Path deliverylineHome;
   private final String serverAddress;
@@ -76,16 +81,20 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   @Autowired
   public DoctorProbeAdapter(
       Environment environment,
-      DataSource dataSource,
-      Flyway flyway,
+      // ObjectProvider lets the doctor adapter wire in Spring contexts that
+      // intentionally omit DataSource/Flyway autoconfig (e.g. CI doctor-smoke
+      // running without a real Postgres). The corresponding probes return
+      // SKIP when the beans are absent.
+      ObjectProvider<DataSource> dataSourceProvider,
+      ObjectProvider<Flyway> flywayProvider,
       UuidV7Generator uuidV7Generator,
       @Value("${deliveryline.home}") String deliverylineHome,
       @Value("${server.address:localhost}") String serverAddress,
       @Value("${server.port:8080}") int serverPort) {
     this(
         environment,
-        dataSource,
-        flyway,
+        dataSourceProvider.getIfAvailable(),
+        flywayProvider.getIfAvailable(),
         uuidV7Generator,
         Path.of(deliverylineHome),
         serverAddress,
@@ -101,10 +110,13 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultShellValue);
   }
 
-  DoctorProbeAdapter(
+  // Public so tests in other packages can construct an adapter without the
+  // Spring-DI ObjectProvider machinery. Not @Autowired — Spring uses the
+  // @Autowired constructor above for bean wiring.
+  public DoctorProbeAdapter(
       Environment environment,
-      DataSource dataSource,
-      Flyway flyway,
+      @Nullable DataSource dataSource,
+      @Nullable Flyway flyway,
       UuidV7Generator uuidV7Generator,
       Path deliverylineHome,
       String serverAddress,
@@ -132,8 +144,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
 
   DoctorProbeAdapter(
       Environment environment,
-      DataSource dataSource,
-      Flyway flyway,
+      @Nullable DataSource dataSource,
+      @Nullable Flyway flyway,
       UuidV7Generator uuidV7Generator,
       Path deliverylineHome,
       String serverAddress,
@@ -254,6 +266,14 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   @Override
   public ProbeResult probePostgresConnectivity() {
     Map<String, String> details = new LinkedHashMap<>();
+    if (dataSource == null) {
+      // No DataSource bean in the context (lean Spring boot for doctor smoke).
+      // SKIP rather than FAIL — the operator hasn't configured persistence, so
+      // we have nothing to probe; doctor's aggregate verdict isn't affected.
+      details.put("reason", "datasource_bean_unavailable");
+      return new ProbeResult(
+          DiagnosticsStatus.SKIP, "DataSource bean not present in context", null, details);
+    }
     try (Connection connection = dataSource.getConnection()) {
       connection.setNetworkTimeout(DIRECT_EXECUTOR, POSTGRES_TIMEOUT_SECONDS * 1000);
       try {
@@ -286,6 +306,14 @@ public class DoctorProbeAdapter implements DoctorProbePort {
 
   @Override
   public ProbeResult probeFlywayState() {
+    if (flyway == null) {
+      // No Flyway bean (lean doctor-smoke boot). SKIP — symmetric with the
+      // postgres-connectivity probe above.
+      Map<String, String> skipped = new LinkedHashMap<>();
+      skipped.put("reason", "flyway_bean_unavailable");
+      return new ProbeResult(
+          DiagnosticsStatus.SKIP, "Flyway bean not present in context", null, skipped);
+    }
     MigrationInfo[] all;
     try {
       all = flyway.info().all();
