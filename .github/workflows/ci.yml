@@ -84,7 +84,11 @@ jobs:
       - name: Checkstyle check
         id: checkstyle
         shell: bash
-        run: ./mvnw -B -ntp -pl deliveryline-backend -am checkstyle:check
+        # `compile` ensures the upstream reactor module compiles so backend's
+        # classpath resolution succeeds — checkstyle:check, like spotbugs:check,
+        # has requiresDependencyResolution=compile but no lifecycle phase, so
+        # -am alone won't trigger upstream sibling compilation.
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am compile checkstyle:check
 
       - name: Checkstyle failure hint
         if: failure() && steps.checkstyle.outcome == 'failure'
@@ -96,7 +100,11 @@ jobs:
         shell: bash
         # spotbugs:spotbugs materializes target/spotbugs.html for the artifact
         # upload below; spotbugs:check fails the build on threshold violations.
-        run: ./mvnw -B -ntp -pl deliveryline-backend -am spotbugs:spotbugs spotbugs:check
+        # `compile` is required: SpotBugs reads bytecode, and without it the
+        # upstream reactor module (deliveryline-runner-contracts) never
+        # compiles, so backend's dep resolution for runner-contracts:jar fails
+        # before spotbugs:spotbugs can even start.
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am compile spotbugs:spotbugs spotbugs:check
 
       - name: SpotBugs failure hint
         if: failure() && steps.spotbugs.outcome == 'failure'
