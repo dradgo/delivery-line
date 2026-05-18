@@ -17,10 +17,14 @@
 # "doctor-invoking smoke jobs" entrypoint and is also wired into foundation-gate.
 #
 # OS-matrix policy (AC3):
-#   - Linux + Windows: format-static-checks, backend-unit-tests, doctor-smoke.
+#   - Linux + Windows: format-static-checks, backend-unit-tests.
 #   - Linux only:      runner-contract-fixtures, frontend-build-tests,
 #                      backend-contract-tests, runner-image-compat,
-#                      jar-packaging, bundled-jar-smoke, export-redaction-verify.
+#                      jar-packaging, bundled-jar-smoke, export-redaction-verify,
+#                      doctor-smoke (was on both OSes in 1.17; collapsed to
+#                      Ubuntu-only when 1.21 added a full-Spring-context boot
+#                      that requires the compose-managed Postgres — Windows
+#                      coverage tracked in deferred-work.md).
 #     (Docker-backed Testcontainers + buildx require Linux; macOS/Windows
 #      runner Docker is excluded for cost/flakiness — see AC3.)
 #
@@ -370,15 +374,14 @@ jobs:
       - name: Verify jar is executable
         # Pin the glob — Spring Boot's `repackage` leaves a `*.jar.original`
         # next to the bootable jar; passing both to `java -jar` misparses.
-        # SPRING_DOCKER_COMPOSE_ENABLED=false: `java -jar ... --help` boots
-        # Spring fully which would otherwise trigger spring-boot-docker-compose
-        # autoconfig on the project's docker-compose.yml (interpolation fails
-        # on POSTGRES_PASSWORD).
-        # SPRING_PROFILES_ACTIVE=demo: deactivates the %redactedMsg log wrapper
-        # so failure analyzer output is readable when something goes wrong.
+        # `java -jar ... --help` boots the full Spring context (so the
+        # transitive bean graph — services → repositories — can wire), which
+        # in turn triggers Spring's docker-compose autoconfig against the
+        # repo-root docker-compose.yml. POSTGRES_PASSWORD interpolates the
+        # compose file's ${POSTGRES_PASSWORD:?...} placeholder; the
+        # compose-managed Postgres lets JPA / Flyway bootstrap cleanly.
         env:
-          SPRING_DOCKER_COMPOSE_ENABLED: "false"
-          SPRING_PROFILES_ACTIVE: demo
+          POSTGRES_PASSWORD: deliveryline-ci
         run: |
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
@@ -533,47 +536,25 @@ jobs:
   # Story 1.17 doctor-smoke — preserved unchanged. Anchors AC3's "doctor-invoking
   # smoke jobs" entry. Wired into foundation-gate alongside the 9 new tiers.
   # ---------------------------------------------------------------------------
+  # Ubuntu-only — the doctor command boots a full Spring context, and the
+  # transitive bean graph (WorkflowCommands → services → repositories) requires
+  # the persistence layer. Spring Boot 4's docker-compose autoconfig starts
+  # the docker-compose.yml-defined Postgres before bean creation, giving JPA a
+  # real DB to wire against. Windows runners have no Docker; the
+  # DOCTOR_DOCKER_MISSING WARN-tolerance coverage from the original 1.17 matrix
+  # is deferred to a follow-up that decouples doctor from the persistence
+  # bean graph (see deferred-work.md).
   doctor-smoke:
-    name: doctor-smoke (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: doctor-smoke (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Spring Boot 4's docker-compose autoconfig tries to parse docker-compose.yml
-    # before the `doctor` CLI command runs, and the compose file references
-    # ${POSTGRES_PASSWORD} which is unset in CI (no .env file). Disable the
-    # integration job-wide — doctor is a diagnostic and never needs the
-    # compose-managed Postgres.
-    #
-    # SPRING_AUTOCONFIGURE_EXCLUDE additionally skips the JPA/Flyway/DataSource
-    # autoconfig classes — without a real datasource, `entityManagerFactory`
-    # bean creation fails at context refresh. Doctor only invokes diagnostic
-    # checks (supported-environment, java-version, docker-availability) that
-    # don't touch the persistence layer, so excluding these is safe for this
-    # smoke. (bundled-jar-smoke is the path that exercises full JPA boot
-    # against a real Postgres.)
     env:
-      SPRING_DOCKER_COMPOSE_ENABLED: "false"
-      SPRING_AUTOCONFIGURE_EXCLUDE: >-
-        org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,
-        org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,
-        org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,
-        org.springframework.boot.data.jpa.autoconfigure.JpaRepositoriesAutoConfiguration
-      # @Value("${deliveryline.home}") in DoctorProbeAdapter has no default;
-      # doctor never writes to this dir, so any path that exists is fine.
-      # github.workspace (not runner.temp) — the `runner` context isn't
-      # resolvable at job-level env, only within step contexts.
+      # Required to interpolate the compose file's ${POSTGRES_PASSWORD:?...}
+      # placeholder — Spring docker-compose autoconfig runs `docker compose
+      # config --format=json` early in startup and fails the whole boot if the
+      # var is missing.
+      POSTGRES_PASSWORD: deliveryline-ci
       DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-doctor
-      # Activate a real profile so logback-spring.xml's `local,test,!demo`
-      # springProfile block — which wraps log output in the %redactedMsg
-      # converter — evaluates false. Without this, every error message
-      # (including Spring's failure analyzer output) becomes the literal
-      # "[redaction-pending]" sentinel because RedactionLayoutHolder isn't
-      # wired (context refresh failed before @PostConstruct could run),
-      # making CI failures un-diagnosable.
-      SPRING_PROFILES_ACTIVE: demo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -585,24 +566,15 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # docker-availability is included so CI actually exercises the Docker-WARN
-      # tolerance from 1.17 AC8: ubuntu-latest ships with Docker (probe PASSes);
-      # windows-latest has no Docker Desktop (probe WARNs with
-      # DOCTOR_DOCKER_MISSING). Both runners must still exit 0 because
-      # DoctorService.aggregate() only returns FAIL when a check FAILs and
-      # DoctorCommands only throws on FAIL.
-      #
-      # supported-environment on hosted runners:
-      #   ubuntu-latest  → PASS (Ubuntu 22.04+, bash, Docker Engine 24+).
-      #   windows-latest → WARN (matrixRow=win10-nearmiss), exit 0.
+      # docker-availability + supported-environment on ubuntu-latest PASS;
+      # java-version PASS. Spring's docker-compose autoconfig (active because
+      # docker-compose.yml is at the repo root and Docker is present) starts
+      # Postgres before bean creation, so the full Spring context — including
+      # JPA repos that WorkflowCommands transitively depends on — wires
+      # cleanly. The Windows-runner DOCTOR_DOCKER_MISSING WARN coverage from
+      # 1.17 AC8 is recorded in deferred-work.md.
       - name: Doctor smoke (Ubuntu)
-        if: runner.os == 'Linux'
         run: ./scripts/doctor.sh --only supported-environment,java-version,docker-availability --format json
-
-      - name: Doctor smoke (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/doctor.ps1 --only supported-environment,java-version,docker-availability --format json
 
   # ---------------------------------------------------------------------------
   # foundation-gate (placeholder body — story 1.23 fills in real verification).
