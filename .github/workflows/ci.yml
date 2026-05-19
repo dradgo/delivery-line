@@ -742,12 +742,19 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # foundation-gate (placeholder body — story 1.23 fills in real verification).
+  # foundation-gate (story 1.23 — aggregate Epic-1 contract verification).
   #
-  # Aggregator job that depends on all 9 tiers + doctor-smoke. Story 1.23
-  # replaces the echo body with deterministic-fixture event-stream verification.
-  # AC9: this is the required-status-check name; docs/ci-branch-protection.md
-  # ships the gh-api command for the repo admin.
+  # Required status check on `main` (per docs/ci-branch-protection.md). Runs
+  # FoundationGateVerificationTest (10 @Nested classes, one per Epic-1
+  # foundation contract) under the dedicated `foundation-gate` Maven profile.
+  # Each nested class delegate-runs the source-of-truth contract test via the
+  # JUnit Platform Launcher API; failure messages start with `[story X.Y]`
+  # so CI logs point at the broken contract on first glance.
+  #
+  # On `pull_request` events, an additional step upserts a PR comment via
+  # actions/github-script using the `<!-- foundation-gate-status -->` marker.
+  # The comment is gated on changed-files: docs-only PRs are skipped to avoid
+  # comment noise. `pull-requests: write` is escalated at the job level only.
   #
   # bundled-jar-smoke is intentionally NOT in needs: — it only runs on
   # push:main, and foundation-gate must succeed on PR runs.
@@ -773,7 +780,12 @@ jobs:
       - export-redaction-verify
       - doctor-smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    # Workflow-root permissions stay `contents: read`. This job escalates
+    # ONLY `pull-requests: write` so the PR-comment upsert step can run.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Assert all required tiers succeeded
         env:
@@ -783,7 +795,7 @@ jobs:
           # Fail if any required tier ended in anything other than 'success'.
           # This converts skipped/failure/cancelled into an explicit exit 1 so
           # branch protection treats foundation-gate as failed in all those
-          # cases (story 1.23 will replace the placeholder body below).
+          # cases.
           failures=$(echo "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"')
           if [ -n "$failures" ]; then
             echo "::error::foundation-gate failing — non-success tiers detected:"
@@ -792,8 +804,106 @@ jobs:
           fi
           echo "All prerequisite tiers reported success."
 
-      - name: foundation-gate placeholder
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Verify Docker daemon is reachable (env-vs-contract disambiguation)
+        # If Docker is unavailable, Testcontainers throws ContainerLaunchException
+        # mid-test and the aggregate report blames a contract regression. Surface
+        # an env-level failure here with an explicit `[env]` marker so triage is
+        # unambiguous. Matches the `[story X.Y]` convention used by the aggregator
+        # for contract failures.
         run: |
-          echo "foundation-gate passed: all prerequisite tiers green"
-          echo "Note: story 1.23 replaces this body with deterministic-fixture"
-          echo "      event-stream verification."
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::[env] Docker daemon not reachable — Testcontainers cannot start. This is an infrastructure issue, NOT a foundation-contract regression. Re-run the job; if it persists, escalate to CI ops."
+            exit 1
+          fi
+          echo "[env] Docker daemon reachable: $(docker version --format '{{.Server.Version}}')"
+
+      - name: Run FoundationGateVerificationTest
+        env:
+          # Testcontainers + Flyway need a Postgres password placeholder for
+          # Spring docker-compose autoconfig; matches the jar-packaging job.
+          POSTGRES_PASSWORD: deliveryline-ci
+          SPRING_PROFILES_ACTIVE: test
+        run: |
+          ./mvnw -B -ntp -pl deliveryline-backend -am -Pfoundation-gate \
+            failsafe:integration-test failsafe:verify \
+            -Dit.test='*FoundationGateVerificationTest*'
+
+      - name: Upload foundation-gate test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-gate-reports
+          path: deliveryline-backend/target/failsafe-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Detect non-docs changed files on PR
+        id: changed-files
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              { owner, repo, pull_number, per_page: 100 }
+            );
+            // Non-docs surfaces — keep in sync with story 1.23 AC9. A PR whose
+            // changed files all fall outside these prefixes is "docs-only" and
+            // skips the comment.
+            const codePrefixes = [
+              'deliveryline-backend/',
+              'deliveryline-frontend/',
+              'deliveryline-runner-contracts/',
+              'runners/',
+            ];
+            const codeFiles = new Set();
+            const hasCode = files.some(f =>
+              codePrefixes.some(p => f.filename.startsWith(p)) ||
+              codeFiles.has(f.filename)
+            );
+            core.setOutput('has-code', hasCode ? 'true' : 'false');
+
+      - name: Upsert foundation-gate PR status comment
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && steps.changed-files.outputs.has-code == 'true' && always() }}
+        uses: actions/github-script@v7
+        env:
+          GATE_STATUS: ${{ job.status }}
+        with:
+          script: |
+            // Deterministic marker — story 1.23 AC9 — used to find a previous
+            // comment so this step UPSERTs (edits in place) rather than spams.
+            const marker = '<!-- foundation-gate-status -->';
+            const gateStatus = process.env.GATE_STATUS;
+            const body = gateStatus === 'success'
+              ? `${marker}\nFoundation gate **passing** on this branch — safe to merge after normal review.\n\nThis comment is generated by .github/workflows/ci.yml (foundation-gate job, story 1.23 AC9). It updates in place on each run.`
+              : `${marker}\nFoundation gate **FAILING** — see the \`foundation-gate\` job log. This PR cannot merge until the failing contract is fixed.\n\nThe failure message in the job log starts with \`[story X.Y]\` so the broken Epic-1 contract is identified on first glance.`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+              core.info(`Updated existing foundation-gate comment ${existing.id}.`);
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+              core.info('Created new foundation-gate comment.');
+            }

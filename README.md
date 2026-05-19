@@ -17,6 +17,7 @@ dependencies.
   [`doctor`](docs/cli/doctor.md))
 - **Supported environments** → [`docs/supported-environments.md`](docs/supported-environments.md)
 - **Glossary** → [`docs/glossary.md`](docs/glossary.md)
+- **Epic 1 close status** → [`docs/epic-1-close-checklist.md`](docs/epic-1-close-checklist.md)
 
 ## Project layout
 

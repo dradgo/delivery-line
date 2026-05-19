@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/foundation/workflow-events-response.v1.schema.json",
+  "title": "Workflow Events Response (fixture event-stream contract)",
+  "description": "Story 1.23 — Authoritative wire shape for governed-run event-history fixtures published under deliveryline-backend/src/test/resources/fixture-event-streams/. This schema IS the contract for the future GET /api/v1/workflows/{workflowRunId}/events response serializer (story 6.9 WorkflowEventsController). Any breaking change here is a coordinated change with that controller and with Epic 2 UI consumers. Field names mirror org.dradgo.application.workflow.spi.WorkflowEventRecord; the details map keys are sourced from org.dradgo.domain.registry.WorkflowEventDetailKeys plus the open-map convention.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workflowRun", "events"],
+  "properties": {
+    "workflowRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicId", "ticketRef", "createdAt", "terminalState"],
+      "properties": {
+        "publicId": {
+          "type": "string",
+          "pattern": "^run_[A-Za-z0-9_]{4,}$",
+          "description": "PublicIdPrefixes.WORKFLOW_RUN prefix; fixtures use deterministic suffixes such as run_fix_happy_001."
+        },
+        "ticketRef": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Linear ticket reference for the run (e.g. DEL-1234)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 UTC, formatted yyyy-MM-ddTHH:mm:ssZ for fixture determinism."
+        },
+        "terminalState": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "Inbox",
+            "Planned",
+            "Investigating",
+            "WaitingForSpecApproval",
+            "Executing",
+            "WaitingForReview",
+            "Completed",
+            "Failed",
+            "Paused",
+            "TakenOver",
+            "Reconciled"
+          ],
+          "description": "The state the run is in at the end of the fixture's event stream. Null for fixtures that intentionally stop mid-flow (none ship in story 1.23)."
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/event" }
+    }
+  },
+  "$defs": {
+    "workflowState": {
+      "type": "string",
+      "enum": [
+        "Inbox",
+        "Planned",
+        "Investigating",
+        "WaitingForSpecApproval",
+        "Executing",
+        "WaitingForReview",
+        "Completed",
+        "Failed",
+        "Paused",
+        "TakenOver",
+        "Reconciled"
+      ]
+    },
+    "actorType": {
+      "type": "string",
+      "enum": ["human", "agent", "system", "service_account"]
+    },
+    "failureCategory": {
+      "type": "string",
+      "enum": [
+        "runner_timeout",
+        "runner_crash",
+        "runner_contract_violation",
+        "runner_non_zero_exit",
+        "runner_late_result",
+        "runner_duplicate_result",
+        "runner_malformed_output",
+        "orphan"
+      ]
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "workflow.stateChanged",
+        "approval.requested",
+        "approval.approved",
+        "approval.rejected",
+        "artifact.draftCreated",
+        "artifact.available",
+        "artifact.failed",
+        "artifact.versionCreated",
+        "runner.started",
+        "runner.failed",
+        "recovery.retried",
+        "recovery.dispatchFailed",
+        "recovery.reconciled",
+        "artifact.lineageRecovered",
+        "integration.linked",
+        "export.created",
+        "clarification.answered",
+        "clarification.accepted",
+        "clarification.incorporated",
+        "clarification.superseded",
+        "clarification.rejectedInvalid",
+        "clarification.noEffectReason"
+      ]
+    },
+    "artifactVariant": {
+      "type": "string",
+      "enum": ["spec", "implementationPlan", "prOutput"],
+      "description": "Enumerated artifact variant; surfaced via details.artifactVariant. Epic 2 generalizes its Artifact Review Panel composite across all three (story 1.23 party-mode finding #3)."
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publicId",
+        "workflowRunPublicId",
+        "eventType",
+        "actorIdentity",
+        "actorType",
+        "interventionMarker",
+        "createdAt",
+        "details"
+      ],
+      "properties": {
+        "publicId": {
+          "type": "string",
+          "pattern": "^evt_[A-Za-z0-9_]{4,}$"
+        },
+        "workflowRunPublicId": {
+          "type": "string",
+          "pattern": "^run_[A-Za-z0-9_]{4,}$"
+        },
+        "eventType": { "$ref": "#/$defs/eventType" },
+        "priorState": {
+          "oneOf": [
+            { "$ref": "#/$defs/workflowState" },
+            { "type": "null" }
+          ],
+          "description": "Null for the initial submit event and for non-state-changing events."
+        },
+        "resultingState": {
+          "oneOf": [
+            { "$ref": "#/$defs/workflowState" },
+            { "type": "null" }
+          ],
+          "description": "Null for non-state-changing events (approval requested, artifact draft created, runner started, etc.)."
+        },
+        "actorIdentity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actorType": { "$ref": "#/$defs/actorType" },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "failureCategory": {
+          "oneOf": [
+            { "$ref": "#/$defs/failureCategory" },
+            { "type": "null" }
+          ]
+        },
+        "interventionMarker": { "type": "boolean" },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "details": {
+          "type": "object",
+          "description": "Open-map: keys enumerated in WorkflowEventDetailKeys carry typed shapes (below); other keys are permitted. idempotencyKey is server-only and MUST NOT appear in fixture output.",
+          "not": {
+            "required": ["idempotencyKey"]
+          },
+          "properties": {
+            "linearTicketReference": { "type": "string", "minLength": 1 },
+            "artifactId": { "type": "string", "minLength": 1 },
+            "artifactVersion": { "type": "integer", "minimum": 1 },
+            "contextVersion": { "type": "integer", "minimum": 1 },
+            "correlationId": { "type": "string", "minLength": 1 },
+            "failedStage": { "type": "string", "minLength": 1 },
+            "triggeringEventId": {
+              "type": "string",
+              "pattern": "^evt_[A-Za-z0-9_]{4,}$"
+            },
+            "reason": { "type": "string" },
+            "errorCode": { "type": "string", "minLength": 1 },
+            "errorClass": { "type": "string", "minLength": 1 },
+            "recoveryActionId": {
+              "type": "string",
+              "pattern": "^rcv_[A-Za-z0-9_]{4,}$"
+            },
+            "recoveryRetriedEventId": {
+              "type": "string",
+              "pattern": "^evt_[A-Za-z0-9_]{4,}$"
+            },
+            "compensationFailed": { "type": "boolean" },
+            "artifactVariant": { "$ref": "#/$defs/artifactVariant" },
+            "feedback": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

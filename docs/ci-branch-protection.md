@@ -1,10 +1,47 @@
 # CI Branch Protection — `foundation-gate`
 
-Story 1.21 wires a `foundation-gate` job in `.github/workflows/ci.yml` that aggregates the nine
-foundation-tier checks plus the OS-matrix `doctor-smoke`. The job is a placeholder until story 1.23
-fills it with deterministic-fixture event-stream verification. **What story 1.21 ships** is the
-required-status-check NAME (`foundation-gate`) that the repository admin must register on the
-default branch so any Epic 2/3/4 PR is structurally blocked until the foundation gate is green.
+Story 1.21 wires the `foundation-gate` job in `.github/workflows/ci.yml` (aggregator of the nine
+foundation-tier checks plus the OS-matrix `doctor-smoke`). Story 1.23 replaces the placeholder
+body with real `FoundationGateVerificationTest` execution — ten Epic-1 contracts re-verified on
+every PR via the dedicated `foundation-gate` Maven profile. **Repository admins must register
+`foundation-gate` as a required status check on `main`** so any Epic 2/3/4 PR is structurally
+blocked until the foundation gate is green.
+
+## Required status checks (story 1.23)
+
+| Check | Required | Notes |
+| --- | --- | --- |
+| `foundation-gate` | **required** | Aggregate Epic-1 contract verification (story 1.23). MUST be a required status check on `main`. |
+| `format-static-checks (ubuntu-latest)` | recommended | Implicit via `foundation-gate` `needs:`. Listing explicitly improves PR-page UI signal. |
+| `format-static-checks (windows-latest)` | recommended | Same — explicit listing surfaces the per-OS pass in the PR UI. |
+| `backend-unit-tests (ubuntu-latest)` | recommended | Implicit dependency. |
+| `backend-unit-tests (windows-latest)` | recommended | Implicit dependency. |
+| `doctor-smoke (ubuntu-latest)` | recommended | Implicit dependency. Linux-only — story 1.17's matrix was collapsed to Ubuntu when the job grew a full-Spring-context boot; Windows coverage is tracked in `_bmad-output/implementation-artifacts/deferred-work.md`. |
+
+The `foundation-gate` row is the load-bearing check; the others are convenience signals.
+
+## Scripted helper
+
+Two helper scripts ship under `scripts/ci/` to apply the required-check configuration idempotently
+via `gh api -X PUT`:
+
+- `scripts/ci/configure-branch-protection.sh` (POSIX/Bash).
+- `scripts/ci/configure-branch-protection.ps1` (PowerShell 5.1+).
+
+Both scripts use the same `REQUIRED_CHECKS_START` / `REQUIRED_CHECKS_END` marker block as their
+source-of-truth contexts list. `BranchProtectionConfigSmokeTest` (in the backend test suite)
+parses the bash helper at build time and asserts `foundation-gate` is present, preventing a
+silent removal.
+
+Usage (set `OWNER` / `REPO` to match your fork, or rely on the `gh` CLI's current-repo default):
+
+```bash
+OWNER=<owner> REPO=<repo> ./scripts/ci/configure-branch-protection.sh
+```
+
+The script uses `gh api -X PUT` (full replace), not `PATCH`, so re-running it produces no diff
+against the desired state. Read access to `branches/main/protection` is verified before the PUT
+to catch missing-permission errors early.
 
 GitHub branch-protection rules cannot be wired in code — they live in repository settings. Below
 are the operational steps for a repo admin to register `foundation-gate` as a required check.
@@ -19,9 +56,10 @@ are the operational steps for a repo admin to register `foundation-gate` as a re
    selectable check.)
 5. (Optional) Also select the per-OS jobs that block foundation-gate — e.g.
    `format-static-checks (ubuntu-latest)`, `format-static-checks (windows-latest)`,
-   `backend-unit-tests (ubuntu-latest)`, `backend-unit-tests (windows-latest)`, `doctor-smoke
-   (ubuntu-latest)`, `doctor-smoke (windows-latest)`. `foundation-gate` already depends on these,
-   so they are implicitly required, but listing them explicitly gives clearer PR-page UI signal.
+   `backend-unit-tests (ubuntu-latest)`, `backend-unit-tests (windows-latest)`, and
+   `doctor-smoke (ubuntu-latest)` (Linux-only — see the table above). `foundation-gate` already
+   depends on these, so they are implicitly required, but listing them explicitly gives clearer
+   PR-page UI signal.
 6. Save the rule.
 
 ## Option B — `gh api` (scriptable)
@@ -35,17 +73,16 @@ gh api \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   /repos/<OWNER>/<REPO>/branches/main/protection \
-  -f required_status_checks[strict]=true \
+  -F required_status_checks[strict]=true \
   -F 'required_status_checks[contexts][]=foundation-gate' \
   -F 'required_status_checks[contexts][]=format-static-checks (ubuntu-latest)' \
   -F 'required_status_checks[contexts][]=format-static-checks (windows-latest)' \
   -F 'required_status_checks[contexts][]=backend-unit-tests (ubuntu-latest)' \
   -F 'required_status_checks[contexts][]=backend-unit-tests (windows-latest)' \
   -F 'required_status_checks[contexts][]=doctor-smoke (ubuntu-latest)' \
-  -F 'required_status_checks[contexts][]=doctor-smoke (windows-latest)' \
-  -f enforce_admins=true \
+  -F enforce_admins=true \
   -F 'required_pull_request_reviews[required_approving_review_count]=1' \
-  -f restrictions=
+  -F restrictions=null
 ```
 
 `strict=true` requires the PR branch to be up-to-date with `main` before the check is considered
@@ -70,7 +107,7 @@ foundation-gate
 ├── runner-image-compat
 ├── jar-packaging
 ├── export-redaction-verify
-└── doctor-smoke            (Linux + Windows matrix; story 1.17)
+└── doctor-smoke            (Linux only; story 1.17 matrix collapsed when 1.21 added the Spring boot)
 ```
 
 `bundled-jar-smoke` is intentionally NOT a foundation-gate dependency — it runs only on

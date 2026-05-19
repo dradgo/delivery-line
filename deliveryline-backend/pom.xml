@@ -111,6 +111,28 @@
 			<artifactId>testcontainers-postgresql</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- Story 1.23 — the JUnit Platform Launcher API is what
+		     FoundationGateVerificationTest uses to delegate-run existing Epic-1
+		     contract test classes by FQN. Spring Boot's test starter ships
+		     junit-platform-engine but not junit-platform-launcher; the launcher
+		     is normally consumed by Maven Surefire/Failsafe via the JUnit Platform
+		     provider and only needs to be on the test compile/runtime classpath
+		     when test code itself invokes the Launcher API. -->
+		<dependency>
+			<groupId>org.junit.platform</groupId>
+			<artifactId>junit-platform-launcher</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- Story 1.23 review patch P16 — networknt JSON Schema validator drives
+		     FixtureEventStreamSchemaConformanceContractTest's authoritative draft-2020-12
+		     conformance check. Same library + version as deliveryline-runner-contracts'
+		     RunnerContractValidator, so a future shared validator utility is straightforward. -->
+		<dependency>
+			<groupId>com.networknt</groupId>
+			<artifactId>json-schema-validator</artifactId>
+			<version>3.0.2</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -172,7 +194,7 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
 					<argLine>@{argLine} -Duser.timezone=UTC -Dfile.encoding=UTF-8</argLine>
-					<excludedGroups>architecture,integration,contract,known-failure</excludedGroups>
+					<excludedGroups>architecture,integration,contract,known-failure,foundation-gate</excludedGroups>
 					<!-- File-pattern exclusion mirrors Failsafe's <includes> below. Tag-based
 					     exclusion (excludedGroups) only catches tests that remembered to add
 					     @Tag('contract')/@Tag('integration'); many *ContractTest.java files
@@ -188,6 +210,14 @@
 						<exclude>**/*ContractTest.java</exclude>
 						<exclude>**/*AppendOnlyTest.java</exclude>
 						<exclude>**/architecture/**/*Test.java</exclude>
+						<!-- Story 1.23 — foundation-gate aggregator is excluded by the
+						     `foundation-gate` tag in <excludedGroups> above; tag-based
+						     exclusion is the source-of-truth invariant per Task 1, so a
+						     future @Tag("foundation-gate") test placed outside the
+						     foundation/ package is also kept out of the unit-test tier.
+						     The supporting *FoundationContract.java helper classes do not
+						     match Surefire's default include pattern (*Test.java family),
+						     so they are unreachable here regardless. -->
 						<!-- Spring Boot smoke "context loads" test boots the full
 						     application context with @Import(TestcontainersConfiguration),
 						     so it needs Docker — Failsafe (Linux-only) is the right slice. -->
@@ -249,6 +279,41 @@
 						<artifactId>maven-failsafe-plugin</artifactId>
 						<configuration>
 							<groups>architecture</groups>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<!-- Story 1.23 — `-Pfoundation-gate` runs the FoundationGateVerificationTest
+		     aggregator. The aggregator delegate-runs every Epic-1 contract test via the
+		     JUnit Platform Launcher API; supporting *FoundationContract classes are
+		     unreachable through standard Maven discovery (their names don't match any
+		     include pattern) and are invoked only via the Launcher. The profile clears
+		     the default `foundation-gate` exclusion (added to <excludedGroups> above)
+		     and adds a <groups> filter so this tier runs ONLY the foundation-gate
+		     tagged tests — the dedicated `foundation-gate` GitHub Actions job uses
+		     this profile. -->
+		<profile>
+			<id>foundation-gate</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<excludedGroups>known-failure</excludedGroups>
+							<groups>foundation-gate</groups>
+							<includes>
+								<include>**/*IT.java</include>
+								<include>**/IT*.java</include>
+								<include>**/*ITCase.java</include>
+								<include>**/*ContractTest.java</include>
+								<include>**/*AppendOnlyTest.java</include>
+								<include>**/architecture/**/*Test.java</include>
+								<include>**/foundation/**/*Test.java</include>
+								<include>**/*ApplicationTests.java</include>
+							</includes>
 						</configuration>
 					</plugin>
 				</plugins>

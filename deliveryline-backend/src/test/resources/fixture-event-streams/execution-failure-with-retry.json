@@ -1,0 +1,345 @@
+{
+  "workflowRun": {
+    "publicId": "run_fix_fail_001",
+    "ticketRef": "DEL-9003",
+    "createdAt": "2026-01-03T00:00:00Z",
+    "terminalState": "Completed"
+  },
+  "events": [
+    {
+      "publicId": "evt_fix_fail_001",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": null,
+      "resultingState": "Inbox",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "submitted",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:00:00Z",
+      "details": {
+        "linearTicketReference": "DEL-9003",
+        "correlationId": "corr_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_002",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Inbox",
+      "resultingState": "Planned",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "intake_complete",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:00:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_003",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Planned",
+      "resultingState": "Investigating",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "spec_runner_dispatched",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:01:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_004",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "artifact.draftCreated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-codex-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:01:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_spec_fail_001",
+        "artifactVariant": "spec",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_005",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "artifact.available",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-codex-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:02:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_spec_fail_001",
+        "artifactVariant": "spec",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_006",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Investigating",
+      "resultingState": "WaitingForSpecApproval",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "spec_drafted",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:02:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_007",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "approval.approved",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "alex@example.com",
+      "actorType": "human",
+      "reason": "approved",
+      "failureCategory": null,
+      "interventionMarker": true,
+      "createdAt": "2026-01-03T00:03:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_spec_fail_001",
+        "artifactVariant": "spec",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_008",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "WaitingForSpecApproval",
+      "resultingState": "Executing",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "spec_approved",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:03:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_009",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "runner.started",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-claude-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:04:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "failedStage": "implementation"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_010",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "runner.failed",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-claude-mock",
+      "actorType": "agent",
+      "reason": "container exited with SIGSEGV",
+      "failureCategory": "runner_crash",
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:04:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "failedStage": "implementation",
+        "errorClass": "RunnerCrashedException",
+        "errorCode": "RUNNER_CRASH"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_011",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Executing",
+      "resultingState": "Failed",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "runner_crash",
+      "failureCategory": "runner_crash",
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:05:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "failedStage": "implementation"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_012",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "recovery.retried",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "alex@example.com",
+      "actorType": "human",
+      "reason": "retry after transient crash",
+      "failureCategory": null,
+      "interventionMarker": true,
+      "createdAt": "2026-01-03T00:05:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "failedStage": "implementation",
+        "triggeringEventId": "evt_fix_fail_010",
+        "recoveryActionId": "rcv_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_013",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Failed",
+      "resultingState": "Executing",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "retry_dispatched",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:06:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "recoveryActionId": "rcv_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_014",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "artifact.draftCreated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-claude-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:06:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_plan_fail_001",
+        "artifactVariant": "implementationPlan",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_015",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "artifact.available",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-claude-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:07:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_plan_fail_001",
+        "artifactVariant": "implementationPlan",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_016",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "artifact.draftCreated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-claude-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:07:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_pr_fail_001",
+        "artifactVariant": "prOutput",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_017",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "artifact.available",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-claude-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:08:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001",
+        "artifactId": "art_pr_fail_001",
+        "artifactVariant": "prOutput",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_018",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Executing",
+      "resultingState": "WaitingForReview",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "execution_complete",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-01-03T00:08:30Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_fail_019",
+      "workflowRunPublicId": "run_fix_fail_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "WaitingForReview",
+      "resultingState": "Completed",
+      "actorIdentity": "alex@example.com",
+      "actorType": "human",
+      "reason": "review_passed",
+      "failureCategory": null,
+      "interventionMarker": true,
+      "createdAt": "2026-01-03T00:09:00Z",
+      "details": {
+        "correlationId": "corr_fix_fail_001"
+      }
+    }
+  ]
+}
