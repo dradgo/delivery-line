@@ -862,9 +862,25 @@ jobs:
           POSTGRES_PASSWORD: deliveryline-ci
           SPRING_PROFILES_ACTIVE: test
         run: |
+          # Two direct-goal-invocation hazards handled here:
+          # 1. `jacoco:prepare-agent` MUST run first: failsafe's <argLine> is
+          #    `@{argLine} ...`, a late-bound property populated by jacoco's
+          #    prepare-agent goal. Invoking failsafe:integration-test directly
+          #    (not via the verify lifecycle) skips prepare-agent, leaving
+          #    `@{argLine}` literal — the JVM fork then crashes with "forked VM
+          #    terminated without properly saying goodbye".
+          # 2. `-Dfailsafe.failIfNoSpecifiedTests=false`: failsafe:integration-test
+          #    is a direct CLI goal, so it runs on every reactor module pulled in
+          #    by `-am` (parent deliveryline, runner-contracts, frontend). Those
+          #    modules carry no *FoundationGateVerificationTest*, so without this
+          #    flag failsafe aborts on the parent module (1/4) with "No tests
+          #    matching pattern". The flag lets non-matching modules pass through;
+          #    the test still runs (and gates) in deliveryline-backend.
           ./mvnw -B -ntp -pl deliveryline-backend -am -Pfoundation-gate \
+            jacoco:prepare-agent \
             failsafe:integration-test failsafe:verify \
-            -Dit.test='*FoundationGateVerificationTest*'
+            -Dit.test='*FoundationGateVerificationTest*' \
+            -Dfailsafe.failIfNoSpecifiedTests=false
 
       - name: Upload foundation-gate test reports
         if: always()
