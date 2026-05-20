@@ -862,23 +862,23 @@ jobs:
           POSTGRES_PASSWORD: deliveryline-ci
           SPRING_PROFILES_ACTIVE: test
         run: |
-          # Two direct-goal-invocation hazards handled here:
-          # 1. `jacoco:prepare-agent` MUST run first: failsafe's <argLine> is
-          #    `@{argLine} ...`, a late-bound property populated by jacoco's
-          #    prepare-agent goal. Invoking failsafe:integration-test directly
-          #    (not via the verify lifecycle) skips prepare-agent, leaving
-          #    `@{argLine}` literal — the JVM fork then crashes with "forked VM
-          #    terminated without properly saying goodbye".
-          # 2. `-Dfailsafe.failIfNoSpecifiedTests=false`: failsafe:integration-test
-          #    is a direct CLI goal, so it runs on every reactor module pulled in
-          #    by `-am` (parent deliveryline, runner-contracts, frontend). Those
-          #    modules carry no *FoundationGateVerificationTest*, so without this
-          #    flag failsafe aborts on the parent module (1/4) with "No tests
-          #    matching pattern". The flag lets non-matching modules pass through;
-          #    the test still runs (and gates) in deliveryline-backend.
-          ./mvnw -B -ntp -pl deliveryline-backend -am -Pfoundation-gate \
-            jacoco:prepare-agent \
-            failsafe:integration-test failsafe:verify \
+          # Run the `verify` LIFECYCLE (not isolated failsafe goals). Isolated
+          # `failsafe:integration-test` invocation has three fatal gaps in a clean
+          # CI checkout, all proven against a fresh empty local Maven repo:
+          #   - it never `package`s the upstream `-am` modules, so backend can't
+          #     resolve `deliveryline-runner-contracts:jar` ("Could not find
+          #     artifact ...");
+          #   - it skips lifecycle-bound `jacoco:prepare-agent`, leaving failsafe's
+          #     `<argLine>@{argLine} ...</argLine>` literal → JVM fork crash
+          #     ("forked VM terminated without properly saying goodbye");
+          #   - it aborts on reactor modules with no matching test.
+          # The `verify` phase packages the upstream jars, binds prepare-agent, and
+          # the `-Pfoundation-gate` profile pins failsafe `<groups>foundation-gate</groups>`
+          # so only the foundation contracts gate here. `failIfNoSpecifiedTests=false`
+          # keeps non-matching reactor modules from aborting the run. (Surefire unit
+          # tests also run as part of `verify` — redundant with backend-unit-tests
+          # but harmless; tightening that is a story-1.23 follow-up.)
+          ./mvnw -B -ntp -pl deliveryline-backend -am -Pfoundation-gate verify \
             -Dit.test='*FoundationGateVerificationTest*' \
             -Dfailsafe.failIfNoSpecifiedTests=false
 
