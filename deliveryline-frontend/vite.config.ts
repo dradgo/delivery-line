@@ -1,5 +1,5 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 // Story 2.1 — Vite config for the deliveryline-frontend module.
@@ -12,11 +12,11 @@ import react from '@vitejs/plugin-react'
 // Parse PORT with explicit guards: `Number("")` → 0 and `Number("abc")` → NaN
 // both slip past a plain `?? 5173`, so validate explicitly and fall back to 5173.
 function resolvePort(raw: string | undefined): number {
-  if (raw === undefined || raw === '') return 5173
-  const parsed = Number(raw)
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : 5173
+  if (raw === undefined || raw === '') return 5173;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : 5173;
 }
-const port = resolvePort(process.env.PORT)
+const port = resolvePort(process.env.PORT);
 
 export default defineConfig({
   plugins: [react()],
@@ -42,4 +42,4 @@ export default defineConfig({
       },
     },
   },
-})
+});

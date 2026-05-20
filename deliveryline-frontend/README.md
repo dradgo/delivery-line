@@ -16,7 +16,7 @@ npm run dev          # Vite dev server on http://localhost:5173, /api/* → loca
 Override the port (5173 collides with another service):
 
 - **POSIX / Git Bash:** `PORT=5174 npm run dev`
-- **PowerShell:**      `$env:PORT=5174; npm run dev`
+- **PowerShell:** `$env:PORT=5174; npm run dev`
 
 ## Build
 
@@ -77,14 +77,61 @@ correctly.
 
 ## Scripts
 
-| Script           | Purpose                                                  |
-|------------------|----------------------------------------------------------|
-| `npm run dev`    | Vite dev server with HMR + `/api/*` proxy                |
-| `npm run build`  | TypeScript project build + Vite production build         |
-| `npm run preview`| Serve the `target/dist/` bundle locally for a smoke test |
+| Script                    | Purpose                                                         |
+| ------------------------- | --------------------------------------------------------------- |
+| `npm run dev`             | Vite dev server with HMR + `/api/*` proxy                       |
+| `npm run build`           | TypeScript project build + Vite production build                |
+| `npm run preview`         | Serve the `target/dist/` bundle locally for a smoke test        |
+| `npm run lint`            | ESLint (flat config), `--max-warnings=0` — fails on any warning |
+| `npm run lint:fix`        | ESLint with `--fix`                                             |
+| `npm run lint:rules-test` | Run the custom-ESLint-rule fixture tests (`node --test`)        |
+| `npm run format`          | Prettier `--write` (apply formatting)                           |
+| `npm run format:check`    | Prettier `--check` (CI gate)                                    |
 
-Linting (`npm run lint`) ships with story 2.31; the Vitest test runner ships with
-story 2.27.
+The Vitest test runner ships with story 2.27.
+
+## Lint & Format (story 2.31)
+
+ESLint (flat config, `eslint.config.js`) + Prettier (`.prettierrc.json`) enforce
+TypeScript-strict, React-hooks, accessibility (`jsx-a11y`), and import hygiene on
+every PR. `npm run lint` + `npm run format:check` run inside `mvn -pl
+deliveryline-frontend clean package` (via `frontend-maven-plugin` executions), so
+the `frontend-build-tests` CI matrix — wired into `foundation-gate` — gates merges
+on lint/format cleanliness.
+
+**Prettier conventions** (`.prettierrc.json`): single quotes, trailing commas
+`all`, semicolons, 2-space indent, 100-char print width. `eslint-config-prettier`
+disables stylistic ESLint rules so the two tools never conflict.
+
+**Custom project rules** (`tools/eslint-rules/`, registered as the `local-rules`
+plugin):
+
+- **`no-workflow-domain-in-ui-primitives`** — files under `src/components/ui/` may
+  not import workflow-domain code (`src/features/workflows/`). Keeps shadcn/ui
+  primitives generic (story 2.2 AC7).
+- **`no-inline-query-keys`** — `useQuery`/`useMutation`/`useInfiniteQuery` must use a
+  query-key factory (`workflowKeys.*` from `src/lib/queryKeys/`), not an inline array
+  literal (story 2.7 AC4). Activates once TanStack Query lands in story 2.6; proven
+  now by fixture tests under `tools/eslint-rules/__tests__/`.
+
+Run the rule fixtures with `npm run lint:rules-test`.
+
+### Optional: local pre-commit hooks (Husky + lint-staged)
+
+Pre-commit hooks are **not installed by default** and are **not required**. If you
+want lint/format to run automatically on staged files before each commit, opt in
+locally:
+
+```bash
+npm install -D husky lint-staged
+npx husky init
+# .husky/pre-commit:
+#   npx lint-staged
+# package.json:
+#   "lint-staged": { "*.{ts,tsx}": ["eslint --max-warnings=0", "prettier --check"] }
+```
+
+This is a personal-workflow convenience; CI is the authoritative gate.
 
 ## Pinned versions
 

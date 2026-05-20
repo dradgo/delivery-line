@@ -1,0 +1,28 @@
+# Repo-wide editor config.
+#
+# Story ownership: story 2.30 (Backend Lint + Format) OWNS this file and will
+# extend it (Java specifics, Spotless alignment). Story 2.31 seeded the minimal
+# baseline below so the frontend has a shared config to match (2.31 AC8) while
+# 2.30 is still pending. Values follow story 2.30 AC5.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# Windows-only scripts may need CRLF (2.30 AC5 exception).
+[*.{cmd,bat,ps1}]
+end_of_line = crlf
+
+[*.java]
+indent_size = 4
+
+[*.{js,jsx,ts,tsx,json,jsonc,yml,yaml,css,html,md}]
+indent_size = 2
+
+# Markdown: keep hard line breaks meaningful.
+[*.md]
+trim_trailing_whitespace = false

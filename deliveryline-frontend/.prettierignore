@@ -1,0 +1,10 @@
+# Build output + deps + module-local Node install
+dist/
+target/
+node_modules/
+.frontend-node/
+coverage/
+
+# Generated / managed files
+package-lock.json
+*.tsbuildinfo

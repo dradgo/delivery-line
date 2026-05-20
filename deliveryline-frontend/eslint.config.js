@@ -1,0 +1,111 @@
+// Story 2.31 — frontend ESLint flat config.
+// Re-authored from scratch (story 2.1 deleted the Vite-template config).
+// `eslint-config-prettier` is applied LAST to disable stylistic rules Prettier owns (AC2).
+import js from '@eslint/js';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+import react from 'eslint-plugin-react';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
+import importPlugin from 'eslint-plugin-import';
+import prettier from 'eslint-config-prettier';
+import localRules from './tools/eslint-rules/index.js';
+
+export default tseslint.config(
+  // Never lint build output, deps, or the module-local Node install.
+  {
+    ignores: ['dist/**', 'target/**', 'node_modules/**', '.frontend-node/**', 'coverage/**'],
+  },
+
+  js.configs.recommended,
+
+  // ---- Application source: type-aware TS + React + a11y (AC1, AC3, AC6) ----
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    extends: [
+      ...tseslint.configs.recommendedTypeChecked,
+      react.configs.flat.recommended,
+      react.configs.flat['jsx-runtime'],
+      jsxA11y.flatConfigs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        // Type-aware linting without enumerating tsconfig paths; honours the
+        // strict flags in tsconfig.app.json (story 2.1).
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+      globals: { ...globals.browser },
+    },
+    settings: {
+      react: { version: 'detect' },
+      // eslint-plugin-import resolves TS + the `@/*` alias (added by story 2.2).
+      'import/resolver': { typescript: true },
+    },
+    plugins: {
+      'react-hooks': reactHooks,
+      'react-refresh': reactRefresh,
+      import: importPlugin,
+      'local-rules': localRules,
+    },
+    rules: {
+      // AC3 — TypeScript strict rules
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/strict-boolean-expressions': 'warn',
+      '@typescript-eslint/no-unnecessary-condition': 'warn',
+      '@typescript-eslint/consistent-type-imports': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+
+      // react-hooks (v5 — set explicitly for flat-config portability)
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+
+      // import hygiene — TypeScript already enforces module resolution, so
+      // no-unresolved is delegated to tsc to avoid false positives on the
+      // `@/*` alias before story 2.2 wires it.
+      'import/no-unresolved': 'off',
+      'import/no-duplicates': 'error',
+
+      // AC6 — jsx-a11y rules at error (supports WCAG 2.1 AA, story 2.25)
+      'jsx-a11y/anchor-is-valid': 'error',
+      'jsx-a11y/click-events-have-key-events': 'error',
+      'jsx-a11y/no-autofocus': 'error',
+      'jsx-a11y/role-has-required-aria-props': 'error',
+      'jsx-a11y/aria-props': 'error',
+      'jsx-a11y/aria-proptypes': 'error',
+      'jsx-a11y/aria-unsupported-elements': 'error',
+      'jsx-a11y/interactive-supports-focus': 'error',
+      'jsx-a11y/no-noninteractive-element-interactions': 'error',
+      'jsx-a11y/label-has-associated-control': 'error',
+
+      // AC5 — query keys must come from a factory (forward-looking to 2.6)
+      'local-rules/no-inline-query-keys': 'error',
+    },
+  },
+
+  // ---- AC4/AC7 — shadcn/ui primitives must stay generic (no workflow imports) ----
+  // Scoped to src/components/ui/** (created by story 2.2; harmless until then).
+  {
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    plugins: { 'local-rules': localRules },
+    rules: {
+      'local-rules/no-workflow-domain-in-ui-primitives': 'error',
+    },
+  },
+
+  // ---- Config + tooling files: TS parser (no type-aware project), Node globals ----
+  {
+    files: ['*.{js,ts}', 'tools/**/*.js'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { project: false, projectService: false },
+      globals: { ...globals.node },
+    },
+  },
+
+  // MUST be last — turn off stylistic rules handled by Prettier (AC2).
+  prettier,
+);
