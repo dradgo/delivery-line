@@ -26,6 +26,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<spring-shell.version>4.0.2</spring-shell.version>
+		<frontend-maven-plugin.skip>false</frontend-maven-plugin.skip>
 		<!-- Story 1.21 — quality plugin versions (centralized so modules opt in by <plugin> declaration only). -->
 		<spotless-maven-plugin.version>2.46.1</spotless-maven-plugin.version>
 		<google-java-format.version>1.27.0</google-java-format.version>

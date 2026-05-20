@@ -14,6 +14,8 @@ blocked until the foundation gate is green.
 | `foundation-gate` | **required** | Aggregate Epic-1 contract verification (story 1.23). MUST be a required status check on `main`. |
 | `format-static-checks (ubuntu-latest)` | recommended | Implicit via `foundation-gate` `needs:`. Listing explicitly improves PR-page UI signal. |
 | `format-static-checks (windows-latest)` | recommended | Same — explicit listing surfaces the per-OS pass in the PR UI. |
+| `frontend-build-tests (ubuntu-latest)` | recommended | Implicit dependency after story 2.1. Listing explicitly surfaces the Linux leg of the frontend matrix. |
+| `frontend-build-tests (windows-latest)` | recommended | Same — explicit listing surfaces the Windows leg of the frontend matrix. |
 | `backend-unit-tests (ubuntu-latest)` | recommended | Implicit dependency. |
 | `backend-unit-tests (windows-latest)` | recommended | Implicit dependency. |
 | `doctor-smoke (ubuntu-latest)` | recommended | Implicit dependency. Linux-only — story 1.17's matrix was collapsed to Ubuntu when the job grew a full-Spring-context boot; Windows coverage is tracked in `_bmad-output/implementation-artifacts/deferred-work.md`. |
@@ -55,11 +57,12 @@ are the operational steps for a repo admin to register `foundation-gate` as a re
    the dropdown. (The job must have run at least once on a PR so GitHub can offer it as a
    selectable check.)
 5. (Optional) Also select the per-OS jobs that block foundation-gate — e.g.
-   `format-static-checks (ubuntu-latest)`, `format-static-checks (windows-latest)`,
+    `format-static-checks (ubuntu-latest)`, `format-static-checks (windows-latest)`,
+   `frontend-build-tests (ubuntu-latest)`, `frontend-build-tests (windows-latest)`,
    `backend-unit-tests (ubuntu-latest)`, `backend-unit-tests (windows-latest)`, and
-   `doctor-smoke (ubuntu-latest)` (Linux-only — see the table above). `foundation-gate` already
-   depends on these, so they are implicitly required, but listing them explicitly gives clearer
-   PR-page UI signal.
+   `doctor-smoke (ubuntu-latest)` (Linux-only — see the table above). `foundation-gate`
+   already depends on these, so they are implicitly required, but listing them explicitly
+   gives clearer PR-page UI signal.
 6. Save the rule.
 
 ## Option B — `gh api` (scriptable)
@@ -77,6 +80,8 @@ gh api \
   -F 'required_status_checks[contexts][]=foundation-gate' \
   -F 'required_status_checks[contexts][]=format-static-checks (ubuntu-latest)' \
   -F 'required_status_checks[contexts][]=format-static-checks (windows-latest)' \
+  -F 'required_status_checks[contexts][]=frontend-build-tests (ubuntu-latest)' \
+  -F 'required_status_checks[contexts][]=frontend-build-tests (windows-latest)' \
   -F 'required_status_checks[contexts][]=backend-unit-tests (ubuntu-latest)' \
   -F 'required_status_checks[contexts][]=backend-unit-tests (windows-latest)' \
   -F 'required_status_checks[contexts][]=doctor-smoke (ubuntu-latest)' \
@@ -101,7 +106,7 @@ defense-in-depth so a compromised PR can't relax its own merge gate.
 foundation-gate
 ├── format-static-checks    (Linux + Windows matrix; Spotless + Checkstyle + SpotBugs)
 ├── runner-contract-fixtures
-├── frontend-build-tests    (placeholder until story 2.1)
+├── frontend-build-tests    (Linux + Windows matrix; Vite + frontend-maven-plugin)
 ├── backend-unit-tests      (Linux + Windows matrix; Surefire only)
 ├── backend-contract-tests  (Linux; Failsafe — ArchUnit + Testcontainers + contract + integration)
 ├── runner-image-compat

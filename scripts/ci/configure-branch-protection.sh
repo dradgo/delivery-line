@@ -24,6 +24,8 @@ REQUIRED_CHECKS=(
   "foundation-gate"
   "format-static-checks (ubuntu-latest)"
   "format-static-checks (windows-latest)"
+  "frontend-build-tests (ubuntu-latest)"
+  "frontend-build-tests (windows-latest)"
   "backend-unit-tests (ubuntu-latest)"
   "backend-unit-tests (windows-latest)"
   "doctor-smoke (ubuntu-latest)"

@@ -91,9 +91,13 @@ enabled.
 
 ## Known-issue footnotes
 
-(a) **Windows**: Long-path support is not yet validated; expect failures if the repo path exceeds
-260 characters. Enable `LongPathsEnabled` in the registry as a workaround. PowerShell 5.1 ships by
-default on Windows 11 and is the version the scripts target; PowerShell 7+ is also supported.
+(a) **Windows**: Long-path support validated for story 2.1 — no path under
+`deliveryline-frontend/node_modules/` exceeds 260 chars in the current dependency tree
+(React 18 + Vite 8 + TypeScript 6). If a future transitive dep changes this, enable
+`LongPathsEnabled` in the registry (`reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem
+/v LongPathsEnabled /t REG_DWORD /d 1 /f`, admin required) and document the mitigation in
+`deliveryline-frontend/README.md`. PowerShell 5.1 ships by default on Windows 11 and is the
+version the scripts target; PowerShell 7+ is also supported.
 
 (b) **macOS**: The file-watcher count limit (`maxfiles`) may need raising for large clones —
 `launchctl limit maxfiles 524288 524288`. The `os.arch` is `aarch64` on Apple Silicon and `x86_64`

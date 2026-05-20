@@ -13,6 +13,80 @@
 	<artifactId>deliveryline-frontend</artifactId>
 	<packaging>pom</packaging>
 	<name>deliveryline-frontend</name>
-	<description>Vite React TypeScript frontend module — wiring ships in Epic 2 (story 2.1).</description>
+	<description>Vite React TypeScript frontend module — Vite scaffold + frontend-maven-plugin wiring (story 2.1).</description>
+
+	<!--
+		Story 2.1 — frontend-maven-plugin wiring.
+
+		Why <packaging>pom</packaging>: this module produces no Java jar; the Vite build emits
+		a static asset bundle under target/dist/ which the backend module copies into
+		BOOT-INF/classes/static/ during its package phase. Maven still runs the lifecycle
+		(generate-resources / compile / package) so plugin <execution> bindings fire.
+
+		Skip toggle for local backend iteration:
+		    mvn -pl deliveryline-backend package -Dfrontend-maven-plugin.skip=true
+		CI must NEVER skip — the matrix job in .github/workflows/ci.yml runs the full pipeline.
+	-->
+
+	<properties>
+		<frontend-maven-plugin.version>1.15.1</frontend-maven-plugin.version>
+		<frontend-maven-plugin.skip>false</frontend-maven-plugin.skip>
+		<!-- Node pin per docs/supported-environments.md and architecture.md:135.
+		     Keep in sync; the frontend-maven-plugin does NOT resolve version ranges. -->
+		<node.version>v20.19.0</node.version>
+		<npm.version>10.8.2</npm.version>
+	</properties>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>com.github.eirslett</groupId>
+				<artifactId>frontend-maven-plugin</artifactId>
+				<version>${frontend-maven-plugin.version}</version>
+				<configuration>
+					<workingDirectory>${project.basedir}</workingDirectory>
+					<installDirectory>${project.basedir}/.frontend-node</installDirectory>
+					<skip>${frontend-maven-plugin.skip}</skip>
+				</configuration>
+				<executions>
+					<execution>
+						<id>install-node-and-npm</id>
+						<goals>
+							<goal>install-node-and-npm</goal>
+						</goals>
+						<phase>generate-resources</phase>
+						<configuration>
+							<nodeVersion>${node.version}</nodeVersion>
+							<npmVersion>${npm.version}</npmVersion>
+						</configuration>
+					</execution>
+					<execution>
+						<id>npm-ci</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>generate-resources</phase>
+						<configuration>
+							<!-- The no-audit / no-fund flags suppress network audit calls
+							     that fail in air-gapped CI and slow down cold runs on Windows
+							     runners. The prefer-offline flag keeps reproducible-build
+							     invariants intact while preferring cached registry tarballs. -->
+							<arguments>ci --no-audit --no-fund --prefer-offline</arguments>
+						</configuration>
+					</execution>
+					<execution>
+						<id>npm-run-build</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>generate-resources</phase>
+						<configuration>
+							<arguments>run build</arguments>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 
 </project>

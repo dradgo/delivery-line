@@ -17,9 +17,9 @@
 # "doctor-invoking smoke jobs" entrypoint and is also wired into foundation-gate.
 #
 # OS-matrix policy (AC3):
-#   - Linux + Windows: format-static-checks, backend-unit-tests.
-#   - Linux only:      runner-contract-fixtures, frontend-build-tests,
-#                      backend-contract-tests, runner-image-compat,
+#   - Linux + Windows: format-static-checks, frontend-build-tests,
+#                      backend-unit-tests.
+#   - Linux only:      runner-contract-fixtures, backend-contract-tests, runner-image-compat,
 #                      jar-packaging, bundled-jar-smoke, export-redaction-verify,
 #                      doctor-smoke (was on both OSes in 1.17; collapsed to
 #                      Ubuntu-only when 1.21 added a full-Spring-context boot
@@ -232,16 +232,27 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
-  # Tier 3: frontend-build-tests
-  # Placeholder until story 2.1 scaffolds Vite/React/TS. Current
-  # deliveryline-frontend/pom.xml is <packaging>pom</packaging> so `mvn verify`
-  # passes trivially. DO NOT delete — pins the tier slot in the needs: chain.
+  # Tier 3: frontend-build-tests (story 2.1 — Vite + frontend-maven-plugin)
+  #
+  # Matrix: ubuntu-latest + windows-latest. macOS deferred per story 1.17
+  # cross-platform support tier. A failure on either OS blocks every downstream
+  # tier and foundation-gate per AC10.
+  #
+  # `mvn -pl deliveryline-frontend clean package` exercises the full pipeline:
+  # Node install (module-local .frontend-node/) → npm ci → npm run build →
+  # target/dist/. The frontend-maven-plugin installs its own Node (per story 2.1
+  # spike-Q1 expectation), so no workflow-level `setup-node` step is needed —
+  # ambient Node would risk PATH interference on Windows runners.
   # ---------------------------------------------------------------------------
   frontend-build-tests:
-    name: frontend-build-tests
+    name: frontend-build-tests (${{ matrix.os }})
     needs: [runner-contract-fixtures]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -253,23 +264,34 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Set up Node (story 2.1 will activate)
-        if: hashFiles('deliveryline-frontend/package-lock.json') != ''
-        uses: actions/setup-node@v4
+      # Cache the module-local Node install + npm registry between runs.
+      # Key includes node.version + npm.version pins (from deliveryline-frontend/pom.xml)
+      # and the lockfile so a Node bump or dep change invalidates the cache cleanly.
+      - name: Cache frontend Node + npm
+        uses: actions/cache@v4
         with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: deliveryline-frontend/package-lock.json
+          path: |
+            deliveryline-frontend/.frontend-node
+            ~/.npm
+          key: frontend-node-${{ matrix.os }}-${{ hashFiles('deliveryline-frontend/pom.xml', 'deliveryline-frontend/package-lock.json') }}
+          restore-keys: |
+            frontend-node-${{ matrix.os }}-
 
-      - name: Frontend module verify (no-op until story 2.1)
-        run: ./mvnw -B -ntp -pl deliveryline-frontend verify
+      - name: Frontend build
+        shell: bash
+        run: ./mvnw -B -ntp -pl deliveryline-frontend clean package
 
       - name: Upload frontend build reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-build-tests-reports
-          path: deliveryline-frontend/target/
+          name: frontend-build-tests-reports-${{ matrix.os }}
+          # Narrow upload to reports + logs; exclude the SPA bundle and node_modules
+          # so retention quota isn't burned on artifacts that aren't review-relevant.
+          path: |
+            deliveryline-frontend/target/surefire-reports/
+            deliveryline-frontend/target/failsafe-reports/
+            deliveryline-frontend/target/*.log
           if-no-files-found: ignore
           retention-days: 14
 

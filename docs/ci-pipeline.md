@@ -9,7 +9,7 @@ and image builds. The pipeline lives at `.github/workflows/ci.yml`.
 ```mermaid
 flowchart TD
   fmt[format-static-checks<br/>ubuntu + windows] --> rcf[runner-contract-fixtures<br/>ubuntu]
-  rcf --> fe[frontend-build-tests<br/>ubuntu]
+  rcf --> fe[frontend-build-tests<br/>ubuntu + windows]
   fe --> bu[backend-unit-tests<br/>ubuntu + windows]
   bu --> bc[backend-contract-tests<br/>ubuntu]
   bc --> ric[runner-image-compat<br/>ubuntu]
@@ -30,7 +30,7 @@ flowchart TD
   ds --> fg
 
   classDef matrix fill:#fff7e0,stroke:#bbaa33
-  class fmt,bu,ds matrix
+  class fmt,fe,bu,ds matrix
 ```
 
 `bundled-jar-smoke` is intentionally **not** a foundation-gate dependency — it runs only on
@@ -42,7 +42,7 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | `format-static-checks` | ubuntu + windows | Spotless (Google Java Format), Checkstyle (`google_checks.xml`), SpotBugs (threshold `Medium` so MEDIUM findings appear in the XML/HTML report; only HIGH findings fail the build via the goal's default `failureThreshold`) | 30-60 s | Unformatted Java code, Checkstyle error-severity violation, HIGH-severity SpotBugs finding. Each plugin failure emits a `::error::` annotation: Spotless points at `./mvnw spotless:apply`; Checkstyle at the XML report under `deliveryline-backend/target/checkstyle-result.xml`; SpotBugs at the HTML report bundled in the uploaded `spotbugs-report-<os>` artifact. |
 | `runner-contract-fixtures` | ubuntu | Runs `RunnerContractValidatorTest` against the JSON schema fixtures in `deliveryline-runner-contracts/src/main/resources/schemas/`. Single OS — contracts are runtime-agnostic JSON. | < 2 min | Schema v1 fixture validates against `context-bundle.v1.schema.json` or `runner-result.v1.schema.json` mismatch. |
-| `frontend-build-tests` | ubuntu | Placeholder until story 2.1 scaffolds Vite/React/TS. Runs `mvn -pl deliveryline-frontend verify` — trivial pass on the `<packaging>pom</packaging>` placeholder module. | < 30 s | Will activate when story 2.1 wires the `frontend-maven-plugin` + Vite + npm pipeline. |
+| `frontend-build-tests` | ubuntu + windows | Story 2.1 — runs `mvn -pl deliveryline-frontend clean package`, which exercises the full `frontend-maven-plugin` chain: module-local Node v20.19.0 install → `npm ci` → `npm run build` (Vite) → `target/dist/`. Windows-matrix failure is build-blocking (never a warning). | 3-6 min (cold Node download); ~1 min warm | Vite build error (TypeScript strict-mode regression, missing dep), `npm ci` lockfile drift, Node download failure on Windows runner, frontend-maven-plugin execution error. |
 | `backend-unit-tests` | ubuntu + windows | Surefire-only pure unit tests. Excludes `@Tag(architecture\|integration\|contract\|known-failure)`. Pins JVM defaults `-Duser.timezone=UTC -Dfile.encoding=UTF-8`. | 2-4 min | Any pure-unit test failure (excluding F17 known-failure which is tagged out). |
 | `backend-contract-tests` | ubuntu | Failsafe — runs ArchUnit + Testcontainers + contract + integration tests on Linux (Testcontainers needs Docker). Picks up by `@Tag` or class-name suffix. AC7 — ArchUnit fails loudly with offending class + rule + remediation hint. Also runs the OpenAPI snapshot drift check (no-op until story 6.9). | 4-8 min | `ArchitectureBoundaryTest` rule violation, Testcontainers IT failure, contract-test failure, or (future) OpenAPI snapshot drift. |
 | `runner-image-compat` | ubuntu | Builds both `runners/codex` + `runners/claude` Dockerfiles (`FROM scratch` placeholders today), then re-runs `RunnerContractValidatorTest` against the committed schema v1 fixtures. AC4 — catches drift between schemas and compiled validator. | < 2 min | Dockerfile parse error, validator drift. |

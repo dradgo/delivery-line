@@ -20,6 +20,30 @@
 			<artifactId>deliveryline-runner-contracts</artifactId>
 			<version>${project.version}</version>
 		</dependency>
+		<!--
+			Story 2.1 — Build-order dependency on the Vite SPA bundle.
+
+			The frontend module is <packaging>pom</packaging> with no Java classes; this
+			<dependency type=pom> contributes nothing to the backend classpath, but it
+			forces Maven's reactor to build deliveryline-frontend BEFORE this module so
+			the maven-resources-plugin step below finds ../deliveryline-frontend/target/dist/
+			populated. The root POM declares <modules> in the order [backend, frontend,
+			runner-contracts]; without this <dependency> Maven would attempt backend first
+			and the AR32 enforcer (below) would always fail under reactor builds.
+		-->
+		<dependency>
+			<groupId>org.dradgo</groupId>
+			<artifactId>deliveryline-frontend</artifactId>
+			<version>${project.version}</version>
+			<type>pom</type>
+			<!-- scope=test: this dep exists solely to coerce reactor build order
+			     (frontend module before backend) so the maven-resources-plugin step
+			     below finds target/dist/ populated. Using scope=test keeps the
+			     edge out of the published backend POM's runtime/compile dependency
+			     graph — analyzers, IDEs, and downstream BOM consumers won't see a
+			     phantom dependency on a packaging=pom module that ships no artifact. -->
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
@@ -144,6 +168,136 @@
 					<excludeDockerCompose>false</excludeDockerCompose>
 					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
 				</configuration>
+			</plugin>
+
+			<!--
+				Story 2.1 — AR32 quality gate (AC3).
+
+				Fails the backend build with a clear remediation hint if the frontend Vite
+				bundle is missing. Bound to generate-resources (BEFORE the resources copy
+				below in process-resources) so the error surfaces before any artifact-copy
+				attempt. Under a reactor build (`mvn install` from root) the frontend
+				dependency above orders the frontend module first, so dist/ is present.
+				The failure mode this prevents: a developer runs
+				`mvn -pl deliveryline-backend package` alone and ships a backend jar with
+				no SPA.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<!-- Pin explicitly rather than relying on Spring Boot's pluginManagement
+				     so the AR32 quality-gate behavior is deterministic across Spring Boot
+				     parent upgrades. Bump in lock-step with Spring Boot's bundled version. -->
+				<version>3.4.1</version>
+				<executions>
+					<execution>
+						<id>require-frontend-dist</id>
+						<phase>generate-resources</phase>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<!-- Same skip toggle as frontend-maven-plugin (deliveryline-frontend/pom.xml).
+							     Without this, `-Dfrontend-maven-plugin.skip=true` skips the frontend
+							     build but the enforcer still hard-fails — breaking the documented
+							     backend-only local iteration workflow. -->
+							<skip>${frontend-maven-plugin.skip}</skip>
+							<rules>
+								<requireFilesExist>
+									<files>
+										<file>${maven.multiModuleProjectDirectory}/deliveryline-frontend/target/dist/index.html</file>
+									</files>
+									<message>Frontend dist missing — run 'mvn -pl deliveryline-frontend package' first, or run 'mvn install' from the reactor root.</message>
+								</requireFilesExist>
+							</rules>
+							<fail>true</fail>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+				Story 2.1 — Wipe target/classes/static/ before fresh copy (AC4).
+
+				Bound to process-resources (BEFORE the copy execution below at prepare-package
+				phase, in lifecycle order). Without this, renamed or removed Vite chunks from
+				a prior build linger in BOOT-INF/classes/static/ during incremental builds
+				(without `clean`), producing inconsistent jar contents that point at deleted
+				bundle assets.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-clean-plugin</artifactId>
+				<version>3.4.0</version>
+				<executions>
+					<execution>
+						<id>wipe-static-before-copy</id>
+						<phase>process-resources</phase>
+						<goals>
+							<goal>clean</goal>
+						</goals>
+						<configuration>
+							<excludeDefaultDirectories>true</excludeDefaultDirectories>
+							<filesets>
+								<fileset>
+									<directory>${project.build.directory}/classes/static/assets</directory>
+								</fileset>
+								<fileset>
+									<directory>${project.build.directory}/classes/static</directory>
+									<includes>
+										<include>index.html</include>
+										<include>favicon.svg</include>
+										<include>icons.svg</include>
+										<include>vite.svg</include>
+									</includes>
+								</fileset>
+							</filesets>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+				Story 2.1 — Copy Vite bundle into Spring Boot static resources (AC3 + AC4).
+
+				Writes to ${project.build.directory}/classes/static/ (Spring Boot's repackage
+				step copies everything under target/classes/ into BOOT-INF/classes/ in the
+				executable jar). NOT writing to src/main/resources/static/ despite AC3's
+				literal wording — generated content under src/ pollutes the working tree,
+				breaks reproducible builds, and would be linted as source. End-state under
+				BOOT-INF/classes/static/ is identical (per AC4 invariant).
+
+				Bound to prepare-package (NOT process-resources): the default-resources
+				execution also runs in process-resources and copies src/main/resources/static/
+				if it ever gains files; binding to prepare-package guarantees the Vite copy
+				lands after default-resources has settled, with deterministic precedence.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>copy-frontend-dist</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<skip>${frontend-maven-plugin.skip}</skip>
+							<outputDirectory>${project.build.directory}/classes/static</outputDirectory>
+							<resources>
+								<resource>
+									<!-- ${maven.multiModuleProjectDirectory} matches the enforcer
+									     above; using ${project.basedir}/../ broke on Windows during
+									     story 2.1 dev (see Debug Log) and works through reactor
+									     re-roots / symlinks less reliably. -->
+									<directory>${maven.multiModuleProjectDirectory}/deliveryline-frontend/target/dist</directory>
+									<filtering>false</filtering>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 
 			<!-- Story 1.21 — quality plugins (versions from root pluginManagement). -->

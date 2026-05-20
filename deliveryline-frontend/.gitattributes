@@ -1,0 +1,35 @@
+# Story 2.1 — line-ending hygiene for the deliveryline-frontend module.
+#
+# Default to LF for all text. CRLF only for Windows-only scripts (none today,
+# reserved for future). Defends Vitest snapshots + Vite build artifacts against
+# CRLF contamination from Windows checkouts with core.autocrlf=true.
+
+* text=auto eol=lf
+
+# Windows-only scripts (reserved for future)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Explicit LF for lockfiles + config + source — keep Vitest snapshots stable
+package-lock.json text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary assets — no normalization
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg text eol=lf
+*.ico binary
+*.woff binary
+*.woff2 binary
