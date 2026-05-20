@@ -99,6 +99,16 @@
 						</configuration>
 					</execution>
 					<execution>
+						<id>npm-run-lint-rules-test</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run lint:rules-test</arguments>
+						</configuration>
+					</execution>
+					<execution>
 						<id>npm-run-format-check</id>
 						<goals>
 							<goal>npm</goal>

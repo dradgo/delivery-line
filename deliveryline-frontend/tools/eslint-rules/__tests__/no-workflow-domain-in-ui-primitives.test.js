@@ -43,6 +43,18 @@ test('no-workflow-domain-in-ui-primitives', () => {
         filename: 'src/components/ui/badge.tsx',
         errors: [{ messageId: 'workflowImport' }],
       },
+      // lazy runtime import of workflow domain inside a primitive
+      {
+        code: "export async function load() { return import('@/features/workflows/types'); }",
+        filename: 'src/components/ui/dialog.tsx',
+        errors: [{ messageId: 'workflowImport' }],
+      },
+      // type-only import expression of workflow domain inside a primitive
+      {
+        code: "type WorkflowRun = import('@/features/workflows/types').WorkflowRun;\nexport const x = 1;",
+        filename: 'src/components/ui/avatar.tsx',
+        errors: [{ messageId: 'workflowImport' }],
+      },
     ],
   });
 });

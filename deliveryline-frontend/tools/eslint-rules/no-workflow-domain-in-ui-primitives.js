@@ -3,9 +3,10 @@
  *
  * shadcn/ui primitives under `src/components/ui/` must remain generic and
  * reusable: they may NOT import DeliveryLine workflow-domain code. This rule
- * flags any import whose source resolves into `src/features/workflows/`
- * (alias `@/features/workflows`, or a relative path ending in
- * `features/workflows[/...]`) from a file located under `src/components/ui/`.
+ * flags any static, lazy, or type-only import whose source resolves into
+ * `src/features/workflows/` (alias `@/features/workflows`, or a relative path
+ * ending in `features/workflows[/...]`) from a file located under
+ * `src/components/ui/`.
  *
  * Scoping note: the ESLint flat config restricts this rule to
  * `src/components/ui/**`, but the rule ALSO guards on the filename so it is
@@ -58,6 +59,8 @@ const rule = {
       // also catch `export ... from 'src/features/workflows/...'` re-exports
       ExportNamedDeclaration: (node) => node.source && check(node),
       ExportAllDeclaration: check,
+      ImportExpression: (node) => check({ source: node.source }),
+      TSImportType: (node) => check({ source: node.source }),
     };
   },
 };

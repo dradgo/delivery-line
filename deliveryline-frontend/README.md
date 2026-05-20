@@ -94,10 +94,10 @@ The Vitest test runner ships with story 2.27.
 
 ESLint (flat config, `eslint.config.js`) + Prettier (`.prettierrc.json`) enforce
 TypeScript-strict, React-hooks, accessibility (`jsx-a11y`), and import hygiene on
-every PR. `npm run lint` + `npm run format:check` run inside `mvn -pl
+every PR. `npm run lint` + `npm run lint:rules-test` + `npm run format:check` run inside `mvn -pl
 deliveryline-frontend clean package` (via `frontend-maven-plugin` executions), so
 the `frontend-build-tests` CI matrix — wired into `foundation-gate` — gates merges
-on lint/format cleanliness.
+on lint/format cleanliness and custom-rule drift.
 
 **Prettier conventions** (`.prettierrc.json`): single quotes, trailing commas
 `all`, semicolons, 2-space indent, 100-char print width. `eslint-config-prettier`
@@ -107,14 +107,17 @@ disables stylistic ESLint rules so the two tools never conflict.
 plugin):
 
 - **`no-workflow-domain-in-ui-primitives`** — files under `src/components/ui/` may
-  not import workflow-domain code (`src/features/workflows/`). Keeps shadcn/ui
-  primitives generic (story 2.2 AC7).
+  not import workflow-domain code (`src/features/workflows/`) through static imports,
+  lazy imports, or type-only import expressions. Keeps shadcn/ui primitives generic
+  (story 2.2 AC7).
 - **`no-inline-query-keys`** — `useQuery`/`useMutation`/`useInfiniteQuery` must use a
   query-key factory (`workflowKeys.*` from `src/lib/queryKeys/`), not an inline array
-  literal (story 2.7 AC4). Activates once TanStack Query lands in story 2.6; proven
-  now by fixture tests under `tools/eslint-rules/__tests__/`.
+  literal or other non-factory key expression (story 2.7 AC4). Activates once
+  TanStack Query lands in story 2.6; proven now by fixture tests under
+  `tools/eslint-rules/__tests__/`.
 
-Run the rule fixtures with `npm run lint:rules-test`.
+Run the rule fixtures manually with `npm run lint:rules-test`; the same fixture suite
+also runs in the enforced Maven/CI path.
 
 ### Optional: local pre-commit hooks (Husky + lint-staged)
 
