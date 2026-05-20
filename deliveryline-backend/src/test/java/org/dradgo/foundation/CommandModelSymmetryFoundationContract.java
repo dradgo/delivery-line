@@ -44,9 +44,9 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <ol>
  *   <li>the sealed permit set stays explicit and every permit still maps to the canonical REST
- *       command record, and</li>
- *   <li>submit remains equivalent across REST and CLI for the same payload and mocked
- *       {@code DomainResult}.</li>
+ *       command record, and
+ *   <li>submit remains equivalent across REST and CLI for the same payload and mocked {@code
+ *       DomainResult}.
  * </ol>
  */
 @Tag("foundation-gate")
@@ -166,9 +166,7 @@ class CommandModelSymmetryFoundationContract {
     when(workflowCommandService.rejectSpec(any()))
         .thenReturn(
             new WorkflowStateChangeResult(
-                "run_found_submit01",
-                WorkflowState.WAITING_FOR_SPEC_APPROVAL,
-                "corr-reject-1"));
+                "run_found_submit01", WorkflowState.WAITING_FOR_SPEC_APPROVAL, "corr-reject-1"));
     RejectSpecCommand capturedReject =
         captureReject(
             "/api/v1/workflows/run_found_submit01/reject-spec",

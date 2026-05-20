@@ -33,9 +33,9 @@ import org.springframework.test.context.ActiveProfiles;
  * Open Clarification #3 ("use the existing convention"), the manifest is the source of truth for
  * forbidden snippets.
  *
- * <p>Silent-fixture invariant: every {@code .txt}/{@code .json}/{@code .env}/{@code .pem}/{@code .yaml}
- * file under {@code redaction-fixtures/} (except the manifest and README) MUST be enumerated in
- * the manifest. Drop-in fixtures without a declared forbidden-snippet set hide contract drift.
+ * <p>Silent-fixture invariant: every {@code .txt}/{@code .json}/{@code .env}/{@code .pem}/{@code
+ * .yaml} file under {@code redaction-fixtures/} (except the manifest and README) MUST be enumerated
+ * in the manifest. Drop-in fixtures without a declared forbidden-snippet set hide contract drift.
  */
 @Tag("foundation-gate")
 @SpringBootTest
@@ -46,7 +46,8 @@ class RedactionAdversarialFoundationContract {
   private static final Path FIXTURE_ROOT =
       Path.of("src", "test", "resources", "redaction-fixtures");
   private static final Path MANIFEST = FIXTURE_ROOT.resolve("fixtures-manifest.json");
-  private static final Set<String> NON_FIXTURE_FILES = Set.of("README.md", "fixtures-manifest.json");
+  private static final Set<String> NON_FIXTURE_FILES =
+      Set.of("README.md", "fixtures-manifest.json");
 
   @Autowired private RedactionPolicyService redactionPolicyService;
 
@@ -55,15 +56,13 @@ class RedactionAdversarialFoundationContract {
     if (!Files.isDirectory(FIXTURE_ROOT)) {
       fail(
           FoundationGateAssertions.tagged(
-              "1.10",
-              "redaction-fixtures directory missing at " + FIXTURE_ROOT.toAbsolutePath()));
+              "1.10", "redaction-fixtures directory missing at " + FIXTURE_ROOT.toAbsolutePath()));
       return;
     }
     if (!Files.isRegularFile(MANIFEST)) {
       fail(
           FoundationGateAssertions.tagged(
-              "1.10",
-              "fixtures-manifest.json missing at " + MANIFEST.toAbsolutePath()));
+              "1.10", "fixtures-manifest.json missing at " + MANIFEST.toAbsolutePath()));
       return;
     }
 
@@ -81,7 +80,8 @@ class RedactionAdversarialFoundationContract {
     Set<String> manifestFilenames = new LinkedHashSet<>();
     for (JsonNode entry : entries) {
       String filename = entry.path("file").asText("");
-      String claimedClassification = entry.path("minimumClassification").asText("shareable-redacted");
+      String claimedClassification =
+          entry.path("minimumClassification").asText("shareable-redacted");
       JsonNode forbiddenSnippetsNode = entry.path("forbiddenSnippets");
       if (filename.isEmpty()) {
         violations.add("manifest entry missing 'file' field: " + entry);
@@ -167,10 +167,10 @@ class RedactionAdversarialFoundationContract {
   }
 
   /**
-   * Reads a fixture as UTF-8, but tolerates non-UTF-8 bytes (e.g. binary {@code .pem} payloads)
-   * by replacing them with the Unicode replacement character. The redaction sweep still surfaces
-   * any embedded ASCII secrets without {@link Files#readString} throwing
-   * {@code CharacterCodingException} mid-fixture and burying the real contract assertion.
+   * Reads a fixture as UTF-8, but tolerates non-UTF-8 bytes (e.g. binary {@code .pem} payloads) by
+   * replacing them with the Unicode replacement character. The redaction sweep still surfaces any
+   * embedded ASCII secrets without {@link Files#readString} throwing {@code
+   * CharacterCodingException} mid-fixture and burying the real contract assertion.
    */
   private static String readFixtureAsUtf8WithReplacement(Path fixture) throws IOException {
     byte[] raw = Files.readAllBytes(fixture);

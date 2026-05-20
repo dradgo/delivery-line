@@ -47,9 +47,7 @@ class FixtureEventStreamArtifactVariantCoverageContractTest {
 
     List<Path> fixtures = listFixtureJson();
     if (fixtures.isEmpty()) {
-      fail(
-          "[story 1.23] no fixture .json files found under "
-              + FIXTURE_ROOT.toAbsolutePath());
+      fail("[story 1.23] no fixture .json files found under " + FIXTURE_ROOT.toAbsolutePath());
       return;
     }
 
@@ -69,7 +67,8 @@ class FixtureEventStreamArtifactVariantCoverageContractTest {
 
     for (String required : EXPECTED_VARIANTS) {
       if (!observed.contains(required)) {
-        violations.add("expected artifact variant '" + required + "' is not present in any fixture");
+        violations.add(
+            "expected artifact variant '" + required + "' is not present in any fixture");
       }
     }
     for (String surprise : observed) {

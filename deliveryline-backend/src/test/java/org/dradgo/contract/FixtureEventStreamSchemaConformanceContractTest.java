@@ -33,16 +33,16 @@ import org.junit.jupiter.api.Test;
 /**
  * Story 1.23 Task 7 — fixture event-stream schema conformance.
  *
- * <p>Every {@code .json} fixture under {@code src/test/resources/fixture-event-streams/}
- * (excluding the {@code schema/} sub-directory) MUST conform to the authoritative wire shape
- * described by {@code workflow-events-response.schema.json}. The check is programmatic to keep
- * the test free of additional schema-validator dependencies, but the assertions mirror the
- * required-fields / enum / pattern / forbidden-keys constraints declared in the schema file.
+ * <p>Every {@code .json} fixture under {@code src/test/resources/fixture-event-streams/} (excluding
+ * the {@code schema/} sub-directory) MUST conform to the authoritative wire shape described by
+ * {@code workflow-events-response.schema.json}. The check is programmatic to keep the test free of
+ * additional schema-validator dependencies, but the assertions mirror the required-fields / enum /
+ * pattern / forbidden-keys constraints declared in the schema file.
  *
  * <p>Tagged {@code @Tag("contract")} so it runs in the existing {@code backend-contract-tests} CI
  * tier (defense-in-depth: a fixture-only change fails contract tests even before foundation-gate
- * runs) AND {@code @Tag("foundation-gate")} so the dedicated {@code foundation-gate} job's
- * {@code <groups>} filter picks it up too.
+ * runs) AND {@code @Tag("foundation-gate")} so the dedicated {@code foundation-gate} job's {@code
+ * <groups>} filter picks it up too.
  */
 @Tag("contract")
 @Tag("foundation-gate")
@@ -89,12 +89,12 @@ class FixtureEventStreamSchemaConformanceContractTest {
 
   /**
    * Authoritative schema-validator pass (story 1.23 review patch P16). Wires {@code
-   * com.networknt:json-schema-validator} draft-2020-12 against
-   * {@code workflow-events-response.schema.json} and runs every fixture through it. The
-   * programmatic-check method below stays as defense-in-depth: a hand-rolled subset of the schema
-   * rules that catches things schema validation would also catch (so a schema-file regression
-   * does not silently weaken the gate) plus a handful of operational invariants (server-only
-   * keys forbidden, deterministic-id patterns, ISO-8601 parsability) the schema does not encode.
+   * com.networknt:json-schema-validator} draft-2020-12 against {@code
+   * workflow-events-response.schema.json} and runs every fixture through it. The programmatic-check
+   * method below stays as defense-in-depth: a hand-rolled subset of the schema rules that catches
+   * things schema validation would also catch (so a schema-file regression does not silently weaken
+   * the gate) plus a handful of operational invariants (server-only keys forbidden,
+   * deterministic-id patterns, ISO-8601 parsability) the schema does not encode.
    */
   @Test
   void everyFixtureJsonValidatesAgainstTheNetworkntJsonSchemaValidator() throws IOException {
@@ -155,7 +155,8 @@ class FixtureEventStreamSchemaConformanceContractTest {
 
     if (!Files.isRegularFile(SCHEMA_FILE)) {
       fail(
-          "[story 1.23] schema file missing at " + SCHEMA_FILE.toAbsolutePath()
+          "[story 1.23] schema file missing at "
+              + SCHEMA_FILE.toAbsolutePath()
               + " — fixture event-stream contract cannot be loaded");
       return;
     }
@@ -236,9 +237,7 @@ class FixtureEventStreamSchemaConformanceContractTest {
     JsonNode runId = workflowRun.path("publicId");
     if (runId.isTextual() && !RUN_ID.matcher(runId.asText()).matches()) {
       violations.add(
-          fixture
-              + " workflowRun.publicId does not match run_<alnum>: "
-              + runId.asText());
+          fixture + " workflowRun.publicId does not match run_<alnum>: " + runId.asText());
     }
     JsonNode createdAt = workflowRun.path("createdAt");
     if (createdAt.isTextual()) {
@@ -255,9 +254,7 @@ class FixtureEventStreamSchemaConformanceContractTest {
     if (!terminal.isMissingNode() && !terminal.isNull()) {
       if (!terminal.isTextual() || !WORKFLOW_STATE_VALUES.contains(terminal.asText())) {
         violations.add(
-            fixture
-                + " workflowRun.terminalState is not a known WorkflowState value: "
-                + terminal);
+            fixture + " workflowRun.terminalState is not a known WorkflowState value: " + terminal);
       }
     }
   }
@@ -320,8 +317,7 @@ class FixtureEventStreamSchemaConformanceContractTest {
     }
     JsonNode runRef = event.path("workflowRunPublicId");
     if (runRef.isTextual() && !RUN_ID.matcher(runRef.asText()).matches()) {
-      violations.add(
-          ctx + ".workflowRunPublicId does not match run_<alnum>: " + runRef.asText());
+      violations.add(ctx + ".workflowRunPublicId does not match run_<alnum>: " + runRef.asText());
     }
     JsonNode eventType = event.path("eventType");
     if (eventType.isTextual() && !EVENT_TYPE_VALUES.contains(eventType.asText())) {
@@ -350,7 +346,8 @@ class FixtureEventStreamSchemaConformanceContractTest {
       try {
         OffsetDateTime.parse(createdAt.asText());
       } catch (DateTimeParseException ex) {
-        violations.add(ctx + ".createdAt is not a valid ISO-8601 offset date-time: " + createdAt.asText());
+        violations.add(
+            ctx + ".createdAt is not a valid ISO-8601 offset date-time: " + createdAt.asText());
       }
     }
 

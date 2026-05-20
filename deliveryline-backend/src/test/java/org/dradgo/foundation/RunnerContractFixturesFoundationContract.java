@@ -15,26 +15,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.dradgo.runnercontracts.RunnerContractValidator;
+import org.dradgo.runnercontracts.RunnerContractValidator.ValidationTarget;
 import org.dradgo.runnercontracts.ValidationContext;
 import org.dradgo.runnercontracts.ValidationError;
 import org.dradgo.runnercontracts.ValidationErrorCode;
 import org.dradgo.runnercontracts.ValidationResult;
-import org.dradgo.runnercontracts.RunnerContractValidator.ValidationTarget;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Foundation contract #5 — every {@link RunnerContractValidator} fixture in the
- * {@code deliveryline-runner-contracts} test corpus passes (for {@code valid/}) or fails with the
- * expected {@link ValidationErrorCode} (for {@code invalid/}).
+ * Foundation contract #5 — every {@link RunnerContractValidator} fixture in the {@code
+ * deliveryline-runner-contracts} test corpus passes (for {@code valid/}) or fails with the expected
+ * {@link ValidationErrorCode} (for {@code invalid/}).
  *
- * <p>Story 1.23 AC2 #5 calls for an {@code .expected-error} sidecar convention; the project
- * already maintains an equivalent manifest at
- * {@code fixture-expectations.json}. Per Open Clarification #2 ("use the existing convention"),
- * the contract reads that manifest rather than introducing a parallel sidecar format.
+ * <p>Story 1.23 AC2 #5 calls for an {@code .expected-error} sidecar convention; the project already
+ * maintains an equivalent manifest at {@code fixture-expectations.json}. Per Open Clarification #2
+ * ("use the existing convention"), the contract reads that manifest rather than introducing a
+ * parallel sidecar format.
  *
- * <p>Fixture paths resolve filesystem-relative to the {@code deliveryline-backend/} CWD —
- * Maven runs Failsafe with that as the working directory, so {@code ../deliveryline-runner-contracts/...}
+ * <p>Fixture paths resolve filesystem-relative to the {@code deliveryline-backend/} CWD — Maven
+ * runs Failsafe with that as the working directory, so {@code ../deliveryline-runner-contracts/...}
  * reaches the sibling module's test resources without requiring a {@code test-jar} dependency.
  */
 @Tag("foundation-gate")
@@ -56,8 +56,7 @@ class RunnerContractFixturesFoundationContract {
       fail(
           FoundationGateAssertions.tagged(
               "1.6",
-              "valid fixture directory missing at "
-                  + VALID_FIXTURE_DIRECTORY.toAbsolutePath()));
+              "valid fixture directory missing at " + VALID_FIXTURE_DIRECTORY.toAbsolutePath()));
       return;
     }
     if (!Files.isDirectory(INVALID_FIXTURE_DIRECTORY)) {
@@ -111,8 +110,7 @@ class RunnerContractFixturesFoundationContract {
       String targetName = entry.path("target").asText("");
       String expectedCode = entry.path("expectedCode").asText("");
       if (pathFromManifest.isEmpty() || targetName.isEmpty() || expectedCode.isEmpty()) {
-        violations.add(
-            "manifest entry missing path/target/expectedCode: " + entry.toString());
+        violations.add("manifest entry missing path/target/expectedCode: " + entry.toString());
         continue;
       }
       Path fixture = resolveManifestPath(pathFromManifest);
@@ -152,13 +150,10 @@ class RunnerContractFixturesFoundationContract {
       ValidationResult result = validator.validateFixture(target, fixture, context);
       if (result.valid()) {
         violations.add(
-            "invalid fixture "
-                + fixture.getFileName()
-                + " unexpectedly passed validation");
+            "invalid fixture " + fixture.getFileName() + " unexpectedly passed validation");
         continue;
       }
-      boolean found =
-          result.errors().stream().anyMatch(err -> err.code() == expected);
+      boolean found = result.errors().stream().anyMatch(err -> err.code() == expected);
       if (!found) {
         violations.add(
             "invalid fixture "
@@ -200,7 +195,8 @@ class RunnerContractFixturesFoundationContract {
     // runner-contracts module). Resolve against RUNNER_FIXTURE_ROOT by stripping the
     // "src/test/resources/fixtures/" prefix, falling back to the raw path otherwise.
     String prefix = "src/test/resources/fixtures/";
-    String tail = manifestPath.startsWith(prefix) ? manifestPath.substring(prefix.length()) : manifestPath;
+    String tail =
+        manifestPath.startsWith(prefix) ? manifestPath.substring(prefix.length()) : manifestPath;
     return RUNNER_FIXTURE_ROOT.resolve(tail);
   }
 
@@ -245,7 +241,9 @@ class RunnerContractFixturesFoundationContract {
 
   private static ValidationTarget targetFor(Path fixture) {
     String name = fixture.getFileName().toString();
-    return name.startsWith("context-bundle") ? ValidationTarget.CONTEXT_BUNDLE : ValidationTarget.RUNNER_RESULT;
+    return name.startsWith("context-bundle")
+        ? ValidationTarget.CONTEXT_BUNDLE
+        : ValidationTarget.RUNNER_RESULT;
   }
 
   private static String summarize(List<ValidationError> errors) {

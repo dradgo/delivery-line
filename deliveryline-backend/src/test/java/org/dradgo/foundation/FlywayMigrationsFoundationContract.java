@@ -20,19 +20,19 @@ import org.testcontainers.utility.DockerImageName;
  * Foundation contract #2 — Flyway V1 migrations apply cleanly on a <em>fresh</em> PostgreSQL
  * container (no shared singleton, no Spring auto-configuration carry-over).
  *
- * <p>Story 1.23 AC2 #2 plus review patch P13 require this contract to boot its own dedicated
- * {@link PostgreSQLContainer} per test class and invoke {@link Flyway#migrate()} directly so the
- * assertion proves migrations succeed on a database that has never seen them before. The repo's
- * canonical Postgres image is {@code postgres:17.2} (pinned in
- * {@code org.dradgo.TestcontainersConfiguration}); we reuse that tag here rather than re-introducing
- * a divergent version per AC2 #2's anti-pattern note. If the canonical pin moves, this contract
+ * <p>Story 1.23 AC2 #2 plus review patch P13 require this contract to boot its own dedicated {@link
+ * PostgreSQLContainer} per test class and invoke {@link Flyway#migrate()} directly so the assertion
+ * proves migrations succeed on a database that has never seen them before. The repo's canonical
+ * Postgres image is {@code postgres:17.2} (pinned in {@code
+ * org.dradgo.TestcontainersConfiguration}); we reuse that tag here rather than re-introducing a
+ * divergent version per AC2 #2's anti-pattern note. If the canonical pin moves, this contract
  * follows it.
  *
  * <p>Two assertions: (1) {@link MigrateResult#success} is true AND {@code successCount} equals the
- * total migration count, AND (2) every {@link MigrationInfo} in the post-migration
- * {@link Flyway#info()} reports {@link MigrationState#SUCCESS}. The second assertion is the same
- * invariant the prior shared-container test made; keeping it preserves visibility into per-
- * migration state even when the aggregate success flag is true.
+ * total migration count, AND (2) every {@link MigrationInfo} in the post-migration {@link
+ * Flyway#info()} reports {@link MigrationState#SUCCESS}. The second assertion is the same invariant
+ * the prior shared-container test made; keeping it preserves visibility into per- migration state
+ * even when the aggregate success flag is true.
  */
 @Tag("foundation-gate")
 @Testcontainers

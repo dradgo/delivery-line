@@ -25,10 +25,10 @@ import org.junit.jupiter.api.Test;
  * legal transition per {@link WorkflowTransitionTable}. The only allowed partial transition shape
  * is the initial Inbox bootstrap event ({@code priorState=null, resultingState=Inbox}).
  *
- * <p>Special-case handling matches {@link WorkflowTransitionTable#assertTransitionAllowed}:
- * {@code Executing -> Failed} requires a non-null {@link FailureCategory} value from the
- * runner-failure set; other transitions must not carry a failure category. {@code TakenOver} and
- * {@code Reconciled} targets must carry a non-blank reason.
+ * <p>Special-case handling matches {@link WorkflowTransitionTable#assertTransitionAllowed}: {@code
+ * Executing -> Failed} requires a non-null {@link FailureCategory} value from the runner-failure
+ * set; other transitions must not carry a failure category. {@code TakenOver} and {@code
+ * Reconciled} targets must carry a non-blank reason.
  */
 @Tag("contract")
 @Tag("foundation-gate")
@@ -149,7 +149,8 @@ class FixtureEventStreamTransitionIntegrityContractTest {
           continue;
         }
 
-        FailureCategory failureCategory = parseFailureCategoryNullable(event.path("failureCategory"));
+        FailureCategory failureCategory =
+            parseFailureCategoryNullable(event.path("failureCategory"));
         String reason = event.path("reason").isTextual() ? event.path("reason").asText() : null;
         try {
           table.assertTransitionAllowed(

@@ -18,14 +18,13 @@ import org.junit.jupiter.api.Test;
  * list, so Maven discovery skips them; the Launcher API discovers them by FQN.
  *
  * <p><strong>Maven routing.</strong> Tagged {@code @Tag("foundation-gate")}. Both Surefire and
- * Failsafe in {@code deliveryline-backend/pom.xml} list {@code foundation-gate} under
- * {@code <excludedGroups>}; the dedicated {@code foundation-gate} Maven profile clears that
- * exclusion and adds {@code <groups>foundation-gate</groups>} so the test only runs in its
- * dedicated CI tier.
+ * Failsafe in {@code deliveryline-backend/pom.xml} list {@code foundation-gate} under {@code
+ * <excludedGroups>}; the dedicated {@code foundation-gate} Maven profile clears that exclusion and
+ * adds {@code <groups>foundation-gate</groups>} so the test only runs in its dedicated CI tier.
  *
- * <p>Per story 1.23 AC1, failure messages produced by the helpers in
- * {@link FoundationGateAssertions} start with {@code [story X.Y]} so CI logs point at the broken
- * contract on first glance.
+ * <p>Per story 1.23 AC1, failure messages produced by the helpers in {@link
+ * FoundationGateAssertions} start with {@code [story X.Y]} so CI logs point at the broken contract
+ * on first glance.
  */
 @Tag("foundation-gate")
 @DisplayName("Foundation Gate Verification (story 1.23)")
@@ -144,7 +143,8 @@ class FoundationGateVerificationTest {
 
   @Nested
   @Tag("foundation-gate")
-  @DisplayName("Contract #9 — RedactionPolicyService redacts every adversarial fixture (story 1.10)")
+  @DisplayName(
+      "Contract #9 — RedactionPolicyService redacts every adversarial fixture (story 1.10)")
   class Contract09RedactionAdversarial {
 
     @Test
@@ -170,15 +170,16 @@ class FoundationGateVerificationTest {
     /**
      * Direct short-circuit assertion (story 1.23 review patch P15). The "draft → available →
      * approval-eligible" sequence the AC describes is, at the workflow level, "any state →
-     * (artifact reaches AVAILABLE, which advances the run to WAITING_FOR_SPEC_APPROVAL) →
-     * EXECUTING (approved)". Skipping AVAILABLE means the workflow run never advances to
+     * (artifact reaches AVAILABLE, which advances the run to WAITING_FOR_SPEC_APPROVAL) → EXECUTING
+     * (approved)". Skipping AVAILABLE means the workflow run never advances to
      * WAITING_FOR_SPEC_APPROVAL, and the legal-table makes WAITING_FOR_SPEC_APPROVAL the ONLY
-     * source state allowed to transition to EXECUTING via the approve path. This nested
-     * assertion proves the gate independently of the delegate-run above so a corrupted
+     * source state allowed to transition to EXECUTING via the approve path. This nested assertion
+     * proves the gate independently of the delegate-run above so a corrupted
      * ArtifactOperationServiceContractTest cannot silently mask the invariant.
      */
     @Test
-    @DisplayName("Direct short-circuit assertion — non-approval-ready states cannot reach EXECUTING")
+    @DisplayName(
+        "Direct short-circuit assertion — non-approval-ready states cannot reach EXECUTING")
     void cannotShortCircuitFromNonApprovalStateToExecuting() {
       org.dradgo.application.workflow.WorkflowTransitionTable table =
           org.dradgo.application.workflow.WorkflowTransitionTable.defaultTable();

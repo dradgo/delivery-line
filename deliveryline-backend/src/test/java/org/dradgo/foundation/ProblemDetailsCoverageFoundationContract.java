@@ -25,9 +25,9 @@ import org.springframework.mock.web.MockHttpServletRequest;
 
 /**
  * Foundation contract #7 — {@link ProblemDetailsCatalog} maps every {@link DomainErrorCode} to a
- * stable {@link ProblemDetailsMetadata} entry, AND {@link ProblemDetailsMapper#handleDomainException}
- * surfaces that entry on the wire as a {@link ProblemDetail} whose {@code code} property equals the
- * enum value.
+ * stable {@link ProblemDetailsMetadata} entry, AND {@link
+ * ProblemDetailsMapper#handleDomainException} surfaces that entry on the wire as a {@link
+ * ProblemDetail} whose {@code code} property equals the enum value.
  *
  * <p>Two layers of defense:
  *
@@ -76,9 +76,7 @@ class ProblemDetailsCoverageFoundationContract {
       }
       if (metadata.typeUri() == null || !metadata.typeUri().startsWith("https://")) {
         violations.add(
-            code.value()
-                + " -> typeUri is missing or not an https URI: "
-                + metadata.typeUri());
+            code.value() + " -> typeUri is missing or not an https URI: " + metadata.typeUri());
       }
     }
     if (!violations.isEmpty()) {
@@ -126,8 +124,7 @@ class ProblemDetailsCoverageFoundationContract {
         violations.add(code.value() + " -> mapper returned a ResponseEntity with null body");
         continue;
       }
-      Object wireCode =
-          body.getProperties() == null ? null : body.getProperties().get("code");
+      Object wireCode = body.getProperties() == null ? null : body.getProperties().get("code");
       if (wireCode == null) {
         violations.add(
             code.value() + " -> ProblemDetail.properties has no `code` property on the wire");

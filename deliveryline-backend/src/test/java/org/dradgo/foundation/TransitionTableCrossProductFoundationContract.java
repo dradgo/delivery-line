@@ -27,8 +27,8 @@ import org.junit.jupiter.api.Test;
  *
  * <ol>
  *   <li>{@code failureCategory} is required only for {@code EXECUTING -> FAILED} and only from the
- *       allowed runner-failure subset.</li>
- *   <li>{@code reason} is required for {@code TAKEN_OVER} and {@code RECONCILED} targets.</li>
+ *       allowed runner-failure subset.
+ *   <li>{@code reason} is required for {@code TAKEN_OVER} and {@code RECONCILED} targets.
  * </ol>
  */
 @Tag("foundation-gate")
@@ -43,9 +43,7 @@ class TransitionTableCrossProductFoundationContract {
           Map.entry(
               WorkflowState.PLANNED,
               EnumSet.of(
-                  WorkflowState.INVESTIGATING,
-                  WorkflowState.TAKEN_OVER,
-                  WorkflowState.RECONCILED)),
+                  WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED)),
           Map.entry(
               WorkflowState.INVESTIGATING,
               EnumSet.of(
@@ -85,9 +83,7 @@ class TransitionTableCrossProductFoundationContract {
           Map.entry(
               WorkflowState.PAUSED,
               EnumSet.of(
-                  WorkflowState.EXECUTING,
-                  WorkflowState.TAKEN_OVER,
-                  WorkflowState.RECONCILED)),
+                  WorkflowState.EXECUTING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.TAKEN_OVER, EnumSet.noneOf(WorkflowState.class)),
           Map.entry(WorkflowState.RECONCILED, EnumSet.noneOf(WorkflowState.class)));
 
@@ -205,8 +201,7 @@ class TransitionTableCrossProductFoundationContract {
 
         if (isExecutingToFailed) {
           try {
-            table.assertTransitionAllowed(
-                "run_foundation_gate_probe", prior, target, null, reason);
+            table.assertTransitionAllowed("run_foundation_gate_probe", prior, target, null, reason);
             violations.add("EXECUTING -> FAILED accepted null failureCategory");
           } catch (DomainException expected) {
             if (expected.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
@@ -273,8 +268,7 @@ class TransitionTableCrossProductFoundationContract {
         }
         for (String reason : new String[] {null, "", "   "}) {
           try {
-            table.assertTransitionAllowed(
-                "run_foundation_gate_probe", prior, target, null, reason);
+            table.assertTransitionAllowed("run_foundation_gate_probe", prior, target, null, reason);
             violations.add(
                 prior.value()
                     + " -> "
