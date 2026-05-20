@@ -149,14 +149,14 @@
 		</dependency>
 		<!-- Story 1.23 review patch P16 — networknt JSON Schema validator drives
 		     FixtureEventStreamSchemaConformanceContractTest's authoritative draft-2020-12
-		     conformance check. Same library + version as deliveryline-runner-contracts'
-		     RunnerContractValidator, so a future shared validator utility is straightforward. -->
-		<dependency>
-			<groupId>com.networknt</groupId>
-			<artifactId>json-schema-validator</artifactId>
-			<version>3.0.2</version>
-			<scope>test</scope>
-		</dependency>
+		     conformance check. NOT redeclared here: it arrives transitively at COMPILE
+		     scope from deliveryline-runner-contracts (whose RunnerContractValidator needs
+		     it at runtime). A direct <scope>test</scope> declaration would WIN over the
+		     transitive compile-scope dep (Maven nearest-definition mediation) and strip the
+		     library from the executable jar — breaking RunnerContractValidator bean creation
+		     at boot (NoClassDefFoundError: com.networknt.schema.SpecificationVersion). The
+		     transitive compile dep is on the test classpath too, so the fixture test still
+		     compiles and runs. -->
 	</dependencies>
 
 	<build>

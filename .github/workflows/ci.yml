@@ -165,9 +165,13 @@ jobs:
           # because lychee-action passes `args:` through `shlex.split()`,
           # which would otherwise leave literal single quotes on the regex
           # and silently match nothing.
-          # `--output` is pinned to `${{ github.workspace }}` so the JSON
-          # report lands in a path the artifact-upload step can resolve.
-          args: --no-progress --max-concurrency 4 --accept 200,206,429 --exclude ^https?:// --output ${{ github.workspace }}/lychee-internal.json --format json docs/*.md docs/**/*.md README.md
+          # The report path is passed via the `output:` input (NOT `--output` in
+          # args): lychee-action v2.8.0 ships a default `output` input, and also
+          # passing `--output` in args trips "'output' is set in args as well as in
+          # the action configuration". `output:` is pinned to `${{ github.workspace }}`
+          # so the JSON report lands where the artifact-upload step can resolve it.
+          output: ${{ github.workspace }}/lychee-internal.json
+          args: --no-progress --max-concurrency 4 --accept 200,206,429 --exclude ^https?:// --format json docs/*.md docs/**/*.md README.md
           fail: true
 
       - name: External link smoke (WARN on third-party outage)
@@ -178,8 +182,10 @@ jobs:
           # `--include ^https?://` restricts the run to http(s) URLs only.
           # External failures emit a workflow annotation but do not fail the
           # job — third-party outages and rate-limits must not block merges.
-          # Same regex-unquoting and workspace-pin notes as the internal pass.
-          args: --no-progress --max-concurrency 4 --accept 200,206,429 --include ^https?:// --output ${{ github.workspace }}/lychee-external.json --format json docs/*.md docs/**/*.md README.md
+          # Same regex-unquoting, workspace-pin, and `output:`-vs-`--output` notes
+          # as the internal pass.
+          output: ${{ github.workspace }}/lychee-external.json
+          args: --no-progress --max-concurrency 4 --accept 200,206,429 --include ^https?:// --format json docs/*.md docs/**/*.md README.md
           fail: false
 
       - name: Annotate external failures (WARN)
