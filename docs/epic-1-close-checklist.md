@@ -1,7 +1,7 @@
 # Epic 1 Close Checklist
 
 Authority: this checklist is the source of authority for closing Epic 1 (Foundation & First
-Governed Run — CLI). It is owned by [story 1.23 AC10](../_bmad-output/implementation-artifacts/1-23-foundation-gate-ci-verification-and-deterministic-fixture-event-stream.md);
+Governed Run — CLI). It is owned by story 1.23 AC10 (`_bmad-output/implementation-artifacts/1-23-foundation-gate-ci-verification-and-deterministic-fixture-event-stream.md`);
 the checklist's `epic-1` status flip is the manual gate that follows story 1.23's automated
 foundation-gate verification.
 

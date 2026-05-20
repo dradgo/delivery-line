@@ -1,6 +1,6 @@
 # CI Pipeline — Tiered Foundation Gates
 
-Story 1.21 implements [architecture rule AR28](../_bmad-output/planning-artifacts/architecture.md):
+Story 1.21 implements architecture rule AR28 (see `_bmad-output/planning-artifacts/architecture.md`):
 a tiered CI pipeline that fails fast on cheap checks before paying for Docker-backed Testcontainers
 and image builds. The pipeline lives at `.github/workflows/ci.yml`.
 
@@ -56,7 +56,7 @@ flowchart TD
 
 Architecture explicitly forbids broad retries on Docker-backed tests: "make flakiness visible
 rather than masking it with broad retries"
-([architecture.md#Infrastructure Risk Controls:556](../_bmad-output/planning-artifacts/architecture.md)).
+(`_bmad-output/planning-artifacts/architecture.md` — Infrastructure Risk Controls:556).
 The `backend-contract-tests`, `runner-image-compat`, and `bundled-jar-smoke` tiers do NOT wrap test
 execution in retry actions or shell loops. If a Testcontainers cold-start flake is observed in the
 field, the only acceptable mitigation is a narrow retry on the `docker pull` step with inline
@@ -106,7 +106,7 @@ re-derivable, so longer retention is wasteful).
 
 JaCoCo coverage XML/HTML is uploaded as `backend-coverage-jacoco`. There is **no coverage threshold
 gate** in story 1.21 — that ships in story 2.32 per
-[epics.md:1028](../_bmad-output/planning-artifacts/epics.md). The artifact exists today so the
+`_bmad-output/planning-artifacts/epics.md`:1028. The artifact exists today so the
 future gate has data to consume from day one.
 
 ## Workflow triggers
