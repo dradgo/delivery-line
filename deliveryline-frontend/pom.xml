@@ -108,6 +108,19 @@
 							<arguments>run lint:rules-test</arguments>
 						</configuration>
 					</execution>
+					<!-- Story 2.3 AC4/AC5/AC6 — design-token gates (WCAG contrast,
+					     signifier parity, blocker/warning prominence) run on the
+					     enforced Maven/CI path, same as lint:rules-test. -->
+					<execution>
+						<id>npm-run-check-contrast</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run check:contrast</arguments>
+						</configuration>
+					</execution>
 					<execution>
 						<id>npm-run-format-check</id>
 						<goals>

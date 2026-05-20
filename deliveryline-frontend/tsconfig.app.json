@@ -15,6 +15,15 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Path alias (story 2.2 — shadcn/ui requires `@/*`). This SUPERSEDES story
+       2.1's note deferring aliases to 2.5/2.6: shadcn mandates `@/*`, so it is
+       introduced here. Mirror this in vite.config.ts `resolve.alias`.
+       No `baseUrl` — it is deprecated in TS 6.0; with moduleResolution "bundler"
+       the `paths` entries resolve relative to this tsconfig's directory. */
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

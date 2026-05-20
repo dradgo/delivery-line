@@ -136,6 +136,55 @@ npx husky init
 
 This is a personal-workflow convenience; CI is the authoritative gate.
 
+## Design System (story 2.2)
+
+Layer 1 (foundation primitives) of the three-layer design system. Tailwind CSS v3 +
+shadcn/ui provide the generic primitive layer; **design tokens** (color palette, teal
+accent, typography, spacing) arrive in stories **2.3 / 2.4**, and **workflow composites**
+(queue item, review panel, decision bar, …) in **2.15–2.19**.
+
+**Color tokens (story 2.3).** The neutral surface palette, teal `--brand-*` interactive
+family, and 12 semantic state token groups (with high-contrast variants and a non-color
+signifier map) are documented in [`src/styles/README.md`](src/styles/README.md). The
+WCAG contrast, blocker/warning prominence, and signifier-parity gates run via
+`npm run check:contrast` on the enforced Maven/CI path.
+
+**Tailwind v3 (not v4).** Pinned to `tailwindcss@^3.4` deliberately: AC1 requires
+`tailwind.config.ts` + `postcss.config.js` (v3 idioms), and v3 is pure-JS — it adds no
+platform-specific native binaries to the lockfile (v4's `@tailwindcss/oxide` /
+`lightningcss` are the exact native-binding hazard that cost story 2.1 four CI rounds).
+
+**shadcn/ui config** (`components.json`): style `new-york`, base color `slate`, CSS
+variables enabled, primitives under `src/components/ui/`, `@/*` → `./src/*` alias
+(introduced here — supersedes story 2.1's deferral, since shadcn requires it). Generated
+with the v3-compatible `shadcn@2.x` CLI; the v4-first `shadcn@4.x` CLI would diverge from
+the AC1 `components.json` schema.
+
+**Primitive inventory (20).** `button`, `input`, `textarea`, `label`, `dialog`, `sheet`,
+`popover`, `dropdown-menu`, `select`, `tabs`, `badge`, `alert`, `table`, `card`, `tooltip`,
+`scroll-area`, `accordion`, `collapsible`, `separator`, and `sonner` (the current shadcn
+toast primitive — replaces the deprecated `toast`). Primitives are stock shadcn output;
+the only edits are minimal strict-TypeScript fixes (`dropdown-menu` `exactOptionalPropertyTypes`,
+`sonner` adapted off the Next.js `next-themes` dependency for this Vite SPA). They must
+**never** import workflow-domain code — enforced by the `no-workflow-domain-in-ui-primitives`
+ESLint rule (story 2.31, scoped to `src/components/ui/**`).
+
+**`cn()` helper** (`src/lib/utils.ts`): the standard `clsx` + `tailwind-merge` className
+combiner that composites use for conditional class composition.
+
+**PrimitivesPlayground** (`src/routes/_dev/PrimitivesPlayground.tsx`): dev-only living
+documentation rendering every primitive in its canonical states. TanStack Router is not
+installed until story 2.5, so it is **not** a real route yet — in dev, append `?playground`
+to the URL (`http://localhost:5173/?playground`) to view it. The `import.meta.env.DEV` guard
+makes it statically dead in production, so it (and the example-only primitive states) are
+tree-shaken out of the prod bundle.
+
+**Dark mode — wired, NOT activated (AC8).** `tailwind.config.ts` sets `darkMode: ['class']`
+and `src/styles/globals.css` ships the `.dark { … }` CSS-variable block, but Epic 2 / MVP
+ships **no** theme toggle and never adds a `dark` class to `<html>`. To activate it in a
+future post-MVP story: add a toggle that sets `class="dark"` on the root element (e.g. via a
+small theme context), and supply the real dark-palette token values once story 2.3 lands.
+
 ## Pinned versions
 
 - **React 18.3.x** — pinned (NOT React 19) because Epic 2 downstream stories

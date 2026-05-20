@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: dev-story of 2-3-design-tokens-color-palette-and-semantic-state-variables (2026-05-20)
+
+- **Pixel-level visual-regression for blocker/warning dominance (AC6)** — true pixel snapshot tooling (Playwright/Chromatic) is not installed and was deliberately NOT added here (Q3 RESOLVED: defer). AC6 is satisfied in story 2.3 by a programmatic prominence proxy (`tools/contrast/__tests__/token-prominence.test.js`: saturation + lightness-delta-from-background score, asserting blocker/warning > informational/draft/empty + visible border) plus the human-reviewable token gallery in `PrimitivesPlayground.tsx`. Add real pixel VR when the frontend test suite (story 2.27) / a11y audit (story 2.25) lands. [`deliveryline-frontend/tools/contrast/__tests__/token-prominence.test.js`]
+
 ## Deferred from: code review of 1-21-github-actions-ci-tiered-pipeline (2026-05-17)
 
 - **doctor-smoke Windows runner coverage** _(added 2026-05-18 during CI stabilization)_ — the original 1.17 AC8 matrix included `windows-latest` to exercise the `DOCTOR_DOCKER_MISSING` WARN-tolerance path (Windows runners have no Docker Desktop). With story 1.21's full-Spring-context doctor boot, the transitive bean graph (`WorkflowCommands` → services → JPA repositories) requires a real persistence layer — and Windows runners can't start the compose-managed Postgres. Doctor-smoke was collapsed to Ubuntu-only as a pragmatic unblock. Re-enabling Windows requires either: (1) decoupling doctor from the persistence bean graph (e.g., a separate Spring profile/sub-context that excludes service beans) or (2) wiring a non-Docker DataSource for Windows (HSQLDB embedded, with Flyway disabled). [`.github/workflows/ci.yml:doctor-smoke`]

@@ -93,6 +93,27 @@ export default tseslint.config(
     plugins: { 'local-rules': localRules },
     rules: {
       'local-rules/no-workflow-domain-in-ui-primitives': 'error',
+
+      // Story 2.2 — primitives are STOCK shadcn/ui output (AC4: "used exactly as
+      // shadcn provides with minimal local customization"). The following rules
+      // conflict with idiomatic shadcn primitives and are relaxed ONLY for this
+      // generic-primitive layer, so the files stay byte-for-byte stock and
+      // 2.3/2.4 can re-skin via tokens without lint churn. Application code
+      // (src/features/**, composites) keeps the full strict rule set.
+      //
+      //  - react/prop-types: redundant — TypeScript already types every prop.
+      //  - react-refresh/only-export-components: shadcn colocates the `cva`
+      //    `*Variants` export with its component by convention (DX-only rule).
+      //  - strict-boolean-expressions: the `inset && 'pl-8'` className idiom uses
+      //    an optional boolean; harmless in primitives.
+      //  - jsx-a11y/heading-has-content: false positive on forwardRef headings
+      //    (e.g. AlertTitle) whose content is always supplied by the consumer;
+      //    real heading content is validated at composite/usage sites (2.15+),
+      //    which live OUTSIDE src/components/ui. All other a11y rules stay ON.
+      'react/prop-types': 'off',
+      'react-refresh/only-export-components': 'off',
+      '@typescript-eslint/strict-boolean-expressions': 'off',
+      'jsx-a11y/heading-has-content': 'off',
     },
   },
 

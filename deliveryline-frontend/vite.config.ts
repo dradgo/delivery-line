@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -20,6 +21,12 @@ const port = resolvePort(process.env.PORT);
 
 export default defineConfig({
   plugins: [react()],
+  // Story 2.2 — `@/*` → ./src alias for shadcn/ui (mirrors tsconfig.app.json paths).
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   build: {
     outDir: 'target/dist',
     emptyOutDir: true,

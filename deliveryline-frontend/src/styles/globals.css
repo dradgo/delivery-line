@@ -1,0 +1,305 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Story 2.3 — DeliveryLine design tokens, Layer 2 (color).
+ *
+ * Story 2.2 installed STOCK shadcn slate variables as placeholders precisely so
+ * this story can re-skin the system by editing CSS custom properties WITHOUT
+ * touching any primitive (2.2 AC4). This file now ships the real DeliveryLine
+ * palette: a calm low-saturation neutral surface system, a teal interactive
+ * `--brand-*` family, and 12 semantic state token groups. Typography, spacing,
+ * layout primitives, and the focus-ring TOKEN SYSTEM are story 2.4 — not here.
+ *
+ * Format: ALL color vars are HSL channel triplets (`H S% L%`, no hsl() wrapper)
+ * so the `hsl(var(--x))` mapping in tailwind.config.ts works uniformly. The
+ * shipped `:root` block below is the SINGLE SOURCE OF TRUTH parsed by the
+ * node --test gates (tools/contrast/): contrast (AC4), signifier parity (AC5),
+ * prominence (AC6). Do not duplicate these values into a JS/JSON token file.
+ *
+ * Naming deviation from AC1 (documented, accepted): AC1 names the teal family
+ * `--accent-50..900`, but shadcn already owns `--accent` as a muted hover
+ * surface. To avoid the collision we ship the teal family as `--brand-50..900`
+ * (Tailwind `brand-*`) and leave shadcn `--accent` untouched (re-toned neutral).
+ * The AC's INTENT — a teal interactive family exposed as utilities — is fully
+ * met. See src/styles/README.md.
+ *
+ * The .dark block is WIRED but NOT activated (2.2 AC8): no `dark` class is set on
+ * <html> and no toggle ships in Epic 2. Its values are PROVISIONAL placeholders
+ * (structurally parallel so a future post-MVP dark-mode story only overrides
+ * values, never restructures). The contrast gate parses :root only.
+ */
+@layer base {
+  :root {
+    /* ---- shadcn neutral variables, re-toned from slate to the DeliveryLine
+     *      calm neutral surface system. Names kept intact (primitives depend on
+     *      them); only the values change. ---- */
+    --background: 210 20% 99%;
+    --foreground: 215 28% 17%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 28% 17%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 28% 17%;
+    /* --primary re-toned to brand teal (Q1) so stock primitive buttons render
+     * as the UX-DR2 primary-interactive color without editing any primitive. */
+    --primary: 185 64% 30%;
+    --primary-foreground: 180 33% 98%;
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 215 28% 17%;
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 14% 40%;
+    /* --accent stays a MUTED hover surface (shadcn semantic), re-toned neutral —
+     * NOT the teal family. The teal family is --brand-* below. */
+    --accent: 210 20% 93%;
+    --accent-foreground: 215 28% 17%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    /* --ring re-toned to brand teal (focus-ring TOKEN SYSTEM is 2.4; this is the
+     * pre-existing shadcn ring color value, allowed per story scope note). */
+    --ring: 185 64% 34%;
+    --radius: 0.5rem;
+
+    /* ---- Named neutral surfaces (NEW, additive — UX-DR2 surface vocabulary).
+     *      surface = one step off background; surface-elevated = raised. ---- */
+    --surface: 210 20% 97%;
+    --surface-elevated: 0 0% 100%;
+    --text-primary: 215 28% 17%;
+    --text-secondary: 215 16% 36%;
+    --text-tertiary: 215 12% 44%;
+
+    /* ---- Brand (teal) family — the primary interactive color (UX-DR2 ux:758).
+     *      Low-saturation, operationally-calm teal — NOT a bright consumer teal.
+     *      `--primary`/`--ring` route brand-600/brand teal into primitives. ---- */
+    --brand-50: 185 44% 96%;
+    --brand-100: 185 44% 90%;
+    --brand-200: 185 42% 80%;
+    --brand-300: 185 40% 66%;
+    --brand-400: 185 46% 50%;
+    --brand-500: 185 60% 40%;
+    --brand-600: 185 64% 30%;
+    --brand-700: 186 66% 24%;
+    --brand-800: 187 64% 19%;
+    --brand-900: 188 60% 14%;
+
+    /* ---- 12 semantic state token groups (UX-DR2 ux:879-894 + stale/recovery).
+     *      Each: fill (DEFAULT), -foreground (text/icon on fill), -border
+     *      (component boundary, >=3:1 vs --background), and a high-contrast
+     *      variant -hc (+ -hc-foreground) for low-vision / dense screens (AC2).
+     *      Dominance (AC6): blocker/warning carry stronger saturation + heavier
+     *      borders than the recessive draft/empty/informational states. ---- */
+
+    /* informational — neutral blue, recessive */
+    --state-informational: 215 60% 95%;
+    --state-informational-foreground: 215 64% 30%;
+    --state-informational-border: 215 55% 58%;
+    --state-informational-hc: 215 64% 32%;
+    --state-informational-hc-foreground: 0 0% 100%;
+
+    /* success / approved — green */
+    --state-success: 145 50% 92%;
+    --state-success-foreground: 145 72% 21%;
+    --state-success-border: 145 45% 40%;
+    --state-success-hc: 145 65% 24%;
+    --state-success-hc-foreground: 0 0% 100%;
+
+    /* warning — amber, DOMINANT */
+    --state-warning: 40 95% 87%;
+    --state-warning-foreground: 28 90% 27%;
+    --state-warning-border: 34 88% 42%;
+    --state-warning-hc: 28 90% 34%;
+    --state-warning-hc-foreground: 0 0% 100%;
+
+    /* blocker — red, DOMINANT */
+    --state-blocker: 2 82% 91%;
+    --state-blocker-foreground: 0 72% 33%;
+    --state-blocker-border: 0 75% 50%;
+    --state-blocker-hc: 0 72% 40%;
+    --state-blocker-hc-foreground: 0 0% 100%;
+
+    /* draft / inactive — muted neutral, recessive (superseded content) */
+    --state-draft: 215 16% 93%;
+    --state-draft-foreground: 215 18% 34%;
+    --state-draft-border: 215 14% 55%;
+    --state-draft-hc: 215 16% 37%;
+    --state-draft-hc-foreground: 0 0% 100%;
+
+    /* selected / focused — brand teal */
+    --state-selected: 185 50% 91%;
+    --state-selected-foreground: 186 66% 23%;
+    --state-selected-border: 185 52% 42%;
+    --state-selected-hc: 185 64% 27%;
+    --state-selected-hc-foreground: 0 0% 100%;
+
+    /* loading — blue-gray */
+    --state-loading: 210 45% 92%;
+    --state-loading-foreground: 210 52% 31%;
+    --state-loading-border: 210 45% 50%;
+    --state-loading-hc: 210 52% 34%;
+    --state-loading-hc-foreground: 0 0% 100%;
+
+    /* error — deep red (failed; distinct shade from blocker) */
+    --state-error: 358 78% 92%;
+    --state-error-foreground: 358 70% 32%;
+    --state-error-border: 358 72% 48%;
+    --state-error-hc: 358 70% 38%;
+    --state-error-hc-foreground: 0 0% 100%;
+
+    /* permission-restricted — violet */
+    --state-permission-restricted: 270 45% 94%;
+    --state-permission-restricted-foreground: 270 48% 37%;
+    --state-permission-restricted-border: 270 42% 56%;
+    --state-permission-restricted-hc: 270 48% 42%;
+    --state-permission-restricted-hc-foreground: 0 0% 100%;
+
+    /* empty — very low-saturation gray, most recessive */
+    --state-empty: 215 12% 96%;
+    --state-empty-foreground: 215 14% 38%;
+    --state-empty-border: 215 12% 58%;
+    --state-empty-hc: 215 14% 42%;
+    --state-empty-hc-foreground: 0 0% 100%;
+
+    /* stale — muted amber/neutral (superseded, attention-adjacent) */
+    --state-stale: 40 32% 91%;
+    --state-stale-foreground: 34 38% 30%;
+    --state-stale-border: 38 34% 48%;
+    --state-stale-hc: 34 42% 35%;
+    --state-stale-hc-foreground: 0 0% 100%;
+
+    /* recovery — amber/orange, attention-needed */
+    --state-recovery: 28 88% 89%;
+    --state-recovery-foreground: 22 82% 29%;
+    --state-recovery-border: 26 82% 46%;
+    --state-recovery-hc: 22 82% 37%;
+    --state-recovery-hc-foreground: 0 0% 100%;
+  }
+
+  /*
+   * PROVISIONAL dark-mode overrides (AC8 structure parity). Dark mode is
+   * WIRED-NOT-ACTIVATED (2.2 AC8); these values are placeholders pending the
+   * post-MVP dark-mode story, which will tune them. The structure must exist so
+   * that story only overrides values — it must not restructure composites.
+   * The contrast gate (AC4) does NOT parse this block.
+   */
+  .dark {
+    --background: 215 28% 9%;
+    --foreground: 210 20% 96%;
+    --card: 215 28% 11%;
+    --card-foreground: 210 20% 96%;
+    --popover: 215 28% 11%;
+    --popover-foreground: 210 20% 96%;
+    --primary: 185 58% 46%;
+    --primary-foreground: 188 60% 10%;
+    --secondary: 215 20% 18%;
+    --secondary-foreground: 210 20% 96%;
+    --muted: 215 20% 18%;
+    --muted-foreground: 215 14% 65%;
+    --accent: 215 20% 20%;
+    --accent-foreground: 210 20% 96%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 20% 22%;
+    --input: 215 20% 22%;
+    --ring: 185 58% 50%;
+
+    --surface: 215 28% 12%;
+    --surface-elevated: 215 26% 15%;
+    --text-primary: 210 20% 96%;
+    --text-secondary: 215 14% 72%;
+    --text-tertiary: 215 12% 60%;
+
+    --brand-50: 188 40% 14%;
+    --brand-100: 188 44% 18%;
+    --brand-200: 187 50% 24%;
+    --brand-300: 186 54% 32%;
+    --brand-400: 185 52% 42%;
+    --brand-500: 185 54% 50%;
+    --brand-600: 185 56% 58%;
+    --brand-700: 185 50% 68%;
+    --brand-800: 185 44% 78%;
+    --brand-900: 185 40% 88%;
+
+    --state-informational: 215 40% 20%;
+    --state-informational-foreground: 215 60% 85%;
+    --state-informational-border: 215 45% 45%;
+    --state-informational-hc: 215 60% 70%;
+    --state-informational-hc-foreground: 215 40% 10%;
+
+    --state-success: 145 35% 18%;
+    --state-success-foreground: 145 50% 80%;
+    --state-success-border: 145 40% 40%;
+    --state-success-hc: 145 50% 65%;
+    --state-success-hc-foreground: 145 40% 8%;
+
+    --state-warning: 36 50% 20%;
+    --state-warning-foreground: 40 90% 78%;
+    --state-warning-border: 36 60% 48%;
+    --state-warning-hc: 40 90% 70%;
+    --state-warning-hc-foreground: 30 60% 10%;
+
+    --state-blocker: 0 45% 22%;
+    --state-blocker-foreground: 0 85% 85%;
+    --state-blocker-border: 0 65% 52%;
+    --state-blocker-hc: 0 80% 72%;
+    --state-blocker-hc-foreground: 0 50% 10%;
+
+    --state-draft: 215 16% 22%;
+    --state-draft-foreground: 215 20% 78%;
+    --state-draft-border: 215 16% 45%;
+    --state-draft-hc: 215 20% 70%;
+    --state-draft-hc-foreground: 215 20% 10%;
+
+    --state-selected: 185 45% 20%;
+    --state-selected-foreground: 185 55% 82%;
+    --state-selected-border: 185 50% 45%;
+    --state-selected-hc: 185 55% 68%;
+    --state-selected-hc-foreground: 188 50% 8%;
+
+    --state-loading: 210 40% 20%;
+    --state-loading-foreground: 210 55% 82%;
+    --state-loading-border: 210 45% 48%;
+    --state-loading-hc: 210 55% 68%;
+    --state-loading-hc-foreground: 210 45% 10%;
+
+    --state-error: 358 45% 22%;
+    --state-error-foreground: 358 80% 85%;
+    --state-error-border: 358 60% 52%;
+    --state-error-hc: 358 75% 72%;
+    --state-error-hc-foreground: 358 50% 10%;
+
+    --state-permission-restricted: 270 35% 24%;
+    --state-permission-restricted-foreground: 270 55% 85%;
+    --state-permission-restricted-border: 270 40% 52%;
+    --state-permission-restricted-hc: 270 55% 75%;
+    --state-permission-restricted-hc-foreground: 270 40% 10%;
+
+    --state-empty: 215 14% 20%;
+    --state-empty-foreground: 215 16% 74%;
+    --state-empty-border: 215 14% 44%;
+    --state-empty-hc: 215 16% 66%;
+    --state-empty-hc-foreground: 215 16% 10%;
+
+    --state-stale: 36 30% 20%;
+    --state-stale-foreground: 38 45% 78%;
+    --state-stale-border: 38 38% 46%;
+    --state-stale-hc: 38 50% 68%;
+    --state-stale-hc-foreground: 34 40% 10%;
+
+    --state-recovery: 26 45% 22%;
+    --state-recovery-foreground: 28 85% 80%;
+    --state-recovery-border: 26 65% 50%;
+    --state-recovery-hc: 28 85% 70%;
+    --state-recovery-hc-foreground: 22 50% 10%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

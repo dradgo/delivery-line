@@ -1,111 +1,50 @@
-import { useEffect, useState } from 'react';
-import reactLogo from './assets/react.svg';
-import viteLogo from './assets/vite.svg';
-import heroImg from './assets/hero.png';
-import './App.css';
+import { lazy, Suspense, useEffect } from 'react';
+
+// Story 2.1 scaffold → re-skinned in story 2.2 onto Tailwind + shadcn/ui.
+// The real tri-pane app shell lands in story 2.7; this placeholder only proves
+// Tailwind utilities + the design-system CSS variables resolve.
+//
+// Dev-only PrimitivesPlayground (story 2.2 Task 6): the `lazy(() => import(...))`
+// is created ONLY when `import.meta.env.DEV` is true. In a production build that
+// flag is statically `false`, so the binding is `null`, the dynamic import is
+// unreferenced, and Rollup tree-shakes the playground (and every example-only
+// primitive state it renders) out of the bundle entirely — no prod chunk.
+const PrimitivesPlayground = import.meta.env.DEV
+  ? lazy(() => import('./routes/_dev/PrimitivesPlayground'))
+  : null;
 
 function App() {
-  const [count, setCount] = useState(0);
-
   useEffect(() => {
-    // Story 2.1 scaffold — placeholder Vite/React template UI. Real tri-pane
-    // app shell lands in story 2.7. This banner ensures developers don't mistake
-    // the scaffold for finished UI when running `npm run dev` or hitting the
-    // booted Spring Boot jar before 2.7 ships.
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
     console.warn(
-      '[deliveryline-frontend] Scaffolding only — Vite/React template UI from story 2.1. Real app shell arrives in story 2.7.',
+      '[deliveryline-frontend] Scaffolding only — placeholder UI. Real app shell arrives in story 2.7. Append ?playground in dev to view the primitives playground.',
     );
   }, []);
 
+  if (
+    import.meta.env.DEV &&
+    PrimitivesPlayground &&
+    new URLSearchParams(window.location.search).has('playground')
+  ) {
+    return (
+      <Suspense fallback={<div className="p-8 text-muted-foreground">Loading playground…</div>}>
+        <PrimitivesPlayground />
+      </Suspense>
+    );
+  }
+
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button type="button" className="counter" onClick={() => setCount((count) => count + 1)}>
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank" rel="noopener noreferrer">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank" rel="noopener noreferrer">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank" rel="noopener noreferrer">
-                <svg className="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank" rel="noopener noreferrer">
-                <svg className="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank" rel="noopener noreferrer">
-                <svg className="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank" rel="noopener noreferrer">
-                <svg className="button-icon" role="presentation" aria-hidden="true">
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <main className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background p-8 text-foreground">
+      <h1 className="text-3xl font-semibold tracking-tight">DeliveryLine</h1>
+      <p className="max-w-prose text-center text-muted-foreground">
+        Frontend scaffold. The tri-pane application shell arrives in story 2.7. In dev, append{' '}
+        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-sm">?playground</code> to the
+        URL to view the shadcn/ui primitives playground.
+      </p>
+    </main>
   );
 }
 
