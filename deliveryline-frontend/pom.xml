@@ -134,6 +134,20 @@
 							<arguments>run check:tokens</arguments>
 						</configuration>
 					</execution>
+					<!-- Story 2.5 (AC2/AC7) — route-param validation gate (run_/art_
+					     public-id shape) + (via `npm run build` above) route-tree
+					     generation. Runs on the enforced Maven/CI path alongside the
+					     other check:* gates. -->
+					<execution>
+						<id>npm-run-check-routes</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run check:routes</arguments>
+						</configuration>
+					</execution>
 					<execution>
 						<id>npm-run-format-check</id>
 						<goals>

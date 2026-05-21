@@ -1,29 +1,44 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense } from 'react';
+import { RouterProvider, createRouter } from '@tanstack/react-router';
 
-// Story 2.1 scaffold → re-skinned in story 2.2 onto Tailwind + shadcn/ui.
-// The real tri-pane app shell lands in story 2.7; this placeholder only proves
-// Tailwind utilities + the design-system CSS variables resolve.
-//
-// Dev-only PrimitivesPlayground (story 2.2 Task 6): the `lazy(() => import(...))`
-// is created ONLY when `import.meta.env.DEV` is true. In a production build that
-// flag is statically `false`, so the binding is `null`, the dynamic import is
-// unreferenced, and Rollup tree-shakes the playground (and every example-only
-// primitive state it renders) out of the bundle entirely — no prod chunk.
+import { routeTree } from './routeTree.gen';
+import { GenericErrorState, PageNotFoundState } from './routes/-states/DeadEndState';
+
+// Story 2.5 — build the router from the GENERATED route tree (the TanStack Router
+// Vite plugin regenerates ./routeTree.gen.ts on every dev/build; it is gitignored).
+//   - context: {} — the typed RouterContext seam (RouterContext in __root.tsx);
+//     story 2.6 passes the real QueryClient here.
+//   - scrollRestoration: true (AC6) — restores scroll position on back/forward so
+//     queue → detail → artifact → back returns to the prior scroll state. Run /
+//     artifact identity is preserved by the URL params themselves.
+//   - default*Component — tree-wide fallbacks mirroring the per-route ones on
+//     __root.tsx, so a `throw notFound()` from any route without its own
+//     notFoundComponent still lands on an explicit state, never a blank page.
+const router = createRouter({
+  routeTree,
+  context: {},
+  scrollRestoration: true,
+  defaultNotFoundComponent: PageNotFoundState,
+  defaultErrorComponent: GenericErrorState,
+});
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
+}
+
+// Dev-only PrimitivesPlayground (story 2.2; relocated to src/dev in story 2.5). The
+// `lazy(() => import(...))` binding is created ONLY when import.meta.env.DEV is true;
+// in a production build that flag is statically false, the binding is null, and
+// Rollup tree-shakes the playground (and its example-only primitive states) out.
 const PrimitivesPlayground = import.meta.env.DEV
-  ? lazy(() => import('./routes/_dev/PrimitivesPlayground'))
+  ? lazy(() => import('./dev/PrimitivesPlayground'))
   : null;
 
 function App() {
-  useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return;
-    }
-
-    console.warn(
-      '[deliveryline-frontend] Scaffolding only — placeholder UI. Real app shell arrives in story 2.7. Append ?playground in dev to view the primitives playground.',
-    );
-  }, []);
-
+  // Dev-only escape hatch (story 2.2): `?playground` short-circuits BEFORE the
+  // router so the playground stays a dev-only, non-routed view.
   if (
     import.meta.env.DEV &&
     PrimitivesPlayground &&
@@ -36,16 +51,7 @@ function App() {
     );
   }
 
-  return (
-    <main className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background p-8 text-foreground">
-      <h1 className="text-3xl font-semibold tracking-tight">DeliveryLine</h1>
-      <p className="max-w-prose text-center text-muted-foreground">
-        Frontend scaffold. The tri-pane application shell arrives in story 2.7. In dev, append{' '}
-        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-sm">?playground</code> to the
-        URL to view the shadcn/ui primitives playground.
-      </p>
-    </main>
-  );
+  return <RouterProvider router={router} />;
 }
 
 export default App;

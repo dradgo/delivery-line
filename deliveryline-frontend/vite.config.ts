@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
@@ -27,7 +28,20 @@ function resolvePort(raw: string | undefined): number {
 const port = resolvePort(process.env.PORT);
 
 export default defineConfig({
-  plugins: [react()],
+  // Story 2.5 — TanStack Router file-based routing.
+  //   tanstackRouter() MUST run BEFORE react(): it transforms route files and
+  //   (re)generates `src/routeTree.gen.ts` during both `vite dev` and `vite build`;
+  //   the React plugin then processes the transformed output. Wrong ordering breaks
+  //   the codegen pass.
+  //   AC7 drift protection: the generated tree is GITIGNORED (never committed), so
+  //   there is no stale committed file to diff. The protection is that this plugin
+  //   regenerates the tree on every `npm run build` — the enforced Maven/CI path —
+  //   so the build always compiles against a fresh tree and FAILS if a route file is
+  //   malformed or the tree can't be generated. `npm run check:routes` additionally
+  //   asserts the tree was emitted (file exists + non-empty) after build, catching a
+  //   silently-disabled plugin. Defaults used: routesDirectory './src/routes',
+  //   generatedRouteTree './src/routeTree.gen.ts', quoteStyle 'single'.
+  plugins: [tanstackRouter({ target: 'react' }), react()],
   // Story 2.2 — `@/*` → ./src alias for shadcn/ui (mirrors tsconfig.app.json paths).
   resolve: {
     alias: {

@@ -107,9 +107,11 @@ import { cn } from '@/lib/utils';
  * Story 2.2 Task 6 (AC6) — dev-only PrimitivesPlayground.
  *
  * Living documentation + manual smoke test for the 20 shadcn/ui primitives. It is
- * mounted ONLY in dev via an `import.meta.env.DEV` + `?playground` guard in App.tsx
- * (story 2.5 converts this file into a real TanStack Router `_dev` route), so it is
- * tree-shaken out of production bundles.
+ * mounted ONLY in dev via an `import.meta.env.DEV` + `?playground` guard in App.tsx,
+ * so it is tree-shaken out of production bundles. Story 2.5 relocated it OUT of
+ * `src/routes/` (now owned by the TanStack Router generator — anything there would
+ * be swept into the production route tree) to `src/dev/`; it stays a dev-only,
+ * non-routed view rendered before `RouterProvider`.
  *
  * Purely presentational: NO workflow data, NO backend calls, NO TanStack Query
  * (those arrive in 2.6+). Semantic-state color tokens land in story 2.3 — here the

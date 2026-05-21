@@ -7,6 +7,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# TanStack Router generated route tree (story 2.5) — regenerated on every
+# `npm run build` / `vite dev`; never committed (AC7).
+src/routeTree.gen.ts
+
 # Node + Vite build outputs
 node_modules
 dist

@@ -21,7 +21,7 @@ Override the port (5173 collides with another service):
 ## Build
 
 ```bash
-npm run build        # tsc -b && vite build → target/dist/
+npm run build        # routes:generate + tsc -b && vite build → target/dist/
 npm run preview      # serve the production bundle locally
 ```
 
@@ -77,16 +77,18 @@ correctly.
 
 ## Scripts
 
-| Script                    | Purpose                                                         |
-| ------------------------- | --------------------------------------------------------------- |
-| `npm run dev`             | Vite dev server with HMR + `/api/*` proxy                       |
-| `npm run build`           | TypeScript project build + Vite production build                |
-| `npm run preview`         | Serve the `target/dist/` bundle locally for a smoke test        |
-| `npm run lint`            | ESLint (flat config), `--max-warnings=0` — fails on any warning |
-| `npm run lint:fix`        | ESLint with `--fix`                                             |
-| `npm run lint:rules-test` | Run the custom-ESLint-rule fixture tests (`node --test`)        |
-| `npm run format`          | Prettier `--write` (apply formatting)                           |
-| `npm run format:check`    | Prettier `--check` (CI gate)                                    |
+| Script                    | Purpose                                                                |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `npm run dev`             | Vite dev server with HMR + `/api/*` proxy                              |
+| `npm run build`           | Generate route tree + TypeScript project build + Vite production build |
+| `npm run routes:generate` | Pre-generate `src/routeTree.gen.ts` (runs first inside `build`)        |
+| `npm run preview`         | Serve the `target/dist/` bundle locally for a smoke test               |
+| `npm run lint`            | ESLint (flat config), `--max-warnings=0` — fails on any warning        |
+| `npm run lint:fix`        | ESLint with `--fix`                                                    |
+| `npm run lint:rules-test` | Run the custom-ESLint-rule fixture tests (`node --test`)               |
+| `npm run check:routes`    | Route-param validation gate (`node --test`)                            |
+| `npm run format`          | Prettier `--write` (apply formatting)                                  |
+| `npm run format:check`    | Prettier `--check` (CI gate)                                           |
 
 The Vitest test runner ships with story 2.27.
 
@@ -183,18 +185,40 @@ ESLint rule (story 2.31, scoped to `src/components/ui/**`).
 **`cn()` helper** (`src/lib/utils.ts`): the standard `clsx` + `tailwind-merge` className
 combiner that composites use for conditional class composition.
 
-**PrimitivesPlayground** (`src/routes/_dev/PrimitivesPlayground.tsx`): dev-only living
-documentation rendering every primitive in its canonical states. TanStack Router is not
-installed until story 2.5, so it is **not** a real route yet — in dev, append `?playground`
-to the URL (`http://localhost:5173/?playground`) to view it. The `import.meta.env.DEV` guard
-makes it statically dead in production, so it (and the example-only primitive states) are
-tree-shaken out of the prod bundle.
+**PrimitivesPlayground** (`src/dev/PrimitivesPlayground.tsx`): dev-only living
+documentation rendering every primitive in its canonical states. It is **not** a route
+— story 2.5 relocated it OUT of `src/routes/` (now owned by the TanStack Router
+generator) to `src/dev/`. In dev, append `?playground` to the URL
+(`http://localhost:5173/?playground`) to view it; `App.tsx` short-circuits to it before
+`RouterProvider`. The `import.meta.env.DEV` guard makes it statically dead in production,
+so it (and the example-only primitive states) are tree-shaken out of the prod bundle.
 
 **Dark mode — wired, NOT activated (AC8).** `tailwind.config.ts` sets `darkMode: ['class']`
 and `src/styles/globals.css` ships the `.dark { … }` CSS-variable block, but Epic 2 / MVP
 ships **no** theme toggle and never adds a `dark` class to `<html>`. To activate it in a
 future post-MVP story: add a toggle that sets `class="dark"` on the root element (e.g. via a
 small theme context), and supply the real dark-palette token values once story 2.3 lands.
+
+## Routing (story 2.5)
+
+TanStack Router with **file-based routing**: route files live under
+[`src/routes/`](src/routes/) and the `@tanstack/router-plugin/vite` plugin generates
+`src/routeTree.gen.ts` on every `vite dev` / `vite build`. That generated tree is
+**gitignored** and excluded from ESLint + Prettier — never edit or commit it. `npm run
+build` runs `routes:generate` first so a clean `tsc -b` (which runs before Vite) sees
+the tree.
+
+Story 2.5 is the **navigation skeleton**: the typed route tree (`/` → `/workflows`
+queue, `/workflows/$workflowRunId` detail, `/workflows/$workflowRunId/artifacts/$artifactId`
+viewer, `*` not-found), validated `run_…` / `art_…` params, the loader **seam**, and
+every explicit dead-end UI state (invalid link, run/artifact not found, page not found,
+unsupported workspace states, generic error). It is **data-free** — the query layer and
+real loader prefetch arrive in story 2.6; production deep-link fallback in 2.28. Param
+validators are gated by `npm run check:routes` on the enforced Maven/CI path.
+
+Full detail (route table, param contract + backend source of truth, loader seam,
+AC8 state taxonomy, AC10 single-detail-route rule, deferrals) is in
+[`src/routes/README.md`](src/routes/README.md).
 
 ## Pinned versions
 

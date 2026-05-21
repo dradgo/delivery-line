@@ -64,6 +64,10 @@ runner-work/
 runner-logs/
 artifacts/
 deliveryline-data/
+# …but the unanchored `artifacts/` rule above must NOT swallow the TanStack Router
+# artifact-viewer route directory (story 2.5). Re-include it (and its contents).
+!deliveryline-frontend/src/routes/**/artifacts/
+!deliveryline-frontend/src/routes/**/artifacts/**
 
 # Local Spring Boot run logs (developer-only, never committed)
 spring-boot-run-local.log

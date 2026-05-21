@@ -8,3 +8,7 @@ coverage/
 # Generated / managed files
 package-lock.json
 *.tsbuildinfo
+
+# TanStack Router generated route tree (story 2.5) — tool-managed; Prettier must
+# not reformat it, or `format:check` would fight the generator.
+src/routeTree.gen.ts

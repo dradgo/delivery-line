@@ -5,18 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "routes:generate": "node tools/routing/generate-route-tree.js",
+    "build": "npm run routes:generate && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
     "lint:rules-test": "node --test tools/eslint-rules/__tests__/no-workflow-domain-in-ui-primitives.test.js tools/eslint-rules/__tests__/no-inline-query-keys.test.js",
     "check:contrast": "node --test tools/contrast/__tests__/token-contrast.test.js tools/contrast/__tests__/token-prominence.test.js tools/contrast/__tests__/state-signifiers.test.js",
     "check:tokens": "node --test tools/tokens/__tests__/typography-tokens.test.js",
+    "check:routes": "node --test tools/routing/__tests__/public-id-params.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",
+    "@tanstack/react-router": "^1.170.6",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
@@ -38,6 +41,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@tanstack/router-generator": "^1.167.8",
+    "@tanstack/router-plugin": "^1.168.9",
     "@types/node": "^20.19.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
