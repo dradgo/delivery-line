@@ -11,6 +11,7 @@
     "lint:fix": "eslint . --fix",
     "lint:rules-test": "node --test tools/eslint-rules/__tests__/no-workflow-domain-in-ui-primitives.test.js tools/eslint-rules/__tests__/no-inline-query-keys.test.js",
     "check:contrast": "node --test tools/contrast/__tests__/token-contrast.test.js tools/contrast/__tests__/token-prominence.test.js tools/contrast/__tests__/state-signifiers.test.js",
+    "check:tokens": "node --test tools/tokens/__tests__/typography-tokens.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

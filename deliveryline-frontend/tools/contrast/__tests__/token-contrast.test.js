@@ -38,6 +38,7 @@ test('every text-on-fill pair meets its WCAG threshold', () => {
   // Every `--X-foreground` pairs with its base `--X` fill (covers shadcn
   // card/popover/primary/secondary/muted/accent/destructive AND every
   // --state-*-foreground and --state-*-hc-foreground).
+  const structuralFailures = [];
   for (const name of vars.keys()) {
     if (!name.endsWith('-foreground') || name === '--foreground') {
       continue;
@@ -46,9 +47,11 @@ test('every text-on-fill pair meets its WCAG threshold', () => {
       continue;
     }
     const base = name.slice(0, -'-foreground'.length);
-    if (vars.has(base)) {
-      pairs.push([name, base, AA_BODY]);
+    if (!vars.has(base)) {
+      structuralFailures.push(`missing base token ${base} for foreground token ${name}`);
+      continue;
     }
+    pairs.push([name, base, AA_BODY]);
   }
 
   const failures = [];
@@ -58,7 +61,11 @@ test('every text-on-fill pair meets its WCAG threshold', () => {
       failures.push(`${fg} on ${bg}: ${ratio.toFixed(2)}:1 (need ${min}:1)`);
     }
   }
-  assert.deepEqual(failures, [], `contrast failures:\n  ${failures.join('\n  ')}`);
+  assert.deepEqual(
+    structuralFailures.concat(failures),
+    [],
+    `contrast failures:\n  ${structuralFailures.concat(failures).join('\n  ')}`,
+  );
 });
 
 test('every state border is >= 3:1 against the page background (WCAG 1.4.11)', () => {

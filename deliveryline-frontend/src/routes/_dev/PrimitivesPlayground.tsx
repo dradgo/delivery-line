@@ -18,7 +18,12 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { STATE_NAMES, STATE_SIGNIFIERS, type StateName } from '@/lib/state-signifiers';
+import {
+  STATE_NAMES,
+  STATE_SIGNIFIERS,
+  type StateIconName,
+  type StateName,
+} from '@/lib/state-signifiers';
 
 import {
   Accordion,
@@ -94,6 +99,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Container, Divider, Grid, Inline, Stack } from '@/components/layout';
+import { densityGap } from '@/lib/density';
+import { cn } from '@/lib/utils';
 
 /*
  * Story 2.2 Task 6 (AC6) — dev-only PrimitivesPlayground.
@@ -109,48 +117,24 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
  * (ux-design-specification.md:894).
  */
 
-// Canonical state vocabulary from the UX spec (ux:881-894). Each pairs an icon and
-// a text label so meaning never depends on color alone.
-const CANONICAL_STATES: { label: string; icon: ReactNode; note: string }[] = [
-  {
-    label: 'Informational',
-    icon: <Info className="size-4" aria-hidden />,
-    note: 'neutral context',
-  },
-  {
-    label: 'Success / Approved',
-    icon: <Check className="size-4" aria-hidden />,
-    note: 'completed',
-  },
-  {
-    label: 'Warning',
-    icon: <TriangleAlert className="size-4" aria-hidden />,
-    note: 'needs attention',
-  },
-  { label: 'Blocker', icon: <Ban className="size-4" aria-hidden />, note: 'cannot proceed' },
-  {
-    label: 'Draft / Inactive',
-    icon: <Info className="size-4" aria-hidden />,
-    note: 'not yet live',
-  },
-  { label: 'Selected / Focused', icon: <Check className="size-4" aria-hidden />, note: 'active' },
-  {
-    label: 'Loading',
-    icon: <Loader2 className="size-4 animate-spin" aria-hidden />,
-    note: 'in progress',
-  },
-  { label: 'Error', icon: <TriangleAlert className="size-4" aria-hidden />, note: 'failed' },
-  {
-    label: 'Permission-restricted',
-    icon: <Lock className="size-4" aria-hidden />,
-    note: 'not allowed',
-  },
-  { label: 'Empty', icon: <Inbox className="size-4" aria-hidden />, note: 'no items' },
-];
+const STATE_NOTES: Record<StateName, string> = {
+  informational: 'neutral context',
+  success: 'completed',
+  warning: 'needs attention',
+  blocker: 'cannot proceed',
+  draft: 'not yet live',
+  selected: 'active',
+  loading: 'in progress',
+  error: 'failed',
+  'permission-restricted': 'not allowed',
+  empty: 'no items',
+  stale: 'needs refresh',
+  recovery: 'operator action',
+};
 
 // Story 2.3 — resolve the signifier map's lucide icon NAMES to components for the
 // dev gallery (keyed by the exact `icon` strings in STATE_SIGNIFIERS).
-const STATE_ICON_COMPONENTS: Record<string, ComponentType<LucideProps>> = {
+const STATE_ICON_COMPONENTS: Record<StateIconName, ComponentType<LucideProps>> = {
   Info,
   CircleCheck,
   TriangleAlert,
@@ -164,6 +148,10 @@ const STATE_ICON_COMPONENTS: Record<string, ComponentType<LucideProps>> = {
   History,
   RotateCcw,
 };
+
+function stateIconComponent(name: StateName) {
+  return STATE_ICON_COMPONENTS[STATE_SIGNIFIERS[name].icon];
+}
 
 // Literal Tailwind class strings per state. MUST be literal (not built via
 // `bg-state-${name}`) so the Tailwind content scanner emits the utilities —
@@ -243,10 +231,42 @@ const BRAND_RAMP = [
   { label: '900', className: 'bg-brand-900' },
 ] as const;
 
+// Story 2.4 — spacing-scale swatches. Literal `w-*` classes (purge-safe).
+// 4px step → control internals / compact / dense rows; 8px step → panel /
+// section / layout structure (UX-DR4 ux:792-794).
+const SPACING_4PX = [
+  { label: '0.5 · 2px', className: 'w-0.5' },
+  { label: '1 · 4px', className: 'w-1' },
+  { label: '1.5 · 6px', className: 'w-1.5' },
+  { label: '2.5 · 10px', className: 'w-2.5' },
+] as const;
+
+const SPACING_8PX = [
+  { label: '2 · 8px', className: 'w-2' },
+  { label: '4 · 16px', className: 'w-4' },
+  { label: '6 · 24px', className: 'w-6' },
+  { label: '8 · 32px', className: 'w-8' },
+] as const;
+
+// Story 2.4 — typography hierarchy samples (the 5 semantic classes, AC2).
+const TYPE_SAMPLES = [
+  { className: 'text-page-title', label: '.text-page-title — page / panel title' },
+  {
+    className: 'text-section-heading',
+    label: '.text-section-heading — workflow-state / section heading',
+  },
+  { className: 'text-body', label: '.text-body — artifact body / prose reading size' },
+  { className: 'text-meta', label: '.text-meta — metadata / caption / secondary label (muted)' },
+  {
+    className: 'text-annotation',
+    label: '.text-annotation — inline status (pair with state color + signifier)',
+  },
+] as const;
+
 // AC5 — a state's color is ALWAYS paired with an icon + label (never color alone).
 function StateBadge({ name, highContrast = false }: { name: StateName; highContrast?: boolean }) {
   const signifier = STATE_SIGNIFIERS[name];
-  const Icon = STATE_ICON_COMPONENTS[signifier.icon] ?? Info;
+  const Icon = stateIconComponent(name);
   const classes = STATE_CLASSES[name];
   const palette = highContrast ? classes.hc : `border ${classes.badge}`;
   return (
@@ -290,13 +310,17 @@ export default function PrimitivesPlayground() {
 
         <Section title="Canonical state vocabulary (icon + text, never color alone)">
           <div className="flex flex-wrap gap-2">
-            {CANONICAL_STATES.map((s) => (
-              <Badge key={s.label} variant="outline" className="gap-1.5">
-                {s.icon}
-                <span>{s.label}</span>
-                <span className="text-muted-foreground">· {s.note}</span>
-              </Badge>
-            ))}
+            {STATE_NAMES.map((name) => {
+              const Icon = stateIconComponent(name);
+              const iconClassName = name === 'loading' ? 'size-4 animate-spin' : 'size-4';
+              return (
+                <Badge key={name} variant="outline" className="gap-1.5">
+                  <Icon className={iconClassName} aria-hidden />
+                  <span>{STATE_SIGNIFIERS[name].label}</span>
+                  <span className="text-muted-foreground">- {STATE_NOTES[name]}</span>
+                </Badge>
+              );
+            })}
           </div>
         </Section>
 
@@ -353,6 +377,141 @@ export default function PrimitivesPlayground() {
               ))}
             </div>
           </div>
+        </Section>
+
+        <Section title="Typography hierarchy (story 2.4) — semantic classes (AC2)">
+          <div className="space-y-3">
+            {TYPE_SAMPLES.map((t) => (
+              <div key={t.className}>
+                <p className={t.className}>The quick brown fox jumps over the lazy dog</p>
+                <p className="text-xs text-text-tertiary">{t.label}</p>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Spacing — 4px / 8px hybrid scale (story 2.4, AC3/AC7)">
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-text-secondary">
+                4px step — control internals, compact metadata, dense rows
+              </p>
+              {SPACING_4PX.map((s) => (
+                <div key={s.label} className="flex items-center gap-2">
+                  <div className={cn('h-4 rounded bg-brand-500', s.className)} />
+                  <span className="text-xs text-text-tertiary">{s.label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-text-secondary">
+                8px step — panel spacing, section separation, layout structure
+              </p>
+              {SPACING_8PX.map((s) => (
+                <div key={s.label} className="flex items-center gap-2">
+                  <div className={cn('h-4 rounded bg-brand-600', s.className)} />
+                  <span className="text-xs text-text-tertiary">{s.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Density convention — composites map <code>compact</code> →{' '}
+              <code>{densityGap('compact')}</code> (4px) and <code>standard</code> →{' '}
+              <code>{densityGap('standard')}</code> (8px)
+            </p>
+            <div className={cn('flex flex-wrap', densityGap('compact'))}>
+              <span className="rounded bg-muted px-2 py-1 text-xs">compact</span>
+              <span className="rounded bg-muted px-2 py-1 text-xs">row</span>
+              <span className="rounded bg-muted px-2 py-1 text-xs">items</span>
+            </div>
+            <div className={cn('flex flex-wrap', densityGap('standard'))}>
+              <span className="rounded bg-muted px-2 py-1 text-xs">standard</span>
+              <span className="rounded bg-muted px-2 py-1 text-xs">row</span>
+              <span className="rounded bg-muted px-2 py-1 text-xs">items</span>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Layout primitives (story 2.4, AC5) — Stack / Inline / Grid / Container / Divider">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">Stack (gap=&quot;2&quot;)</p>
+            <Stack gap="2">
+              <div className="rounded bg-muted p-2 text-sm">Stack child A</div>
+              <div className="rounded bg-muted p-2 text-sm">Stack child B</div>
+            </Stack>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Inline (gap=&quot;2&quot;, with a vertical Divider)
+            </p>
+            <Inline gap="2">
+              <span className="rounded bg-muted px-2 py-1 text-sm">A</span>
+              <Divider orientation="vertical" className="h-5" />
+              <span className="rounded bg-muted px-2 py-1 text-sm">B</span>
+              <Divider orientation="vertical" className="h-5" />
+              <span className="rounded bg-muted px-2 py-1 text-sm">C</span>
+            </Inline>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Grid (cols=3, gap=&quot;2&quot;)
+            </p>
+            <Grid cols={3} gap="2">
+              {Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="rounded bg-muted p-2 text-center text-sm">
+                  {i + 1}
+                </div>
+              ))}
+            </Grid>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Container (centered max-width)
+            </p>
+            <Container className="rounded border bg-muted py-3 text-center text-sm">
+              Centered, padded container
+            </Container>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">Divider (horizontal)</p>
+            <p className="text-sm text-muted-foreground">Above</p>
+            <Divider />
+            <p className="text-sm text-muted-foreground">Below</p>
+          </div>
+        </Section>
+
+        <Section title="Prose reading utility (story 2.4, AC4) — 45–75ch, line-height ≥ 1.5">
+          <div className="prose">
+            <p>
+              The Artifact Review Panel (story 2.17) renders long-form specification content with
+              the <code>.prose</code> utility. Line length is bounded to a comfortable measure
+              (70ch, within the 45–75 character readable band) so the eye does not lose its place
+              when tracking from the end of one line to the start of the next.
+            </p>
+            <p>
+              Paragraph spacing follows the 8px rhythm and the line-height is relaxed (≥ 1.5),
+              supporting sustained technical reading without dramatic stylistic contrast. The
+              utility is hand-rolled in <code>globals.css</code> — no{' '}
+              <code>@tailwindcss/typography</code> dependency.
+            </p>
+          </div>
+        </Section>
+
+        <Section title="Focus ring (story 2.4, AC6) — Tab to the control to see --ring-focus">
+          <Row>
+            <button
+              type="button"
+              className="rounded-md border bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
+            >
+              Tab to me — focus ring uses --ring-focus
+            </button>
+            <span className="text-sm text-muted-foreground">
+              Layout / composite / app code uses <code>ring-ring-focus</code>; shadcn primitives
+              keep their own <code>ring-ring</code>.
+            </span>
+          </Row>
         </Section>
 
         <Section title="Button — variants & states">

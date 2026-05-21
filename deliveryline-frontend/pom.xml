@@ -121,6 +121,19 @@
 							<arguments>run check:contrast</arguments>
 						</configuration>
 					</execution>
+					<!-- Story 2.4 (Q2) — typography/spacing/focus token-presence gate
+					     (required tokens exist + well-shaped + .prose readability),
+					     on the enforced Maven/CI path alongside check:contrast. -->
+					<execution>
+						<id>npm-run-check-tokens</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run check:tokens</arguments>
+						</configuration>
+					</execution>
 					<execution>
 						<id>npm-run-format-check</id>
 						<goals>

@@ -24,10 +24,21 @@ export default {
       },
     },
     extend: {
+      // Story 2.4 — document font stack (AC1). Points `font-sans` (and the
+      // default text utilities, since `sans` is Tailwind's default family) at
+      // the `--font-sans` token in globals.css. The `theme.fontSize` keys are
+      // deliberately LEFT UNTOUCHED (Q1) so stock primitives render identically.
+      fontFamily: {
+        sans: ['var(--font-sans)'],
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
+        // Story 2.4 — focus-ring token (AC6). Canonical focus ring for layout
+        // primitives / composites / app code: `focus-visible:ring-ring-focus`.
+        // shadcn primitives keep `ring-ring` (2.3 teal `--ring`) untouched.
+        'ring-focus': 'hsl(var(--ring-focus))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         primary: {

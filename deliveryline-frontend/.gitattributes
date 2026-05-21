@@ -24,7 +24,8 @@ package-lock.json text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 
-# Binary assets — no normalization
+# Binary assets — no normalization. Declared explicitly so `* text=auto eol=lf`
+# never EOL-mangles them (notable: rolldown/lightningcss ship native .wasm/.node).
 *.png binary
 *.jpg binary
 *.jpeg binary
@@ -33,3 +34,9 @@ package-lock.json text eol=lf
 *.ico binary
 *.woff binary
 *.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.wasm binary
+*.mp4 binary
+*.pdf binary

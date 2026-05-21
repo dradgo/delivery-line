@@ -149,6 +149,17 @@ signifier map) are documented in [`src/styles/README.md`](src/styles/README.md).
 WCAG contrast, blocker/warning prominence, and signifier-parity gates run via
 `npm run check:contrast` on the enforced Maven/CI path.
 
+**Typography / spacing / layout tokens (story 2.4).** The non-color half of Layer 2: a
+typography hierarchy (`--font-sans`, `--text-*`, `--leading-*`, `--weight-*` + the
+`.text-page-title … .text-annotation` semantic classes), the 4px/8px hybrid spacing
+convention + `density` pattern ([`src/lib/density.ts`](src/lib/density.ts)), a hand-rolled
+`.prose` reading utility, the `--ring-focus` focus token, and the
+[`src/components/layout/`](src/components/layout/) primitives (`Stack`, `Inline`, `Grid`,
+`Container`, `Divider`). Documented in [`src/styles/README.md`](src/styles/README.md); the
+token-presence/shape gate runs via `npm run check:tokens` on the enforced Maven/CI path.
+Tailwind's `theme.fontSize` and `theme.spacing` are deliberately left untouched so stock
+primitives render identically.
+
 **Tailwind v3 (not v4).** Pinned to `tailwindcss@^3.4` deliberately: AC1 requires
 `tailwind.config.ts` + `postcss.config.js` (v3 idioms), and v3 is pure-JS — it adds no
 platform-specific native binaries to the lockfile (v4's `@tailwindcss/oxide` /

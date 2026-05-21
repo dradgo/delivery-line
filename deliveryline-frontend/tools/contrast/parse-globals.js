@@ -5,14 +5,50 @@
  * source of truth, so token values can never drift from a parallel JS/JSON copy
  * (Task 2 "single source of truth", Dev Notes "Testing approach").
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** Absolute path to the shipped global stylesheet. */
-export const GLOBALS_CSS_PATH = resolve(here, '../../src/styles/globals.css');
+/** Absolute path to the source global stylesheet. */
+export const SOURCE_GLOBALS_CSS_PATH = resolve(here, '../../src/styles/globals.css');
+/** Build output entry HTML used to locate the emitted CSS asset when present. */
+export const DIST_INDEX_HTML_PATH = resolve(here, '../../target/dist/index.html');
+
+function resolveGlobalsCssPath() {
+  if (!existsSync(DIST_INDEX_HTML_PATH)) {
+    return SOURCE_GLOBALS_CSS_PATH;
+  }
+
+  const html = readFileSync(DIST_INDEX_HTML_PATH, 'utf8');
+  const hrefMatch = html.match(/href="(?:\.\/|\/)?(assets\/[^"]+\.css)"/);
+  if (!hrefMatch) {
+    return SOURCE_GLOBALS_CSS_PATH;
+  }
+
+  const distCssPath = resolve(here, '../../target/dist', hrefMatch[1]);
+  if (!existsSync(distCssPath)) {
+    return SOURCE_GLOBALS_CSS_PATH;
+  }
+
+  // Prefer the emitted bundle only when it is at least as fresh as the source.
+  // This keeps the Maven/CI path validating the shipped CSS after `npm run build`,
+  // while local token checks still see current source edits instead of a stale
+  // leftover `target/dist` bundle from an earlier run.
+  if (existsSync(SOURCE_GLOBALS_CSS_PATH)) {
+    const sourceMtimeMs = statSync(SOURCE_GLOBALS_CSS_PATH).mtimeMs;
+    const distMtimeMs = statSync(distCssPath).mtimeMs;
+    if (sourceMtimeMs > distMtimeMs) {
+      return SOURCE_GLOBALS_CSS_PATH;
+    }
+  }
+
+  return distCssPath;
+}
+
+/** Absolute path to the preferred stylesheet under test: emitted bundle if available, source otherwise. */
+export const GLOBALS_CSS_PATH = resolveGlobalsCssPath();
 
 /**
  * Extract the `:root { ... }` declaration block (NOT the `.dark` overrides — the
@@ -21,17 +57,32 @@ export const GLOBALS_CSS_PATH = resolve(here, '../../src/styles/globals.css');
  * @returns {string} the contents between `:root {` and its closing brace
  */
 function extractRootBlock(css) {
-  const start = css.indexOf(':root');
-  if (start === -1) {
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const selectorMatch = /:root\s*\{/.exec(cssWithoutComments);
+  if (!selectorMatch) {
     throw new Error('No :root block found in globals.css');
   }
-  const open = css.indexOf('{', start);
-  // Walk to the matching closing brace (the :root block has no nested braces).
-  const close = css.indexOf('}', open);
-  if (open === -1 || close === -1) {
+
+  const selectorStart = selectorMatch.index;
+  const open = cssWithoutComments.indexOf('{', selectorStart);
+  if (open === -1) {
     throw new Error('Malformed :root block in globals.css');
   }
-  return css.slice(open + 1, close);
+
+  let depth = 0;
+  for (let index = open; index < cssWithoutComments.length; index += 1) {
+    const char = cssWithoutComments[index];
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return cssWithoutComments.slice(open + 1, index);
+      }
+    }
+  }
+
+  throw new Error('Malformed :root block in globals.css');
 }
 
 /**
@@ -44,7 +95,12 @@ export function parseRootVars(cssPath = GLOBALS_CSS_PATH) {
   const block = extractRootBlock(css);
   /** @type {Map<string, string>} */
   const vars = new Map();
-  const declRe = /(--[\w-]+)\s*:\s*([^;]+);/g;
+  // The trailing `;` is OPTIONAL: CSS minifiers (esbuild/lightningcss in the
+  // `vite build` output) drop the semicolon on the LAST declaration of a block,
+  // so requiring `;` silently dropped the final `:root` var when parsing the
+  // emitted bundle (story 2.4). `[^;]+` already stops at the next `;` or the end
+  // of the extracted block, so omitting the required `;` is safe.
+  const declRe = /(--[\w-]+)\s*:\s*([^;]+)/g;
   let m;
   while ((m = declRe.exec(block)) !== null) {
     vars.set(m[1], m[2].trim());

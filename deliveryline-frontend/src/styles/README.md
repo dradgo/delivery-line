@@ -124,3 +124,109 @@ pattern and run on the enforced Maven/CI path (`frontend-maven-plugin`), same as
   gallery is the human-reviewable fixture.
 - **`state-signifiers.test.js`** (AC5) — asserts 1:1 parity between the `--state-*` token
   groups and the signifier map, and that every signifier has a non-empty icon + label.
+
+---
+
+# Design Tokens — Typography, Spacing & Layout (story 2.4)
+
+Layer 2's **non-color** half. Story 2.3 shipped color; this story adds the structural
+tokens composites and the app shell consume: a typography hierarchy, the 4px/8px spacing
+convention + density pattern, a hand-rolled `prose` reading utility, the `--ring-focus`
+focus token, and the `src/components/layout/` primitives. All token values live in
+[`globals.css`](./globals.css) `:root` (single source of truth, parsed by the token gate);
+the semantic classes + `.prose` live in `@layer components`.
+
+## Typography (AC1/AC2, UX-DR3)
+
+**Tokens** (`:root`): `--font-sans` (plain-utilitarian system stack — no branded/web font),
+`--text-xs … --text-2xl` (rem scale), `--leading-tight|normal|relaxed`, and
+`--weight-regular|medium|semibold|bold`. `--font-sans` is also wired onto `body` and exposed
+as `theme.fontFamily.sans`, so `font-sans` and the default text utilities resolve to it.
+
+> **Why we did NOT touch Tailwind's `theme.fontSize` (Q1).** Stock shadcn primitives consume
+> `text-sm`/`text-xs` directly; repointing those keys at `--text-*` would silently resize every
+> primitive and break the "primitives render identically" guarantee (2.2 AC4). The `--text-*`
+> vars are NEW and are consumed only through the semantic classes below.
+
+**Semantic classes** (`@layer components`) — use these in composites/app code, not the raw
+`text-*` Tailwind utilities, for hierarchy:
+
+| Class                   | Role                                  | Tokens                                           |
+| ----------------------- | ------------------------------------- | ------------------------------------------------ |
+| `.text-page-title`      | page / panel title (h1)               | `--text-2xl` + `--leading-tight` + semibold      |
+| `.text-section-heading` | workflow-state / section heading (h2) | `--text-lg` + `--leading-tight` + semibold       |
+| `.text-body`            | artifact body / prose reading size    | `--text-base` + `--leading-relaxed` + regular    |
+| `.text-meta`            | metadata / captions / secondary       | `--text-sm` + muted `--text-secondary`           |
+| `.text-annotation`      | inline status / annotation (smallest) | `--text-xs` + medium; **color left to consumer** |
+
+`.text-annotation` carries no color: composites pair it with a 2.3 `--state-*` color **and**
+the signifier (icon + label) — never color alone (ux:894).
+
+## Spacing — 4px / 8px hybrid (AC3/AC7, UX-DR4)
+
+Tailwind v3's **default** spacing scale already encodes the hybrid rhythm (base unit
+0.25rem = 4px), so we **document the convention rather than redefine `theme.spacing`**
+(a wholesale override would drop the rest of the scale and break primitives' `p-*`/`gap-*`):
+
+- **4px step** — `0.5` (2px), `1` (4px), `1.5` (6px), `2.5` (10px): control internals,
+  compact metadata groups, dense review rows.
+- **8px step** — `2` (8px), `4` (16px), `6` (24px), `8` (32px): panel spacing, section
+  separation, larger layout structure.
+
+**Density pattern (AC7).** Composites (Queue Item 2.15, ARP 2.17, Run Context Strip 2.16)
+take a `density: 'compact' | 'standard'` prop. The shared
+[`densityGap`](../lib/density.ts) helper maps it to a literal gap class — `compact → gap-1`
+(4px), `standard → gap-2` (8px) — so composites don't re-derive the convention.
+
+## `prose` reading utility (AC4)
+
+`.prose` (in `globals.css` `@layer components`) is the long-form artifact reading surface
+(consumed by ARP, story 2.17): `max-width: 70ch` (within the 45–75ch readable-line-length
+band), `line-height: var(--leading-relaxed)` (≥ 1.5), 8px-step paragraph rhythm
+(`> * + *`), and `--text-primary` color. It is **hand-rolled** — `@tailwindcss/typography`
+is intentionally NOT installed (a new dep = a lockfile/native-binding round-trip). The token
+gate asserts the `ch` max-width band + line-height so a future edit can't silently break
+readability.
+
+## Layout primitives (AC5) — `src/components/layout/`
+
+Generic, domain-free layout helpers (the tri-pane shell 2.7 + composites 2.15+ compose
+them). Each uses `forwardRef` + `cn()` + `...props` like the shadcn primitives:
+
+| Primitive   | Element / behaviour                                      | Key props                         |
+| ----------- | -------------------------------------------------------- | --------------------------------- |
+| `Stack`     | `flex flex-col` with gap                                 | `gap`                             |
+| `Inline`    | `flex flex-row` (default `items-center`) with gap        | `gap`, `wrap`, `align`, `justify` |
+| `Grid`      | CSS grid                                                 | `cols`, `gap`                     |
+| `Container` | `mx-auto` max-width + responsive horizontal padding      | (standard div attrs)              |
+| `Divider`   | `role="separator"` section break painted with `--border` | `orientation`                     |
+
+**Gap prop API (Q3).** `gap` takes a closed `GapToken` union (`'0' | '0.5' | … | '8'`) mapped
+through a static `GAP_CLASS` `Record` to **literal** `gap-*` strings. Tailwind's content-purge
+cannot see dynamically-constructed class names (`` `gap-${n}` `` is purged), so the static
+lookup is both purge-safe and type-safe, and the union enforces the 4px/8px scale.
+
+## Focus ring (AC6, WCAG 2.4.7)
+
+`--ring-focus` (`:root`, HSL triplet) is the **project focus-ring token** for layout
+primitives, composites, and app-authored interactive elements — applied as
+`focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2`
+(exposed as the Tailwind `ring-focus` color), never the default browser outline.
+
+> `--ring-focus` vs `--ring`: shadcn primitives keep their own `focus-visible:ring-ring`
+> (the 2.3 teal `--ring`); this story does **not** swap their ring. `--ring-focus` is the
+> canonical token for **everything outside `src/components/ui/`**. They may share a value, but
+> composite/app code references `ring-focus`.
+
+## Verification
+
+The token layer is gated by `npm run check:tokens`
+([`tools/tokens/__tests__/typography-tokens.test.js`](../../tools/tokens/__tests__/typography-tokens.test.js)),
+wired into `frontend-maven-plugin` alongside `check:contrast`. It asserts every required token
+exists + is well-shaped (sizes carry units, weights are 100–900 multiples of 100,
+`--leading-relaxed` ≥ 1.5, `--ring-focus` is an HSL triplet) and that `.prose` encodes the
+45–75ch line length + line-height ≥ 1.5, with a negative self-test. The layout React
+primitives are verified via `tsc -b` / `vite build` + the
+[PrimitivesPlayground](../routes/_dev/PrimitivesPlayground.tsx) gallery; component-level unit
+tests defer to 2.27. `check:contrast` stays **8/8** — the typography tokens are color-agnostic
+and `--ring-focus` is not a gated pair.

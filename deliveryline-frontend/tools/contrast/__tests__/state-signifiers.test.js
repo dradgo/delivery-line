@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import * as LucideIcons from 'lucide-react';
 import { parseStateNames } from '../parse-globals.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,4 +74,15 @@ test('every signifier has a non-empty icon and label', () => {
     }
   }
   assert.deepEqual(bad, [], `signifiers with empty icon/label: ${bad.join('; ')}`);
+});
+
+test('every signifier icon resolves to a lucide-react export', () => {
+  const signifiers = parseSignifiers();
+  const bad = [];
+  for (const [name, { icon }] of Object.entries(signifiers)) {
+    if (!(icon in LucideIcons)) {
+      bad.push(`${name} -> ${icon}`);
+    }
+  }
+  assert.deepEqual(bad, [], `signifiers with unknown lucide-react icons: ${bad.join('; ')}`);
 });

@@ -259,6 +259,12 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    # Pin the npm cache to a workspace path so it resolves identically on both
+    # ubuntu and windows runners. The default `~/.npm` is POSIX-only — on
+    # windows-latest the npm cache lives at %LocalAppData%\npm-cache, so caching
+    # `~/.npm` there would silently cache nothing and re-download every run.
+    env:
+      npm_config_cache: ${{ github.workspace }}/.npm-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -273,12 +279,13 @@ jobs:
       # Cache the module-local Node install + npm registry between runs.
       # Key includes node.version + npm.version pins (from deliveryline-frontend/pom.xml)
       # and the lockfile so a Node bump or dep change invalidates the cache cleanly.
+      # npm cache path is the workspace-pinned npm_config_cache (cross-platform).
       - name: Cache frontend Node + npm
         uses: actions/cache@v4
         with:
           path: |
             deliveryline-frontend/.frontend-node
-            ~/.npm
+            ${{ github.workspace }}/.npm-cache
           key: frontend-node-${{ matrix.os }}-${{ hashFiles('deliveryline-frontend/pom.xml', 'deliveryline-frontend/package-lock.json') }}
           restore-keys: |
             frontend-node-${{ matrix.os }}-

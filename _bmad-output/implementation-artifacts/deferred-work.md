@@ -2,6 +2,16 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-2.1 (2026-05-21)
+
+- **Static-wipe allowlist is hardcoded** — `wipe-static-before-copy` enumerates top-level dist files (`index.html`, `favicon.svg`, `icons.svg`, `vite.svg`) plus the `assets/` dir; future or renamed top-level dist outputs (`manifest.webmanifest`, `robots.txt`, renamed favicon) survive across incremental (non-`clean`) builds. Extends the already-accepted static-namespace hardening from the prior 2.1 review. [`deliveryline-backend/pom.xml:222-234`]
+- **`-Dfrontend-maven-plugin.skip=true` can still ship a SPA-less jar** — the `clean`/wipe execution has no `<skip>`, so static is wiped even when the copy is skipped, and the skip path produces an empty `static/` with no warning. Documented local-dev escape hatch; harden if it becomes a footgun. [`deliveryline-backend/pom.xml:209-267`]
+- **`${maven.multiModuleProjectDirectory}` fragility** — the enforcer and resources-copy paths can resolve incorrectly for non-`mvnw` or single-module `mvn -pl deliveryline-backend` invocations launched outside the reactor root, firing a misleading "frontend dist missing" error even when dist exists. [`deliveryline-backend/pom.xml:189,275`]
+- **Reactor build-order coercion unguarded** — build order relies on the `<dependency type=pom scope=test>` on the frontend module; dependency mediation/analyzers could prune it and silently revert ordering. Add a build-order assertion test. [`deliveryline-backend/pom.xml:134-146`]
+- **npm separate-download with no bundled-npm fallback** — `frontend-maven-plugin` downloads npm `10.8.2` as a separate artifact; an air-gapped/cold Windows runner could fail the `install-node-and-npm` step. Not exercised by current CI environments. [`deliveryline-frontend/pom.xml`]
+- **Required-status-check names have no single source of truth** — the matrix check names are duplicated across `ci.yml`, both `configure-branch-protection.{sh,ps1}`, and `ci-branch-protection.md`; a future matrix-axis/`name:` rename silently desyncs branch protection (renamed check stops blocking). [`.github/workflows/ci.yml`; `scripts/ci/configure-branch-protection.{sh,ps1}`; `docs/ci-branch-protection.md`]
+- **Vite `/api` proxy has no error/ws-down handler** — backend-down yields a raw `ECONNREFUSED` 500 and ungraceful WebSocket (`ws:true`) upgrade resets; no `configure` hook normalizes the error. Documented expected dev behavior. [`deliveryline-frontend/vite.config.ts`]
+
 ## Deferred from: dev-story of 2-3-design-tokens-color-palette-and-semantic-state-variables (2026-05-20)
 
 - **Pixel-level visual-regression for blocker/warning dominance (AC6)** — true pixel snapshot tooling (Playwright/Chromatic) is not installed and was deliberately NOT added here (Q3 RESOLVED: defer). AC6 is satisfied in story 2.3 by a programmatic prominence proxy (`tools/contrast/__tests__/token-prominence.test.js`: saturation + lightness-delta-from-background score, asserting blocker/warning > informational/draft/empty + visible border) plus the human-reviewable token gallery in `PrimitivesPlayground.tsx`. Add real pixel VR when the frontend test suite (story 2.27) / a11y audit (story 2.25) lands. [`deliveryline-frontend/tools/contrast/__tests__/token-prominence.test.js`]

@@ -12,10 +12,17 @@ import react from '@vitejs/plugin-react';
 //                   can reach it via host-side localhost forwarding).
 // Parse PORT with explicit guards: `Number("")` → 0 and `Number("abc")` → NaN
 // both slip past a plain `?? 5173`, so validate explicitly and fall back to 5173.
+// Warn loudly on a rejected non-empty PORT so a typo (e.g. `PORT=5174 ` with a
+// trailing space, or `PORT=abc`) doesn't silently drop the dev server back to
+// 5173 with no diagnostic.
 function resolvePort(raw: string | undefined): number {
   if (raw === undefined || raw === '') return 5173;
   const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : 5173;
+  if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) return parsed;
+  console.warn(
+    `[vite] Ignoring invalid PORT="${raw}" — expected an integer in 1..65535. Falling back to 5173.`,
+  );
+  return 5173;
 }
 const port = resolvePort(process.env.PORT);
 
@@ -33,7 +40,11 @@ export default defineConfig({
   },
   server: {
     port,
-    strictPort: false,
+    // Fail loud if the resolved port is already in use rather than silently
+    // rebinding to a random free port — the README documents a fixed dev port
+    // (default 5173 / PORT override) as the `/api` proxy contract, and a silent
+    // rebind would make that guidance wrong and confuse WSL2 host-forwarding.
+    strictPort: true,
     host: true,
     proxy: {
       '/api': {

@@ -174,6 +174,59 @@
     --state-recovery-border: 26 82% 46%;
     --state-recovery-hc: 22 82% 37%;
     --state-recovery-hc-foreground: 0 0% 100%;
+
+    /* ====================================================================
+     * Story 2.4 — Layer 2 (the NON-color half): typography, spacing rhythm,
+     * layout primitives, and the focus-ring token. The color tokens above are
+     * owned by story 2.3 — do NOT touch them here.
+     *
+     * Typography tokens (AC1). Plain-utilitarian system sans (no branded/web
+     * font, ux:777-779), a rem-based size scale, a line-height scale (the body/
+     * prose path lands >= 1.5, AC4), and an unitless weight scale. These are NEW
+     * vars: they intentionally do NOT override Tailwind's built-in `text-*`
+     * fontSize keys (Q1) — stock shadcn primitives consume `text-sm`/`text-xs`
+     * directly and must keep rendering identically (2.2 AC4). The semantic
+     * `@layer components` classes below (`.text-page-title` … `.text-annotation`)
+     * read from these tokens and are used by composites/app code, not primitives.
+     *
+     * Color-agnostic by construction → invisible to the `parseRootColorVars`
+     * HSL-triplet filter, so `check:contrast` stays 8/8 (only `--ring-focus`
+     * below is an HSL triplet, and it is not a gated pair — see tools/contrast).
+     * ==================================================================== */
+
+    /* Font stack — also wired to `body` (@layer base) + `theme.fontFamily.sans`. */
+    --font-sans:
+      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      sans-serif;
+
+    /* Font-size scale (rem). NEW vars — NOT a Tailwind fontSize override (Q1). */
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.25rem;
+    --text-2xl: 1.5rem;
+
+    /* Line-height scale (unitless). `--leading-relaxed` >= 1.5 for body/prose. */
+    --leading-tight: 1.25;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.625;
+
+    /* Font-weight scale (unitless, 100-step multiples). */
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --weight-bold: 700;
+
+    /* Focus-ring token (AC6, WCAG 2.4.7). The canonical focus ring for layout
+     * primitives, composites, and app-authored interactive elements — applied
+     * via `focus-visible:ring-ring-focus` (NOT browser default outlines). A
+     * strong, slightly darker teal so it reads against both `--surface` and
+     * `--surface-elevated`. shadcn primitives keep their own `--ring` (2.3 teal)
+     * — this story does NOT swap their ring. (`--ring-focus` IS an HSL triplet,
+     * so `parseRootColorVars` includes it, but it has no `-foreground` partner
+     * and is not a `--state-*-border`, so it is not contrast-gated.) */
+    --ring-focus: 186 70% 30%;
   }
 
   /*
@@ -292,6 +345,11 @@
     --state-recovery-border: 26 65% 50%;
     --state-recovery-hc: 28 85% 70%;
     --state-recovery-hc-foreground: 22 50% 10%;
+
+    /* Story 2.4 — provisional dark focus-ring (AC8 structure parity; lightened
+     * so it reads against the dark surfaces). Typography/spacing tokens are
+     * color-agnostic and need no dark override. */
+    --ring-focus: 185 60% 58%;
   }
 }
 
@@ -300,6 +358,76 @@
     @apply border-border;
   }
   body {
+    margin: 0;
+    /* Story 2.4 — document font stack (AC1). `theme.fontFamily.sans` in
+     * tailwind.config.ts also points `font-sans` + default text utilities here. */
+    font-family: var(--font-sans);
     @apply bg-background text-foreground;
+  }
+}
+
+/*
+ * Story 2.4 — semantic typography hierarchy (AC2, UX-DR3 ux:779-786) + the
+ * hand-rolled `.prose` reading utility (AC4). These are ADDITIVE `@layer
+ * components` classes consumed by composites/app code (NOT by stock primitives,
+ * which keep Tailwind's untouched `text-*` fontSize keys — Q1). They read the
+ * Task-1 typography tokens and the 2.3 `--text-*` color tokens (consume, never
+ * redefine). The `node --test` token gate (tools/tokens/) pins the `.prose`
+ * line-length + line-height so a future edit can't silently break readability.
+ */
+@layer components {
+  /* page / panel title (h1 equivalent) */
+  .text-page-title {
+    font-size: var(--text-2xl);
+    line-height: var(--leading-tight);
+    font-weight: var(--weight-semibold);
+    color: hsl(var(--text-primary));
+  }
+
+  /* workflow-state / section heading (h2 / h3) */
+  .text-section-heading {
+    font-size: var(--text-lg);
+    line-height: var(--leading-tight);
+    font-weight: var(--weight-semibold);
+    color: hsl(var(--text-primary));
+  }
+
+  /* artifact body / prose reading size */
+  .text-body {
+    font-size: var(--text-base);
+    line-height: var(--leading-relaxed);
+    font-weight: var(--weight-regular);
+    color: hsl(var(--text-primary));
+  }
+
+  /* metadata / captions / secondary labels (smaller, muted) */
+  .text-meta {
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    font-weight: var(--weight-regular);
+    color: hsl(var(--text-secondary));
+  }
+
+  /* inline status / annotation (smallest, often bold). Color is left to the
+   * consumer: composites pair it with a 2.3 `--state-*` color + signifier —
+   * never color alone (ux:894). */
+  .text-annotation {
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+    font-weight: var(--weight-medium);
+  }
+
+  /* Long-form artifact reading surface (AC4) — consumed by the Artifact Review
+   * Panel (story 2.17). Readable line length (45-75ch band, ux:839), comfortable
+   * line-height (>= 1.5), and 8px-step paragraph rhythm. Hand-rolled — NOT
+   * @tailwindcss/typography (avoids a lockfile/native-binding round-trip). */
+  .prose {
+    max-width: 70ch;
+    font-size: var(--text-base);
+    line-height: var(--leading-relaxed);
+    color: hsl(var(--text-primary));
+  }
+  .prose > * + * {
+    margin-top: 1rem;
   }
 }

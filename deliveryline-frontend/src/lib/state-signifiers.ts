@@ -66,7 +66,7 @@ export interface StateSignifier {
  * `Record<StateName, …>` so TypeScript fails the build if a state is missing —
  * adding a new state to the union forces a signifier entry here.
  */
-export const STATE_SIGNIFIERS: Record<StateName, StateSignifier> = {
+export const STATE_SIGNIFIERS = {
   informational: { icon: 'Info', label: 'Informational' },
   success: { icon: 'CircleCheck', label: 'Success' },
   warning: { icon: 'TriangleAlert', label: 'Warning' },
@@ -79,4 +79,7 @@ export const STATE_SIGNIFIERS: Record<StateName, StateSignifier> = {
   empty: { icon: 'Inbox', label: 'Empty' },
   stale: { icon: 'History', label: 'Stale' },
   recovery: { icon: 'RotateCcw', label: 'Recovery' },
-};
+} as const satisfies Record<StateName, StateSignifier>;
+
+/** Literal icon-name union derived from the canonical signifier map. */
+export type StateIconName = (typeof STATE_SIGNIFIERS)[StateName]['icon'];
