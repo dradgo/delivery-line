@@ -190,7 +190,9 @@ export interface components {
             /** @example Workflow run not found: run_abc123 */
             detail: string;
             /** @description Domain-specific extension payload. Validation errors emit an array of field-error objects; other domain errors typically emit an object. */
-            details?: null;
+            details?: {
+                [key: string]: unknown;
+            } | Record<string, never>[];
             /** @example /api/v1/workflows/run_abc123/events */
             instance: string;
             /** @example false */
@@ -284,6 +286,25 @@ export interface components {
             createdAt: string;
             /** @description Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, compensationFailed, artifactVariant, and feedback. */
             details: {
+                artifactId?: string;
+                /** @enum {string} */
+                artifactVariant?: "spec" | "implementationPlan" | "prOutput";
+                /** Format: int32 */
+                artifactVersion?: number;
+                compensationFailed?: boolean;
+                /** Format: int32 */
+                contextVersion?: number;
+                correlationId?: string;
+                errorClass?: string;
+                errorCode?: string;
+                failedStage?: string;
+                feedback?: string;
+                linearTicketReference?: string;
+                reason?: string;
+                recoveryActionId?: string;
+                recoveryRetriedEventId?: string;
+                triggeringEventId?: string;
+            } & {
                 [key: string]: unknown;
             };
             /**
