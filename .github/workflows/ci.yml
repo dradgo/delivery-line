@@ -375,12 +375,26 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Backend integration + ArchUnit + contract tests (Failsafe)
-        # Open Clarification 4 default: run the full `verify` lifecycle but skip
-        # Surefire (unit tests already ran in the backend-unit-tests tier).
-        # Avoids inventing a custom `-DskipUnitTests` property the POM would have
-        # to wire up.
-        run: ./mvnw -B -ntp -pl deliveryline-backend -am verify -Dsurefire.skip=true
+      - name: Backend verify gate (coverage + ArchUnit + contract tests)
+        id: backend-verify
+        # Run the full backend `verify` lifecycle in the Linux/Testcontainers
+        # tier: Surefire unit tests, Failsafe ArchUnit + contract + integration
+        # tests, and the JaCoCo coverage gate (jacoco-check). Story 1.21
+        # originally passed `-Dsurefire.skip=true` here to skip the unit tier,
+        # but story 2.32 verification proved maven-surefire-plugin does not
+        # honor that property in this build, so the flag was dropped — this job
+        # runs the full verify shape, and that is now explicit rather than
+        # depending on a no-op flag.
+        run: ./mvnw -B -ntp -pl deliveryline-backend -am verify
+
+      - name: Coverage gate failure hint
+        if: failure() && steps.backend-verify.outcome == 'failure'
+        shell: bash
+        # Story 2.32 — the verify step above can fail for coverage, ArchUnit,
+        # contract/integration tests, or OpenAPI drift. When the failure is a
+        # JaCoCo threshold breach, the merged HTML report in the
+        # backend-coverage-jacoco artifact pinpoints the under-covered class.
+        run: echo "::warning::If the verify step failed on the JaCoCo coverage gate, open index.html in the backend-coverage-jacoco artifact to find the under-covered class. If it failed earlier for ArchUnit, contract/integration tests, or OpenAPI drift, triage that failure instead. See deliveryline-backend/README.md (Test Coverage)."
 
       # AC6 (story 6.9) — OpenAPI snapshot drift gate.
       # Drift is enforced deterministically by OpenApiSnapshotContractTest, which runs in the

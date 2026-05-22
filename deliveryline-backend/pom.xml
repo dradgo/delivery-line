@@ -14,6 +14,19 @@
 	<packaging>jar</packaging>
 	<name>deliveryline-backend</name>
 
+	<!-- Story 2.32 — JaCoCo coverage gate properties.
+	     jacoco.check.skip: the jacoco-check execution binds its <skip> to this
+	     property; the foundation-gate profile below overrides it to true so the
+	     aggregator subset job does not gate on non-representative coverage.
+	     jacoco.merged.exec: single source of truth for the merged exec file
+	     path, referenced by the merge <destFile> and the report/check
+	     <dataFile> so the three stay in lockstep (a typo in one literal would
+	     otherwise silently decouple the merge from the gate). -->
+	<properties>
+		<jacoco.check.skip>false</jacoco.check.skip>
+		<jacoco.merged.exec>${project.build.directory}/jacoco-merged.exec</jacoco.merged.exec>
+	</properties>
+
 	<dependencies>
 		<dependency>
 			<groupId>org.dradgo</groupId>
@@ -364,6 +377,106 @@
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
+				<!-- Story 2.32 — backend coverage gate. Story 1.21 seeded the
+				     version pin plus the prepare-agent, prepare-agent-integration
+				     and report executions in the root pluginManagement as
+				     report-only plumbing. This module adds the enforcing check
+				     and a merge step so the report and the gate both see unit
+				     AND integration coverage combined. The two prepare-agent
+				     executions are inherited unchanged and must not be edited. -->
+				<configuration>
+					<!-- Excluded from coverage analysis; honored by report and
+					     check. DeliveryLineApplication is the @SpringBootApplication
+					     bootstrap (a one-line main() delegating to
+					     SpringApplication.run) with no business logic and is not
+					     meaningfully unit-testable. Nothing else is excluded:
+					     AC5 forbids blanket-excluding business or application
+					     code, and AC10 requires new packages to auto-participate,
+					     so the BUNDLE rule plus this excludes-only policy is the
+					     entire scoping mechanism. infrastructure/config classes
+					     are intentionally left in and absorbed by the floor. -->
+					<excludes>
+						<exclude>org/dradgo/DeliveryLineApplication.class</exclude>
+					</excludes>
+				</configuration>
+				<executions>
+					<!-- Merge the Surefire (jacoco.exec) and Failsafe
+					     (jacoco-it.exec) execution data. Bound to
+					     post-integration-test: runs strictly after test and
+					     integration-test have written their exec files and
+					     strictly before the verify-phase report and check. The
+					     fileSet silently skips any include that is absent, so the
+					     merge stays robust if either tier produced no exec file. -->
+					<execution>
+						<id>jacoco-merge</id>
+						<phase>post-integration-test</phase>
+						<goals>
+							<goal>merge</goal>
+						</goals>
+						<configuration>
+							<fileSets>
+								<fileSet>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>jacoco.exec</include>
+										<include>jacoco-it.exec</include>
+									</includes>
+								</fileSet>
+							</fileSets>
+							<destFile>${jacoco.merged.exec}</destFile>
+						</configuration>
+					</execution>
+					<!-- Override the inherited jacoco-report (same id, so Maven
+					     merges by id; phase verify and goal report stay
+					     inherited) to read the merged exec file instead of the
+					     default unit-only jacoco.exec. This also fixes a latent
+					     1.21 bug: the backend-coverage-jacoco CI artifact was
+					     effectively empty because report read the never-written
+					     jacoco.exec in the surefire-skipped tier. -->
+					<execution>
+						<id>jacoco-report</id>
+						<configuration>
+							<dataFile>${jacoco.merged.exec}</dataFile>
+						</configuration>
+					</execution>
+					<!-- Enforcing gate. Bound to verify; reads the merged exec
+					     file. The BUNDLE-scoped rule fails the build
+					     deterministically (haltOnFailure defaults to true) when
+					     LINE or BRANCH coverage drops below the committed floor.
+					     Floors were measured empirically against the CI shape and
+					     set below it as regression headroom (see
+					     deliveryline-backend/README.md). skip is wired to a
+					     property so the foundation-gate profile can switch the
+					     gate off without disabling prepare-agent. -->
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<dataFile>${jacoco.merged.exec}</dataFile>
+							<skip>${jacoco.check.skip}</skip>
+							<rules>
+								<rule>
+									<element>BUNDLE</element>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.75</minimum>
+										</limit>
+										<limit>
+											<counter>BRANCH</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.55</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 
 			<!-- Story 1.21 — Surefire (unit tests): pure JUnit5 unit tests. Excludes
@@ -480,6 +593,18 @@
 		     this profile. -->
 		<profile>
 			<id>foundation-gate</id>
+			<!-- Story 2.32 — skip ONLY the JaCoCo check in this profile. The
+			     foundation-gate job runs just the FoundationGateVerificationTest
+			     aggregator subset, whose coverage is not representative of the
+			     module, so gating on it would red-build unpredictably.
+			     prepare-agent, prepare-agent-integration, merge and report still
+			     run, so Failsafe's @{argLine} stays intact (no forked-JVM
+			     crash). The real coverage gate runs in the backend-contract-tests
+			     CI tier, a needs: dependency of the foundation-gate job, so AC12
+			     holds transitively. -->
+			<properties>
+				<jacoco.check.skip>true</jacoco.check.skip>
+			</properties>
 			<build>
 				<plugins>
 					<plugin>
