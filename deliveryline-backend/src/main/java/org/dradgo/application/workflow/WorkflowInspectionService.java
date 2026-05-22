@@ -186,6 +186,170 @@ public class WorkflowInspectionService {
   }
 
   /**
+   * Hard ceiling on the {@code GET /api/v1/workflows} list page size (story 6.9 Task 1). Mirrors
+   * the page-size discipline of the events read port ({@link
+   * WorkflowEventReadPort#HISTORY_CEILING}) — bounds the per-run enrichment fan-out (latest event +
+   * active ticket lookup per row) for the MVP localhost queue.
+   */
+  public static final int MAX_LIST_PAGE_SIZE = 200;
+
+  /** Default list page size when a caller does not request one (story 6.9 Task 1). */
+  public static final int DEFAULT_LIST_PAGE_SIZE = 50;
+
+  /**
+   * List recent workflow runs newest-first for the queue/list UI (story 6.9 Task 1, AC1/AC2).
+   * Read-only. Backs {@code GET /api/v1/workflows}.
+   *
+   * @param stateFilter optional {@link WorkflowState} filter; {@code null} returns all states
+   * @param limit requested page size; clamped to {@code [1, }{@link #MAX_LIST_PAGE_SIZE}{@code ]}
+   * @return lean per-run summaries (run id, current state, ticket ref, last event time + type)
+   *     ordered by run creation descending
+   */
+  @Transactional(readOnly = true)
+  public List<WorkflowRunSummaryView> listRuns(WorkflowState stateFilter, int limit) {
+    int capped = Math.min(Math.max(limit, 1), MAX_LIST_PAGE_SIZE);
+    log.info(
+        "listing workflow_runs stateFilter={} limit={}",
+        stateFilter == null ? "<all>" : stateFilter.value(),
+        capped);
+    List<WorkflowRunSnapshot> runs = workflowRunReadPort.listRuns(stateFilter, capped);
+    List<WorkflowRunSummaryView> summaries = new ArrayList<>(runs.size());
+    for (WorkflowRunSnapshot run : runs) {
+      Optional<WorkflowEventRecord> latest =
+          workflowEventReadPort.findLatestByWorkflowRunPublicId(run.publicId());
+      String ticketRef =
+          integrationLinkService
+              .findActiveLinkByWorkflowRun(run.publicId())
+              .map(IntegrationLink::externalRef)
+              .orElse(null);
+      summaries.add(
+          new WorkflowRunSummaryView(
+              run.publicId(),
+              run.currentState().value(),
+              ticketRef,
+              latest.map(WorkflowEventRecord::createdAt).orElse(null),
+              latest.map(record -> record.eventType().value()).orElse(null)));
+    }
+    log.info("listing workflow_runs success count={}", summaries.size());
+    return summaries;
+  }
+
+  /**
+   * Materialize the full event stream for a run in the committed wire shape (story 6.9 Task 2,
+   * AC1/AC2). Backs {@code GET /api/v1/workflows/{workflowRunId}/events} and is pinned against
+   * {@code fixture-event-streams/schema/workflow-events-response.schema.json}.
+   *
+   * <p>Sourced from {@link WorkflowEventRecord} (which carries {@code workflowRunPublicId}), NOT
+   * from {@link WorkflowEventView} (which drops it and uses a different top-level shape). Event
+   * {@code details} are wire-sanitized: server-only keys (e.g. {@code idempotencyKey}) are stripped
+   * and values run through the redaction policy — but unlike CLI {@code history} the open-map keys
+   * the schema/UI need (e.g. {@code artifactVariant}) are preserved.
+   *
+   * @param workflowRunPublicId the {@code run_}-prefixed run id (prefix-validated first)
+   * @return the schema-shaped run header + ordered event list
+   */
+  @Transactional(readOnly = true)
+  public WorkflowEventStreamView getEventStream(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info("inspecting workflow_run event stream workflowRunId={}", workflowRunPublicId);
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunPublicId)
+              .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+      List<WorkflowEventRecord> events =
+          workflowEventReadPort.listByWorkflowRunPublicId(run.publicId(), null);
+      if (events.isEmpty()) {
+        throw invalidEventStream(workflowRunPublicId, "missing event history");
+      }
+
+      List<WorkflowEventStreamItem> items = new ArrayList<>(events.size());
+      for (WorkflowEventRecord event : events) {
+        items.add(
+            new WorkflowEventStreamItem(
+                event.publicId(),
+                event.workflowRunPublicId(),
+                event.eventType().value(),
+                event.priorState() == null ? null : event.priorState().value(),
+                event.resultingState() == null ? null : event.resultingState().value(),
+                event.actorIdentity(),
+                event.actorType().value(),
+                event.reason(),
+                event.failureCategory() == null ? null : event.failureCategory().value(),
+                event.interventionMarker(),
+                event.createdAt(),
+                sanitizeWireDetails(event.details())));
+      }
+
+      // workflowRun.createdAt = the moment the run's event stream began (the submit event), which
+      // the committed fixtures equate to the run's createdAt. Every governed run has a submit
+      // event, so events is non-empty in practice; guard defensively for the empty edge.
+      OffsetDateTime runCreatedAt = events.get(0).createdAt();
+      String ticketRef = resolveTicketRef(workflowRunPublicId, events);
+      if (ticketRef == null || ticketRef.isBlank()) {
+        throw invalidEventStream(workflowRunPublicId, "missing ticket reference");
+      }
+
+      WorkflowRunHeaderView header =
+          new WorkflowRunHeaderView(
+              run.publicId(), ticketRef, runCreatedAt, run.currentState().value());
+      log.info(
+          "inspecting workflow_run event stream success workflowRunId={} eventCount={}",
+          workflowRunPublicId,
+          items.size());
+      return new WorkflowEventStreamView(header, List.copyOf(items));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Resolve the run's ticket reference for the events wire header: the active integration link's
+   * external ref is authoritative; fall back to the earliest event detail carrying {@code
+   * linearTicketReference} (every run is submitted with a {@code @NotBlank} ticket reference, so
+   * one of these is always present).
+   */
+  private String resolveTicketRef(String workflowRunPublicId, List<WorkflowEventRecord> events) {
+    Optional<String> linkRef =
+        integrationLinkService
+            .findActiveLinkByWorkflowRun(workflowRunPublicId)
+            .map(IntegrationLink::externalRef);
+    if (linkRef.isPresent()) {
+      return linkRef.get();
+    }
+    for (WorkflowEventRecord event : events) {
+      Object ref =
+          event.details() == null
+              ? null
+              : event.details().get(WorkflowEventDetailKeys.LINEAR_TICKET_REFERENCE);
+      if (ref instanceof String text && !text.isBlank()) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Wire sanitization for {@code GET /events} event {@code details} (story 6.9 Task 2): strip
+   * server-only keys ({@link WorkflowEventDetailKeys#SERVER_ONLY_KEYS} — notably {@code
+   * idempotencyKey}, which the schema forbids) then run a value-level redaction pass. Unlike the
+   * CLI {@code history} allow-list this preserves open-map keys the schema/UI consume (e.g. {@code
+   * artifactVariant}).
+   */
+  private Map<String, Object> sanitizeWireDetails(Map<String, Object> raw) {
+    if (raw == null || raw.isEmpty()) {
+      return Map.of();
+    }
+    Map<String, Object> stripped = new LinkedHashMap<>(raw);
+    for (String serverOnlyKey : WorkflowEventDetailKeys.SERVER_ONLY_KEYS) {
+      stripped.remove(serverOnlyKey);
+    }
+    return redactDetails(stripped);
+  }
+
+  /**
    * Allow-listed keys that may flow from {@code workflow_events.details} into a rendered CLI
    * payload (story 1-15 Task 4). Everything else is dropped before render. Sourced from {@link
    * WorkflowEventDetailKeys#ALLOW_LISTED_KEYS} — the single source of truth shared with {@code
@@ -263,6 +427,16 @@ public class WorkflowInspectionService {
         DomainErrorCode.RUN_NOT_FOUND, "Workflow run not found: " + workflowRunPublicId, details);
   }
 
+  private static DomainException invalidEventStream(String workflowRunPublicId, String reason) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runId", workflowRunPublicId);
+    details.put("reason", reason);
+    return new DomainException(
+        DomainErrorCode.INTERNAL_ERROR,
+        "Workflow event stream is invalid for " + workflowRunPublicId + ": " + reason,
+        details);
+  }
+
   /**
    * Application-facing status snapshot. Transport adapters render this view.
    *
@@ -294,6 +468,51 @@ public class WorkflowInspectionService {
 
   public record WorkflowEventView(
       String publicId,
+      String eventType,
+      String priorState,
+      String resultingState,
+      String actorIdentity,
+      String actorType,
+      String reason,
+      String failureCategory,
+      boolean interventionMarker,
+      OffsetDateTime createdAt,
+      Map<String, Object> details) {}
+
+  /**
+   * Lean per-run summary for the queue/list surface ({@code GET /api/v1/workflows}, story 6.9).
+   * Just enough for the queue UI (story 2.15) to render a row and link to detail.
+   */
+  public record WorkflowRunSummaryView(
+      String workflowRunId,
+      String currentState,
+      String ticketRef,
+      OffsetDateTime lastEventAt,
+      String lastEventType) {}
+
+  /**
+   * Schema-shaped event-stream view ({@code GET /api/v1/workflows/{id}/events}, story 6.9). Mirrors
+   * {@code workflow-events-response.schema.json}: a run header object plus the ordered event list.
+   */
+  public record WorkflowEventStreamView(
+      WorkflowRunHeaderView workflowRun, List<WorkflowEventStreamItem> events) {}
+
+  /**
+   * Run header of the event-stream wire shape: {@code {publicId, ticketRef, createdAt,
+   * terminalState}} (story 6.9). {@code terminalState} is the run's current state — the state at
+   * the end of the returned stream.
+   */
+  public record WorkflowRunHeaderView(
+      String publicId, String ticketRef, OffsetDateTime createdAt, String terminalState) {}
+
+  /**
+   * One event in the wire shape (story 6.9). Distinct from {@link WorkflowEventView}: it carries
+   * {@code workflowRunPublicId} (required by the committed schema) and its {@code details} preserve
+   * open-map keys (e.g. {@code artifactVariant}) after server-only-key stripping + value redaction.
+   */
+  public record WorkflowEventStreamItem(
+      String publicId,
+      String workflowRunPublicId,
       String eventType,
       String priorState,
       String resultingState,

@@ -15,6 +15,7 @@ import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
+import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
@@ -34,6 +35,11 @@ class WorkflowAdapterEquivalenceTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private WorkflowCommandService workflowCommandService;
+
+  // Story 6.9 — WorkflowController now also delegates GET reads to WorkflowInspectionService.
+  // This @WebMvcTest slice exercises only the POST command equivalence, but the bean must exist
+  // for the controller to construct.
+  @MockitoBean private WorkflowInspectionService workflowInspectionService;
 
   @Test
   void cliAndRestSubmitTranslateTheSameLogicalPayloadIntoTheSameCommand() throws Exception {

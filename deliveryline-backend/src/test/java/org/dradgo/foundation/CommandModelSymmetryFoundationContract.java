@@ -64,6 +64,11 @@ class CommandModelSymmetryFoundationContract {
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
 
+  // Story 6.9 — WorkflowController now also depends on WorkflowInspectionService (GET reads); the
+  // bean must exist for this command-symmetry @WebMvcTest slice to construct the controller.
+  @MockitoBean
+  private org.dradgo.application.workflow.WorkflowInspectionService workflowInspectionService;
+
   @Test
   void everyWorkflowCommandPermitRoundTripsThroughRestAsTheCanonicalRecord() throws Exception {
     Class<?>[] permits = WorkflowCommand.class.getPermittedSubclasses();

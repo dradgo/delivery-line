@@ -25,6 +25,7 @@ import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
+import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventStreamView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
@@ -311,6 +312,79 @@ class WorkflowInspectionServiceTest {
     DomainException error =
         assertThrows(DomainException.class, () -> service.listHistory("run_nohist12345", null));
     assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
+  }
+
+  @Test
+  void getEventStreamReturnsSchemaShapedHeaderAndItems() {
+    when(runs.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(RUN, WorkflowState.WAITING_FOR_SPEC_APPROVAL, null, 3L)));
+    when(links.findActiveLinkByWorkflowRun(RUN)).thenReturn(Optional.empty());
+    when(events.listByWorkflowRunPublicId(RUN, null))
+        .thenReturn(
+            List.of(
+                eventRecord(
+                    "evt_submit1234",
+                    WorkflowEventType.WORKFLOW_STATE_CHANGED,
+                    null,
+                    WorkflowState.INBOX,
+                    Map.of("linearTicketReference", "LIN-101", "correlationId", "corr-1")),
+                eventRecord(
+                    "evt_artifact1234",
+                    WorkflowEventType.ARTIFACT_DRAFT_CREATED,
+                    null,
+                    null,
+                    Map.of(
+                        "artifactVariant",
+                        "spec",
+                        "artifactVersion",
+                        1,
+                        "idempotencyKey",
+                        "drop-me"))));
+
+    WorkflowEventStreamView view = service.getEventStream(RUN);
+
+    assertEquals(RUN, view.workflowRun().publicId());
+    assertEquals("LIN-101", view.workflowRun().ticketRef());
+    assertEquals(NOW, view.workflowRun().createdAt());
+    assertEquals(
+        WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), view.workflowRun().terminalState());
+    assertEquals(2, view.events().size());
+    assertEquals(RUN, view.events().get(0).workflowRunPublicId());
+    assertEquals("spec", view.events().get(1).details().get("artifactVariant"));
+    assertNull(view.events().get(1).details().get("idempotencyKey"));
+  }
+
+  @Test
+  void getEventStreamRaisesInternalErrorWhenHistoryIsEmpty() {
+    when(runs.findByPublicId(RUN))
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L)));
+    when(events.listByWorkflowRunPublicId(RUN, null)).thenReturn(List.of());
+
+    DomainException error = assertThrows(DomainException.class, () -> service.getEventStream(RUN));
+    assertEquals(DomainErrorCode.INTERNAL_ERROR, error.errorCode());
+    assertEquals("missing event history", error.details().get("reason"));
+  }
+
+  @Test
+  void getEventStreamRaisesInternalErrorWhenTicketReferenceCannotBeResolved() {
+    when(runs.findByPublicId(RUN))
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L)));
+    when(links.findActiveLinkByWorkflowRun(RUN)).thenReturn(Optional.empty());
+    when(events.listByWorkflowRunPublicId(RUN, null))
+        .thenReturn(
+            List.of(
+                eventRecord(
+                    "evt_submit1234",
+                    WorkflowEventType.WORKFLOW_STATE_CHANGED,
+                    null,
+                    WorkflowState.INBOX,
+                    Map.of("correlationId", "corr-1"))));
+
+    DomainException error = assertThrows(DomainException.class, () -> service.getEventStream(RUN));
+    assertEquals(DomainErrorCode.INTERNAL_ERROR, error.errorCode());
+    assertEquals("missing ticket reference", error.details().get("reason"));
   }
 
   private static WorkflowEventRecord eventRecord(

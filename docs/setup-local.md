@@ -296,6 +296,45 @@ consider [resetting local state](#reset-local-state).
 
 ---
 
+## REST API & localhost binding
+
+DeliveryLine exposes a REST surface (story 6.9) alongside the CLI. In Phase 1 the API is
+**unauthenticated**, so it binds **loopback-only by default** — that loopback restriction *is* the
+security control.
+
+- Default bind: `server.address: 127.0.0.1`, `server.port: 8080` (both in `application.yml`).
+- Read endpoints (the same `WorkflowInspectionService` the CLI `status`/`history` commands use):
+  - `GET /api/v1/workflows` — review queue (optional `?state=` filter, `?limit=`),
+  - `GET /api/v1/workflows/{workflowRunId}` — single-run detail,
+  - `GET /api/v1/workflows/{workflowRunId}/events` — full event history.
+- OpenAPI (loopback-bound like everything else):
+  - `GET /v3/api-docs` — the OpenAPI JSON document,
+  - `GET /swagger-ui.html` — Swagger UI.
+  - The committed reference snapshot lives at
+    `deliveryline-backend/src/main/resources/openapi/openapi.json`; CI fails on drift
+    (`OpenApiSnapshotContractTest`). Regenerate after an intentional API change with
+    `./mvnw -pl deliveryline-backend -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true integration-test`,
+    then review and commit the diff.
+
+### Binding to a non-loopback address (development only)
+
+Startup **fails closed** with `DOCTOR_REST_BIND_UNAVAILABLE` if the effective bind address is not
+loopback. To deliberately bind a network-reachable interface (e.g. to reach the UI from another
+device on your LAN during development), set **both**:
+
+```yaml
+deliveryline:
+  rest:
+    bind-address: 0.0.0.0          # overrides server.address
+    unsafe-network-bind: true      # required acknowledgement
+```
+
+With `unsafe-network-bind: true` the app starts but logs a `WARN` naming the bound address and the
+security implication. **The REST API has no authentication in Phase 1 — only enable this on a
+trusted network.** The same loopback check is surfaced by `doctor` (`rest-bind-address` probe).
+
+---
+
 ## Reset local state
 
 `scripts/reset-local.{ps1,sh}` wipes local DeliveryLine state and removes the Flyway-managed

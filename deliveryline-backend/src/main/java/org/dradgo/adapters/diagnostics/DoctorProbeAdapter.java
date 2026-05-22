@@ -1,8 +1,6 @@
 package org.dradgo.adapters.diagnostics;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -30,6 +28,7 @@ import org.dradgo.application.diagnostics.DiagnosticsStatus;
 import org.dradgo.application.diagnostics.spi.DoctorProbePort;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
+import org.dradgo.domain.net.LoopbackAddressResolver;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
@@ -89,7 +88,7 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       ObjectProvider<Flyway> flywayProvider,
       UuidV7Generator uuidV7Generator,
       @Value("${deliveryline.home}") String deliverylineHome,
-      @Value("${server.address:localhost}") String serverAddress,
+      @Value("${deliveryline.rest.bind-address:${server.address:localhost}}") String serverAddress,
       @Value("${server.port:8080}") int serverPort) {
     this(
         environment,
@@ -472,26 +471,28 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   @Override
   public ProbeResult probeRestBindAddress() {
     Map<String, String> details = new LinkedHashMap<>();
-    details.put("serverAddress", serverAddress);
+    details.put("effectiveBindAddress", serverAddress);
     details.put("serverPort", String.valueOf(serverPort));
-    try {
-      InetAddress resolved = InetAddress.getByName(serverAddress);
-      if (!resolved.isLoopbackAddress()) {
-        return new ProbeResult(
-            DiagnosticsStatus.FAIL,
-            "server.address resolves to non-loopback (" + resolved.getHostAddress() + ")",
-            DomainErrorCode.DOCTOR_REST_BIND_UNAVAILABLE.value(),
-            details);
-      }
-      return new ProbeResult(
-          DiagnosticsStatus.PASS, "REST bind address resolves to loopback", null, details);
-    } catch (UnknownHostException unknown) {
+    // Shared loopback resolution (story 6.9) — the startup fail-closed bind guard
+    // (infrastructure.config.RestBindingGuard) calls the same helper so probe and guard
+    // cannot drift in how they classify a bind address.
+    LoopbackAddressResolver.Resolution resolution = LoopbackAddressResolver.resolve(serverAddress);
+    if (!resolution.resolvable()) {
       return new ProbeResult(
           DiagnosticsStatus.FAIL,
-          "server.address could not be resolved: " + serverAddress,
+          "REST bind address could not be resolved: " + serverAddress,
           DomainErrorCode.DOCTOR_REST_BIND_UNAVAILABLE.value(),
           details);
     }
+    if (!resolution.loopback()) {
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "REST bind address resolves to non-loopback (" + resolution.resolvedHostAddress() + ")",
+          DomainErrorCode.DOCTOR_REST_BIND_UNAVAILABLE.value(),
+          details);
+    }
+    return new ProbeResult(
+        DiagnosticsStatus.PASS, "REST bind address resolves to loopback", null, details);
   }
 
   @Override

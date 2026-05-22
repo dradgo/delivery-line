@@ -7,7 +7,28 @@ spring:
       test: [runners.mock, linear-mock]
       demo: [runners.mock, linear-mock]
 
+# Story 6.9 — localhost-only safe-by-default REST binding. The Phase-1 MVP ships no
+# auth; loopback-only binding IS the security control. RestBindingGuard fails startup
+# (DOCTOR_REST_BIND_UNAVAILABLE) if the effective bind address is non-loopback unless
+# deliveryline.rest.unsafe-network-bind=true is explicitly set.
+server:
+  address: 127.0.0.1
+  port: 8080
+
+# Story 6.9 — deterministic OpenAPI output so the committed openapi.json snapshot diff
+# (CI drift gate) is stable across runs/platforms: sort keys, no build timestamps.
+springdoc:
+  writer-with-order-by-keys: true
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
 deliveryline:
+  rest:
+    # Optional override for server.address. Leave unset to inherit the loopback default above.
+    # bind-address: 0.0.0.0
+    unsafe-network-bind: false
   linear:
     base-url: https://api.linear.app/graphql
     poll-interval-ms: 60000

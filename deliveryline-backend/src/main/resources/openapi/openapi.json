@@ -1,0 +1,1106 @@
+{
+  "components" : {
+    "schemas" : {
+      "ApproveSpecRequest" : {
+        "properties" : {
+          "actorIdentity" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "HUMAN",
+              "AGENT",
+              "SYSTEM",
+              "SERVICE_ACCOUNT"
+            ],
+            "type" : "string"
+          },
+          "artifactId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "artifactVersion" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "contextVersion" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "correlationId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType",
+          "artifactId",
+          "artifactVersion",
+          "contextVersion"
+        ],
+        "type" : "object"
+      },
+      "LatestArtifact" : {
+        "properties" : {
+          "artifactType" : {
+            "example" : "spec",
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          },
+          "version" : {
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
+      "LinkedTicket" : {
+        "properties" : {
+          "externalRef" : {
+            "example" : "DEL-1234",
+            "type" : "string"
+          },
+          "integrationType" : {
+            "example" : "linear",
+            "type" : "string"
+          },
+          "syncStatus" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "ProblemDetailsResponse" : {
+        "description" : "RFC 9457 Problem Details payload with DeliveryLine extension fields.",
+        "properties" : {
+          "code" : {
+            "example" : "RUN_NOT_FOUND",
+            "type" : "string"
+          },
+          "correlationId" : {
+            "description" : "Echoed correlation ID when present on the request or MDC.",
+            "example" : "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "detail" : {
+            "example" : "Workflow run not found: run_abc123",
+            "type" : "string"
+          },
+          "details" : {
+            "anyOf" : [
+              {
+                "additionalProperties" : { },
+                "type" : "object"
+              },
+              {
+                "items" : {
+                  "type" : "object"
+                },
+                "type" : "array"
+              }
+            ],
+            "description" : "Domain-specific extension payload. Validation errors emit an array of field-error objects; other domain errors typically emit an object."
+          },
+          "instance" : {
+            "example" : "/api/v1/workflows/run_abc123/events",
+            "type" : "string"
+          },
+          "retryable" : {
+            "example" : false,
+            "type" : "boolean"
+          },
+          "status" : {
+            "example" : 404,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "title" : {
+            "example" : "Workflow run not found",
+            "type" : "string"
+          },
+          "type" : {
+            "example" : "https://deliveryline.local/problems/run-not-found",
+            "format" : "uri",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "code",
+          "detail",
+          "instance",
+          "retryable",
+          "status",
+          "title",
+          "type"
+        ],
+        "type" : "object"
+      },
+      "RejectSpecRequest" : {
+        "properties" : {
+          "actorIdentity" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "HUMAN",
+              "AGENT",
+              "SYSTEM",
+              "SERVICE_ACCOUNT"
+            ],
+            "type" : "string"
+          },
+          "artifactId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "artifactVersion" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "contextVersion" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "correlationId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reasonText" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType",
+          "artifactId",
+          "artifactVersion",
+          "contextVersion",
+          "reasonText"
+        ],
+        "type" : "object"
+      },
+      "RetryWorkflowRequest" : {
+        "properties" : {
+          "actorIdentity" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "HUMAN",
+              "AGENT",
+              "SYSTEM",
+              "SERVICE_ACCOUNT"
+            ],
+            "type" : "string"
+          },
+          "correlationId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reasonText" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType"
+        ],
+        "type" : "object"
+      },
+      "SubmitWorkflowRequest" : {
+        "properties" : {
+          "actorIdentity" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "HUMAN",
+              "AGENT",
+              "SYSTEM",
+              "SERVICE_ACCOUNT"
+            ],
+            "type" : "string"
+          },
+          "correlationId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "linearTicketReference" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType",
+          "linearTicketReference"
+        ],
+        "type" : "object"
+      },
+      "SubmitWorkflowResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "TakeoverWorkflowRequest" : {
+        "properties" : {
+          "actorIdentity" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "HUMAN",
+              "AGENT",
+              "SYSTEM",
+              "SERVICE_ACCOUNT"
+            ],
+            "type" : "string"
+          },
+          "correlationId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reasonText" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType"
+        ],
+        "type" : "object"
+      },
+      "WorkflowDetail" : {
+        "description" : "Current status detail of a workflow run.",
+        "properties" : {
+          "currentActorIdentity" : {
+            "type" : "string"
+          },
+          "currentActorType" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "example" : "WaitingForSpecApproval",
+            "type" : "string"
+          },
+          "failedStage" : {
+            "type" : "string"
+          },
+          "failureCategory" : {
+            "type" : "string"
+          },
+          "failureTimestamp" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "lastActivityTimestamp" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "lastEventAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "lastEventType" : {
+            "type" : "string"
+          },
+          "lastSuccessfulStage" : {
+            "type" : "string"
+          },
+          "latestArtifacts" : {
+            "items" : {
+              "$ref" : "#/components/schemas/LatestArtifact"
+            },
+            "type" : "array"
+          },
+          "linkedTicket" : {
+            "$ref" : "#/components/schemas/LinkedTicket"
+          },
+          "nextSafeAction" : {
+            "description" : "Next safe operator action for the current state.",
+            "example" : "view_only",
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "WorkflowEvent" : {
+        "description" : "A single workflow event.",
+        "properties" : {
+          "actorIdentity" : {
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "human",
+              "agent",
+              "system",
+              "service_account"
+            ],
+            "example" : "system",
+            "type" : "string"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "details" : {
+            "additionalProperties" : { },
+            "description" : "Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, compensationFailed, artifactVariant, and feedback.",
+            "not" : {
+              "required" : [
+                "idempotencyKey"
+              ],
+              "type" : "object"
+            },
+            "properties" : {
+              "artifactId" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "artifactVariant" : {
+                "enum" : [
+                  "spec",
+                  "implementationPlan",
+                  "prOutput"
+                ],
+                "type" : "string"
+              },
+              "artifactVersion" : {
+                "format" : "int32",
+                "minimum" : 1,
+                "type" : "integer"
+              },
+              "compensationFailed" : {
+                "type" : "boolean"
+              },
+              "contextVersion" : {
+                "format" : "int32",
+                "minimum" : 1,
+                "type" : "integer"
+              },
+              "correlationId" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "errorClass" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "errorCode" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "failedStage" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "feedback" : {
+                "type" : "string"
+              },
+              "linearTicketReference" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "reason" : {
+                "type" : "string"
+              },
+              "recoveryActionId" : {
+                "pattern" : "^rcv_[A-Za-z0-9_]{4,}$",
+                "type" : "string"
+              },
+              "recoveryRetriedEventId" : {
+                "pattern" : "^evt_[A-Za-z0-9_]{4,}$",
+                "type" : "string"
+              },
+              "triggeringEventId" : {
+                "pattern" : "^evt_[A-Za-z0-9_]{4,}$",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "eventType" : {
+            "enum" : [
+              "workflow.stateChanged",
+              "approval.requested",
+              "approval.approved",
+              "approval.rejected",
+              "artifact.draftCreated",
+              "artifact.available",
+              "artifact.failed",
+              "artifact.versionCreated",
+              "runner.started",
+              "runner.failed",
+              "recovery.retried",
+              "recovery.dispatchFailed",
+              "recovery.reconciled",
+              "artifact.lineageRecovered",
+              "integration.linked",
+              "export.created",
+              "clarification.answered",
+              "clarification.accepted",
+              "clarification.incorporated",
+              "clarification.superseded",
+              "clarification.rejectedInvalid",
+              "clarification.noEffectReason"
+            ],
+            "example" : "workflow.stateChanged",
+            "type" : "string"
+          },
+          "failureCategory" : {
+            "enum" : [
+              "runner_timeout",
+              "runner_crash",
+              "runner_contract_violation",
+              "runner_non_zero_exit",
+              "runner_late_result",
+              "runner_duplicate_result",
+              "runner_malformed_output",
+              "orphan"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "interventionMarker" : {
+            "type" : "boolean"
+          },
+          "priorState" : {
+            "enum" : [
+              "Inbox",
+              "Planned",
+              "Investigating",
+              "WaitingForSpecApproval",
+              "Executing",
+              "WaitingForReview",
+              "Completed",
+              "Failed",
+              "Paused",
+              "TakenOver",
+              "Reconciled"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "publicId" : {
+            "example" : "evt_abc123",
+            "pattern" : "^evt_[A-Za-z0-9_]{4,}$",
+            "type" : "string"
+          },
+          "reason" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "resultingState" : {
+            "enum" : [
+              "Inbox",
+              "Planned",
+              "Investigating",
+              "WaitingForSpecApproval",
+              "Executing",
+              "WaitingForReview",
+              "Completed",
+              "Failed",
+              "Paused",
+              "TakenOver",
+              "Reconciled"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "workflowRunPublicId" : {
+            "example" : "run_abc123",
+            "pattern" : "^run_[A-Za-z0-9_]{4,}$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType",
+          "createdAt",
+          "details",
+          "eventType",
+          "interventionMarker",
+          "publicId",
+          "workflowRunPublicId"
+        ],
+        "type" : "object"
+      },
+      "WorkflowEventsResponse" : {
+        "description" : "Ordered event history for a workflow run.",
+        "properties" : {
+          "events" : {
+            "items" : {
+              "$ref" : "#/components/schemas/WorkflowEvent"
+            },
+            "minItems" : 1,
+            "type" : "array"
+          },
+          "workflowRun" : {
+            "$ref" : "#/components/schemas/WorkflowRunRef"
+          }
+        },
+        "required" : [
+          "events",
+          "workflowRun"
+        ],
+        "type" : "object"
+      },
+      "WorkflowRunRef" : {
+        "description" : "Run header for an event stream.",
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "publicId" : {
+            "example" : "run_abc123",
+            "pattern" : "^run_[A-Za-z0-9_]{4,}$",
+            "type" : "string"
+          },
+          "terminalState" : {
+            "description" : "State at the end of the returned stream (the run's current state).",
+            "enum" : [
+              "Inbox",
+              "Planned",
+              "Investigating",
+              "WaitingForSpecApproval",
+              "Executing",
+              "WaitingForReview",
+              "Completed",
+              "Failed",
+              "Paused",
+              "TakenOver",
+              "Reconciled"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "ticketRef" : {
+            "example" : "DEL-1234",
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "createdAt",
+          "publicId",
+          "terminalState",
+          "ticketRef"
+        ],
+        "type" : "object"
+      },
+      "WorkflowStateChangeResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "WorkflowSummary" : {
+        "description" : "Queue/list summary of a workflow run.",
+        "properties" : {
+          "currentState" : {
+            "description" : "Current workflow state.",
+            "example" : "WaitingForSpecApproval",
+            "type" : "string"
+          },
+          "lastEventAt" : {
+            "description" : "Timestamp of the most recent event (ISO-8601 UTC).",
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "lastEventType" : {
+            "description" : "Type of the most recent event.",
+            "example" : "workflow.stateChanged",
+            "type" : "string"
+          },
+          "ticketRef" : {
+            "description" : "Linear ticket reference, if linked.",
+            "example" : "DEL-1234",
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "description" : "Run public id.",
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      }
+    }
+  },
+  "info" : {
+    "description" : "Governed local-first agent delivery workflow API. Phase 1 is localhost-bound (loopback-only) and unauthenticated; the embedded server refuses to bind a non-loopback address without an explicit unsafe override.",
+    "title" : "DeliveryLine API",
+    "version" : "v1"
+  },
+  "openapi" : "3.1.0",
+  "paths" : {
+    "/api/v1/workflows" : {
+      "get" : {
+        "description" : "Newest-first list of workflow runs for the review queue, optionally filtered by state.",
+        "operationId" : "listWorkflows",
+        "parameters" : [
+          {
+            "description" : "Optional current-state filter, e.g. WaitingForSpecApproval.",
+            "in" : "query",
+            "name" : "state",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Max rows to return (clamped to 1..200).",
+            "in" : "query",
+            "name" : "limit",
+            "required" : false,
+            "schema" : {
+              "default" : 50,
+              "format" : "int32",
+              "type" : "integer"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "items" : {
+                    "$ref" : "#/components/schemas/WorkflowSummary"
+                  },
+                  "type" : "array"
+                }
+              }
+            },
+            "description" : "Workflow run summaries (direct array, no envelope)."
+          }
+        },
+        "summary" : "List workflow runs",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/submit-workflow" : {
+      "post" : {
+        "operationId" : "submitWorkflow",
+        "parameters" : [
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SubmitWorkflowRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SubmitWorkflowResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Submit a new workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}" : {
+      "get" : {
+        "description" : "Current status of a single workflow run.",
+        "operationId" : "getWorkflow",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowDetail"
+                }
+              }
+            },
+            "description" : "Workflow run detail."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get workflow run detail",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/approve-spec" : {
+      "post" : {
+        "operationId" : "approveSpec",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ApproveSpecRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Approve a run's specification",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/events" : {
+      "get" : {
+        "description" : "Ordered event stream for a run, in the committed wire schema (workflow-events-response.schema.json).",
+        "operationId" : "getWorkflowEvents",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowEventsResponse"
+                }
+              }
+            },
+            "description" : "Event history."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX) or history too large."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get workflow run event history",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/reject-spec" : {
+      "post" : {
+        "operationId" : "rejectSpec",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RejectSpecRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Reject a run's specification",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/retry-workflow" : {
+      "post" : {
+        "operationId" : "retryWorkflow",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RetryWorkflowRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Retry a failed workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/takeover-workflow" : {
+      "post" : {
+        "operationId" : "takeoverWorkflow",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/TakeoverWorkflowRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Take over a workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    }
+  },
+  "servers" : [
+    {
+      "description" : "Localhost (loopback-only, Phase 1)",
+      "url" : "http://127.0.0.1:8080"
+    }
+  ],
+  "tags" : [
+    {
+      "description" : "Inspect and command governed workflow runs.",
+      "name" : "Workflows"
+    }
+  ]
+}

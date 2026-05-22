@@ -1,7 +1,9 @@
 package org.dradgo.adapters.persistence;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.adapters.persistence.mapper.WorkflowRunEntityMapper;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
@@ -12,7 +14,10 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class WorkflowRunPersistenceAdapter
@@ -31,6 +36,18 @@ public class WorkflowRunPersistenceAdapter
   @Override
   public Optional<WorkflowRunSnapshot> findByPublicId(String publicId) {
     return workflowRunRepository.findByPublicId(publicId).map(workflowRunEntityMapper::toSnapshot);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<WorkflowRunSnapshot> listRuns(WorkflowState stateFilter, int limit) {
+    Pageable page = PageRequest.of(0, limit);
+    List<WorkflowRunEntity> entities =
+        stateFilter == null
+            ? workflowRunRepository.findAllByOrderByCreatedAtDescIdDesc(page)
+            : workflowRunRepository.findByCurrentStateOrderByCreatedAtDescIdDesc(
+                stateFilter.value(), page);
+    return entities.stream().map(workflowRunEntityMapper::toSnapshot).toList();
   }
 
   @Override

@@ -17,6 +17,7 @@ import org.dradgo.application.security.RedactionCategory;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
+import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -34,6 +35,10 @@ class ProblemDetailsContractTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private WorkflowCommandService workflowCommandService;
+
+  // Story 6.9 — WorkflowController gained a read dependency on WorkflowInspectionService; the
+  // bean must exist for this @WebMvcTest slice even though these tests exercise only POST commands.
+  @MockitoBean private WorkflowInspectionService workflowInspectionService;
 
   @MockitoBean private RedactionPolicyService redactionPolicyService;
 

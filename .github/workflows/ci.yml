@@ -382,17 +382,21 @@ jobs:
         # to wire up.
         run: ./mvnw -B -ntp -pl deliveryline-backend -am verify -Dsurefire.skip=true
 
-      # AC6 — TODO(story-6.9): activates when springdoc-openapi is wired and
-      # backend/src/main/resources/openapi/openapi.json snapshot is committed.
-      - name: OpenAPI snapshot drift check
+      # AC6 (story 6.9) — OpenAPI snapshot drift gate.
+      # Drift is enforced deterministically by OpenApiSnapshotContractTest, which runs in the
+      # `verify` step above: it boots the app, fetches /v3/api-docs, canonicalizes it (key-sorted,
+      # "\n" line endings — platform-independent) and asserts byte-equality with the committed
+      # backend/src/main/resources/openapi/openapi.json. (A standalone `springdoc:generate` cannot
+      # run without a live app, so generation + diff are folded into the boot test instead.)
+      # This step is a belt-and-suspenders guard that the snapshot file is committed at all.
+      - name: OpenAPI snapshot committed
         if: always()
         run: |
           if [ -f deliveryline-backend/src/main/resources/openapi/openapi.json ]; then
-            ./mvnw -B -ntp -pl deliveryline-backend springdoc:generate -DoutputDir=target/openapi
-            diff -q deliveryline-backend/src/main/resources/openapi/openapi.json \
-                    deliveryline-backend/target/openapi/openapi.json
+            echo "OpenAPI snapshot present; drift enforced by OpenApiSnapshotContractTest in the verify step above."
           else
-            echo "OpenAPI snapshot not yet wired (owned by story 6.9); skipping drift check."
+            echo "::error::Committed OpenAPI snapshot missing at deliveryline-backend/src/main/resources/openapi/openapi.json (story 6.9). Regenerate with -Dopenapi.snapshot.write=true and commit."
+            exit 1
           fi
 
       - name: Upload failsafe reports
@@ -563,7 +567,7 @@ jobs:
       DELIVERYLINE_RUNNER_SCHEDULING_ENABLED: "false"
       DELIVERYLINE_LINEAR_POLLING_ENABLED: "false"
       SPRING_SHELL_INTERACTIVE_ENABLED: "false"
-      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -595,13 +599,14 @@ jobs:
           docker compose logs postgres
           exit 1
 
-      - name: Boot jar and run doctor smoke
+      - name: Boot jar and verify REST smoke
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/deliveryline
           SPRING_DATASOURCE_USERNAME: deliveryline
           SPRING_DATASOURCE_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
         run: |
           mkdir -p bundled-jar-smoke-logs
+          APP_PORT="${SERVER_PORT:-8080}"
           JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
           if [ -z "$JAR" ]; then
             echo "::error::No bootable jar found at deliveryline-backend/target/"
@@ -613,32 +618,55 @@ jobs:
           # does not call System.exit and at least one bean holds a non-daemon
           # thread, so bound the JVM with `timeout` and assert success via the
           # JSON envelope (overallStatus). SIGTERM after a passing run is OK.
-          set +e
-          timeout 240s java -jar "$JAR" \
-               deliveryline doctor --format json --only supported-environment,java-version,docker-availability \
-               > bundled-jar-smoke-logs/doctor.json 2>bundled-jar-smoke-logs/doctor.err
-          rc=$?
-          set -e
-          echo "java -jar exit: $rc"
-          echo "----- stdout -----"
-          cat bundled-jar-smoke-logs/doctor.json
-          echo "----- stderr (tail) -----"
-          tail -40 bundled-jar-smoke-logs/doctor.err || true
-          # Extract the JSON envelope: stdout may contain Spring log lines
-          # before the JSON payload, so capture the first line that starts
-          # with { for jq.
-          JSON_LINE=$(grep -m1 '^{' bundled-jar-smoke-logs/doctor.json || true)
-          if [ -z "$JSON_LINE" ]; then
-            echo "::error::no JSON envelope on stdout"
+          java -jar "$JAR" > bundled-jar-smoke-logs/server.log 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true' EXIT
+          ready=""
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${APP_PORT}/actuator/health" > bundled-jar-smoke-logs/health.json; then
+              status=$(jq -r '.status // empty' bundled-jar-smoke-logs/health.json)
+              if [ "$status" = "UP" ]; then
+                ready=1
+                break
+              fi
+            fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "::error::packaged jar exited before the REST surface became ready"
+              tail -100 bundled-jar-smoke-logs/server.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::packaged jar never became ready on http://127.0.0.1:${APP_PORT}"
+            tail -100 bundled-jar-smoke-logs/server.log || true
             exit 1
           fi
-          status=$(printf '%s' "$JSON_LINE" | jq -r '.overallStatus')
-          echo "doctor overallStatus: $status"
-          if [ "$status" = "FAIL" ]; then
-            echo "::error::doctor reported overallStatus=FAIL"
-            exit 1
-          fi
-          # PASS or WARN is acceptable per 1.17 AC8 semantics.
+          curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/workflows" \
+            > bundled-jar-smoke-logs/workflows.json
+          curl -fsS "http://127.0.0.1:${APP_PORT}/v3/api-docs" \
+            > bundled-jar-smoke-logs/openapi.json
+          jq -e '.status == "UP"' bundled-jar-smoke-logs/health.json > /dev/null
+          jq -e '
+            type == "array" and
+            all(
+              .[];
+              (
+                (keys | sort) ==
+                  ["currentState", "lastEventAt", "lastEventType", "ticketRef", "workflowRunId"]
+              ) and
+              (.workflowRunId | type == "string") and
+              (.currentState | type == "string") and
+              ((.ticketRef == null) or (.ticketRef | type == "string")) and
+              ((.lastEventAt == null) or (.lastEventAt | type == "string")) and
+              ((.lastEventType == null) or (.lastEventType | type == "string"))
+            )
+          ' bundled-jar-smoke-logs/workflows.json > /dev/null
+          jq -e '
+            .paths["/api/v1/workflows"] and
+            .paths["/api/v1/workflows/{workflowRunId}"] and
+            .paths["/api/v1/workflows/{workflowRunId}/events"]
+          ' bundled-jar-smoke-logs/openapi.json > /dev/null
 
       - name: Tear down docker-compose
         if: always()
