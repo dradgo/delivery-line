@@ -1,20 +1,19 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { Outlet, createRootRouteWithContext } from '@tanstack/react-router';
 
 import { GenericErrorState, PageNotFoundState } from './-states/DeadEndState';
 
 /**
- * Story 2.5 — typed router context SEAM.
+ * Typed router context.
  *
- * SEAM (story 2.6): TanStack Query injects the real `QueryClient` here so route
- * loaders can call `queryClient.ensureQueryData(workflowKeys.detail(...))` (AC3).
- * `QueryClient` does not exist yet (2.6 owns it), so the field is typed `unknown`
- * and optional today; 2.6 widens it to the concrete type and passes the instance
- * into `createRouter({ context })`. Using `createRootRouteWithContext` now means
- * 2.6 does NOT have to reshape the root route.
+ * Story 2.6 filled the story-2.5 SEAM: the real `QueryClient` is injected here
+ * (App.tsx passes it into `createRouter({ context })`), so route loaders call
+ * `context.queryClient.ensureQueryData(detailQueryOptions(...))` for flash-free
+ * deep links (AC3). Authored via `createRootRouteWithContext` in 2.5 so this is a
+ * type widen, not a route reshape.
  */
 export interface RouterContext {
-  /** SEAM (story 2.6): real `QueryClient` instance is injected here. */
-  queryClient?: unknown;
+  queryClient: QueryClient;
 }
 
 /**

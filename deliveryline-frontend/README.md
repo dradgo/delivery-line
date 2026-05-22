@@ -87,10 +87,14 @@ correctly.
 | `npm run lint:fix`        | ESLint with `--fix`                                                    |
 | `npm run lint:rules-test` | Run the custom-ESLint-rule fixture tests (`node --test`)               |
 | `npm run check:routes`    | Route-param validation gate (`node --test`)                            |
+| `npm run generate-api`    | Regenerate the typed API client from the backend OpenAPI snapshot      |
+| `npm run check:api`       | Generated-client drift gate — fails if `schema.d.ts` is stale          |
+| `npm test`                | Run the Vitest data-layer suite (`vitest run`)                         |
 | `npm run format`          | Prettier `--write` (apply formatting)                                  |
 | `npm run format:check`    | Prettier `--check` (CI gate)                                           |
 
-The Vitest test runner ships with story 2.27.
+A MINIMAL Vitest + Testing Library + MSW runner ships with story 2.6 (data-layer
+hooks/mutations only); story 2.27 extends it to the full component/route/a11y suite.
 
 ## Lint & Format (story 2.31)
 
@@ -219,6 +223,49 @@ validators are gated by `npm run check:routes` on the enforced Maven/CI path.
 Full detail (route table, param contract + backend source of truth, loader seam,
 AC8 state taxonomy, AC10 single-detail-route rule, deferrals) is in
 [`src/routes/README.md`](src/routes/README.md).
+
+## Data layer (story 2.6)
+
+Server state lives in **TanStack Query** — the backend is the single source of
+truth; domain state never goes in React `useState`. The pieces:
+
+- **Typed API client** (`src/lib/api/client.ts`) — `openapi-fetch` typed by
+  `src/lib/api/schema.d.ts`, which is **generated from the backend's OpenAPI
+  snapshot** and **committed**. Regenerate after the backend changes its API:
+
+  ```bash
+  npm run generate-api    # reads ../deliveryline-backend/.../openapi/openapi.json
+  ```
+
+  The OpenAPI source is **backend-owned** (stories 6.9 / 2.13 / 2.14); the frontend
+  only consumes it. `npm run check:api` regenerates to a temp file and diffs it
+  against the committed `schema.d.ts`, so a stale client fails the build (mirrors
+  the backend's OpenAPI drift gate). It runs in `mvn -pl deliveryline-frontend
+clean package` via a `frontend-maven-plugin` execution.
+
+- **Query-key factory** (`src/lib/queryKeys/workflowKeys.ts`) — **mandatory**. Every
+  `useQuery`/`useMutation` key comes from `workflowKeys.*()`; inline array keys are a
+  build-failing anti-pattern enforced by the `no-inline-query-keys` ESLint rule. Keys
+  are hierarchical, so `workflowKeys.detail(id)` is a prefix of `.events(id)` /
+  `.allowedActions(id)` and one `invalidateQueries` call covers them all.
+
+- **Typed Problem Details** (`src/lib/api/problemDetails.ts`) — parses
+  `application/problem+json` (RFC 9457) into a typed `ProblemDetailsError`; consumers
+  branch on `error.code` / `error.status` / `error.retryable`, never on raw HTTP
+  status or string matching.
+
+- **Hooks** (`src/features/workflows/hooks/`) — `useWorkflowDetail` / `useWorkflowEvents`
+  are live; `useArtifact` / `useAllowedActions` are typed stubs until their endpoints
+  ship (artifact-read story / 2.14). `useWorkflowMutation` is the reusable mutation
+  pattern: a stable UUIDv7 `Idempotency-Key` per attempt (reused across retries) plus
+  success invalidation; stories 2.13 / 2.19 instantiate it for approve/reject/clarify.
+
+- **Cache defaults** (`src/lib/api/queryOptions.ts`) — workflow detail `staleTime` 5s
+  (live state), event history 60s (append-only); retries respect
+  `ProblemDetailsError.retryable`.
+
+- **Headers** — the client middleware attaches `X-Correlation-Id` on every request
+  (server-log tracing, story 1.19) and `Idempotency-Key` on mutations (story 1.9).
 
 ## Pinned versions
 

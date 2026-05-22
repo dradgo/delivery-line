@@ -28,8 +28,34 @@ test('no-inline-query-keys', () => {
       },
       // unrelated call with an array arg is untouched
       { code: 'doSomething({ queryKey: ["x"] });' },
+      // Story 2.6 (AC4) — real-shaped query hook using the workflowKeys factory PASSES.
+      {
+        code: [
+          "import { useQuery } from '@tanstack/react-query';",
+          "import { workflowKeys } from '@/lib/queryKeys/workflowKeys';",
+          'export function useWorkflowDetail(workflowRunId) {',
+          '  return useQuery({',
+          '    queryKey: workflowKeys.detail(workflowRunId),',
+          '    queryFn: () => fetchWorkflowDetail(workflowRunId),',
+          '  });',
+          '}',
+        ].join('\n'),
+      },
     ],
     invalid: [
+      // Story 2.6 (AC4) — real-shaped query hook with an AD-HOC inline array key FAILS.
+      {
+        code: [
+          "import { useQuery } from '@tanstack/react-query';",
+          'export function useWorkflowDetail(workflowRunId) {',
+          '  return useQuery({',
+          "    queryKey: ['workflows', 'detail', workflowRunId],",
+          '    queryFn: () => fetchWorkflowDetail(workflowRunId),',
+          '  });',
+          '}',
+        ].join('\n'),
+        errors: [{ messageId: 'nonFactoryKey' }],
+      },
       {
         code: 'useQuery({ queryKey: ["workflows", id], queryFn: fn });',
         errors: [{ messageId: 'nonFactoryKey' }],

@@ -1,13 +1,22 @@
 import { lazy, Suspense } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 
+import { createQueryClient } from './lib/api/queryOptions';
 import { routeTree } from './routeTree.gen';
 import { GenericErrorState, PageNotFoundState } from './routes/-states/DeadEndState';
 
+// Story 2.6 — the single app-wide QueryClient (server-state source of truth,
+// architecture.md:454). Created once at module scope so it is stable across
+// renders and shared by BOTH the React tree (QueryClientProvider) and the route
+// loaders (via the router context below) — that shared instance is what makes a
+// loader prefetch and a component hook hit the same cache (AC10 dedup).
+const queryClient = createQueryClient();
+
 // Story 2.5 — build the router from the GENERATED route tree (the TanStack Router
 // Vite plugin regenerates ./routeTree.gen.ts on every dev/build; it is gitignored).
-//   - context: {} — the typed RouterContext seam (RouterContext in __root.tsx);
-//     story 2.6 passes the real QueryClient here.
+//   - context.queryClient (story 2.6) — fills the RouterContext seam so loaders
+//     call `context.queryClient.ensureQueryData(...)` (AC3).
 //   - scrollRestoration: true (AC6) — restores scroll position on back/forward so
 //     queue → detail → artifact → back returns to the prior scroll state. Run /
 //     artifact identity is preserved by the URL params themselves.
@@ -16,7 +25,7 @@ import { GenericErrorState, PageNotFoundState } from './routes/-states/DeadEndSt
 //     notFoundComponent still lands on an explicit state, never a blank page.
 const router = createRouter({
   routeTree,
-  context: {},
+  context: { queryClient },
   scrollRestoration: true,
   defaultNotFoundComponent: PageNotFoundState,
   defaultErrorComponent: GenericErrorState,
@@ -51,7 +60,11 @@ function App() {
     );
   }
 
-  return <RouterProvider router={router} />;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  );
 }
 
 export default App;

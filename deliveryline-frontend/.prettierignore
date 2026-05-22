@@ -12,3 +12,8 @@ package-lock.json
 # TanStack Router generated route tree (story 2.5) — tool-managed; Prettier must
 # not reformat it, or `format:check` would fight the generator.
 src/routeTree.gen.ts
+
+# Generated OpenAPI client types (story 2.6) — emitted byte-for-byte by
+# `npm run generate-api` and drift-checked by `check:api`. Prettier must NOT
+# reformat it, or the committed file would diverge from a fresh regeneration.
+src/lib/api/schema.d.ts

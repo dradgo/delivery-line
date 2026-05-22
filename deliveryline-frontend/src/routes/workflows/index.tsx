@@ -1,17 +1,19 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 
 import { Container, Stack } from '@/components/layout';
+import { listQueryOptions } from '@/lib/api/queryOptions';
 
 /**
- * Story 2.5 (AC1) — WorkflowsRoute: the `/workflows` run queue/list.
+ * WorkflowsRoute: the `/workflows` run queue/list.
  *
- * MINIMAL PLACEHOLDER ONLY. The real Run Review Queue (Queue Item 2.15, queue
- * shell states 2.20) and the tri-pane AppShell (2.7) replace this body. The
- * sample links below exist so the navigation chain (queue → detail → artifact →
- * back) is clickable for the AC6 scroll-restoration check; they carry well-formed
- * `run_…` ids but resolve to placeholder detail views (no data layer until 2.6).
+ * The BODY is still a MINIMAL PLACEHOLDER — the real Run Review Queue (Queue Item
+ * 2.15, queue shell states 2.20) and the tri-pane AppShell (2.7) replace it. Story
+ * 2.6 added the DATA seam only: the loader warms the run-list query so the queue UI
+ * (when 2.15/2.20 land) renders flash-free off the shared cache. The X-Correlation-Id
+ * header rides the request via the client middleware (story 2.6/1.19).
  */
 export const Route = createFileRoute('/workflows/')({
+  loader: ({ context }) => context.queryClient.ensureQueryData(listQueryOptions()),
   component: WorkflowsRoute,
 });
 

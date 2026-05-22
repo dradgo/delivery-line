@@ -148,6 +148,33 @@
 							<arguments>run check:routes</arguments>
 						</configuration>
 					</execution>
+					<!-- Story 2.6 (AC2) — generated-API-client drift gate. Regenerates
+					     the typed client from the committed backend openapi.json and
+					     fails if the committed src/lib/api/schema.d.ts is stale. Mirrors
+					     the backend OpenAPI drift gate (story 1.21 / 6.9). -->
+					<execution>
+						<id>npm-run-check-api</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run check:api</arguments>
+						</configuration>
+					</execution>
+					<!-- Story 2.6 (Task 7) — data-layer Vitest suite (query-key factory,
+					     problem-details parser, query/mutation hooks, dedup, correlation
+					     header). Minimal runner stood up here; story 2.27 extends it. -->
+					<execution>
+						<id>npm-run-test</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>test</arguments>
+						</configuration>
+					</execution>
 					<execution>
 						<id>npm-run-format-check</id>
 						<goals>
