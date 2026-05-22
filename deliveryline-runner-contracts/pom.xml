@@ -34,11 +34,50 @@
 
 	<build>
 		<plugins>
-			<!-- Story 1.21 — Spotless enabled for formatting consistency with backend module.
-			     Config inherited from root pluginManagement. -->
+			<!-- Story 1.21 — Spotless; story 2.30 — Checkstyle + SpotBugs.
+			     All plugin versions + config inherited from root pluginManagement.
+			     Story 2.30 / Q4: AC1 names this module explicitly for Spotless;
+			     Checkstyle + SpotBugs are extended here too for consistency, since
+			     runner-contracts ships production Java (RunnerContractValidator,
+			     schema model). Each `check` goal is bound to verify. -->
 			<plugin>
 				<groupId>com.diffplug.spotless</groupId>
 				<artifactId>spotless-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>spotless-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-checkstyle-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>checkstyle-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>com.github.spotbugs</groupId>
+				<artifactId>spotbugs-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>spotbugs-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>

@@ -335,6 +335,55 @@ trusted network.** The same loopback check is surfaced by `doctor` (`rest-bind-a
 
 ---
 
+## Code quality checks
+
+The backend enforces formatting, style, and bug-pattern detection mechanically so consistency
+does not depend on reviewer discipline (story 2.30):
+
+| Tool | Scope | Wired into |
+|---|---|---|
+| **Spotless** (Google Java Format) | Formatting — indentation, wrapping, import order, unused imports. | `mvn verify`; CI `format-static-checks`. |
+| **Checkstyle** | Style/naming — Java naming conventions, no wildcard/unused imports, issue-referenced TODOs, forbidden `System.out`/`System.err`/`printStackTrace`/`Thread.sleep` in production code. Committed ruleset: `config/checkstyle/checkstyle.xml`. | `mvn verify`; CI `format-static-checks`. |
+| **SpotBugs** | Bug patterns. Fails the build on `HIGH`-severity findings; `MEDIUM` is reported but non-failing. | `mvn verify`; CI `format-static-checks`. |
+
+`mvn verify` runs all three. To run them directly without the full test suite:
+
+```bash
+./mvnw -pl deliveryline-backend -am spotless:apply              # auto-fix formatting
+./mvnw -pl deliveryline-backend -am spotless:check checkstyle:check
+```
+
+A failing CI `format-static-checks` tier blocks the merge (it feeds `foundation-gate`).
+
+### Optional pre-commit hook (recommended, not required)
+
+You can opt into a local git pre-commit hook that runs Spotless + Checkstyle before each commit,
+so formatting/style problems are caught before they reach CI. SpotBugs is intentionally excluded
+from the hook — it is too slow for a commit-time check. **The hook is optional**; the CI tier is
+the real gate.
+
+#### PowerShell (Windows)
+
+```powershell
+.\scripts\install-git-hooks.ps1                # install
+.\scripts\install-git-hooks.ps1 -Uninstall     # remove
+```
+
+#### bash (macOS / Linux / WSL2)
+
+```bash
+./scripts/install-git-hooks.sh                 # install
+./scripts/install-git-hooks.sh --uninstall     # remove
+```
+
+The installer is non-destructive: if a non-DeliveryLine `pre-commit` hook already exists it
+refuses to overwrite it unless you pass `--force`/`-Force` (which backs the existing hook up to a
+`pre-commit.backup` file in your active Git hooks directory first). The scripts resolve that hook
+directory via `git rev-parse --git-path hooks`, so they also work with linked worktrees and custom
+`core.hooksPath` setups. To skip the hook for a single commit, use `git commit --no-verify`.
+
+---
+
 ## Reset local state
 
 `scripts/reset-local.{ps1,sh}` wipes local DeliveryLine state and removes the Flyway-managed

@@ -1,9 +1,10 @@
 # Repo-wide editor config.
 #
-# Story ownership: story 2.30 (Backend Lint + Format) OWNS this file and will
-# extend it (Java specifics, Spotless alignment). Story 2.31 seeded the minimal
-# baseline below so the frontend has a shared config to match (2.31 AC8) while
-# 2.30 is still pending. Values follow story 2.30 AC5.
+# Story ownership: story 2.30 (Backend Lint + Format) OWNS this file. Story 2.31
+# seeded the minimal baseline so the frontend had a shared config to match
+# (2.31 AC8); story 2.30 now owns and extends it (Java specifics, Spotless
+# alignment). Values follow story 2.30 AC5 — see the [*.java] note for the one
+# documented deviation from AC5's literal wording.
 root = true
 
 [*]
@@ -17,8 +18,19 @@ indent_style = space
 [*.{cmd,bat,ps1}]
 end_of_line = crlf
 
+# Java: 2-space indent.
+#
+# AC5's literal wording says "4-space Java", but its own closing clause requires
+# this file be "consistent with Spotless-enforced formatting" — and Spotless is
+# the source of truth per AC1. The backend Spotless config is
+# <style>GOOGLE</style> (root pom.xml), i.e. Google Java Format, whose standard
+# style uses a 2-space indent (4-space continuation). The entire backend was
+# already formatted that way by story 1.21's spotless:apply. Declaring 4-space
+# here would make an .editorconfig-honoring editor indent Java with 4 spaces,
+# which spotless:check would then reject. We therefore follow Spotless: 2-space.
+# (story 2.30, Q1 — see story file Task 1 / Completion Notes.)
 [*.java]
-indent_size = 4
+indent_size = 2
 
 [*.{js,jsx,ts,tsx,json,jsonc,yml,yaml,css,html,md}]
 indent_size = 2

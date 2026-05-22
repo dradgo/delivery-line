@@ -92,7 +92,14 @@
 						</dependency>
 					</dependencies>
 					<configuration>
-						<configLocation>google_checks.xml</configLocation>
+						<!-- Story 2.30 — committed ruleset is the source of truth (replaces the
+						     JAR-bundled google_checks.xml so a Checkstyle version bump cannot
+						     silently change the rules). suppressionsLocation supplies
+						     ${checkstyle.suppressions.file} to the ruleset's SuppressionFilter.
+						     ${maven.multiModuleProjectDirectory} resolves to the repo root under
+						     mvnw (matches the resources-plugin paths in deliveryline-backend). -->
+						<configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/checkstyle.xml</configLocation>
+						<suppressionsLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/suppressions.xml</suppressionsLocation>
 						<sourceDirectories>
 							<sourceDirectory>${project.build.sourceDirectory}</sourceDirectory>
 						</sourceDirectories>
@@ -108,13 +115,24 @@
 					<artifactId>spotbugs-maven-plugin</artifactId>
 					<version>${spotbugs-maven-plugin.version}</version>
 					<configuration>
-						<!-- Story 1.21 — threshold=Medium so MEDIUM bugs are reported (warns
-						     non-blocking) per epics.md:980. failOnError=false here lets the
-						     `:check` goal own the build-fail decision; goal-level config below
-						     restricts that to HIGH-severity findings only. -->
+						<!-- Story 1.21 + 2.30 — the analysis threshold and the build-fail
+						     threshold are deliberately split:
+						       threshold=Medium     — what the `spotbugs` goal REPORTS: MEDIUM
+						                              and HIGH findings both land in
+						                              spotbugsXml.xml / spotbugs.html (the CI
+						                              artifact), so MEDIUM stays visible.
+						       failThreshold=High   — what the `check` goal FAILS the build on:
+						                              HIGH-severity findings only (AC3). MEDIUM
+						                              is reported but non-failing until a
+						                              deferred story escalates it.
+						     failOnError=true is required for the `check` goal to gate the
+						     build at all — with it false `check` reports findings but never
+						     fails (verified empirically in story 2.30). effort=Max for the
+						     deepest analysis. -->
 						<effort>Max</effort>
 						<threshold>Medium</threshold>
-						<failOnError>false</failOnError>
+						<failThreshold>High</failThreshold>
+						<failOnError>true</failOnError>
 						<xmlOutput>true</xmlOutput>
 						<htmlOutput>true</htmlOutput>
 					</configuration>

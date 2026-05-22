@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  DeliveryLine Checkstyle ruleset - committed source of truth.
+
+  Story ownership: story 2.30 (Backend Lint + Format). Pinned to Checkstyle
+  10.21.4 (root pom.xml checkstyle.version property). Applied to
+  deliveryline-backend and deliveryline-runner-contracts main sources only
+  (src/main/java - see the POM sourceDirectories; test code is intentionally
+  not scanned, which is what satisfies AC8's "outside test directories").
+
+  TOOL SPLIT (AC7) - each quality tool has a non-overlapping scope:
+    Checkstyle handles formatting/style/naming; ArchUnit handles architectural
+    boundaries; SpotBugs handles bug patterns. No overlap.
+
+  This ruleset is intentionally FOCUSED rather than a verbatim copy of
+  google_checks.xml. Spotless (Google Java Format) already owns whitespace,
+  line wrapping, import ordering and blank-line formatting; re-enforcing those
+  here would create exactly the double-enforcement noise AC7 forbids. The rules
+  below are derived from Google's naming conventions plus project-specific
+  deltas (forbidden-call bans, issue-referenced TODOs) documented inline.
+  Committing this file is also the closure of the deferred-work item
+  "Checkstyle uses JAR-bundled google_checks.xml" - nothing here resolves from
+  the Checkstyle JAR, so a future Checkstyle version bump cannot silently
+  change the enforced rule set.
+-->
+<module name="Checker">
+  <property name="severity" value="error"/>
+  <property name="charset" value="UTF-8"/>
+  <property name="fileExtensions" value="java"/>
+
+  <!--
+    AC8 / Task 4 - file-scoped suppressions for the documented forbidden-call
+    exceptions (and one final-reference-to-mutable-state field). The rules
+    themselves stay globally active; only the named files are exempted, each
+    with a rationale recorded in suppressions.xml. The root POM
+    pluginManagement supplies ${checkstyle.suppressions.file} via
+    suppressionsLocation.
+  -->
+  <module name="SuppressionFilter">
+    <property name="file" value="${checkstyle.suppressions.file}"/>
+    <property name="optional" value="false"/>
+  </module>
+
+  <module name="TreeWalker">
+
+    <!--
+      AC6 - Java naming conventions (architecture.md Code Naming Conventions).
+      Patterns are the Checkstyle/Google defaults: PascalCase types, camelCase
+      methods / fields / parameters, UPPER_SNAKE_CASE constants.
+    -->
+    <module name="TypeName"/>
+    <module name="MethodName"/>
+    <module name="MemberName"/>
+    <module name="ParameterName"/>
+    <module name="LocalVariableName"/>
+    <module name="ConstantName">
+      <!--
+        Default ConstantName treats every static-final field as a constant.
+        Two universal Java idioms are static-final yet conventionally not
+        UPPER_SNAKE_CASE: the SLF4J logger field (log / logger) and the
+        serialization field serialVersionUID. Both are permitted here so the
+        rule still enforces UPPER_SNAKE_CASE for every genuine constant.
+        RedactionLayoutHolder's static-final-but-mutable AtomicBoolean flag is
+        a final reference to mutable state (not a constant) and is suppressed
+        by file in suppressions.xml.
+      -->
+      <property name="format"
+                value="^(log|logger|serialVersionUID)$|^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$"/>
+    </module>
+
+    <!--
+      AC6 - imports. Spotless already removes unused imports and never collapses
+      to wildcards; these are belt-and-suspenders so a misconfigured editor
+      cannot slip a wildcard or dangling import past review.
+    -->
+    <module name="AvoidStarImport"/>
+    <module name="RedundantImport"/>
+    <module name="UnusedImports">
+      <property name="processJavadoc" value="true"/>
+    </module>
+
+    <!--
+      AC6 - a bare TODO / FIXME must carry a parenthesised issue reference,
+      e.g. TODO(story-3.1) or FIXME(ISSUE-42), so follow-up work is always
+      traceable. A TODO/FIXME with no reference is rejected.
+    -->
+    <module name="RegexpSinglelineJava">
+      <property name="id" value="TodoFixmeRequiresIssueReference"/>
+      <property name="format" value="\b(?:TODO|FIXME)\b(?!\s*\()"/>
+      <property name="message"
+                value="Bare TODO/FIXME: add a parenthesised issue reference, e.g. TODO(story-3.1)."/>
+    </module>
+
+    <!--
+      AC8 - forbidden calls in production code. Diagnostics must go through the
+      structured SLF4J logger + redaction layer (story 1.19), never stdout /
+      stderr or a raw stack-trace dump. ignoreComments=true so a comment that
+      merely mentions one of these calls is not itself flagged. Each rule has a
+      stable id so suppressions.xml can exempt the documented legitimate sites.
+    -->
+    <module name="RegexpSinglelineJava">
+      <property name="id" value="ForbiddenSystemOut"/>
+      <property name="format" value="System\.out\.print"/>
+      <property name="ignoreComments" value="true"/>
+      <property name="message"
+                value="System.out is forbidden in production code - use the SLF4J logger (story 1.19)."/>
+    </module>
+    <module name="RegexpSinglelineJava">
+      <property name="id" value="ForbiddenSystemErr"/>
+      <property name="format" value="System\.err\.print"/>
+      <property name="ignoreComments" value="true"/>
+      <property name="message"
+                value="System.err is forbidden in production code - use the SLF4J logger (story 1.19)."/>
+    </module>
+    <module name="RegexpSinglelineJava">
+      <property name="id" value="ForbiddenPrintStackTrace"/>
+      <property name="format" value="\.printStackTrace\s*\("/>
+      <property name="ignoreComments" value="true"/>
+      <property name="message"
+                value="printStackTrace() is forbidden in production code - log the exception via SLF4J (story 1.19)."/>
+    </module>
+    <module name="RegexpSinglelineJava">
+      <property name="id" value="ForbiddenThreadSleep"/>
+      <property name="format" value="\bThread\.sleep\s*\("/>
+      <property name="ignoreComments" value="true"/>
+      <property name="message"
+                value="Thread.sleep is forbidden in production code - suppress with rationale if it is a deliberate backoff."/>
+    </module>
+
+  </module>
+</module>

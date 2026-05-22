@@ -95,8 +95,11 @@ public class DoctorCommands {
       String rendered = render(report, normalizedFormat);
 
       if (report.overallStatus() == DiagnosticsStatus.FAIL) {
-        // TODO(story-2.30): replace System.out.println with structured CLI output channel — see
-        // Checkstyle rule
+        // System.out is intentional here: this is the CLI command's user-facing
+        // result envelope (Spring Shell renders command output to stdout), not
+        // diagnostic logging. Story 2.30 keeps it and exempts this file in
+        // config/checkstyle/suppressions.xml rather than routing product output
+        // through the SLF4J logger.
         System.out.println(rendered);
         throw failureException(report);
       }

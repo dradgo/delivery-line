@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+
+<!--
+  DeliveryLine Checkstyle suppressions - story 2.30 (Backend Lint + Format).
+
+  Every entry exempts ONE rule for ONE production file, with the rationale
+  inline. The AC8 forbidden-call rules stay globally active; the entries below
+  are the pre-existing, legitimate exceptions identified during story 2.30.
+  Do NOT blanket-disable a rule here - add a narrowly scoped <suppress> with a
+  documented rationale instead (story 2.30 Q2 / anti-patterns).
+
+  The files= patterns use [\\/] so they match on both Windows (backslash) and
+  Linux/macOS (forward slash) path separators.
+-->
+<suppressions>
+
+  <!--
+    DoctorCommands - System.out is the Spring Shell CLI command output channel.
+    The doctor command renders its result envelope to stdout as product output
+    for the operator; it is not diagnostic logging, so it does not belong on
+    the SLF4J logger.
+  -->
+  <suppress id="ForbiddenSystemOut"
+            files="[\\/]adapters[\\/]cli[\\/]DoctorCommands\.java$"
+            lines="103"/>
+
+  <!--
+    IdempotencyService / WorkflowCommandService - Thread.sleep is a deliberate,
+    bounded retry/replay backoff delay in application code. Refactoring this
+    timing behaviour to an injected sleeper abstraction is out of scope for a
+    lint story.
+  -->
+  <suppress id="ForbiddenThreadSleep"
+            files="[\\/]application[\\/]idempotency[\\/]IdempotencyService\.java$"
+            lines="108"/>
+  <suppress id="ForbiddenThreadSleep"
+            files="[\\/]application[\\/]workflow[\\/]WorkflowCommandService\.java$"
+            lines="438"/>
+
+  <!--
+    RedactionLayoutHolder - two exemptions for this one class:
+      * System.err is the fail-closed logging-bootstrap path. This class IS the
+        redaction layer bootstrapping, so routing this diagnostic through SLF4J
+        would be circular (story 1.19 design).
+      * ConstantName is exempted for its static-final AtomicBoolean once-flag
+        (diagnosticEmitted) - a final reference to mutable state, not a
+        compile-time constant, so camelCase is the correct name.
+  -->
+  <suppress id="ForbiddenSystemErr"
+            files="[\\/]infrastructure[\\/]observability[\\/]RedactionLayoutHolder\.java$"
+            lines="56"/>
+  <suppress checks="ConstantName"
+            files="[\\/]infrastructure[\\/]observability[\\/]RedactionLayoutHolder\.java$"
+            lines="22"/>
+
+</suppressions>
