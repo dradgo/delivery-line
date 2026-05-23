@@ -8,13 +8,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.dradgo.application.approval.ApprovalSnapshot;
+import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
+import org.dradgo.application.artifact.SpecificationArtifact;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.FailureDescription;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.runner.ContextBundle;
+import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
@@ -51,26 +58,36 @@ public class WorkflowInspectionService {
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
   private final ArtifactRecordPort artifactRecordPort;
+  private final ApprovalReadPort approvalReadPort;
   private final IntegrationLinkService integrationLinkService;
   private final RedactionPolicyService redactionPolicyService;
   private final RecoveryService recoveryService;
+  private final RunnerExecutionRecordPort runnerExecutionRecordPort;
+  private final RunnerScratchStore runnerScratchStore;
 
   public WorkflowInspectionService(
       WorkflowRunReadPort workflowRunReadPort,
       WorkflowEventReadPort workflowEventReadPort,
       ArtifactRecordPort artifactRecordPort,
+      ApprovalReadPort approvalReadPort,
       IntegrationLinkService integrationLinkService,
       RedactionPolicyService redactionPolicyService,
-      RecoveryService recoveryService) {
+      RecoveryService recoveryService,
+      RunnerExecutionRecordPort runnerExecutionRecordPort,
+      RunnerScratchStore runnerScratchStore) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
     this.artifactRecordPort = Objects.requireNonNull(artifactRecordPort, "artifactRecordPort");
+    this.approvalReadPort = Objects.requireNonNull(approvalReadPort, "approvalReadPort");
     this.integrationLinkService =
         Objects.requireNonNull(integrationLinkService, "integrationLinkService");
     this.redactionPolicyService =
         Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
     this.recoveryService = Objects.requireNonNull(recoveryService, "recoveryService");
+    this.runnerExecutionRecordPort =
+        Objects.requireNonNull(runnerExecutionRecordPort, "runnerExecutionRecordPort");
+    this.runnerScratchStore = Objects.requireNonNull(runnerScratchStore, "runnerScratchStore");
   }
 
   @Transactional(readOnly = true)
@@ -232,6 +249,226 @@ public class WorkflowInspectionService {
     }
     log.info("listing workflow_runs success count={}", summaries.size());
     return summaries;
+  }
+
+  /**
+   * Story 2.8 AC8 / FR10: latest approved spec for the workflow run, projected as a {@link
+   * SpecificationArtifact}. Returns {@link Optional#empty()} (never {@code null}) when no spec has
+   * been approved yet in this run.
+   */
+  @Transactional(readOnly = true)
+  public Optional<SpecificationArtifact> getCurrentApprovedSpec(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info("getCurrentApprovedSpec entry workflowRunId={}", workflowRunPublicId);
+      Optional<ApprovalSnapshot> approval =
+          approvalReadPort.findLatestApprovedForArtifactLineage(
+              workflowRunPublicId, ArtifactType.SPEC.value());
+      if (approval.isEmpty()) {
+        log.info(
+            "getCurrentApprovedSpec success workflowRunId={} noApprovedSpec=true",
+            workflowRunPublicId);
+        return Optional.empty();
+      }
+      Optional<ArtifactRecordSnapshot> artifact =
+          artifactRecordPort.findByPublicId(approval.get().artifactId());
+      if (artifact.isEmpty()) {
+        log.warn(
+            "getCurrentApprovedSpec inconsistency workflowRunId={} approvalId={} artifactId={} reason=approvalReferencesUnknownArtifact",
+            workflowRunPublicId,
+            approval.get().publicId(),
+            approval.get().artifactId());
+        return Optional.empty();
+      }
+      SpecificationArtifact spec = SpecificationArtifact.fromSnapshot(artifact.get());
+      log.info(
+          "getCurrentApprovedSpec success workflowRunId={} artifactId={} version={}",
+          workflowRunPublicId,
+          spec.id(),
+          spec.version());
+      return Optional.of(spec);
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 2.8 AC9 / FR11: full chronological spec history (ascending {@code version}) with each
+   * version joined to its decision row from {@code approvals}. Spec versions with no approval row
+   * are emitted with {@code decision="pending"}.
+   */
+  @Transactional(readOnly = true)
+  public List<SpecHistoryEntry> getSpecHistory(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info("getSpecHistory entry workflowRunId={}", workflowRunPublicId);
+      List<ArtifactRecordSnapshot> specVersions =
+          artifactRecordPort.listByWorkflowRunIdAndArtifactType(
+              workflowRunPublicId, ArtifactType.SPEC.value());
+      List<ApprovalSnapshot> decisions =
+          approvalReadPort.listByWorkflowRunAndArtifactType(
+              workflowRunPublicId, ArtifactType.SPEC.value());
+
+      Map<String, ApprovalSnapshot> decisionByVersionKey = new LinkedHashMap<>();
+      for (ApprovalSnapshot decision : decisions) {
+        String versionKey = specVersionKey(decision.artifactId(), decision.artifactVersion());
+        ApprovalSnapshot prior = decisionByVersionKey.putIfAbsent(versionKey, decision);
+        if (prior != null) {
+          throw duplicateSpecDecision(workflowRunPublicId, prior, decision);
+        }
+      }
+
+      List<SpecHistoryEntry> entries = new ArrayList<>(specVersions.size());
+      for (ArtifactRecordSnapshot spec : specVersions) {
+        SpecificationArtifact projected = SpecificationArtifact.fromSnapshot(spec);
+        ApprovalSnapshot decision =
+            decisionByVersionKey.get(specVersionKey(spec.publicId(), spec.version()));
+        if (decision == null) {
+          log.debug(
+              "getSpecHistory pending version workflowRunId={} artifactId={} version={}",
+              workflowRunPublicId,
+              spec.publicId(),
+              spec.version());
+          entries.add(new SpecHistoryEntry(projected, "pending", null, null, null));
+        } else {
+          entries.add(
+              new SpecHistoryEntry(
+                  projected,
+                  decision.decision(),
+                  decision.reviewerRole(),
+                  decision.rejectionTaxonomy(),
+                  decision.decidedAt()));
+        }
+      }
+      log.info(
+          "getSpecHistory success workflowRunId={} historyLength={}",
+          workflowRunPublicId,
+          entries.size());
+      return List.copyOf(entries);
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 2.8 AC7 / FR55: bundle inspection for a specific artifact.
+   *
+   * <p>Returns the redacted runner-contracts {@code context-bundle.v1} bytes that the runner saw
+   * when it produced the artifact — read verbatim from the runner scratch store ({@link
+   * RunnerScratchStore#tryReadContextBundle}). No recomposition. AC7 wording is strict: the bundle
+   * returned MUST be the bundle that produced the artifact, not a current-state synthesis that may
+   * have drifted from the original inputs.
+   *
+   * <p>Returns {@link Optional#empty()} (with a structured WARN) for any miss reason:
+   *
+   * <ul>
+   *   <li>{@code artifactNotFound} — no row for {@code artifactId};
+   *   <li>{@code runnerExecutionLinkMissing} — the artifact has no creation event tying it to a
+   *       runner execution (e.g. CLI-only/seed artifact);
+   *   <li>{@code runnerExecutionNotFound} — the link points at a runner_execution row that no
+   *       longer exists;
+   *   <li>{@code runnerExecutionRunMismatch} — the linked runner execution belongs to a different
+   *       workflow run than the artifact;
+   *   <li>{@code bundleNotPersisted} — scratch has been evicted; the historical bytes are gone and
+   *       FR55 fidelity cannot be honored. A persisted-bundle column/file is deferred to a future
+   *       story (see deferred-work.md).
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public Optional<ContextBundle> getContextBundleForArtifact(String artifactId) {
+    return Optional.ofNullable(getContextBundleLookupForArtifact(artifactId).bundle());
+  }
+
+  @Transactional(readOnly = true)
+  public ContextBundleLookupResult getContextBundleLookupForArtifact(String artifactId) {
+    PublicIdPrefixes.require(artifactId, PublicIdPrefixes.ARTIFACT);
+    String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactId);
+    try {
+      log.info("getContextBundleForArtifact entry artifactId={}", artifactId);
+      Optional<ArtifactRecordSnapshot> artifact = artifactRecordPort.findByPublicId(artifactId);
+      if (artifact.isEmpty()) {
+        log.warn(
+            "getContextBundleForArtifact miss artifactId={} reason=artifactNotFound", artifactId);
+        return ContextBundleLookupResult.unavailable(artifactId, "artifactNotFound");
+      }
+      Optional<String> rexIdOpt = artifactRecordPort.findRunnerExecutionIdForArtifact(artifactId);
+      if (rexIdOpt.isEmpty()) {
+        log.warn(
+            "getContextBundleForArtifact miss artifactId={} reason=runnerExecutionLinkMissing",
+            artifactId);
+        return ContextBundleLookupResult.unavailable(artifactId, "runnerExecutionLinkMissing");
+      }
+      String runnerExecutionId = rexIdOpt.get();
+      Optional<RunnerExecutionSnapshot> rex =
+          runnerExecutionRecordPort.findByPublicId(runnerExecutionId);
+      if (rex.isEmpty()) {
+        log.warn(
+            "getContextBundleForArtifact miss artifactId={} runnerExecutionId={} reason=runnerExecutionNotFound",
+            artifactId,
+            runnerExecutionId);
+        return ContextBundleLookupResult.unavailable(artifactId, "runnerExecutionNotFound");
+      }
+      RunnerExecutionSnapshot rexSnapshot = rex.get();
+      ArtifactRecordSnapshot artifactSnapshot = artifact.get();
+      if (!artifactSnapshot.workflowRunId().equals(rexSnapshot.workflowRunPublicId())) {
+        log.warn(
+            "getContextBundleForArtifact miss artifactId={} runnerExecutionId={} reason=runnerExecutionRunMismatch requestedWorkflowRunId={} resolvedWorkflowRunId={}",
+            artifactId,
+            runnerExecutionId,
+            artifactSnapshot.workflowRunId(),
+            rexSnapshot.workflowRunPublicId());
+        return ContextBundleLookupResult.unavailable(artifactId, "runnerExecutionRunMismatch");
+      }
+
+      Optional<byte[]> scratchBytes = runnerScratchStore.tryReadContextBundle(runnerExecutionId);
+      if (scratchBytes.isPresent() && scratchBytes.get().length > 0) {
+        ContextBundle bundle =
+            new ContextBundle(
+                rexSnapshot.workflowRunPublicId(),
+                rexSnapshot.stage(),
+                runnerExecutionId,
+                rexSnapshot.contextBundleVersion(),
+                DataClassification.SHAREABLE_REDACTED,
+                scratchBytes.get());
+        log.info(
+            "getContextBundleForArtifact success artifactId={} runnerExecutionId={} bundleByteLength={} source=scratch",
+            artifactId,
+            runnerExecutionId,
+            bundle.redactedPayload().length);
+        return ContextBundleLookupResult.available(artifactId, bundle);
+      }
+
+      log.warn(
+          "getContextBundleForArtifact miss artifactId={} runnerExecutionId={} reason=bundleNotPersisted",
+          artifactId,
+          runnerExecutionId);
+      return ContextBundleLookupResult.unavailable(artifactId, "bundleNotPersisted");
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+    }
+  }
+
+  private static String specVersionKey(String artifactId, int version) {
+    return artifactId + ":" + version;
+  }
+
+  private static DomainException duplicateSpecDecision(
+      String workflowRunPublicId, ApprovalSnapshot prior, ApprovalSnapshot duplicate) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("workflowRunId", workflowRunPublicId);
+    details.put("artifactId", duplicate.artifactId());
+    details.put("artifactVersion", duplicate.artifactVersion());
+    details.put("priorApprovalId", prior.publicId());
+    details.put("duplicateApprovalId", duplicate.publicId());
+    return new DomainException(
+        DomainErrorCode.INTERNAL_ERROR,
+        "Duplicate approvals found for spec version "
+            + duplicate.artifactVersion()
+            + " of artifact "
+            + duplicate.artifactId(),
+        details);
   }
 
   /**
@@ -523,4 +760,44 @@ public class WorkflowInspectionService {
       boolean interventionMarker,
       OffsetDateTime createdAt,
       Map<String, Object> details) {}
+
+  /**
+   * Story 2.8 AC9: one row of the spec history projection. {@code decision} is one of {@code
+   * "approved"}, {@code "rejected"}, or {@code "pending"} (no approval row yet). {@code
+   * reviewerRole}, {@code rejectionTaxonomy}, and {@code decidedAt} are non-null only when the
+   * version carries a decision row; {@code rejectionTaxonomy} is non-null only when {@code decision
+   * == "rejected"} (DB CHECK pairing).
+   */
+  public record SpecHistoryEntry(
+      SpecificationArtifact spec,
+      String decision,
+      String reviewerRole,
+      String rejectionTaxonomy,
+      OffsetDateTime decidedAt) {}
+
+  public record ContextBundleLookupResult(String artifactId, ContextBundle bundle, String reason) {
+
+    public ContextBundleLookupResult {
+      Objects.requireNonNull(artifactId, "artifactId");
+      if ((bundle == null) == (reason == null)) {
+        throw new IllegalArgumentException(
+            "Exactly one of bundle or reason must be set on ContextBundleLookupResult");
+      }
+    }
+
+    public static ContextBundleLookupResult available(String artifactId, ContextBundle bundle) {
+      return new ContextBundleLookupResult(artifactId, Objects.requireNonNull(bundle, "bundle"), null);
+    }
+
+    public static ContextBundleLookupResult unavailable(String artifactId, String reason) {
+      if (reason == null || reason.isBlank()) {
+        throw new IllegalArgumentException("reason must not be blank");
+      }
+      return new ContextBundleLookupResult(artifactId, null, reason);
+    }
+
+    public boolean available() {
+      return bundle != null;
+    }
+  }
 }

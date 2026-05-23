@@ -65,19 +65,19 @@ class ArtifactOperationServiceContractTest {
     insertRun("run_artifact1234", WorkflowState.EXECUTING);
     ActorContext actor = new ActorContext("alex", ActorType.HUMAN, "corr-test");
     ArtifactRecordSnapshot draft =
-        service.createDraft("run_artifact1234", ArtifactType.SPEC, "spec-v1.md", actor);
+        service.createDraft("run_artifact1234", ArtifactType.SPEC, "spec.md", actor);
     CyclicBarrier barrier = new CyclicBarrier(2);
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Callable<ArtifactRecordSnapshot> taskOne =
           () -> {
             barrier.await();
-            return service.newVersion(draft.publicId(), "spec-v2.md", actor);
+            return service.newVersion(draft.publicId(), "spec.md", actor);
           };
       Callable<ArtifactRecordSnapshot> taskTwo =
           () -> {
             barrier.await();
-            return service.newVersion(draft.publicId(), "spec-v3.md", actor);
+            return service.newVersion(draft.publicId(), "spec.md", actor);
           };
 
       Future<ArtifactRecordSnapshot> firstFuture = executor.submit(taskOne);
@@ -116,6 +116,61 @@ class ArtifactOperationServiceContractTest {
     assertEquals(draft.publicId(), lineage.get(1).parentPublicId());
     assertEquals(3, lineage.get(2).version());
     assertEquals(lineage.get(1).publicId(), lineage.get(2).parentPublicId());
+  }
+
+  @Test
+  void newVersionOnSpecParentEmitsExactlyOneArtifactVersionCreatedEvent() {
+    // Story 2.8 AC10 / Task 6: regression pin — ArtifactOperationService.newVersion(spec parent,
+    // "spec.md", actor) must append exactly one workflow_events row with event_type
+    // 'artifact.versionCreated' whose details point at the newly created spec version. The event
+    // is emitted generically by ArtifactRecordPersistenceAdapter.createNextVersion for ALL artifact
+    // types; this test pins the SPEC path so a future change that adds artifact-type branching can
+    // never silently drop emission for SPEC.
+    insertRun("run_specevt1234", WorkflowState.EXECUTING);
+    ActorContext actor = new ActorContext("alex", ActorType.HUMAN, "corr-specevt");
+    ArtifactRecordSnapshot v1 =
+        service.createDraft("run_specevt1234", ArtifactType.SPEC, "spec.md", actor);
+
+    ArtifactRecordSnapshot v2 = service.newVersion(v1.publicId(), "spec.md", actor);
+
+    assertEquals(2, v2.version(), "newVersion must allocate v2 atop the v1 parent");
+    Integer versionCreatedCount =
+        jdbcTemplate.queryForObject(
+            "select count(*) from workflow_events e "
+                + "join workflow_runs r on r.id = e.workflow_run_id "
+                + "where r.public_id = ? and e.event_type = ?",
+            Integer.class,
+            "run_specevt1234",
+            "artifact.versionCreated");
+    assertEquals(
+        Integer.valueOf(1),
+        versionCreatedCount,
+        "AC10: exactly one ARTIFACT_VERSION_CREATED event must exist for the SPEC v2 newVersion call");
+
+    String eventDetailsArtifactId =
+        jdbcTemplate.queryForObject(
+            "select e.details->>'artifactId' from workflow_events e "
+                + "join workflow_runs r on r.id = e.workflow_run_id "
+                + "where r.public_id = ? and e.event_type = ?",
+            String.class,
+            "run_specevt1234",
+            "artifact.versionCreated");
+    Integer eventDetailsVersion =
+        jdbcTemplate.queryForObject(
+            "select (e.details->>'version')::int from workflow_events e "
+                + "join workflow_runs r on r.id = e.workflow_run_id "
+                + "where r.public_id = ? and e.event_type = ?",
+            Integer.class,
+            "run_specevt1234",
+            "artifact.versionCreated");
+    assertEquals(
+        v2.publicId(),
+        eventDetailsArtifactId,
+        "AC10: event details.artifactId must point at the v2 spec public id");
+    assertEquals(
+        Integer.valueOf(2),
+        eventDetailsVersion,
+        "AC10: event details.version must record the v2 spec's version number");
   }
 
   @Test

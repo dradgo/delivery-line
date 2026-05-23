@@ -1,8 +1,14 @@
 package org.dradgo.adapters.cli;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -13,9 +19,12 @@ import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
+import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
+import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLookupResult;
+import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -42,6 +51,7 @@ public class WorkflowCommands {
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
   private static final String FORMAT_TEXT = "text";
   private static final String FORMAT_JSON = "json";
+  private static final int STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_VERSION = 2;
 
   private final WorkflowCommandService workflowCommandService;
   private final WorkflowInspectionService workflowInspectionService;
@@ -188,7 +198,14 @@ public class WorkflowCommands {
               description = "Print additional command metadata",
               required = false,
               defaultValue = "false")
-          boolean verbose) {
+          boolean verbose,
+      @Option(
+              longName = "include-context-bundle",
+              description =
+                  "Append the latest spec-stage context bundle to the output (FR55 inspection)",
+              required = false,
+              defaultValue = "false")
+          boolean includeContextBundle) {
     requireInspectionWired();
     long start = System.nanoTime();
     CorrelationScope scope = pushCorrelation(correlationId);
@@ -196,6 +213,9 @@ public class WorkflowCommands {
     try {
       WorkflowStatusView view = workflowInspectionService.getStatus(runId);
       String rendered = renderStatus(view, format);
+      if (includeContextBundle) {
+        rendered = appendContextBundle(rendered, runId, format);
+      }
       if (verbose) {
         rendered = appendCorrelationSuffix(rendered, resolvedCorrelation);
       }
@@ -373,6 +393,160 @@ public class WorkflowCommands {
       return generatedKeySupplier.get();
     }
     throw idempotencyKeyValidator.missingKeyException();
+  }
+
+  /**
+   * Story 2.8 AC7 + OQ-3: append the latest spec-stage context bundle to the rendered status. Text
+   * format → pretty-printed (2-space indent) for readability; JSON format → raw bytes so jq
+   * consumers receive a single valid JSON document with the bundle nested as a key.
+   *
+   * <p>The bundle is sourced from {@link
+   * WorkflowInspectionService#getContextBundleLookupForArtifact}. JSON mode upgrades the outer
+   * status document to a dedicated v2 contract with a structured {@code contextBundle} object so
+   * the field shape is stable across available and unavailable states.
+   */
+  private String appendContextBundle(String rendered, String runId, String format) {
+    List<SpecHistoryEntry> history = workflowInspectionService.getSpecHistory(runId);
+    String normalizedFormat = normalizeFormat(format);
+    if (history.isEmpty()) {
+      return appendBundleUnavailable(rendered, normalizedFormat, null, "noSpecArtifactYet");
+    }
+    String latestSpecArtifactId = history.get(history.size() - 1).spec().id();
+    ContextBundleLookupResult lookup =
+        workflowInspectionService.getContextBundleLookupForArtifact(latestSpecArtifactId);
+    if (!lookup.available()) {
+      return appendBundleUnavailable(
+          rendered, normalizedFormat, latestSpecArtifactId, lookup.reason());
+    }
+    byte[] redactedBytes = lookup.bundle().redactedPayload();
+    String bundleText = renderBundleBytes(redactedBytes, normalizedFormat);
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      return appendBundleJsonField(rendered, latestSpecArtifactId, bundleText);
+    }
+    StringBuilder out = new StringBuilder(rendered);
+    if (!rendered.isEmpty() && !rendered.endsWith("\n")) {
+      out.append('\n');
+    }
+    out.append("# context-bundle (artifact ").append(latestSpecArtifactId).append("):\n");
+    out.append(bundleText);
+    if (!bundleText.endsWith("\n")) {
+      out.append('\n');
+    }
+    return out.toString();
+  }
+
+  private String appendBundleUnavailable(
+      String rendered, String normalizedFormat, String artifactId, String reasonCode) {
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      return appendBundleJsonUnavailable(rendered, artifactId, reasonCode);
+    }
+    StringBuilder out = new StringBuilder(rendered);
+    if (!rendered.isEmpty() && !rendered.endsWith("\n")) {
+      out.append('\n');
+    }
+    out.append("# context-bundle: none (").append(textBundleReason(reasonCode)).append(")\n");
+    return out.toString();
+  }
+
+  /**
+   * Splice the bundle as a structured sibling key on the JSON status document. We re-parse the
+   * already-rendered status JSON, upgrade the top-level schemaVersion, attach the structured
+   * {@code contextBundle} field, and re-serialize so downstream {@code jq} consumers receive a
+   * single well-formed document with a stable wire shape.
+   */
+  private String appendBundleJsonField(
+      String renderedStatusJson, String artifactId, String bundleJsonLiteral) {
+    return spliceContextBundleJson(renderedStatusJson, artifactId, bundleJsonLiteral, null);
+  }
+
+  private String appendBundleJsonUnavailable(
+      String renderedStatusJson, String artifactId, String reasonCode) {
+    return spliceContextBundleJson(renderedStatusJson, artifactId, null, reasonCode);
+  }
+
+  private String spliceContextBundleJson(
+      String renderedStatusJson, String artifactId, String bundleJsonLiteral, String reasonCode) {
+    try {
+      ObjectMapper mapper = jsonMapper();
+      JsonNode parsed = mapper.readTree(renderedStatusJson);
+      if (!parsed.isObject()) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "context_bundle_json_splice_failed");
+        details.put("cause", "rendered_status_not_object");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR,
+            "Rendered status JSON is not a JSON object — cannot splice context bundle",
+            details);
+      }
+      com.fasterxml.jackson.databind.node.ObjectNode root =
+          (com.fasterxml.jackson.databind.node.ObjectNode) parsed;
+      root.put("schemaVersion", STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_VERSION);
+      com.fasterxml.jackson.databind.node.ObjectNode contextBundle = root.putObject("contextBundle");
+      if (bundleJsonLiteral != null) {
+        JsonNode bundleNode = mapper.readTree(bundleJsonLiteral);
+        contextBundle.put("status", "available");
+        if (artifactId != null) {
+          contextBundle.put("artifactId", artifactId);
+        } else {
+          contextBundle.putNull("artifactId");
+        }
+        contextBundle.putNull("reason");
+        contextBundle.set("bundle", bundleNode);
+      } else {
+        contextBundle.put("status", "unavailable");
+        if (artifactId != null) {
+          contextBundle.put("artifactId", artifactId);
+        } else {
+          contextBundle.putNull("artifactId");
+        }
+        contextBundle.put("reason", reasonCode);
+        contextBundle.putNull("bundle");
+      }
+      return mapper.writeValueAsString(root);
+    } catch (IOException error) {
+      // Status JSON came from our own outputs helper — a parse failure here is a programming
+      // bug, not a runtime user error. Surface as an internal error so the CLI exits non-zero.
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "context_bundle_json_splice_failed");
+      details.put("cause", error.getClass().getSimpleName());
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "Failed to splice context bundle into JSON status output",
+          details);
+    }
+  }
+
+  private String renderBundleBytes(byte[] redactedBytes, String normalizedFormat) {
+    String raw = new String(redactedBytes, StandardCharsets.UTF_8);
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      // Raw — caller will splice this as a JSON sub-document.
+      return raw;
+    }
+    try {
+      ObjectMapper mapper = jsonMapper();
+      JsonNode tree = mapper.readTree(raw);
+      return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(tree);
+    } catch (IOException error) {
+      // The bundle is already a validated runner-contracts v1 JSON document; a parse failure
+      // here would indicate corrupted scratch storage. Fall back to raw text so the operator
+      // still sees something usable.
+      log.warn(
+          "context-bundle pretty-print failed; falling back to raw bytes cause={}",
+          error.getClass().getSimpleName());
+      return raw;
+    }
+  }
+
+  private String textBundleReason(String reasonCode) {
+    return switch (reasonCode) {
+      case null -> "context bundle unavailable (unknown reason)";
+      case "noSpecArtifactYet" -> "no spec artifact yet";
+      default -> "context bundle unavailable (" + reasonCode + ")";
+    };
+  }
+
+  private ObjectMapper jsonMapper() {
+    return new ObjectMapper().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
   }
 
   private static String appendCorrelationSuffix(String rendered, String correlationId) {

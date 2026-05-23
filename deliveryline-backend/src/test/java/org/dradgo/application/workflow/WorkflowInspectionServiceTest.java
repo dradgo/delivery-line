@@ -51,12 +51,27 @@ class WorkflowInspectionServiceTest {
   private final WorkflowRunReadPort runs = mock(WorkflowRunReadPort.class);
   private final WorkflowEventReadPort events = mock(WorkflowEventReadPort.class);
   private final ArtifactRecordPort artifacts = mock(ArtifactRecordPort.class);
+  private final org.dradgo.application.approval.spi.ApprovalReadPort approvals =
+      mock(org.dradgo.application.approval.spi.ApprovalReadPort.class);
   private final IntegrationLinkService links = mock(IntegrationLinkService.class);
   private final RedactionPolicyService redaction =
       new RedactionPolicyService(new DataClassificationService());
   private final RecoveryService recovery = mock(RecoveryService.class);
+  private final org.dradgo.application.runner.spi.RunnerExecutionRecordPort runnerExecutions =
+      mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
+  private final org.dradgo.application.runner.spi.RunnerScratchStore scratchStore =
+      mock(org.dradgo.application.runner.spi.RunnerScratchStore.class);
   private final WorkflowInspectionService service =
-      new WorkflowInspectionService(runs, events, artifacts, links, redaction, recovery);
+      new WorkflowInspectionService(
+          runs,
+          events,
+          artifacts,
+          approvals,
+          links,
+          redaction,
+          recovery,
+          runnerExecutions,
+          scratchStore);
 
   private void stubNonFailedDescribe(
       String runId, WorkflowState currentState, String nextSafeAction) {

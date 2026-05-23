@@ -181,7 +181,17 @@ public class LocalRunnerScratchStore implements RunnerScratchStore {
 
   @Override
   public Optional<byte[]> tryReadRunnerResult(String runnerExecutionId) {
-    Path target = scratchFile(runnerExecutionId, RUNNER_RESULT_FILENAME);
+    return tryReadScratchFile(runnerExecutionId, RUNNER_RESULT_FILENAME, "tryReadRunnerResult");
+  }
+
+  @Override
+  public Optional<byte[]> tryReadContextBundle(String runnerExecutionId) {
+    return tryReadScratchFile(runnerExecutionId, CONTEXT_BUNDLE_FILENAME, "tryReadContextBundle");
+  }
+
+  private Optional<byte[]> tryReadScratchFile(
+      String runnerExecutionId, String filename, String logTag) {
+    Path target = scratchFile(runnerExecutionId, filename);
     if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
       return Optional.empty();
     }
@@ -196,7 +206,8 @@ public class LocalRunnerScratchStore implements RunnerScratchStore {
       return Optional.of(Files.readAllBytes(real));
     } catch (IOException error) {
       log.warn(
-          "tryReadRunnerResult io failure runnerExecutionId={} cause={}",
+          "{} io failure runnerExecutionId={} cause={}",
+          logTag,
           runnerExecutionId,
           error.toString());
       return Optional.empty();

@@ -18,7 +18,10 @@
     {
       "artifactId": "art_spec0001",
       "artifactType": "spec",
-      "referencePath": "artifacts/run_abcd1234/spec.md"
+      "artifactStatus": "available",
+      "referenceAvailable": true,
+      "referencePath": "artifacts/run_abcd1234/spec.md",
+      "unavailableReason": null
     }
   ],
   "executionConstraints": {

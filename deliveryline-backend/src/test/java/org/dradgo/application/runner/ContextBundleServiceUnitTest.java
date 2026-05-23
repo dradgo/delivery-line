@@ -2,7 +2,6 @@ package org.dradgo.application.runner;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -150,7 +149,11 @@ class ContextBundleServiceUnitTest {
   }
 
   @Test
-  void rejectsContextBundleWhenSchemaValidationFails_emptyArtifactReferences() {
+  void emptyArtifactReferencesArrayIsAcceptedAfterSchemaRelaxation() throws Exception {
+    // Story 2.8 Task 5: context-bundle.v1.schema.json relaxed artifactReferences.minItems 1 -> 0.
+    // A bundle with zero prior artifacts (legitimate spec-investigation bootstrap shape) must now
+    // PASS validation — replacing the prior "empty-array fails validation" assertion this test
+    // used to make.
     TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
     ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
     RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
@@ -169,22 +172,19 @@ class ContextBundleServiceUnitTest {
             redactionPolicyService,
             new RunnerContractValidator());
 
-    DomainException error =
-        assertThrows(
-            DomainException.class,
-            () ->
-                service.create(
-                    RUN_ID,
-                    RunnerStage.INVESTIGATION,
-                    REX_ID,
-                    1,
-                    CONSTRAINTS,
-                    DataClassification.SHAREABLE_REDACTED,
-                    ACTOR));
-    assertEquals(DomainErrorCode.RUNNER_CONTRACT_VIOLATION, error.errorCode());
-    assertEquals(REX_ID, error.details().get("runnerExecutionId"));
-    assertEquals(RUN_ID, error.details().get("workflowRunId"));
-    assertNotNull(error.details().get("validationErrors"));
+    ContextBundle bundle =
+        service.create(
+            RUN_ID,
+            RunnerStage.INVESTIGATION,
+            REX_ID,
+            1,
+            CONSTRAINTS,
+            DataClassification.SHAREABLE_REDACTED,
+            ACTOR);
+
+    JsonNode parsed = objectMapper.readTree(bundle.redactedPayload());
+    assertEquals(0, parsed.get("artifactReferences").size());
+    assertTrue(parsed.get("approvedSpecificationReference").isNull());
   }
 
   @Test

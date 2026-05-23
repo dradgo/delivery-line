@@ -188,6 +188,7 @@ public class ArtifactOperationService {
   public ArtifactRecordSnapshot createDraft(
       String workflowRunId, ArtifactType artifactType, String payloadRef, ActorContext actor) {
     requireActor(actor);
+    String canonicalPayloadRef = canonicalPayloadRef(artifactType, payloadRef);
     // P31: construct and validate the request object BEFORE logging "start" so that
     // validation failures from the compact ctor (e.g. blank payloadRef) don't produce
     // a dangling "start" log with no corresponding "success" or "error" entry.
@@ -195,7 +196,7 @@ public class ArtifactOperationService {
         new ArtifactDraftRequest(
             workflowRunId,
             artifactType,
-            payloadRef,
+            canonicalPayloadRef,
             artifactType.defaultClassification(),
             actor,
             null,
@@ -449,6 +450,7 @@ public class ArtifactOperationService {
   public ArtifactRecordSnapshot newVersion(
       String parentArtifactId, String payloadRef, ActorContext actor) {
     requireActor(actor);
+    String canonicalPayloadRef = canonicalSpecPayloadRef(payloadRef);
     log.info(
         "newVersion start parentArtifactId={} actorIdentity={} correlationId={}",
         parentArtifactId,
@@ -457,7 +459,7 @@ public class ArtifactOperationService {
     ArtifactRecordSnapshot artifact =
         artifactRecordPort.createNextVersion(
             new ArtifactVersionRequest(
-                parentArtifactId, payloadRef, actor, null, null, null, null));
+                parentArtifactId, canonicalPayloadRef, actor, null, null, null, null));
     log.info(
         "newVersion success parentArtifactId={} artifactId={} version={}",
         parentArtifactId,
@@ -552,6 +554,8 @@ public class ArtifactOperationService {
   private RecordArtifactOperationResult doRecordOperationInTransaction(
       RecordArtifactOperationCommand operation, String operationTypeValue, ActorContext actor) {
     requireWorkflowRunNonTerminal(operation.workflowRunId());
+    String canonicalPayloadRef =
+        canonicalPayloadRef(operation.artifactType(), operation.payloadRef());
 
     // D10: acquire advisory transaction lock scoped to (workflowRunId, artifactType) BEFORE
     // reading the lineage head. This serializes concurrent recordOperation calls for the same
@@ -568,7 +572,12 @@ public class ArtifactOperationService {
     try {
       ArtifactRecordSnapshot artifact =
           createOrAdvanceArtifact(
-              operation, operationTypeValue, operationPublicId, actor, latestArtifact);
+              operation,
+              canonicalPayloadRef,
+              operationTypeValue,
+              operationPublicId,
+              actor,
+              latestArtifact);
       String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifact.publicId());
       try {
         if (operation.runnerExecutionId() != null
@@ -594,7 +603,7 @@ public class ArtifactOperationService {
               operation.workflowRunId(),
               artifact.publicId(),
               artifact.version(),
-              operation.payloadRef(),
+              canonicalPayloadRef,
               operation.payloadContent());
         }
         log.info(
@@ -674,6 +683,7 @@ public class ArtifactOperationService {
 
   private ArtifactRecordSnapshot createOrAdvanceArtifact(
       RecordArtifactOperationCommand operation,
+      String canonicalPayloadRef,
       String operationTypeValue,
       String operationPublicId,
       ActorContext actor,
@@ -710,7 +720,7 @@ public class ArtifactOperationService {
         yield artifactRecordPort.createNextVersion(
             new ArtifactVersionRequest(
                 latestArtifact.get().publicId(),
-                operation.payloadRef(),
+                canonicalPayloadRef,
                 actor,
                 operationTypeValue,
                 operationPublicId,
@@ -745,7 +755,7 @@ public class ArtifactOperationService {
             new ArtifactDraftRequest(
                 operation.workflowRunId(),
                 operation.artifactType(),
-                operation.payloadRef(),
+                canonicalPayloadRef,
                 operation.artifactType().defaultClassification(),
                 actor,
                 operationTypeValue,
@@ -955,5 +965,28 @@ public class ArtifactOperationService {
           "Artifact checksum value must be non-blank",
           Map.of("field", "checksum.value"));
     }
+  }
+
+  private String canonicalPayloadRef(ArtifactType artifactType, String payloadRef) {
+    if (artifactType == ArtifactType.SPEC) {
+      return canonicalSpecPayloadRef(payloadRef);
+    }
+    return payloadRef;
+  }
+
+  private static final String SPEC_CANONICAL_PAYLOAD_REF = "spec.md";
+
+  private String canonicalSpecPayloadRef(String payloadRef) {
+    if (payloadRef == null || payloadRef.isBlank()) {
+      return payloadRef;
+    }
+    if (!SPEC_CANONICAL_PAYLOAD_REF.equals(payloadRef)) {
+      log.warn(
+          "spec payloadRef canonicalized original={} canonical={} — AC2 requires callers to pass '{}' verbatim",
+          payloadRef,
+          SPEC_CANONICAL_PAYLOAD_REF,
+          SPEC_CANONICAL_PAYLOAD_REF);
+    }
+    return SPEC_CANONICAL_PAYLOAD_REF;
   }
 }

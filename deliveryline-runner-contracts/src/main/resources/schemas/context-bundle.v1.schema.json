@@ -83,7 +83,8 @@
     },
     "artifactReferences": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
+      "description": "Spec-investigation bundles legitimately carry zero artifact references when no spec has been generated yet (story 2.8 AC3); minItems relaxed from 1 to 0 in-place as a backward-compatible v1 patch (existing producers always passed >=1; consumers must already accept 0+).",
       "items": {
         "$ref": "#/$defs/artifactReference"
       }
@@ -122,7 +123,10 @@
       "required": [
         "artifactId",
         "artifactType",
-        "referencePath"
+        "referencePath",
+        "artifactStatus",
+        "referenceAvailable",
+        "unavailableReason"
       ],
       "properties": {
         "artifactId": {
@@ -137,8 +141,30 @@
             "prOutput"
           ]
         },
-        "referencePath": {
+        "artifactStatus": {
           "type": "string",
+          "enum": [
+            "pending",
+            "available",
+            "failed",
+            "late_or_stale"
+          ]
+        },
+        "referenceAvailable": {
+          "type": "boolean"
+        },
+        "referencePath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "unavailableReason": {
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1
         }
       }

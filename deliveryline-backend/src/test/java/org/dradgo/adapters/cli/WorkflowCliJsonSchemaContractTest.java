@@ -20,13 +20,22 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
+import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLookupResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
+import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.LinkedTicketView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
+import org.dradgo.application.artifact.SpecificationArtifact;
+import org.dradgo.application.artifact.ArtifactRecordSnapshot;
+import org.dradgo.domain.registry.ArtifactStatus;
+import org.dradgo.domain.registry.ArtifactType;
+import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Test;
 
@@ -34,6 +43,8 @@ class WorkflowCliJsonSchemaContractTest {
 
   private static final String STATUS_SCHEMA_LOCATION =
       "classpath:schemas/cli/workflow-status.v1.schema.json";
+  private static final String STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_LOCATION =
+      "classpath:schemas/cli/workflow-status.v2.schema.json";
   private static final String HISTORY_SCHEMA_LOCATION =
       "classpath:schemas/cli/workflow-history.v1.schema.json";
 
@@ -72,12 +83,81 @@ class WorkflowCliJsonSchemaContractTest {
             "await_outcome");
     when(inspection.getStatus("run_status12345")).thenReturn(view);
 
-    String json = commands.status("run_status12345", "json", "corr-status-1", false);
+    String json = commands.status("run_status12345", "json", "corr-status-1", false, false);
     JsonNode payload = mapper.readTree(json);
 
     assertEquals(1, payload.get("schemaVersion").asInt());
     assertTrue(payload.get("workflowRunId").asText().startsWith("run_"));
     assertSchemaValid(STATUS_SCHEMA_LOCATION, json);
+  }
+
+  @Test
+  void statusJsonWithContextBundleUsesSchemaVersionTwoAndValidatesAgainstSchema()
+      throws Exception {
+    WorkflowStatusView view =
+        new WorkflowStatusView(
+            "run_status12345",
+            WorkflowState.EXECUTING,
+            "alex",
+            "human",
+            "workflow.stateChanged",
+            OffsetDateTime.parse("2026-05-13T10:00:00Z"),
+            List.of(new LatestArtifactView("spec", 2, "available")),
+            new LinkedTicketView("linear", "LIN-101", "linked"),
+            null,
+            null,
+            null,
+            null,
+            null,
+            "await_outcome");
+    when(inspection.getStatus("run_status12345")).thenReturn(view);
+    SpecHistoryEntry latest =
+        new SpecHistoryEntry(
+            SpecificationArtifact.fromSnapshot(
+                new ArtifactRecordSnapshot(
+                    "art_spec00000002",
+                    "run_status12345",
+                    ArtifactType.SPEC,
+                    2,
+                    "art_spec00000001",
+                    DataClassification.SHAREABLE_REDACTED,
+                    "spec.md",
+                    null,
+                    null,
+                    null,
+                    null,
+                    ArtifactStatus.AVAILABLE,
+                    null,
+                    false,
+                    OffsetDateTime.parse("2026-05-13T10:00:00Z"))),
+            "approved",
+            "product_owner",
+            null,
+            OffsetDateTime.parse("2026-05-13T10:05:00Z"));
+    when(inspection.getSpecHistory("run_status12345")).thenReturn(List.of(latest));
+    when(inspection.getContextBundleLookupForArtifact("art_spec00000002"))
+        .thenReturn(
+            ContextBundleLookupResult.available(
+                "art_spec00000002",
+                new ContextBundle(
+                    "run_status12345",
+                    RunnerStage.INVESTIGATION,
+                    "rex_status12345",
+                    1,
+                    DataClassification.SHAREABLE_REDACTED,
+                    """
+                    {"schemaVersion":1,"workflowRunId":"run_status12345","runnerExecutionId":"rex_status12345","classification":"shareable-redacted"}
+                    """
+                        .getBytes())));
+
+    String json = commands.status("run_status12345", "json", "corr-status-2", false, true);
+    JsonNode payload = mapper.readTree(json);
+
+    assertEquals(2, payload.get("schemaVersion").asInt());
+    assertEquals("available", payload.get("contextBundle").get("status").asText());
+    assertEquals(
+        "art_spec00000002", payload.get("contextBundle").get("artifactId").asText());
+    assertSchemaValid(STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_LOCATION, json);
   }
 
   @Test
@@ -101,7 +181,7 @@ class WorkflowCliJsonSchemaContractTest {
             "retry");
     when(inspection.getStatus("run_failed01234")).thenReturn(view);
 
-    String json = commands.status("run_failed01234", "json", "corr-status-failed", false);
+    String json = commands.status("run_failed01234", "json", "corr-status-failed", false, false);
     JsonNode payload = mapper.readTree(json);
 
     assertEquals("execution", payload.get("failedStage").asText());
@@ -191,7 +271,7 @@ class WorkflowCliJsonSchemaContractTest {
             "await_outcome");
     when(inspection.getStatus("run_emptystatus12345")).thenReturn(view);
 
-    String json = commands.status("run_emptystatus12345", "json", null, false);
+    String json = commands.status("run_emptystatus12345", "json", null, false, false);
     JsonNode payload = mapper.readTree(json);
 
     assertTrue(payload.get("currentActor").isNull());

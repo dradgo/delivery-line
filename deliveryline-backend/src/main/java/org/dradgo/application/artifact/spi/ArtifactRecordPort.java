@@ -1,5 +1,6 @@
 package org.dradgo.application.artifact.spi;
 
+import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.artifact.ArtifactChecksum;
 import org.dradgo.application.artifact.ArtifactDraftRequest;
@@ -15,6 +16,26 @@ public interface ArtifactRecordPort {
       String workflowRunId, String artifactType);
 
   Optional<ArtifactRecordSnapshot> findLatestByParentArtifactId(String lineageMemberArtifactId);
+
+  /**
+   * All non-archived artifact rows for the given workflow run + artifact type, in ascending version
+   * order. Used by story 2.8: spec-history (FR11) and spec-investigation context-bundle composition
+   * (artifactReferences walk).
+   */
+  List<ArtifactRecordSnapshot> listByWorkflowRunIdAndArtifactType(
+      String workflowRunId, String artifactType);
+
+  /**
+   * Resolve the runner-execution public id (if any) associated with the artifact's creation event.
+   * Source: {@code workflow_events.details->>'runnerExecutionId'} on the artifact's {@code
+   * linked_event_id}.
+   *
+   * <p>Returns {@link Optional#empty()} when the artifact does not exist, has no linked event, or
+   * the linked event was emitted without a {@code runnerExecutionId} detail (legacy / manual
+   * paths). Story 2.8 AC7: used by {@code WorkflowInspectionService.getContextBundleForArtifact} to
+   * locate the scratch file holding the redacted bundle bytes.
+   */
+  Optional<String> findRunnerExecutionIdForArtifact(String artifactId);
 
   /**
    * Creates the first artifact record (version 1, status PENDING) for a new lineage within the

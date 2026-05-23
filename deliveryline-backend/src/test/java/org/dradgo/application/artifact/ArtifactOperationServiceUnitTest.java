@@ -3,6 +3,7 @@ package org.dradgo.application.artifact;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -12,6 +13,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
 import org.dradgo.application.artifact.spi.ArtifactEventPort;
@@ -209,7 +211,7 @@ class ArtifactOperationServiceUnitTest {
   }
 
   @Test
-  void createDraftUsesTheApplicationOwnedArtifactDraftRequest() {
+  void createDraftCanonicalizesSpecPayloadRefToSpecDotMd() {
     ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
     ArtifactOperationPort artifactOperationPort = mock(ArtifactOperationPort.class);
     ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
@@ -240,19 +242,21 @@ class ArtifactOperationServiceUnitTest {
     when(artifactRecordPort.createDraft(any())).thenReturn(draft);
 
     assertEquals(
-        draft, service.createDraft("run_ready1234", ArtifactType.SPEC, "spec.md", OPERATOR_ACTOR));
+        draft,
+        service.createDraft("run_ready1234", ArtifactType.SPEC, "spec-v1.md", OPERATOR_ACTOR));
     verify(artifactRecordPort)
         .createDraft(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
                     request.artifactType() == ArtifactType.SPEC
+                        && "spec.md".equals(request.payloadRef())
                         && request.classification() == DataClassification.SHAREABLE_REDACTED
                         && request.actor().actorType() == ActorType.HUMAN
                         && "alex".equals(request.actor().actorIdentity())));
   }
 
   @Test
-  void newVersionDelegatesToTheArtifactRecordPort() {
+  void newVersionCanonicalizesSpecPayloadRefToSpecDotMd() {
     ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
     ArtifactOperationPort artifactOperationPort = mock(ArtifactOperationPort.class);
     ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
@@ -288,7 +292,7 @@ class ArtifactOperationServiceUnitTest {
             org.mockito.ArgumentMatchers.argThat(
                 request ->
                     "art_parent1234".equals(request.lineageMemberArtifactId())
-                        && "spec-v2.md".equals(request.payloadRef())
+                        && "spec.md".equals(request.payloadRef())
                         && request.actor().actorType() == ActorType.HUMAN
                         && "alex".equals(request.actor().actorIdentity())));
   }
@@ -606,6 +610,19 @@ class ArtifactOperationServiceUnitTest {
 
     assertEquals(next, result.artifact());
     assertEquals(pending, result.operation());
+    verify(artifactRecordPort)
+        .createNextVersion(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    "art_parent1234".equals(request.lineageMemberArtifactId())
+                        && "spec.md".equals(request.payloadRef())));
+    verify(artifactPayloadStore)
+        .write(
+            eq("run_ready1234"),
+            eq("art_child1234"),
+            eq(2),
+            eq("spec.md"),
+            argThat(bytes -> Arrays.equals(bytes, "spec body v2".getBytes())));
   }
 
   @Test

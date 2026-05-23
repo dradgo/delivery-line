@@ -22,6 +22,7 @@ public class ArtifactEntityMapper {
         entity.getFailureReason(),
         entity.getStatus(),
         entity.getArchivedAt(),
-        entity.isLineageRecovery());
+        entity.isLineageRecovery(),
+        entity.getCreatedAt());
   }
 }

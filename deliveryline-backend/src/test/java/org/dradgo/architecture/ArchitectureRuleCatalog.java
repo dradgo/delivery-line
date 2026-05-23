@@ -345,6 +345,41 @@ final class ArchitectureRuleCatalog {
                   "org.dradgo.application.artifact.ArtifactOperationService")
               .should(notCallFutureArtifactWriteMethods()));
 
+  static final ArchRule APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL =
+      namedRule(
+          "ApprovalService must live under application.approval and stay free of persistence/adapter dependencies",
+          "Remediation: keep ApprovalService in org.dradgo.application.approval (story 2.9 trap T4). The service orchestrates the approval pipeline via application-owned ports + domain types — JPA entity types or any other adapter import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.approval.ApprovalService")
+              .should()
+              .resideInAPackage("org.dradgo.application.approval..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.beans.factory.annotation..",
+                  "org.springframework.stereotype..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
+  static final ArchRule SPECIFICATION_ARTIFACT_PROJECTION_LIVES_IN_APPLICATION_ARTIFACT =
+      namedRule(
+          "SpecificationArtifact projection must live under application.artifact and stay free of persistence/adapter dependencies",
+          "Remediation: keep SpecificationArtifact in org.dradgo.application.artifact (story 2.8 AC1). The projection is a domain-shaped read view; routing it through adapters or persistence types would re-introduce the cross-layer dependency the existing LAYERED_BOUNDARIES rule forbids.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.artifact.SpecificationArtifact")
+              .should()
+              .resideInAPackage("org.dradgo.application.artifact..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..", "org.dradgo.application.artifact..", "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
   static final ArchRule RECOVERY_SERVICE_IS_SCOPE_PROTECTED =
       namedRule(
           "RecoveryService must expose only the Epic-1 baseline public method signatures",

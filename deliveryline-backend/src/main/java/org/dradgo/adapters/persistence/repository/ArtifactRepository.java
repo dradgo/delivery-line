@@ -15,6 +15,31 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
           String workflowRunPublicId, String artifactType);
 
   /**
+   * All non-archived artifact rows for the run + artifact-type filter, in ascending version order.
+   * Story 2.8: spec history (FR11) + spec-investigation prior-versions walk.
+   */
+  java.util.List<ArtifactEntity>
+      findByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionAsc(
+          String workflowRunPublicId, String artifactType);
+
+  /**
+   * Story 2.8 AC7: resolve the runner-execution public id associated with the artifact's creation
+   * event (read from the linked workflow_events row's JSONB {@code details->>'runnerExecutionId'}).
+   * Single-statement native query — no entity hydration.
+   */
+  @Query(
+      value =
+          """
+          SELECT we.details ->> 'runnerExecutionId'
+            FROM artifacts a
+            JOIN workflow_events we ON we.id = a.linked_event_id
+           WHERE a.public_id = :artifactId
+           LIMIT 1
+          """,
+      nativeQuery = true)
+  String findRunnerExecutionIdForArtifact(@Param("artifactId") String artifactId);
+
+  /**
    * Story 1.12c (AC1+AC2): bounded single-statement leaf resolver.
    *
    * <p>Replaces the legacy unbounded sibling load + JVM-side parent-chain walk in {@code

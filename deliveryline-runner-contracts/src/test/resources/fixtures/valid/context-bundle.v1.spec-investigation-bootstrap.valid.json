@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_specinv1234",
+  "runnerExecutionId": "rex_specinv1234",
+  "ticketSummary": {
+    "ticketRef": "DL-205",
+    "title": "Add governed export pipeline",
+    "summary": "Spec-investigation bootstrap (story 2.8 AC3-5) — no prior spec exists."
+  },
+  "approvedSpecificationReference": null,
+  "priorFeedbackReferences": [],
+  "artifactReferences": [],
+  "executionConstraints": {
+    "timeoutSeconds": 300,
+    "allowRawOutput": false
+  },
+  "classification": "shareable-redacted"
+}

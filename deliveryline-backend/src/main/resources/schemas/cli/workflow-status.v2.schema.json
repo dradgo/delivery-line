@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/workflow-status.v2",
+  "title": "WorkflowStatusViewV2WithContextBundle",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "workflowRunId",
+    "currentState",
+    "latestArtifacts",
+    "failedStage",
+    "lastSuccessfulStage",
+    "failureTimestamp",
+    "failureCategory",
+    "lastActivityTimestamp",
+    "nextSafeAction",
+    "contextBundle"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "workflowRunId": { "type": "string", "pattern": "^run_" },
+    "currentState": { "type": "string" },
+    "currentActor": {
+      "type": ["object", "null"],
+      "required": ["identity", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "identity": { "type": "string" },
+        "type": { "type": "string" }
+      }
+    },
+    "lastEvent": {
+      "type": ["object", "null"],
+      "required": ["eventType", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "eventType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "latestArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifactType", "version", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "artifactType": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 },
+          "status": { "type": "string" }
+        }
+      }
+    },
+    "linkedTicket": {
+      "type": ["object", "null"],
+      "required": ["integrationType", "externalRef", "syncStatus"],
+      "additionalProperties": false,
+      "properties": {
+        "integrationType": { "type": "string" },
+        "externalRef": { "type": "string" },
+        "syncStatus": { "type": "string" }
+      }
+    },
+    "failedStage": { "type": ["string", "null"] },
+    "lastSuccessfulStage": { "type": ["string", "null"] },
+    "failureTimestamp": { "type": ["string", "null"], "format": "date-time" },
+    "failureCategory": { "type": ["string", "null"] },
+    "lastActivityTimestamp": { "type": ["string", "null"], "format": "date-time" },
+    "nextSafeAction": { "type": "string" },
+    "contextBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "artifactId", "reason", "bundle"],
+      "properties": {
+        "status": { "type": "string", "enum": ["available", "unavailable"] },
+        "artifactId": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^art_[A-Za-z0-9_-]{4,64}$" }
+          ]
+        },
+        "reason": { "type": ["string", "null"] },
+        "bundle": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

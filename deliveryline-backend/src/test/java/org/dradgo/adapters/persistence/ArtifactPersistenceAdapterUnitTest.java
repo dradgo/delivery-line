@@ -139,7 +139,7 @@ class ArtifactPersistenceAdapterUnitTest {
         adapter.createNextVersion(
             new ArtifactVersionRequest(
                 "art_draft1234",
-                "spec-v2.md",
+                "spec.md",
                 new ActorContext("system", ActorType.SYSTEM, null),
                 null,
                 null,
@@ -253,7 +253,7 @@ class ArtifactPersistenceAdapterUnitTest {
                 adapter.createNextVersion(
                     new ArtifactVersionRequest(
                         "art_member1234",
-                        "spec-v2.md",
+                        "spec.md",
                         new ActorContext("system", ActorType.SYSTEM, null),
                         null,
                         null,
@@ -300,7 +300,7 @@ class ArtifactPersistenceAdapterUnitTest {
         adapter.createNextVersion(
             new ArtifactVersionRequest(
                 "art_root1234",
-                "spec-v4.md",
+                "spec.md",
                 new ActorContext("system", ActorType.SYSTEM, null),
                 null,
                 null,
@@ -353,7 +353,7 @@ class ArtifactPersistenceAdapterUnitTest {
         adapter.createNextVersion(
             new ArtifactVersionRequest(
                 "art_oldroot1234",
-                "spec-v4.md",
+                "spec.md",
                 new ActorContext("system", ActorType.SYSTEM, null),
                 null,
                 null,

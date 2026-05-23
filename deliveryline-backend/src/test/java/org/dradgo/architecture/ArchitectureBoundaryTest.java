@@ -112,4 +112,12 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule recovery_service_is_scope_protected =
       ArchitectureRuleCatalog.RECOVERY_SERVICE_IS_SCOPE_PROTECTED;
+
+  @ArchTest
+  static final ArchRule specification_artifact_projection_lives_in_application_artifact =
+      ArchitectureRuleCatalog.SPECIFICATION_ARTIFACT_PROJECTION_LIVES_IN_APPLICATION_ARTIFACT;
+
+  @ArchTest
+  static final ArchRule approval_service_lives_in_application_approval =
+      ArchitectureRuleCatalog.APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL;
 }

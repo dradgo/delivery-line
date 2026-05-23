@@ -4,8 +4,10 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -86,6 +88,31 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
         .findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
             workflowRunId, artifactType)
         .map(artifactEntityMapper::toSnapshot);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<ArtifactRecordSnapshot> listByWorkflowRunIdAndArtifactType(
+      String workflowRunId, String artifactType) {
+    List<ArtifactEntity> rows =
+        artifactRepository
+            .findByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionAsc(
+                workflowRunId, artifactType);
+    List<ArtifactRecordSnapshot> snapshots = new ArrayList<>(rows.size());
+    for (ArtifactEntity row : rows) {
+      snapshots.add(artifactEntityMapper.toSnapshot(row));
+    }
+    return List.copyOf(snapshots);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<String> findRunnerExecutionIdForArtifact(String artifactId) {
+    String value = artifactRepository.findRunnerExecutionIdForArtifact(artifactId);
+    if (value == null || value.isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(value);
   }
 
   @Override
