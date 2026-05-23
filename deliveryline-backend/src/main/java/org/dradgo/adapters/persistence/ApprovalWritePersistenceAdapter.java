@@ -38,10 +38,16 @@ public class ApprovalWritePersistenceAdapter implements ApprovalWritePort {
   /** Substring match against the constraint name surfaced by Postgres / Hibernate. */
   private static final String UQ_IDEMPOTENCY_CONSTRAINT = "uq_approvals_idempotency_key";
 
-  /** Postgres unique-violation SQLSTATE — used as defense-in-depth when the message lacks the constraint name. */
+  /**
+   * Postgres unique-violation SQLSTATE — used as defense-in-depth when the message lacks the
+   * constraint name.
+   */
   private static final String POSTGRES_UNIQUE_VIOLATION_SQLSTATE = "23505";
 
-  /** Public-id collision constraint — astronomically unlikely (UUIDv7) but mapped explicitly to avoid raw-DAE leakage. */
+  /**
+   * Public-id collision constraint — astronomically unlikely (UUIDv7) but mapped explicitly to
+   * avoid raw-DAE leakage.
+   */
   private static final String UQ_PUBLIC_ID_CONSTRAINT = "uq_approvals_public_id";
 
   private final ApprovalRepository approvalRepository;
@@ -144,9 +150,7 @@ public class ApprovalWritePersistenceAdapter implements ApprovalWritePort {
           details.put("source", "db_unique_constraint");
           details.put("constraintName", constraintName);
           throw new DomainException(
-              DomainErrorCode.INTERNAL_ERROR,
-              "Approval public-id collision",
-              details);
+              DomainErrorCode.INTERNAL_ERROR, "Approval public-id collision", details);
         }
         log.error(
             "approval write integrity-violation approvalId={} constraint={} cause={}",
@@ -172,11 +176,11 @@ public class ApprovalWritePersistenceAdapter implements ApprovalWritePort {
   }
 
   /**
-   * Resolve the constraint name from the exception chain. Preferred path: the
-   * Hibernate-wrapped {@link ConstraintViolationException} exposes {@code getConstraintName()}
-   * directly. Fallback: walk the cause chain and check each message for the known constraint
-   * substring (legacy path; survives if Hibernate ever stops wrapping). Returns {@code null} if
-   * the constraint name cannot be determined.
+   * Resolve the constraint name from the exception chain. Preferred path: the Hibernate-wrapped
+   * {@link ConstraintViolationException} exposes {@code getConstraintName()} directly. Fallback:
+   * walk the cause chain and check each message for the known constraint substring (legacy path;
+   * survives if Hibernate ever stops wrapping). Returns {@code null} if the constraint name cannot
+   * be determined.
    */
   private static String resolveConstraintName(DataIntegrityViolationException violation) {
     Throwable cursor = violation;

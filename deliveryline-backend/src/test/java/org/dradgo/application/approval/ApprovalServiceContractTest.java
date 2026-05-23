@@ -26,13 +26,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * Story 2.9 Task 6 / AC10(h): Spring-slice integration that drives the full
- * {@code WorkflowCommandService.approveSpec → ApprovalService → adapters → ApprovalReadPort}
- * chain and confirms the {@link ApprovalReadPort#findLatestApprovedForArtifactLineage} read
- * port plus {@link WorkflowInspectionService#getCurrentApprovedSpec} both surface the
- * just-written row. The unit-layer tests ({@code ApprovalServiceApproveSpecTest}) use mocks
- * and the persistence-slice tests ({@code ApprovalWritePersistenceAdapterTest}) bypass the
- * service; this test pins that the entire stack agrees end-to-end.
+ * Story 2.9 Task 6 / AC10(h): Spring-slice integration that drives the full {@code
+ * WorkflowCommandService.approveSpec → ApprovalService → adapters → ApprovalReadPort} chain and
+ * confirms the {@link ApprovalReadPort#findLatestApprovedForArtifactLineage} read port plus {@link
+ * WorkflowInspectionService#getCurrentApprovedSpec} both surface the just-written row. The
+ * unit-layer tests ({@code ApprovalServiceApproveSpecTest}) use mocks and the persistence-slice
+ * tests ({@code ApprovalWritePersistenceAdapterTest}) bypass the service; this test pins that the
+ * entire stack agrees end-to-end.
  *
  * <p>Added in story 2.9 review batch 1 (2026-05-24).
  */
@@ -113,9 +113,9 @@ class ApprovalServiceContractTest {
 
   /**
    * Mirrors {@code WorkflowCommandServiceContractTest.seedAvailableSpecArtifact} — seeds a SPEC
-   * artifact whose payload bytes round-trip through {@code ArtifactPayloadStore} so
-   * {@code ArtifactService.isApprovalEligible} passes. Bootstrap context-bundle path (no
-   * runnerExecutionId in event details → current bundle version = 1).
+   * artifact whose payload bytes round-trip through {@code ArtifactPayloadStore} so {@code
+   * ArtifactService.isApprovalEligible} passes. Bootstrap context-bundle path (no runnerExecutionId
+   * in event details → current bundle version = 1).
    */
   private void seedAvailableSpecArtifact(String runPublicId, String artifactPublicId) {
     Long runId =

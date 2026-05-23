@@ -108,11 +108,12 @@ public class ApprovalService {
 
   /**
    * Trap T4 / D3 pin: {@code Propagation.MANDATORY} guarantees this method ALWAYS executes inside
-   * the outer {@link org.dradgo.application.workflow.WorkflowCommandService#approveSpec
-   * @Transactional} boundary. A direct invocation without an outer transaction fails fast with
-   * {@code IllegalTransactionStateException} instead of silently committing the approval row and
-   * event then rolling back only the transition. Joining the outer transaction is the contract;
-   * starting a new one (or running with no transaction) is a programming error.
+   * the outer {@link
+   * org.dradgo.application.workflow.WorkflowCommandService#approveSpec @Transactional} boundary. A
+   * direct invocation without an outer transaction fails fast with {@code
+   * IllegalTransactionStateException} instead of silently committing the approval row and event
+   * then rolling back only the transition. Joining the outer transaction is the contract; starting
+   * a new one (or running with no transaction) is a programming error.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public ApprovalResult approveSpec(ApproveSpecCommand command) {

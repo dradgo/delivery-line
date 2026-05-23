@@ -786,7 +786,8 @@ public class WorkflowInspectionService {
     }
 
     public static ContextBundleLookupResult available(String artifactId, ContextBundle bundle) {
-      return new ContextBundleLookupResult(artifactId, Objects.requireNonNull(bundle, "bundle"), null);
+      return new ContextBundleLookupResult(
+          artifactId, Objects.requireNonNull(bundle, "bundle"), null);
     }
 
     public static ContextBundleLookupResult unavailable(String artifactId, String reason) {

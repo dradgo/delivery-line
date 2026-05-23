@@ -18,6 +18,8 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.artifact.ArtifactRecordSnapshot;
+import org.dradgo.application.artifact.SpecificationArtifact;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.ContextBundle;
@@ -25,13 +27,11 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLookupResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
-import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.LinkedTicketView;
+import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
-import org.dradgo.application.artifact.SpecificationArtifact;
-import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
@@ -92,8 +92,7 @@ class WorkflowCliJsonSchemaContractTest {
   }
 
   @Test
-  void statusJsonWithContextBundleUsesSchemaVersionTwoAndValidatesAgainstSchema()
-      throws Exception {
+  void statusJsonWithContextBundleUsesSchemaVersionTwoAndValidatesAgainstSchema() throws Exception {
     WorkflowStatusView view =
         new WorkflowStatusView(
             "run_status12345",
@@ -155,8 +154,7 @@ class WorkflowCliJsonSchemaContractTest {
 
     assertEquals(2, payload.get("schemaVersion").asInt());
     assertEquals("available", payload.get("contextBundle").get("status").asText());
-    assertEquals(
-        "art_spec00000002", payload.get("contextBundle").get("artifactId").asText());
+    assertEquals("art_spec00000002", payload.get("contextBundle").get("artifactId").asText());
     assertSchemaValid(STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_LOCATION, json);
   }
 

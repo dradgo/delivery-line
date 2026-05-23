@@ -57,8 +57,7 @@ class ApprovalWritePersistenceAdapterTest {
   void attachLogAppender() {
     appender = new ListAppender<>();
     appender.start();
-    ((Logger) LoggerFactory.getLogger(ApprovalWritePersistenceAdapter.class))
-        .addAppender(appender);
+    ((Logger) LoggerFactory.getLogger(ApprovalWritePersistenceAdapter.class)).addAppender(appender);
   }
 
   @AfterEach

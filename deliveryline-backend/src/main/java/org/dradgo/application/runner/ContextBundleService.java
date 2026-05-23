@@ -288,7 +288,8 @@ public class ContextBundleService {
 
     RedactionResult redaction;
     try {
-      redaction = redactionPolicyService.redact(root, DataClassification.SHAREABLE_REDACTED.value());
+      redaction =
+          redactionPolicyService.redact(root, DataClassification.SHAREABLE_REDACTED.value());
     } catch (RuntimeException e) {
       Map<String, Object> details = new LinkedHashMap<>();
       details.put("workflowRunId", workflowRunPublicId);

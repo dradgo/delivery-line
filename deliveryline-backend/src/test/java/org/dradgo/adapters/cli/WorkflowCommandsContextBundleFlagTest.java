@@ -165,8 +165,7 @@ class WorkflowCommandsContextBundleFlagTest {
     when(inspection.getSpecHistory(RUN_ID)).thenReturn(List.of(latest));
     when(inspection.getContextBundleLookupForArtifact(SPEC_ART_ID))
         .thenReturn(
-            ContextBundleLookupResult.unavailable(
-                SPEC_ART_ID, "runnerExecutionLinkMissing"));
+            ContextBundleLookupResult.unavailable(SPEC_ART_ID, "runnerExecutionLinkMissing"));
 
     String rendered = commands.status(RUN_ID, "text", "corr-1", false, true);
 

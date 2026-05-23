@@ -163,6 +163,8 @@ export interface components {
             /** Format: int32 */
             contextVersion: number;
             correlationId?: string;
+            reason?: string;
+            reviewerRole?: string;
         };
         LatestArtifact: {
             /** @example spec */

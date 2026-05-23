@@ -19,7 +19,6 @@ import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
-import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
@@ -450,9 +449,9 @@ public class WorkflowCommands {
 
   /**
    * Splice the bundle as a structured sibling key on the JSON status document. We re-parse the
-   * already-rendered status JSON, upgrade the top-level schemaVersion, attach the structured
-   * {@code contextBundle} field, and re-serialize so downstream {@code jq} consumers receive a
-   * single well-formed document with a stable wire shape.
+   * already-rendered status JSON, upgrade the top-level schemaVersion, attach the structured {@code
+   * contextBundle} field, and re-serialize so downstream {@code jq} consumers receive a single
+   * well-formed document with a stable wire shape.
    */
   private String appendBundleJsonField(
       String renderedStatusJson, String artifactId, String bundleJsonLiteral) {
@@ -481,7 +480,8 @@ public class WorkflowCommands {
       com.fasterxml.jackson.databind.node.ObjectNode root =
           (com.fasterxml.jackson.databind.node.ObjectNode) parsed;
       root.put("schemaVersion", STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_VERSION);
-      com.fasterxml.jackson.databind.node.ObjectNode contextBundle = root.putObject("contextBundle");
+      com.fasterxml.jackson.databind.node.ObjectNode contextBundle =
+          root.putObject("contextBundle");
       if (bundleJsonLiteral != null) {
         JsonNode bundleNode = mapper.readTree(bundleJsonLiteral);
         contextBundle.put("status", "available");
