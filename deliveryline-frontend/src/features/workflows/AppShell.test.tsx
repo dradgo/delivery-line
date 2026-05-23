@@ -19,7 +19,7 @@ import {
 } from '@tanstack/react-router';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installMatchMedia, uninstallMatchMedia } from '@/test/matchMedia';
 import { server } from '@/test/server';
@@ -84,6 +84,24 @@ function QueueWithRegisteredPanel() {
   );
 }
 
+function QueueWithStatefulPanel() {
+  return (
+    <>
+      <h1>Run review queue</h1>
+      <ContextPanelSlot>
+        <label className="flex flex-col gap-2 text-sm text-text-primary">
+          Clarification note
+          <input
+            aria-label="Clarification note"
+            defaultValue=""
+            className="rounded border border-border px-2 py-1"
+          />
+        </label>
+      </ContextPanelSlot>
+    </>
+  );
+}
+
 afterEach(() => {
   uninstallMatchMedia();
 });
@@ -122,11 +140,11 @@ describe('AppShell — artifact primacy (AC2 / TRAP 4)', () => {
     installMatchMedia(800);
     renderShell({ path: '/workflows' });
     const main = await screen.findByRole('main');
-    // The artifact-primacy floor is unchanged...
-    expect(main).toHaveClass('min-w-[36rem]');
-    // ...and the right context panel is NO LONGER inline — it collapsed to a drawer.
-    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Supporting context' })).toBeInTheDocument();
+    expect(main).toHaveClass('min-w-[34rem]');
+    expect(await screen.findByRole('navigation', { name: 'Workflow navigation' })).toHaveClass(
+      'w-56',
+    );
+    expect(screen.getByRole('complementary', { name: 'Supporting context' })).toBeInTheDocument();
   });
 });
 
@@ -134,29 +152,24 @@ describe('AppShell — responsive collapse (AC5)', () => {
   it('moves the context panel into a drawer on tablet and opens it on demand', async () => {
     installMatchMedia(800);
     renderShell({ path: '/workflows' });
-    const toggle = await screen.findByRole('button', { name: 'Supporting context' });
-    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+    const toggle = await screen.findByRole('button', { name: 'Open supporting context' });
+    expect(screen.getByRole('complementary', { name: 'Supporting context' })).toBeInTheDocument();
 
     fireEvent.click(toggle);
 
-    expect(
-      await screen.findByRole('complementary', { name: 'Supporting context' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
   it('collapses to a single column with drawer navigation on mobile', async () => {
     installMatchMedia(400);
     renderShell({ path: '/workflows' });
-    // The persistent top bar survives the collapse.
     expect(await screen.findByRole('banner')).toBeInTheDocument();
-    // The nav rail is not inline on mobile — it is behind a drawer toggle.
-    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Workflow navigation' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Supporting context' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open workflow navigation' }));
 
-    expect(
-      await screen.findByRole('navigation', { name: 'Workflow navigation' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 });
 
@@ -184,6 +197,30 @@ describe('AppShell — run identity (AC3 / AC11)', () => {
     expect(within(region).getByText('2026-05-20 14:30 UTC')).toBeInTheDocument();
   });
 
+  it('keeps actor and last-transition metadata in the compact mobile variant', async () => {
+    installMatchMedia(400);
+    server.use(
+      http.get('http://localhost/api/v1/workflows/:id', () =>
+        HttpResponse.json({
+          workflowRunId: 'run_test0001',
+          currentState: 'WaitingForSpecApproval',
+          currentActorIdentity: 'alice',
+          currentActorType: 'human',
+          lastEventAt: '2026-05-20T14:30:00Z',
+        }),
+      ),
+    );
+    renderShell({ path: '/workflows/run_test0001' });
+
+    const region = await screen.findByTestId('run-identity-region');
+    expect(within(region).getByText('run_test0001')).toBeInTheDocument();
+    expect(
+      await within(region).findByText(
+        /WaitingForSpecApproval · alice \(human\) · 2026-05-20 14:30 UTC/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('omits the run-identity region on the queue route', async () => {
     renderShell({ path: '/workflows' });
     await screen.findByRole('navigation', { name: 'Workflow navigation' });
@@ -205,6 +242,37 @@ describe('AppShell — right-panel composition slot (AC4)', () => {
     const aside = screen.getByRole('complementary', { name: 'Supporting context' });
     expect(aside).toContainElement(panel);
     expect(aside).toHaveClass('w-80');
+  });
+
+  it('preserves registered panel state across tablet drawer close and reopen', async () => {
+    installMatchMedia(800);
+    renderShell({ path: '/workflows', workflowsComponent: QueueWithStatefulPanel });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open supporting context' }));
+    const input = await screen.findByLabelText('Clarification note');
+    fireEvent.change(input, { target: { value: 'Need product sign-off' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open supporting context' }));
+
+    expect(await screen.findByDisplayValue('Need product sign-off')).toBeInTheDocument();
+  });
+
+  it('does not query workflow detail for an invalid route param carried by the shell', async () => {
+    installMatchMedia(400);
+    const detailRequest = vi.fn();
+    server.use(
+      http.get('http://localhost/api/v1/workflows/:id', ({ params }) => {
+        detailRequest(params.id);
+        return HttpResponse.json({ workflowRunId: params.id, currentState: 'Executing' });
+      }),
+    );
+
+    renderShell({ path: '/workflows/not-a-run-id' });
+
+    await screen.findByRole('main');
+    expect(detailRequest).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('run-identity-region')).not.toBeInTheDocument();
   });
 });
 

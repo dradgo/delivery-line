@@ -107,6 +107,23 @@ function FullRunIdentityFields({ detail }: { detail: WorkflowDetail }) {
   );
 }
 
+function compactMetadata(detail: WorkflowDetail): string {
+  const actorIdentity = presentOrNull(detail.currentActorIdentity);
+  const actorType = presentOrNull(detail.currentActorType);
+  const actorText =
+    actorIdentity !== null
+      ? actorType !== null
+        ? `${actorIdentity} (${actorType})`
+        : actorIdentity
+      : null;
+  const transitionTime = formatTransitionTimestamp(detail.lastEventAt);
+  const items = [presentOrNull(detail.currentState), actorText, transitionTime].filter(
+    (value): value is string => value !== null,
+  );
+
+  return items.length > 0 ? items.join(' · ') : 'Not reported';
+}
+
 /**
  * Run-identity block. Reads run id, current state, current actor, and the last
  * transition — gracefully handling the loading, error, and missing-field cases
@@ -116,15 +133,15 @@ export function RunIdentityRegion({ workflowRunId, variant = 'full' }: RunIdenti
   const query = useWorkflowDetail(workflowRunId);
 
   if (variant === 'compact') {
-    const stateLabel = query.isError
+    const metadata = query.isError
       ? 'Unavailable'
       : query.isPending
         ? 'Loading…'
-        : (presentOrNull(query.data.currentState) ?? 'Not reported');
+        : compactMetadata(query.data);
     return (
       <div className="flex min-w-0 flex-col" data-testid="run-identity-region">
         <code className="truncate text-sm font-medium text-text-primary">{workflowRunId}</code>
-        <span className="truncate text-xs text-text-secondary">{stateLabel}</span>
+        <span className="truncate text-xs text-text-secondary">{metadata}</span>
       </div>
     );
   }
@@ -138,9 +155,9 @@ export function RunIdentityRegion({ workflowRunId, variant = 'full' }: RunIdenti
         </Field>
 
         {query.isError ? (
-          <p className="text-sm text-text-tertiary">Run details unavailable.</p>
+          <Field label="Run details">Run details unavailable.</Field>
         ) : query.isPending ? (
-          <p className="text-sm text-text-tertiary">Loading run details…</p>
+          <Field label="Run details">Loading run details…</Field>
         ) : (
           <FullRunIdentityFields detail={query.data} />
         )}

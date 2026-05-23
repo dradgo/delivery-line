@@ -1,6 +1,6 @@
 # Story 2.7: Tri-Pane Application Shell with Artifact-Primacy Layout Rules
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -287,3 +287,13 @@ claude-opus-4-7[1m]
 | Date       | Version | Description                                                                                                                                                                                              | Author |
 | ---------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | 2026-05-23 | 0.1     | Implementation complete. Tri-pane shell + responsive collapse + run-identity region + right-panel slot + LAYOUT.md ADR. All local gates green; ready for review. No npm deps added; lockfile untouched. | Amelia |
+| 2026-05-23 | 0.2     | Code review patches applied: tablet width contract corrected, collapsed-mode landmarks preserved, mobile run-identity parity restored, context drawer state preserved across reopen, invalid run-id shell queries suppressed, and description-list semantics fixed. | Codex |
+
+### Review Findings
+
+- [x] [Review][Patch] Tablet breakpoint cannot satisfy the declared width contract [deliveryline-frontend/src/features/workflows/AppShell.tsx:263]
+- [x] [Review][Patch] Mobile run identity drops CLI-parity fields required by AC11 [deliveryline-frontend/src/features/workflows/RunIdentityRegion.tsx:118]
+- [x] [Review][Patch] Landmark regions disappear in collapsed modes instead of remaining navigable [deliveryline-frontend/src/features/workflows/AppShell.tsx:262]
+- [x] [Review][Patch] Context-panel drawer close unmounts slot content and drops future sidebar state [deliveryline-frontend/src/features/workflows/ContextPanelSlot.tsx:22]
+- [x] [Review][Patch] Invalid workflow IDs still trigger backend detail queries from the root-mounted shell [deliveryline-frontend/src/features/workflows/AppShell.tsx:218]
+- [x] [Review][Patch] Run-identity loading and error states render invalid children inside the description list [deliveryline-frontend/src/features/workflows/RunIdentityRegion.tsx:135]

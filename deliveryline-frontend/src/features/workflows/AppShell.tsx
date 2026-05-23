@@ -23,13 +23,14 @@
  */
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
-import { Circle, Inbox, Menu, PanelRight } from 'lucide-react';
+import { Circle, Inbox, Menu, PanelRight, X } from 'lucide-react';
 
 import { Stack } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { isValidRunId } from '@/lib/routing/publicId';
 import { cn } from '@/lib/utils';
 import { AppShellContext, type AppShellContextValue } from './AppShellContext';
 import { RunIdentityRegion } from './RunIdentityRegion';
@@ -37,6 +38,7 @@ import { useResponsiveLayout } from './hooks/useResponsiveLayout';
 
 /** The `<main>` landmark id — the skip-link target (Task 7, AC7). */
 const MAIN_CONTENT_ID = 'main-content';
+const CONTEXT_DRAWER_TITLE_ID = 'supporting-context-title';
 
 /**
  * AC2 / TRAP 4 — the artifact-primacy floor. The central main pane never narrows
@@ -45,7 +47,8 @@ const MAIN_CONTENT_ID = 'main-content';
  * jsdom has no layout engine. The chosen tokens are documented in `LAYOUT.md`:
  * nav rail 16rem (fixed), context panel 20rem (preferred, shrinks), main ≥ 36rem.
  */
-const MAIN_MIN_WIDTH = 'min-w-[36rem]';
+const DESKTOP_MAIN_MIN_WIDTH = 'min-w-[36rem]';
+const TABLET_MAIN_MIN_WIDTH = 'min-w-[34rem]';
 
 /** Skip-to-content link — the first focusable element, visible only on focus. */
 function SkipToMainContentLink() {
@@ -96,13 +99,23 @@ function StatusIndicator() {
   );
 }
 
-/** Tablet-only control that opens the context panel drawer. */
-function ContextPanelToggle({ onClick }: { onClick: () => void }) {
+/** Persistent slim tablet context rail — keeps the landmark present without stealing width. */
+function TabletContextRail({ onOpen }: { onOpen: () => void }) {
   return (
-    <Button variant="outline" size="sm" onClick={onClick} className="justify-start gap-2">
-      <PanelRight className="size-4" aria-hidden />
-      Supporting context
-    </Button>
+    <aside
+      aria-label="Supporting context"
+      className="flex w-12 shrink-0 items-start justify-center border-l border-border bg-surface px-2 py-4"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onOpen}
+        aria-label="Open supporting context"
+        className="shrink-0"
+      >
+        <PanelRight className="size-4" aria-hidden />
+      </Button>
+    </aside>
   );
 }
 
@@ -110,13 +123,10 @@ function ContextPanelToggle({ onClick }: { onClick: () => void }) {
 function NavRailContent({
   workflowRunId,
   showRunIdentity,
-  onOpenContext,
   onNavigate,
 }: {
   workflowRunId: string | undefined;
   showRunIdentity: boolean;
-  /** When provided, a context-panel toggle is shown (tablet inline rail). */
-  onOpenContext?: (() => void) | undefined;
   /** Invoked when a nav link is followed — the mobile drawer uses it to close. */
   onNavigate?: (() => void) | undefined;
 }) {
@@ -125,7 +135,6 @@ function NavRailContent({
     <Stack gap="4">
       <QueueHomeLink onNavigate={onNavigate} />
       {showRunIdentity && hasRun ? <RunIdentityRegion workflowRunId={workflowRunId} /> : null}
-      {onOpenContext !== undefined ? <ContextPanelToggle onClick={onOpenContext} /> : null}
       <StatusIndicator />
     </Stack>
   );
@@ -182,27 +191,36 @@ function MobileTopBar({
   onOpenNav: () => void;
   onOpenContext: () => void;
 }) {
-  const hasRun = workflowRunId !== undefined && workflowRunId !== '';
+  const hasRun = workflowRunId !== undefined && isValidRunId(workflowRunId);
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-3 py-2">
-      <Button variant="ghost" size="icon" onClick={onOpenNav} aria-label="Open workflow navigation">
-        <Menu className="size-5" aria-hidden />
-      </Button>
-      <div className="min-w-0 flex-1">
-        {hasRun ? (
-          <RunIdentityRegion workflowRunId={workflowRunId} variant="compact" />
-        ) : (
-          <span className="text-sm font-semibold text-text-primary">DeliveryLine</span>
-        )}
-      </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onOpenContext}
-        aria-label="Open supporting context"
-      >
-        <PanelRight className="size-5" aria-hidden />
-      </Button>
+      <nav aria-label="Workflow navigation" className="flex min-w-0 flex-1 items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onOpenNav}
+          aria-label="Open workflow navigation"
+        >
+          <Menu className="size-5" aria-hidden />
+        </Button>
+        <div className="min-w-0 flex-1">
+          {hasRun ? (
+            <RunIdentityRegion workflowRunId={workflowRunId} variant="compact" />
+          ) : (
+            <span className="text-sm font-semibold text-text-primary">DeliveryLine</span>
+          )}
+        </div>
+      </nav>
+      <aside aria-label="Supporting context" className="shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onOpenContext}
+          aria-label="Open supporting context"
+        >
+          <PanelRight className="size-5" aria-hidden />
+        </Button>
+      </aside>
     </header>
   );
 }
@@ -216,12 +234,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   // TRAP 5 — render identity is keyed off the route param, read with the backend
   // as the source of truth. `strict: false` — the shell mounts above every route.
   const params = useParams({ strict: false });
-  const workflowRunId = params.workflowRunId;
+  const workflowRunId = isValidRunId(params.workflowRunId) ? params.workflowRunId : undefined;
 
   // AC4 — the right-panel slot. `contextPanelMount` is the live portal target;
   // `occupantCount` is reference-counted so concurrent `<ContextPanelSlot>`s do
   // not prematurely flip the panel back to its empty state.
   const [contextPanelMount, setContextPanelMount] = useState<HTMLElement | null>(null);
+  const [parkedContextPanelMount, setParkedContextPanelMount] = useState<HTMLElement | null>(null);
   const [occupantCount, setOccupantCount] = useState(0);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
@@ -234,13 +253,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   const isContextPanelOccupied = occupantCount > 0;
+  const activeContextPanelMount = contextPanelMount ?? parkedContextPanelMount;
 
   const contextValue = useMemo<AppShellContextValue>(
-    () => ({ contextPanelMount, isContextPanelOccupied, registerContextPanelOccupant }),
-    [contextPanelMount, isContextPanelOccupied, registerContextPanelOccupant],
+    () => ({
+      contextPanelMount: activeContextPanelMount,
+      isContextPanelOccupied,
+      registerContextPanelOccupant,
+    }),
+    [activeContextPanelMount, isContextPanelOccupied, registerContextPanelOccupant],
   );
 
   const isMobile = layout === 'mobile';
+  const isTablet = layout === 'tablet';
   const isDesktop = layout === 'desktop';
 
   return (
@@ -249,6 +274,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <SkipToMainContentLink />
 
         <div className="flex h-dvh w-full flex-col overflow-hidden bg-background">
+          <div ref={setParkedContextPanelMount} className="hidden" aria-hidden="true" />
+
           {isMobile ? (
             <MobileTopBar
               workflowRunId={workflowRunId}
@@ -262,13 +289,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             {isMobile ? null : (
               <nav
                 aria-label="Workflow navigation"
-                className="w-64 shrink-0 overflow-y-auto border-r border-border bg-surface p-4"
+                className={cn(
+                  'shrink-0 overflow-y-auto border-r border-border bg-surface p-4',
+                  isTablet ? 'w-56' : 'w-64',
+                )}
               >
-                <NavRailContent
-                  workflowRunId={workflowRunId}
-                  showRunIdentity
-                  onOpenContext={layout === 'tablet' ? () => setContextDrawerOpen(true) : undefined}
-                />
+                <NavRailContent workflowRunId={workflowRunId} showRunIdentity />
               </nav>
             )}
 
@@ -283,11 +309,13 @@ export function AppShell({ children }: { children: ReactNode }) {
                 isMobile ? 'px-4 pt-6' : 'px-6 pt-8',
                 // AC2 / TRAP 4 — the artifact-primacy min-width floor. Relaxed on
                 // mobile, where main is already the single column.
-                isMobile ? 'min-w-0' : MAIN_MIN_WIDTH,
+                isMobile ? 'min-w-0' : isTablet ? TABLET_MAIN_MIN_WIDTH : DESKTOP_MAIN_MIN_WIDTH,
               )}
             >
               {children}
             </main>
+
+            {isTablet ? <TabletContextRail onOpen={() => setContextDrawerOpen(true)} /> : null}
 
             {/* Right supporting context panel — inline on desktop only (AC4). */}
             {isDesktop ? (
@@ -313,24 +341,47 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* Tablet + mobile — the context panel as a right slide-out drawer (AC5). */}
         {isDesktop ? null : (
-          <Sheet open={contextDrawerOpen} onOpenChange={setContextDrawerOpen}>
-            <SheetContent
-              side="right"
-              aria-describedby={undefined}
-              className="w-80 overflow-y-auto sm:max-w-sm"
+          <>
+            {contextDrawerOpen ? (
+              <button
+                type="button"
+                aria-label="Close supporting context"
+                className="fixed inset-0 z-40 bg-black/80"
+                onClick={() => setContextDrawerOpen(false)}
+              />
+            ) : null}
+            <div
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby={CONTEXT_DRAWER_TITLE_ID}
+              aria-hidden={!contextDrawerOpen}
+              className={cn(
+                'fixed inset-y-0 right-0 z-50 w-80 overflow-y-auto border-l bg-background p-6 shadow-lg transition-transform duration-300 sm:max-w-sm',
+                contextDrawerOpen ? 'translate-x-0' : 'pointer-events-none translate-x-full',
+              )}
             >
-              <SheetHeader>
-                <SheetTitle>Supporting context</SheetTitle>
-              </SheetHeader>
-              <aside aria-label="Supporting context" className="mt-4">
+              <button
+                type="button"
+                aria-label="Close"
+                className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                onClick={() => setContextDrawerOpen(false)}
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+              <div className="flex flex-col space-y-2 text-center sm:text-left">
+                <h2 id={CONTEXT_DRAWER_TITLE_ID} className="text-lg font-semibold text-foreground">
+                  Supporting context
+                </h2>
+              </div>
+              <div className="mt-4">
                 <ContextPanelRegion
                   mountRef={setContextPanelMount}
                   occupied={isContextPanelOccupied}
                   collapsed={false}
                 />
-              </aside>
-            </SheetContent>
-          </Sheet>
+              </div>
+            </div>
+          </>
         )}
 
         {/* Mobile — the navigation rail as a left slide-out drawer (AC5). */}
@@ -346,13 +397,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               </SheetHeader>
               {/* Run identity stays in the persistent top bar on mobile (it must
                   never disappear), so the drawer omits it — `showRunIdentity={false}`. */}
-              <nav aria-label="Workflow navigation" className="mt-4">
+              <div className="mt-4">
                 <NavRailContent
                   workflowRunId={workflowRunId}
                   showRunIdentity={false}
                   onNavigate={() => setNavDrawerOpen(false)}
                 />
-              </nav>
+              </div>
             </SheetContent>
           </Sheet>
         ) : null}
