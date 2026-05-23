@@ -11,7 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import { Container, Stack } from '@/components/layout';
+import { Stack } from '@/components/layout';
 
 /**
  * Story 2.5 — shared "this link goes nowhere good" UI states for the route tree.
@@ -20,9 +20,14 @@ import { Container, Stack } from '@/components/layout';
  * `routeFileIgnorePrefix`) means the TanStack Router generator does NOT treat
  * these as routes — they are plain components the route files compose.
  *
- * These are MINIMAL, accessible placeholders built from the story-2.4 layout
- * primitives (`Container`/`Stack`) + the 2.4 typography classes + 2.3 state
- * tokens. They are deliberately not product UI.
+ * These are MINIMAL, accessible placeholders built from the story-2.4 `Stack`
+ * primitive + the 2.4 typography classes + 2.3 state tokens. They are
+ * deliberately not product UI.
+ *
+ * Story 2.7 (TRAP 1): these states render INSIDE the tri-pane shell's central
+ * main pane (Q4 — dead ends keep the shell frame, AC8 structural stability), so
+ * the `<Container>` wrapper was dropped — the shell's `<main>` owns the single
+ * `<main>` landmark and the base padding.
  *
  * SEAM (story 2.22): when the shared empty-state / feedback-pattern infrastructure
  * lands, these dead-end states adopt that component instead of this local shell.
@@ -38,13 +43,11 @@ interface DeadEndStateProps {
 
 function DeadEndState({ icon: Icon, title, children }: DeadEndStateProps) {
   return (
-    <Container className="py-12" data-testid="dead-end-state">
-      <Stack gap="2" className="max-w-prose items-start">
-        <Icon className="size-8 text-text-tertiary" aria-hidden />
-        <h1 className="text-page-title">{title}</h1>
-        <div className="text-body text-text-secondary">{children}</div>
-      </Stack>
-    </Container>
+    <Stack gap="2" className="max-w-prose items-start" data-testid="dead-end-state">
+      <Icon className="size-8 text-text-tertiary" aria-hidden />
+      <h1 className="text-page-title">{title}</h1>
+      <div className="text-body text-text-secondary">{children}</div>
+    </Stack>
   );
 }
 

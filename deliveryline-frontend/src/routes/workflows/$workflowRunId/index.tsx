@@ -1,6 +1,6 @@
 import { Link, createFileRoute, notFound } from '@tanstack/react-router';
 
-import { Container, Stack } from '@/components/layout';
+import { Stack } from '@/components/layout';
 import { detailQueryOptions } from '@/lib/api/queryOptions';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
 import {
@@ -100,36 +100,35 @@ function WorkflowDetailRoute() {
   }
 
   return (
-    <Container className="py-8">
-      <Stack gap="4" className="items-start">
-        <Link
-          to="/workflows"
-          className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
-        >
-          &larr; Back to queue
-        </Link>
-        <h1 className="text-page-title">Workflow run</h1>
-        <p className="text-meta text-text-tertiary">
-          <code>{workflowRunId}</code>
-          {data?.currentState !== undefined ? (
-            <>
-              {' '}
-              &middot; state <code>{data.currentState}</code>
-            </>
-          ) : null}
-        </p>
-        <p className="text-body text-text-secondary max-w-prose">
-          Navigation skeleton (story 2.5) now backed by the live data layer (story 2.6). The Run
-          Context Strip (2.16) and the Artifact Review Panel (2.17) render here once they land.
-        </p>
-        <Link
-          to="/workflows/$workflowRunId/artifacts/$artifactId"
-          params={{ workflowRunId, artifactId: 'art_sample0001' }}
-          className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
-        >
-          Open a sample artifact &rarr;
-        </Link>
-      </Stack>
-    </Container>
+    <Stack gap="4" className="items-start">
+      <Link
+        to="/workflows"
+        className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
+      >
+        &larr; Back to queue
+      </Link>
+      <h1 className="text-page-title">Workflow run</h1>
+      <p className="text-meta text-text-tertiary">
+        <code>{workflowRunId}</code>
+        {data?.currentState !== undefined ? (
+          <>
+            {' '}
+            &middot; state <code>{data.currentState}</code>
+          </>
+        ) : null}
+      </p>
+      <p className="text-body text-text-secondary max-w-prose">
+        Navigation skeleton (story 2.5) now backed by the live data layer (story 2.6) and hosted in
+        the tri-pane shell (story 2.7). The Run Context Strip (2.16) and the Artifact Review Panel
+        (2.17) render here once they land.
+      </p>
+      <Link
+        to="/workflows/$workflowRunId/artifacts/$artifactId"
+        params={{ workflowRunId, artifactId: 'art_sample0001' }}
+        className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
+      >
+        Open a sample artifact &rarr;
+      </Link>
+    </Stack>
   );
 }

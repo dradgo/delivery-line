@@ -1,0 +1,221 @@
+# generated: 2026-04-26
+# last_updated: 2026-05-22 (story 2.32 bmad-code-review complete: 3 adversarial layers (Blind Hunter / Edge Case Hunter / Acceptance Auditor) -> 33 raw findings triaged to 1 decision + 4 patches + 2 defers + 17 dismissed. Decision resolved: drop the verified no-op `-Dsurefire.skip=true` flag from the backend-contract-tests verify command. 4 patches applied: (1) flag removed from ci.yml + step comment rewritten; (2) deliveryline-backend/README.md Thresholds section corrected to the authoritative Linux CI measurement (LINE 81.33% / BRANCH 62.74%) with an honest "floor below measurement" rationale; (3) docs/ci-pipeline.md backend-contract-tests row restored the dropped @Tag/class-name-suffix + AC7 detail and reconciled the surefire.skip wording; (4) pom.xml jacoco-merged.exec path extracted to a `<jacoco.merged.exec>` property (resolution verified via help:evaluate). 2 defers logged to deferred-work.md (stale exec data on non-clean local rebuilds; foundation-gate "Placeholder" doc staleness). Story 2.32 flipped review -> done. Prior entry: story 2.7 created via create-story -> `ready-for-dev`: tri-pane application shell (left nav rail + central main pane + right context panel) with artifact-primacy layout rules. Frontend-only; builds the structural SHELL only — composites that fill it ship later (2.15/2.16/2.17/2.18/2.19/2.20/2.22). Mounts in `__root.tsx` wrapping `<Outlet/>` (currently a bare Outlet). FIVE traps baked in: (T1) every leaf route renders its own `<Container py-8>` -> de-duplicate so there is exactly one `<main>` landmark; (T2) the right panel is a documented composition SLOT, not the Run Context Strip/Clarification Region composites; (T3) responsive overlaps story 2.26 — 2.7 builds the responsive STRUCTURE + creates `useResponsiveLayout`, 2.26 owns the full breakpoint matrix + Tailwind aliases + `RESPONSIVE.md` + mobile sticky decision-bar (do NOT pre-empt); (T4) artifact-primacy is a HARD CSS rule — main pane min-width so the right panel collapses first — and jsdom has no layout engine, so the AC2 "layout test" asserts the structural contract, not computed pixels (Playwright defers to 2.26/2.27); (T5) run-identity region reads `useWorkflowDetail` (TanStack Query), never `useState`. KEY FINDINGS: the epic's `UX-DR5/UX-DR6/UX-DR24` codes do NOT appear verbatim in the UX spec — decoded to real sections (Artifact Primacy Rule 1050-1057, Hybrid Coherence Rules 989-1002, Breakpoint Strategy 2092-2106). Planning-doc CONFLICT surfaced: epic AC1/AC10 place the shell at `src/features/workflows/AppShell.tsx`+`LAYOUT.md` but architecture.md:1183 says `components/layout` — recommended: follow the epic AC (shell is workflow-coupled), document the deviation in LAYOUT.md. Shell needs NO new npm deps (composes existing layout + shadcn primitives + native `matchMedia`). 4 open Qs to Alex (file location, right-panel slot mechanism, `useResponsiveLayout` ownership vs 2.26, dead-end routes inside vs outside the shell). Prior 2026-05-22 entry: story 2.32 review follow-up: CI/workflow/docs wording corrected to match the current build shape — backend-contract-tests now explicitly documents that `-Dsurefire.skip=true` is still passed but is currently a no-op in this build, so the Linux gate effectively runs the full backend verify shape. Additional Linux reproduction attempts recorded in the story notes: full reactor run in a Linux container blocked in deliveryline-frontend (`Could not determine Node.js install directory`), backend-isolated Linux run reached JaCoCo/report generation but Failsafe could not access a valid Docker/Testcontainers environment inside the container. The last open review action item (clean Linux + Docker reproduction) was then resolved — reproduced green natively in WSL2 Ubuntu 24.04 with real Testcontainers (exact CI command `verify -Dsurefire.skip=true`, BUILD SUCCESS, JaCoCo gate met, LINE 81.33% / BRANCH 62.74%), so story 2.32 moved `in-progress -> review`. Prior 2026-05-22 story 6.9 entry: review batch applied — dynamic OpenAPI server/schema fixes, fail-closed bind-guard hardening, workflow-event-stream contract enforcement, bundled-jar smoke payload validation; story moved to `done`.)
+# review_note: 2026-05-17 story 1.12c bmad-code-review complete. Three adversarial layers (Blind Hunter / Edge Case Hunter / Acceptance Auditor) → Auditor verdict all 5 ACs satisfied; triage 4 decision-needed + 7 patches + 3 defers + 4 dismissed. Decisions: D1 cycle/depth-truncation → accept per spec dev-notes (schema invariants make >10000 unreachable; documented contract in ArtifactRepository javadoc); D2 ARTIFACT_OPERATION_INTENT_CONFLICT rollout → dismissed (pre-existing errorCode, existing REST/CLI mapping handles it); D3 reject-path idempotency persistence → deferred to another epic (cross-cutting policy across all pre-createPending typed rejections); D4 idempotencyKey cleartext logging → accepted (operational traceability; keys treated as opaque/non-sensitive per contract). Patches applied: CTE per-chain early-termination (added `AND c.cursor_public_id <> :lineageMemberPublicId` to recursive step — bounds row count to chains' depth-to-target, not full root-walk); `seedDeepLineage` rewritten to insert one workflow_events row per artifact version (production-shape parity) + per-call nanoTime nonce prevents cross-test public_id collisions + explicit IllegalStateException on null insert returns (replaces NPE); `hibernateStatistics()` simplified — removed redundant `setStatisticsEnabled(true)` that mutated global state (class-level `generate_statistics=true` property already enables tracking); assertion lower bounds added (`artifactLoads >= 1`, `delta >= 4`) to reject any regression that short-circuits the path to zero loads while preserving the upper-bound rejection of legacy O(D) behavior; CTE depth-cap contract documented in `ArtifactRepository#findActiveLineageLeaf` javadoc. One reviewer patch dismissed: "drop unused `leaf_version` in recursive step" was a reviewer error — `leaf_version` IS consumed by the outer `ORDER BY c.leaf_version DESC LIMIT 1` and must be propagated. Defers logged to `deferred-work.md`: native query un-hydrated lazy associations (theoretical for current callers), `JOIN workflow_runs wr ON wr.id` plan suboptimality (needs profiling), `createNextVersion` empty-CTE fallback grafts onto unrelated lineage (pre-existing). Focused verification: `mvn -pl deliveryline-backend -am test -Dtest='ArtifactOperationServiceContractTest,ArtifactLoggingContractTest,ArtifactPersistenceAdapterUnitTest'` → 30 tests / 0 failures / 0 errors / 0 skipped, BUILD SUCCESS. Story 1.12c flipped `review → done`. Prior 2026-05-15 entry preserved:
+# review_note: 2026-05-15 story 1.18 final deferred review item resolved via append-only second-event audit. New `WorkflowEventType.RECOVERY_DISPATCH_FAILED("recovery.dispatchFailed")` registered + fixture updated; `RecoveryService.retry(...)` catch now appends the new event (REQUIRES_NEW) stamping `errorCode`, `errorClass`, `failedStage`, `recoveryActionId`, `recoveryRetriedEventId`, `idempotencyKey`, optional `correlationId` / `reason` / `compensationFailed`. The already-committed `recovery.retried` event is never mutated (NFR4 preserved). Targeted slice 119/0/0; full backend regression 560/1/0/4 (only pre-existing F17). +5 net tests, zero new regressions. Story 1.18 flipped `in-progress → review`. Prior 2026-05-15 entry preserved: story 1.18 review batch follow-up applied the accepted non-controversial fixes, aligned the story and ArchUnit guard to the 4-arg retry signature, and reverified the recovery-focused slice at 102/0/0.
+# project: DeliveryLine
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-04-26
+project: DeliveryLine
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # ============================================================
+  # Epic 1: Foundation & First Governed Run (CLI) - 22 stories
+  # ============================================================
+  epic-1: in-progress
+  1-1-initialize-maven-multi-module-project-scaffold: done
+  1-2-unified-docker-compose-with-env-configurable-ports: done
+  1-3-flyway-v1-core-schema-with-retention-and-measurement-columns: done
+  1-4-central-registries-with-drift-tests: done
+  1-5-workflow-state-transition-table-and-workflow-transition-service: done
+  1-6-runner-context-result-schema-v1-with-artifact-variant-discriminators: done
+  1-7-shared-application-command-model-pattern: done
+  1-8-problem-details-mapper-with-stable-domain-error-codes: done
+  1-9-idempotency-service: done
+  1-10-redaction-classification-policy-and-adversarial-secret-fixture-set: done
+  1-11-archunit-package-boundary-tests: done
+  1-12-artifact-operations-skeleton: done
+  1-12c-artifact-query-hardening-tech-debt: done
+  1-13-runner-broker-and-deterministic-mock-runner-adapter: done
+  1-14-mock-linear-adapter-and-real-linear-adapter-sharing-port: done
+  1-15-spring-shell-cli-commands-submit-status-history: done
+  1-16-doctor-service-and-doctor-command: done
+  1-17-supported-environment-matrix-and-cross-platform-scripts: done
+  1-18-cli-minimum-viable-recovery-baseline: done
+  1-19-structured-logging-and-correlation-ids: done
+  1-21-github-actions-ci-tiered-pipeline: done
+  1-22-setup-and-cli-first-run-quickstart-documentation: done
+  1-23-foundation-gate-ci-verification-and-deterministic-fixture-event-stream: done
+  epic-1-retrospective: done
+
+  # ============================================================
+  # Epic 2: Specification Review & Product Approval - 32 stories
+  # ============================================================
+  epic-2: in-progress
+  2-1-frontend-module-scaffolding-vite-react-typescript-and-maven-wiring: done
+  2-2-tailwind-and-shadcn-ui-setup-and-primitive-inventory: done
+  2-3-design-tokens-color-palette-and-semantic-state-variables: done
+  2-4-design-tokens-typography-and-spacing-and-layout-primitives: done
+  2-5-tanstack-router-setup-and-typed-routes-and-deep-link-handling: done
+  2-6-tanstack-query-and-key-factories-and-typed-api-client-from-openapi: done
+  2-7-tri-pane-application-shell-with-artifact-primacy-layout-rules: review
+  2-8-backend-specification-artifact-model-and-spec-stage-context-bundle: backlog
+  2-9-backend-approval-service-core-approve-with-version-binding: backlog
+  2-10-backend-spec-rejection-with-structured-feedback-and-escalation: backlog
+  2-11-backend-clarification-domain-model-and-submission: backlog
+  2-12-backend-visible-incorporation-lifecycle-states-and-event-wiring: backlog
+  2-13-backend-rest-mutation-endpoints-and-openapi: backlog
+  2-14-backend-allowed-actions-inspection-endpoint: backlog
+  2-15-run-review-queue-item-component: backlog
+  2-16-run-context-strip-component: backlog
+  2-17-artifact-review-panel-generalized-composite-spec-variant: backlog
+  2-18-clarification-region-with-visible-incorporation-lifecycle-wiring: backlog
+  2-19-approval-decision-bar-generalized-composite-spec-approval-mode: backlog
+  2-20-queue-shell-states-loading-empty-filtered-empty-error: backlog
+  2-21-feedback-patterns-infrastructure-inline-persistent-toast-boundaries: backlog
+  2-22-navigation-and-empty-loading-error-states-infrastructure: backlog
+  2-23-modal-overlay-confirmation-patterns-and-button-hierarchy-infrastructure: backlog
+  2-24-artifact-content-sanitization-untrusted-runner-output: backlog
+  2-25-wcag-2-1-aa-compliance-keyboard-focus-aria-contrast-audit-label-semantics: backlog
+  2-26-responsive-design-mobile-tablet-desktop-breakpoints-and-structural-collapse-rules: backlog
+  2-27-frontend-test-suite-component-route-query-hook-a11y-sanitization-cross-browser: backlog
+  2-28-spa-fallback-controller-and-maven-bundled-jar-smoke-and-packaging-integration: backlog
+  2-29-pm-loop-walkthrough-documentation-increment: backlog
+  2-30-backend-lint-and-format-spotless-checkstyle-spotbugs: done
+  2-31-frontend-lint-and-prettier-and-custom-rules: done
+  2-32-backend-coverage-reporting-and-maven-jacoco-threshold-gate: done
+  epic-2-retrospective: optional
+
+  # ============================================================
+  # Epic 3: Agent Execution, Implementation Output & Dev Review - 36 stories
+  # ============================================================
+  epic-3: backlog
+  3-1-docker-runner-adapter-core-container-lifecycle-and-file-based-contract-invocation: backlog
+  3-2-docker-runner-adapter-lifecycle-timeout-heartbeat-lease-expiry-cleanup-idempotent-restart: backlog
+  3-3-codex-runner-image-dockerfile-and-entrypoint-and-contract-conformance: backlog
+  3-4-claude-runner-image-dockerfile-and-entrypoint-and-contract-conformance: backlog
+  3-5-runner-secrets-handling-secure-mount-of-agent-provider-api-keys: backlog
+  3-6-runner-logs-capture-and-redaction-and-classification: backlog
+  3-7-elk-stack-integration-centralized-log-capture-profile-gated: backlog
+  3-8-real-docker-runner-contract-integration-test: backlog
+  3-9-repository-workspace-service-git-clone-branch-management-commit-push: backlog
+  3-10-full-context-bundle-generation-for-implementation-stage: backlog
+  3-11-implementation-plan-artifact-generation-flow-orchestration: backlog
+  3-12-pr-output-artifact-generation-flow-orchestration: backlog
+  3-13-mock-github-adapter: backlog
+  3-14-real-github-adapter-pr-branch-commit-refs-and-pat-auth: backlog
+  3-15-integration-link-service-extended-for-github-pr-linkage: backlog
+  3-16-linear-completion-sync-write-merge-ready-summary-back-to-source-linear-ticket: backlog
+  3-17-runner-execution-queue-and-configurable-worker-pool: backlog
+  3-18-workflow-batch-submission-cli-and-rest: backlog
+  3-19-queue-inspection-and-worker-status-and-queue-size-monitoring: backlog
+  3-20-technical-approval-service-accept-implementation-with-version-binding: backlog
+  3-21-technical-approval-service-reject-implementation-with-structured-technical-feedback: backlog
+  3-22-developer-takeover-service-takeover-workflow-with-preserved-context: backlog
+  3-23-rest-endpoint-accept-implementation-and-openapi: backlog
+  3-24-rest-endpoint-reject-implementation-and-openapi: backlog
+  3-25-rest-endpoint-takeover-workflow-and-openapi: backlog
+  3-26-artifact-review-panel-implementation-plan-variant-renderer: backlog
+  3-27-artifact-review-panel-pr-output-variant-renderer: backlog
+  3-28-approval-decision-bar-implementation-review-mode-activation: backlog
+  3-29-developer-takeover-ui-flow-initiation-confirmation-persistent-visibility: backlog
+  3-30-ui-minimum-viable-recovery-baseline-failed-stage-last-successful-retry-action: backlog
+  3-31-github-pr-linkage-display-in-run-context-strip-and-queue-item: backlog
+  3-32-ticket-source-adapter-abstraction-extract-from-linear-adapter: backlog
+  3-33-repository-host-adapter-abstraction-extract-from-github-adapter: backlog
+  3-34-ci-tier-real-docker-runner-image-build-and-compatibility-checks: backlog
+  3-35-test-suite-extension-runner-adapter-github-adapter-takeover-dev-review: backlog
+  3-36-execution-walkthrough-documentation-increment: backlog
+  epic-3-retrospective: optional
+
+  # ============================================================
+  # Epic 4: Failure Handling, Recovery & Reconciliation - 28 stories
+  # ============================================================
+  epic-4: backlog
+  4-1-cli-operator-inspection-deliveryline-operator-status: backlog
+  4-2-ui-operator-workflow-owner-queue-and-filters: backlog
+  4-3-audit-history-query-by-ticket-and-by-run-cli-and-rest: backlog
+  4-4-failure-diagnostics-deep-dive-view: backlog
+  4-5-recovery-service-resume-recovery-from-paused-state: backlog
+  4-6-recovery-service-reconcile-reconcile-workflow-state-on-integration-conflict: backlog
+  4-7-recovery-service-rerun-from-step-restricted-rerun-from-safe-step-boundaries: backlog
+  4-8-recovery-service-pause-manual-pause-for-operator-intervention: backlog
+  4-9-recovery-service-classify-failure-and-failure-taxonomy-registry-management: backlog
+  4-10-rest-endpoint-resume-and-openapi: backlog
+  4-11-rest-endpoint-reconcile-and-openapi: backlog
+  4-12-rest-endpoint-rerun-from-step-and-openapi: backlog
+  4-13-rest-endpoint-pause-and-openapi: backlog
+  4-14-rest-endpoint-classify-failure-and-openapi: backlog
+  4-15-artifact-reconciliation-db-file-drift-detection: backlog
+  4-16-artifact-reconciliation-operator-driven-repair-actions: backlog
+  4-16a-artifact-lineage-reconciliation-and-fork-governance: backlog
+  4-17-integration-conflict-detection-linear-and-github-vs-internal-state: backlog
+  4-18-integration-conflict-operator-action-surfacing-and-conflict-driven-workflow-pause: backlog
+  4-19-compare-mode-backend-revision-delta-service-for-spec-plan-pr-output: backlog
+  4-20-compare-mode-ui-component-ux-dr13: backlog
+  4-21-compare-mode-mobile-bounded-state-ux-dr23: backlog
+  4-22-decision-bar-recovery-operator-mode-full-activation-deeper-actions-beyond-retry-baseline: backlog
+  4-23-operator-reconciliation-dialog-ui: backlog
+  4-24-failure-taxonomy-classification-ui: backlog
+  4-25-ci-tier-extension-recovery-integration-tests-and-fault-injection: backlog
+  4-26-test-suite-extension-recovery-service-reconciliation-compare-mode-operator-ui: backlog
+  4-27-failed-run-recovery-walkthrough-documentation-increment: backlog
+  4-28-architecture-lift-remove-recovery-service-scope-protected-lock-and-adr: backlog
+  epic-4-retrospective: optional
+
+  # ============================================================
+  # Epic 5: Shareable Run Export & Team-Visible Review - 12 stories
+  # ============================================================
+  epic-5: backlog
+  5-1-run-export-service-composition-and-redaction-and-classification: backlog
+  5-2-export-bundle-file-format-and-schema-json-and-markdown: backlog
+  5-3-adversarial-redaction-enforcement-on-exports: backlog
+  5-4-cli-deliveryline-export-run-and-rest-endpoints: backlog
+  5-5-measurement-aggregation-queries-per-run-and-per-batch-and-per-team: backlog
+  5-6-cli-deliveryline-metrics-report-and-rest-endpoints: backlog
+  5-7-inclusion-of-measurement-data-in-exported-run-reports: backlog
+  5-8-retention-enforcement-scheduled-job-and-ticket-closure-handling: backlog
+  5-9-retention-configuration-and-per-run-archive-opt-out: backlog
+  5-10-ci-tier-extension-export-contract-and-redaction-verification: backlog
+  5-11-test-suite-extension-export-measurement-retention: backlog
+  5-12-exported-report-walkthrough-documentation-increment: backlog
+  epic-5-retrospective: optional
+
+  # ============================================================
+  # Epic 6: Adoption Polish & Pilot Documentation - 9 stories
+  # ============================================================
+  epic-6: backlog
+  6-1-documentation-index-and-cross-reference-audit: backlog
+  6-2-concept-vocabulary-and-glossary-completeness-audit: backlog
+  6-3-end-to-end-happy-path-tutorial-validation: backlog
+  6-4-end-to-end-failed-run-recovery-walkthrough-validation: backlog
+  6-5-exported-report-walkthrough-validation-with-real-bundle: backlog
+  6-6-pilot-dry-runs-coordination-and-report-with-named-validators: backlog
+  6-7-nfr42-nfr44-nfr45-closure-audit: backlog
+  6-8-pilot-launch-readiness-checklist-and-epic-close-gate: backlog
+  6-9-localhost-rest-binding-and-workflow-read-endpoints: done  # pulled forward (2026-05-21) as story 2.6's prerequisite; built in the Epic 2 timeframe, id unchanged per epics.md:843
+  epic-6-retrospective: optional

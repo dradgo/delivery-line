@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 
-import { Container, Stack } from '@/components/layout';
+import { Stack } from '@/components/layout';
 import {
   InvalidRouteParamError,
   assertValidArtifactRouteParams,
@@ -68,25 +68,23 @@ function ArtifactViewerRoute() {
   }
 
   return (
-    <Container className="py-8">
-      <Stack gap="4" className="items-start">
-        <Link
-          to="/workflows/$workflowRunId"
-          params={{ workflowRunId }}
-          className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
-        >
-          &larr; Back to run
-        </Link>
-        <h1 className="text-page-title">Artifact</h1>
-        <p className="text-meta text-text-tertiary">
-          <code>{artifactId}</code> &middot; type <code>{data.artifactType}</code> &middot; run{' '}
-          <code>{workflowRunId}</code>
-        </p>
-        <p className="text-body text-text-secondary max-w-prose">
-          Navigation skeleton (story 2.5). The Artifact Review Panel (2.17) renders the artifact
-          body here once it and the data layer (2.6) land.
-        </p>
-      </Stack>
-    </Container>
+    <Stack gap="4" className="items-start">
+      <Link
+        to="/workflows/$workflowRunId"
+        params={{ workflowRunId }}
+        className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
+      >
+        &larr; Back to run
+      </Link>
+      <h1 className="text-page-title">Artifact</h1>
+      <p className="text-meta text-text-tertiary">
+        <code>{artifactId}</code> &middot; type <code>{data.artifactType}</code> &middot; run{' '}
+        <code>{workflowRunId}</code>
+      </p>
+      <p className="text-body text-text-secondary max-w-prose">
+        Navigation skeleton (story 2.5), hosted in the tri-pane shell (story 2.7). The Artifact
+        Review Panel (2.17) renders the artifact body here once it and the data layer (2.6) land.
+      </p>
+    </Stack>
   );
 }
