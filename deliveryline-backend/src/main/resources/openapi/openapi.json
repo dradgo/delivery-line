@@ -34,6 +34,16 @@
             "maxLength" : 128,
             "minLength" : 0,
             "type" : "string"
+          },
+          "reason" : {
+            "maxLength" : 1024,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reviewerRole" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
           }
         },
         "required" : [

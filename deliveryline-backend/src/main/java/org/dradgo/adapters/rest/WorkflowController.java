@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
@@ -50,12 +51,15 @@ public class WorkflowController {
 
   private final WorkflowCommandService workflowCommandService;
   private final WorkflowInspectionService workflowInspectionService;
+  private final ApprovalReviewerRoleResolver approvalReviewerRoleResolver;
 
   public WorkflowController(
       WorkflowCommandService workflowCommandService,
-      WorkflowInspectionService workflowInspectionService) {
+      WorkflowInspectionService workflowInspectionService,
+      ApprovalReviewerRoleResolver approvalReviewerRoleResolver) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
+    this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
   }
 
   // ---------------------------------------------------------------------------
@@ -205,7 +209,9 @@ public class WorkflowController {
                 request.actorIdentity(),
                 request.actorType(),
                 idempotencyKey,
-                request.correlationId())));
+                request.correlationId(),
+                approvalReviewerRoleResolver.resolveFor(request.reviewerRole()),
+                request.reason())));
   }
 
   @PostMapping(

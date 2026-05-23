@@ -16,7 +16,17 @@ class WorkflowCommandTypeTest {
         new SubmitWorkflowCommand("alex", ActorType.HUMAN, "k", null, "LIN-1").commandType());
     assertEquals(
         "ApproveSpecCommand",
-        new ApproveSpecCommand("run_x", "art_x", 1, 1, "alex", ActorType.HUMAN, "k", null)
+        new ApproveSpecCommand(
+                "run_x",
+                "art_x",
+                1,
+                1,
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "product_reviewer",
+                null)
             .commandType());
     assertEquals(
         "RejectSpecCommand",

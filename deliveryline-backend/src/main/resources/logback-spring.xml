@@ -10,8 +10,9 @@
               so `tail -f` operators can grep on bracketed MDC keys.
 
   All appenders carry the AC3 MDC key set: correlationId, workflowRunId, runnerExecutionId,
-  artifactId, artifactOperationId. The exact camelCase strings are duplicated here, in
-  MdcKeys.java, and in RedactingJsonProvider — drift is caught by LoggingFieldNameContractTest.
+  artifactId, artifactOperationId, approvalId. The exact camelCase strings are duplicated here,
+  in MdcKeys.java, and in RedactingJsonProvider — drift is caught by
+  LoggingFieldNameContractTest.
 
   Timestamps are emitted in UTC (pattern includes UTC zone hint; the JSON timestamp provider
   is configured for UTC ISO-8601). Operators MUST NOT see local-time-zone timestamps.
@@ -60,7 +61,7 @@
 	<springProfile name="local,test,!demo">
 		<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
 			<encoder>
-				<pattern>%d{yyyy-MM-dd HH:mm:ss.SSS, UTC} %-5level [%X{correlationId:-no-correlation}] %X{workflowRunId:-} %X{runnerExecutionId:-} %X{artifactId:-} %X{artifactOperationId:-} %logger{36} - %redactedMsg%n</pattern>
+				<pattern>%d{yyyy-MM-dd HH:mm:ss.SSS, UTC} %-5level [%X{correlationId:-no-correlation}] %X{workflowRunId:-} %X{runnerExecutionId:-} %X{artifactId:-} %X{artifactOperationId:-} %X{approvalId:-} %logger{36} - %redactedMsg%n</pattern>
 			</encoder>
 		</appender>
 		<root level="INFO">

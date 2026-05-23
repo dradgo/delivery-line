@@ -25,6 +25,12 @@ springdoc:
     path: /swagger-ui.html
 
 deliveryline:
+  approval:
+    # MVP fallback for the legacy WorkflowController.approveSpec REST surface that does not yet
+    # accept an actor-identity / reviewer-role header (story 2.13 rebuilds that surface). When the
+    # request body supplies a non-blank `reviewerRole`, it is used verbatim; otherwise this value
+    # is stamped on the persisted approvals row and the approval.approved audit event.
+    default-reviewer-role: product_reviewer
   rest:
     # Optional override for server.address. Leave unset to inherit the loopback default above.
     # bind-address: 0.0.0.0

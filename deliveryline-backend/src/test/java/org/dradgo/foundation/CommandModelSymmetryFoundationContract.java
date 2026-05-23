@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Set;
 import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
+import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -51,6 +53,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @Tag("foundation-gate")
 @WebMvcTest(controllers = WorkflowController.class)
+@Import(ApprovalReviewerRoleResolver.class)
 class CommandModelSymmetryFoundationContract {
 
   private static final Set<Class<?>> EXPECTED_PERMITS =
@@ -130,7 +133,12 @@ class CommandModelSymmetryFoundationContract {
             "alex",
             ActorType.HUMAN,
             "idem-approve-bbbbbbbbbbbbbbbb",
-            "corr-approve-1");
+            "corr-approve-1",
+            // The REST body intentionally omits reviewerRole below so this assertion also pins
+            // the ApprovalReviewerRoleResolver MVP-fallback default (product_reviewer) wired by
+            // story 2.9. Story 2.13 will rebuild the request DTO with explicit role parsing.
+            "product_reviewer",
+            null);
     when(workflowCommandService.approveSpec(any()))
         .thenReturn(
             new WorkflowStateChangeResult(

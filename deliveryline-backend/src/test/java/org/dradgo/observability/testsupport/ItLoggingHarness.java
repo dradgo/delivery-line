@@ -16,7 +16,7 @@ import org.slf4j.MDC;
 /**
  * Test harness for the story 1.21 Testcontainers ITs that satisfies the spec Logging requirement:
  * each IT logs on entry + outcome with the {@code correlationId} + {@code workflowRunId} MDC keys
- * (the two keys that exist in {@link MdcKeys}, per the contract pinned by {@code
+ * (two of the keys exposed by {@link MdcKeys}, per the contract pinned by {@code
  * LoggingMdcContractTest}) plus {@code idempotencyKey} as a structured message argument (it is
  * deliberately NOT promoted to MDC — adding it would break the {@code MdcKeys.ALL} closed set). The
  * harness attaches a Logback {@link ListAppender} so the entry/outcome lines are pinned with a

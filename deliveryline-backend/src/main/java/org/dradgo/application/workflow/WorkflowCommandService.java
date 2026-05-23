@@ -10,6 +10,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.dradgo.application.approval.ApprovalResult;
+import org.dradgo.application.approval.ApprovalService;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
@@ -54,6 +56,7 @@ public class WorkflowCommandService {
   private final IdempotencyKeyValidator idempotencyKeyValidator;
   private final WorkflowCommandFingerprintFactory fingerprintFactory;
   private final IntegrationLinkService integrationLinkService;
+  private final ApprovalService approvalService;
   private final TransactionTemplate failureCompletionTemplate;
   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
@@ -68,7 +71,8 @@ public class WorkflowCommandService {
       IdempotencyService idempotencyService,
       IdempotencyKeyValidator idempotencyKeyValidator,
       WorkflowCommandFingerprintFactory fingerprintFactory,
-      IntegrationLinkService integrationLinkService) {
+      IntegrationLinkService integrationLinkService,
+      ApprovalService approvalService) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -79,6 +83,7 @@ public class WorkflowCommandService {
     this.idempotencyKeyValidator = idempotencyKeyValidator;
     this.fingerprintFactory = fingerprintFactory;
     this.integrationLinkService = integrationLinkService;
+    this.approvalService = approvalService;
   }
 
   @Transactional
@@ -153,24 +158,15 @@ public class WorkflowCommandService {
   }
 
   private WorkflowStateChangeResult approveSpecInternal(ApproveSpecCommand command) {
-    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
-    try {
-      transition(
-          command.workflowRunId(),
-          WorkflowState.EXECUTING,
-          command,
-          "approve specification",
-          Map.of(
-              "artifactId", command.artifactId(),
-              "artifactVersion", command.artifactVersion(),
-              "contextVersion", command.contextVersion()));
-      return new WorkflowStateChangeResult(
-          command.workflowRunId(),
-          WorkflowState.EXECUTING,
-          normalizeOptional(command.correlationId()));
-    } finally {
-      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
-    }
+    // Story 2.9: the approval row insert + approval.approved event append + transition all
+    // happen inside ApprovalService, participating in this method's @Transactional boundary.
+    // The legacy REST/CLI contract still returns WorkflowStateChangeResult (story 2.13 will
+    // rebuild the surface to expose the richer ApprovalResult directly).
+    ApprovalResult approvalResult = approvalService.approveSpec(command);
+    return new WorkflowStateChangeResult(
+        approvalResult.workflowRunId(),
+        approvalResult.resultingState(),
+        approvalResult.correlationId());
   }
 
   private WorkflowStateChangeResult rejectSpecInternal(RejectSpecCommand command) {
@@ -413,10 +409,19 @@ public class WorkflowCommandService {
 
   private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
     var workflowRun = findWorkflowRunForReplay(resultRef);
+    // Review batch 1 D1 / AC8: for commands whose post-state is invariant (approveSpec always
+    // produces EXECUTING per the transition table), pin the replay's resultingState to the
+    // expected post-state instead of reading the live currentState(). Otherwise a replay that
+    // arrives after the run has advanced (e.g. to COMPLETED) would return the now-current state
+    // rather than the original action's result, breaking the "replay the prior ApprovalResult"
+    // guarantee in AC8. Other commands (rejectSpec, retry, takeover) keep the live-state shape
+    // until each gets its own pinned post-state in subsequent stories.
+    WorkflowState resultingState =
+        command instanceof ApproveSpecCommand
+            ? WorkflowState.EXECUTING
+            : workflowRun.currentState();
     return new WorkflowStateChangeResult(
-        workflowRun.publicId(),
-        workflowRun.currentState(),
-        normalizeOptional(command.correlationId()));
+        workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));
   }
 
   private WorkflowRunSnapshot findWorkflowRunForReplay(String workflowRunId) {

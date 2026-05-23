@@ -10,7 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -19,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.dradgo.TestcontainersConfiguration;
+import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -46,12 +50,16 @@ class WorkflowCommandServiceContractTest {
 
   @Autowired private WorkflowCommandService service;
 
+  @Autowired private ArtifactPayloadStore artifactPayloadStore;
+
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @AfterEach
   void cleanDatabase() {
     jdbcTemplate.update("delete from idempotency_records");
     jdbcTemplate.update("delete from integration_links");
+    jdbcTemplate.update("delete from approvals");
+    jdbcTemplate.update("delete from artifacts");
     jdbcTemplate.update("delete from workflow_events");
     jdbcTemplate.update("delete from workflow_runs");
   }
@@ -122,25 +130,83 @@ class WorkflowCommandServiceContractTest {
   @Test
   void approveSpecReplayDoesNotAppendDuplicateEvents() throws IOException {
     String runId = insertRun("run_replayapprove1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_replayapp_v1");
     ApproveSpecCommand command =
         new ApproveSpecCommand(
             runId,
-            "art_spec1234",
-            3,
-            2,
+            "art_replayapp_v1",
+            1,
+            1,
             "alex",
             ActorType.HUMAN,
             "idem-approve-replay-1234567890",
-            "corr-approve-replay-1");
+            "corr-approve-replay-1",
+            "product_reviewer",
+            null);
 
     WorkflowStateChangeResult first = service.approveSpec(command);
     WorkflowStateChangeResult replay = service.approveSpec(command);
 
     assertEquals(first, replay);
+    // 3 events: the original artifact.draftCreated seed + the approval.approved + the
+    // workflow.stateChanged emitted by the transition. The replay path skips ApprovalService
+    // entirely (executeIdempotent returns the prior result), so no fourth event appears.
     assertEquals(
-        1, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+        3, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
     assertEquals(
         1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+    assertEquals(1, jdbcTemplate.queryForObject("select count(*) from approvals", Integer.class));
+  }
+
+  @Test
+  void approveSpecSameKeyDifferentFingerprintRaisesIdempotencyKeyConflict() throws IOException {
+    // Story 2.9 AC10(e): same idempotencyKey + DIFFERENT fingerprint → IDEMPOTENCY_KEY_CONFLICT.
+    // The fingerprint factory includes reviewerRole; using a different reviewerRole keeps
+    // workflowRunId / artifactId / artifactVersion / contextVersion stable so only the fingerprint
+    // diverges. The IdempotencyService application-layer guard must reject the second submission
+    // before the DB-level uq_approvals_idempotency_key backstop fires.
+    String runId = insertRun("run_keyconflict1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_keyconflict_v1");
+    String sharedKey = "idem-approve-keyconflict-1234567890";
+
+    ApproveSpecCommand first =
+        new ApproveSpecCommand(
+            runId,
+            "art_keyconflict_v1",
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            sharedKey,
+            "corr-keyconflict-1",
+            "product_reviewer",
+            null);
+    service.approveSpec(first);
+
+    ApproveSpecCommand secondDifferentFingerprint =
+        new ApproveSpecCommand(
+            runId,
+            "art_keyconflict_v1",
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            sharedKey,
+            "corr-keyconflict-2",
+            "engineering_reviewer", // different reviewerRole -> different fingerprint
+            null);
+
+    DomainException error =
+        assertThrows(DomainException.class, () -> service.approveSpec(secondDifferentFingerprint));
+    assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
+    // Exactly one approval row + one approval.approved event survived — the conflicting
+    // submission was rejected before any second write reached the database.
+    assertEquals(1, jdbcTemplate.queryForObject("select count(*) from approvals", Integer.class));
+    assertEquals(
+        1,
+        jdbcTemplate.queryForObject(
+            "select count(*) from workflow_events where event_type = 'approval.approved'",
+            Integer.class));
   }
 
   @Test
@@ -295,18 +361,21 @@ class WorkflowCommandServiceContractTest {
   void approveSpecTransitionsWaitingForSpecApprovalToExecutingAndCarriesMetadata()
       throws IOException {
     String runId = insertRun("run_approve1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_approve_v1");
 
     WorkflowStateChangeResult result =
         service.approveSpec(
             new ApproveSpecCommand(
                 runId,
-                "art_spec1234",
-                3,
-                2,
+                "art_approve_v1",
+                1,
+                1,
                 "alex",
                 ActorType.HUMAN,
                 "idem-approve-1234567890",
-                "corr-approve-1"));
+                "corr-approve-1",
+                "product_reviewer",
+                null));
 
     assertEquals(runId, result.workflowRunId());
     assertEquals(WorkflowState.EXECUTING, result.currentState());
@@ -314,6 +383,7 @@ class WorkflowCommandServiceContractTest {
     assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
     assertEquals("corr-approve-1", latestDetail(runId, "correlationId"));
     assertEquals("ApproveSpecCommand", latestDetail(runId, "commandType"));
+    assertEquals(1, jdbcTemplate.queryForObject("select count(*) from approvals", Integer.class));
   }
 
   @Test
@@ -380,7 +450,11 @@ class WorkflowCommandServiceContractTest {
   }
 
   @Test
-  void approveSpecRaisesRunNotFoundForUnknownWorkflowRunId() {
+  void approveSpecRaisesArtifactNotFoundWhenArtifactDoesNotExist() {
+    // Story 2.9: ApprovalService validates the artifact before any version/eligibility checks.
+    // With no artifact row, the new flow surfaces ARTIFACT_RECORD_NOT_FOUND BEFORE the legacy
+    // RUN_NOT_FOUND signal (which lives in WorkflowTransitionService and is now unreachable for
+    // approveSpec because the artifact check fires first).
     DomainException error =
         assertThrows(
             DomainException.class,
@@ -388,21 +462,24 @@ class WorkflowCommandServiceContractTest {
                 service.approveSpec(
                     new ApproveSpecCommand(
                         "run_missing1234",
-                        "art_spec1234",
-                        3,
-                        2,
+                        "art_missing1234",
+                        1,
+                        1,
                         "alex",
                         ActorType.HUMAN,
                         "idem-approve-missing-1234567890",
-                        "corr-approve-missing-1")));
+                        "corr-approve-missing-1",
+                        "product_reviewer",
+                        null)));
 
-    assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
-    assertEquals("run_missing1234", error.details().get("runId"));
+    assertEquals(DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND, error.errorCode());
+    assertEquals("art_missing1234", error.details().get("artifactId"));
   }
 
   @Test
-  void approveSpecRejectsIllegalTransitionWhenRunIsNotWaitingForSpecApproval() {
+  void approveSpecRejectsIllegalTransitionWhenRunIsNotWaitingForSpecApproval() throws IOException {
     String runId = insertRun("run_illegal1234", WorkflowState.INBOX);
+    seedAvailableSpecArtifact(runId, "art_illegal_v1");
 
     DomainException error =
         assertThrows(
@@ -411,18 +488,31 @@ class WorkflowCommandServiceContractTest {
                 service.approveSpec(
                     new ApproveSpecCommand(
                         runId,
-                        "art_spec1234",
-                        3,
-                        2,
+                        "art_illegal_v1",
+                        1,
+                        1,
                         "alex",
                         ActorType.HUMAN,
                         "idem-approve-illegal-1234567890",
-                        "corr-approve-illegal-1")));
+                        "corr-approve-illegal-1",
+                        "product_reviewer",
+                        null)));
 
     assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
     assertEquals(runId, error.details().get("runId"));
     assertEquals(WorkflowState.INBOX.value(), error.details().get("sourceState"));
     assertEquals(WorkflowState.EXECUTING.value(), error.details().get("targetState"));
+    // Trap T6: the approval row + approval.approved event must have rolled back when the
+    // transition failed. Only the artifact.draftCreated seed event remains.
+    assertEquals(
+        0L, jdbcTemplate.queryForObject("select count(*) from approvals", Long.class).longValue());
+    assertEquals(
+        0L,
+        jdbcTemplate
+            .queryForObject(
+                "select count(*) from workflow_events where event_type = 'approval.approved'",
+                Long.class)
+            .longValue());
   }
 
   private void assertFieldErrors(DomainException error, String... expectedFields) {
@@ -473,5 +563,51 @@ class WorkflowCommandServiceContractTest {
   private String idempotencyStatus(String key) {
     return jdbcTemplate.queryForObject(
         "select status from idempotency_records where key = ?", String.class, key);
+  }
+
+  /**
+   * Seed a {@code SPEC} artifact whose payload bytes round-trip through {@link
+   * ArtifactPayloadStore} so {@code ArtifactService.isApprovalEligible} passes — required for
+   * {@code ApprovalService.approveSpec} flows since story 2.9. The artifact carries a {@code
+   * linked_event_id} whose details JSON does NOT include a {@code runnerExecutionId}, so the
+   * context-bundle version comparison takes the bootstrap path (current = 1).
+   */
+  private void seedAvailableSpecArtifact(String runPublicId, String artifactPublicId) {
+    Long runId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_runs where public_id = ?", Long.class, runPublicId);
+
+    byte[] payload = ("approval-eligible content for " + artifactPublicId).getBytes();
+    String storageRef =
+        artifactPayloadStore.write(runPublicId, artifactPublicId, 1, "spec.md", payload);
+    String checksum = sha256Hex(payload);
+
+    String evtPublicId = "evt_seed" + System.nanoTime();
+    Long linkedEventId =
+        jdbcTemplate.queryForObject(
+            "insert into workflow_events (public_id, workflow_run_id, event_type, actor_identity, actor_type) "
+                + "values (?, ?, 'artifact.draftCreated', 'seed', 'system') returning id",
+            Long.class,
+            evtPublicId,
+            runId);
+
+    jdbcTemplate.update(
+        "insert into artifacts (public_id, workflow_run_id, artifact_type, version, parent_artifact_id, "
+            + "classification, status, storage_ref, checksum_algorithm, checksum_value, linked_event_id) "
+            + "values (?, ?, 'spec', 1, null, 'shareable-redacted', 'available', ?, 'SHA-256', ?, ?)",
+        artifactPublicId,
+        runId,
+        storageRef,
+        checksum,
+        linkedEventId);
+  }
+
+  private static String sha256Hex(byte[] payload) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      return HexFormat.of().formatHex(digest.digest(payload));
+    } catch (NoSuchAlgorithmException error) {
+      throw new IllegalStateException("SHA-256 must be available", error);
+    }
   }
 }

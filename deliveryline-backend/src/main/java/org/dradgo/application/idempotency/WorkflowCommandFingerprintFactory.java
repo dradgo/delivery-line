@@ -28,6 +28,10 @@ public class WorkflowCommandFingerprintFactory {
         append(digest, approve.artifactId());
         append(digest, approve.artifactVersion().toString());
         append(digest, approve.contextVersion().toString());
+        // reviewerRole is part of the semantic identity of the decision — a different role
+        // asserting the same approval is a different command. reason is intentionally NOT
+        // fingerprinted: free-form reviewer wording edits on the same review must replay.
+        append(digest, approve.reviewerRole());
       }
       case RejectSpecCommand reject -> {
         append(digest, reject.workflowRunId());
