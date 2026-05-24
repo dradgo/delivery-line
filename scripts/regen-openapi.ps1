@@ -36,8 +36,11 @@ Write-Host '    (the test FAILS by design when -Dopenapi.snapshot.write=true is 
 # would otherwise spend ~4 min on Node install + npm ci + lint + Prettier check + Vite
 # build before even getting to the backend test. The frontend regen step below runs
 # `npm run generate-api` directly, which is the only frontend work we actually need.
+#
+# Skip JaCoCo (-Djacoco.skip=true): we're not measuring coverage of a snapshot regen.
 & $MvnwCmd -B -ntp -pl deliveryline-backend -am `
     '-Dfrontend-maven-plugin.skip=true' `
+    '-Djacoco.skip=true' `
     '-Dit.test=OpenApiSnapshotContractTest' `
     '-Dfailsafe.failIfNoSpecifiedTests=false' `
     '-Dopenapi.snapshot.write=true' `

@@ -35,9 +35,15 @@ echo "    (the test FAILS by design when -Dopenapi.snapshot.write=true is set; t
 # would otherwise spend ~4 min on Node install + npm ci + lint + Prettier check + Vite
 # build before even getting to the backend test. The frontend regen step below runs
 # `npm run generate-api` directly, which is the only frontend work we actually need.
+#
+# Skip JaCoCo (-Djacoco.skip=true): we're not measuring coverage of a snapshot regen.
+# This also dodges a WSL2-specific failure where JaCoCo's agent cannot overwrite an
+# existing target/jacoco.exec created by a prior Windows-side mvn run — the file lives
+# on /mnt/c/... and the Windows ownership flags block WSL writes.
 set +e
 "${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend -am \
   -Dfrontend-maven-plugin.skip=true \
+  -Djacoco.skip=true \
   -Dit.test=OpenApiSnapshotContractTest \
   -Dfailsafe.failIfNoSpecifiedTests=false \
   -Dopenapi.snapshot.write=true \
