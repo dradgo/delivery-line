@@ -31,8 +31,8 @@ import org.springframework.test.context.ActiveProfiles;
  * confirms the {@link ApprovalReadPort#findLatestApprovedForArtifactLineage} read port plus {@link
  * WorkflowInspectionService#getCurrentApprovedSpec} both surface the just-written row. The
  * unit-layer tests ({@code ApprovalServiceApproveSpecTest}) use mocks and the persistence-slice
- * tests ({@code ApprovalWritePersistenceAdapterContractTest}) bypass the service; this test pins that the
- * entire stack agrees end-to-end.
+ * tests ({@code ApprovalWritePersistenceAdapterContractTest}) bypass the service; this test pins
+ * that the entire stack agrees end-to-end.
  *
  * <p>Added in story 2.9 review batch 1 (2026-05-24).
  */
