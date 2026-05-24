@@ -30,7 +30,7 @@ import org.springframework.test.context.ActiveProfiles;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @ActiveProfiles({"test", "linear-mock"})
-class ApprovalReadPersistenceAdapterTest {
+class ApprovalReadPersistenceAdapterContractTest {
 
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private ApprovalReadPort approvalReadPort;

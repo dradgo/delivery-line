@@ -32,7 +32,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * Real-Postgres regression for {@link ApprovalWritePersistenceAdapter} (story 2.9 Task 3). Mirrors
- * the {@code ApprovalReadPersistenceAdapterTest} setup. Three cases:
+ * the {@code ApprovalReadPersistenceAdapterContractTest} setup. Three cases:
  *
  * <ul>
  *   <li>happy-path insert + read-back via {@link
@@ -45,7 +45,7 @@ import org.springframework.test.context.ActiveProfiles;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @ActiveProfiles({"test", "linear-mock"})
-class ApprovalWritePersistenceAdapterTest {
+class ApprovalWritePersistenceAdapterContractTest {
 
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private ApprovalWritePort approvalWritePort;
@@ -210,7 +210,7 @@ class ApprovalWritePersistenceAdapterTest {
   }
 
   // ---------------------------------------------------------------------------
-  // JDBC seed helpers — direct inserts (mirror ApprovalReadPersistenceAdapterTest).
+  // JDBC seed helpers — direct inserts (mirror ApprovalReadPersistenceAdapterContractTest).
   // ---------------------------------------------------------------------------
 
   private void insertRun(String publicId, WorkflowState state) {
