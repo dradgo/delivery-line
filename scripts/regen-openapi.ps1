@@ -31,7 +31,13 @@ $FrontendClient  = 'deliveryline-frontend/src/lib/api/schema.d.ts'
 Write-Host '==> Step 1/2 — regenerating backend OpenAPI snapshot via OpenApiSnapshotContractTest'
 Write-Host '    (the test FAILS by design when -Dopenapi.snapshot.write=true is set; that is expected)'
 
+# Skip the frontend Maven module entirely (-Dfrontend-maven-plugin.skip=true): `-am` pulls
+# deliveryline-frontend into the reactor because backend depends on its bundle, and that
+# would otherwise spend ~4 min on Node install + npm ci + lint + Prettier check + Vite
+# build before even getting to the backend test. The frontend regen step below runs
+# `npm run generate-api` directly, which is the only frontend work we actually need.
 & $MvnwCmd -B -ntp -pl deliveryline-backend -am `
+    '-Dfrontend-maven-plugin.skip=true' `
     '-Dit.test=OpenApiSnapshotContractTest' `
     '-Dfailsafe.failIfNoSpecifiedTests=false' `
     '-Dopenapi.snapshot.write=true' `
