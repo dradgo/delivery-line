@@ -127,3 +127,22 @@ The `foundation-gate` job runs only a non-representative aggregator subset, so i
 `merge`, and `report` still run, so coverage instrumentation stays intact. Backend coverage is
 still gated at the foundation level **transitively**, because `backend-contract-tests` (where the
 real gate runs) is a required upstream tier of `foundation-gate`.
+
+## OpenAPI snapshot regeneration
+
+The committed `src/main/resources/openapi/openapi.json` is a tripwire enforced by
+`OpenApiSnapshotContractTest`: any drift between the live `/v3/api-docs` and the committed file
+fails CI. The frontend client (`deliveryline-frontend/src/lib/api/schema.d.ts`) is generated from
+this same snapshot, so a backend REST change requires regenerating BOTH together. Use the combined
+script from the repo root — it handles the by-design "regen-and-fail" exit, then runs the frontend
+regen, then prints the diff for you to review and commit:
+
+```bash
+./scripts/regen-openapi.sh        # Linux / macOS / WSL2 / Git Bash
+./scripts/regen-openapi.ps1       # Windows PowerShell + Docker Desktop
+```
+
+Requires Docker (Testcontainers spins up Postgres for the backend Spring context). The script does
+**not** auto-commit — review the snapshot + `schema.d.ts` diff first to confirm the surface change
+is intentional, since the drift gate is the only thing protecting downstream consumers from a silent
+contract change.

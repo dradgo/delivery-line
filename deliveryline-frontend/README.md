@@ -237,6 +237,11 @@ truth; domain state never goes in React `useState`. The pieces:
   npm run generate-api    # reads ../deliveryline-backend/.../openapi/openapi.json
   ```
 
+  When the *backend* spec itself changed, regenerate both the backend snapshot AND this
+  client in one go via `scripts/regen-openapi.sh` (or `scripts/regen-openapi.ps1`) from
+  the repo root — that avoids the half-done state where the snapshot was updated but
+  `schema.d.ts` wasn't (or vice versa).
+
   The OpenAPI source is **backend-owned** (stories 6.9 / 2.13 / 2.14); the frontend
   only consumes it. `npm run check:api` regenerates to a temp file and diffs it
   against the committed `schema.d.ts`, so a stale client fails the build (mirrors
