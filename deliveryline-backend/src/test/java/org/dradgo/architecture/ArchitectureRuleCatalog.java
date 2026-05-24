@@ -361,6 +361,7 @@ final class ArchitectureRuleCatalog {
                   "org.slf4j..",
                   "org.springframework.beans.factory.annotation..",
                   "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
                   "org.dradgo.application..",
                   "org.dradgo.domain..")
               .allowEmptyShould(false));
