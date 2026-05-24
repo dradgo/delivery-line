@@ -69,6 +69,14 @@ fi
 
 echo
 echo "==> Step 2/2 — regenerating frontend TypeScript client (openapi-typescript)"
+# In WSL2 the Windows nodejs install often leaks onto PATH via /mnt/* interop. If `npm`
+# then resolves to npm.cmd, Windows cmd.exe is spawned and can't find project-local
+# .bin shims (openapi-typescript) — the established `wsl-linux-ci-reproduction`
+# discipline. Strip /mnt/* entries so the WSL-native node is used here.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  PATH="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd:)"
+  export PATH
+fi
 ( cd "${REPO_ROOT}/deliveryline-frontend" && npm run --silent generate-api )
 
 echo
