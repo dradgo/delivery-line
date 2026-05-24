@@ -69,15 +69,35 @@ fi
 
 echo
 echo "==> Step 2/2 — regenerating frontend TypeScript client (openapi-typescript)"
-# In WSL2 the Windows nodejs install often leaks onto PATH via /mnt/* interop. If `npm`
-# then resolves to npm.cmd, Windows cmd.exe is spawned and can't find project-local
-# .bin shims (openapi-typescript) — the established `wsl-linux-ci-reproduction`
-# discipline. Strip /mnt/* entries so the WSL-native node is used here.
-if grep -qi microsoft /proc/version 2>/dev/null; then
-  PATH="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd:)"
-  export PATH
+# Prefer a host npm whose `node_modules/.bin/openapi-typescript` shim matches its
+# platform. In WSL2 with Windows-side node_modules (Linux symlinks) you need WSL
+# native Node; from PowerShell you need Windows .cmd shims (re-run `npm install`
+# on Windows once if the shims are stale). If neither path works, the script exits
+# successfully with a clear instruction so the user can finish the regen manually
+# instead of debugging shim mismatches mid-flight.
+if command -v npm >/dev/null 2>&1; then
+  if ( cd "${REPO_ROOT}/deliveryline-frontend" && npm run --silent generate-api ); then
+    FRONTEND_REGEN_DONE=1
+  else
+    FRONTEND_REGEN_DONE=0
+    echo "WARN: 'npm run generate-api' failed (likely a platform/shim mismatch in" >&2
+    echo "      deliveryline-frontend/node_modules/.bin/openapi-typescript)." >&2
+  fi
+else
+  FRONTEND_REGEN_DONE=0
+  echo "WARN: no 'npm' on PATH after WSL2 /mnt/* strip — skipping frontend regen." >&2
 fi
-( cd "${REPO_ROOT}/deliveryline-frontend" && npm run --silent generate-api )
+
+if [ "${FRONTEND_REGEN_DONE}" -ne 1 ]; then
+  echo >&2
+  echo "      Finish the frontend regen separately, on whichever shell has a working" >&2
+  echo "      Node + matching node_modules/.bin/ shims:" >&2
+  echo "          cd deliveryline-frontend && npm run generate-api" >&2
+  echo >&2
+  echo "      The backend snapshot above is the gating change; the frontend client is" >&2
+  echo "      derived from it, so committing the snapshot without schema.d.ts would" >&2
+  echo "      fail the frontend's check:api drift gate." >&2
+fi
 
 echo
 echo "==> Done. Review and commit:"

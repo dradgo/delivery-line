@@ -69,13 +69,28 @@ else {
 
 Write-Host ''
 Write-Host '==> Step 2/2 — regenerating frontend TypeScript client (openapi-typescript)'
+# Requires `node_modules/.bin/openapi-typescript.cmd` to exist (created by a Windows-side
+# `npm install`). If only Linux shims are present (the bare `openapi-typescript` symlink
+# from a WSL/Linux install), Windows npm will fail; re-run `npm install` in the frontend
+# module from PowerShell once to refresh the Windows shims.
+$FrontendRegenDone = $false
 Push-Location (Join-Path $RepoRoot 'deliveryline-frontend')
 try {
     & npm run --silent generate-api
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($LASTEXITCODE -eq 0) { $FrontendRegenDone = $true }
+}
+catch {
+    # Swallow; we report below.
 }
 finally {
     Pop-Location
+}
+
+if (-not $FrontendRegenDone) {
+    Write-Warning ("'npm run generate-api' did not succeed. If the `node_modules/.bin/` " +
+                   'shims are Linux-style (from a WSL/CI install), re-run `npm install` ' +
+                   'in deliveryline-frontend from PowerShell to refresh Windows .cmd shims, ' +
+                   'then re-run this script. Backend snapshot above is already written.')
 }
 
 Write-Host ''
