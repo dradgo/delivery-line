@@ -155,9 +155,9 @@ class ArtifactOperationServiceContractTest {
             String.class,
             "run_specevt1234",
             "artifact.versionCreated");
-    Integer eventDetailsVersion =
+    Integer eventDetailsArtifactVersion =
         jdbcTemplate.queryForObject(
-            "select (e.details->>'version')::int from workflow_events e "
+            "select (e.details->>'artifactVersion')::int from workflow_events e "
                 + "join workflow_runs r on r.id = e.workflow_run_id "
                 + "where r.public_id = ? and e.event_type = ?",
             Integer.class,
@@ -169,8 +169,8 @@ class ArtifactOperationServiceContractTest {
         "AC10: event details.artifactId must point at the v2 spec public id");
     assertEquals(
         Integer.valueOf(2),
-        eventDetailsVersion,
-        "AC10: event details.version must record the v2 spec's version number");
+        eventDetailsArtifactVersion,
+        "AC10: event details.artifactVersion must record the v2 spec's version number");
   }
 
   @Test

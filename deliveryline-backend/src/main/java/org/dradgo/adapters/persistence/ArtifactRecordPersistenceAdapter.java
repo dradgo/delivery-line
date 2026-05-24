@@ -210,6 +210,9 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
     ArtifactEntity lineageHead =
         findLatestActiveLineageMemberEntity(requestedMember).orElse(latestActiveArtifact);
     int nextVersion = latestActiveArtifact.getVersion() + 1;
+    // Allocate the new artifact's publicId up front so the event emitted below carries the
+    // artifactId / artifactVersion that downstream readers (story 2.8 AC10) need to correlate.
+    String nextArtifactPublicId = PublicIdPrefixes.ARTIFACT.next();
     WorkflowEventEntity linkedEvent =
         workflowEventRepository.saveAndFlush(
             newArtifactEvent(
@@ -226,10 +229,16 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
                     request.idempotencyKey(),
                     request.runnerExecutionId(),
                     Map.of(
-                        "lineageMemberArtifactId", request.lineageMemberArtifactId(),
-                        "parentArtifactId", lineageHead.getPublicId()))));
+                        "artifactId",
+                        nextArtifactPublicId,
+                        "artifactVersion",
+                        nextVersion,
+                        "lineageMemberArtifactId",
+                        request.lineageMemberArtifactId(),
+                        "parentArtifactId",
+                        lineageHead.getPublicId()))));
     ArtifactEntity entity = new ArtifactEntity();
-    entity.setPublicId(PublicIdPrefixes.ARTIFACT.next());
+    entity.setPublicId(nextArtifactPublicId);
     entity.setWorkflowRun(requestedMember.getWorkflowRun());
     entity.setArtifactType(requestedMember.getArtifactType());
     entity.setVersion(nextVersion);
