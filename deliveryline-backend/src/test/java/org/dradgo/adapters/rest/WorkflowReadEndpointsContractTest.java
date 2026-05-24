@@ -178,7 +178,13 @@ class WorkflowReadEndpointsContractTest {
     assertThat(first.fieldNames())
         .toIterable()
         .containsExactlyInAnyOrder(
-            "workflowRunId", "currentState", "ticketRef", "lastEventAt", "lastEventType");
+            "workflowRunId",
+            "currentState",
+            "ticketRef",
+            "lastEventAt",
+            "lastEventType",
+            "specRejectionLoopCount",
+            "escalationMarker");
     // Newest-first: OTHER_RUN was created after HAPPY_RUN.
     assertThat(first.get("workflowRunId").asText()).isEqualTo(OTHER_RUN);
 
