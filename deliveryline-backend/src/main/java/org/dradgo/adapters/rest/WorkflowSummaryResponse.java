@@ -19,7 +19,19 @@ public record WorkflowSummaryResponse(
     @Schema(description = "Timestamp of the most recent event (ISO-8601 UTC).")
         OffsetDateTime lastEventAt,
     @Schema(description = "Type of the most recent event.", example = "workflow.stateChanged")
-        String lastEventType) {
+        String lastEventType,
+    @Schema(
+            description =
+                "How many spec rejections this run has accumulated. Increments on every successful"
+                    + " rejectSpec call (story 2.10).",
+            example = "0")
+        int specRejectionLoopCount,
+    @Schema(
+            description =
+                "True once specRejectionLoopCount has crossed the configured escalation threshold."
+                    + " Informational — does NOT terminate the workflow (FR13).",
+            example = "false")
+        boolean escalationMarker) {
 
   public static WorkflowSummaryResponse from(WorkflowRunSummaryView view) {
     return new WorkflowSummaryResponse(
@@ -27,7 +39,9 @@ public record WorkflowSummaryResponse(
         view.currentState(),
         view.ticketRef(),
         toUtc(view.lastEventAt()),
-        view.lastEventType());
+        view.lastEventType(),
+        view.specRejectionLoopCount(),
+        view.escalationMarker());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

@@ -38,10 +38,14 @@ public class WorkflowCommandFingerprintFactory {
         append(digest, reject.artifactId());
         append(digest, reject.artifactVersion().toString());
         append(digest, reject.contextVersion().toString());
-        // Trim reasonText for cross-transport parity. RetryWorkflowCommand
-        // and TakeoverWorkflowCommand already normalize via normalizeOptional;
-        // reject is @NotBlank so trim is sufficient and matches the others.
-        append(digest, reject.reasonText().trim());
+        // reviewerRole is part of the semantic identity of the decision (story 2.10) — symmetric
+        // with ApproveSpecCommand above. taggedFeedback is the structured rework taxonomy and
+        // must shift the fingerprint when changed (e.g., a reviewer revising the taxonomy on the
+        // same review is a different command). reasonText is intentionally NOT fingerprinted:
+        // free-form reviewer wording edits on the same review must replay idempotently — story
+        // 2.10 trap T6 / OQ-2 (symmetric with ApproveSpecCommand.reason exclusion).
+        append(digest, reject.reviewerRole());
+        append(digest, reject.taggedFeedback().value());
       }
       case RetryWorkflowCommand retry -> {
         append(digest, retry.workflowRunId());

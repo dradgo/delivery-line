@@ -31,6 +31,12 @@ deliveryline:
     # request body supplies a non-blank `reviewerRole`, it is used verbatim; otherwise this value
     # is stamped on the persisted approvals row and the approval.approved audit event.
     default-reviewer-role: product_reviewer
+  workflow:
+    # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
+    # escalation marker. The escalation event is appended exactly once (when the counter crosses
+    # the threshold from below); subsequent rejections continue to advance the counter and the
+    # workflow stays in Investigating — escalation does NOT terminate the workflow.
+    spec-rejection-escalation-threshold: 3
   rest:
     # Optional override for server.address. Leave unset to inherit the loopback default above.
     # bind-address: 0.0.0.0

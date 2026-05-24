@@ -15,7 +15,7 @@ class WorkflowRunSnapshotTest {
   @Test
   void requiredVersionFailsClosedWhenTheSnapshotCarriesNoOptimisticLockValue() throws Exception {
     WorkflowRunSnapshot snapshot =
-        new WorkflowRunSnapshot("run_missingversion1234", WorkflowState.INBOX, null, null);
+        new WorkflowRunSnapshot("run_missingversion1234", WorkflowState.INBOX, null, null, 0, false);
     Method method = WorkflowRunSnapshot.class.getMethod("requiredVersion");
 
     InvocationTargetException error =

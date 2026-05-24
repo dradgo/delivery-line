@@ -42,7 +42,9 @@ class WorkflowCommandOutputsTextTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
 
     String rendered = outputs.renderStatusText(view);
     String expected =
@@ -75,7 +77,9 @@ class WorkflowCommandOutputsTextTest {
             OffsetDateTime.parse("2026-05-13T10:00:00Z"),
             "runner_timeout",
             OffsetDateTime.parse("2026-05-13T09:59:30Z"),
-            "retry");
+            "retry",
+            0,
+            false);
 
     String rendered = outputs.renderStatusText(view);
     String expected =
@@ -111,7 +115,9 @@ class WorkflowCommandOutputsTextTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
 
     String rendered = outputs.renderStatusText(view);
     String expected =

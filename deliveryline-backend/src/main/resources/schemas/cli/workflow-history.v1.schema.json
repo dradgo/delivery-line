@@ -49,7 +49,11 @@
               "errorClass": { "type": "string" },
               "recoveryActionId": { "type": "string", "pattern": "^rcv_" },
               "recoveryRetriedEventId": { "type": "string", "pattern": "^evt_" },
-              "compensationFailed": { "type": "boolean" }
+              "compensationFailed": { "type": "boolean" },
+              "reviewerRole": { "type": "string" },
+              "taggedFeedback": { "type": "string" },
+              "specRejectionLoopCount": { "type": "integer" },
+              "escalationMarker": { "type": "boolean" }
             }
           }
         }

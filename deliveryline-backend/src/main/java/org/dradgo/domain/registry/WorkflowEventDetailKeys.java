@@ -41,6 +41,10 @@ public final class WorkflowEventDetailKeys {
   public static final String RECOVERY_ACTION_ID = "recoveryActionId";
   public static final String RECOVERY_RETRIED_EVENT_ID = "recoveryRetriedEventId";
   public static final String COMPENSATION_FAILED = "compensationFailed";
+  public static final String REVIEWER_ROLE = "reviewerRole";
+  public static final String TAGGED_FEEDBACK = "taggedFeedback";
+  public static final String SPEC_REJECTION_LOOP_COUNT = "specRejectionLoopCount";
+  public static final String ESCALATION_MARKER = "escalationMarker";
 
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
@@ -60,7 +64,11 @@ public final class WorkflowEventDetailKeys {
           ERROR_CLASS,
           RECOVERY_ACTION_ID,
           RECOVERY_RETRIED_EVENT_ID,
-          COMPENSATION_FAILED);
+          COMPENSATION_FAILED,
+          REVIEWER_ROLE,
+          TAGGED_FEEDBACK,
+          SPEC_REJECTION_LOOP_COUNT,
+          ESCALATION_MARKER);
 
   /** Keys persisted in {@code workflow_events.details} but intentionally stripped from render. */
   public static final List<String> SERVER_ONLY_KEYS = List.of(IDEMPOTENCY_KEY);

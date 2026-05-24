@@ -234,6 +234,8 @@ public class WorkflowController {
                 request.actorType(),
                 idempotencyKey,
                 request.correlationId(),
+                approvalReviewerRoleResolver.resolveFor(request.reviewerRole()),
+                request.taggedFeedback(),
                 request.reasonText())));
   }
 

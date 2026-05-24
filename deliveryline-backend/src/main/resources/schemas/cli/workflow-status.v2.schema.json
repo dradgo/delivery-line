@@ -14,6 +14,8 @@
     "failureCategory",
     "lastActivityTimestamp",
     "nextSafeAction",
+    "specRejectionLoopCount",
+    "escalationMarker",
     "contextBundle"
   ],
   "additionalProperties": false,
@@ -68,6 +70,8 @@
     "failureCategory": { "type": ["string", "null"] },
     "lastActivityTimestamp": { "type": ["string", "null"], "format": "date-time" },
     "nextSafeAction": { "type": "string" },
+    "specRejectionLoopCount": { "type": "integer", "minimum": 0, "$comment": "added in story 2.10" },
+    "escalationMarker": { "type": "boolean", "$comment": "added in story 2.10" },
     "contextBundle": {
       "type": "object",
       "additionalProperties": false,

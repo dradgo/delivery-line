@@ -114,6 +114,7 @@ public record WorkflowEventsResponse(
                 "approval.requested",
                 "approval.approved",
                 "approval.rejected",
+                "escalation.required",
                 "artifact.draftCreated",
                 "artifact.available",
                 "artifact.failed",
@@ -196,7 +197,8 @@ public record WorkflowEventsResponse(
                       + "Known keys include linearTicketReference, artifactId, artifactVersion, "
                       + "contextVersion, correlationId, failedStage, triggeringEventId, "
                       + "recoveryActionId, recoveryRetriedEventId, compensationFailed, "
-                      + "artifactVariant, and feedback.")
+                      + "reviewerRole, taggedFeedback, specRejectionLoopCount, "
+                      + "escalationMarker, artifactVariant, and feedback.")
           Map<String, Object> details) {
 
     static WorkflowEventResponse from(WorkflowEventStreamItem item) {

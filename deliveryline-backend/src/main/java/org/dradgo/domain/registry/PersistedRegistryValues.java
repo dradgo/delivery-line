@@ -60,6 +60,10 @@ public final class PersistedRegistryValues {
     return ActorType.fromValue(rawValue, "approvals.actor_type");
   }
 
+  public static RejectionTaxonomy approvalRejectionTaxonomy(String rawValue) {
+    return RejectionTaxonomy.fromValue(rawValue, "approvals.rejection_taxonomy");
+  }
+
   public static RunnerExecutionStatus runnerExecutionStatus(String rawValue) {
     return RunnerExecutionStatus.fromValue(rawValue, "runner_executions.status");
   }

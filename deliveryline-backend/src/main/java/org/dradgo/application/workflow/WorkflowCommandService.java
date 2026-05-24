@@ -170,21 +170,20 @@ public class WorkflowCommandService {
   }
 
   private WorkflowStateChangeResult rejectSpecInternal(RejectSpecCommand command) {
+    // Story 2.10: the approval row insert (decision=rejected) + approval.rejected event append +
+    // counter increment + optional escalation.required event + transition all happen inside
+    // ApprovalService, participating in this method's @Transactional boundary. The legacy
+    // REST/CLI contract still returns WorkflowStateChangeResult (story 2.13 will rebuild the
+    // surface to expose the richer ApprovalResult directly). This replaces the prior minimal
+    // stub that only emitted a workflow.stateChanged transition with no approvals row, no
+    // approval.rejected event, no counter increment, and no taxonomy (story 2.10 trap T2).
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
-      transition(
-          command.workflowRunId(),
-          WorkflowState.INVESTIGATING,
-          command,
-          command.reasonText(),
-          Map.of(
-              "artifactId", command.artifactId(),
-              "artifactVersion", command.artifactVersion(),
-              "contextVersion", command.contextVersion()));
+      ApprovalResult approvalResult = approvalService.rejectSpec(command);
       return new WorkflowStateChangeResult(
-          command.workflowRunId(),
-          WorkflowState.INVESTIGATING,
-          normalizeOptional(command.correlationId()));
+          approvalResult.workflowRunId(),
+          approvalResult.resultingState(),
+          approvalResult.correlationId());
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
@@ -409,17 +408,15 @@ public class WorkflowCommandService {
 
   private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
     var workflowRun = findWorkflowRunForReplay(resultRef);
-    // Review batch 1 D1 / AC8: for commands whose post-state is invariant (approveSpec always
-    // produces EXECUTING per the transition table), pin the replay's resultingState to the
-    // expected post-state instead of reading the live currentState(). Otherwise a replay that
-    // arrives after the run has advanced (e.g. to COMPLETED) would return the now-current state
-    // rather than the original action's result, breaking the "replay the prior ApprovalResult"
-    // guarantee in AC8. Other commands (rejectSpec, retry, takeover) keep the live-state shape
-    // until each gets its own pinned post-state in subsequent stories.
+    // Replay must return the original command result, not the run's later live state. Commands
+    // with invariant post-states are therefore pinned here; callers arriving after the run has
+    // advanced still receive the state produced by the original accepted command.
     WorkflowState resultingState =
-        command instanceof ApproveSpecCommand
-            ? WorkflowState.EXECUTING
-            : workflowRun.currentState();
+        switch (command) {
+          case ApproveSpecCommand ignored -> WorkflowState.EXECUTING;
+          case RejectSpecCommand ignored -> WorkflowState.INVESTIGATING;
+          default -> workflowRun.currentState();
+        };
     return new WorkflowStateChangeResult(
         workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));
   }

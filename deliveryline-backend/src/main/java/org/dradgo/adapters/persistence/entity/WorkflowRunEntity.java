@@ -43,6 +43,16 @@ public class WorkflowRunEntity {
   @Column(name = "version", nullable = false)
   private Long version = 0L;
 
+  // Story 2.10 / V7: counter of spec-rejection loops on this run. Increments on every
+  // successful ApprovalService.rejectSpec. Drives the escalation-marker threshold check.
+  @Column(name = "spec_rejection_loop_count", nullable = false)
+  private int specRejectionLoopCount = 0;
+
+  // Story 2.10 / V7: informational marker set once the spec-rejection loop counter crosses the
+  // configured escalation threshold. Cleared manually by an operator (Epic 4 handler).
+  @Column(name = "escalation_marker_set", nullable = false)
+  private boolean escalationMarkerSet = false;
+
   public Long getId() {
     return id;
   }
@@ -77,5 +87,21 @@ public class WorkflowRunEntity {
 
   public Long getVersion() {
     return version;
+  }
+
+  public int getSpecRejectionLoopCount() {
+    return specRejectionLoopCount;
+  }
+
+  void setSpecRejectionLoopCount(int specRejectionLoopCount) {
+    this.specRejectionLoopCount = specRejectionLoopCount;
+  }
+
+  public boolean isEscalationMarkerSet() {
+    return escalationMarkerSet;
+  }
+
+  void setEscalationMarkerSet(boolean escalationMarkerSet) {
+    this.escalationMarkerSet = escalationMarkerSet;
   }
 }

@@ -7,6 +7,7 @@ public enum WorkflowEventType implements RegistryValue {
   APPROVAL_REQUESTED("approval.requested"),
   APPROVAL_APPROVED("approval.approved"),
   APPROVAL_REJECTED("approval.rejected"),
+  ESCALATION_REQUIRED("escalation.required"),
   ARTIFACT_DRAFT_CREATED("artifact.draftCreated"),
   ARTIFACT_AVAILABLE("artifact.available"),
   ARTIFACT_FAILED("artifact.failed"),

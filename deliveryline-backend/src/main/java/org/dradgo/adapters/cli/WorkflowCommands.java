@@ -213,7 +213,7 @@ public class WorkflowCommands {
       WorkflowStatusView view = workflowInspectionService.getStatus(runId);
       String rendered = renderStatus(view, format);
       if (includeContextBundle) {
-        rendered = appendContextBundle(rendered, runId, format);
+        rendered = appendContextBundle(rendered, view, runId, format);
       }
       if (verbose) {
         rendered = appendCorrelationSuffix(rendered, resolvedCorrelation);
@@ -404,23 +404,24 @@ public class WorkflowCommands {
    * status document to a dedicated v2 contract with a structured {@code contextBundle} object so
    * the field shape is stable across available and unavailable states.
    */
-  private String appendContextBundle(String rendered, String runId, String format) {
+  private String appendContextBundle(
+      String rendered, WorkflowStatusView view, String runId, String format) {
     List<SpecHistoryEntry> history = workflowInspectionService.getSpecHistory(runId);
     String normalizedFormat = normalizeFormat(format);
     if (history.isEmpty()) {
-      return appendBundleUnavailable(rendered, normalizedFormat, null, "noSpecArtifactYet");
+      return appendBundleUnavailable(rendered, view, normalizedFormat, null, "noSpecArtifactYet");
     }
     String latestSpecArtifactId = history.get(history.size() - 1).spec().id();
     ContextBundleLookupResult lookup =
         workflowInspectionService.getContextBundleLookupForArtifact(latestSpecArtifactId);
     if (!lookup.available()) {
       return appendBundleUnavailable(
-          rendered, normalizedFormat, latestSpecArtifactId, lookup.reason());
+          rendered, view, normalizedFormat, latestSpecArtifactId, lookup.reason());
     }
     byte[] redactedBytes = lookup.bundle().redactedPayload();
     String bundleText = renderBundleBytes(redactedBytes, normalizedFormat);
     if (FORMAT_JSON.equals(normalizedFormat)) {
-      return appendBundleJsonField(rendered, latestSpecArtifactId, bundleText);
+      return appendBundleJsonField(rendered, view, latestSpecArtifactId, bundleText);
     }
     StringBuilder out = new StringBuilder(rendered);
     if (!rendered.isEmpty() && !rendered.endsWith("\n")) {
@@ -435,9 +436,13 @@ public class WorkflowCommands {
   }
 
   private String appendBundleUnavailable(
-      String rendered, String normalizedFormat, String artifactId, String reasonCode) {
+      String rendered,
+      WorkflowStatusView view,
+      String normalizedFormat,
+      String artifactId,
+      String reasonCode) {
     if (FORMAT_JSON.equals(normalizedFormat)) {
-      return appendBundleJsonUnavailable(rendered, artifactId, reasonCode);
+      return appendBundleJsonUnavailable(rendered, view, artifactId, reasonCode);
     }
     StringBuilder out = new StringBuilder(rendered);
     if (!rendered.isEmpty() && !rendered.endsWith("\n")) {
@@ -454,17 +459,27 @@ public class WorkflowCommands {
    * well-formed document with a stable wire shape.
    */
   private String appendBundleJsonField(
-      String renderedStatusJson, String artifactId, String bundleJsonLiteral) {
-    return spliceContextBundleJson(renderedStatusJson, artifactId, bundleJsonLiteral, null);
+      String renderedStatusJson,
+      WorkflowStatusView view,
+      String artifactId,
+      String bundleJsonLiteral) {
+    return spliceContextBundleJson(renderedStatusJson, view, artifactId, bundleJsonLiteral, null);
   }
 
   private String appendBundleJsonUnavailable(
-      String renderedStatusJson, String artifactId, String reasonCode) {
-    return spliceContextBundleJson(renderedStatusJson, artifactId, null, reasonCode);
+      String renderedStatusJson,
+      WorkflowStatusView view,
+      String artifactId,
+      String reasonCode) {
+    return spliceContextBundleJson(renderedStatusJson, view, artifactId, null, reasonCode);
   }
 
   private String spliceContextBundleJson(
-      String renderedStatusJson, String artifactId, String bundleJsonLiteral, String reasonCode) {
+      String renderedStatusJson,
+      WorkflowStatusView view,
+      String artifactId,
+      String bundleJsonLiteral,
+      String reasonCode) {
     try {
       ObjectMapper mapper = jsonMapper();
       JsonNode parsed = mapper.readTree(renderedStatusJson);
@@ -480,6 +495,8 @@ public class WorkflowCommands {
       com.fasterxml.jackson.databind.node.ObjectNode root =
           (com.fasterxml.jackson.databind.node.ObjectNode) parsed;
       root.put("schemaVersion", STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_VERSION);
+      root.put("specRejectionLoopCount", view.specRejectionLoopCount());
+      root.put("escalationMarker", view.escalationMarker());
       com.fasterxml.jackson.databind.node.ObjectNode contextBundle =
           root.putObject("contextBundle");
       if (bundleJsonLiteral != null) {

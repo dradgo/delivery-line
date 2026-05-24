@@ -94,6 +94,7 @@
         "approval.requested",
         "approval.approved",
         "approval.rejected",
+        "escalation.required",
         "artifact.draftCreated",
         "artifact.available",
         "artifact.failed",

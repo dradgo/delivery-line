@@ -12,6 +12,7 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 class WorkflowRunPersistenceAdapterTest {
 
@@ -19,7 +20,8 @@ class WorkflowRunPersistenceAdapterTest {
   void updateCurrentStateTranslatesMissingRunIntoStableRunNotFoundError() {
     WorkflowRunRepository repository = mock(WorkflowRunRepository.class);
     WorkflowRunPersistenceAdapter adapter =
-        new WorkflowRunPersistenceAdapter(repository, new WorkflowRunEntityMapper());
+        new WorkflowRunPersistenceAdapter(
+            repository, new WorkflowRunEntityMapper(), mock(NamedParameterJdbcTemplate.class));
 
     when(repository.updateCurrentState("run_missing1234", WorkflowState.EXECUTING.value(), 4L))
         .thenReturn(0);
@@ -38,7 +40,8 @@ class WorkflowRunPersistenceAdapterTest {
   void updateCurrentStateKeepsOptimisticLockFailuresForExistingRuns() {
     WorkflowRunRepository repository = mock(WorkflowRunRepository.class);
     WorkflowRunPersistenceAdapter adapter =
-        new WorkflowRunPersistenceAdapter(repository, new WorkflowRunEntityMapper());
+        new WorkflowRunPersistenceAdapter(
+            repository, new WorkflowRunEntityMapper(), mock(NamedParameterJdbcTemplate.class));
 
     when(repository.updateCurrentState("run_conflict1234", WorkflowState.EXECUTING.value(), 7L))
         .thenReturn(0);

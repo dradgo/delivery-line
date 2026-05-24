@@ -125,6 +125,11 @@ class FlywaySchemaContractTest {
     assertColumnType("workflow_runs", "version", "bigint");
     assertColumnNullable("workflow_runs", "current_state", false);
     assertColumnNullable("workflow_runs", "version", false);
+    // V7: spec rejection loop tracking + escalation marker (story 2.10).
+    assertColumnType("workflow_runs", "spec_rejection_loop_count", "integer");
+    assertColumnNullable("workflow_runs", "spec_rejection_loop_count", false);
+    assertColumnType("workflow_runs", "escalation_marker_set", "boolean");
+    assertColumnNullable("workflow_runs", "escalation_marker_set", false);
     assertColumnType("workflow_events", "stage_duration_ms", "bigint");
     assertColumnType("workflow_events", "rejection_taxonomy", "text");
     assertColumnType("approvals", "rejection_taxonomy", "text");
@@ -364,6 +369,9 @@ class FlywaySchemaContractTest {
         "uq_artifact_operations_idem_key_op_type_workflow_run", "idempotency_key");
     assertConstraintDefinitionContains(
         "uq_artifact_operations_idem_key_op_type_workflow_run", "operation_type");
+    // V7 (story 2.10): non-negative guard on the spec rejection loop counter.
+    assertConstraintDefinitionContains(
+        "ck_workflow_runs_spec_rejection_loop_count_nonneg", "spec_rejection_loop_count");
   }
 
   @Test

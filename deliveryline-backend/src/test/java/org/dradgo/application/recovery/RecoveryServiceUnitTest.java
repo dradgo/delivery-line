@@ -191,7 +191,7 @@ class RecoveryServiceUnitTest {
   @Test
   void retryOnNonFailedRunRaisesRetryNotApplicableWithoutMutatingState() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
 
     DomainException error =
@@ -832,7 +832,7 @@ class RecoveryServiceUnitTest {
   @Test
   void describeFailureOnExecutingRunReturnsAwaitOutcomeAndNullDiagnostics() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
     when(eventReadPort.findLatestCorrelationId(RUN)).thenReturn(Optional.empty());
 
     FailureDescription failure = service.describeFailure(RUN);
@@ -847,7 +847,7 @@ class RecoveryServiceUnitTest {
   @Test
   void describeFailureOnCompletedRunReturnsViewOnly() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.COMPLETED, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.COMPLETED, null, 1L, 0, false)));
     when(eventReadPort.findLatestCorrelationId(RUN)).thenReturn(Optional.empty());
 
     FailureDescription failure = service.describeFailure(RUN);
@@ -858,11 +858,11 @@ class RecoveryServiceUnitTest {
   void describeFailureOnTakenOverAndReconciledAlsoReturnsViewOnly() {
     when(eventReadPort.findLatestCorrelationId(RUN)).thenReturn(Optional.empty());
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.TAKEN_OVER, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.TAKEN_OVER, null, 1L, 0, false)));
     assertEquals("view_only", service.describeFailure(RUN).nextSafeAction());
 
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.RECONCILED, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.RECONCILED, null, 1L, 0, false)));
     assertEquals("view_only", service.describeFailure(RUN).nextSafeAction());
   }
 
@@ -990,7 +990,7 @@ class RecoveryServiceUnitTest {
   @Test
   void describeFailureExtractsCorrelationIdFromHistoricalEventNotJustTheLatest() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
     // The port walks newest-first internally; tests stub the resolved value to demonstrate
     // that RecoveryService no longer reads only `findLatestByWorkflowRunPublicId(...)`.
     when(eventReadPort.findLatestCorrelationId(RUN)).thenReturn(Optional.of("corr-from-history"));
@@ -1018,7 +1018,7 @@ class RecoveryServiceUnitTest {
 
   private void stubFailedRun() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.FAILED, null, 5L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.FAILED, null, 5L, 0, false)));
   }
 
   private void stubFailureEventPresent() {

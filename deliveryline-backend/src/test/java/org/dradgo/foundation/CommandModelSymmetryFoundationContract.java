@@ -175,6 +175,8 @@ class CommandModelSymmetryFoundationContract {
             ActorType.HUMAN,
             "idem-reject-cccccccccccccccc",
             "corr-reject-1",
+            "product_reviewer",
+            org.dradgo.domain.registry.RejectionTaxonomy.UNCLEAR_SPECIFICATION,
             "Spec missing acceptance criteria for the negative path");
     when(workflowCommandService.rejectSpec(any()))
         .thenReturn(

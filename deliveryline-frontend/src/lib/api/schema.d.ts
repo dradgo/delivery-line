@@ -222,6 +222,9 @@ export interface components {
             /** Format: int32 */
             contextVersion: number;
             correlationId?: string;
+            reviewerRole?: string;
+            /** @enum {string} */
+            taggedFeedback: "MISSING_SCOPE" | "UNCLEAR_SPECIFICATION" | "MISUNDERSTOOD_IMPLEMENTATION";
             reasonText: string;
         };
         RetryWorkflowRequest: {
@@ -256,6 +259,11 @@ export interface components {
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
             currentState?: string;
+            /**
+             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
+             * @example false
+             */
+            escalationMarker?: boolean;
             failedStage?: string;
             failureCategory?: string;
             /** Format: date-time */
@@ -273,6 +281,12 @@ export interface components {
              * @example view_only
              */
             nextSafeAction?: string;
+            /**
+             * Format: int32
+             * @description How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).
+             * @example 0
+             */
+            specRejectionLoopCount?: number;
             /** @example run_abc123 */
             workflowRunId?: string;
         };
@@ -286,7 +300,7 @@ export interface components {
             actorType: "human" | "agent" | "system" | "service_account";
             /** Format: date-time */
             createdAt: string;
-            /** @description Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, compensationFailed, artifactVariant, and feedback. */
+            /** @description Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, compensationFailed, reviewerRole, taggedFeedback, specRejectionLoopCount, escalationMarker, artifactVariant, and feedback. */
             details: {
                 artifactId?: string;
                 /** @enum {string} */
@@ -297,6 +311,7 @@ export interface components {
                 /** Format: int32 */
                 contextVersion?: number;
                 correlationId?: string;
+                escalationMarker?: boolean;
                 errorClass?: string;
                 errorCode?: string;
                 failedStage?: string;
@@ -305,6 +320,10 @@ export interface components {
                 reason?: string;
                 recoveryActionId?: string;
                 recoveryRetriedEventId?: string;
+                reviewerRole?: string;
+                /** Format: int32 */
+                specRejectionLoopCount?: number;
+                taggedFeedback?: string;
                 triggeringEventId?: string;
             } & {
                 [key: string]: unknown;
@@ -313,7 +332,7 @@ export interface components {
              * @example workflow.stateChanged
              * @enum {string}
              */
-            eventType: "workflow.stateChanged" | "approval.requested" | "approval.approved" | "approval.rejected" | "artifact.draftCreated" | "artifact.available" | "artifact.failed" | "artifact.versionCreated" | "runner.started" | "runner.failed" | "recovery.retried" | "recovery.dispatchFailed" | "recovery.reconciled" | "artifact.lineageRecovered" | "integration.linked" | "export.created" | "clarification.answered" | "clarification.accepted" | "clarification.incorporated" | "clarification.superseded" | "clarification.rejectedInvalid" | "clarification.noEffectReason";
+            eventType: "workflow.stateChanged" | "approval.requested" | "approval.approved" | "approval.rejected" | "escalation.required" | "artifact.draftCreated" | "artifact.available" | "artifact.failed" | "artifact.versionCreated" | "runner.started" | "runner.failed" | "recovery.retried" | "recovery.dispatchFailed" | "recovery.reconciled" | "artifact.lineageRecovered" | "integration.linked" | "export.created" | "clarification.answered" | "clarification.accepted" | "clarification.incorporated" | "clarification.superseded" | "clarification.rejectedInvalid" | "clarification.noEffectReason";
             /** @enum {string|null} */
             failureCategory?: "runner_timeout" | "runner_crash" | "runner_contract_violation" | "runner_non_zero_exit" | "runner_late_result" | "runner_duplicate_result" | "runner_malformed_output" | "orphan" | null;
             interventionMarker: boolean;
@@ -359,6 +378,11 @@ export interface components {
              */
             currentState?: string;
             /**
+             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
+             * @example false
+             */
+            escalationMarker?: boolean;
+            /**
              * Format: date-time
              * @description Timestamp of the most recent event (ISO-8601 UTC).
              */
@@ -373,6 +397,12 @@ export interface components {
              * @example DEL-1234
              */
             ticketRef?: string;
+            /**
+             * Format: int32
+             * @description How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).
+             * @example 0
+             */
+            specRejectionLoopCount?: number;
             /**
              * @description Run public id.
              * @example run_abc123

@@ -389,24 +389,135 @@ class WorkflowCommandServiceContractTest {
   @Test
   void rejectSpecTransitionsWaitingForSpecApprovalToInvestigating() throws IOException {
     String runId = insertRun("run_reject1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_reject_v1");
 
     WorkflowStateChangeResult result =
         service.rejectSpec(
             new RejectSpecCommand(
                 runId,
-                "art_spec1234",
-                3,
-                2,
+                "art_reject_v1",
+                1,
+                1,
                 "alex",
                 ActorType.HUMAN,
                 "idem-reject-1234567890",
                 "corr-reject-1",
+                "product_reviewer",
+                org.dradgo.domain.registry.RejectionTaxonomy.MISSING_SCOPE,
                 "Needs more detail"));
 
     assertEquals(runId, result.workflowRunId());
     assertEquals(WorkflowState.INVESTIGATING, result.currentState());
     assertEquals(WorkflowState.INVESTIGATING.value(), currentState(runId));
     assertEquals("RejectSpecCommand", latestDetail(runId, "commandType"));
+    assertEquals(1, jdbcTemplate.queryForObject("select count(*) from approvals", Integer.class));
+  }
+
+  @Test
+  void rejectSpecReplayReturnsTheOriginalInvestigatingStateWithoutDuplicateWrites()
+      throws IOException {
+    String runId = insertRun("run_rejectreplay1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_rejectreplay_v1");
+    RejectSpecCommand command =
+        new RejectSpecCommand(
+            runId,
+            "art_rejectreplay_v1",
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            "idem-reject-replay-1234567890",
+            "corr-reject-replay-1",
+            "product_reviewer",
+            org.dradgo.domain.registry.RejectionTaxonomy.MISSING_SCOPE,
+            "Needs more detail");
+
+    WorkflowStateChangeResult first = service.rejectSpec(command);
+    jdbcTemplate.update(
+        "update workflow_runs set current_state = ? where public_id = ?",
+        WorkflowState.EXECUTING.value(),
+        runId);
+
+    WorkflowStateChangeResult replay = service.rejectSpec(command);
+
+    assertEquals(first, replay);
+    assertEquals(WorkflowState.INVESTIGATING, replay.currentState());
+    assertEquals(1, jdbcTemplate.queryForObject("select count(*) from approvals", Integer.class));
+    assertEquals(
+        3, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+  }
+
+  @Test
+  void rejectSpecSameKeyDifferentFingerprintRaisesIdempotencyKeyConflict() throws IOException {
+    String runId = insertRun("run_rejectconflict1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_rejectconflict_v1");
+    String sharedKey = "idem-reject-keyconflict-1234567890";
+
+    RejectSpecCommand first =
+        new RejectSpecCommand(
+            runId,
+            "art_rejectconflict_v1",
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            sharedKey,
+            "corr-reject-conflict-1",
+            "product_reviewer",
+            org.dradgo.domain.registry.RejectionTaxonomy.MISSING_SCOPE,
+            "Needs more detail");
+    service.rejectSpec(first);
+
+    RejectSpecCommand secondDifferentFingerprint =
+        new RejectSpecCommand(
+            runId,
+            "art_rejectconflict_v1",
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            sharedKey,
+            "corr-reject-conflict-2",
+            "product_reviewer",
+            org.dradgo.domain.registry.RejectionTaxonomy.UNCLEAR_SPECIFICATION,
+            "Needs more detail");
+
+    DomainException error =
+        assertThrows(DomainException.class, () -> service.rejectSpec(secondDifferentFingerprint));
+
+    assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
+    assertEquals(1, jdbcTemplate.queryForObject("select count(*) from approvals", Integer.class));
+    assertEquals(
+        1,
+        jdbcTemplate.queryForObject(
+            "select count(*) from workflow_events where event_type = 'approval.rejected'",
+            Integer.class));
+  }
+
+  @Test
+  void rejectSpecMissingTaggedFeedbackRaisesInvalidCommandPayload() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.rejectSpec(
+                    new RejectSpecCommand(
+                        "run_rejectvalidate1234",
+                        "art_rejectvalidate1234",
+                        1,
+                        1,
+                        "alex",
+                        ActorType.HUMAN,
+                        "idem-reject-validate-1234567890",
+                        "corr-reject-validate-1",
+                        "product_reviewer",
+                        null,
+                        "Needs more detail")));
+
+    assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
+    assertFieldErrors(error, "taggedFeedback");
   }
 
   @Test

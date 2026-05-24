@@ -80,7 +80,9 @@ class WorkflowCliJsonSchemaContractTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
     when(inspection.getStatus("run_status12345")).thenReturn(view);
 
     String json = commands.status("run_status12345", "json", "corr-status-1", false, false);
@@ -88,6 +90,8 @@ class WorkflowCliJsonSchemaContractTest {
 
     assertEquals(1, payload.get("schemaVersion").asInt());
     assertTrue(payload.get("workflowRunId").asText().startsWith("run_"));
+    assertFalse(payload.has("specRejectionLoopCount"));
+    assertFalse(payload.has("escalationMarker"));
     assertSchemaValid(STATUS_SCHEMA_LOCATION, json);
   }
 
@@ -108,7 +112,9 @@ class WorkflowCliJsonSchemaContractTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            3,
+            true);
     when(inspection.getStatus("run_status12345")).thenReturn(view);
     SpecHistoryEntry latest =
         new SpecHistoryEntry(
@@ -153,6 +159,8 @@ class WorkflowCliJsonSchemaContractTest {
     JsonNode payload = mapper.readTree(json);
 
     assertEquals(2, payload.get("schemaVersion").asInt());
+    assertEquals(3, payload.get("specRejectionLoopCount").asInt());
+    assertTrue(payload.get("escalationMarker").asBoolean());
     assertEquals("available", payload.get("contextBundle").get("status").asText());
     assertEquals("art_spec00000002", payload.get("contextBundle").get("artifactId").asText());
     assertSchemaValid(STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_LOCATION, json);
@@ -176,7 +184,9 @@ class WorkflowCliJsonSchemaContractTest {
             OffsetDateTime.parse("2026-05-13T10:00:00Z"),
             "runner_timeout",
             OffsetDateTime.parse("2026-05-13T09:59:30Z"),
-            "retry");
+            "retry",
+            0,
+            false);
     when(inspection.getStatus("run_failed01234")).thenReturn(view);
 
     String json = commands.status("run_failed01234", "json", "corr-status-failed", false, false);
@@ -266,7 +276,9 @@ class WorkflowCliJsonSchemaContractTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
     when(inspection.getStatus("run_emptystatus12345")).thenReturn(view);
 
     String json = commands.status("run_emptystatus12345", "json", null, false, false);
@@ -283,6 +295,10 @@ class WorkflowCliJsonSchemaContractTest {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("linearTicketReference", "LIN-101");
     details.put("correlationId", "corr-1");
+    details.put("reviewerRole", "product_reviewer");
+    details.put("taggedFeedback", "missing_scope");
+    details.put("specRejectionLoopCount", 2);
+    details.put("escalationMarker", false);
     WorkflowHistoryView view =
         new WorkflowHistoryView(
             "run_hist12345",
@@ -307,6 +323,11 @@ class WorkflowCliJsonSchemaContractTest {
     assertEquals(1, payload.get("schemaVersion").asInt());
     assertEquals("run_hist12345", payload.get("workflowRunId").asText());
     assertEquals(1, payload.get("events").size());
+    JsonNode renderedDetails = payload.get("events").get(0).get("details");
+    assertEquals("product_reviewer", renderedDetails.get("reviewerRole").asText());
+    assertEquals("missing_scope", renderedDetails.get("taggedFeedback").asText());
+    assertEquals(2, renderedDetails.get("specRejectionLoopCount").asInt());
+    assertFalse(renderedDetails.get("escalationMarker").asBoolean());
     assertSchemaValid(HISTORY_SCHEMA_LOCATION, json);
   }
 

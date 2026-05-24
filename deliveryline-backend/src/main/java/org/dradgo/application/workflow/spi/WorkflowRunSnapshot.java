@@ -9,11 +9,18 @@ import org.dradgo.domain.registry.WorkflowState;
 /**
  * Intentionally lossy application-facing view of a workflow run.
  *
- * <p>The application layer currently needs only the public id, state, archival marker, and
- * optimistic-lock version.
+ * <p>The application layer needs the public id, state, archival marker, optimistic-lock version,
+ * and the two spec-rejection loop tracking fields ({@code specRejectionLoopCount} +
+ * {@code escalationMarkerSet}) that drive the {@code WorkflowInspectionService} surface introduced
+ * by story 2.10.
  */
 public record WorkflowRunSnapshot(
-    String publicId, WorkflowState currentState, OffsetDateTime archivedAt, Long version) {
+    String publicId,
+    WorkflowState currentState,
+    OffsetDateTime archivedAt,
+    Long version,
+    int specRejectionLoopCount,
+    boolean escalationMarkerSet) {
 
   public Long requiredVersion() {
     if (version != null) {

@@ -203,7 +203,9 @@ class WorkflowCommandsContextBundleFlagTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
     when(inspection.getStatus(RUN_ID)).thenReturn(view);
   }
 
@@ -223,7 +225,9 @@ class WorkflowCommandsContextBundleFlagTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
     when(inspection.getStatus(RUN_ID)).thenReturn(view);
   }
 

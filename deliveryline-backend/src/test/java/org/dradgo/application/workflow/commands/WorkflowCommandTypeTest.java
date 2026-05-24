@@ -30,7 +30,18 @@ class WorkflowCommandTypeTest {
             .commandType());
     assertEquals(
         "RejectSpecCommand",
-        new RejectSpecCommand("run_x", "art_x", 1, 1, "alex", ActorType.HUMAN, "k", null, "r")
+        new RejectSpecCommand(
+                "run_x",
+                "art_x",
+                1,
+                1,
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "product_reviewer",
+                org.dradgo.domain.registry.RejectionTaxonomy.MISSING_SCOPE,
+                "r")
             .commandType());
     assertEquals(
         "RetryWorkflowCommand",

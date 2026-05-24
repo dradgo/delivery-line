@@ -146,7 +146,9 @@ public class WorkflowInspectionService {
               failure.failureTimestamp(),
               failure.failureCategory(),
               failure.lastActivityTimestamp(),
-              failure.nextSafeAction());
+              failure.nextSafeAction(),
+              run.specRejectionLoopCount(),
+              run.escalationMarkerSet());
       log.info(
           "inspecting workflow_run snapshot success workflowRunId={} currentState={}",
           workflowRunPublicId,
@@ -245,7 +247,9 @@ public class WorkflowInspectionService {
               run.currentState().value(),
               ticketRef,
               latest.map(WorkflowEventRecord::createdAt).orElse(null),
-              latest.map(record -> record.eventType().value()).orElse(null)));
+              latest.map(record -> record.eventType().value()).orElse(null),
+              run.specRejectionLoopCount(),
+              run.escalationMarkerSet()));
     }
     log.info("listing workflow_runs success count={}", summaries.size());
     return summaries;
@@ -695,7 +699,10 @@ public class WorkflowInspectionService {
       OffsetDateTime failureTimestamp,
       String failureCategory,
       OffsetDateTime lastActivityTimestamp,
-      String nextSafeAction) {}
+      String nextSafeAction,
+      // Story 2.10 — spec rejection loop tracking surfaced to the inspection consumer.
+      int specRejectionLoopCount,
+      boolean escalationMarker) {}
 
   public record LatestArtifactView(String artifactType, int version, String status) {}
 
@@ -725,7 +732,11 @@ public class WorkflowInspectionService {
       String currentState,
       String ticketRef,
       OffsetDateTime lastEventAt,
-      String lastEventType) {}
+      String lastEventType,
+      // Story 2.10 — spec rejection loop tracking surfaced on the queue surface so the UI can
+      // render a "loop depth N" badge / escalation badge without a second per-row lookup.
+      int specRejectionLoopCount,
+      boolean escalationMarker) {}
 
   /**
    * Schema-shaped event-stream view ({@code GET /api/v1/workflows/{id}/events}, story 6.9). Mirrors

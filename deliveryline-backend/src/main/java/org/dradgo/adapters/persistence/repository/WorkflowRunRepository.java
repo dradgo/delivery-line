@@ -43,4 +43,5 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
       @Param("publicId") String publicId,
       @Param("currentState") String currentState,
       @Param("expectedVersion") Long expectedVersion);
+
 }

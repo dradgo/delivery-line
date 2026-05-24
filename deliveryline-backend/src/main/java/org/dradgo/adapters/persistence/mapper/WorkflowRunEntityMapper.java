@@ -17,6 +17,8 @@ public class WorkflowRunEntityMapper {
         entity.getPublicId(),
         entity.getCurrentState(),
         entity.getArchivedAt(),
-        entity.getVersion());
+        entity.getVersion(),
+        entity.getSpecRejectionLoopCount(),
+        entity.isEscalationMarkerSet());
   }
 }

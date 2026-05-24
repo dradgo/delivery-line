@@ -122,7 +122,8 @@ public class OpenApiConfiguration {
         "Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include "
             + "linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, "
             + "failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, "
-            + "compensationFailed, artifactVariant, and feedback.");
+            + "compensationFailed, reviewerRole, taggedFeedback, specRejectionLoopCount, "
+            + "escalationMarker, artifactVariant, and feedback.");
     detailsSchema.additionalProperties(new Schema<>());
     detailsSchema.setNot(new ObjectSchema().required(List.of("idempotencyKey")));
     detailsSchema.addProperty("linearTicketReference", new StringSchema().minLength(1));
@@ -143,6 +144,11 @@ public class OpenApiConfiguration {
     detailsSchema.addProperty(
         "recoveryRetriedEventId", new StringSchema().pattern("^evt_[A-Za-z0-9_]{4,}$"));
     detailsSchema.addProperty("compensationFailed", new BooleanSchema());
+    detailsSchema.addProperty("reviewerRole", new StringSchema().minLength(1));
+    detailsSchema.addProperty("taggedFeedback", new StringSchema().minLength(1));
+    detailsSchema.addProperty(
+        "specRejectionLoopCount", new IntegerSchema().minimum(BigDecimal.ZERO).format("int32"));
+    detailsSchema.addProperty("escalationMarker", new BooleanSchema());
     detailsSchema.addProperty(
         "artifactVariant",
         new StringSchema()._enum(List.of("spec", "implementationPlan", "prOutput")));

@@ -103,7 +103,9 @@ class WorkflowCommandsStatusHistoryTest {
             null,
             null,
             null,
-            "await_outcome");
+            "await_outcome",
+            0,
+            false);
     when(inspection.getStatus("run_status12345")).thenReturn(view);
 
     String rendered = commands.status("run_status12345", "text", "corr-status-1", false, false);
@@ -139,7 +141,9 @@ class WorkflowCommandsStatusHistoryTest {
                 null,
                 null,
                 null,
-                "await_outcome"));
+                "await_outcome",
+                0,
+                false));
 
     String rendered = commands.status("run_status12345", "json", null, false, false);
     assertTrue(
@@ -220,7 +224,9 @@ class WorkflowCommandsStatusHistoryTest {
                 null,
                 null,
                 null,
-                "await_outcome"));
+                "await_outcome",
+                0,
+                false));
 
     commands.status("run_status12345", "json", "corr-status-42", false, false);
 

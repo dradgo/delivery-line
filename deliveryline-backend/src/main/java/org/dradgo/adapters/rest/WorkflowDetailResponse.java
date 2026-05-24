@@ -30,7 +30,19 @@ public record WorkflowDetailResponse(
     String failureCategory,
     OffsetDateTime lastActivityTimestamp,
     @Schema(description = "Next safe operator action for the current state.", example = "view_only")
-        String nextSafeAction) {
+        String nextSafeAction,
+    @Schema(
+            description =
+                "How many spec rejections this run has accumulated. Increments on every successful"
+                    + " rejectSpec call (story 2.10).",
+            example = "0")
+        int specRejectionLoopCount,
+    @Schema(
+            description =
+                "True once specRejectionLoopCount has crossed the configured escalation threshold."
+                    + " Informational — does NOT terminate the workflow (FR13).",
+            example = "false")
+        boolean escalationMarker) {
 
   public static WorkflowDetailResponse from(WorkflowStatusView view) {
     return new WorkflowDetailResponse(
@@ -49,7 +61,9 @@ public record WorkflowDetailResponse(
         toUtc(view.failureTimestamp()),
         view.failureCategory(),
         toUtc(view.lastActivityTimestamp()),
-        view.nextSafeAction());
+        view.nextSafeAction(),
+        view.specRejectionLoopCount(),
+        view.escalationMarker());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

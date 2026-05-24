@@ -75,6 +75,10 @@ class ApprovalServiceApproveSpecTest {
   private WorkflowEventWritePort workflowEventWritePort;
   private WorkflowTransitionService workflowTransitionService;
   private RunnerExecutionRecordPort runnerExecutionRecordPort;
+  private org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort
+      workflowRunRejectionLoopPort;
+  private org.dradgo.application.workflow.SpecRejectionEscalationThresholdProvider
+      escalationThresholdProvider;
 
   private ApprovalService approvalService;
 
@@ -88,6 +92,10 @@ class ApprovalServiceApproveSpecTest {
     workflowEventWritePort = Mockito.mock(WorkflowEventWritePort.class);
     workflowTransitionService = Mockito.mock(WorkflowTransitionService.class);
     runnerExecutionRecordPort = Mockito.mock(RunnerExecutionRecordPort.class);
+    workflowRunRejectionLoopPort =
+        Mockito.mock(org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort.class);
+    escalationThresholdProvider =
+        new org.dradgo.application.workflow.SpecRejectionEscalationThresholdProvider(3);
     approvalService =
         new ApprovalService(
             artifactRecordPort,
@@ -96,6 +104,8 @@ class ApprovalServiceApproveSpecTest {
             workflowEventWritePort,
             workflowTransitionService,
             runnerExecutionRecordPort,
+            workflowRunRejectionLoopPort,
+            escalationThresholdProvider,
             FIXED_CLOCK);
 
     appender = new ListAppender<>();

@@ -157,7 +157,7 @@ class RecoveryLoggingContractTest {
   void retryOnNonFailedEmitsRejectedLogAtWarnWithCurrentState() {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
 
     assertThrows(DomainException.class, () -> service.retry(RUN, IDEMPOTENCY_KEY, ACTOR, null));
 
@@ -252,7 +252,7 @@ class RecoveryLoggingContractTest {
   @Test
   void describeFailureEmitsEntryAndExitLogsAtInfo() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
     when(eventReadPort.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
 
     service.describeFailure(RUN);
@@ -266,7 +266,7 @@ class RecoveryLoggingContractTest {
 
   private void stubFailedRunPath() {
     when(runReadPort.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.FAILED, null, 5L)));
+        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.FAILED, null, 5L, 0, false)));
     when(eventReadPort.findLatestFailureEvent(RUN))
         .thenReturn(
             Optional.of(

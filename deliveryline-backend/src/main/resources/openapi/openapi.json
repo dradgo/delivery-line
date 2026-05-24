@@ -189,8 +189,21 @@
             "minLength" : 0,
             "type" : "string"
           },
+          "reviewerRole" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "taggedFeedback" : {
+            "enum" : [
+              "MISSING_SCOPE",
+              "UNCLEAR_SPECIFICATION",
+              "MISUNDERSTOOD_IMPLEMENTATION"
+            ],
+            "type" : "string"
+          },
           "reasonText" : {
-            "maxLength" : 512,
+            "maxLength" : 1024,
             "minLength" : 0,
             "type" : "string"
           }
@@ -201,6 +214,7 @@
           "artifactId",
           "artifactVersion",
           "contextVersion",
+          "taggedFeedback",
           "reasonText"
         ],
         "type" : "object"
@@ -370,6 +384,17 @@
             "example" : "view_only",
             "type" : "string"
           },
+          "specRejectionLoopCount" : {
+            "description" : "How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).",
+            "example" : "0",
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "escalationMarker" : {
+            "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).",
+            "example" : "false",
+            "type" : "boolean"
+          },
           "workflowRunId" : {
             "example" : "run_abc123",
             "type" : "string"
@@ -400,7 +425,7 @@
           },
           "details" : {
             "additionalProperties" : { },
-            "description" : "Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, compensationFailed, artifactVariant, and feedback.",
+            "description" : "Open detail map; server-only keys (e.g. idempotencyKey) are stripped. Known keys include linearTicketReference, artifactId, artifactVersion, contextVersion, correlationId, failedStage, triggeringEventId, recoveryActionId, recoveryRetriedEventId, compensationFailed, reviewerRole, taggedFeedback, specRejectionLoopCount, escalationMarker, artifactVariant, and feedback.",
             "not" : {
               "required" : [
                 "idempotencyKey"
@@ -452,6 +477,22 @@
               "feedback" : {
                 "type" : "string"
               },
+              "reviewerRole" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "taggedFeedback" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "specRejectionLoopCount" : {
+                "format" : "int32",
+                "minimum" : 0,
+                "type" : "integer"
+              },
+              "escalationMarker" : {
+                "type" : "boolean"
+              },
               "linearTicketReference" : {
                 "minLength" : 1,
                 "type" : "string"
@@ -480,6 +521,7 @@
               "approval.requested",
               "approval.approved",
               "approval.rejected",
+              "escalation.required",
               "artifact.draftCreated",
               "artifact.available",
               "artifact.failed",
@@ -685,6 +727,17 @@
             "description" : "Type of the most recent event.",
             "example" : "workflow.stateChanged",
             "type" : "string"
+          },
+          "specRejectionLoopCount" : {
+            "description" : "How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).",
+            "example" : "0",
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "escalationMarker" : {
+            "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).",
+            "example" : "false",
+            "type" : "boolean"
           },
           "ticketRef" : {
             "description" : "Linear ticket reference, if linked.",
