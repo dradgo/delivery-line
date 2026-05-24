@@ -259,11 +259,6 @@ export interface components {
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
             currentState?: string;
-            /**
-             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
-             * @example false
-             */
-            escalationMarker?: boolean;
             failedStage?: string;
             failureCategory?: string;
             /** Format: date-time */
@@ -287,6 +282,11 @@ export interface components {
              * @example 0
              */
             specRejectionLoopCount?: number;
+            /**
+             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
+             * @example false
+             */
+            escalationMarker?: boolean;
             /** @example run_abc123 */
             workflowRunId?: string;
         };
@@ -311,19 +311,19 @@ export interface components {
                 /** Format: int32 */
                 contextVersion?: number;
                 correlationId?: string;
-                escalationMarker?: boolean;
                 errorClass?: string;
                 errorCode?: string;
                 failedStage?: string;
                 feedback?: string;
+                reviewerRole?: string;
+                taggedFeedback?: string;
+                /** Format: int32 */
+                specRejectionLoopCount?: number;
+                escalationMarker?: boolean;
                 linearTicketReference?: string;
                 reason?: string;
                 recoveryActionId?: string;
                 recoveryRetriedEventId?: string;
-                reviewerRole?: string;
-                /** Format: int32 */
-                specRejectionLoopCount?: number;
-                taggedFeedback?: string;
                 triggeringEventId?: string;
             } & {
                 [key: string]: unknown;
@@ -378,11 +378,6 @@ export interface components {
              */
             currentState?: string;
             /**
-             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
-             * @example false
-             */
-            escalationMarker?: boolean;
-            /**
              * Format: date-time
              * @description Timestamp of the most recent event (ISO-8601 UTC).
              */
@@ -393,16 +388,21 @@ export interface components {
              */
             lastEventType?: string;
             /**
-             * @description Linear ticket reference, if linked.
-             * @example DEL-1234
-             */
-            ticketRef?: string;
-            /**
              * Format: int32
              * @description How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).
              * @example 0
              */
             specRejectionLoopCount?: number;
+            /**
+             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
+             * @example false
+             */
+            escalationMarker?: boolean;
+            /**
+             * @description Linear ticket reference, if linked.
+             * @example DEL-1234
+             */
+            ticketRef?: string;
             /**
              * @description Run public id.
              * @example run_abc123

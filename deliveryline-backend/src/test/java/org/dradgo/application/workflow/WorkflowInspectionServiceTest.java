@@ -84,7 +84,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void getStatusReturnsHappyPathViewWithLatestEventArtifactsAndLink() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     when(events.findLatestByWorkflowRunPublicId(RUN))
         .thenReturn(
             Optional.of(
@@ -142,7 +143,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void getStatusOmitsArtifactsAndLinkWhenAbsent() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.INBOX, null, 1L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.INBOX, null, 1L, 0, false)));
     when(events.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
     when(artifacts.findLatestByWorkflowRunIdAndArtifactType(eq(RUN), any()))
         .thenReturn(Optional.empty());
@@ -173,7 +175,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void listHistoryDelegatesToPortAndProjectsRecords() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     Map<String, Object> rawDetails = new LinkedHashMap<>();
     rawDetails.put("linearTicketReference", "LIN-101");
     rawDetails.put("idempotencyKey", "secret-key");
@@ -212,7 +215,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void listHistorySurfacesRecoveryAuditKeysFromDispatchFailedAndRetriedEvents() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 5L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 5L, 0, false)));
     // recovery.retried writes failedStage/triggeringEventId/idempotencyKey/reason +
     // (when MDC is set) correlationId. idempotencyKey must still be stripped; the rest
     // belong in `history` output for operator triage.
@@ -277,7 +281,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void listHistoryRedactsSecretBytesEvenInsideAllowListedKeyValues() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     Map<String, Object> rawDetails = new LinkedHashMap<>();
     // Adversarial: an operator pasted a github PAT into the allow-listed
     // linearTicketReference value. The allow-list lets the KEY through, so we rely on the
@@ -305,7 +310,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void listHistoryAppliesSinceFilterThroughPort() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     OffsetDateTime since = OffsetDateTime.parse("2026-05-13T09:00:00Z");
     when(events.listByWorkflowRunPublicId(RUN, since)).thenReturn(List.of());
 
@@ -316,7 +322,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void listHistoryRaisesHistoryTooLargeWhenPortSignalsCeiling() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     when(events.listByWorkflowRunPublicId(RUN, null))
         .thenThrow(
             new DomainException(
@@ -342,7 +349,8 @@ class WorkflowInspectionServiceTest {
     when(runs.findByPublicId(RUN))
         .thenReturn(
             Optional.of(
-                new WorkflowRunSnapshot(RUN, WorkflowState.WAITING_FOR_SPEC_APPROVAL, null, 3L, 0, false)));
+                new WorkflowRunSnapshot(
+                    RUN, WorkflowState.WAITING_FOR_SPEC_APPROVAL, null, 3L, 0, false)));
     when(links.findActiveLinkByWorkflowRun(RUN)).thenReturn(Optional.empty());
     when(events.listByWorkflowRunPublicId(RUN, null))
         .thenReturn(
@@ -382,7 +390,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void getEventStreamRaisesInternalErrorWhenHistoryIsEmpty() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     when(events.listByWorkflowRunPublicId(RUN, null)).thenReturn(List.of());
 
     DomainException error = assertThrows(DomainException.class, () -> service.getEventStream(RUN));
@@ -393,7 +402,8 @@ class WorkflowInspectionServiceTest {
   @Test
   void getEventStreamRaisesInternalErrorWhenTicketReferenceCannotBeResolved() {
     when(runs.findByPublicId(RUN))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
     when(links.findActiveLinkByWorkflowRun(RUN)).thenReturn(Optional.empty());
     when(events.listByWorkflowRunPublicId(RUN, null))
         .thenReturn(

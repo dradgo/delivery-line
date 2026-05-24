@@ -229,7 +229,8 @@ class ApprovalServiceRejectSpecTest {
 
   @Test
   void thresholdExceededFirstTimeAppendsEscalationEventAndFlipsMarker() {
-    // AC9(e) — counter 2->3 when threshold=3: escalation.required appended once, marker false->true.
+    // AC9(e) — counter 2->3 when threshold=3: escalation.required appended once, marker
+    // false->true.
     seedArtifact(3);
     seedRunnerExecutionContextBundleVersion(2);
     when(approvalWritePort.insert(any())).thenAnswer(this::persistedFromNew);
@@ -285,7 +286,8 @@ class ApprovalServiceRejectSpecTest {
                 "WaitingForSpecApproval cannot transition to Investigating",
                 Map.of()))
         .when(workflowTransitionService)
-        .transition(anyString(), any(WorkflowState.class), any(), anyString(), anyString(), anyMap());
+        .transition(
+            anyString(), any(WorkflowState.class), any(), anyString(), anyString(), anyMap());
 
     DomainException error =
         catchDomainException(

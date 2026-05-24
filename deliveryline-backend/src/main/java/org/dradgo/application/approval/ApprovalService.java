@@ -355,8 +355,8 @@ public class ApprovalService {
 
         // AC4: atomically increment the run's spec_rejection_loop_count and read the new value
         // (the persistence adapter clears the persistence context after the @Modifying UPDATE).
-        int newLoopCount = workflowRunRejectionLoopPort.incrementAndReadLoopCount(
-            command.workflowRunId());
+        int newLoopCount =
+            workflowRunRejectionLoopPort.incrementAndReadLoopCount(command.workflowRunId());
 
         // AC4: append the approval.rejected event INSIDE the same transaction.
         workflowEventWritePort.append(

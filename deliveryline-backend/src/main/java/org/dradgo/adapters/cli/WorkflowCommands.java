@@ -467,10 +467,7 @@ public class WorkflowCommands {
   }
 
   private String appendBundleJsonUnavailable(
-      String renderedStatusJson,
-      WorkflowStatusView view,
-      String artifactId,
-      String reasonCode) {
+      String renderedStatusJson, WorkflowStatusView view, String artifactId, String reasonCode) {
     return spliceContextBundleJson(renderedStatusJson, view, artifactId, null, reasonCode);
   }
 
