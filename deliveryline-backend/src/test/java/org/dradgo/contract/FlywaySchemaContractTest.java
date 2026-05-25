@@ -240,16 +240,13 @@ class FlywaySchemaContractTest {
         "fk_clarifications_superseded_by_artifact", "superseded_by_artifact_version");
     assertConstraintDefinitionContains(
         "ck_clarifications_supersedes_pair", "superseded_by_artifact_id");
-    assertConstraintDefinitionContains(
-        "ck_clarifications_status_fields_paired", "incorporated");
-    assertConstraintDefinitionContains(
-        "ck_clarifications_status_fields_paired", "superseded");
+    assertConstraintDefinitionContains("ck_clarifications_status_fields_paired", "incorporated");
+    assertConstraintDefinitionContains("ck_clarifications_status_fields_paired", "superseded");
     assertConstraintDefinitionContains(
         "ck_clarifications_status_fields_paired", "rejected_invalid");
     assertConstraintDefinitionContains(
         "ck_clarifications_status_fields_paired", "no_effect_reason");
-    assertIndexDefinitionContains(
-        "idx_clarifications_pending_by_workflow_run", "workflow_run_id");
+    assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "workflow_run_id");
     assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "incorporated");
     assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "archived_at");
   }

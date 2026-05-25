@@ -16,8 +16,8 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 
 class WorkflowCommandServiceReplayRefTest {
 

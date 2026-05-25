@@ -41,10 +41,7 @@ class ClarificationLifecycleServiceLoggingTest {
   void setUp() {
     service =
         new ClarificationLifecycleService(
-            readPort,
-            writePort,
-            eventWritePort,
-            Clock.fixed(NOW.toInstant(), ZoneOffset.UTC));
+            readPort, writePort, eventWritePort, Clock.fixed(NOW.toInstant(), ZoneOffset.UTC));
     appender = new ListAppender<>();
     appender.start();
     ((Logger) LoggerFactory.getLogger(ClarificationLifecycleService.class)).addAppender(appender);
@@ -52,7 +49,8 @@ class ClarificationLifecycleServiceLoggingTest {
 
   @AfterEach
   void tearDown() {
-    ((Logger) LoggerFactory.getLogger(ClarificationLifecycleService.class)).detachAppender(appender);
+    ((Logger) LoggerFactory.getLogger(ClarificationLifecycleService.class))
+        .detachAppender(appender);
   }
 
   @Test
@@ -147,11 +145,7 @@ class ClarificationLifecycleServiceLoggingTest {
     assertThatThrownBy(
             () ->
                 service.markIncorporated(
-                    "run_log_terminal",
-                    "clr_log_terminal",
-                    "art_log_new",
-                    2,
-                    ActorContext.SYSTEM))
+                    "run_log_terminal", "clr_log_terminal", "art_log_new", 2, ActorContext.SYSTEM))
         .hasMessageContaining("Illegal clarification transition");
 
     assertThat(appender.list)

@@ -72,7 +72,8 @@ class WorkflowInspectionServiceClarificationTest {
   @Test
   void getClarificationsForArtifactProjectsRowsFromTheArtifactScopedReadPort() {
     when(clarifications.listByArtifactId(ART))
-        .thenReturn(List.of(clarification("clr_artifact1", ART, Clarification.STATUS_ACCEPTED, "ok")));
+        .thenReturn(
+            List.of(clarification("clr_artifact1", ART, Clarification.STATUS_ACCEPTED, "ok")));
 
     List<WorkflowInspectionService.ClarificationView> result =
         service.getClarificationsForArtifact(RUN, ART);

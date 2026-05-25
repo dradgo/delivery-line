@@ -27,8 +27,9 @@ public interface ClarificationReadPort {
   /**
    * P30/D2 — pessimistic-lock variant of {@link #findByPublicId}. Emits {@code SELECT ... FOR
    * UPDATE} so concurrent lifecycle transitions on the same clarification row serialize. Caller
-   * MUST be inside a transaction (the lifecycle service runs under the spec-rebuild outer {@code
-   * @Transactional}). Used exclusively by {@code ClarificationLifecycleService.loadAndGuardRun}.
+   * MUST be inside a transaction (the lifecycle service runs under the spec-rebuild outer
+   * {@code @Transactional}). Used exclusively by {@code
+   * ClarificationLifecycleService.loadAndGuardRun}.
    */
   Optional<Clarification> findByPublicIdForUpdate(
       String workflowRunPublicId, String clarificationPublicId);
@@ -48,9 +49,9 @@ public interface ClarificationReadPort {
   /**
    * Story 2.12 AC9: count of clarifications for the supplied workflow run that are NOT in {@code
    * incorporated} or {@code rejected_invalid} status (i.e. {@code open + answered + accepted +
-   * superseded}). Filters {@code archived_at IS NULL} mirroring the existing list methods.
-   * {@code superseded} IS counted as pending — see OQ-2 deep dive in story 2.12 Dev Notes.
-   * Story 2.14 (allowed-actions endpoint) reads this to gate {@code approve_spec}.
+   * superseded}). Filters {@code archived_at IS NULL} mirroring the existing list methods. {@code
+   * superseded} IS counted as pending — see OQ-2 deep dive in story 2.12 Dev Notes. Story 2.14
+   * (allowed-actions endpoint) reads this to gate {@code approve_spec}.
    */
   int countPendingByWorkflowRun(String workflowRunPublicId);
 

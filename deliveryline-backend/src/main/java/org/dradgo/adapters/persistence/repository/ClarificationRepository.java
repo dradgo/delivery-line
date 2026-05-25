@@ -42,8 +42,7 @@ public interface ClarificationRepository extends JpaRepository<ClarificationEnti
         and c.archivedAt is null
       """)
   Optional<ClarificationEntity> findByWorkflowRunPublicIdAndPublicIdAndArchivedAtIsNullForUpdate(
-      @Param("workflowRunPublicId") String workflowRunPublicId,
-      @Param("publicId") String publicId);
+      @Param("workflowRunPublicId") String workflowRunPublicId, @Param("publicId") String publicId);
 
   /**
    * All non-archived clarifications for the supplied workflow run, status-grouped + chronological
@@ -97,8 +96,9 @@ public interface ClarificationRepository extends JpaRepository<ClarificationEnti
 
   /**
    * Story 2.12 AC9 — count of non-terminal clarifications for the supplied workflow run. Native
-   * query so Postgres can use the V9 partial index {@code idx_clarifications_pending_by_workflow_run}
-   * directly. Filter mirrors the partial-index WHERE clause.
+   * query so Postgres can use the V9 partial index {@code
+   * idx_clarifications_pending_by_workflow_run} directly. Filter mirrors the partial-index WHERE
+   * clause.
    */
   @Query(
       value =

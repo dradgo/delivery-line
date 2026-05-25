@@ -393,9 +393,10 @@ final class ArchitectureRuleCatalog {
               .allowEmptyShould(false));
 
   /**
-   * Story 2.12 trap T8 sibling rule: ClarificationLifecycleService + ClarificationLifecycleOrchestrator
-   * stay in {@code application.clarification} and never reach into adapter/persistence types. Mirror
-   * of {@link #CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION}.
+   * Story 2.12 trap T8 sibling rule: ClarificationLifecycleService +
+   * ClarificationLifecycleOrchestrator stay in {@code application.clarification} and never reach
+   * into adapter/persistence types. Mirror of {@link
+   * #CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION}.
    */
   static final ArchRule CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION =
       namedRule(

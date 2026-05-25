@@ -214,8 +214,7 @@ class WorkflowInspectionServiceClarificationStatusTest {
     when(runs.listRuns(null, 2))
         .thenReturn(
             List.of(
-                new WorkflowRunSnapshot(
-                    "run_list_1", WorkflowState.EXECUTING, null, 1L, 0, false),
+                new WorkflowRunSnapshot("run_list_1", WorkflowState.EXECUTING, null, 1L, 0, false),
                 new WorkflowRunSnapshot(
                     "run_list_2", WorkflowState.WAITING_FOR_SPEC_APPROVAL, null, 2L, 1, true)));
     when(events.findLatestByWorkflowRunPublicId("run_list_1"))

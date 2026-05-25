@@ -46,9 +46,9 @@ public class ClarificationEntityMapper {
   /**
    * Story 2.12 — V9-rich lifecycle snapshot. {@code incorporationEventPublicId} is resolved by
    * walking {@code incorporation_event_id} → {@code workflow_events.public_id}; {@code
-   * supersededByArtifactPublicId} is resolved by walking {@code superseded_by_artifact_id} →
-   * {@code artifacts.public_id}. Both lookups stay inside the read transaction so the dereference
-   * cannot escape the persistence context. N+1 acceptable for a single-row inspection call.
+   * supersededByArtifactPublicId} is resolved by walking {@code superseded_by_artifact_id} → {@code
+   * artifacts.public_id}. Both lookups stay inside the read transaction so the dereference cannot
+   * escape the persistence context. N+1 acceptable for a single-row inspection call.
    */
   public ClarificationLifecycleSnapshot toLifecycleSnapshot(ClarificationEntity entity) {
     String incorporationEventPublicId = null;
@@ -59,7 +59,8 @@ public class ClarificationEntityMapper {
       if (eventRow.isPresent()) {
         WorkflowEventEntity event = eventRow.get();
         incorporationEventPublicId = event.getPublicId();
-        // AC6 / AC7: resolve incorporatedIntoArtifactId from the event details map. The orchestrator
+        // AC6 / AC7: resolve incorporatedIntoArtifactId from the event details map. The
+        // orchestrator
         // stamps this key on the clarification.incorporated event (Trap-aware: kept in the
         // allow-list).
         java.util.Map<String, Object> details = event.getDetails();

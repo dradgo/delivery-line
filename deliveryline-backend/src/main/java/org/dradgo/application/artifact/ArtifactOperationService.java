@@ -66,10 +66,10 @@ public class ArtifactOperationService {
 
   /**
    * Story 2.12 clarification lifecycle hook. P31/D3 — constructor-injected as the LAST parameter
-   * (Trap T7 positional ordering) so every construction site MUST explicitly supply either the
-   * real orchestrator or a deterministic test double. The setter-injection variant left silent
-   * no-op gaps in test paths; constructor injection eliminates them. Trap T5 — the sweep still
-   * only runs for SPEC parents.
+   * (Trap T7 positional ordering) so every construction site MUST explicitly supply either the real
+   * orchestrator or a deterministic test double. The setter-injection variant left silent no-op
+   * gaps in test paths; constructor injection eliminates them. Trap T5 — the sweep still only runs
+   * for SPEC parents.
    */
   private final ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator;
 
@@ -188,8 +188,8 @@ public class ArtifactOperationService {
    * wire a real or stubbed {@link ArtifactWorkflowRunStatePort} via the 6-arg constructor instead.
    *
    * <p>P31/D3 — the orchestrator is now a REQUIRED constructor parameter; tests pass a
-   * deterministic test double (Mockito mock or hand-rolled stub) so the sweep path is exercised
-   * (or its absence asserted) instead of silently skipped.
+   * deterministic test double (Mockito mock or hand-rolled stub) so the sweep path is exercised (or
+   * its absence asserted) instead of silently skipped.
    */
   public static ArtifactOperationService withoutWorkflowRunStateGuard(
       ArtifactRecordPort artifactRecordPort,

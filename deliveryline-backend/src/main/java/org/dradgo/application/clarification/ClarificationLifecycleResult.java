@@ -14,9 +14,9 @@ import java.util.Objects;
  *
  * @param clarificationId persisted clarification public id ({@code clr_…})
  * @param workflowRunId run public id ({@code run_…})
- * @param status clarification status after the write (one of {@link
- *     Clarification#STATUS_ACCEPTED}, {@link Clarification#STATUS_INCORPORATED}, {@link
- *     Clarification#STATUS_SUPERSEDED}, {@link Clarification#STATUS_REJECTED_INVALID})
+ * @param status clarification status after the write (one of {@link Clarification#STATUS_ACCEPTED},
+ *     {@link Clarification#STATUS_INCORPORATED}, {@link Clarification#STATUS_SUPERSEDED}, {@link
+ *     Clarification#STATUS_REJECTED_INVALID})
  * @param transitionedAt server-stamped transition timestamp
  */
 public record ClarificationLifecycleResult(

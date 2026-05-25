@@ -41,10 +41,11 @@ import org.mockito.Mockito;
  *   <li>One accepted + payload does NOT mention questionId → exactly one {@code markSuperseded}
  *       call with {@code noEffectReason = clarification_not_addressed}.
  *   <li>Mixed sweep: incorporates the matching, supersedes the unmatched.
- *   <li>P32/D5 fatal abort: empty {@code storageRef} raises
- *       {@code DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)} and NO mark* calls fire.
+ *   <li>P32/D5 fatal abort: empty {@code storageRef} raises {@code
+ *       DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)} and NO mark* calls fire.
  *   <li>P32/D5 fatal abort: missing artifact record raises the same error code.
- *   <li>P23 input validation: blank/whitespace ids raise {@code DomainException(INVALID_ID_PREFIX)}.
+ *   <li>P23 input validation: blank/whitespace ids raise {@code
+ *       DomainException(INVALID_ID_PREFIX)}.
  * </ul>
  */
 class ClarificationLifecycleOrchestratorTest {
@@ -54,7 +55,8 @@ class ClarificationLifecycleOrchestratorTest {
   private static final String SPEC_V2_ID = "art_orch_spec_v2";
   private static final String OTHER_SPEC_V1_ID = "art_orch_other_v1";
   private static final int SPEC_V2_VERSION = 2;
-  private static final String STORAGE_REF_V2 = "artifacts/run_orch_test_001/art_orch_spec_v2/v2/spec.md";
+  private static final String STORAGE_REF_V2 =
+      "artifacts/run_orch_test_001/art_orch_spec_v2/v2/spec.md";
 
   private final ClarificationReadPort readPort = Mockito.mock(ClarificationReadPort.class);
   private final ClarificationLifecycleService lifecycleService =
@@ -83,7 +85,8 @@ class ClarificationLifecycleOrchestratorTest {
     assertThat(result.incorporatedCount()).isZero();
     assertThat(result.supersededCount()).isZero();
     assertThat(result.decisions()).isEmpty();
-    verify(lifecycleService, never()).markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
+    verify(lifecycleService, never())
+        .markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
     verify(lifecycleService, never())
         .markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
     // P32 — no payload-load even attempted when zero accepted (short-circuit).
@@ -99,7 +102,8 @@ class ClarificationLifecycleOrchestratorTest {
     when(payloadStore.readBytes(STORAGE_REF_V2))
         .thenReturn(
             Optional.of(
-                "Spec v2 incorporates Q-AUTH-001 with the new auth flow.".getBytes(StandardCharsets.UTF_8)));
+                "Spec v2 incorporates Q-AUTH-001 with the new auth flow."
+                    .getBytes(StandardCharsets.UTF_8)));
 
     ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
         orchestrator.sweepAfterSpecRebuild(
@@ -109,7 +113,12 @@ class ClarificationLifecycleOrchestratorTest {
     assertThat(result.incorporatedCount()).isEqualTo(1);
     assertThat(result.supersededCount()).isZero();
     verify(lifecycleService, times(1))
-        .markIncorporated(eq(RUN_ID), eq("clr_orch_001"), eq(SPEC_V2_ID), eq(SPEC_V2_VERSION), eq(ActorContext.SYSTEM));
+        .markIncorporated(
+            eq(RUN_ID),
+            eq("clr_orch_001"),
+            eq(SPEC_V2_ID),
+            eq(SPEC_V2_VERSION),
+            eq(ActorContext.SYSTEM));
     verify(lifecycleService, never())
         .markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
   }
@@ -137,7 +146,8 @@ class ClarificationLifecycleOrchestratorTest {
             eq(SPEC_V2_VERSION),
             eq("clarification_not_addressed"),
             eq(ActorContext.SYSTEM));
-    verify(lifecycleService, never()).markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
+    verify(lifecycleService, never())
+        .markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
   }
 
   @Test
@@ -157,10 +167,21 @@ class ClarificationLifecycleOrchestratorTest {
     assertThat(result.consideredCount()).isEqualTo(2);
     assertThat(result.incorporatedCount()).isEqualTo(1);
     assertThat(result.supersededCount()).isEqualTo(1);
-    verify(lifecycleService).markIncorporated(eq(RUN_ID), eq("clr_orch_mixed_a"), eq(SPEC_V2_ID), eq(SPEC_V2_VERSION), eq(ActorContext.SYSTEM));
+    verify(lifecycleService)
+        .markIncorporated(
+            eq(RUN_ID),
+            eq("clr_orch_mixed_a"),
+            eq(SPEC_V2_ID),
+            eq(SPEC_V2_VERSION),
+            eq(ActorContext.SYSTEM));
     verify(lifecycleService)
         .markSuperseded(
-            eq(RUN_ID), eq("clr_orch_mixed_b"), eq(SPEC_V2_ID), eq(SPEC_V2_VERSION), eq("clarification_not_addressed"), eq(ActorContext.SYSTEM));
+            eq(RUN_ID),
+            eq("clr_orch_mixed_b"),
+            eq(SPEC_V2_ID),
+            eq(SPEC_V2_VERSION),
+            eq("clarification_not_addressed"),
+            eq(ActorContext.SYSTEM));
   }
 
   @Test
@@ -217,8 +238,7 @@ class ClarificationLifecycleOrchestratorTest {
   void sweepSkipsClarificationsThatAreNotInAcceptedStatus() {
     Clarification openRow = clarification("clr_orch_open", "Q-X", Clarification.STATUS_OPEN);
     Clarification answeredRow = clarification("clr_orch_ans", "Q-Y", Clarification.STATUS_ANSWERED);
-    when(readPort.listByWorkflowRunId(RUN_ID))
-        .thenReturn(List.of(openRow, answeredRow));
+    when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(openRow, answeredRow));
 
     ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
         orchestrator.sweepAfterSpecRebuild(
@@ -226,8 +246,10 @@ class ClarificationLifecycleOrchestratorTest {
 
     assertThat(result.consideredCount()).isZero();
     assertThat(result.decisions()).isEmpty();
-    verify(lifecycleService, never()).markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
-    verify(lifecycleService, never()).markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
+    verify(lifecycleService, never())
+        .markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
+    verify(lifecycleService, never())
+        .markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
   }
 
   @Test
@@ -244,7 +266,8 @@ class ClarificationLifecycleOrchestratorTest {
         .isInstanceOf(DomainException.class)
         .extracting("errorCode")
         .isEqualTo(DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE);
-    verify(lifecycleService, never()).markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
+    verify(lifecycleService, never())
+        .markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
     verify(lifecycleService, never())
         .markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
   }

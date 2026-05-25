@@ -51,14 +51,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class WorkflowCommandService {
   /**
    * P10 — replay-ref separator switched from {@code "|"} (which is a legal char in workflow run
-   * public ids and state names per a future regex relaxation) to ASCII Unit Separator
-   * {@code U+001F}. The character is disallowed in every component of the resultRef
-   * (run-public-id and state-value regexes both ban control characters), so the indexOf split is
-   * guaranteed unambiguous. The parser remains backward-compatible with legacy {@code "|"}-encoded
-   * refs already persisted in {@code idempotency_records.result_ref}; new writes use
-   * {@code U+001F}.
+   * public ids and state names per a future regex relaxation) to ASCII Unit Separator {@code
+   * U+001F}. The character is disallowed in every component of the resultRef (run-public-id and
+   * state-value regexes both ban control characters), so the indexOf split is guaranteed
+   * unambiguous. The parser remains backward-compatible with legacy {@code "|"}-encoded refs
+   * already persisted in {@code idempotency_records.result_ref}; new writes use {@code U+001F}.
    */
   private static final String CLARIFICATION_REPLAY_REF_SEPARATOR = "";
+
   private static final String LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR = "|";
 
   private final WorkflowRunReadPort workflowRunReadPort;
@@ -524,8 +524,7 @@ public class WorkflowCommandService {
             ? CLARIFICATION_REPLAY_REF_SEPARATOR.length()
             : LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR.length();
     return WorkflowState.fromValue(
-        resultRef.substring(separator + separatorLength),
-        "idempotency.resultRef");
+        resultRef.substring(separator + separatorLength), "idempotency.resultRef");
   }
 
   private int clarificationReplaySeparatorIndex(String resultRef) {

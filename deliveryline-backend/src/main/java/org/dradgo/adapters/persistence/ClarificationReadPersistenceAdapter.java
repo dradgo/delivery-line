@@ -64,8 +64,7 @@ public class ClarificationReadPersistenceAdapter implements ClarificationReadPor
         clarificationRepository.findByWorkflowRunPublicIdAndPublicIdAndArchivedAtIsNullForUpdate(
             workflowRunPublicId, clarificationPublicId);
     if (row.isEmpty()) {
-      log.debug(
-          "clarification read-for-update miss clarificationId={}", clarificationPublicId);
+      log.debug("clarification read-for-update miss clarificationId={}", clarificationPublicId);
       return Optional.empty();
     }
     Clarification projection = clarificationEntityMapper.toProjection(row.get());
@@ -117,12 +116,9 @@ public class ClarificationReadPersistenceAdapter implements ClarificationReadPor
   @Override
   @Transactional(readOnly = true)
   public int countPendingByWorkflowRun(String workflowRunPublicId) {
-    long count =
-        clarificationRepository.countPendingByWorkflowRunPublicId(workflowRunPublicId);
+    long count = clarificationRepository.countPendingByWorkflowRunPublicId(workflowRunPublicId);
     log.debug(
-        "clarification count-pending workflowRunId={} pendingCount={}",
-        workflowRunPublicId,
-        count);
+        "clarification count-pending workflowRunId={} pendingCount={}", workflowRunPublicId, count);
     if (count > Integer.MAX_VALUE) {
       throw new IllegalStateException(
           "Pending clarification count overflow for run " + workflowRunPublicId);

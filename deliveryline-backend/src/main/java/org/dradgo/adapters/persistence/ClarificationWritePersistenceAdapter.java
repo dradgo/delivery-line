@@ -248,8 +248,7 @@ public class ClarificationWritePersistenceAdapter implements ClarificationWriteP
                   Map<String, Object> details = new LinkedHashMap<>();
                   details.put("clarificationId", markIncorporated.clarificationPublicId());
                   details.put(
-                      "incorporationEventPublicId",
-                      markIncorporated.incorporationEventPublicId());
+                      "incorporationEventPublicId", markIncorporated.incorporationEventPublicId());
                   log.error(
                       "clarification write markIncorporated event-resolve-failed clarificationId={} incorporationEventId={}",
                       markIncorporated.clarificationPublicId(),

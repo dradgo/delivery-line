@@ -173,8 +173,8 @@ public class WorkflowInspectionService {
 
   /**
    * Story 2.12 AC6 / AC7: V9-rich lifecycle status for a single clarification. Cross-run guard
-   * (Trap T11) raises {@code CLARIFICATION_NOT_FOUND} when the row belongs to a sibling run.
-   * UI Clarification Region (story 2.18) consumes this for the per-question lifecycle indicator.
+   * (Trap T11) raises {@code CLARIFICATION_NOT_FOUND} when the row belongs to a sibling run. UI
+   * Clarification Region (story 2.18) consumes this for the per-question lifecycle indicator.
    */
   @Transactional(readOnly = true)
   public ClarificationStatusView getClarificationStatus(
@@ -462,8 +462,7 @@ public class WorkflowInspectionService {
               .findActiveLinkByWorkflowRun(run.publicId())
               .map(IntegrationLink::externalRef)
               .orElse(null);
-      int pendingClarifications =
-          clarificationReadPort.countPendingByWorkflowRun(run.publicId());
+      int pendingClarifications = clarificationReadPort.countPendingByWorkflowRun(run.publicId());
       summaries.add(
           new WorkflowRunSummaryView(
               run.publicId(),

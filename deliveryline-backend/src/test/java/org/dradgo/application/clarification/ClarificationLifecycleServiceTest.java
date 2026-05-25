@@ -60,8 +60,7 @@ class ClarificationLifecycleServiceTest {
   @BeforeEach
   void setUp() {
     Clock fixed = Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC);
-    service =
-        new ClarificationLifecycleService(readPort, writePort, eventWritePort, fixed);
+    service = new ClarificationLifecycleService(readPort, writePort, eventWritePort, fixed);
   }
 
   @Test
@@ -70,11 +69,9 @@ class ClarificationLifecycleServiceTest {
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
     when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
-    when(writePort.markAccepted(any()))
-        .thenReturn(answeredRow(Clarification.STATUS_ACCEPTED));
+    when(writePort.markAccepted(any())).thenReturn(answeredRow(Clarification.STATUS_ACCEPTED));
 
-    ClarificationLifecycleResult result =
-        service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM);
+    ClarificationLifecycleResult result = service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM);
 
     assertThat(result.status()).isEqualTo(Clarification.STATUS_ACCEPTED);
     assertThat(result.transitionedAt()).isEqualTo(FIXED_NOW);
@@ -91,10 +88,8 @@ class ClarificationLifecycleServiceTest {
 
   @Test
   void markAcceptedFromOpenIsIllegalTransition() {
-    when(readPort.findByPublicId(CLR_ID))
-        .thenReturn(Optional.of(openRow()));
-    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
-        .thenReturn(Optional.of(openRow()));
+    when(readPort.findByPublicId(CLR_ID)).thenReturn(Optional.of(openRow()));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID)).thenReturn(Optional.of(openRow()));
 
     assertThatThrownBy(() -> service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM))
         .isInstanceOf(DomainException.class)
@@ -134,7 +129,8 @@ class ClarificationLifecycleServiceTest {
     WorkflowEventRecord event = events.getValue();
     assertThat(event.eventType()).isEqualTo(WorkflowEventType.CLARIFICATION_INCORPORATED);
     assertThat(event.details())
-        .containsKeys("clarificationId", "questionId", "incorporatedIntoArtifactId", "incorporationEventId")
+        .containsKeys(
+            "clarificationId", "questionId", "incorporatedIntoArtifactId", "incorporationEventId")
         .containsEntry("incorporatedIntoArtifactId", NEW_SPEC_ID);
   }
 
@@ -144,8 +140,7 @@ class ClarificationLifecycleServiceTest {
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
     when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
-    when(writePort.markSuperseded(any()))
-        .thenReturn(answeredRow(Clarification.STATUS_SUPERSEDED));
+    when(writePort.markSuperseded(any())).thenReturn(answeredRow(Clarification.STATUS_SUPERSEDED));
 
     service.markSuperseded(
         RUN_ID, CLR_ID, NEW_SPEC_ID, 2, "clarification_not_addressed", ActorContext.SYSTEM);
@@ -234,8 +229,18 @@ class ClarificationLifecycleServiceTest {
 
   private static Clarification openRow() {
     return new Clarification(
-        CLR_ID, RUN_ID, ART_ID, 1, "Q-AUTH-001", "Question text", Clarification.STATUS_OPEN, null,
-        null, null, null, FIXED_NOW);
+        CLR_ID,
+        RUN_ID,
+        ART_ID,
+        1,
+        "Q-AUTH-001",
+        "Question text",
+        Clarification.STATUS_OPEN,
+        null,
+        null,
+        null,
+        null,
+        FIXED_NOW);
   }
 
   private static Clarification answeredRow(String status) {

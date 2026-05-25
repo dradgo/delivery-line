@@ -113,7 +113,8 @@ class ArtifactOperationServiceUnitTest {
     when(artifactOperationPort.markComplete("op_ready1234")).thenReturn(completedOperation);
     when(orchestrator.sweepAfterSpecRebuild("run_ready1234", "art_ready1234", 1, OPERATOR_ACTOR))
         .thenReturn(
-            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(0, 0, 0, java.util.List.of()));
+            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(
+                0, 0, 0, java.util.List.of()));
 
     ArtifactAvailabilityResult result =
         service.markAvailable(
@@ -206,7 +207,8 @@ class ArtifactOperationServiceUnitTest {
     when(artifactOperationPort.markComplete("op_ready1234")).thenReturn(completedOperation);
     when(orchestrator.sweepAfterSpecRebuild("run_ready1234", "art_ready1234", 1, OPERATOR_ACTOR))
         .thenReturn(
-            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(0, 0, 0, java.util.List.of()));
+            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(
+                0, 0, 0, java.util.List.of()));
 
     service.markAvailable(
         "art_ready1234",
@@ -325,7 +327,8 @@ class ArtifactOperationServiceUnitTest {
         mock(ArtifactRunnerExecutionPort.class);
     ClarificationLifecycleOrchestrator orchestrator =
         mock(ClarificationLifecycleOrchestrator.class);
-    when(orchestrator.sweepAfterSpecRebuild(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
+    when(orchestrator.sweepAfterSpecRebuild(
+            any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
         .thenReturn(
             new ClarificationLifecycleOrchestrator.LifecycleSweepResult(
                 2, 1, 1, java.util.List.of()));

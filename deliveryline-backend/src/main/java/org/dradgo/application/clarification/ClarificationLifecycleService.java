@@ -85,7 +85,8 @@ public class ClarificationLifecycleService {
    * supersession event by a buggy orchestrator path.
    */
   private static final Set<String> SUPERSEDED_REASONS =
-      Set.of("clarification_not_addressed", "superseded_by_unrelated_rebuild", "payload_read_failed");
+      Set.of(
+          "clarification_not_addressed", "superseded_by_unrelated_rebuild", "payload_read_failed");
 
   /**
    * P14 — per-method {@code noEffectReason} subset for {@link #markRejectedInvalid}. Excludes
@@ -119,11 +120,7 @@ public class ClarificationLifecycleService {
       ClarificationReadPort clarificationReadPort,
       ClarificationWritePort clarificationWritePort,
       WorkflowEventWritePort workflowEventWritePort) {
-    this(
-        clarificationReadPort,
-        clarificationWritePort,
-        workflowEventWritePort,
-        Clock.systemUTC());
+    this(clarificationReadPort, clarificationWritePort, workflowEventWritePort, Clock.systemUTC());
   }
 
   // Visible-for-tests constructor: fixed Clock for deterministic transitionedAt assertions.
@@ -332,7 +329,8 @@ public class ClarificationLifecycleService {
           actor.actorType().value());
       Clarification row = loadAndGuardRun(workflowRunPublicId, clarificationPublicId);
       TransitionPhase phase =
-          assertTransition(row, Clarification.STATUS_ANSWERED, Clarification.STATUS_REJECTED_INVALID);
+          assertTransition(
+              row, Clarification.STATUS_ANSWERED, Clarification.STATUS_REJECTED_INVALID);
       OffsetDateTime now = nowUtc();
       if (phase == TransitionPhase.ALREADY_AT_TARGET) {
         return new ClarificationLifecycleResult(
@@ -394,13 +392,14 @@ public class ClarificationLifecycleService {
    * P5/P15 — classify the attempted transition into one of three branches:
    *
    * <ul>
-   *   <li>If the row is already at the target state, return {@link TransitionPhase#ALREADY_AT_TARGET}
-   *       so the caller can short-circuit (idempotent replay during outer-tx retry).
+   *   <li>If the row is already at the target state, return {@link
+   *       TransitionPhase#ALREADY_AT_TARGET} so the caller can short-circuit (idempotent replay
+   *       during outer-tx retry).
    *   <li>If the row is at the required precursor state, return {@link TransitionPhase#PROCEED}.
    *   <li>If the row is at any other terminal state ({@code isTerminal()}), throw {@link
-   *       DomainErrorCode#CLARIFICATION_TERMINAL_STATE} so problem-details surfaces the typed
-   *       409 "terminal" mapping that {@link
-   *       org.dradgo.adapters.rest.ProblemDetailsCatalog} registered for it (P15).
+   *       DomainErrorCode#CLARIFICATION_TERMINAL_STATE} so problem-details surfaces the typed 409
+   *       "terminal" mapping that {@link org.dradgo.adapters.rest.ProblemDetailsCatalog} registered
+   *       for it (P15).
    *   <li>Otherwise throw {@link DomainErrorCode#ILLEGAL_CLARIFICATION_TRANSITION} (non-terminal
    *       precursor mismatch — e.g. {@code open -> accepted}).
    * </ul>
@@ -502,7 +501,10 @@ public class ClarificationLifecycleService {
     }
     if (!methodSubset.contains(reason)) {
       throw new IllegalArgumentException(
-          "noEffectReason '" + reason + "' is not allowed for this transition; allowed: " + methodSubset);
+          "noEffectReason '"
+              + reason
+              + "' is not allowed for this transition; allowed: "
+              + methodSubset);
     }
   }
 

@@ -523,8 +523,7 @@ class WorkflowCommandServiceContractTest {
   }
 
   @Test
-  void answerClarificationReplayReturnsTheOriginalStateWithoutDuplicateWrites()
-      throws IOException {
+  void answerClarificationReplayReturnsTheOriginalStateWithoutDuplicateWrites() throws IOException {
     String runId = insertRun("run_clrreplay1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
     seedAvailableSpecArtifact(runId, "art_clrreplay_v1");
     seedOpenClarification(runId, "art_clrreplay_v1", "clr_clrreplay01");
@@ -626,8 +625,7 @@ class WorkflowCommandServiceContractTest {
 
     DomainException error =
         assertThrows(
-            DomainException.class,
-            () -> service.answerClarification(secondDifferentFingerprint));
+            DomainException.class, () -> service.answerClarification(secondDifferentFingerprint));
 
     assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
     assertEquals(

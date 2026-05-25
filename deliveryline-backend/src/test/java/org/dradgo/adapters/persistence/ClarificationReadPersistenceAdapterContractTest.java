@@ -175,7 +175,8 @@ class ClarificationReadPersistenceAdapterContractTest {
         1,
         Clarification.STATUS_ANSWERED,
         "2026-05-25T10:01:00Z");
-    insertAcceptedClarification("clr_pending_acc", "run_clrcount123", artifactId, "2026-05-25T10:02:00Z");
+    insertAcceptedClarification(
+        "clr_pending_acc", "run_clrcount123", artifactId, "2026-05-25T10:02:00Z");
     insertSupersededClarification(
         "clr_pending_sup", "run_clrcount123", artifactId, artifactId, "2026-05-25T10:03:00Z");
     insertRejectedInvalidClarification(
@@ -327,7 +328,9 @@ class ClarificationReadPersistenceAdapterContractTest {
             workflowRunPublicId,
             "evt_" + publicId,
             "clarification.incorporated",
-            "{\"clarificationId\":\"" + publicId + "\",\"incorporatedIntoArtifactId\":\"art_clrcount123\"}");
+            "{\"clarificationId\":\""
+                + publicId
+                + "\",\"incorporatedIntoArtifactId\":\"art_clrcount123\"}");
     jdbcTemplate.update(
         "insert into clarifications (public_id, workflow_run_id, artifact_id, artifact_version, question_id, question_text, "
             + "status, answer_text, answered_by_actor, answered_by_actor_type, answered_at, accepted_at, incorporated_at, incorporation_event_id, idempotency_key, created_at) "

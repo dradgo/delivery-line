@@ -2,8 +2,8 @@ package org.dradgo.application.clarification;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,20 +38,19 @@ import org.springframework.stereotype.Service;
  * <p>{@link #acknowledgesQuestion(byte[], String)} uses a deterministic substring scan: the new
  * spec's payload bytes are searched for the literal {@code questionId} (case-sensitive — {@code
  * questionId} matches {@code ^[A-Za-z0-9._-]{1,128}$} so case-folding is unnecessary). This is
- * sufficient for fixture-driven testing but NOT shipping-ready: a false positive arises if the
- * spec mentions the questionId in any context (e.g. "Q-AUTH-001 was deferred"). Epic 3's runner
- * result schema will gain a structured {@code clarification_acknowledgements} block and the
- * orchestrator will switch to consuming that. The seam is the {@code acknowledgesQuestion} method.
+ * sufficient for fixture-driven testing but NOT shipping-ready: a false positive arises if the spec
+ * mentions the questionId in any context (e.g. "Q-AUTH-001 was deferred"). Epic 3's runner result
+ * schema will gain a structured {@code clarification_acknowledgements} block and the orchestrator
+ * will switch to consuming that. The seam is the {@code acknowledgesQuestion} method.
  *
  * <h3>P32/D5 — payload-read failure is fatal</h3>
  *
  * <p>If the {@code ArtifactPayloadStore} cannot return bytes for the new spec (record missing,
  * storageRef null/blank, or empty bytes), the orchestrator logs ERROR and raises {@code
- * DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)}. The exception propagates out of the outer
- * {@code ArtifactOperationService.newVersion} transaction, rolling back the new spec version
- * along with the unread clarification sweep. The operator sees the failure loudly rather than
- * every accepted clarification being silently terminal-superseded. Code-review decision D5
- * (2026-05-25).
+ * DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)}. The exception propagates out of the outer {@code
+ * ArtifactOperationService.newVersion} transaction, rolling back the new spec version along with
+ * the unread clarification sweep. The operator sees the failure loudly rather than every accepted
+ * clarification being silently terminal-superseded. Code-review decision D5 (2026-05-25).
  */
 @Service
 public class ClarificationLifecycleOrchestrator {
@@ -164,9 +163,9 @@ public class ClarificationLifecycleOrchestrator {
   }
 
   /**
-   * P32/D5 — fatal abort variant. Returns the payload bytes for the new spec or throws
-   * {@code DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)} when the storageRef is null/blank or
-   * the payload bytes are empty. The exception propagates out of the outer {@code
+   * P32/D5 — fatal abort variant. Returns the payload bytes for the new spec or throws {@code
+   * DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)} when the storageRef is null/blank or the payload
+   * bytes are empty. The exception propagates out of the outer {@code
    * ArtifactOperationService.newVersion} transaction so the new spec version is rolled back
    * alongside the unread clarification sweep. The previous "silent supersede every accepted
    * clarification with payload_read_failed" behavior is gone.

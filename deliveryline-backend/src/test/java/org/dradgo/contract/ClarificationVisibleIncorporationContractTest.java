@@ -55,7 +55,9 @@ class ClarificationVisibleIncorporationContractTest {
   @Test
   void everyAnsweredClarificationInEveryFixtureHasADownstreamLifecycleChain() throws IOException {
     if (!Files.isDirectory(FIXTURE_ROOT)) {
-      fail("[story 2.12] fixture-event-streams directory missing at " + FIXTURE_ROOT.toAbsolutePath());
+      fail(
+          "[story 2.12] fixture-event-streams directory missing at "
+              + FIXTURE_ROOT.toAbsolutePath());
       return;
     }
     ObjectMapper mapper = new ObjectMapper();
@@ -212,6 +214,7 @@ class ClarificationVisibleIncorporationContractTest {
    * state-machine transition shape per AC2.
    *
    * <p>Patches addressed:
+   *
    * <ul>
    *   <li>#1 group by composite key (workflowRunId, clarificationId), not clarificationId alone.
    *   <li>#2 validate transition shape — rejectedInvalid must directly follow answered with NO
@@ -225,7 +228,8 @@ class ClarificationVisibleIncorporationContractTest {
     for (EventRef ref : events) {
       if (ref.clarificationId() == null) continue;
       byScope
-          .computeIfAbsent(scopeKey(ref.workflowRunId(), ref.clarificationId()), k -> new ArrayList<>())
+          .computeIfAbsent(
+              scopeKey(ref.workflowRunId(), ref.clarificationId()), k -> new ArrayList<>())
           .add(ref.eventType());
     }
     List<String> violations = new ArrayList<>();
@@ -285,7 +289,8 @@ class ClarificationVisibleIncorporationContractTest {
         if (shapeViolation) {
           msg.append("with illegal transition shape (").append(shapeViolationDetail).append(")");
         } else {
-          msg.append("with no downstream chain (expected accepted+terminal or rejectedInvalid or noEffectReason)");
+          msg.append(
+              "with no downstream chain (expected accepted+terminal or rejectedInvalid or noEffectReason)");
         }
         msg.append("; seen=[").append(String.join(",", trailing)).append("]");
         violations.add(msg.toString());

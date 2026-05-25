@@ -51,7 +51,8 @@ class ClarificationWritePersistenceAdapterLifecycleContractTest {
   void markAcceptedPersistsAcceptedAtAndStatus() {
     insertRun("run_write_life_1", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
     Long artifactId = insertArtifact("run_write_life_1", "art_write_life_v1", 1);
-    insertAnsweredClarification("clr_write_accept", "run_write_life_1", artifactId, NOW.minusMinutes(5));
+    insertAnsweredClarification(
+        "clr_write_accept", "run_write_life_1", artifactId, NOW.minusMinutes(5));
 
     Clarification updated =
         clarificationWritePort.markAccepted(new MarkAccepted("clr_write_accept", NOW));
@@ -70,7 +71,8 @@ class ClarificationWritePersistenceAdapterLifecycleContractTest {
     insertRun("run_write_life_2", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
     Long artifactV1Id = insertArtifact("run_write_life_2", "art_write_life_v1", 1);
     insertArtifact("run_write_life_2", "art_write_life_v2", 2);
-    insertAcceptedClarification("clr_write_inc", "run_write_life_2", artifactV1Id, NOW.minusMinutes(10));
+    insertAcceptedClarification(
+        "clr_write_inc", "run_write_life_2", artifactV1Id, NOW.minusMinutes(10));
     Long eventId =
         insertWorkflowEvent(
             "run_write_life_2",
@@ -80,8 +82,7 @@ class ClarificationWritePersistenceAdapterLifecycleContractTest {
 
     Clarification updated =
         clarificationWritePort.markIncorporated(
-            new MarkIncorporated(
-                "clr_write_inc", "art_write_life_v2", 2, "evt_write_inc", NOW));
+            new MarkIncorporated("clr_write_inc", "art_write_life_v2", 2, "evt_write_inc", NOW));
     Optional<ClarificationLifecycleSnapshot> readBack =
         clarificationReadPort.findLifecycleSnapshotByPublicId("clr_write_inc");
     Long persistedEventId =
@@ -103,16 +104,13 @@ class ClarificationWritePersistenceAdapterLifecycleContractTest {
     insertRun("run_write_life_3", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
     Long artifactV1Id = insertArtifact("run_write_life_3", "art_write_life_v1", 1);
     insertArtifact("run_write_life_3", "art_write_life_v2", 2);
-    insertAcceptedClarification("clr_write_super", "run_write_life_3", artifactV1Id, NOW.minusMinutes(20));
+    insertAcceptedClarification(
+        "clr_write_super", "run_write_life_3", artifactV1Id, NOW.minusMinutes(20));
 
     Clarification updated =
         clarificationWritePort.markSuperseded(
             new MarkSuperseded(
-                "clr_write_super",
-                "art_write_life_v2",
-                2,
-                "clarification_not_addressed",
-                NOW));
+                "clr_write_super", "art_write_life_v2", 2, "clarification_not_addressed", NOW));
     Optional<ClarificationLifecycleSnapshot> readBack =
         clarificationReadPort.findLifecycleSnapshotByPublicId("clr_write_super");
 
@@ -127,7 +125,8 @@ class ClarificationWritePersistenceAdapterLifecycleContractTest {
   void markRejectedInvalidPersistsNoEffectReason() {
     insertRun("run_write_life_4", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
     Long artifactId = insertArtifact("run_write_life_4", "art_write_life_v1", 1);
-    insertAnsweredClarification("clr_write_reject", "run_write_life_4", artifactId, NOW.minusMinutes(3));
+    insertAnsweredClarification(
+        "clr_write_reject", "run_write_life_4", artifactId, NOW.minusMinutes(3));
 
     Clarification updated =
         clarificationWritePort.markRejectedInvalid(

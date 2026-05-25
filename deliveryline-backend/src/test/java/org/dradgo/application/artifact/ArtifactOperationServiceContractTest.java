@@ -203,7 +203,8 @@ class ArtifactOperationServiceContractTest {
     seedAcceptedClarification(
         "run_clrsweep1234", v1.artifact().publicId(), "clr_sweep_sup", "Q-SWEEP-SUP", "answer-sup");
 
-    byte[] v2Payload = "Updated spec acknowledges Q-SWEEP-INC but not the other question".getBytes();
+    byte[] v2Payload =
+        "Updated spec acknowledges Q-SWEEP-INC but not the other question".getBytes();
     String v2Checksum = ArtifactChecksum.digestHex("SHA-256", v2Payload).orElseThrow();
     RecordArtifactOperationResult v2 =
         service.recordOperation(
@@ -221,10 +222,7 @@ class ArtifactOperationServiceContractTest {
     String v2StorageRef = "artifacts/run_clrsweep1234/" + v2.artifact().publicId() + "/v2/spec.md";
 
     service.markAvailable(
-        v2.artifact().publicId(),
-        new ArtifactChecksum("SHA-256", v2Checksum),
-        v2StorageRef,
-        actor);
+        v2.artifact().publicId(), new ArtifactChecksum("SHA-256", v2Checksum), v2StorageRef, actor);
 
     assertEquals(
         "incorporated",
