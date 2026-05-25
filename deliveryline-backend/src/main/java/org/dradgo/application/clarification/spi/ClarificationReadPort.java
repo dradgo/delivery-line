@@ -25,6 +25,15 @@ public interface ClarificationReadPort {
   Optional<Clarification> findByPublicId(String clarificationPublicId);
 
   /**
+   * P30/D2 — pessimistic-lock variant of {@link #findByPublicId}. Emits {@code SELECT ... FOR
+   * UPDATE} so concurrent lifecycle transitions on the same clarification row serialize. Caller
+   * MUST be inside a transaction (the lifecycle service runs under the spec-rebuild outer {@code
+   * @Transactional}). Used exclusively by {@code ClarificationLifecycleService.loadAndGuardRun}.
+   */
+  Optional<Clarification> findByPublicIdForUpdate(
+      String workflowRunPublicId, String clarificationPublicId);
+
+  /**
    * All non-archived clarifications attached to the supplied workflow run, status-grouped then
    * {@code created_at ASC}. Backs {@code WorkflowInspectionService.getClarifications}.
    */

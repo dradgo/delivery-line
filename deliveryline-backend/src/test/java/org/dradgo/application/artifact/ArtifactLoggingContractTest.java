@@ -24,6 +24,7 @@ import org.dradgo.application.artifact.spi.ArtifactOperationPort;
 import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.artifact.spi.ArtifactRunnerExecutionPort;
+import org.dradgo.application.clarification.ClarificationLifecycleOrchestrator;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactOperationStatus;
@@ -62,7 +63,12 @@ class ArtifactLoggingContractTest {
     ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
-            recordPort, operationPort, payloadStore, eventPort, runnerPort);
+            recordPort,
+            operationPort,
+            payloadStore,
+            eventPort,
+            runnerPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot draft = pendingArtifact("art_log1234", "run_log1234");
     ArtifactOperationSnapshot pending =
@@ -125,7 +131,12 @@ class ArtifactLoggingContractTest {
     ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
-            recordPort, operationPort, payloadStore, eventPort, runnerPort);
+            recordPort,
+            operationPort,
+            payloadStore,
+            eventPort,
+            runnerPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot draft = pendingArtifact("art_late9999", "run_late9999");
     ArtifactRecordSnapshot late = lateOrStaleArtifact("art_late9999", "run_late9999");
@@ -193,7 +204,12 @@ class ArtifactLoggingContractTest {
     ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
-            recordPort, operationPort, payloadStore, eventPort, runnerPort);
+            recordPort,
+            operationPort,
+            payloadStore,
+            eventPort,
+            runnerPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot draft = pendingArtifact("art_conflict7777", "run_conflict7777");
     when(operationPort.findReplay(
@@ -323,7 +339,12 @@ class ArtifactLoggingContractTest {
     ArtifactRunnerExecutionPort runnerPort = mock(ArtifactRunnerExecutionPort.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
-            recordPort, operationPort, payloadStore, eventPort, runnerPort);
+            recordPort,
+            operationPort,
+            payloadStore,
+            eventPort,
+            runnerPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     when(recordPort.findLatestByWorkflowRunIdAndArtifactType(
             "run_intent1234", ArtifactType.SPEC.value()))

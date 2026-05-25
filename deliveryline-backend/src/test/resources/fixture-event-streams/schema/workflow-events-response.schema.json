@@ -228,7 +228,16 @@
               "type": "string",
               "pattern": "^art_[A-Za-z0-9_]{4,}$"
             },
-            "noEffectReason": { "type": "string", "minLength": 1 }
+            "noEffectReason": {
+              "type": "string",
+              "enum": [
+                "clarification_not_addressed",
+                "superseded_by_unrelated_rebuild",
+                "payload_read_failed",
+                "pm_marked_invalid",
+                "spec_runner_skipped_question"
+              ]
+            }
           }
         }
       }

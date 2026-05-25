@@ -14,17 +14,12 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
-import org.dradgo.application.artifact.ArtifactRecordSnapshot;
-import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
-import org.dradgo.domain.registry.ArtifactStatus;
-import org.dradgo.domain.registry.ArtifactType;
-import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,7 +54,6 @@ class ClarificationLifecycleServiceTest {
 
   private final ClarificationReadPort readPort = Mockito.mock(ClarificationReadPort.class);
   private final ClarificationWritePort writePort = Mockito.mock(ClarificationWritePort.class);
-  private final ArtifactRecordPort artifactRecordPort = Mockito.mock(ArtifactRecordPort.class);
   private final WorkflowEventWritePort eventWritePort = Mockito.mock(WorkflowEventWritePort.class);
   private ClarificationLifecycleService service;
 
@@ -67,13 +61,14 @@ class ClarificationLifecycleServiceTest {
   void setUp() {
     Clock fixed = Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC);
     service =
-        new ClarificationLifecycleService(
-            readPort, writePort, artifactRecordPort, eventWritePort, fixed);
+        new ClarificationLifecycleService(readPort, writePort, eventWritePort, fixed);
   }
 
   @Test
   void markAcceptedHappyPath() {
     when(readPort.findByPublicId(CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
     when(writePort.markAccepted(any()))
         .thenReturn(answeredRow(Clarification.STATUS_ACCEPTED));
@@ -98,6 +93,8 @@ class ClarificationLifecycleServiceTest {
   void markAcceptedFromOpenIsIllegalTransition() {
     when(readPort.findByPublicId(CLR_ID))
         .thenReturn(Optional.of(openRow()));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
+        .thenReturn(Optional.of(openRow()));
 
     assertThatThrownBy(() -> service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM))
         .isInstanceOf(DomainException.class)
@@ -110,25 +107,26 @@ class ClarificationLifecycleServiceTest {
   @Test
   void markAcceptedFromSiblingRunRaisesClarificationNotFound() {
     when(readPort.findByPublicId(CLR_ID))
-        .thenReturn(Optional.of(answeredRowWithRun("run_test_other_999")));
+        .thenReturn(Optional.of(answeredRowForRun("run_test_other_999")));
 
     assertThatThrownBy(() -> service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM))
         .isInstanceOf(DomainException.class)
         .extracting("errorCode")
         .isEqualTo(DomainErrorCode.CLARIFICATION_NOT_FOUND);
+    verify(readPort, never()).findByPublicIdForUpdate(RUN_ID, CLR_ID);
   }
 
   @Test
   void markIncorporatedHappyPath() {
     when(readPort.findByPublicId(CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
-    when(artifactRecordPort.findByPublicId(NEW_SPEC_ID))
-        .thenReturn(Optional.of(specV2()));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
     when(writePort.markIncorporated(any()))
         .thenReturn(answeredRow(Clarification.STATUS_INCORPORATED));
 
     ClarificationLifecycleResult result =
-        service.markIncorporated(RUN_ID, CLR_ID, NEW_SPEC_ID, ActorContext.SYSTEM);
+        service.markIncorporated(RUN_ID, CLR_ID, NEW_SPEC_ID, 2, ActorContext.SYSTEM);
 
     assertThat(result.status()).isEqualTo(Clarification.STATUS_INCORPORATED);
     ArgumentCaptor<WorkflowEventRecord> events = ArgumentCaptor.forClass(WorkflowEventRecord.class);
@@ -141,30 +139,16 @@ class ClarificationLifecycleServiceTest {
   }
 
   @Test
-  void markIncorporatedRaisesInternalErrorWhenArtifactMissing() {
-    when(readPort.findByPublicId(CLR_ID))
-        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
-    when(artifactRecordPort.findByPublicId(NEW_SPEC_ID)).thenReturn(Optional.empty());
-
-    assertThatThrownBy(
-            () -> service.markIncorporated(RUN_ID, CLR_ID, NEW_SPEC_ID, ActorContext.SYSTEM))
-        .isInstanceOf(DomainException.class)
-        .extracting("errorCode")
-        .isEqualTo(DomainErrorCode.INTERNAL_ERROR);
-    verify(eventWritePort, never()).append(any());
-    verify(writePort, never()).markIncorporated(any());
-  }
-
-  @Test
   void markSupersededHappyPath() {
     when(readPort.findByPublicId(CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
-    when(artifactRecordPort.findByPublicId(NEW_SPEC_ID)).thenReturn(Optional.of(specV2()));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
     when(writePort.markSuperseded(any()))
         .thenReturn(answeredRow(Clarification.STATUS_SUPERSEDED));
 
     service.markSuperseded(
-        RUN_ID, CLR_ID, NEW_SPEC_ID, "clarification_not_addressed", ActorContext.SYSTEM);
+        RUN_ID, CLR_ID, NEW_SPEC_ID, 2, "clarification_not_addressed", ActorContext.SYSTEM);
     ArgumentCaptor<WorkflowEventRecord> events = ArgumentCaptor.forClass(WorkflowEventRecord.class);
     verify(eventWritePort).append(events.capture());
     assertThat(events.getValue().eventType()).isEqualTo(WorkflowEventType.CLARIFICATION_SUPERSEDED);
@@ -176,7 +160,7 @@ class ClarificationLifecycleServiceTest {
   @Test
   void markSupersededRejectsBlankNoEffectReason() {
     assertThatThrownBy(
-            () -> service.markSuperseded(RUN_ID, CLR_ID, NEW_SPEC_ID, "", ActorContext.SYSTEM))
+            () -> service.markSuperseded(RUN_ID, CLR_ID, NEW_SPEC_ID, 2, "", ActorContext.SYSTEM))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -185,13 +169,25 @@ class ClarificationLifecycleServiceTest {
     assertThatThrownBy(
             () ->
                 service.markSuperseded(
-                    RUN_ID, CLR_ID, NEW_SPEC_ID, "totally_made_up_token", ActorContext.SYSTEM))
+                    RUN_ID, CLR_ID, NEW_SPEC_ID, 2, "totally_made_up_token", ActorContext.SYSTEM))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void markSupersededRejectsPmOnlyVocabularyToken() {
+    // P14 — per-method vocab subset: pm_marked_invalid is reserved for markRejectedInvalid.
+    assertThatThrownBy(
+            () ->
+                service.markSuperseded(
+                    RUN_ID, CLR_ID, NEW_SPEC_ID, 2, "pm_marked_invalid", ActorContext.SYSTEM))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void markRejectedInvalidHappyPath() {
     when(readPort.findByPublicId(CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
     when(writePort.markRejectedInvalid(any()))
         .thenReturn(answeredRow(Clarification.STATUS_REJECTED_INVALID));
@@ -208,6 +204,8 @@ class ClarificationLifecycleServiceTest {
   void markRejectedInvalidFromAcceptedIsIllegal() {
     when(readPort.findByPublicId(CLR_ID))
         .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
 
     assertThatThrownBy(
             () ->
@@ -218,6 +216,22 @@ class ClarificationLifecycleServiceTest {
         .isEqualTo(DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION);
   }
 
+  @Test
+  void markIncorporatedReissuedOnTerminalRowIsIllegalTransition() {
+    when(readPort.findByPublicId(CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_INCORPORATED)));
+    when(readPort.findByPublicIdForUpdate(RUN_ID, CLR_ID))
+        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_INCORPORATED)));
+
+    assertThatThrownBy(
+            () -> service.markIncorporated(RUN_ID, CLR_ID, NEW_SPEC_ID, 2, ActorContext.SYSTEM))
+        .isInstanceOf(DomainException.class)
+        .extracting("errorCode")
+        .isEqualTo(DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION);
+    verify(writePort, never()).markIncorporated(any());
+    verify(eventWritePort, never()).append(any());
+  }
+
   private static Clarification openRow() {
     return new Clarification(
         CLR_ID, RUN_ID, ART_ID, 1, "Q-AUTH-001", "Question text", Clarification.STATUS_OPEN, null,
@@ -225,14 +239,15 @@ class ClarificationLifecycleServiceTest {
   }
 
   private static Clarification answeredRow(String status) {
-    return answeredRowWithRun(status, RUN_ID);
+    return answeredRowWithStatusAndRun(status, RUN_ID);
   }
 
-  private static Clarification answeredRowWithRun(String runId) {
-    return answeredRowWithRun(Clarification.STATUS_ANSWERED, runId);
+  /** P24 — rename: single-arg variant takes a runId (status defaults to ANSWERED). */
+  private static Clarification answeredRowForRun(String runId) {
+    return answeredRowWithStatusAndRun(Clarification.STATUS_ANSWERED, runId);
   }
 
-  private static Clarification answeredRowWithRun(String status, String runId) {
+  private static Clarification answeredRowWithStatusAndRun(String status, String runId) {
     return new Clarification(
         CLR_ID,
         runId,
@@ -246,24 +261,5 @@ class ClarificationLifecycleServiceTest {
         ActorType.HUMAN,
         FIXED_NOW.minusMinutes(5),
         FIXED_NOW.minusHours(1));
-  }
-
-  private static ArtifactRecordSnapshot specV2() {
-    return new ArtifactRecordSnapshot(
-        NEW_SPEC_ID,
-        RUN_ID,
-        ArtifactType.SPEC,
-        2,
-        ART_ID,
-        DataClassification.LOCAL_ONLY,
-        "spec/v2/spec.md",
-        "SHA-256",
-        "abc123",
-        null,
-        null,
-        ArtifactStatus.AVAILABLE,
-        null,
-        false,
-        FIXED_NOW);
   }
 }

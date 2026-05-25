@@ -54,6 +54,7 @@ class ArtifactOperationServiceContractTest {
 
   @AfterEach
   void cleanDatabase() {
+    jdbcTemplate.update("delete from clarifications");
     jdbcTemplate.update("delete from artifact_operations");
     jdbcTemplate.update("delete from artifacts");
     jdbcTemplate.update("delete from workflow_events");
@@ -171,6 +172,93 @@ class ArtifactOperationServiceContractTest {
         Integer.valueOf(2),
         eventDetailsArtifactVersion,
         "AC10: event details.artifactVersion must record the v2 spec's version number");
+  }
+
+  @Test
+  void markAvailableOnNewSpecVersionSweepsAcceptedClarificationsUsingReadablePayload() {
+    insertRun("run_clrsweep1234", WorkflowState.EXECUTING);
+    ActorContext actor = new ActorContext("alex", ActorType.HUMAN, "corr-clrsweep");
+
+    byte[] v1Payload = "baseline spec".getBytes();
+    String v1Checksum = ArtifactChecksum.digestHex("SHA-256", v1Payload).orElseThrow();
+    RecordArtifactOperationResult v1 =
+        service.recordOperation(
+            new RecordArtifactOperationCommand(
+                "run_clrsweep1234",
+                ArtifactType.SPEC,
+                ArtifactOperationType.CREATE,
+                "idem-clrsweep-create-" + System.nanoTime(),
+                "spec.md",
+                v1Payload,
+                "alex",
+                ActorType.HUMAN,
+                "corr-clrsweep",
+                null));
+    String v1StorageRef = "artifacts/run_clrsweep1234/" + v1.artifact().publicId() + "/v1/spec.md";
+    service.markAvailable(
+        v1.artifact().publicId(), new ArtifactChecksum("SHA-256", v1Checksum), v1StorageRef, actor);
+
+    seedAcceptedClarification(
+        "run_clrsweep1234", v1.artifact().publicId(), "clr_sweep_inc", "Q-SWEEP-INC", "answer-inc");
+    seedAcceptedClarification(
+        "run_clrsweep1234", v1.artifact().publicId(), "clr_sweep_sup", "Q-SWEEP-SUP", "answer-sup");
+
+    byte[] v2Payload = "Updated spec acknowledges Q-SWEEP-INC but not the other question".getBytes();
+    String v2Checksum = ArtifactChecksum.digestHex("SHA-256", v2Payload).orElseThrow();
+    RecordArtifactOperationResult v2 =
+        service.recordOperation(
+            new RecordArtifactOperationCommand(
+                "run_clrsweep1234",
+                ArtifactType.SPEC,
+                ArtifactOperationType.UPDATE,
+                "idem-clrsweep-update-" + System.nanoTime(),
+                "spec.md",
+                v2Payload,
+                "alex",
+                ActorType.HUMAN,
+                "corr-clrsweep",
+                null));
+    String v2StorageRef = "artifacts/run_clrsweep1234/" + v2.artifact().publicId() + "/v2/spec.md";
+
+    service.markAvailable(
+        v2.artifact().publicId(),
+        new ArtifactChecksum("SHA-256", v2Checksum),
+        v2StorageRef,
+        actor);
+
+    assertEquals(
+        "incorporated",
+        jdbcTemplate.queryForObject(
+            "select status from clarifications where public_id = ?",
+            String.class,
+            "clr_sweep_inc"));
+    assertEquals(
+        "superseded",
+        jdbcTemplate.queryForObject(
+            "select status from clarifications where public_id = ?",
+            String.class,
+            "clr_sweep_sup"));
+    assertEquals(
+        Integer.valueOf(1),
+        jdbcTemplate.queryForObject(
+            "select count(*) from workflow_events e "
+                + "join workflow_runs r on r.id = e.workflow_run_id "
+                + "where r.public_id = ? and e.event_type = 'clarification.incorporated' "
+                + "and e.details->>'clarificationId' = 'clr_sweep_inc' "
+                + "and e.details->>'incorporatedIntoArtifactId' = ?",
+            Integer.class,
+            "run_clrsweep1234",
+            v2.artifact().publicId()));
+    assertEquals(
+        Integer.valueOf(1),
+        jdbcTemplate.queryForObject(
+            "select count(*) from workflow_events e "
+                + "join workflow_runs r on r.id = e.workflow_run_id "
+                + "where r.public_id = ? and e.event_type = 'clarification.superseded' "
+                + "and e.details->>'clarificationId' = 'clr_sweep_sup' "
+                + "and e.details->>'noEffectReason' = 'clarification_not_addressed'",
+            Integer.class,
+            "run_clrsweep1234"));
   }
 
   @Test
@@ -579,6 +667,36 @@ class ArtifactOperationServiceContractTest {
         "insert into workflow_runs (public_id, current_state) values (?, ?)",
         publicId,
         state.value());
+  }
+
+  private void seedAcceptedClarification(
+      String workflowRunPublicId,
+      String artifactPublicId,
+      String clarificationPublicId,
+      String questionId,
+      String answerText) {
+    Long runId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_runs where public_id = ?", Long.class, workflowRunPublicId);
+    Long artifactId =
+        jdbcTemplate.queryForObject(
+            "select id from artifacts where public_id = ?", Long.class, artifactPublicId);
+    OffsetDateTime answeredAt = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(2);
+    OffsetDateTime acceptedAt = answeredAt.plusMinutes(1);
+    jdbcTemplate.update(
+        "insert into clarifications (public_id, workflow_run_id, artifact_id, artifact_version, question_id, question_text, "
+            + "status, answer_text, answered_by_actor, answered_by_actor_type, answered_at, accepted_at, idempotency_key, created_at) "
+            + "values (?, ?, ?, 1, ?, ?, 'accepted', ?, 'alex', 'human', ?, ?, ?, ?)",
+        clarificationPublicId,
+        runId,
+        artifactId,
+        questionId,
+        "Question for " + questionId + "?",
+        answerText,
+        answeredAt,
+        acceptedAt,
+        "idem-" + clarificationPublicId,
+        answeredAt.minusMinutes(1));
   }
 
   /**

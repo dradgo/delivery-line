@@ -124,25 +124,50 @@ public class WorkflowInspectionService {
   /**
    * Story 2.11 AC9: status-grouped clarifications scoped to a single artifact. Same ordering
    * contract as {@link #getClarifications(String)}.
+   *
+   * <p>P16 — caller MUST supply the {@code workflowRunPublicId} they expect the artifact's
+   * clarifications to belong to. Rows from sibling runs are filtered out (Trap T11 cross-run /
+   * cross-tenant leak guard). Returning an empty list is the safe default when the artifact is
+   * unrelated to the caller's run.
    */
   @Transactional(readOnly = true)
-  public List<ClarificationView> getClarificationsForArtifact(String artifactPublicId) {
+  public List<ClarificationView> getClarificationsForArtifact(
+      String workflowRunPublicId, String artifactPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     PublicIdPrefixes.require(artifactPublicId, PublicIdPrefixes.ARTIFACT);
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
     String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactPublicId);
     try {
-      log.info("getClarificationsForArtifact entry artifactId={}", artifactPublicId);
+      log.info(
+          "getClarificationsForArtifact entry workflowRunId={} artifactId={}",
+          workflowRunPublicId,
+          artifactPublicId);
       List<Clarification> rows = clarificationReadPort.listByArtifactId(artifactPublicId);
       List<ClarificationView> views = new ArrayList<>(rows.size());
+      int filteredOut = 0;
       for (Clarification row : rows) {
-        views.add(toClarificationView(row));
+        if (workflowRunPublicId.equals(row.workflowRunId())) {
+          views.add(toClarificationView(row));
+        } else {
+          filteredOut++;
+        }
+      }
+      if (filteredOut > 0) {
+        log.warn(
+            "getClarificationsForArtifact cross-run-filtered workflowRunId={} artifactId={} filteredCount={}",
+            workflowRunPublicId,
+            artifactPublicId,
+            filteredOut);
       }
       log.info(
-          "getClarificationsForArtifact success artifactId={} count={}",
+          "getClarificationsForArtifact success workflowRunId={} artifactId={} count={}",
+          workflowRunPublicId,
           artifactPublicId,
           views.size());
       return List.copyOf(views);
     } finally {
       MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
   }
 
@@ -194,11 +219,15 @@ public class WorkflowInspectionService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
     try {
       log.info("getRunSummary entry workflowRunId={}", workflowRunPublicId);
+      // P28 — read ordering: under READ COMMITTED, putting countPendingByWorkflowRun LAST means
+      // any concurrent transaction that flipped a clarification to incorporated/rejected_invalid
+      // commits BEFORE we read the count, so we never surface a stale-high "pending" alongside
+      // a fresh latest-event-type of `clarification.incorporated`. Bumping the @Transactional to
+      // REPEATABLE_READ would also work but adds lock-conflict risk; reorder is cheaper.
       WorkflowRunSnapshot run =
           workflowRunReadPort
               .findByPublicId(workflowRunPublicId)
               .orElseThrow(() -> runNotFound(workflowRunPublicId));
-      int pending = clarificationReadPort.countPendingByWorkflowRun(workflowRunPublicId);
       Optional<WorkflowEventRecord> latest =
           workflowEventReadPort.findLatestByWorkflowRunPublicId(workflowRunPublicId);
       String ticketRef =
@@ -206,6 +235,7 @@ public class WorkflowInspectionService {
               .findActiveLinkByWorkflowRun(workflowRunPublicId)
               .map(IntegrationLink::externalRef)
               .orElse(null);
+      int pending = clarificationReadPort.countPendingByWorkflowRun(workflowRunPublicId);
       WorkflowRunDetailedSummaryView view =
           new WorkflowRunDetailedSummaryView(
               run.publicId(),

@@ -55,6 +55,29 @@ public class ClarificationReadPersistenceAdapter implements ClarificationReadPor
   }
 
   @Override
+  public Optional<Clarification> findByPublicIdForUpdate(
+      String workflowRunPublicId, String clarificationPublicId) {
+    // P30/D2 — NO @Transactional(readOnly=true) here: the SELECT ... FOR UPDATE must execute
+    // inside the caller's existing read-write transaction so the row lock is held until that
+    // outer transaction commits or rolls back.
+    Optional<ClarificationEntity> row =
+        clarificationRepository.findByWorkflowRunPublicIdAndPublicIdAndArchivedAtIsNullForUpdate(
+            workflowRunPublicId, clarificationPublicId);
+    if (row.isEmpty()) {
+      log.debug(
+          "clarification read-for-update miss clarificationId={}", clarificationPublicId);
+      return Optional.empty();
+    }
+    Clarification projection = clarificationEntityMapper.toProjection(row.get());
+    log.debug(
+        "clarification read-for-update hit clarificationId={} workflowRunId={} status={}",
+        projection.publicId(),
+        projection.workflowRunId(),
+        projection.status());
+    return Optional.of(projection);
+  }
+
+  @Override
   @Transactional(readOnly = true)
   public List<Clarification> listByWorkflowRunId(String workflowRunPublicId) {
     log.info("clarification list-by-run entry workflowRunId={}", workflowRunPublicId);

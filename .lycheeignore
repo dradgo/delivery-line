@@ -1,0 +1,26 @@
+# .lycheeignore — silence known-flaky external URL patterns for the
+# docs-link-check CI tier (story 1.22 AC8). One regex per line; comments
+# (lines starting with `#`) and blank lines are ignored by lychee.
+#
+# Each entry below documents WHY the URL is suppressed. Add new entries
+# sparingly — every silenced URL is a link we cannot mechanically verify;
+# prefer fixing the link or finding a more stable target before adding here.
+
+# docs.docker.com — install-guide URLs use HTTP redirects between marketing
+# and product sub-domains that occasionally 404 mid-chain even when the
+# canonical destination is healthy. The links remain present in the docs
+# because they are the canonical operator-facing references.
+^https://docs\.docker\.com/
+
+# linear.app — public marketing pages (e.g. settings/api landing) sometimes
+# bot-block lychee's User-Agent. The URLs are still useful to readers.
+^https://linear\.app/
+
+# github.com — silence ONLY JS-rendered heading anchors on `blob/` views
+# (lychee's static fetch can't see anchors injected by GitHub's frontend).
+# Issue / PR / comment / code-line anchors are NOT covered — those are
+# static HTML and should be validated; broken back-references must fail.
+^https://github\.com/[^/]+/[^/]+/blob/[^#]+#[A-Za-z0-9_-]+$
+
+# adoptium.net — package-listing pages occasionally rate-limit lychee in CI.
+^https://(packages\.|www\.)?adoptium\.net/

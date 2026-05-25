@@ -22,6 +22,7 @@ import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.artifact.spi.ArtifactRunnerExecutionPort;
 import org.dradgo.application.artifact.spi.ArtifactWorkflowRunStatePort;
+import org.dradgo.application.clarification.ClarificationLifecycleOrchestrator;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactOperationStatus;
@@ -56,13 +57,16 @@ class ArtifactOperationServiceUnitTest {
     ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
     ArtifactRunnerExecutionPort artifactRunnerExecutionPort =
         mock(ArtifactRunnerExecutionPort.class);
+    ClarificationLifecycleOrchestrator orchestrator =
+        mock(ClarificationLifecycleOrchestrator.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
             artifactRecordPort,
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            orchestrator);
     ArtifactRecordSnapshot availableArtifact =
         new ArtifactRecordSnapshot(
             "art_ready1234",
@@ -107,6 +111,9 @@ class ArtifactOperationServiceUnitTest {
             "art_ready1234", VALID_CHECKSUM, "artifacts/run_ready1234/art_ready1234/v1/spec.md"))
         .thenReturn(availableArtifact);
     when(artifactOperationPort.markComplete("op_ready1234")).thenReturn(completedOperation);
+    when(orchestrator.sweepAfterSpecRebuild("run_ready1234", "art_ready1234", 1, OPERATOR_ACTOR))
+        .thenReturn(
+            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(0, 0, 0, java.util.List.of()));
 
     ArtifactAvailabilityResult result =
         service.markAvailable(
@@ -142,13 +149,16 @@ class ArtifactOperationServiceUnitTest {
     ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
     ArtifactRunnerExecutionPort artifactRunnerExecutionPort =
         mock(ArtifactRunnerExecutionPort.class);
+    ClarificationLifecycleOrchestrator orchestrator =
+        mock(ClarificationLifecycleOrchestrator.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
             artifactRecordPort,
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            orchestrator);
     ArtifactRecordSnapshot availableArtifact =
         new ArtifactRecordSnapshot(
             "art_ready1234",
@@ -194,6 +204,9 @@ class ArtifactOperationServiceUnitTest {
             "art_ready1234", VALID_CHECKSUM, "artifacts/run_ready1234/art_ready1234/v1/spec.md"))
         .thenReturn(availableArtifact);
     when(artifactOperationPort.markComplete("op_ready1234")).thenReturn(completedOperation);
+    when(orchestrator.sweepAfterSpecRebuild("run_ready1234", "art_ready1234", 1, OPERATOR_ACTOR))
+        .thenReturn(
+            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(0, 0, 0, java.util.List.of()));
 
     service.markAvailable(
         "art_ready1234",
@@ -224,7 +237,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot draft =
         new ArtifactRecordSnapshot(
             "art_draft1234",
@@ -263,13 +277,16 @@ class ArtifactOperationServiceUnitTest {
     ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
     ArtifactRunnerExecutionPort artifactRunnerExecutionPort =
         mock(ArtifactRunnerExecutionPort.class);
+    ClarificationLifecycleOrchestrator orchestrator =
+        mock(ClarificationLifecycleOrchestrator.class);
     ArtifactOperationService service =
         ArtifactOperationService.withoutWorkflowRunStateGuard(
             artifactRecordPort,
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            orchestrator);
     ArtifactRecordSnapshot nextVersion =
         new ArtifactRecordSnapshot(
             "art_version1234",
@@ -287,6 +304,7 @@ class ArtifactOperationServiceUnitTest {
     when(artifactRecordPort.createNextVersion(any())).thenReturn(nextVersion);
 
     assertEquals(nextVersion, service.newVersion("art_parent1234", "spec-v2.md", OPERATOR_ACTOR));
+    verifyNoInteractions(orchestrator);
     verify(artifactRecordPort)
         .createNextVersion(
             org.mockito.ArgumentMatchers.argThat(
@@ -295,6 +313,85 @@ class ArtifactOperationServiceUnitTest {
                         && "spec.md".equals(request.payloadRef())
                         && request.actor().actorType() == ActorType.HUMAN
                         && "alex".equals(request.actor().actorIdentity())));
+  }
+
+  @Test
+  void markAvailableOnSpecArtifactTriggersClarificationSweepAfterAvailability() {
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ArtifactOperationPort artifactOperationPort = mock(ArtifactOperationPort.class);
+    ArtifactPayloadStore artifactPayloadStore = mock(ArtifactPayloadStore.class);
+    ArtifactEventPort artifactEventPort = mock(ArtifactEventPort.class);
+    ArtifactRunnerExecutionPort artifactRunnerExecutionPort =
+        mock(ArtifactRunnerExecutionPort.class);
+    ClarificationLifecycleOrchestrator orchestrator =
+        mock(ClarificationLifecycleOrchestrator.class);
+    when(orchestrator.sweepAfterSpecRebuild(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
+        .thenReturn(
+            new ClarificationLifecycleOrchestrator.LifecycleSweepResult(
+                2, 1, 1, java.util.List.of()));
+    ArtifactOperationService service =
+        ArtifactOperationService.withoutWorkflowRunStateGuard(
+            artifactRecordPort,
+            artifactOperationPort,
+            artifactPayloadStore,
+            artifactEventPort,
+            artifactRunnerExecutionPort,
+            orchestrator);
+    ArtifactRecordSnapshot availableArtifact =
+        new ArtifactRecordSnapshot(
+            "art_spec_v2_123",
+            "run_ready1234",
+            ArtifactType.SPEC,
+            2,
+            "art_spec_v1_123",
+            DataClassification.SHAREABLE_REDACTED,
+            "artifacts/run_ready1234/art_spec_v2_123/v2/spec.md",
+            "SHA-256",
+            PAYLOAD_DIGEST_HEX,
+            ArtifactStatus.AVAILABLE,
+            null);
+    ArtifactOperationSnapshot pendingOperation =
+        new ArtifactOperationSnapshot(
+            "op_spec_v2_123",
+            "run_ready1234",
+            "art_spec_v2_123",
+            "create",
+            ArtifactOperationStatus.PENDING,
+            "idem-spec-v2-123",
+            null,
+            null,
+            OffsetDateTime.now(ZoneOffset.UTC));
+    ArtifactOperationSnapshot completedOperation =
+        new ArtifactOperationSnapshot(
+            "op_spec_v2_123",
+            "run_ready1234",
+            "art_spec_v2_123",
+            "create",
+            ArtifactOperationStatus.COMPLETE,
+            "idem-spec-v2-123",
+            null,
+            null,
+            OffsetDateTime.now(ZoneOffset.UTC));
+
+    when(artifactPayloadStore.readBytes("artifacts/run_ready1234/art_spec_v2_123/v2/spec.md"))
+        .thenReturn(Optional.of(PAYLOAD_BYTES));
+    when(artifactOperationPort.findPendingByArtifactId("art_spec_v2_123"))
+        .thenReturn(Optional.of(pendingOperation));
+    when(artifactRecordPort.markAvailable(
+            "art_spec_v2_123",
+            VALID_CHECKSUM,
+            "artifacts/run_ready1234/art_spec_v2_123/v2/spec.md"))
+        .thenReturn(availableArtifact);
+    when(artifactOperationPort.markComplete("op_spec_v2_123")).thenReturn(completedOperation);
+
+    service.markAvailable(
+        "art_spec_v2_123",
+        VALID_CHECKSUM,
+        "artifacts/run_ready1234/art_spec_v2_123/v2/spec.md",
+        OPERATOR_ACTOR);
+
+    verify(orchestrator)
+        .sweepAfterSpecRebuild("run_ready1234", "art_spec_v2_123", 2, OPERATOR_ACTOR);
   }
 
   @Test
@@ -311,7 +408,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot failedArtifact =
         new ArtifactRecordSnapshot(
             "art_failed1234",
@@ -382,7 +480,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot latestArtifact =
         new ArtifactRecordSnapshot(
             "art_replay1234",
@@ -453,7 +552,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot draft =
         new ArtifactRecordSnapshot(
             "art_draft1234",
@@ -539,7 +639,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot latest =
         new ArtifactRecordSnapshot(
             "art_parent1234",
@@ -639,7 +740,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot draft =
         new ArtifactRecordSnapshot(
             "art_late1234",
@@ -725,7 +827,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     DomainException error =
         assertThrows(
@@ -756,7 +859,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     Map<String, Object> ignored = Map.of();
     assertEquals(0, ignored.size());
@@ -792,7 +896,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot existingLeaf =
         new ArtifactRecordSnapshot(
@@ -858,7 +963,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot failedLeaf =
         new ArtifactRecordSnapshot(
@@ -953,7 +1059,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     when(artifactOperationPort.findReplay(
             "run_done1234", ArtifactType.SPEC, "idem-terminal-1234567890", "create"))
@@ -1000,7 +1107,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
     service.setRaceReplayTemplate(raceReplayTemplate);
 
     ArtifactRecordSnapshot draft =
@@ -1098,7 +1206,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot draft =
         new ArtifactRecordSnapshot(
@@ -1171,7 +1280,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot priorArtifact =
         new ArtifactRecordSnapshot(
@@ -1250,7 +1360,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactOperationSnapshot priorOperation =
         new ArtifactOperationSnapshot(
@@ -1306,7 +1417,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     DomainException blankAlgorithm =
         assertThrows(
@@ -1361,7 +1473,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot failedArtifact =
         new ArtifactRecordSnapshot(
             "art_failed1234",
@@ -1442,7 +1555,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     DomainException error =
         assertThrows(
@@ -1470,7 +1584,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactOperationSnapshot pending =
         new ArtifactOperationSnapshot(
             "op_ready1234",
@@ -1518,7 +1633,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactOperationSnapshot pending =
         new ArtifactOperationSnapshot(
             "op_ready1234",
@@ -1567,7 +1683,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactOperationSnapshot pending =
         new ArtifactOperationSnapshot(
             "op_ready1234",
@@ -1614,7 +1731,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     DomainException nullReason =
         assertThrows(
@@ -1651,7 +1769,8 @@ class ArtifactOperationServiceUnitTest {
             artifactOperationPort,
             artifactPayloadStore,
             artifactEventPort,
-            artifactRunnerExecutionPort);
+            artifactRunnerExecutionPort,
+            mock(ClarificationLifecycleOrchestrator.class));
     ArtifactRecordSnapshot draft =
         new ArtifactRecordSnapshot(
             "art_draft1234",
@@ -1719,7 +1838,8 @@ class ArtifactOperationServiceUnitTest {
             artifactPayloadStore,
             artifactEventPort,
             artifactRunnerExecutionPort,
-            runStatePort);
+            runStatePort,
+            mock(ClarificationLifecycleOrchestrator.class));
 
     ArtifactRecordSnapshot draft =
         new ArtifactRecordSnapshot(

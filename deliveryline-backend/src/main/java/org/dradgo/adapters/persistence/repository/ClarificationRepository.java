@@ -1,9 +1,11 @@
 package org.dradgo.adapters.persistence.repository;
 
+import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.ClarificationEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -21,6 +23,27 @@ public interface ClarificationRepository extends JpaRepository<ClarificationEnti
   Optional<ClarificationEntity> findByPublicIdAndArchivedAtIsNull(String publicId);
 
   Optional<ClarificationEntity> findByPublicId(String publicId);
+
+  /**
+   * P30/D2 — pessimistic row-lock variant of {@link #findByPublicIdAndArchivedAtIsNull}. Emits
+   * {@code SELECT ... FOR UPDATE} so a concurrent {@code ClarificationLifecycleService.mark*} on
+   * the same row in another transaction blocks until the holder commits or rolls back. The caller
+   * MUST be inside an outer transaction (the lifecycle service is invoked under the spec-rebuild
+   * outer {@code @Transactional}). Eliminates the duplicate-event race between sweep and a manual
+   * lifecycle transition.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      """
+      select c from ClarificationEntity c
+        join c.workflowRun wr
+      where c.publicId = :publicId
+        and wr.publicId = :workflowRunPublicId
+        and c.archivedAt is null
+      """)
+  Optional<ClarificationEntity> findByWorkflowRunPublicIdAndPublicIdAndArchivedAtIsNullForUpdate(
+      @Param("workflowRunPublicId") String workflowRunPublicId,
+      @Param("publicId") String publicId);
 
   /**
    * All non-archived clarifications for the supplied workflow run, status-grouped + chronological

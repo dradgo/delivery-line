@@ -10,6 +10,7 @@ import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.dradgo.application.artifact.spi.ArtifactEventPort;
 import org.dradgo.application.artifact.spi.ArtifactOperationPort;
@@ -64,13 +65,13 @@ public class ArtifactOperationService {
   private TransactionTemplate raceReplayTemplate;
 
   /**
-   * Story 2.12 clarification lifecycle hook. Setter-injected (optional) so unit-test constructors
-   * (~30 callsites) need no shape change. Production wiring sets it via {@link
-   * #setClarificationLifecycleOrchestrator}; tests that don't exercise the sweep leave it null and
-   * {@link #newVersion} treats null as a no-op. Trap T5 — the sweep only runs for SPEC parents
-   * regardless of orchestrator presence.
+   * Story 2.12 clarification lifecycle hook. P31/D3 — constructor-injected as the LAST parameter
+   * (Trap T7 positional ordering) so every construction site MUST explicitly supply either the
+   * real orchestrator or a deterministic test double. The setter-injection variant left silent
+   * no-op gaps in test paths; constructor injection eliminates them. Trap T5 — the sweep still
+   * only runs for SPEC parents.
    */
-  private ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator;
+  private final ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator;
 
   @Autowired
   public ArtifactOperationService(
@@ -80,7 +81,8 @@ public class ArtifactOperationService {
       ArtifactEventPort artifactEventPort,
       ArtifactRunnerExecutionPort artifactRunnerExecutionPort,
       ArtifactWorkflowRunStatePort artifactWorkflowRunStatePort,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
     this(
         artifactRecordPort,
         artifactOperationPort,
@@ -89,7 +91,8 @@ public class ArtifactOperationService {
         artifactRunnerExecutionPort,
         artifactWorkflowRunStatePort,
         Clock.systemUTC(),
-        meterRegistry);
+        meterRegistry,
+        clarificationLifecycleOrchestrator);
   }
 
   // For tests that inject a runStatePort but do not need clock/meter control.
@@ -99,7 +102,8 @@ public class ArtifactOperationService {
       ArtifactPayloadStore artifactPayloadStore,
       ArtifactEventPort artifactEventPort,
       ArtifactRunnerExecutionPort artifactRunnerExecutionPort,
-      ArtifactWorkflowRunStatePort artifactWorkflowRunStatePort) {
+      ArtifactWorkflowRunStatePort artifactWorkflowRunStatePort,
+      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
     this(
         artifactRecordPort,
         artifactOperationPort,
@@ -108,7 +112,8 @@ public class ArtifactOperationService {
         artifactRunnerExecutionPort,
         artifactWorkflowRunStatePort,
         Clock.systemUTC(),
-        new SimpleMeterRegistry());
+        new SimpleMeterRegistry(),
+        clarificationLifecycleOrchestrator);
   }
 
   // For tests that need clock control.
@@ -119,7 +124,8 @@ public class ArtifactOperationService {
       ArtifactEventPort artifactEventPort,
       ArtifactRunnerExecutionPort artifactRunnerExecutionPort,
       ArtifactWorkflowRunStatePort artifactWorkflowRunStatePort,
-      Clock clock) {
+      Clock clock,
+      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
     this(
         artifactRecordPort,
         artifactOperationPort,
@@ -128,7 +134,8 @@ public class ArtifactOperationService {
         artifactRunnerExecutionPort,
         artifactWorkflowRunStatePort,
         clock,
-        new SimpleMeterRegistry());
+        new SimpleMeterRegistry(),
+        clarificationLifecycleOrchestrator);
   }
 
   private ArtifactOperationService(
@@ -139,7 +146,8 @@ public class ArtifactOperationService {
       ArtifactRunnerExecutionPort artifactRunnerExecutionPort,
       ArtifactWorkflowRunStatePort artifactWorkflowRunStatePort,
       Clock clock,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
     this.artifactRecordPort = artifactRecordPort;
     this.artifactOperationPort = artifactOperationPort;
     this.artifactPayloadStore = artifactPayloadStore;
@@ -151,6 +159,9 @@ public class ArtifactOperationService {
         Counter.builder("deliveryline.artifact.operation.idempotency_replay")
             .description("Number of artifact operation idempotency replays")
             .register(meterRegistry);
+    this.clarificationLifecycleOrchestrator =
+        Objects.requireNonNull(
+            clarificationLifecycleOrchestrator, "clarificationLifecycleOrchestrator");
   }
 
   @Autowired
@@ -170,30 +181,23 @@ public class ArtifactOperationService {
   }
 
   /**
-   * Story 2.12 — setter-injection of the orchestrator. {@code @Autowired(required = false)} so
-   * test contexts that exclude the orchestrator (e.g., focused {@link
-   * org.dradgo.application.artifact.ArtifactOperationServiceUnitTest}) still load. Production
-   * wiring auto-injects the singleton.
-   */
-  @Autowired(required = false)
-  public void setClarificationLifecycleOrchestrator(
-      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
-    this.clarificationLifecycleOrchestrator = clarificationLifecycleOrchestrator;
-  }
-
-  /**
    * Builds a service whose workflow-run-state guard is intentionally absent.
    *
    * <p>Use only in unit tests that do not exercise the {@code WORKFLOW_RUN_TERMINAL} precondition
    * or the {@code ARTIFACT_WORKFLOW_RUN_NOT_FOUND} guard. Tests that touch run-state behavior must
    * wire a real or stubbed {@link ArtifactWorkflowRunStatePort} via the 6-arg constructor instead.
+   *
+   * <p>P31/D3 — the orchestrator is now a REQUIRED constructor parameter; tests pass a
+   * deterministic test double (Mockito mock or hand-rolled stub) so the sweep path is exercised
+   * (or its absence asserted) instead of silently skipped.
    */
   public static ArtifactOperationService withoutWorkflowRunStateGuard(
       ArtifactRecordPort artifactRecordPort,
       ArtifactOperationPort artifactOperationPort,
       ArtifactPayloadStore artifactPayloadStore,
       ArtifactEventPort artifactEventPort,
-      ArtifactRunnerExecutionPort artifactRunnerExecutionPort) {
+      ArtifactRunnerExecutionPort artifactRunnerExecutionPort,
+      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
     // Return EXECUTING (non-terminal) so the run-state guard passes without hitting
     // ARTIFACT_WORKFLOW_RUN_NOT_FOUND on empty state (D2).
     return new ArtifactOperationService(
@@ -203,7 +207,8 @@ public class ArtifactOperationService {
         artifactEventPort,
         artifactRunnerExecutionPort,
         runId -> Optional.of(WorkflowState.EXECUTING),
-        Clock.systemUTC());
+        Clock.systemUTC(),
+        clarificationLifecycleOrchestrator);
   }
 
   @Transactional
@@ -382,6 +387,22 @@ public class ArtifactOperationService {
                   "operationId", operation.publicId(),
                   "checksumAlgorithm", checksum.algorithm(),
                   "storageRef", storageRef)));
+      // Story 2.12 clarification sweep must run only once the new SPEC artifact has readable
+      // bytes. `newVersion(...)` creates a pending lineage row with no storageRef/checksum yet, so
+      // sweeping there cannot inspect the rebuilt spec content. Running here keeps the artifact
+      // availability transition, artifact.available event, and clarification lifecycle mutations in
+      // the same outer transaction while giving the orchestrator the actual payload bytes.
+      if (artifact.artifactType() == ArtifactType.SPEC) {
+        ClarificationLifecycleOrchestrator.LifecycleSweepResult sweep =
+            clarificationLifecycleOrchestrator.sweepAfterSpecRebuild(
+                artifact.workflowRunId(), artifact.publicId(), artifact.version(), actor);
+        log.info(
+            "markAvailable clarification lifecycle sweep artifactId={} consideredCount={} incorporatedCount={} supersededCount={}",
+            artifact.publicId(),
+            sweep.consideredCount(),
+            sweep.incorporatedCount(),
+            sweep.supersededCount());
+      }
       log.info(
           "markAvailable success artifactId={} operationId={} workflowRunId={} version={}",
           artifact.publicId(),
@@ -487,27 +508,6 @@ public class ArtifactOperationService {
         parentArtifactId,
         artifact.publicId(),
         artifact.version());
-    // Story 2.12 — clarification lifecycle sweep AFTER the new version is persisted AND AFTER the
-    // ARTIFACT_VERSION_CREATED event is appended (the persistence adapter writes both atomically
-    // in this same outer transaction). Trap T5 — only sweep SPEC lineages; non-SPEC parents have
-    // no clarifications attached. Trap T7 — orchestrator is setter-injected so unit-test
-    // constructors did not need shape updates.
-    if (clarificationLifecycleOrchestrator != null
-        && artifact.artifactType() == ArtifactType.SPEC) {
-      ClarificationLifecycleOrchestrator.LifecycleSweepResult sweep =
-          clarificationLifecycleOrchestrator.sweepAfterSpecRebuild(
-              artifact.workflowRunId(), artifact.publicId(), artifact.version(), actor);
-      log.info(
-          "newVersion clarification lifecycle sweep parentArtifactId={} consideredCount={} incorporatedCount={} supersededCount={}",
-          parentArtifactId,
-          sweep.consideredCount(),
-          sweep.decisions().stream()
-              .filter(d -> d.outcome() == ClarificationLifecycleOrchestrator.Outcome.INCORPORATED)
-              .count(),
-          sweep.decisions().stream()
-              .filter(d -> d.outcome() == ClarificationLifecycleOrchestrator.Outcome.SUPERSEDED)
-              .count());
-    }
     return artifact;
   }
 

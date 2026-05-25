@@ -559,6 +559,39 @@ class WorkflowCommandServiceContractTest {
   }
 
   @Test
+  void answerClarificationReplayAcceptsLegacyPipeSeparatedResultRefs() throws IOException {
+    String runId = insertRun("run_clrlegacyreplay1", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_clrlegacy_v1");
+    seedOpenClarification(runId, "art_clrlegacy_v1", "clr_clrlegacy01");
+    SubmitClarificationCommand command =
+        new SubmitClarificationCommand(
+            runId,
+            "clr_clrlegacy01",
+            "art_clrlegacy_v1",
+            1,
+            "updated answer",
+            "alex",
+            ActorType.HUMAN,
+            "idem-clarification-legacy-replay-1234567890",
+            "corr-clarification-legacy-replay-1");
+
+    WorkflowStateChangeResult first = service.answerClarification(command);
+    jdbcTemplate.update(
+        "update idempotency_records set result_ref = ? where key = ?",
+        first.workflowRunId() + "|" + first.currentState().value(),
+        command.idempotencyKey());
+    jdbcTemplate.update(
+        "update workflow_runs set current_state = ? where public_id = ?",
+        WorkflowState.EXECUTING.value(),
+        runId);
+
+    WorkflowStateChangeResult replay = service.answerClarification(command);
+
+    assertEquals(first, replay);
+    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, replay.currentState());
+  }
+
+  @Test
   void answerClarificationSameKeyDifferentFingerprintRaisesIdempotencyKeyConflict()
       throws IOException {
     String runId = insertRun("run_clrconflict12", WorkflowState.WAITING_FOR_SPEC_APPROVAL);

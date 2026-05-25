@@ -2,14 +2,21 @@ package org.dradgo.application.clarification;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.domain.DomainException;
+import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.registry.DomainErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -36,14 +43,15 @@ import org.springframework.stereotype.Service;
  * result schema will gain a structured {@code clarification_acknowledgements} block and the
  * orchestrator will switch to consuming that. The seam is the {@code acknowledgesQuestion} method.
  *
- * <h3>OQ-5 — payload-read failure handling</h3>
+ * <h3>P32/D5 — payload-read failure is fatal</h3>
  *
- * <p>If the {@code ArtifactPayloadStore} cannot return bytes for the new spec, the orchestrator
- * logs WARN and marks each {@code accepted} clarification {@code superseded} with {@code
- * noEffectReason = payload_read_failed}. This keeps the new spec version persisted (the
- * clarification-side failure does not punish the spec rebuild) while preserving the
- * make-or-break invariant (every answered clarification must end with a downstream lifecycle
- * event).
+ * <p>If the {@code ArtifactPayloadStore} cannot return bytes for the new spec (record missing,
+ * storageRef null/blank, or empty bytes), the orchestrator logs ERROR and raises {@code
+ * DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)}. The exception propagates out of the outer
+ * {@code ArtifactOperationService.newVersion} transaction, rolling back the new spec version
+ * along with the unread clarification sweep. The operator sees the failure loudly rather than
+ * every accepted clarification being silently terminal-superseded. Code-review decision D5
+ * (2026-05-25).
  */
 @Service
 public class ClarificationLifecycleOrchestrator {
@@ -52,7 +60,6 @@ public class ClarificationLifecycleOrchestrator {
       LoggerFactory.getLogger(ClarificationLifecycleOrchestrator.class);
 
   private static final String NO_EFFECT_NOT_ADDRESSED = "clarification_not_addressed";
-  private static final String NO_EFFECT_PAYLOAD_READ_FAILED = "payload_read_failed";
 
   private final ClarificationReadPort clarificationReadPort;
   private final ClarificationLifecycleService clarificationLifecycleService;
@@ -75,6 +82,10 @@ public class ClarificationLifecycleOrchestrator {
       String newSpecArtifactPublicId,
       int newSpecArtifactVersion,
       ActorContext actor) {
+    // P23 — prefix validation at the orchestrator entry so a blank/whitespace id can't silently
+    // turn into an empty-list "no-op sweep" that bypasses the clarification audit trail.
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(newSpecArtifactPublicId, PublicIdPrefixes.ARTIFACT);
     String priorMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
     try {
       log.info(
@@ -96,44 +107,33 @@ public class ClarificationLifecycleOrchestrator {
         log.info(
             "sweepAfterSpecRebuild exit workflowRunId={} consideredCount=0 incorporatedCount=0 supersededCount=0",
             workflowRunPublicId);
-        return new LifecycleSweepResult(0, List.copyOf(decisions));
+        return new LifecycleSweepResult(0, 0, 0, List.copyOf(decisions));
       }
 
-      // Read the new spec's payload bytes ONCE; the sweep tests every accepted clarification
-      // against the same content. OQ-5 — on read failure, every accepted clarification is
-      // marked superseded with `payload_read_failed`.
-      Optional<byte[]> payloadBytes = loadSpecPayload(newSpecArtifactPublicId);
-      if (payloadBytes.isEmpty()) {
-        log.warn(
-            "sweepAfterSpecRebuild payload-read-failed workflowRunId={} newSpecArtifactId={} acceptedCount={}",
-            workflowRunPublicId,
-            newSpecArtifactPublicId,
-            accepted.size());
-        for (Clarification c : accepted) {
-          clarificationLifecycleService.markSuperseded(
-              workflowRunPublicId,
-              c.publicId(),
-              newSpecArtifactPublicId,
-              NO_EFFECT_PAYLOAD_READ_FAILED,
-              actor);
-          decisions.add(
-              new ClarificationDecision(c.publicId(), c.questionId(), Outcome.SUPERSEDED));
-        }
-        log.info(
-            "sweepAfterSpecRebuild exit workflowRunId={} consideredCount={} incorporatedCount=0 supersededCount={}",
-            workflowRunPublicId,
-            accepted.size(),
-            accepted.size());
-        return new LifecycleSweepResult(accepted.size(), List.copyOf(decisions));
-      }
-
-      byte[] bytes = payloadBytes.get();
+      // P32/D5 — fatal abort on payload-read failure. The new spec's payload bytes are read ONCE;
+      // if the storageRef is missing/blank or the bytes are empty, loadSpecPayload throws a
+      // DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE) so the outer newVersion transaction rolls
+      // back. The spec rebuild fails loudly; the operator sees the failure rather than every
+      // accepted clarification being silently terminal-superseded.
+      LoadedSpecArtifact loadedSpec = loadSpecArtifact(newSpecArtifactPublicId);
+      byte[] bytes = loadedSpec.payloadBytes();
+      Set<String> sweepLineageArtifactIds = lineageArtifactIds(loadedSpec.snapshot());
       int incorporatedCount = 0;
       int supersededCount = 0;
       for (Clarification c : accepted) {
+        if (!sweepLineageArtifactIds.contains(c.artifactId())) {
+          continue;
+        }
         if (acknowledgesQuestion(bytes, c.questionId())) {
+          // P9 — pass the artifact version directly so the lifecycle service does NOT re-fetch
+          // the artifact record on each loop iteration (was N×4 round trips for a sweep over N
+          // accepted clarifications).
           clarificationLifecycleService.markIncorporated(
-              workflowRunPublicId, c.publicId(), newSpecArtifactPublicId, actor);
+              workflowRunPublicId,
+              c.publicId(),
+              newSpecArtifactPublicId,
+              newSpecArtifactVersion,
+              actor);
           decisions.add(
               new ClarificationDecision(c.publicId(), c.questionId(), Outcome.INCORPORATED));
           incorporatedCount++;
@@ -142,6 +142,7 @@ public class ClarificationLifecycleOrchestrator {
               workflowRunPublicId,
               c.publicId(),
               newSpecArtifactPublicId,
+              newSpecArtifactVersion,
               NO_EFFECT_NOT_ADDRESSED,
               actor);
           decisions.add(
@@ -155,35 +156,97 @@ public class ClarificationLifecycleOrchestrator {
           accepted.size(),
           incorporatedCount,
           supersededCount);
-      return new LifecycleSweepResult(accepted.size(), List.copyOf(decisions));
+      return new LifecycleSweepResult(
+          accepted.size(), incorporatedCount, supersededCount, List.copyOf(decisions));
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorMdc);
     }
   }
 
-  private Optional<byte[]> loadSpecPayload(String artifactPublicId) {
-    Optional<ArtifactRecordSnapshot> snapshot = artifactRecordPort.findByPublicId(artifactPublicId);
-    if (snapshot.isEmpty()) {
-      log.warn(
-          "sweepAfterSpecRebuild artifact-record-missing artifactId={}", artifactPublicId);
-      return Optional.empty();
-    }
-    String storageRef = snapshot.get().storageRef();
+  /**
+   * P32/D5 — fatal abort variant. Returns the payload bytes for the new spec or throws
+   * {@code DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)} when the storageRef is null/blank or
+   * the payload bytes are empty. The exception propagates out of the outer {@code
+   * ArtifactOperationService.newVersion} transaction so the new spec version is rolled back
+   * alongside the unread clarification sweep. The previous "silent supersede every accepted
+   * clarification with payload_read_failed" behavior is gone.
+   */
+  private LoadedSpecArtifact loadSpecArtifact(String artifactPublicId) {
+    ArtifactRecordSnapshot snapshot =
+        artifactRecordPort
+            .findByPublicId(artifactPublicId)
+            .orElseThrow(
+                () -> {
+                  Map<String, Object> details = new LinkedHashMap<>();
+                  details.put("artifactId", artifactPublicId);
+                  details.put("reason", "artifact_record_missing");
+                  log.error(
+                      "sweepAfterSpecRebuild artifact-record-missing artifactId={}",
+                      artifactPublicId);
+                  return new DomainException(
+                      DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE,
+                      "Spec artifact not found while sweeping clarifications: " + artifactPublicId,
+                      details);
+                });
+    String storageRef = snapshot.storageRef();
     if (storageRef == null || storageRef.isBlank()) {
-      log.warn(
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("artifactId", artifactPublicId);
+      details.put("artifactVersion", snapshot.version());
+      details.put("reason", "storage_ref_missing");
+      log.error(
           "sweepAfterSpecRebuild storage-ref-missing artifactId={} version={}",
           artifactPublicId,
-          snapshot.get().version());
-      return Optional.empty();
+          snapshot.version());
+      throw new DomainException(
+          DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE,
+          "Spec artifact has no storageRef while sweeping clarifications: " + artifactPublicId,
+          details);
     }
     Optional<byte[]> bytes = artifactPayloadStore.readBytes(storageRef);
     if (bytes.isEmpty()) {
-      log.warn(
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("artifactId", artifactPublicId);
+      details.put("storageRef", storageRef);
+      details.put("reason", "payload_bytes_unavailable");
+      log.error(
           "sweepAfterSpecRebuild payload-bytes-unavailable artifactId={} storageRef={}",
           artifactPublicId,
           storageRef);
+      throw new DomainException(
+          DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE,
+          "Spec artifact payload unreadable while sweeping clarifications: " + artifactPublicId,
+          details);
     }
-    return bytes;
+    if (bytes.get().length == 0) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("artifactId", artifactPublicId);
+      details.put("storageRef", storageRef);
+      details.put("reason", "payload_bytes_empty");
+      log.error(
+          "sweepAfterSpecRebuild payload-bytes-empty artifactId={} storageRef={}",
+          artifactPublicId,
+          storageRef);
+      throw new DomainException(
+          DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE,
+          "Spec artifact payload empty while sweeping clarifications: " + artifactPublicId,
+          details);
+    }
+    return new LoadedSpecArtifact(snapshot, bytes.get());
+  }
+
+  private Set<String> lineageArtifactIds(ArtifactRecordSnapshot latest) {
+    Set<String> lineage = new LinkedHashSet<>();
+    ArtifactRecordSnapshot cursor = latest;
+    while (cursor != null && lineage.add(cursor.publicId())) {
+      String parentArtifactId = cursor.parentArtifactId();
+      if (parentArtifactId == null || parentArtifactId.isBlank()) {
+        break;
+      }
+      lineage.add(parentArtifactId);
+      cursor = artifactRecordPort.findByPublicId(parentArtifactId).orElse(null);
+    }
+    return Set.copyOf(lineage);
   }
 
   /**
@@ -241,7 +304,18 @@ public class ClarificationLifecycleOrchestrator {
         || b == '-';
   }
 
-  public record LifecycleSweepResult(int consideredCount, List<ClarificationDecision> decisions) {}
+  /**
+   * P26 — pre-computed {@code incorporatedCount} / {@code supersededCount} on the result so
+   * downstream loggers (e.g. {@code ArtifactOperationService.newVersion}) don't repeat the
+   * filter+count passes over {@code decisions()}.
+   */
+  public record LifecycleSweepResult(
+      int consideredCount,
+      int incorporatedCount,
+      int supersededCount,
+      List<ClarificationDecision> decisions) {}
+
+  private record LoadedSpecArtifact(ArtifactRecordSnapshot snapshot, byte[] payloadBytes) {}
 
   public record ClarificationDecision(String clarificationId, String questionId, Outcome outcome) {}
 

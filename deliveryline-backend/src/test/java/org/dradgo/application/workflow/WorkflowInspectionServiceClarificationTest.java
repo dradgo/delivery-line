@@ -75,7 +75,7 @@ class WorkflowInspectionServiceClarificationTest {
         .thenReturn(List.of(clarification("clr_artifact1", ART, Clarification.STATUS_ACCEPTED, "ok")));
 
     List<WorkflowInspectionService.ClarificationView> result =
-        service.getClarificationsForArtifact(ART);
+        service.getClarificationsForArtifact(RUN, ART);
 
     assertEquals(1, result.size());
     assertEquals("clr_artifact1", result.get(0).clarificationId());
