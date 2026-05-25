@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
+import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.registry.ActorType;
@@ -31,7 +32,14 @@ class WorkflowCommandServiceClarificationRollbackContractTest {
   @Autowired private WorkflowCommandService service;
   @Autowired private ArtifactPayloadStore artifactPayloadStore;
 
+  // The production bean (WorkflowEventPersistenceAdapter) implements BOTH
+  // WorkflowEventWritePort and WorkflowEventReadPort. Mocking only the write side
+  // would leave WorkflowInspectionService unable to autowire the read port and
+  // crash context refresh. Mock both — the read mock returns Mockito defaults,
+  // which is fine because this test only exercises the write-then-rollback path
+  // and verifies state via JdbcTemplate.
   @MockitoBean private WorkflowEventWritePort workflowEventWritePort;
+  @MockitoBean private WorkflowEventReadPort workflowEventReadPort;
 
   @AfterEach
   void cleanDatabase() {
