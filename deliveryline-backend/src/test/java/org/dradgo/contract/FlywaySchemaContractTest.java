@@ -206,8 +206,11 @@ class FlywaySchemaContractTest {
     assertConstraintDefinitionContains(
         "fk_clarifications_incorporation_event", "incorporation_event_id");
     assertConstraintDefinitionContains("ck_clarifications_status", "rejected_invalid");
+    // Postgres's pg_get_constraintdef() returns the canonical form with uppercase
+    // SQL keywords (`IS NULL`), even though V8 wrote the constraint with lowercase
+    // `is null`. Match the canonical Postgres rendering, not the source SQL.
     assertConstraintDefinitionContains(
-        "ck_clarifications_answered_fields_paired", "answer_text is null");
+        "ck_clarifications_answered_fields_paired", "answer_text IS NULL");
     assertConstraintDefinitionContains(
         "ck_clarifications_answered_by_actor_type", "service_account");
     assertConstraintDefinitionContains("ck_clarifications_question_id_format", "A-Za-z0-9._-");

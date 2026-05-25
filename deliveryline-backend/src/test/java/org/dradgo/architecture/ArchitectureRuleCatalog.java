@@ -297,14 +297,14 @@ final class ArchitectureRuleCatalog {
 
   static final ArchRule APPLICATION_SERVICES_MUST_BE_NAMED_AS_SERVICES =
       namedRule(
-          "application services must end in Service",
-          "Remediation: keep application service beans under org.dradgo.application and use the *Service suffix for service classes.",
+          "application services must end in Service or Orchestrator",
+          "Remediation: keep application service beans under org.dradgo.application and use the *Service suffix for service classes, or *Orchestrator for cross-service coordinators.",
           classes()
               .that()
               .resideInAPackage(APPLICATION_PACKAGE)
               .and()
               .areAnnotatedWith(Service.class)
-              .should(haveSimpleNameEndingWithAny("Service")));
+              .should(haveSimpleNameEndingWithAny("Service", "Orchestrator")));
 
   static final ArchRule APPLICATION_RESULTS_MUST_USE_RESULT_OR_OUTCOME_SUFFIX =
       namedRule(

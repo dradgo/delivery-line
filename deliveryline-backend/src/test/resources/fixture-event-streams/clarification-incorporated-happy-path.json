@@ -24,10 +24,24 @@
       }
     },
     {
-      "publicId": "evt_fix_clr_incorp_002",
+      "publicId": "evt_fix_clr_incorp_001b",
       "workflowRunPublicId": "run_fix_clr_incorp_001",
       "eventType": "workflow.stateChanged",
       "priorState": "Inbox",
+      "resultingState": "Planned",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "planned",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:00:30Z",
+      "details": { "correlationId": "corr_fix_clr_incorp_001" }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_002",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Planned",
       "resultingState": "Investigating",
       "actorIdentity": "system",
       "actorType": "system",
