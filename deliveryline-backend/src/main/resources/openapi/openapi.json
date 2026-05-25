@@ -189,6 +189,11 @@
             "minLength" : 0,
             "type" : "string"
           },
+          "reasonText" : {
+            "maxLength" : 1024,
+            "minLength" : 0,
+            "type" : "string"
+          },
           "reviewerRole" : {
             "maxLength" : 128,
             "minLength" : 0,
@@ -201,11 +206,6 @@
               "MISUNDERSTOOD_IMPLEMENTATION"
             ],
             "type" : "string"
-          },
-          "reasonText" : {
-            "maxLength" : 1024,
-            "minLength" : 0,
-            "type" : "string"
           }
         },
         "required" : [
@@ -214,8 +214,8 @@
           "artifactId",
           "artifactVersion",
           "contextVersion",
-          "taggedFeedback",
-          "reasonText"
+          "reasonText",
+          "taggedFeedback"
         ],
         "type" : "object"
       },
@@ -346,6 +346,11 @@
             "example" : "WaitingForSpecApproval",
             "type" : "string"
           },
+          "escalationMarker" : {
+            "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational — does NOT terminate the workflow (FR13).",
+            "example" : false,
+            "type" : "boolean"
+          },
           "failedStage" : {
             "type" : "string"
           },
@@ -386,14 +391,9 @@
           },
           "specRejectionLoopCount" : {
             "description" : "How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).",
-            "example" : "0",
+            "example" : 0,
             "format" : "int32",
             "type" : "integer"
-          },
-          "escalationMarker" : {
-            "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).",
-            "example" : "false",
-            "type" : "boolean"
           },
           "workflowRunId" : {
             "example" : "run_abc123",
@@ -470,28 +470,15 @@
                 "minLength" : 1,
                 "type" : "string"
               },
+              "escalationMarker" : {
+                "type" : "boolean"
+              },
               "failedStage" : {
                 "minLength" : 1,
                 "type" : "string"
               },
               "feedback" : {
                 "type" : "string"
-              },
-              "reviewerRole" : {
-                "minLength" : 1,
-                "type" : "string"
-              },
-              "taggedFeedback" : {
-                "minLength" : 1,
-                "type" : "string"
-              },
-              "specRejectionLoopCount" : {
-                "format" : "int32",
-                "minimum" : 0,
-                "type" : "integer"
-              },
-              "escalationMarker" : {
-                "type" : "boolean"
               },
               "linearTicketReference" : {
                 "minLength" : 1,
@@ -506,6 +493,19 @@
               },
               "recoveryRetriedEventId" : {
                 "pattern" : "^evt_[A-Za-z0-9_]{4,}$",
+                "type" : "string"
+              },
+              "reviewerRole" : {
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "specRejectionLoopCount" : {
+                "format" : "int32",
+                "minimum" : 0,
+                "type" : "integer"
+              },
+              "taggedFeedback" : {
+                "minLength" : 1,
                 "type" : "string"
               },
               "triggeringEventId" : {
@@ -718,6 +718,11 @@
             "example" : "WaitingForSpecApproval",
             "type" : "string"
           },
+          "escalationMarker" : {
+            "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational — does NOT terminate the workflow (FR13).",
+            "example" : false,
+            "type" : "boolean"
+          },
           "lastEventAt" : {
             "description" : "Timestamp of the most recent event (ISO-8601 UTC).",
             "format" : "date-time",
@@ -730,14 +735,9 @@
           },
           "specRejectionLoopCount" : {
             "description" : "How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).",
-            "example" : "0",
+            "example" : 0,
             "format" : "int32",
             "type" : "integer"
-          },
-          "escalationMarker" : {
-            "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).",
-            "example" : "false",
-            "type" : "boolean"
           },
           "ticketRef" : {
             "description" : "Linear ticket reference, if linked.",

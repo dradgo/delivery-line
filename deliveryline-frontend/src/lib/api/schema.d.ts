@@ -222,10 +222,10 @@ export interface components {
             /** Format: int32 */
             contextVersion: number;
             correlationId?: string;
+            reasonText: string;
             reviewerRole?: string;
             /** @enum {string} */
             taggedFeedback: "MISSING_SCOPE" | "UNCLEAR_SPECIFICATION" | "MISUNDERSTOOD_IMPLEMENTATION";
-            reasonText: string;
         };
         RetryWorkflowRequest: {
             actorIdentity: string;
@@ -259,6 +259,11 @@ export interface components {
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
             currentState?: string;
+            /**
+             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational — does NOT terminate the workflow (FR13).
+             * @example false
+             */
+            escalationMarker?: boolean;
             failedStage?: string;
             failureCategory?: string;
             /** Format: date-time */
@@ -282,11 +287,6 @@ export interface components {
              * @example 0
              */
             specRejectionLoopCount?: number;
-            /**
-             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
-             * @example false
-             */
-            escalationMarker?: boolean;
             /** @example run_abc123 */
             workflowRunId?: string;
         };
@@ -313,17 +313,17 @@ export interface components {
                 correlationId?: string;
                 errorClass?: string;
                 errorCode?: string;
+                escalationMarker?: boolean;
                 failedStage?: string;
                 feedback?: string;
-                reviewerRole?: string;
-                taggedFeedback?: string;
-                /** Format: int32 */
-                specRejectionLoopCount?: number;
-                escalationMarker?: boolean;
                 linearTicketReference?: string;
                 reason?: string;
                 recoveryActionId?: string;
                 recoveryRetriedEventId?: string;
+                reviewerRole?: string;
+                /** Format: int32 */
+                specRejectionLoopCount?: number;
+                taggedFeedback?: string;
                 triggeringEventId?: string;
             } & {
                 [key: string]: unknown;
@@ -378,6 +378,11 @@ export interface components {
              */
             currentState?: string;
             /**
+             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational — does NOT terminate the workflow (FR13).
+             * @example false
+             */
+            escalationMarker?: boolean;
+            /**
              * Format: date-time
              * @description Timestamp of the most recent event (ISO-8601 UTC).
              */
@@ -393,11 +398,6 @@ export interface components {
              * @example 0
              */
             specRejectionLoopCount?: number;
-            /**
-             * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational - does NOT terminate the workflow (FR13).
-             * @example false
-             */
-            escalationMarker?: boolean;
             /**
              * @description Linear ticket reference, if linked.
              * @example DEL-1234
