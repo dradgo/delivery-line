@@ -13,6 +13,14 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
 
   Optional<WorkflowEventEntity> findByPublicId(String publicId);
 
+  /**
+   * Story 2.12 — resolve a workflow_events row to its internal {@code id} (FK target for {@code
+   * clarifications.incorporation_event_id}). Used by {@code ClarificationWritePersistenceAdapter
+   * .markIncorporated} after {@code ClarificationLifecycleService} appends the event row.
+   */
+  @Query("select event.id from WorkflowEventEntity event where event.publicId = :publicId")
+  Optional<Long> findIdByPublicId(@Param("publicId") String publicId);
+
   @Query(
       """
 		select event from WorkflowEventEntity event

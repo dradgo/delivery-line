@@ -15,6 +15,7 @@ public enum PublicIdPrefixes implements RegistryValue {
   ARTIFACT("artifact", "art_", "ck_artifacts_public_id_format"),
   ARTIFACT_OPERATION("artifactOperation", "op_", "ck_artifact_operations_public_id_format"),
   APPROVAL("approval", "apr_", "ck_approvals_public_id_format"),
+  CLARIFICATION("clarification", "clr_", "ck_clarifications_public_id_format"),
   RUNNER_EXECUTION("runnerExecution", "rex_", "ck_runner_executions_public_id_format"),
   INTEGRATION_LINK("integrationLink", "ilk_", "ck_integration_links_public_id_format"),
   RECOVERY_ACTION("recoveryAction", "rcv_", "ck_recovery_actions_public_id_format"),

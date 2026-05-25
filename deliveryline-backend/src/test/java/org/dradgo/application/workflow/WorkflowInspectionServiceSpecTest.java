@@ -69,6 +69,8 @@ class WorkflowInspectionServiceSpecTest {
   private final RecoveryService recovery = mock(RecoveryService.class);
   private final RunnerExecutionRecordPort runnerExecutions = mock(RunnerExecutionRecordPort.class);
   private final RunnerScratchStore scratch = mock(RunnerScratchStore.class);
+  private final org.dradgo.application.clarification.spi.ClarificationReadPort clarifications =
+      mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
 
   private final WorkflowInspectionService service =
       new WorkflowInspectionService(
@@ -80,7 +82,8 @@ class WorkflowInspectionServiceSpecTest {
           redaction,
           recovery,
           runnerExecutions,
-          scratch);
+          scratch,
+          clarifications);
 
   private final ListAppender<ILoggingEvent> serviceAppender =
       attachListAppender(WorkflowInspectionService.class);

@@ -6,6 +6,7 @@ public sealed interface WorkflowCommand
     permits SubmitWorkflowCommand,
         ApproveSpecCommand,
         RejectSpecCommand,
+        SubmitClarificationCommand,
         RetryWorkflowCommand,
         TakeoverWorkflowCommand {
 

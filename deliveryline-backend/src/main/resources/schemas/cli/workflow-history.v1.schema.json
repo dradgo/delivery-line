@@ -53,7 +53,13 @@
               "reviewerRole": { "type": "string" },
               "taggedFeedback": { "type": "string" },
               "specRejectionLoopCount": { "type": "integer" },
-              "escalationMarker": { "type": "boolean" }
+              "escalationMarker": { "type": "boolean" },
+              "clarificationId": { "type": "string", "pattern": "^clr_" },
+              "questionId": { "type": "string" },
+              "incorporatedIntoArtifactId": { "type": "string", "pattern": "^art_" },
+              "incorporationEventId": { "type": "string", "pattern": "^evt_" },
+              "supersededByArtifactId": { "type": "string", "pattern": "^art_" },
+              "noEffectReason": { "type": "string" }
             }
           }
         }

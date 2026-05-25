@@ -13,6 +13,9 @@ import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.SpecificationArtifact;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.clarification.Clarification;
+import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
@@ -64,6 +67,7 @@ public class WorkflowInspectionService {
   private final RecoveryService recoveryService;
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final RunnerScratchStore runnerScratchStore;
+  private final ClarificationReadPort clarificationReadPort;
 
   public WorkflowInspectionService(
       WorkflowRunReadPort workflowRunReadPort,
@@ -74,7 +78,8 @@ public class WorkflowInspectionService {
       RedactionPolicyService redactionPolicyService,
       RecoveryService recoveryService,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
-      RunnerScratchStore runnerScratchStore) {
+      RunnerScratchStore runnerScratchStore,
+      ClarificationReadPort clarificationReadPort) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -88,6 +93,192 @@ public class WorkflowInspectionService {
     this.runnerExecutionRecordPort =
         Objects.requireNonNull(runnerExecutionRecordPort, "runnerExecutionRecordPort");
     this.runnerScratchStore = Objects.requireNonNull(runnerScratchStore, "runnerScratchStore");
+    this.clarificationReadPort =
+        Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
+  }
+
+  /**
+   * Story 2.11 AC9: status-grouped clarifications for the supplied workflow run. Backs the UI
+   * Clarification Region (story 2.18) via TanStack Query (story 2.6). Archived rows are filtered
+   * out at the read port (V8 schema parity with story 1.3 retention).
+   */
+  @Transactional(readOnly = true)
+  public List<ClarificationView> getClarifications(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info("getClarifications entry workflowRunId={}", workflowRunPublicId);
+      List<Clarification> rows = clarificationReadPort.listByWorkflowRunId(workflowRunPublicId);
+      List<ClarificationView> views = new ArrayList<>(rows.size());
+      for (Clarification row : rows) {
+        views.add(toClarificationView(row));
+      }
+      log.info(
+          "getClarifications success workflowRunId={} count={}", workflowRunPublicId, views.size());
+      return List.copyOf(views);
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  /**
+   * Story 2.11 AC9: status-grouped clarifications scoped to a single artifact. Same ordering
+   * contract as {@link #getClarifications(String)}.
+   */
+  @Transactional(readOnly = true)
+  public List<ClarificationView> getClarificationsForArtifact(String artifactPublicId) {
+    PublicIdPrefixes.require(artifactPublicId, PublicIdPrefixes.ARTIFACT);
+    String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactPublicId);
+    try {
+      log.info("getClarificationsForArtifact entry artifactId={}", artifactPublicId);
+      List<Clarification> rows = clarificationReadPort.listByArtifactId(artifactPublicId);
+      List<ClarificationView> views = new ArrayList<>(rows.size());
+      for (Clarification row : rows) {
+        views.add(toClarificationView(row));
+      }
+      log.info(
+          "getClarificationsForArtifact success artifactId={} count={}",
+          artifactPublicId,
+          views.size());
+      return List.copyOf(views);
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
+    }
+  }
+
+  /**
+   * Story 2.12 AC6 / AC7: V9-rich lifecycle status for a single clarification. Cross-run guard
+   * (Trap T11) raises {@code CLARIFICATION_NOT_FOUND} when the row belongs to a sibling run.
+   * UI Clarification Region (story 2.18) consumes this for the per-question lifecycle indicator.
+   */
+  @Transactional(readOnly = true)
+  public ClarificationStatusView getClarificationStatus(
+      String workflowRunPublicId, String clarificationPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(clarificationPublicId, PublicIdPrefixes.CLARIFICATION);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info(
+          "getClarificationStatus entry workflowRunId={} clarificationId={}",
+          workflowRunPublicId,
+          clarificationPublicId);
+      ClarificationLifecycleSnapshot snapshot =
+          clarificationReadPort
+              .findLifecycleSnapshotByPublicId(clarificationPublicId)
+              .orElseThrow(
+                  () ->
+                      clarificationNotFound(workflowRunPublicId, clarificationPublicId, "missing"));
+      if (!workflowRunPublicId.equals(snapshot.workflowRunId())) {
+        // Trap T11 cross-run leak guard — same shape as missing-row.
+        throw clarificationNotFound(workflowRunPublicId, clarificationPublicId, "cross_run");
+      }
+      ClarificationStatusView view = toClarificationStatusView(snapshot);
+      log.info(
+          "getClarificationStatus success workflowRunId={} clarificationId={} status={}",
+          workflowRunPublicId,
+          clarificationPublicId,
+          view.status());
+      return view;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 2.12 AC9: detailed per-run summary including {@code pendingClarifications}. Story 2.14
+   * (allowed-actions endpoint) reads this to gate {@code approve_spec}.
+   */
+  @Transactional(readOnly = true)
+  public WorkflowRunDetailedSummaryView getRunSummary(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info("getRunSummary entry workflowRunId={}", workflowRunPublicId);
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunPublicId)
+              .orElseThrow(() -> runNotFound(workflowRunPublicId));
+      int pending = clarificationReadPort.countPendingByWorkflowRun(workflowRunPublicId);
+      Optional<WorkflowEventRecord> latest =
+          workflowEventReadPort.findLatestByWorkflowRunPublicId(workflowRunPublicId);
+      String ticketRef =
+          integrationLinkService
+              .findActiveLinkByWorkflowRun(workflowRunPublicId)
+              .map(IntegrationLink::externalRef)
+              .orElse(null);
+      WorkflowRunDetailedSummaryView view =
+          new WorkflowRunDetailedSummaryView(
+              run.publicId(),
+              run.currentState().value(),
+              ticketRef,
+              latest.map(WorkflowEventRecord::createdAt).orElse(null),
+              latest.map(record -> record.eventType().value()).orElse(null),
+              run.specRejectionLoopCount(),
+              run.escalationMarkerSet(),
+              pending);
+      log.info(
+          "getRunSummary success workflowRunId={} pendingClarifications={} currentState={}",
+          workflowRunPublicId,
+          pending,
+          view.currentState());
+      return view;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private static ClarificationStatusView toClarificationStatusView(
+      ClarificationLifecycleSnapshot s) {
+    return new ClarificationStatusView(
+        s.publicId(),
+        s.workflowRunId(),
+        s.artifactId(),
+        s.artifactVersion(),
+        s.questionId(),
+        s.questionText(),
+        s.status(),
+        s.answerText(),
+        s.answeredByActor(),
+        s.answeredByActorType() == null ? null : s.answeredByActorType().value(),
+        s.answeredAt(),
+        s.acceptedAt(),
+        s.incorporatedAt(),
+        s.incorporatedIntoArtifactPublicId(),
+        s.supersededByArtifactPublicId(),
+        s.noEffectReason(),
+        s.createdAt());
+  }
+
+  private DomainException clarificationNotFound(
+      String workflowRunPublicId, String clarificationPublicId, String reason) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("clarificationId", clarificationPublicId);
+    details.put("workflowRunId", workflowRunPublicId);
+    log.warn(
+        "getClarificationStatus rejected CLARIFICATION_NOT_FOUND workflowRunId={} clarificationId={} reason={}",
+        workflowRunPublicId,
+        clarificationPublicId,
+        reason);
+    return new DomainException(
+        DomainErrorCode.CLARIFICATION_NOT_FOUND,
+        "Clarification not found: " + clarificationPublicId,
+        details);
+  }
+
+  private static ClarificationView toClarificationView(Clarification row) {
+    return new ClarificationView(
+        row.publicId(),
+        row.workflowRunId(),
+        row.artifactId(),
+        row.artifactVersion(),
+        row.questionId(),
+        row.questionText(),
+        row.status(),
+        row.answerText(),
+        row.answeredByActor(),
+        row.answeredByActorType() == null ? null : row.answeredByActorType().value(),
+        row.answeredAt(),
+        row.createdAt());
   }
 
   @Transactional(readOnly = true)
@@ -241,6 +432,8 @@ public class WorkflowInspectionService {
               .findActiveLinkByWorkflowRun(run.publicId())
               .map(IntegrationLink::externalRef)
               .orElse(null);
+      int pendingClarifications =
+          clarificationReadPort.countPendingByWorkflowRun(run.publicId());
       summaries.add(
           new WorkflowRunSummaryView(
               run.publicId(),
@@ -249,7 +442,8 @@ public class WorkflowInspectionService {
               latest.map(WorkflowEventRecord::createdAt).orElse(null),
               latest.map(record -> record.eventType().value()).orElse(null),
               run.specRejectionLoopCount(),
-              run.escalationMarkerSet()));
+              run.escalationMarkerSet(),
+              pendingClarifications));
     }
     log.info("listing workflow_runs success count={}", summaries.size());
     return summaries;
@@ -736,7 +930,51 @@ public class WorkflowInspectionService {
       // Story 2.10 — spec rejection loop tracking surfaced on the queue surface so the UI can
       // render a "loop depth N" badge / escalation badge without a second per-row lookup.
       int specRejectionLoopCount,
-      boolean escalationMarker) {}
+      boolean escalationMarker,
+      // Story 2.12 — non-terminal clarification count surfaced on the queue surface; story 2.14
+      // gates approve_spec on this count == 0. N+1 in listRuns accepted for MVP queue scale
+      // (typical < 50 rows) — see OQ-4 + Trap T12.
+      int pendingClarifications) {}
+
+  /**
+   * Story 2.12 AC9: richer per-run summary returned by {@link #getRunSummary(String)}. Carries
+   * everything {@link WorkflowRunSummaryView} carries plus is dedicated to single-run inspection
+   * (story 2.14 reads this directly).
+   */
+  public record WorkflowRunDetailedSummaryView(
+      String workflowRunId,
+      String currentState,
+      String ticketRef,
+      OffsetDateTime lastEventAt,
+      String lastEventType,
+      int specRejectionLoopCount,
+      boolean escalationMarker,
+      int pendingClarifications) {}
+
+  /**
+   * Story 2.12 AC6 / AC7: V9-rich clarification status used by {@link
+   * #getClarificationStatus(String, String)}. UI Clarification Region (story 2.18) consumes this
+   * for the per-question lifecycle indicator. Trap T1 — built from {@code
+   * ClarificationLifecycleSnapshot} read projection; {@link Clarification} stays lean.
+   */
+  public record ClarificationStatusView(
+      String clarificationId,
+      String workflowRunId,
+      String artifactId,
+      int artifactVersion,
+      String questionId,
+      String questionText,
+      String status,
+      String answerText,
+      String answeredByActor,
+      String answeredByActorType,
+      OffsetDateTime answeredAt,
+      OffsetDateTime acceptedAt,
+      OffsetDateTime incorporatedAt,
+      String incorporatedIntoArtifactId,
+      String supersededByArtifactId,
+      String noEffectReason,
+      OffsetDateTime createdAt) {}
 
   /**
    * Schema-shaped event-stream view ({@code GET /api/v1/workflows/{id}/events}, story 6.9). Mirrors
@@ -785,6 +1023,26 @@ public class WorkflowInspectionService {
       String reviewerRole,
       String rejectionTaxonomy,
       OffsetDateTime decidedAt) {}
+
+  /**
+   * Story 2.11 AC9: clarification view used by both {@link #getClarifications(String)} and {@link
+   * #getClarificationsForArtifact(String)}. {@code answerText} / {@code answeredByActor} / {@code
+   * answeredByActorType} / {@code answeredAt} are non-null only when {@code status != "open"}
+   * (paired with the DB CHECK invariant).
+   */
+  public record ClarificationView(
+      String clarificationId,
+      String workflowRunId,
+      String artifactId,
+      int artifactVersion,
+      String questionId,
+      String questionText,
+      String status,
+      String answerText,
+      String answeredByActor,
+      String answeredByActorType,
+      OffsetDateTime answeredAt,
+      OffsetDateTime createdAt) {}
 
   public record ContextBundleLookupResult(String artifactId, ContextBundle bundle, String reason) {
 

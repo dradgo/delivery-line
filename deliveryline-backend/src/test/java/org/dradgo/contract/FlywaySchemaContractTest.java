@@ -33,6 +33,7 @@ class FlywaySchemaContractTest {
           "artifacts",
           "artifact_operations",
           "approvals",
+          "clarifications",
           "runner_executions",
           "integration_links",
           "recovery_actions",
@@ -45,6 +46,7 @@ class FlywaySchemaContractTest {
           Map.entry("artifacts", "art_"),
           Map.entry("artifact_operations", "op_"),
           Map.entry("approvals", "apr_"),
+          Map.entry("clarifications", "clr_"),
           Map.entry("runner_executions", "rex_"),
           Map.entry("integration_links", "ilk_"),
           Map.entry("recovery_actions", "rcv_"),
@@ -174,6 +176,85 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void clarificationsSchemaCarriesTheExpectedV8ColumnsConstraintsAndIndexes() {
+    assertColumnType("clarifications", "artifact_version", "integer");
+    assertColumnType("clarifications", "question_id", "text");
+    assertColumnType("clarifications", "question_text", "text");
+    assertColumnType("clarifications", "status", "text");
+    assertColumnType("clarifications", "answer_text", "text");
+    assertColumnType("clarifications", "answered_by_actor", "text");
+    assertColumnType("clarifications", "answered_by_actor_type", "text");
+    assertColumnType("clarifications", "answered_at", "timestamp with time zone");
+    assertColumnType("clarifications", "incorporation_event_id", "bigint");
+    assertColumnType("clarifications", "idempotency_key", "text");
+    assertColumnNullable("clarifications", "workflow_run_id", false);
+    assertColumnNullable("clarifications", "artifact_id", false);
+    assertColumnNullable("clarifications", "artifact_version", false);
+    assertColumnNullable("clarifications", "question_id", false);
+    assertColumnNullable("clarifications", "question_text", false);
+    assertColumnNullable("clarifications", "status", false);
+    assertColumnNullable("clarifications", "answer_text", true);
+    assertColumnNullable("clarifications", "answered_by_actor", true);
+    assertColumnNullable("clarifications", "answered_by_actor_type", true);
+    assertColumnNullable("clarifications", "answered_at", true);
+    assertColumnNullable("clarifications", "incorporation_event_id", true);
+    assertColumnNullable("clarifications", "idempotency_key", false);
+
+    assertConstraintDefinitionContains("fk_clarifications_workflow_runs", "workflow_run_id");
+    assertConstraintDefinitionContains("fk_clarifications_artifacts", "artifact_id");
+    assertConstraintDefinitionContains("fk_clarifications_artifacts", "artifact_version");
+    assertConstraintDefinitionContains(
+        "fk_clarifications_incorporation_event", "incorporation_event_id");
+    assertConstraintDefinitionContains("ck_clarifications_status", "rejected_invalid");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_answered_fields_paired", "answer_text is null");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_answered_by_actor_type", "service_account");
+    assertConstraintDefinitionContains("ck_clarifications_question_id_format", "A-Za-z0-9._-");
+    assertConstraintDefinitionContains("ck_clarifications_artifact_version", "artifact_version");
+    assertIndexDefinitionContains(
+        "idx_clarifications_workflow_run_id_status_created_at", "workflow_run_id");
+    assertIndexDefinitionContains(
+        "idx_clarifications_workflow_run_id_status_created_at", "created_at");
+    assertIndexDefinitionContains("idx_clarifications_artifact_id_created_at", "artifact_id");
+    assertIndexDefinitionContains("idx_clarifications_archived_at", "archived_at");
+  }
+
+  @Test
+  void clarificationsSchemaCarriesTheExpectedV9LifecycleColumnsAndChecks() {
+    // V9 (story 2.12): five lifecycle metadata columns + composite FK + status-derivable CHECK +
+    // partial pending-index.
+    assertColumnType("clarifications", "accepted_at", "timestamp with time zone");
+    assertColumnType("clarifications", "incorporated_at", "timestamp with time zone");
+    assertColumnType("clarifications", "superseded_by_artifact_id", "bigint");
+    assertColumnType("clarifications", "superseded_by_artifact_version", "integer");
+    assertColumnType("clarifications", "no_effect_reason", "text");
+    assertColumnNullable("clarifications", "accepted_at", true);
+    assertColumnNullable("clarifications", "incorporated_at", true);
+    assertColumnNullable("clarifications", "superseded_by_artifact_id", true);
+    assertColumnNullable("clarifications", "superseded_by_artifact_version", true);
+    assertColumnNullable("clarifications", "no_effect_reason", true);
+    assertConstraintDefinitionContains(
+        "fk_clarifications_superseded_by_artifact", "superseded_by_artifact_id");
+    assertConstraintDefinitionContains(
+        "fk_clarifications_superseded_by_artifact", "superseded_by_artifact_version");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_supersedes_pair", "superseded_by_artifact_id");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_status_fields_paired", "incorporated");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_status_fields_paired", "superseded");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_status_fields_paired", "rejected_invalid");
+    assertConstraintDefinitionContains(
+        "ck_clarifications_status_fields_paired", "no_effect_reason");
+    assertIndexDefinitionContains(
+        "idx_clarifications_pending_by_workflow_run", "workflow_run_id");
+    assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "incorporated");
+    assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "archived_at");
+  }
+
+  @Test
   void everyConstraintAndIndexNameFitsPostgresIdentifierLimit() {
     List<String> overlongConstraints =
         jdbcTemplate.queryForList(
@@ -249,10 +330,10 @@ class FlywaySchemaContractTest {
                 })
             .count();
     assertEquals(
-        7,
+        8,
         workflowRunFks,
         () ->
-            "Expected 7 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, runner_executions, integration_links, recovery_actions). Found "
+            "Expected 8 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions). Found "
                 + workflowRunFks);
 
     // recovery_actions soft event references: SET NULL.
@@ -321,6 +402,7 @@ class FlywaySchemaContractTest {
                   + uniqueConstraintNames);
     }
     assertTrue(uniqueConstraintNames.contains("uq_approvals_idempotency_key"));
+    assertTrue(uniqueConstraintNames.contains("uq_clarifications_idempotency_key"));
     assertTrue(uniqueConstraintNames.contains("uq_recovery_actions_idempotency_key"));
     assertTrue(uniqueConstraintNames.contains("uq_idempotency_records_key"));
     assertTrue(
@@ -499,6 +581,23 @@ class FlywaySchemaContractTest {
                 + fragment
                 + "' but was: "
                 + defs.get(0));
+  }
+
+  private void assertIndexDefinitionContains(String indexName, String fragment) {
+    List<String> defs =
+        jdbcTemplate.queryForList(
+            """
+				select indexdef
+				from pg_indexes
+				where schemaname = 'public'
+				  and indexname = ?
+				""",
+            String.class,
+            indexName);
+    assertEquals(1, defs.size(), () -> "Index not found: " + indexName);
+    assertTrue(
+        defs.get(0).contains(fragment),
+        () -> "Index " + indexName + " should contain '" + fragment + "' but was: " + defs.get(0));
   }
 
   private void assertStateAccepted(String state) {

@@ -61,6 +61,8 @@ class WorkflowInspectionServiceTest {
       mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
   private final org.dradgo.application.runner.spi.RunnerScratchStore scratchStore =
       mock(org.dradgo.application.runner.spi.RunnerScratchStore.class);
+  private final org.dradgo.application.clarification.spi.ClarificationReadPort clarifications =
+      mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
   private final WorkflowInspectionService service =
       new WorkflowInspectionService(
           runs,
@@ -71,7 +73,8 @@ class WorkflowInspectionServiceTest {
           redaction,
           recovery,
           runnerExecutions,
-          scratchStore);
+          scratchStore,
+          clarifications);
 
   private void stubNonFailedDescribe(
       String runId, WorkflowState currentState, String nextSafeAction) {

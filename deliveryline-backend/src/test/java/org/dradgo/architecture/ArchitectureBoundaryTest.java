@@ -120,4 +120,12 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule approval_service_lives_in_application_approval =
       ArchitectureRuleCatalog.APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL;
+
+  @ArchTest
+  static final ArchRule clarification_service_lives_in_application_clarification =
+      ArchitectureRuleCatalog.CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION;
+
+  @ArchTest
+  static final ArchRule clarification_lifecycle_lives_in_application_clarification =
+      ArchitectureRuleCatalog.CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION;
 }

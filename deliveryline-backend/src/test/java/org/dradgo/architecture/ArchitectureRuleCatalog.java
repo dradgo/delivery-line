@@ -366,6 +366,62 @@ final class ArchitectureRuleCatalog {
                   "org.dradgo.domain..")
               .allowEmptyShould(false));
 
+  /**
+   * Story 2.11 trap T7 sibling rule: ClarificationService stays in {@code
+   * application.clarification} and never reaches into adapter/persistence types. Same shape as the
+   * approval boundary rule.
+   */
+  static final ArchRule CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION =
+      namedRule(
+          "ClarificationService must live under application.clarification and stay free of persistence/adapter dependencies",
+          "Remediation: keep ClarificationService in org.dradgo.application.clarification (story 2.11 trap T7). The service orchestrates the clarification pipeline via application-owned ports + domain types — JPA entity types or any other adapter import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.clarification.ClarificationService")
+              .should()
+              .resideInAPackage("org.dradgo.application.clarification..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.beans.factory.annotation..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
+  /**
+   * Story 2.12 trap T8 sibling rule: ClarificationLifecycleService + ClarificationLifecycleOrchestrator
+   * stay in {@code application.clarification} and never reach into adapter/persistence types. Mirror
+   * of {@link #CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION}.
+   */
+  static final ArchRule CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION =
+      namedRule(
+          "ClarificationLifecycleService + ClarificationLifecycleOrchestrator must live under application.clarification and stay free of persistence/adapter dependencies",
+          "Remediation: keep ClarificationLifecycleService + ClarificationLifecycleOrchestrator in org.dradgo.application.clarification (story 2.12 trap T8). Each orchestrates the lifecycle pipeline via application-owned ports + domain types; JPA entity imports would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
+          classes()
+              .that()
+              .haveFullyQualifiedName(
+                  "org.dradgo.application.clarification.ClarificationLifecycleService")
+              .or()
+              .haveFullyQualifiedName(
+                  "org.dradgo.application.clarification.ClarificationLifecycleOrchestrator")
+              .should()
+              .resideInAPackage("org.dradgo.application.clarification..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.beans.factory.annotation..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
   static final ArchRule SPECIFICATION_ARTIFACT_PROJECTION_LIVES_IN_APPLICATION_ARTIFACT =
       namedRule(
           "SpecificationArtifact projection must live under application.artifact and stay free of persistence/adapter dependencies",

@@ -33,6 +33,13 @@ public record WorkflowSummaryResponse(
             example = "false")
         boolean escalationMarker) {
 
+  // NOTE: Story 2.12 added `pendingClarifications` to the application-layer
+  // {@link WorkflowRunSummaryView} but the REST surface does NOT yet expose it — the OpenAPI
+  // snapshot regen is deferred to story 2.13 per the story's Git Intelligence note. Story 2.14
+  // reads `WorkflowInspectionService.getRunSummary()` directly for the gate logic without
+  // depending on the REST shape; when story 2.13 regenerates the snapshot, this DTO + the
+  // `WorkflowSummaryResponse.from` mapper will be widened with the new field at the END of the
+  // parameter list.
   public static WorkflowSummaryResponse from(WorkflowRunSummaryView view) {
     return new WorkflowSummaryResponse(
         view.workflowRunId(),

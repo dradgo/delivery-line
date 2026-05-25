@@ -17,6 +17,7 @@ import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.artifact.spi.ArtifactRunnerExecutionPort;
 import org.dradgo.application.artifact.spi.ArtifactWorkflowRunStatePort;
+import org.dradgo.application.clarification.ClarificationLifecycleOrchestrator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
@@ -61,6 +62,15 @@ public class ArtifactOperationService {
   private final Counter idempotencyReplayCounter;
   private TransactionTemplate operationTemplate;
   private TransactionTemplate raceReplayTemplate;
+
+  /**
+   * Story 2.12 clarification lifecycle hook. Setter-injected (optional) so unit-test constructors
+   * (~30 callsites) need no shape change. Production wiring sets it via {@link
+   * #setClarificationLifecycleOrchestrator}; tests that don't exercise the sweep leave it null and
+   * {@link #newVersion} treats null as a no-op. Trap T5 — the sweep only runs for SPEC parents
+   * regardless of orchestrator presence.
+   */
+  private ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator;
 
   @Autowired
   public ArtifactOperationService(
@@ -157,6 +167,18 @@ public class ArtifactOperationService {
 
   void setRaceReplayTemplate(TransactionTemplate raceReplayTemplate) {
     this.raceReplayTemplate = raceReplayTemplate;
+  }
+
+  /**
+   * Story 2.12 — setter-injection of the orchestrator. {@code @Autowired(required = false)} so
+   * test contexts that exclude the orchestrator (e.g., focused {@link
+   * org.dradgo.application.artifact.ArtifactOperationServiceUnitTest}) still load. Production
+   * wiring auto-injects the singleton.
+   */
+  @Autowired(required = false)
+  public void setClarificationLifecycleOrchestrator(
+      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
+    this.clarificationLifecycleOrchestrator = clarificationLifecycleOrchestrator;
   }
 
   /**
@@ -465,6 +487,27 @@ public class ArtifactOperationService {
         parentArtifactId,
         artifact.publicId(),
         artifact.version());
+    // Story 2.12 — clarification lifecycle sweep AFTER the new version is persisted AND AFTER the
+    // ARTIFACT_VERSION_CREATED event is appended (the persistence adapter writes both atomically
+    // in this same outer transaction). Trap T5 — only sweep SPEC lineages; non-SPEC parents have
+    // no clarifications attached. Trap T7 — orchestrator is setter-injected so unit-test
+    // constructors did not need shape updates.
+    if (clarificationLifecycleOrchestrator != null
+        && artifact.artifactType() == ArtifactType.SPEC) {
+      ClarificationLifecycleOrchestrator.LifecycleSweepResult sweep =
+          clarificationLifecycleOrchestrator.sweepAfterSpecRebuild(
+              artifact.workflowRunId(), artifact.publicId(), artifact.version(), actor);
+      log.info(
+          "newVersion clarification lifecycle sweep parentArtifactId={} consideredCount={} incorporatedCount={} supersededCount={}",
+          parentArtifactId,
+          sweep.consideredCount(),
+          sweep.decisions().stream()
+              .filter(d -> d.outcome() == ClarificationLifecycleOrchestrator.Outcome.INCORPORATED)
+              .count(),
+          sweep.decisions().stream()
+              .filter(d -> d.outcome() == ClarificationLifecycleOrchestrator.Outcome.SUPERSEDED)
+              .count());
+    }
     return artifact;
   }
 

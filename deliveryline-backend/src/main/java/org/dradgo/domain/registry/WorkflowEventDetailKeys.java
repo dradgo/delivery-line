@@ -46,6 +46,21 @@ public final class WorkflowEventDetailKeys {
   public static final String SPEC_REJECTION_LOOP_COUNT = "specRejectionLoopCount";
   public static final String ESCALATION_MARKER = "escalationMarker";
 
+  // Clarification audit keys (added story 2.11). priorAnswerText / questionText / answerText are
+  // NEVER allow-listed — they may carry product-specific free-form content; CLI history strips
+  // them like IDEMPOTENCY_KEY. Trap T12.
+  public static final String CLARIFICATION_ID = "clarificationId";
+  public static final String QUESTION_ID = "questionId";
+  public static final String PRIOR_ANSWER_TEXT = "priorAnswerText";
+
+  // Clarification lifecycle keys (added story 2.12). All four are allow-listed: the IDs are
+  // public references; noEffectReason is controlled-vocabulary token (Trap T2), NOT free-form
+  // reviewer text — safe to log + surface in CLI history.
+  public static final String INCORPORATED_INTO_ARTIFACT_ID = "incorporatedIntoArtifactId";
+  public static final String INCORPORATION_EVENT_ID = "incorporationEventId";
+  public static final String SUPERSEDED_BY_ARTIFACT_ID = "supersededByArtifactId";
+  public static final String NO_EFFECT_REASON = "noEffectReason";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -68,10 +83,21 @@ public final class WorkflowEventDetailKeys {
           REVIEWER_ROLE,
           TAGGED_FEEDBACK,
           SPEC_REJECTION_LOOP_COUNT,
-          ESCALATION_MARKER);
+          ESCALATION_MARKER,
+          CLARIFICATION_ID,
+          QUESTION_ID,
+          INCORPORATED_INTO_ARTIFACT_ID,
+          INCORPORATION_EVENT_ID,
+          SUPERSEDED_BY_ARTIFACT_ID,
+          NO_EFFECT_REASON);
 
-  /** Keys persisted in {@code workflow_events.details} but intentionally stripped from render. */
-  public static final List<String> SERVER_ONLY_KEYS = List.of(IDEMPOTENCY_KEY);
+  /**
+   * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.
+   * {@link #PRIOR_ANSWER_TEXT} joins {@link #IDEMPOTENCY_KEY} here so the CLI never echoes the
+   * free-form reviewer-supplied answer text from the event log (story 2.11 trap T12 — same
+   * redaction posture as story 2.10's {@code reasonText}).
+   */
+  public static final List<String> SERVER_ONLY_KEYS = List.of(IDEMPOTENCY_KEY, PRIOR_ANSWER_TEXT);
 
   private WorkflowEventDetailKeys() {}
 }

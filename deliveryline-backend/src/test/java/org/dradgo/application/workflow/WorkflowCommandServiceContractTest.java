@@ -26,6 +26,7 @@ import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.domain.DomainException;
@@ -58,6 +59,7 @@ class WorkflowCommandServiceContractTest {
   void cleanDatabase() {
     jdbcTemplate.update("delete from idempotency_records");
     jdbcTemplate.update("delete from integration_links");
+    jdbcTemplate.update("delete from clarifications");
     jdbcTemplate.update("delete from approvals");
     jdbcTemplate.update("delete from artifacts");
     jdbcTemplate.update("delete from workflow_events");
@@ -521,6 +523,112 @@ class WorkflowCommandServiceContractTest {
   }
 
   @Test
+  void answerClarificationReplayReturnsTheOriginalStateWithoutDuplicateWrites()
+      throws IOException {
+    String runId = insertRun("run_clrreplay1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_clrreplay_v1");
+    seedOpenClarification(runId, "art_clrreplay_v1", "clr_clrreplay01");
+    SubmitClarificationCommand command =
+        new SubmitClarificationCommand(
+            runId,
+            "clr_clrreplay01",
+            "art_clrreplay_v1",
+            1,
+            "updated answer",
+            "alex",
+            ActorType.HUMAN,
+            "idem-clarification-replay-1234567890",
+            "corr-clarification-replay-1");
+
+    WorkflowStateChangeResult first = service.answerClarification(command);
+    jdbcTemplate.update(
+        "update workflow_runs set current_state = ? where public_id = ?",
+        WorkflowState.EXECUTING.value(),
+        runId);
+
+    WorkflowStateChangeResult replay = service.answerClarification(command);
+
+    assertEquals(first, replay);
+    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, replay.currentState());
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from clarifications", Integer.class));
+    assertEquals(
+        2, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
+  }
+
+  @Test
+  void answerClarificationSameKeyDifferentFingerprintRaisesIdempotencyKeyConflict()
+      throws IOException {
+    String runId = insertRun("run_clrconflict12", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
+    seedAvailableSpecArtifact(runId, "art_clrconflict_v1");
+    seedOpenClarification(runId, "art_clrconflict_v1", "clr_clrconflict1");
+    String sharedKey = "idem-clarification-keyconflict-1234567890";
+
+    SubmitClarificationCommand first =
+        new SubmitClarificationCommand(
+            runId,
+            "clr_clrconflict1",
+            "art_clrconflict_v1",
+            1,
+            "first answer",
+            "alex",
+            ActorType.HUMAN,
+            sharedKey,
+            "corr-clarification-conflict-1");
+    service.answerClarification(first);
+
+    SubmitClarificationCommand secondDifferentFingerprint =
+        new SubmitClarificationCommand(
+            runId,
+            "clr_clrconflict1",
+            "art_clrconflict_v1",
+            2,
+            "second answer",
+            "alex",
+            ActorType.HUMAN,
+            sharedKey,
+            "corr-clarification-conflict-2");
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () -> service.answerClarification(secondDifferentFingerprint));
+
+    assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
+    assertEquals(
+        1, jdbcTemplate.queryForObject("select count(*) from clarifications", Integer.class));
+    assertEquals(
+        1,
+        jdbcTemplate.queryForObject(
+            "select count(*) from workflow_events where event_type = 'clarification.answered'",
+            Integer.class));
+  }
+
+  @Test
+  void answerClarificationBlankAnswerRaisesInvalidCommandPayload() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.answerClarification(
+                    new SubmitClarificationCommand(
+                        "run_clrvalidate12",
+                        "clr_clrvalidate1",
+                        "art_clrvalidate1",
+                        1,
+                        " ",
+                        "alex",
+                        ActorType.HUMAN,
+                        "idem-clarification-validate-1234567890",
+                        "corr-clarification-validate-1")));
+
+    assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
+    assertFieldErrors(error, "answerText");
+  }
+
+  @Test
   void retryWorkflowTransitionsFailedToExecuting() throws IOException {
     String runId = insertRun("run_retry1234", WorkflowState.FAILED);
 
@@ -711,6 +819,24 @@ class WorkflowCommandServiceContractTest {
         storageRef,
         checksum,
         linkedEventId);
+  }
+
+  private void seedOpenClarification(
+      String runPublicId, String artifactPublicId, String clarificationPublicId) {
+    Long runId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_runs where public_id = ?", Long.class, runPublicId);
+    Long artifactId =
+        jdbcTemplate.queryForObject(
+            "select id from artifacts where public_id = ?", Long.class, artifactPublicId);
+    jdbcTemplate.update(
+        "insert into clarifications (public_id, workflow_run_id, artifact_id, artifact_version, "
+            + "question_id, question_text, status, idempotency_key) "
+            + "values (?, ?, ?, 1, 'Q1', 'What is the boundary?', 'open', ?)",
+        clarificationPublicId,
+        runId,
+        artifactId,
+        "seed-" + clarificationPublicId);
   }
 
   private static String sha256Hex(byte[] payload) {

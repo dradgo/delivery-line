@@ -1,0 +1,88 @@
+package org.dradgo.adapters.persistence.repository;
+
+import java.util.List;
+import java.util.Optional;
+import org.dradgo.adapters.persistence.entity.ClarificationEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+/**
+ * Spring Data repository for the V8 {@code clarifications} table (story 2.11). All read queries
+ * enforce {@code archived_at IS NULL} so tombstoned rows never reach the application layer.
+ *
+ * <p>The status-grouped ordering ({@code open → answered → accepted → incorporated → superseded →
+ * rejected_invalid}, with {@code created_at ASC + id ASC} within each group) is pinned in JPQL so
+ * the UI (story 2.18) can render rows in a single render pass without re-sorting. Story 2.11 trap
+ * T11.
+ */
+public interface ClarificationRepository extends JpaRepository<ClarificationEntity, Long> {
+
+  Optional<ClarificationEntity> findByPublicIdAndArchivedAtIsNull(String publicId);
+
+  Optional<ClarificationEntity> findByPublicId(String publicId);
+
+  /**
+   * All non-archived clarifications for the supplied workflow run, status-grouped + chronological
+   * within each group. {@code join fetch} on {@code workflowRun} + {@code artifact} kills the
+   * lazy-load N+1 in {@link
+   * org.dradgo.adapters.persistence.mapper.ClarificationEntityMapper#toProjection} which
+   * dereferences both public ids per row.
+   */
+  @Query(
+      """
+      select c from ClarificationEntity c
+        join fetch c.workflowRun wr
+        join fetch c.artifact a
+      where wr.publicId = :workflowRunPublicId
+        and c.archivedAt is null
+      order by case c.status
+          when 'open' then 0
+          when 'answered' then 1
+          when 'accepted' then 2
+          when 'incorporated' then 3
+          when 'superseded' then 3
+          when 'rejected_invalid' then 3
+        end,
+        c.createdAt asc,
+        c.id asc
+      """)
+  List<ClarificationEntity> findByWorkflowRunPublicIdOrdered(
+      @Param("workflowRunPublicId") String workflowRunPublicId);
+
+  /** Same ordering contract scoped to a single artifact's clarification list. */
+  @Query(
+      """
+      select c from ClarificationEntity c
+        join fetch c.workflowRun wr
+        join fetch c.artifact a
+      where a.publicId = :artifactPublicId
+        and c.archivedAt is null
+      order by case c.status
+          when 'open' then 0
+          when 'answered' then 1
+          when 'accepted' then 2
+          when 'incorporated' then 3
+          when 'superseded' then 3
+          when 'rejected_invalid' then 3
+        end,
+        c.createdAt asc,
+        c.id asc
+      """)
+  List<ClarificationEntity> findByArtifactPublicIdOrdered(
+      @Param("artifactPublicId") String artifactPublicId);
+
+  /**
+   * Story 2.12 AC9 — count of non-terminal clarifications for the supplied workflow run. Native
+   * query so Postgres can use the V9 partial index {@code idx_clarifications_pending_by_workflow_run}
+   * directly. Filter mirrors the partial-index WHERE clause.
+   */
+  @Query(
+      value =
+          "select count(*) from clarifications c "
+              + "where c.workflow_run_id = (select id from workflow_runs where public_id = :runPublicId) "
+              + "  and c.archived_at is null "
+              + "  and c.status not in ('incorporated', 'rejected_invalid')",
+      nativeQuery = true)
+  long countPendingByWorkflowRunPublicId(@Param("runPublicId") String runPublicId);
+}

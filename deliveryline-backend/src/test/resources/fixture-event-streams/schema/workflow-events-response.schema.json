@@ -206,7 +206,29 @@
             },
             "compensationFailed": { "type": "boolean" },
             "artifactVariant": { "$ref": "#/$defs/artifactVariant" },
-            "feedback": { "type": "string" }
+            "feedback": { "type": "string" },
+            "reviewerRole": { "type": "string", "minLength": 1 },
+            "taggedFeedback": { "type": "string", "minLength": 1 },
+            "specRejectionLoopCount": { "type": "integer", "minimum": 0 },
+            "escalationMarker": { "type": "boolean" },
+            "clarificationId": {
+              "type": "string",
+              "pattern": "^clr_[A-Za-z0-9_]{4,}$"
+            },
+            "questionId": { "type": "string", "minLength": 1 },
+            "incorporatedIntoArtifactId": {
+              "type": "string",
+              "pattern": "^art_[A-Za-z0-9_]{4,}$"
+            },
+            "incorporationEventId": {
+              "type": "string",
+              "pattern": "^evt_[A-Za-z0-9_]{4,}$"
+            },
+            "supersededByArtifactId": {
+              "type": "string",
+              "pattern": "^art_[A-Za-z0-9_]{4,}$"
+            },
+            "noEffectReason": { "type": "string", "minLength": 1 }
           }
         }
       }

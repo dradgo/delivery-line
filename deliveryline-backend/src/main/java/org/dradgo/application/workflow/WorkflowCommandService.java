@@ -13,6 +13,8 @@ import java.util.Set;
 import org.dradgo.application.approval.ApprovalResult;
 import org.dradgo.application.approval.ApprovalService;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.clarification.ClarificationResult;
+import org.dradgo.application.clarification.ClarificationService;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
@@ -22,6 +24,7 @@ import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
@@ -46,6 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class WorkflowCommandService {
+  private static final String CLARIFICATION_REPLAY_REF_SEPARATOR = "|";
 
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowRunCreatePort workflowRunCreatePort;
@@ -57,6 +61,7 @@ public class WorkflowCommandService {
   private final WorkflowCommandFingerprintFactory fingerprintFactory;
   private final IntegrationLinkService integrationLinkService;
   private final ApprovalService approvalService;
+  private final ClarificationService clarificationService;
   private final TransactionTemplate failureCompletionTemplate;
   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
@@ -72,7 +77,8 @@ public class WorkflowCommandService {
       IdempotencyKeyValidator idempotencyKeyValidator,
       WorkflowCommandFingerprintFactory fingerprintFactory,
       IntegrationLinkService integrationLinkService,
-      ApprovalService approvalService) {
+      ApprovalService approvalService,
+      ClarificationService clarificationService) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -84,6 +90,7 @@ public class WorkflowCommandService {
     this.fingerprintFactory = fingerprintFactory;
     this.integrationLinkService = integrationLinkService;
     this.approvalService = approvalService;
+    this.clarificationService = clarificationService;
   }
 
   @Transactional
@@ -99,6 +106,20 @@ public class WorkflowCommandService {
   @Transactional
   public WorkflowStateChangeResult rejectSpec(RejectSpecCommand command) {
     return executeIdempotent(command, this::rejectSpecInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult answerClarification(SubmitClarificationCommand command) {
+    // Story 2.11: the clarification row UPDATE + clarification.answered event append all happen
+    // inside ClarificationService, participating in this method's @Transactional boundary. The
+    // legacy contract still returns WorkflowStateChangeResult (story 2.13 will rebuild the surface
+    // to expose ClarificationResult directly). OQ-1 resolved as recommended: idempotency wired
+    // here in 2.11 so replays land correctly end-to-end.
+    return executeIdempotent(
+        command,
+        this::answerClarificationInternal,
+        this::replayStateChange,
+        this::clarificationReplayRef);
   }
 
   @Transactional
@@ -189,6 +210,33 @@ public class WorkflowCommandService {
     }
   }
 
+  private WorkflowStateChangeResult answerClarificationInternal(
+      SubmitClarificationCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      ClarificationResult result = clarificationService.submitAnswer(command);
+      // Answering a clarification does NOT mutate the workflow state — read the run's live state
+      // fresh so the legacy WorkflowStateChangeResult is honest (rather than hard-coding a state
+      // value that would lie about runs that have advanced through story 2.12's lifecycle since).
+      // replayStateChange's default branch falls back to the same live read for SubmitClarification
+      // (story 2.11 trap T4 — no invariant post-state).
+      WorkflowState currentState =
+          workflowRunReadPort
+              .findByPublicId(command.workflowRunId())
+              .map(WorkflowRunSnapshot::currentState)
+              .orElseThrow(
+                  () ->
+                      new DomainException(
+                          DomainErrorCode.RUN_NOT_FOUND,
+                          "Workflow run not found: " + command.workflowRunId(),
+                          Map.of("runId", command.workflowRunId())));
+      return new WorkflowStateChangeResult(
+          result.workflowRunId(), currentState, result.correlationId());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
   private WorkflowStateChangeResult retryWorkflowInternal(RetryWorkflowCommand command) {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
@@ -229,6 +277,14 @@ public class WorkflowCommandService {
       C command,
       java.util.function.Function<C, T> action,
       java.util.function.BiFunction<String, C, T> replayLoader) {
+    return executeIdempotent(command, action, replayLoader, DomainResult::workflowRunId);
+  }
+
+  private <T extends DomainResult, C extends WorkflowCommand> T executeIdempotent(
+      C command,
+      java.util.function.Function<C, T> action,
+      java.util.function.BiFunction<String, C, T> replayLoader,
+      java.util.function.Function<T, String> resultRefExtractor) {
     validateForExecution(command);
     String fingerprint = fingerprintFactory.fingerprintFor(command);
     IdempotencyService.ReservationOutcome outcome =
@@ -238,7 +294,7 @@ public class WorkflowCommandService {
     }
     try {
       T result = action.apply(command);
-      completeWhenTransactionFinishes(command.idempotencyKey(), result.workflowRunId());
+      completeWhenTransactionFinishes(command.idempotencyKey(), resultRefExtractor.apply(result));
       return result;
     } catch (RuntimeException error) {
       completeFailedInIndependentTransaction(command.idempotencyKey(), error);
@@ -407,7 +463,12 @@ public class WorkflowCommandService {
   }
 
   private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
-    var workflowRun = findWorkflowRunForReplay(resultRef);
+    String workflowRunId =
+        switch (command) {
+          case SubmitClarificationCommand ignored -> clarificationReplayRunId(resultRef);
+          default -> resultRef;
+        };
+    var workflowRun = findWorkflowRunForReplay(workflowRunId);
     // Replay must return the original command result, not the run's later live state. Commands
     // with invariant post-states are therefore pinned here; callers arriving after the run has
     // advanced still receive the state produced by the original accepted command.
@@ -415,10 +476,49 @@ public class WorkflowCommandService {
         switch (command) {
           case ApproveSpecCommand ignored -> WorkflowState.EXECUTING;
           case RejectSpecCommand ignored -> WorkflowState.INVESTIGATING;
+          case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();
         };
     return new WorkflowStateChangeResult(
         workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));
+  }
+
+  private String clarificationReplayRef(WorkflowStateChangeResult result) {
+    if (result.currentState() == null) {
+      // Defensive: a null currentState would NPE here and surface as INTERNAL_ERROR via the
+      // failed-tx pipeline for a command that actually succeeded. Today the answer flow always
+      // populates currentState, but future result variants must not silently corrupt idempotency.
+      throw new IllegalStateException(
+          "WorkflowStateChangeResult.currentState() is null for clarification replay ref");
+    }
+    return result.workflowRunId()
+        + CLARIFICATION_REPLAY_REF_SEPARATOR
+        + result.currentState().value();
+  }
+
+  private String clarificationReplayRunId(String resultRef) {
+    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
+    if (separator <= 0 || separator == resultRef.length() - 1) {
+      throw malformedClarificationReplayRef(resultRef);
+    }
+    return resultRef.substring(0, separator);
+  }
+
+  private WorkflowState clarificationReplayState(String resultRef) {
+    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
+    if (separator <= 0 || separator == resultRef.length() - 1) {
+      throw malformedClarificationReplayRef(resultRef);
+    }
+    return WorkflowState.fromValue(
+        resultRef.substring(separator + CLARIFICATION_REPLAY_REF_SEPARATOR.length()),
+        "idempotency.resultRef");
+  }
+
+  private DomainException malformedClarificationReplayRef(String resultRef) {
+    return new DomainException(
+        DomainErrorCode.INTERNAL_ERROR,
+        "Malformed clarification replay result reference",
+        Map.of("resultRef", resultRef));
   }
 
   private WorkflowRunSnapshot findWorkflowRunForReplay(String workflowRunId) {

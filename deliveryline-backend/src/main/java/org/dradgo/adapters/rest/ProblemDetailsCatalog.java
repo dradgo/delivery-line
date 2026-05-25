@@ -88,6 +88,30 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.CLARIFICATION_ARTIFACT_VERSION_MISMATCH,
+        HttpStatus.CONFLICT,
+        "Clarification artifact version mismatch",
+        true);
+    register(
+        metadata,
+        DomainErrorCode.CLARIFICATION_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        "Clarification not found",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.CLARIFICATION_TERMINAL_STATE,
+        HttpStatus.CONFLICT,
+        "Clarification is in a terminal state",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION,
+        HttpStatus.CONFLICT,
+        "Illegal clarification transition",
+        false);
+    register(
+        metadata,
         DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT,
         HttpStatus.CONFLICT,
         "Concurrent transition conflict",

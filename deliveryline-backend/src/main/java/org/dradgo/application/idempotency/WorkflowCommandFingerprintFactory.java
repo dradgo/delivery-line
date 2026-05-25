@@ -7,6 +7,7 @@ import java.util.HexFormat;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
@@ -46,6 +47,18 @@ public class WorkflowCommandFingerprintFactory {
         // 2.10 trap T6 / OQ-2 (symmetric with ApproveSpecCommand.reason exclusion).
         append(digest, reject.reviewerRole());
         append(digest, reject.taggedFeedback().value());
+      }
+      case SubmitClarificationCommand clarify -> {
+        // Story 2.11: canonical fingerprint fields beyond the shared envelope are
+        // workflowRunId + clarificationId + artifactId + artifactVersion. answerText is
+        // intentionally NOT fingerprinted — free-form reviewer wording edits on the same
+        // clarification must replay idempotently (symmetric with ApproveSpecCommand.reason and
+        // RejectSpecCommand.reasonText exclusion). The DB-level uq_clarifications_idempotency_key
+        // UNIQUE constraint is the defense-in-depth backstop.
+        append(digest, clarify.workflowRunId());
+        append(digest, clarify.clarificationId());
+        append(digest, clarify.artifactId());
+        append(digest, clarify.artifactVersion().toString());
       }
       case RetryWorkflowCommand retry -> {
         append(digest, retry.workflowRunId());

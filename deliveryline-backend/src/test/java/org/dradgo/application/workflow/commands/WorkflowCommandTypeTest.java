@@ -44,6 +44,11 @@ class WorkflowCommandTypeTest {
                 "r")
             .commandType());
     assertEquals(
+        "SubmitClarificationCommand",
+        new SubmitClarificationCommand(
+                "run_x", "clr_x", "art_x", 1, "answer", "alex", ActorType.HUMAN, "k", null)
+            .commandType());
+    assertEquals(
         "RetryWorkflowCommand",
         new RetryWorkflowCommand("run_x", "alex", ActorType.HUMAN, "k", null, null).commandType());
     assertEquals(

@@ -23,6 +23,7 @@ import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
@@ -61,6 +62,7 @@ class CommandModelSymmetryFoundationContract {
           SubmitWorkflowCommand.class,
           ApproveSpecCommand.class,
           RejectSpecCommand.class,
+          SubmitClarificationCommand.class,
           RetryWorkflowCommand.class,
           TakeoverWorkflowCommand.class);
 
