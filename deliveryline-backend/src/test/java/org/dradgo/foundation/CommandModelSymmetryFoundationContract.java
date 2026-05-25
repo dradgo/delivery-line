@@ -194,6 +194,7 @@ class CommandModelSymmetryFoundationContract {
               "actorIdentity": "alex",
               "actorType": "HUMAN",
               "correlationId": "corr-reject-1",
+              "taggedFeedback": "UNCLEAR_SPECIFICATION",
               "reasonText": "Spec missing acceptance criteria for the negative path"
             }
             """);
