@@ -1,0 +1,3167 @@
+diff --git a/config/checkstyle/suppressions.xml b/config/checkstyle/suppressions.xml
+index e743984..d228cf7 100644
+--- a/config/checkstyle/suppressions.xml
++++ b/config/checkstyle/suppressions.xml
+@@ -38,7 +38,7 @@
+             lines="108"/>
+   <suppress id="ForbiddenThreadSleep"
+             files="[\\/]application[\\/]workflow[\\/]WorkflowCommandService\.java$"
+-            lines="440"/>
++            lines="483"/>
+ 
+   <!--
+     RedactionLayoutHolder - two exemptions for this one class:
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/repository/WorkflowEventRepository.java b/deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/repository/WorkflowEventRepository.java
+index e5841a0..1afc869 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/repository/WorkflowEventRepository.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/repository/WorkflowEventRepository.java
+@@ -13,6 +13,14 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
+ 
+   Optional<WorkflowEventEntity> findByPublicId(String publicId);
+ 
++  /**
++   * Story 2.12 — resolve a workflow_events row to its internal {@code id} (FK target for {@code
++   * clarifications.incorporation_event_id}). Used by {@code ClarificationWritePersistenceAdapter
++   * .markIncorporated} after {@code ClarificationLifecycleService} appends the event row.
++   */
++  @Query("select event.id from WorkflowEventEntity event where event.publicId = :publicId")
++  Optional<Long> findIdByPublicId(@Param("publicId") String publicId);
++
+   @Query(
+       """
+ 		select event from WorkflowEventEntity event
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java b/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java
+index 0fd8518..b4ff16b 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java
+@@ -86,6 +86,30 @@ public final class ProblemDetailsCatalog {
+         HttpStatus.CONFLICT,
+         "Approval version mismatch",
+         false);
++    register(
++        metadata,
++        DomainErrorCode.CLARIFICATION_ARTIFACT_VERSION_MISMATCH,
++        HttpStatus.CONFLICT,
++        "Clarification artifact version mismatch",
++        true);
++    register(
++        metadata,
++        DomainErrorCode.CLARIFICATION_NOT_FOUND,
++        HttpStatus.NOT_FOUND,
++        "Clarification not found",
++        false);
++    register(
++        metadata,
++        DomainErrorCode.CLARIFICATION_TERMINAL_STATE,
++        HttpStatus.CONFLICT,
++        "Clarification is in a terminal state",
++        false);
++    register(
++        metadata,
++        DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION,
++        HttpStatus.CONFLICT,
++        "Illegal clarification transition",
++        false);
+     register(
+         metadata,
+         DomainErrorCode.CONCURRENT_TRANSITION_CONFLICT,
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowSummaryResponse.java b/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowSummaryResponse.java
+index 9c77b69..8651ec3 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowSummaryResponse.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowSummaryResponse.java
+@@ -33,6 +33,13 @@ public record WorkflowSummaryResponse(
+             example = "false")
+         boolean escalationMarker) {
+ 
++  // NOTE: Story 2.12 added `pendingClarifications` to the application-layer
++  // {@link WorkflowRunSummaryView} but the REST surface does NOT yet expose it — the OpenAPI
++  // snapshot regen is deferred to story 2.13 per the story's Git Intelligence note. Story 2.14
++  // reads `WorkflowInspectionService.getRunSummary()` directly for the gate logic without
++  // depending on the REST shape; when story 2.13 regenerates the snapshot, this DTO + the
++  // `WorkflowSummaryResponse.from` mapper will be widened with the new field at the END of the
++  // parameter list.
+   public static WorkflowSummaryResponse from(WorkflowRunSummaryView view) {
+     return new WorkflowSummaryResponse(
+         view.workflowRunId(),
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactOperationService.java b/deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactOperationService.java
+index 9e84016..59bad63 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactOperationService.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactOperationService.java
+@@ -17,6 +17,7 @@ import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
+ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+ import org.dradgo.application.artifact.spi.ArtifactRunnerExecutionPort;
+ import org.dradgo.application.artifact.spi.ArtifactWorkflowRunStatePort;
++import org.dradgo.application.clarification.ClarificationLifecycleOrchestrator;
+ import org.dradgo.application.observability.MdcKeys;
+ import org.dradgo.domain.DomainException;
+ import org.dradgo.domain.id.PublicIdPrefixes;
+@@ -62,6 +63,15 @@ public class ArtifactOperationService {
+   private TransactionTemplate operationTemplate;
+   private TransactionTemplate raceReplayTemplate;
+ 
++  /**
++   * Story 2.12 clarification lifecycle hook. Setter-injected (optional) so unit-test constructors
++   * (~30 callsites) need no shape change. Production wiring sets it via {@link
++   * #setClarificationLifecycleOrchestrator}; tests that don't exercise the sweep leave it null and
++   * {@link #newVersion} treats null as a no-op. Trap T5 — the sweep only runs for SPEC parents
++   * regardless of orchestrator presence.
++   */
++  private ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator;
++
+   @Autowired
+   public ArtifactOperationService(
+       ArtifactRecordPort artifactRecordPort,
+@@ -159,6 +169,18 @@ public class ArtifactOperationService {
+     this.raceReplayTemplate = raceReplayTemplate;
+   }
+ 
++  /**
++   * Story 2.12 — setter-injection of the orchestrator. {@code @Autowired(required = false)} so
++   * test contexts that exclude the orchestrator (e.g., focused {@link
++   * org.dradgo.application.artifact.ArtifactOperationServiceUnitTest}) still load. Production
++   * wiring auto-injects the singleton.
++   */
++  @Autowired(required = false)
++  public void setClarificationLifecycleOrchestrator(
++      ClarificationLifecycleOrchestrator clarificationLifecycleOrchestrator) {
++    this.clarificationLifecycleOrchestrator = clarificationLifecycleOrchestrator;
++  }
++
+   /**
+    * Builds a service whose workflow-run-state guard is intentionally absent.
+    *
+@@ -465,6 +487,27 @@ public class ArtifactOperationService {
+         parentArtifactId,
+         artifact.publicId(),
+         artifact.version());
++    // Story 2.12 — clarification lifecycle sweep AFTER the new version is persisted AND AFTER the
++    // ARTIFACT_VERSION_CREATED event is appended (the persistence adapter writes both atomically
++    // in this same outer transaction). Trap T5 — only sweep SPEC lineages; non-SPEC parents have
++    // no clarifications attached. Trap T7 — orchestrator is setter-injected so unit-test
++    // constructors did not need shape updates.
++    if (clarificationLifecycleOrchestrator != null
++        && artifact.artifactType() == ArtifactType.SPEC) {
++      ClarificationLifecycleOrchestrator.LifecycleSweepResult sweep =
++          clarificationLifecycleOrchestrator.sweepAfterSpecRebuild(
++              artifact.workflowRunId(), artifact.publicId(), artifact.version(), actor);
++      log.info(
++          "newVersion clarification lifecycle sweep parentArtifactId={} consideredCount={} incorporatedCount={} supersededCount={}",
++          parentArtifactId,
++          sweep.consideredCount(),
++          sweep.decisions().stream()
++              .filter(d -> d.outcome() == ClarificationLifecycleOrchestrator.Outcome.INCORPORATED)
++              .count(),
++          sweep.decisions().stream()
++              .filter(d -> d.outcome() == ClarificationLifecycleOrchestrator.Outcome.SUPERSEDED)
++              .count());
++    }
+     return artifact;
+   }
+ 
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/idempotency/WorkflowCommandFingerprintFactory.java b/deliveryline-backend/src/main/java/org/dradgo/application/idempotency/WorkflowCommandFingerprintFactory.java
+index 4b785fc..ef1b3ab 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/application/idempotency/WorkflowCommandFingerprintFactory.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/idempotency/WorkflowCommandFingerprintFactory.java
+@@ -7,6 +7,7 @@ import java.util.HexFormat;
+ import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+ import org.dradgo.application.workflow.commands.RejectSpecCommand;
+ import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
++import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
+ import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
+ import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
+ import org.dradgo.application.workflow.commands.WorkflowCommand;
+@@ -47,6 +48,18 @@ public class WorkflowCommandFingerprintFactory {
+         append(digest, reject.reviewerRole());
+         append(digest, reject.taggedFeedback().value());
+       }
++      case SubmitClarificationCommand clarify -> {
++        // Story 2.11: canonical fingerprint fields beyond the shared envelope are
++        // workflowRunId + clarificationId + artifactId + artifactVersion. answerText is
++        // intentionally NOT fingerprinted — free-form reviewer wording edits on the same
++        // clarification must replay idempotently (symmetric with ApproveSpecCommand.reason and
++        // RejectSpecCommand.reasonText exclusion). The DB-level uq_clarifications_idempotency_key
++        // UNIQUE constraint is the defense-in-depth backstop.
++        append(digest, clarify.workflowRunId());
++        append(digest, clarify.clarificationId());
++        append(digest, clarify.artifactId());
++        append(digest, clarify.artifactVersion().toString());
++      }
+       case RetryWorkflowCommand retry -> {
+         append(digest, retry.workflowRunId());
+         append(digest, normalizeOptional(retry.reasonText()));
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowCommandService.java b/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowCommandService.java
+index 1e8c709..8430e63 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowCommandService.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowCommandService.java
+@@ -13,6 +13,8 @@ import java.util.Set;
+ import org.dradgo.application.approval.ApprovalResult;
+ import org.dradgo.application.approval.ApprovalService;
+ import org.dradgo.application.artifact.ActorContext;
++import org.dradgo.application.clarification.ClarificationResult;
++import org.dradgo.application.clarification.ClarificationService;
+ import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+ import org.dradgo.application.idempotency.IdempotencyService;
+ import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
+@@ -22,6 +24,7 @@ import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor
+ import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+ import org.dradgo.application.workflow.commands.RejectSpecCommand;
+ import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
++import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
+ import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
+ import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
+ import org.dradgo.application.workflow.commands.WorkflowCommand;
+@@ -46,6 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
+ 
+ @Service
+ public class WorkflowCommandService {
++  private static final String CLARIFICATION_REPLAY_REF_SEPARATOR = "|";
+ 
+   private final WorkflowRunReadPort workflowRunReadPort;
+   private final WorkflowRunCreatePort workflowRunCreatePort;
+@@ -57,6 +61,7 @@ public class WorkflowCommandService {
+   private final WorkflowCommandFingerprintFactory fingerprintFactory;
+   private final IntegrationLinkService integrationLinkService;
+   private final ApprovalService approvalService;
++  private final ClarificationService clarificationService;
+   private final TransactionTemplate failureCompletionTemplate;
+   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
+   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
+@@ -72,7 +77,8 @@ public class WorkflowCommandService {
+       IdempotencyKeyValidator idempotencyKeyValidator,
+       WorkflowCommandFingerprintFactory fingerprintFactory,
+       IntegrationLinkService integrationLinkService,
+-      ApprovalService approvalService) {
++      ApprovalService approvalService,
++      ClarificationService clarificationService) {
+     this.workflowRunReadPort = workflowRunReadPort;
+     this.workflowRunCreatePort = workflowRunCreatePort;
+     this.workflowEventWritePort = workflowEventWritePort;
+@@ -84,6 +90,7 @@ public class WorkflowCommandService {
+     this.fingerprintFactory = fingerprintFactory;
+     this.integrationLinkService = integrationLinkService;
+     this.approvalService = approvalService;
++    this.clarificationService = clarificationService;
+   }
+ 
+   @Transactional
+@@ -101,6 +108,20 @@ public class WorkflowCommandService {
+     return executeIdempotent(command, this::rejectSpecInternal, this::replayStateChange);
+   }
+ 
++  @Transactional
++  public WorkflowStateChangeResult answerClarification(SubmitClarificationCommand command) {
++    // Story 2.11: the clarification row UPDATE + clarification.answered event append all happen
++    // inside ClarificationService, participating in this method's @Transactional boundary. The
++    // legacy contract still returns WorkflowStateChangeResult (story 2.13 will rebuild the surface
++    // to expose ClarificationResult directly). OQ-1 resolved as recommended: idempotency wired
++    // here in 2.11 so replays land correctly end-to-end.
++    return executeIdempotent(
++        command,
++        this::answerClarificationInternal,
++        this::replayStateChange,
++        this::clarificationReplayRef);
++  }
++
+   @Transactional
+   public WorkflowStateChangeResult retryWorkflow(RetryWorkflowCommand command) {
+     return executeIdempotent(command, this::retryWorkflowInternal, this::replayStateChange);
+@@ -189,6 +210,33 @@ public class WorkflowCommandService {
+     }
+   }
+ 
++  private WorkflowStateChangeResult answerClarificationInternal(
++      SubmitClarificationCommand command) {
++    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
++    try {
++      ClarificationResult result = clarificationService.submitAnswer(command);
++      // Answering a clarification does NOT mutate the workflow state — read the run's live state
++      // fresh so the legacy WorkflowStateChangeResult is honest (rather than hard-coding a state
++      // value that would lie about runs that have advanced through story 2.12's lifecycle since).
++      // replayStateChange's default branch falls back to the same live read for SubmitClarification
++      // (story 2.11 trap T4 — no invariant post-state).
++      WorkflowState currentState =
++          workflowRunReadPort
++              .findByPublicId(command.workflowRunId())
++              .map(WorkflowRunSnapshot::currentState)
++              .orElseThrow(
++                  () ->
++                      new DomainException(
++                          DomainErrorCode.RUN_NOT_FOUND,
++                          "Workflow run not found: " + command.workflowRunId(),
++                          Map.of("runId", command.workflowRunId())));
++      return new WorkflowStateChangeResult(
++          result.workflowRunId(), currentState, result.correlationId());
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
++    }
++  }
++
+   private WorkflowStateChangeResult retryWorkflowInternal(RetryWorkflowCommand command) {
+     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+     try {
+@@ -229,6 +277,14 @@ public class WorkflowCommandService {
+       C command,
+       java.util.function.Function<C, T> action,
+       java.util.function.BiFunction<String, C, T> replayLoader) {
++    return executeIdempotent(command, action, replayLoader, DomainResult::workflowRunId);
++  }
++
++  private <T extends DomainResult, C extends WorkflowCommand> T executeIdempotent(
++      C command,
++      java.util.function.Function<C, T> action,
++      java.util.function.BiFunction<String, C, T> replayLoader,
++      java.util.function.Function<T, String> resultRefExtractor) {
+     validateForExecution(command);
+     String fingerprint = fingerprintFactory.fingerprintFor(command);
+     IdempotencyService.ReservationOutcome outcome =
+@@ -238,7 +294,7 @@ public class WorkflowCommandService {
+     }
+     try {
+       T result = action.apply(command);
+-      completeWhenTransactionFinishes(command.idempotencyKey(), result.workflowRunId());
++      completeWhenTransactionFinishes(command.idempotencyKey(), resultRefExtractor.apply(result));
+       return result;
+     } catch (RuntimeException error) {
+       completeFailedInIndependentTransaction(command.idempotencyKey(), error);
+@@ -407,7 +463,12 @@ public class WorkflowCommandService {
+   }
+ 
+   private WorkflowStateChangeResult replayStateChange(String resultRef, WorkflowCommand command) {
+-    var workflowRun = findWorkflowRunForReplay(resultRef);
++    String workflowRunId =
++        switch (command) {
++          case SubmitClarificationCommand ignored -> clarificationReplayRunId(resultRef);
++          default -> resultRef;
++        };
++    var workflowRun = findWorkflowRunForReplay(workflowRunId);
+     // Replay must return the original command result, not the run's later live state. Commands
+     // with invariant post-states are therefore pinned here; callers arriving after the run has
+     // advanced still receive the state produced by the original accepted command.
+@@ -415,12 +476,44 @@ public class WorkflowCommandService {
+         switch (command) {
+           case ApproveSpecCommand ignored -> WorkflowState.EXECUTING;
+           case RejectSpecCommand ignored -> WorkflowState.INVESTIGATING;
++          case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
+           default -> workflowRun.currentState();
+         };
+     return new WorkflowStateChangeResult(
+         workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));
+   }
+ 
++  private String clarificationReplayRef(WorkflowStateChangeResult result) {
++    return result.workflowRunId()
++        + CLARIFICATION_REPLAY_REF_SEPARATOR
++        + result.currentState().value();
++  }
++
++  private String clarificationReplayRunId(String resultRef) {
++    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
++    if (separator <= 0 || separator == resultRef.length() - 1) {
++      throw malformedClarificationReplayRef(resultRef);
++    }
++    return resultRef.substring(0, separator);
++  }
++
++  private WorkflowState clarificationReplayState(String resultRef) {
++    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
++    if (separator <= 0 || separator == resultRef.length() - 1) {
++      throw malformedClarificationReplayRef(resultRef);
++    }
++    return WorkflowState.fromValue(
++        resultRef.substring(separator + CLARIFICATION_REPLAY_REF_SEPARATOR.length()),
++        "idempotency.resultRef");
++  }
++
++  private DomainException malformedClarificationReplayRef(String resultRef) {
++    return new DomainException(
++        DomainErrorCode.INTERNAL_ERROR,
++        "Malformed clarification replay result reference",
++        Map.of("resultRef", resultRef));
++  }
++
+   private WorkflowRunSnapshot findWorkflowRunForReplay(String workflowRunId) {
+     for (int attempt = 0; attempt < REPLAY_LOOKUP_ATTEMPTS; attempt++) {
+       var workflowRun = workflowRunReadPort.findByPublicId(workflowRunId);
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java b/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java
+index 4d4cfd9..a90444d 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java
+@@ -13,6 +13,9 @@ import org.dradgo.application.approval.spi.ApprovalReadPort;
+ import org.dradgo.application.artifact.ArtifactRecordSnapshot;
+ import org.dradgo.application.artifact.SpecificationArtifact;
+ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
++import org.dradgo.application.clarification.Clarification;
++import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
++import org.dradgo.application.clarification.spi.ClarificationReadPort;
+ import org.dradgo.application.integration.IntegrationLink;
+ import org.dradgo.application.integration.IntegrationLinkService;
+ import org.dradgo.application.observability.MdcKeys;
+@@ -64,6 +67,7 @@ public class WorkflowInspectionService {
+   private final RecoveryService recoveryService;
+   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
+   private final RunnerScratchStore runnerScratchStore;
++  private final ClarificationReadPort clarificationReadPort;
+ 
+   public WorkflowInspectionService(
+       WorkflowRunReadPort workflowRunReadPort,
+@@ -74,7 +78,8 @@ public class WorkflowInspectionService {
+       RedactionPolicyService redactionPolicyService,
+       RecoveryService recoveryService,
+       RunnerExecutionRecordPort runnerExecutionRecordPort,
+-      RunnerScratchStore runnerScratchStore) {
++      RunnerScratchStore runnerScratchStore,
++      ClarificationReadPort clarificationReadPort) {
+     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
+     this.workflowEventReadPort =
+         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
+@@ -88,6 +93,192 @@ public class WorkflowInspectionService {
+     this.runnerExecutionRecordPort =
+         Objects.requireNonNull(runnerExecutionRecordPort, "runnerExecutionRecordPort");
+     this.runnerScratchStore = Objects.requireNonNull(runnerScratchStore, "runnerScratchStore");
++    this.clarificationReadPort =
++        Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
++  }
++
++  /**
++   * Story 2.11 AC9: status-grouped clarifications for the supplied workflow run. Backs the UI
++   * Clarification Region (story 2.18) via TanStack Query (story 2.6). Archived rows are filtered
++   * out at the read port (V8 schema parity with story 1.3 retention).
++   */
++  @Transactional(readOnly = true)
++  public List<ClarificationView> getClarifications(String workflowRunPublicId) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info("getClarifications entry workflowRunId={}", workflowRunPublicId);
++      List<Clarification> rows = clarificationReadPort.listByWorkflowRunId(workflowRunPublicId);
++      List<ClarificationView> views = new ArrayList<>(rows.size());
++      for (Clarification row : rows) {
++        views.add(toClarificationView(row));
++      }
++      log.info(
++          "getClarifications success workflowRunId={} count={}", workflowRunPublicId, views.size());
++      return List.copyOf(views);
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
++    }
++  }
++
++  /**
++   * Story 2.11 AC9: status-grouped clarifications scoped to a single artifact. Same ordering
++   * contract as {@link #getClarifications(String)}.
++   */
++  @Transactional(readOnly = true)
++  public List<ClarificationView> getClarificationsForArtifact(String artifactPublicId) {
++    PublicIdPrefixes.require(artifactPublicId, PublicIdPrefixes.ARTIFACT);
++    String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactPublicId);
++    try {
++      log.info("getClarificationsForArtifact entry artifactId={}", artifactPublicId);
++      List<Clarification> rows = clarificationReadPort.listByArtifactId(artifactPublicId);
++      List<ClarificationView> views = new ArrayList<>(rows.size());
++      for (Clarification row : rows) {
++        views.add(toClarificationView(row));
++      }
++      log.info(
++          "getClarificationsForArtifact success artifactId={} count={}",
++          artifactPublicId,
++          views.size());
++      return List.copyOf(views);
++    } finally {
++      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
++    }
++  }
++
++  /**
++   * Story 2.12 AC6 / AC7: V9-rich lifecycle status for a single clarification. Cross-run guard
++   * (Trap T11) raises {@code CLARIFICATION_NOT_FOUND} when the row belongs to a sibling run.
++   * UI Clarification Region (story 2.18) consumes this for the per-question lifecycle indicator.
++   */
++  @Transactional(readOnly = true)
++  public ClarificationStatusView getClarificationStatus(
++      String workflowRunPublicId, String clarificationPublicId) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    PublicIdPrefixes.require(clarificationPublicId, PublicIdPrefixes.CLARIFICATION);
++    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info(
++          "getClarificationStatus entry workflowRunId={} clarificationId={}",
++          workflowRunPublicId,
++          clarificationPublicId);
++      ClarificationLifecycleSnapshot snapshot =
++          clarificationReadPort
++              .findLifecycleSnapshotByPublicId(clarificationPublicId)
++              .orElseThrow(
++                  () ->
++                      clarificationNotFound(workflowRunPublicId, clarificationPublicId, "missing"));
++      if (!snapshot.workflowRunId().equals(workflowRunPublicId)) {
++        // Trap T11 cross-run leak guard — same shape as missing-row.
++        throw clarificationNotFound(workflowRunPublicId, clarificationPublicId, "cross_run");
++      }
++      ClarificationStatusView view = toClarificationStatusView(snapshot);
++      log.info(
++          "getClarificationStatus success workflowRunId={} clarificationId={} status={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          view.status());
++      return view;
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
++    }
++  }
++
++  /**
++   * Story 2.12 AC9: detailed per-run summary including {@code pendingClarifications}. Story 2.14
++   * (allowed-actions endpoint) reads this to gate {@code approve_spec}.
++   */
++  @Transactional(readOnly = true)
++  public WorkflowRunDetailedSummaryView getRunSummary(String workflowRunPublicId) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info("getRunSummary entry workflowRunId={}", workflowRunPublicId);
++      WorkflowRunSnapshot run =
++          workflowRunReadPort
++              .findByPublicId(workflowRunPublicId)
++              .orElseThrow(() -> runNotFound(workflowRunPublicId));
++      int pending = clarificationReadPort.countPendingByWorkflowRun(workflowRunPublicId);
++      Optional<WorkflowEventRecord> latest =
++          workflowEventReadPort.findLatestByWorkflowRunPublicId(workflowRunPublicId);
++      String ticketRef =
++          integrationLinkService
++              .findActiveLinkByWorkflowRun(workflowRunPublicId)
++              .map(IntegrationLink::externalRef)
++              .orElse(null);
++      WorkflowRunDetailedSummaryView view =
++          new WorkflowRunDetailedSummaryView(
++              run.publicId(),
++              run.currentState().value(),
++              ticketRef,
++              latest.map(WorkflowEventRecord::createdAt).orElse(null),
++              latest.map(record -> record.eventType().value()).orElse(null),
++              run.specRejectionLoopCount(),
++              run.escalationMarkerSet(),
++              pending);
++      log.info(
++          "getRunSummary success workflowRunId={} pendingClarifications={} currentState={}",
++          workflowRunPublicId,
++          pending,
++          view.currentState());
++      return view;
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
++    }
++  }
++
++  private static ClarificationStatusView toClarificationStatusView(
++      ClarificationLifecycleSnapshot s) {
++    return new ClarificationStatusView(
++        s.publicId(),
++        s.workflowRunId(),
++        s.artifactId(),
++        s.artifactVersion(),
++        s.questionId(),
++        s.questionText(),
++        s.status(),
++        s.answerText(),
++        s.answeredByActor(),
++        s.answeredByActorType() == null ? null : s.answeredByActorType().value(),
++        s.answeredAt(),
++        s.acceptedAt(),
++        s.incorporatedAt(),
++        s.incorporatedIntoArtifactPublicId(),
++        s.supersededByArtifactPublicId(),
++        s.noEffectReason(),
++        s.createdAt());
++  }
++
++  private DomainException clarificationNotFound(
++      String workflowRunPublicId, String clarificationPublicId, String reason) {
++    Map<String, Object> details = new LinkedHashMap<>();
++    details.put("clarificationId", clarificationPublicId);
++    details.put("workflowRunId", workflowRunPublicId);
++    log.warn(
++        "getClarificationStatus rejected CLARIFICATION_NOT_FOUND workflowRunId={} clarificationId={} reason={}",
++        workflowRunPublicId,
++        clarificationPublicId,
++        reason);
++    return new DomainException(
++        DomainErrorCode.CLARIFICATION_NOT_FOUND,
++        "Clarification not found: " + clarificationPublicId,
++        details);
++  }
++
++  private static ClarificationView toClarificationView(Clarification row) {
++    return new ClarificationView(
++        row.publicId(),
++        row.workflowRunId(),
++        row.artifactId(),
++        row.artifactVersion(),
++        row.questionId(),
++        row.questionText(),
++        row.status(),
++        row.answerText(),
++        row.answeredByActor(),
++        row.answeredByActorType() == null ? null : row.answeredByActorType().value(),
++        row.answeredAt(),
++        row.createdAt());
+   }
+ 
+   @Transactional(readOnly = true)
+@@ -241,6 +432,8 @@ public class WorkflowInspectionService {
+               .findActiveLinkByWorkflowRun(run.publicId())
+               .map(IntegrationLink::externalRef)
+               .orElse(null);
++      int pendingClarifications =
++          clarificationReadPort.countPendingByWorkflowRun(run.publicId());
+       summaries.add(
+           new WorkflowRunSummaryView(
+               run.publicId(),
+@@ -249,7 +442,8 @@ public class WorkflowInspectionService {
+               latest.map(WorkflowEventRecord::createdAt).orElse(null),
+               latest.map(record -> record.eventType().value()).orElse(null),
+               run.specRejectionLoopCount(),
+-              run.escalationMarkerSet()));
++              run.escalationMarkerSet(),
++              pendingClarifications));
+     }
+     log.info("listing workflow_runs success count={}", summaries.size());
+     return summaries;
+@@ -736,7 +930,51 @@ public class WorkflowInspectionService {
+       // Story 2.10 — spec rejection loop tracking surfaced on the queue surface so the UI can
+       // render a "loop depth N" badge / escalation badge without a second per-row lookup.
+       int specRejectionLoopCount,
+-      boolean escalationMarker) {}
++      boolean escalationMarker,
++      // Story 2.12 — non-terminal clarification count surfaced on the queue surface; story 2.14
++      // gates approve_spec on this count == 0. N+1 in listRuns accepted for MVP queue scale
++      // (typical < 50 rows) — see OQ-4 + Trap T12.
++      int pendingClarifications) {}
++
++  /**
++   * Story 2.12 AC9: richer per-run summary returned by {@link #getRunSummary(String)}. Carries
++   * everything {@link WorkflowRunSummaryView} carries plus is dedicated to single-run inspection
++   * (story 2.14 reads this directly).
++   */
++  public record WorkflowRunDetailedSummaryView(
++      String workflowRunId,
++      String currentState,
++      String ticketRef,
++      OffsetDateTime lastEventAt,
++      String lastEventType,
++      int specRejectionLoopCount,
++      boolean escalationMarker,
++      int pendingClarifications) {}
++
++  /**
++   * Story 2.12 AC6 / AC7: V9-rich clarification status used by {@link
++   * #getClarificationStatus(String, String)}. UI Clarification Region (story 2.18) consumes this
++   * for the per-question lifecycle indicator. Trap T1 — built from {@code
++   * ClarificationLifecycleSnapshot} read projection; {@link Clarification} stays lean.
++   */
++  public record ClarificationStatusView(
++      String clarificationId,
++      String workflowRunId,
++      String artifactId,
++      int artifactVersion,
++      String questionId,
++      String questionText,
++      String status,
++      String answerText,
++      String answeredByActor,
++      String answeredByActorType,
++      OffsetDateTime answeredAt,
++      OffsetDateTime acceptedAt,
++      OffsetDateTime incorporatedAt,
++      String incorporatedIntoArtifactId,
++      String supersededByArtifactId,
++      String noEffectReason,
++      OffsetDateTime createdAt) {}
+ 
+   /**
+    * Schema-shaped event-stream view ({@code GET /api/v1/workflows/{id}/events}, story 6.9). Mirrors
+@@ -786,6 +1024,26 @@ public class WorkflowInspectionService {
+       String rejectionTaxonomy,
+       OffsetDateTime decidedAt) {}
+ 
++  /**
++   * Story 2.11 AC9: clarification view used by both {@link #getClarifications(String)} and {@link
++   * #getClarificationsForArtifact(String)}. {@code answerText} / {@code answeredByActor} / {@code
++   * answeredByActorType} / {@code answeredAt} are non-null only when {@code status != "open"}
++   * (paired with the DB CHECK invariant).
++   */
++  public record ClarificationView(
++      String clarificationId,
++      String workflowRunId,
++      String artifactId,
++      int artifactVersion,
++      String questionId,
++      String questionText,
++      String status,
++      String answerText,
++      String answeredByActor,
++      String answeredByActorType,
++      OffsetDateTime answeredAt,
++      OffsetDateTime createdAt) {}
++
+   public record ContextBundleLookupResult(String artifactId, ContextBundle bundle, String reason) {
+ 
+     public ContextBundleLookupResult {
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/workflow/commands/WorkflowCommand.java b/deliveryline-backend/src/main/java/org/dradgo/application/workflow/commands/WorkflowCommand.java
+index ee7df5e..9ff427f 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/application/workflow/commands/WorkflowCommand.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/workflow/commands/WorkflowCommand.java
+@@ -6,6 +6,7 @@ public sealed interface WorkflowCommand
+     permits SubmitWorkflowCommand,
+         ApproveSpecCommand,
+         RejectSpecCommand,
++        SubmitClarificationCommand,
+         RetryWorkflowCommand,
+         TakeoverWorkflowCommand {
+ 
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/domain/id/PublicIdPrefixes.java b/deliveryline-backend/src/main/java/org/dradgo/domain/id/PublicIdPrefixes.java
+index 033e9f2..5ea7133 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/domain/id/PublicIdPrefixes.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/domain/id/PublicIdPrefixes.java
+@@ -15,6 +15,7 @@ public enum PublicIdPrefixes implements RegistryValue {
+   ARTIFACT("artifact", "art_", "ck_artifacts_public_id_format"),
+   ARTIFACT_OPERATION("artifactOperation", "op_", "ck_artifact_operations_public_id_format"),
+   APPROVAL("approval", "apr_", "ck_approvals_public_id_format"),
++  CLARIFICATION("clarification", "clr_", "ck_clarifications_public_id_format"),
+   RUNNER_EXECUTION("runnerExecution", "rex_", "ck_runner_executions_public_id_format"),
+   INTEGRATION_LINK("integrationLink", "ilk_", "ck_integration_links_public_id_format"),
+   RECOVERY_ACTION("recoveryAction", "rcv_", "ck_recovery_actions_public_id_format"),
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java b/deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java
+index 6e6077d..763ae80 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java
+@@ -17,6 +17,10 @@ public enum DomainErrorCode implements RegistryValue {
+   IDEMPOTENCY_RECORD_LOST("IDEMPOTENCY_RECORD_LOST"),
+   EXPORT_CLASSIFICATION_VIOLATION("EXPORT_CLASSIFICATION_VIOLATION"),
+   APPROVAL_VERSION_MISMATCH("APPROVAL_VERSION_MISMATCH"),
++  CLARIFICATION_ARTIFACT_VERSION_MISMATCH("CLARIFICATION_ARTIFACT_VERSION_MISMATCH"),
++  CLARIFICATION_NOT_FOUND("CLARIFICATION_NOT_FOUND"),
++  CLARIFICATION_TERMINAL_STATE("CLARIFICATION_TERMINAL_STATE"),
++  ILLEGAL_CLARIFICATION_TRANSITION("ILLEGAL_CLARIFICATION_TRANSITION"),
+   CONCURRENT_TRANSITION_CONFLICT("CONCURRENT_TRANSITION_CONFLICT"),
+   RUNNER_TIMEOUT("RUNNER_TIMEOUT"),
+   RUNNER_CONTRACT_VIOLATION("RUNNER_CONTRACT_VIOLATION"),
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java b/deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java
+index 676bb2d..ff0b267 100644
+--- a/deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java
++++ b/deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java
+@@ -46,6 +46,21 @@ public final class WorkflowEventDetailKeys {
+   public static final String SPEC_REJECTION_LOOP_COUNT = "specRejectionLoopCount";
+   public static final String ESCALATION_MARKER = "escalationMarker";
+ 
++  // Clarification audit keys (added story 2.11). priorAnswerText / questionText / answerText are
++  // NEVER allow-listed — they may carry product-specific free-form content; CLI history strips
++  // them like IDEMPOTENCY_KEY. Trap T12.
++  public static final String CLARIFICATION_ID = "clarificationId";
++  public static final String QUESTION_ID = "questionId";
++  public static final String PRIOR_ANSWER_TEXT = "priorAnswerText";
++
++  // Clarification lifecycle keys (added story 2.12). All four are allow-listed: the IDs are
++  // public references; noEffectReason is controlled-vocabulary token (Trap T2), NOT free-form
++  // reviewer text — safe to log + surface in CLI history.
++  public static final String INCORPORATED_INTO_ARTIFACT_ID = "incorporatedIntoArtifactId";
++  public static final String INCORPORATION_EVENT_ID = "incorporationEventId";
++  public static final String SUPERSEDED_BY_ARTIFACT_ID = "supersededByArtifactId";
++  public static final String NO_EFFECT_REASON = "noEffectReason";
++
+   // Server-only (stripped from CLI history; visible only on the originating stdout)
+   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
+ 
+@@ -68,10 +83,21 @@ public final class WorkflowEventDetailKeys {
+           REVIEWER_ROLE,
+           TAGGED_FEEDBACK,
+           SPEC_REJECTION_LOOP_COUNT,
+-          ESCALATION_MARKER);
++          ESCALATION_MARKER,
++          CLARIFICATION_ID,
++          QUESTION_ID,
++          INCORPORATED_INTO_ARTIFACT_ID,
++          INCORPORATION_EVENT_ID,
++          SUPERSEDED_BY_ARTIFACT_ID,
++          NO_EFFECT_REASON);
+ 
+-  /** Keys persisted in {@code workflow_events.details} but intentionally stripped from render. */
+-  public static final List<String> SERVER_ONLY_KEYS = List.of(IDEMPOTENCY_KEY);
++  /**
++   * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.
++   * {@link #PRIOR_ANSWER_TEXT} joins {@link #IDEMPOTENCY_KEY} here so the CLI never echoes the
++   * free-form reviewer-supplied answer text from the event log (story 2.11 trap T12 — same
++   * redaction posture as story 2.10's {@code reasonText}).
++   */
++  public static final List<String> SERVER_ONLY_KEYS = List.of(IDEMPOTENCY_KEY, PRIOR_ANSWER_TEXT);
+ 
+   private WorkflowEventDetailKeys() {}
+ }
+diff --git a/deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json b/deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json
+index 73448b2..dc0fd29 100644
+--- a/deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json
++++ b/deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json
+@@ -53,7 +53,13 @@
+               "reviewerRole": { "type": "string" },
+               "taggedFeedback": { "type": "string" },
+               "specRejectionLoopCount": { "type": "integer" },
+-              "escalationMarker": { "type": "boolean" }
++              "escalationMarker": { "type": "boolean" },
++              "clarificationId": { "type": "string", "pattern": "^clr_" },
++              "questionId": { "type": "string" },
++              "incorporatedIntoArtifactId": { "type": "string", "pattern": "^art_" },
++              "incorporationEventId": { "type": "string", "pattern": "^evt_" },
++              "supersededByArtifactId": { "type": "string", "pattern": "^art_" },
++              "noEffectReason": { "type": "string" }
+             }
+           }
+         }
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowCommandServiceContractTest.java b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowCommandServiceContractTest.java
+index ae49042..906c273 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowCommandServiceContractTest.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowCommandServiceContractTest.java
+@@ -26,6 +26,7 @@ import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
+ import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+ import org.dradgo.application.workflow.commands.RejectSpecCommand;
+ import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
++import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
+ import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
+ import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
+ import org.dradgo.domain.DomainException;
+@@ -58,6 +59,7 @@ class WorkflowCommandServiceContractTest {
+   void cleanDatabase() {
+     jdbcTemplate.update("delete from idempotency_records");
+     jdbcTemplate.update("delete from integration_links");
++    jdbcTemplate.update("delete from clarifications");
+     jdbcTemplate.update("delete from approvals");
+     jdbcTemplate.update("delete from artifacts");
+     jdbcTemplate.update("delete from workflow_events");
+@@ -520,6 +522,112 @@ class WorkflowCommandServiceContractTest {
+     assertFieldErrors(error, "taggedFeedback");
+   }
+ 
++  @Test
++  void answerClarificationReplayReturnsTheOriginalStateWithoutDuplicateWrites()
++      throws IOException {
++    String runId = insertRun("run_clrreplay1234", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
++    seedAvailableSpecArtifact(runId, "art_clrreplay_v1");
++    seedOpenClarification(runId, "art_clrreplay_v1", "clr_clrreplay01");
++    SubmitClarificationCommand command =
++        new SubmitClarificationCommand(
++            runId,
++            "clr_clrreplay01",
++            "art_clrreplay_v1",
++            1,
++            "updated answer",
++            "alex",
++            ActorType.HUMAN,
++            "idem-clarification-replay-1234567890",
++            "corr-clarification-replay-1");
++
++    WorkflowStateChangeResult first = service.answerClarification(command);
++    jdbcTemplate.update(
++        "update workflow_runs set current_state = ? where public_id = ?",
++        WorkflowState.EXECUTING.value(),
++        runId);
++
++    WorkflowStateChangeResult replay = service.answerClarification(command);
++
++    assertEquals(first, replay);
++    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, replay.currentState());
++    assertEquals(
++        1, jdbcTemplate.queryForObject("select count(*) from clarifications", Integer.class));
++    assertEquals(
++        2, jdbcTemplate.queryForObject("select count(*) from workflow_events", Integer.class));
++    assertEquals(
++        1, jdbcTemplate.queryForObject("select count(*) from idempotency_records", Integer.class));
++  }
++
++  @Test
++  void answerClarificationSameKeyDifferentFingerprintRaisesIdempotencyKeyConflict()
++      throws IOException {
++    String runId = insertRun("run_clrconflict12", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
++    seedAvailableSpecArtifact(runId, "art_clrconflict_v1");
++    seedOpenClarification(runId, "art_clrconflict_v1", "clr_clrconflict1");
++    String sharedKey = "idem-clarification-keyconflict-1234567890";
++
++    SubmitClarificationCommand first =
++        new SubmitClarificationCommand(
++            runId,
++            "clr_clrconflict1",
++            "art_clrconflict_v1",
++            1,
++            "first answer",
++            "alex",
++            ActorType.HUMAN,
++            sharedKey,
++            "corr-clarification-conflict-1");
++    service.answerClarification(first);
++
++    SubmitClarificationCommand secondDifferentFingerprint =
++        new SubmitClarificationCommand(
++            runId,
++            "clr_clrconflict1",
++            "art_clrconflict_v1",
++            2,
++            "second answer",
++            "alex",
++            ActorType.HUMAN,
++            sharedKey,
++            "corr-clarification-conflict-2");
++
++    DomainException error =
++        assertThrows(
++            DomainException.class,
++            () -> service.answerClarification(secondDifferentFingerprint));
++
++    assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
++    assertEquals(
++        1, jdbcTemplate.queryForObject("select count(*) from clarifications", Integer.class));
++    assertEquals(
++        1,
++        jdbcTemplate.queryForObject(
++            "select count(*) from workflow_events where event_type = 'clarification.answered'",
++            Integer.class));
++  }
++
++  @Test
++  void answerClarificationBlankAnswerRaisesInvalidCommandPayload() {
++    DomainException error =
++        assertThrows(
++            DomainException.class,
++            () ->
++                service.answerClarification(
++                    new SubmitClarificationCommand(
++                        "run_clrvalidate12",
++                        "clr_clrvalidate1",
++                        "art_clrvalidate1",
++                        1,
++                        " ",
++                        "alex",
++                        ActorType.HUMAN,
++                        "idem-clarification-validate-1234567890",
++                        "corr-clarification-validate-1")));
++
++    assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
++    assertFieldErrors(error, "answerText");
++  }
++
+   @Test
+   void retryWorkflowTransitionsFailedToExecuting() throws IOException {
+     String runId = insertRun("run_retry1234", WorkflowState.FAILED);
+@@ -713,6 +821,24 @@ class WorkflowCommandServiceContractTest {
+         linkedEventId);
+   }
+ 
++  private void seedOpenClarification(
++      String runPublicId, String artifactPublicId, String clarificationPublicId) {
++    Long runId =
++        jdbcTemplate.queryForObject(
++            "select id from workflow_runs where public_id = ?", Long.class, runPublicId);
++    Long artifactId =
++        jdbcTemplate.queryForObject(
++            "select id from artifacts where public_id = ?", Long.class, artifactPublicId);
++    jdbcTemplate.update(
++        "insert into clarifications (public_id, workflow_run_id, artifact_id, artifact_version, "
++            + "question_id, question_text, status, idempotency_key) "
++            + "values (?, ?, ?, 1, 'Q1', 'What is the boundary?', 'open', ?)",
++        clarificationPublicId,
++        runId,
++        artifactId,
++        "seed-" + clarificationPublicId);
++  }
++
+   private static String sha256Hex(byte[] payload) {
+     try {
+       MessageDigest digest = MessageDigest.getInstance("SHA-256");
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceSpecTest.java b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceSpecTest.java
+index 2d53121..5966e29 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceSpecTest.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceSpecTest.java
+@@ -69,6 +69,8 @@ class WorkflowInspectionServiceSpecTest {
+   private final RecoveryService recovery = mock(RecoveryService.class);
+   private final RunnerExecutionRecordPort runnerExecutions = mock(RunnerExecutionRecordPort.class);
+   private final RunnerScratchStore scratch = mock(RunnerScratchStore.class);
++  private final org.dradgo.application.clarification.spi.ClarificationReadPort clarifications =
++      mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
+ 
+   private final WorkflowInspectionService service =
+       new WorkflowInspectionService(
+@@ -80,7 +82,8 @@ class WorkflowInspectionServiceSpecTest {
+           redaction,
+           recovery,
+           runnerExecutions,
+-          scratch);
++          scratch,
++          clarifications);
+ 
+   private final ListAppender<ILoggingEvent> serviceAppender =
+       attachListAppender(WorkflowInspectionService.class);
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceTest.java b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceTest.java
+index 96d4237..97649c9 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceTest.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceTest.java
+@@ -61,6 +61,8 @@ class WorkflowInspectionServiceTest {
+       mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
+   private final org.dradgo.application.runner.spi.RunnerScratchStore scratchStore =
+       mock(org.dradgo.application.runner.spi.RunnerScratchStore.class);
++  private final org.dradgo.application.clarification.spi.ClarificationReadPort clarifications =
++      mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
+   private final WorkflowInspectionService service =
+       new WorkflowInspectionService(
+           runs,
+@@ -71,7 +73,8 @@ class WorkflowInspectionServiceTest {
+           redaction,
+           recovery,
+           runnerExecutions,
+-          scratchStore);
++          scratchStore,
++          clarifications);
+ 
+   private void stubNonFailedDescribe(
+       String runId, WorkflowState currentState, String nextSafeAction) {
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/commands/WorkflowCommandTypeTest.java b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/commands/WorkflowCommandTypeTest.java
+index 16733e1..7bd07c3 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/application/workflow/commands/WorkflowCommandTypeTest.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/application/workflow/commands/WorkflowCommandTypeTest.java
+@@ -43,6 +43,11 @@ class WorkflowCommandTypeTest {
+                 org.dradgo.domain.registry.RejectionTaxonomy.MISSING_SCOPE,
+                 "r")
+             .commandType());
++    assertEquals(
++        "SubmitClarificationCommand",
++        new SubmitClarificationCommand(
++                "run_x", "clr_x", "art_x", 1, "answer", "alex", ActorType.HUMAN, "k", null)
++            .commandType());
+     assertEquals(
+         "RetryWorkflowCommand",
+         new RetryWorkflowCommand("run_x", "alex", ActorType.HUMAN, "k", null, null).commandType());
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java b/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java
+index f9de1b5..00d5ddd 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java
+@@ -120,4 +120,12 @@ class ArchitectureBoundaryTest {
+   @ArchTest
+   static final ArchRule approval_service_lives_in_application_approval =
+       ArchitectureRuleCatalog.APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL;
++
++  @ArchTest
++  static final ArchRule clarification_service_lives_in_application_clarification =
++      ArchitectureRuleCatalog.CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION;
++
++  @ArchTest
++  static final ArchRule clarification_lifecycle_lives_in_application_clarification =
++      ArchitectureRuleCatalog.CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION;
+ }
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java b/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java
+index dc2b0b7..65e8583 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java
+@@ -366,6 +366,62 @@ final class ArchitectureRuleCatalog {
+                   "org.dradgo.domain..")
+               .allowEmptyShould(false));
+ 
++  /**
++   * Story 2.11 trap T7 sibling rule: ClarificationService stays in {@code
++   * application.clarification} and never reaches into adapter/persistence types. Same shape as the
++   * approval boundary rule.
++   */
++  static final ArchRule CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION =
++      namedRule(
++          "ClarificationService must live under application.clarification and stay free of persistence/adapter dependencies",
++          "Remediation: keep ClarificationService in org.dradgo.application.clarification (story 2.11 trap T7). The service orchestrates the clarification pipeline via application-owned ports + domain types — JPA entity types or any other adapter import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
++          classes()
++              .that()
++              .haveFullyQualifiedName("org.dradgo.application.clarification.ClarificationService")
++              .should()
++              .resideInAPackage("org.dradgo.application.clarification..")
++              .andShould()
++              .onlyDependOnClassesThat()
++              .resideInAnyPackage(
++                  "java..",
++                  "org.slf4j..",
++                  "org.springframework.beans.factory.annotation..",
++                  "org.springframework.stereotype..",
++                  "org.springframework.transaction.annotation..",
++                  "org.dradgo.application..",
++                  "org.dradgo.domain..")
++              .allowEmptyShould(false));
++
++  /**
++   * Story 2.12 trap T8 sibling rule: ClarificationLifecycleService + ClarificationLifecycleOrchestrator
++   * stay in {@code application.clarification} and never reach into adapter/persistence types. Mirror
++   * of {@link #CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION}.
++   */
++  static final ArchRule CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION =
++      namedRule(
++          "ClarificationLifecycleService + ClarificationLifecycleOrchestrator must live under application.clarification and stay free of persistence/adapter dependencies",
++          "Remediation: keep ClarificationLifecycleService + ClarificationLifecycleOrchestrator in org.dradgo.application.clarification (story 2.12 trap T8). Each orchestrates the lifecycle pipeline via application-owned ports + domain types; JPA entity imports would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
++          classes()
++              .that()
++              .haveFullyQualifiedName(
++                  "org.dradgo.application.clarification.ClarificationLifecycleService")
++              .or()
++              .haveFullyQualifiedName(
++                  "org.dradgo.application.clarification.ClarificationLifecycleOrchestrator")
++              .should()
++              .resideInAPackage("org.dradgo.application.clarification..")
++              .andShould()
++              .onlyDependOnClassesThat()
++              .resideInAnyPackage(
++                  "java..",
++                  "org.slf4j..",
++                  "org.springframework.beans.factory.annotation..",
++                  "org.springframework.stereotype..",
++                  "org.springframework.transaction.annotation..",
++                  "org.dradgo.application..",
++                  "org.dradgo.domain..")
++              .allowEmptyShould(false));
++
+   static final ArchRule SPECIFICATION_ARTIFACT_PROJECTION_LIVES_IN_APPLICATION_ARTIFACT =
+       namedRule(
+           "SpecificationArtifact projection must live under application.artifact and stay free of persistence/adapter dependencies",
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java b/deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java
+index e5e4d4e..f39180c 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java
+@@ -33,6 +33,7 @@ class FlywaySchemaContractTest {
+           "artifacts",
+           "artifact_operations",
+           "approvals",
++          "clarifications",
+           "runner_executions",
+           "integration_links",
+           "recovery_actions",
+@@ -45,6 +46,7 @@ class FlywaySchemaContractTest {
+           Map.entry("artifacts", "art_"),
+           Map.entry("artifact_operations", "op_"),
+           Map.entry("approvals", "apr_"),
++          Map.entry("clarifications", "clr_"),
+           Map.entry("runner_executions", "rex_"),
+           Map.entry("integration_links", "ilk_"),
+           Map.entry("recovery_actions", "rcv_"),
+@@ -173,6 +175,85 @@ class FlywaySchemaContractTest {
+     assertRejectionTaxonomyRejected("not_a_real_taxonomy");
+   }
+ 
++  @Test
++  void clarificationsSchemaCarriesTheExpectedV8ColumnsConstraintsAndIndexes() {
++    assertColumnType("clarifications", "artifact_version", "integer");
++    assertColumnType("clarifications", "question_id", "text");
++    assertColumnType("clarifications", "question_text", "text");
++    assertColumnType("clarifications", "status", "text");
++    assertColumnType("clarifications", "answer_text", "text");
++    assertColumnType("clarifications", "answered_by_actor", "text");
++    assertColumnType("clarifications", "answered_by_actor_type", "text");
++    assertColumnType("clarifications", "answered_at", "timestamp with time zone");
++    assertColumnType("clarifications", "incorporation_event_id", "bigint");
++    assertColumnType("clarifications", "idempotency_key", "text");
++    assertColumnNullable("clarifications", "workflow_run_id", false);
++    assertColumnNullable("clarifications", "artifact_id", false);
++    assertColumnNullable("clarifications", "artifact_version", false);
++    assertColumnNullable("clarifications", "question_id", false);
++    assertColumnNullable("clarifications", "question_text", false);
++    assertColumnNullable("clarifications", "status", false);
++    assertColumnNullable("clarifications", "answer_text", true);
++    assertColumnNullable("clarifications", "answered_by_actor", true);
++    assertColumnNullable("clarifications", "answered_by_actor_type", true);
++    assertColumnNullable("clarifications", "answered_at", true);
++    assertColumnNullable("clarifications", "incorporation_event_id", true);
++    assertColumnNullable("clarifications", "idempotency_key", false);
++
++    assertConstraintDefinitionContains("fk_clarifications_workflow_runs", "workflow_run_id");
++    assertConstraintDefinitionContains("fk_clarifications_artifacts", "artifact_id");
++    assertConstraintDefinitionContains("fk_clarifications_artifacts", "artifact_version");
++    assertConstraintDefinitionContains(
++        "fk_clarifications_incorporation_event", "incorporation_event_id");
++    assertConstraintDefinitionContains("ck_clarifications_status", "rejected_invalid");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_answered_fields_paired", "answer_text is null");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_answered_by_actor_type", "service_account");
++    assertConstraintDefinitionContains("ck_clarifications_question_id_format", "A-Za-z0-9._-");
++    assertConstraintDefinitionContains("ck_clarifications_artifact_version", "artifact_version");
++    assertIndexDefinitionContains(
++        "idx_clarifications_workflow_run_id_status_created_at", "workflow_run_id");
++    assertIndexDefinitionContains(
++        "idx_clarifications_workflow_run_id_status_created_at", "created_at");
++    assertIndexDefinitionContains("idx_clarifications_artifact_id_created_at", "artifact_id");
++    assertIndexDefinitionContains("idx_clarifications_archived_at", "archived_at");
++  }
++
++  @Test
++  void clarificationsSchemaCarriesTheExpectedV9LifecycleColumnsAndChecks() {
++    // V9 (story 2.12): five lifecycle metadata columns + composite FK + status-derivable CHECK +
++    // partial pending-index.
++    assertColumnType("clarifications", "accepted_at", "timestamp with time zone");
++    assertColumnType("clarifications", "incorporated_at", "timestamp with time zone");
++    assertColumnType("clarifications", "superseded_by_artifact_id", "bigint");
++    assertColumnType("clarifications", "superseded_by_artifact_version", "integer");
++    assertColumnType("clarifications", "no_effect_reason", "text");
++    assertColumnNullable("clarifications", "accepted_at", true);
++    assertColumnNullable("clarifications", "incorporated_at", true);
++    assertColumnNullable("clarifications", "superseded_by_artifact_id", true);
++    assertColumnNullable("clarifications", "superseded_by_artifact_version", true);
++    assertColumnNullable("clarifications", "no_effect_reason", true);
++    assertConstraintDefinitionContains(
++        "fk_clarifications_superseded_by_artifact", "superseded_by_artifact_id");
++    assertConstraintDefinitionContains(
++        "fk_clarifications_superseded_by_artifact", "superseded_by_artifact_version");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_supersedes_pair", "superseded_by_artifact_id");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_status_fields_paired", "incorporated");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_status_fields_paired", "superseded");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_status_fields_paired", "rejected_invalid");
++    assertConstraintDefinitionContains(
++        "ck_clarifications_status_fields_paired", "no_effect_reason");
++    assertIndexDefinitionContains(
++        "idx_clarifications_pending_by_workflow_run", "workflow_run_id");
++    assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "incorporated");
++    assertIndexDefinitionContains("idx_clarifications_pending_by_workflow_run", "archived_at");
++  }
++
+   @Test
+   void everyConstraintAndIndexNameFitsPostgresIdentifierLimit() {
+     List<String> overlongConstraints =
+@@ -249,10 +330,10 @@ class FlywaySchemaContractTest {
+                 })
+             .count();
+     assertEquals(
+-        7,
++        8,
+         workflowRunFks,
+         () ->
+-            "Expected 7 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, runner_executions, integration_links, recovery_actions). Found "
++            "Expected 8 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions). Found "
+                 + workflowRunFks);
+ 
+     // recovery_actions soft event references: SET NULL.
+@@ -321,6 +402,7 @@ class FlywaySchemaContractTest {
+                   + uniqueConstraintNames);
+     }
+     assertTrue(uniqueConstraintNames.contains("uq_approvals_idempotency_key"));
++    assertTrue(uniqueConstraintNames.contains("uq_clarifications_idempotency_key"));
+     assertTrue(uniqueConstraintNames.contains("uq_recovery_actions_idempotency_key"));
+     assertTrue(uniqueConstraintNames.contains("uq_idempotency_records_key"));
+     assertTrue(
+@@ -501,6 +583,23 @@ class FlywaySchemaContractTest {
+                 + defs.get(0));
+   }
+ 
++  private void assertIndexDefinitionContains(String indexName, String fragment) {
++    List<String> defs =
++        jdbcTemplate.queryForList(
++            """
++				select indexdef
++				from pg_indexes
++				where schemaname = 'public'
++				  and indexname = ?
++				""",
++            String.class,
++            indexName);
++    assertEquals(1, defs.size(), () -> "Index not found: " + indexName);
++    assertTrue(
++        defs.get(0).contains(fragment),
++        () -> "Index " + indexName + " should contain '" + fragment + "' but was: " + defs.get(0));
++  }
++
+   private void assertStateAccepted(String state) {
+     String publicId = "run_test_" + Math.abs((state + System.nanoTime()).hashCode());
+     jdbcTemplate.update(
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/foundation/CommandModelSymmetryFoundationContract.java b/deliveryline-backend/src/test/java/org/dradgo/foundation/CommandModelSymmetryFoundationContract.java
+index 7bba34a..c982524 100644
+--- a/deliveryline-backend/src/test/java/org/dradgo/foundation/CommandModelSymmetryFoundationContract.java
++++ b/deliveryline-backend/src/test/java/org/dradgo/foundation/CommandModelSymmetryFoundationContract.java
+@@ -23,6 +23,7 @@ import org.dradgo.application.workflow.WorkflowStateChangeResult;
+ import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+ import org.dradgo.application.workflow.commands.RejectSpecCommand;
+ import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
++import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
+ import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
+ import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
+ import org.dradgo.application.workflow.commands.WorkflowCommand;
+@@ -61,6 +62,7 @@ class CommandModelSymmetryFoundationContract {
+           SubmitWorkflowCommand.class,
+           ApproveSpecCommand.class,
+           RejectSpecCommand.class,
++          SubmitClarificationCommand.class,
+           RetryWorkflowCommand.class,
+           TakeoverWorkflowCommand.class);
+ 
+diff --git a/deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json b/deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json
+index add8e30..e6e294d 100644
+--- a/deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json
++++ b/deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json
+@@ -71,6 +71,7 @@
+     "artifact": "art_",
+     "artifactOperation": "op_",
+     "approval": "apr_",
++    "clarification": "clr_",
+     "runnerExecution": "rex_",
+     "integrationLink": "ilk_",
+     "recoveryAction": "rcv_",
+@@ -86,6 +87,10 @@
+     "IDEMPOTENCY_RECORD_LOST": "https://deliveryline.local/problems/idempotency-record-lost",
+     "EXPORT_CLASSIFICATION_VIOLATION": "https://deliveryline.local/problems/export-classification-violation",
+     "APPROVAL_VERSION_MISMATCH": "https://deliveryline.local/problems/approval-version-mismatch",
++    "CLARIFICATION_ARTIFACT_VERSION_MISMATCH": "https://deliveryline.local/problems/clarification-artifact-version-mismatch",
++    "CLARIFICATION_NOT_FOUND": "https://deliveryline.local/problems/clarification-not-found",
++    "CLARIFICATION_TERMINAL_STATE": "https://deliveryline.local/problems/clarification-terminal-state",
++    "ILLEGAL_CLARIFICATION_TRANSITION": "https://deliveryline.local/problems/illegal-clarification-transition",
+     "CONCURRENT_TRANSITION_CONFLICT": "https://deliveryline.local/problems/concurrent-transition-conflict",
+     "RUNNER_TIMEOUT": "https://deliveryline.local/problems/runner-timeout",
+     "RUNNER_CONTRACT_VIOLATION": "https://deliveryline.local/problems/runner-contract-violation",
+diff --git a/deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json b/deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json
+index 5cce89d..136b3bb 100644
+--- a/deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json
++++ b/deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json
+@@ -206,7 +206,29 @@
+             },
+             "compensationFailed": { "type": "boolean" },
+             "artifactVariant": { "$ref": "#/$defs/artifactVariant" },
+-            "feedback": { "type": "string" }
++            "feedback": { "type": "string" },
++            "reviewerRole": { "type": "string", "minLength": 1 },
++            "taggedFeedback": { "type": "string", "minLength": 1 },
++            "specRejectionLoopCount": { "type": "integer", "minimum": 0 },
++            "escalationMarker": { "type": "boolean" },
++            "clarificationId": {
++              "type": "string",
++              "pattern": "^clr_[A-Za-z0-9_]{4,}$"
++            },
++            "questionId": { "type": "string", "minLength": 1 },
++            "incorporatedIntoArtifactId": {
++              "type": "string",
++              "pattern": "^art_[A-Za-z0-9_]{4,}$"
++            },
++            "incorporationEventId": {
++              "type": "string",
++              "pattern": "^evt_[A-Za-z0-9_]{4,}$"
++            },
++            "supersededByArtifactId": {
++              "type": "string",
++              "pattern": "^art_[A-Za-z0-9_]{4,}$"
++            },
++            "noEffectReason": { "type": "string", "minLength": 1 }
+           }
+         }
+       }
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleOrchestrator.java b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleOrchestrator.java
+new file mode 100644
+index 0000000..8b76677
+--- /dev/null
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleOrchestrator.java
+@@ -0,0 +1,222 @@
++package org.dradgo.application.clarification;
++
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Optional;
++import org.dradgo.application.artifact.ActorContext;
++import org.dradgo.application.artifact.ArtifactRecordSnapshot;
++import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
++import org.dradgo.application.artifact.spi.ArtifactRecordPort;
++import org.dradgo.application.clarification.spi.ClarificationReadPort;
++import org.dradgo.application.observability.MdcKeys;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.stereotype.Service;
++
++/**
++ * Sweeps {@code accepted} clarifications attached to a workflow run after a new SPEC artifact
++ * version has been persisted, calling {@link ClarificationLifecycleService#markIncorporated} when
++ * the new spec acknowledges the question, or {@link ClarificationLifecycleService#markSuperseded}
++ * when it does not (story 2.12 AC4).
++ *
++ * <p>Hooked into {@code ArtifactOperationService.newVersion(parentArtifactId, payloadRef, actor)}
++ * AFTER the {@code ARTIFACT_VERSION_CREATED} event is appended AND only when {@code
++ * parent.artifactType() == SPEC} (Trap T5 — non-spec lineages have no clarifications to sweep). The
++ * sweep runs in the SAME outer transaction as {@code newVersion} so row mutations + lifecycle
++ * events commit atomically.
++ *
++ * <h3>Trap T6 — stub orchestrator (replaced by Epic 3 runner-contracts)</h3>
++ *
++ * <p>{@link #acknowledgesQuestion(byte[], String)} uses a deterministic substring scan: the new
++ * spec's payload bytes are searched for the literal {@code questionId} (case-sensitive — {@code
++ * questionId} matches {@code ^[A-Za-z0-9._-]{1,128}$} so case-folding is unnecessary). This is
++ * sufficient for fixture-driven testing but NOT shipping-ready: a false positive arises if the
++ * spec mentions the questionId in any context (e.g. "Q-AUTH-001 was deferred"). Epic 3's runner
++ * result schema will gain a structured {@code clarification_acknowledgements} block and the
++ * orchestrator will switch to consuming that. The seam is the {@code acknowledgesQuestion} method.
++ *
++ * <h3>OQ-5 — payload-read failure handling</h3>
++ *
++ * <p>If the {@code ArtifactPayloadStore} cannot return bytes for the new spec, the orchestrator
++ * logs WARN and marks each {@code accepted} clarification {@code superseded} with {@code
++ * noEffectReason = payload_read_failed}. This keeps the new spec version persisted (the
++ * clarification-side failure does not punish the spec rebuild) while preserving the
++ * make-or-break invariant (every answered clarification must end with a downstream lifecycle
++ * event).
++ */
++@Service
++public class ClarificationLifecycleOrchestrator {
++
++  private static final Logger log =
++      LoggerFactory.getLogger(ClarificationLifecycleOrchestrator.class);
++
++  private static final String NO_EFFECT_NOT_ADDRESSED = "clarification_not_addressed";
++  private static final String NO_EFFECT_PAYLOAD_READ_FAILED = "payload_read_failed";
++
++  private final ClarificationReadPort clarificationReadPort;
++  private final ClarificationLifecycleService clarificationLifecycleService;
++  private final ArtifactRecordPort artifactRecordPort;
++  private final ArtifactPayloadStore artifactPayloadStore;
++
++  public ClarificationLifecycleOrchestrator(
++      ClarificationReadPort clarificationReadPort,
++      ClarificationLifecycleService clarificationLifecycleService,
++      ArtifactRecordPort artifactRecordPort,
++      ArtifactPayloadStore artifactPayloadStore) {
++    this.clarificationReadPort = clarificationReadPort;
++    this.clarificationLifecycleService = clarificationLifecycleService;
++    this.artifactRecordPort = artifactRecordPort;
++    this.artifactPayloadStore = artifactPayloadStore;
++  }
++
++  public LifecycleSweepResult sweepAfterSpecRebuild(
++      String workflowRunPublicId,
++      String newSpecArtifactPublicId,
++      int newSpecArtifactVersion,
++      ActorContext actor) {
++    String priorMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info(
++          "sweepAfterSpecRebuild entry workflowRunId={} newSpecArtifactId={} newSpecArtifactVersion={}",
++          workflowRunPublicId,
++          newSpecArtifactPublicId,
++          newSpecArtifactVersion);
++
++      List<Clarification> all = clarificationReadPort.listByWorkflowRunId(workflowRunPublicId);
++      List<Clarification> accepted = new ArrayList<>();
++      for (Clarification c : all) {
++        if (Clarification.STATUS_ACCEPTED.equals(c.status())) {
++          accepted.add(c);
++        }
++      }
++      List<ClarificationDecision> decisions = new ArrayList<>(accepted.size());
++
++      if (accepted.isEmpty()) {
++        log.info(
++            "sweepAfterSpecRebuild exit workflowRunId={} consideredCount=0 incorporatedCount=0 supersededCount=0",
++            workflowRunPublicId);
++        return new LifecycleSweepResult(0, List.copyOf(decisions));
++      }
++
++      // Read the new spec's payload bytes ONCE; the sweep tests every accepted clarification
++      // against the same content. OQ-5 — on read failure, every accepted clarification is
++      // marked superseded with `payload_read_failed`.
++      Optional<byte[]> payloadBytes = loadSpecPayload(newSpecArtifactPublicId);
++      if (payloadBytes.isEmpty()) {
++        log.warn(
++            "sweepAfterSpecRebuild payload-read-failed workflowRunId={} newSpecArtifactId={} acceptedCount={}",
++            workflowRunPublicId,
++            newSpecArtifactPublicId,
++            accepted.size());
++        for (Clarification c : accepted) {
++          clarificationLifecycleService.markSuperseded(
++              workflowRunPublicId,
++              c.publicId(),
++              newSpecArtifactPublicId,
++              NO_EFFECT_PAYLOAD_READ_FAILED,
++              actor);
++          decisions.add(
++              new ClarificationDecision(c.publicId(), c.questionId(), Outcome.SUPERSEDED));
++        }
++        log.info(
++            "sweepAfterSpecRebuild exit workflowRunId={} consideredCount={} incorporatedCount=0 supersededCount={}",
++            workflowRunPublicId,
++            accepted.size(),
++            accepted.size());
++        return new LifecycleSweepResult(accepted.size(), List.copyOf(decisions));
++      }
++
++      byte[] bytes = payloadBytes.get();
++      int incorporatedCount = 0;
++      int supersededCount = 0;
++      for (Clarification c : accepted) {
++        if (acknowledgesQuestion(bytes, c.questionId())) {
++          clarificationLifecycleService.markIncorporated(
++              workflowRunPublicId, c.publicId(), newSpecArtifactPublicId, actor);
++          decisions.add(
++              new ClarificationDecision(c.publicId(), c.questionId(), Outcome.INCORPORATED));
++          incorporatedCount++;
++        } else {
++          clarificationLifecycleService.markSuperseded(
++              workflowRunPublicId,
++              c.publicId(),
++              newSpecArtifactPublicId,
++              NO_EFFECT_NOT_ADDRESSED,
++              actor);
++          decisions.add(
++              new ClarificationDecision(c.publicId(), c.questionId(), Outcome.SUPERSEDED));
++          supersededCount++;
++        }
++      }
++      log.info(
++          "sweepAfterSpecRebuild exit workflowRunId={} consideredCount={} incorporatedCount={} supersededCount={}",
++          workflowRunPublicId,
++          accepted.size(),
++          incorporatedCount,
++          supersededCount);
++      return new LifecycleSweepResult(accepted.size(), List.copyOf(decisions));
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorMdc);
++    }
++  }
++
++  private Optional<byte[]> loadSpecPayload(String artifactPublicId) {
++    Optional<ArtifactRecordSnapshot> snapshot = artifactRecordPort.findByPublicId(artifactPublicId);
++    if (snapshot.isEmpty()) {
++      log.warn(
++          "sweepAfterSpecRebuild artifact-record-missing artifactId={}", artifactPublicId);
++      return Optional.empty();
++    }
++    String storageRef = snapshot.get().storageRef();
++    if (storageRef == null || storageRef.isBlank()) {
++      log.warn(
++          "sweepAfterSpecRebuild storage-ref-missing artifactId={} version={}",
++          artifactPublicId,
++          snapshot.get().version());
++      return Optional.empty();
++    }
++    Optional<byte[]> bytes = artifactPayloadStore.readBytes(storageRef);
++    if (bytes.isEmpty()) {
++      log.warn(
++          "sweepAfterSpecRebuild payload-bytes-unavailable artifactId={} storageRef={}",
++          artifactPublicId,
++          storageRef);
++    }
++    return bytes;
++  }
++
++  /**
++   * Trap T6 stub implementation: deterministic substring scan. Returns {@code true} when the
++   * payload bytes contain the literal {@code questionId} (case-sensitive UTF-8).
++   *
++   * <p>TODO(epic-3-runner-contracts): replace with a structured {@code
++   * clarification_acknowledgements} block emitted by the spec runner.
++   */
++  static boolean acknowledgesQuestion(byte[] payloadBytes, String questionId) {
++    byte[] needle = questionId.getBytes(StandardCharsets.UTF_8);
++    if (needle.length == 0 || needle.length > payloadBytes.length) {
++      return false;
++    }
++    outer:
++    for (int i = 0; i <= payloadBytes.length - needle.length; i++) {
++      for (int j = 0; j < needle.length; j++) {
++        if (payloadBytes[i + j] != needle[j]) {
++          continue outer;
++        }
++      }
++      return true;
++    }
++    return false;
++  }
++
++  public record LifecycleSweepResult(int consideredCount, List<ClarificationDecision> decisions) {}
++
++  public record ClarificationDecision(String clarificationId, String questionId, Outcome outcome) {}
++
++  public enum Outcome {
++    INCORPORATED,
++    SUPERSEDED,
++    SKIPPED_NON_ACCEPTED
++  }
++}
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleResult.java b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleResult.java
+new file mode 100644
+index 0000000..cfdb00c
+--- /dev/null
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleResult.java
+@@ -0,0 +1,35 @@
++package org.dradgo.application.clarification;
++
++import java.time.OffsetDateTime;
++import java.util.Objects;
++
++/**
++ * Result returned by each {@link ClarificationLifecycleService} transition (story 2.12). Sibling of
++ * {@link ClarificationResult} (story 2.11 answer-time writer) and {@link
++ * org.dradgo.application.approval.ApprovalResult} (story 2.9 approval writer).
++ *
++ * <p>Intentionally NOT a member of any sealed result interface — the lifecycle transitions are
++ * orchestrator-driven and not surfaced through {@code WorkflowCommandService.executeIdempotent} in
++ * MVP (no REST endpoint per Trap T10). Future operator-action REST surface (Epic 4) may widen.
++ *
++ * @param clarificationId persisted clarification public id ({@code clr_…})
++ * @param workflowRunId run public id ({@code run_…})
++ * @param status clarification status after the write (one of {@link
++ *     Clarification#STATUS_ACCEPTED}, {@link Clarification#STATUS_INCORPORATED}, {@link
++ *     Clarification#STATUS_SUPERSEDED}, {@link Clarification#STATUS_REJECTED_INVALID})
++ * @param transitionedAt server-stamped transition timestamp
++ */
++public record ClarificationLifecycleResult(
++    String clarificationId, String workflowRunId, String status, OffsetDateTime transitionedAt) {
++
++  public ClarificationLifecycleResult {
++    Objects.requireNonNull(clarificationId, "clarificationId");
++    Objects.requireNonNull(workflowRunId, "workflowRunId");
++    Objects.requireNonNull(status, "status");
++    Objects.requireNonNull(transitionedAt, "transitionedAt");
++    if (!Clarification.ALL_STATUSES.contains(status)) {
++      throw new IllegalArgumentException(
++          "status must be one of " + Clarification.ALL_STATUSES + ", was: " + status);
++    }
++  }
++}
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleService.java b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleService.java
+new file mode 100644
+index 0000000..e8456db
+--- /dev/null
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleService.java
+@@ -0,0 +1,448 @@
++package org.dradgo.application.clarification;
++
++import java.time.Clock;
++import java.time.OffsetDateTime;
++import java.time.ZoneOffset;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.Set;
++import java.util.regex.Pattern;
++import org.dradgo.application.artifact.ActorContext;
++import org.dradgo.application.artifact.ArtifactRecordSnapshot;
++import org.dradgo.application.artifact.spi.ArtifactRecordPort;
++import org.dradgo.application.clarification.spi.ClarificationReadPort;
++import org.dradgo.application.clarification.spi.ClarificationWritePort;
++import org.dradgo.application.clarification.spi.ClarificationWritePort.MarkAccepted;
++import org.dradgo.application.clarification.spi.ClarificationWritePort.MarkIncorporated;
++import org.dradgo.application.clarification.spi.ClarificationWritePort.MarkRejectedInvalid;
++import org.dradgo.application.clarification.spi.ClarificationWritePort.MarkSuperseded;
++import org.dradgo.application.observability.MdcKeys;
++import org.dradgo.application.workflow.spi.WorkflowEventRecord;
++import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
++import org.dradgo.domain.DomainException;
++import org.dradgo.domain.id.PublicIdPrefixes;
++import org.dradgo.domain.registry.DomainErrorCode;
++import org.dradgo.domain.registry.WorkflowEventType;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.stereotype.Service;
++
++/**
++ * Owns the four visible-incorporation lifecycle transitions (story 2.12 AC1):
++ *
++ * <ul>
++ *   <li>{@code answered → accepted} via {@link #markAccepted}.
++ *   <li>{@code accepted → incorporated} via {@link #markIncorporated}.
++ *   <li>{@code accepted → superseded} via {@link #markSuperseded}.
++ *   <li>{@code answered → rejected_invalid} via {@link #markRejectedInvalid}.
++ * </ul>
++ *
++ * <p>Each transition appends the matching {@code clarification.*} event in the SAME transaction as
++ * the row update — {@code ArtifactOperationService.newVersion @Transactional} is the outer
++ * boundary. Trap T8: no {@code @Transactional} on these methods; mistakenly adding {@code
++ * REQUIRES_NEW} would break rollback shape under the outer transaction. ArchUnit boundary rule
++ * {@code CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION} pins the package confinement.
++ *
++ * <p>Trap T11 cross-run leak guard: every public method accepts {@code workflowRunPublicId} +
++ * {@code clarificationPublicId} so a row in a sibling run raises {@code CLARIFICATION_NOT_FOUND}
++ * (same shape as missing-row) — mirror of story 2.11 trap T6.
++ *
++ * <p>Trap T13 FK flush-ordering: {@link #markIncorporated} appends the event row FIRST then writes
++ * the clarification UPDATE referencing the event's FK. The persistence adapter resolves {@code
++ * incorporation_event_id} via {@code WorkflowEventRepository.findIdByPublicId} so the application
++ * never traffics in internal ids.
++ *
++ * <p>Two-constructor pattern: production wiring uses {@link Clock#systemUTC()}; unit tests inject a
++ * fixed {@link Clock} for deterministic timestamp assertions.
++ */
++@Service
++public class ClarificationLifecycleService {
++
++  private static final Logger log = LoggerFactory.getLogger(ClarificationLifecycleService.class);
++
++  /**
++   * Trap T2 controlled-vocabulary regex for {@code noEffectReason}. snake_case identifier 1-64
++   * chars. The application-layer cap; the DB stores {@code text} with no DDL cap. Free-form
++   * override would need a separate column + future story.
++   */
++  private static final Pattern NO_EFFECT_REASON_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
++
++  /** Trap T2 allowed-vocabulary set. */
++  private static final Set<String> ALLOWED_NO_EFFECT_REASONS =
++      Set.of(
++          "clarification_not_addressed",
++          "pm_marked_invalid",
++          "spec_runner_skipped_question",
++          "payload_read_failed",
++          "superseded_by_unrelated_rebuild");
++
++  private final ClarificationReadPort clarificationReadPort;
++  private final ClarificationWritePort clarificationWritePort;
++  private final ArtifactRecordPort artifactRecordPort;
++  private final WorkflowEventWritePort workflowEventWritePort;
++  private final Clock clock;
++
++  @Autowired
++  public ClarificationLifecycleService(
++      ClarificationReadPort clarificationReadPort,
++      ClarificationWritePort clarificationWritePort,
++      ArtifactRecordPort artifactRecordPort,
++      WorkflowEventWritePort workflowEventWritePort) {
++    this(
++        clarificationReadPort,
++        clarificationWritePort,
++        artifactRecordPort,
++        workflowEventWritePort,
++        Clock.systemUTC());
++  }
++
++  // Visible-for-tests constructor: fixed Clock for deterministic transitionedAt assertions.
++  ClarificationLifecycleService(
++      ClarificationReadPort clarificationReadPort,
++      ClarificationWritePort clarificationWritePort,
++      ArtifactRecordPort artifactRecordPort,
++      WorkflowEventWritePort workflowEventWritePort,
++      Clock clock) {
++    this.clarificationReadPort = clarificationReadPort;
++    this.clarificationWritePort = clarificationWritePort;
++    this.artifactRecordPort = artifactRecordPort;
++    this.workflowEventWritePort = workflowEventWritePort;
++    this.clock = clock;
++  }
++
++  public ClarificationLifecycleResult markAccepted(
++      String workflowRunPublicId, String clarificationPublicId, ActorContext actor) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    PublicIdPrefixes.require(clarificationPublicId, PublicIdPrefixes.CLARIFICATION);
++    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info(
++          "markAccepted entry workflowRunId={} clarificationId={} actorIdentity={} actorType={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          actor.actorIdentity(),
++          actor.actorType().value());
++      Clarification row = loadAndGuardRun(workflowRunPublicId, clarificationPublicId);
++      assertTransition(row, Clarification.STATUS_ANSWERED, Clarification.STATUS_ACCEPTED);
++      OffsetDateTime now = nowUtc();
++      Clarification updated =
++          clarificationWritePort.markAccepted(new MarkAccepted(clarificationPublicId, now));
++      Map<String, Object> details = baseEventDetails(updated);
++      appendEvent(
++          workflowRunPublicId,
++          WorkflowEventType.CLARIFICATION_ACCEPTED,
++          actor,
++          now,
++          "clarification accepted",
++          details,
++          PublicIdPrefixes.WORKFLOW_EVENT.next());
++      log.info(
++          "markAccepted success workflowRunId={} clarificationId={} status={} transitionedAt={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          updated.status(),
++          now);
++      return new ClarificationLifecycleResult(
++          updated.publicId(), updated.workflowRunId(), updated.status(), now);
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
++    }
++  }
++
++  public ClarificationLifecycleResult markIncorporated(
++      String workflowRunPublicId,
++      String clarificationPublicId,
++      String newSpecArtifactPublicId,
++      ActorContext actor) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    PublicIdPrefixes.require(clarificationPublicId, PublicIdPrefixes.CLARIFICATION);
++    PublicIdPrefixes.require(newSpecArtifactPublicId, PublicIdPrefixes.ARTIFACT);
++    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info(
++          "markIncorporated entry workflowRunId={} clarificationId={} newSpecArtifactId={} actorIdentity={} actorType={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          newSpecArtifactPublicId,
++          actor.actorIdentity(),
++          actor.actorType().value());
++      Clarification row = loadAndGuardRun(workflowRunPublicId, clarificationPublicId);
++      assertTransition(row, Clarification.STATUS_ACCEPTED, Clarification.STATUS_INCORPORATED);
++      // Trap T4: orchestrator-supplied artifact missing surfaces as INTERNAL_ERROR (caller bug,
++      // not user error). Different error code + log level from CLARIFICATION_NOT_FOUND so
++      // operations can distinguish them.
++      ArtifactRecordSnapshot newSpec =
++          artifactRecordPort
++              .findByPublicId(newSpecArtifactPublicId)
++              .orElseThrow(
++                  () -> incorporationArtifactMissing(newSpecArtifactPublicId, clarificationPublicId));
++      OffsetDateTime now = nowUtc();
++      // Trap T13 FK flush-ordering: append event FIRST so the adapter's findIdByPublicId lookup
++      // succeeds when the clarification row UPDATE flushes.
++      String incorporationEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
++      Map<String, Object> details = baseEventDetails(row);
++      details.put("incorporatedIntoArtifactId", newSpecArtifactPublicId);
++      details.put("incorporationEventId", incorporationEventPublicId);
++      appendEvent(
++          workflowRunPublicId,
++          WorkflowEventType.CLARIFICATION_INCORPORATED,
++          actor,
++          now,
++          "clarification incorporated",
++          details,
++          incorporationEventPublicId);
++      Clarification updated =
++          clarificationWritePort.markIncorporated(
++              new MarkIncorporated(
++                  clarificationPublicId,
++                  newSpecArtifactPublicId,
++                  newSpec.version(),
++                  incorporationEventPublicId,
++                  now));
++      log.info(
++          "markIncorporated success workflowRunId={} clarificationId={} newSpecArtifactId={} status={} transitionedAt={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          newSpecArtifactPublicId,
++          updated.status(),
++          now);
++      return new ClarificationLifecycleResult(
++          updated.publicId(), updated.workflowRunId(), updated.status(), now);
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
++    }
++  }
++
++  public ClarificationLifecycleResult markSuperseded(
++      String workflowRunPublicId,
++      String clarificationPublicId,
++      String supersededByArtifactPublicId,
++      String noEffectReason,
++      ActorContext actor) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    PublicIdPrefixes.require(clarificationPublicId, PublicIdPrefixes.CLARIFICATION);
++    PublicIdPrefixes.require(supersededByArtifactPublicId, PublicIdPrefixes.ARTIFACT);
++    requireControlledVocabularyReason(noEffectReason);
++    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info(
++          "markSuperseded entry workflowRunId={} clarificationId={} supersededByArtifactId={} noEffectReason={} actorIdentity={} actorType={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          supersededByArtifactPublicId,
++          noEffectReason,
++          actor.actorIdentity(),
++          actor.actorType().value());
++      Clarification row = loadAndGuardRun(workflowRunPublicId, clarificationPublicId);
++      assertTransition(row, Clarification.STATUS_ACCEPTED, Clarification.STATUS_SUPERSEDED);
++      ArtifactRecordSnapshot supersedingSpec =
++          artifactRecordPort
++              .findByPublicId(supersededByArtifactPublicId)
++              .orElseThrow(
++                  () ->
++                      incorporationArtifactMissing(
++                          supersededByArtifactPublicId, clarificationPublicId));
++      OffsetDateTime now = nowUtc();
++      Clarification updated =
++          clarificationWritePort.markSuperseded(
++              new MarkSuperseded(
++                  clarificationPublicId,
++                  supersededByArtifactPublicId,
++                  supersedingSpec.version(),
++                  noEffectReason,
++                  now));
++      Map<String, Object> details = baseEventDetails(updated);
++      details.put("supersededByArtifactId", supersededByArtifactPublicId);
++      details.put("noEffectReason", noEffectReason);
++      appendEvent(
++          workflowRunPublicId,
++          WorkflowEventType.CLARIFICATION_SUPERSEDED,
++          actor,
++          now,
++          "clarification superseded",
++          details,
++          PublicIdPrefixes.WORKFLOW_EVENT.next());
++      log.info(
++          "markSuperseded success workflowRunId={} clarificationId={} status={} transitionedAt={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          updated.status(),
++          now);
++      return new ClarificationLifecycleResult(
++          updated.publicId(), updated.workflowRunId(), updated.status(), now);
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
++    }
++  }
++
++  public ClarificationLifecycleResult markRejectedInvalid(
++      String workflowRunPublicId,
++      String clarificationPublicId,
++      String noEffectReason,
++      ActorContext actor) {
++    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
++    PublicIdPrefixes.require(clarificationPublicId, PublicIdPrefixes.CLARIFICATION);
++    requireControlledVocabularyReason(noEffectReason);
++    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
++    try {
++      log.info(
++          "markRejectedInvalid entry workflowRunId={} clarificationId={} noEffectReason={} actorIdentity={} actorType={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          noEffectReason,
++          actor.actorIdentity(),
++          actor.actorType().value());
++      Clarification row = loadAndGuardRun(workflowRunPublicId, clarificationPublicId);
++      assertTransition(row, Clarification.STATUS_ANSWERED, Clarification.STATUS_REJECTED_INVALID);
++      OffsetDateTime now = nowUtc();
++      Clarification updated =
++          clarificationWritePort.markRejectedInvalid(
++              new MarkRejectedInvalid(clarificationPublicId, noEffectReason, now));
++      Map<String, Object> details = baseEventDetails(updated);
++      details.put("noEffectReason", noEffectReason);
++      appendEvent(
++          workflowRunPublicId,
++          WorkflowEventType.CLARIFICATION_REJECTED_INVALID,
++          actor,
++          now,
++          "clarification rejected invalid",
++          details,
++          PublicIdPrefixes.WORKFLOW_EVENT.next());
++      log.info(
++          "markRejectedInvalid success workflowRunId={} clarificationId={} status={} transitionedAt={}",
++          workflowRunPublicId,
++          clarificationPublicId,
++          updated.status(),
++          now);
++      return new ClarificationLifecycleResult(
++          updated.publicId(), updated.workflowRunId(), updated.status(), now);
++    } finally {
++      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
++    }
++  }
++
++  private Clarification loadAndGuardRun(String workflowRunPublicId, String clarificationPublicId) {
++    Clarification row =
++        clarificationReadPort
++            .findByPublicId(clarificationPublicId)
++            .orElseThrow(
++                () -> clarificationNotFound(workflowRunPublicId, clarificationPublicId, "missing"));
++    if (!row.workflowRunId().equals(workflowRunPublicId)) {
++      // Trap T11 cross-run leak guard — same shape as missing-row so probes cannot discover
++      // existence in a sibling run.
++      throw clarificationNotFound(workflowRunPublicId, clarificationPublicId, "cross_run");
++    }
++    return row;
++  }
++
++  private static void assertTransition(Clarification row, String required, String target) {
++    if (!required.equals(row.status())) {
++      Map<String, Object> details = new LinkedHashMap<>();
++      details.put("clarificationId", row.publicId());
++      details.put("currentStatus", row.status());
++      details.put("attemptedTransition", required + " -> " + target);
++      log.warn(
++          "ILLEGAL_CLARIFICATION_TRANSITION clarificationId={} currentStatus={} attemptedTransition={} -> {}",
++          row.publicId(),
++          row.status(),
++          required,
++          target);
++      throw new DomainException(
++          DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION,
++          "Illegal clarification transition: "
++              + required
++              + " -> "
++              + target
++              + " (current: "
++              + row.status()
++              + ")",
++          details);
++    }
++  }
++
++  private static void requireControlledVocabularyReason(String reason) {
++    if (reason == null || reason.isBlank()) {
++      throw new IllegalArgumentException("noEffectReason required");
++    }
++    if (!NO_EFFECT_REASON_PATTERN.matcher(reason).matches()) {
++      throw new IllegalArgumentException(
++          "noEffectReason must match " + NO_EFFECT_REASON_PATTERN.pattern() + ": " + reason);
++    }
++    if (!ALLOWED_NO_EFFECT_REASONS.contains(reason)) {
++      throw new IllegalArgumentException(
++          "noEffectReason '" + reason + "' is not in the allowed vocabulary " + ALLOWED_NO_EFFECT_REASONS);
++    }
++  }
++
++  private DomainException clarificationNotFound(
++      String workflowRunPublicId, String clarificationPublicId, String reason) {
++    Map<String, Object> details = new LinkedHashMap<>();
++    details.put("clarificationId", clarificationPublicId);
++    details.put("workflowRunId", workflowRunPublicId);
++    log.warn(
++        "CLARIFICATION_NOT_FOUND clarificationId={} workflowRunId={} reason={}",
++        clarificationPublicId,
++        workflowRunPublicId,
++        reason);
++    return new DomainException(
++        DomainErrorCode.CLARIFICATION_NOT_FOUND,
++        "Clarification not found: " + clarificationPublicId,
++        details);
++  }
++
++  private DomainException incorporationArtifactMissing(
++      String artifactPublicId, String clarificationPublicId) {
++    Map<String, Object> details = new LinkedHashMap<>();
++    details.put("clarificationId", clarificationPublicId);
++    details.put("artifactId", artifactPublicId);
++    log.error(
++        "INTERNAL_ERROR orchestrator-supplied artifact missing clarificationId={} artifactId={}",
++        clarificationPublicId,
++        artifactPublicId);
++    return new DomainException(
++        DomainErrorCode.INTERNAL_ERROR,
++        "Orchestrator-supplied artifact not found: " + artifactPublicId,
++        details);
++  }
++
++  private static Map<String, Object> baseEventDetails(Clarification clarification) {
++    Map<String, Object> details = new LinkedHashMap<>();
++    details.put("clarificationId", clarification.publicId());
++    details.put("questionId", clarification.questionId());
++    details.put("artifactId", clarification.artifactId());
++    details.put("artifactVersion", clarification.artifactVersion());
++    return details;
++  }
++
++  private void appendEvent(
++      String workflowRunPublicId,
++      WorkflowEventType eventType,
++      ActorContext actor,
++      OffsetDateTime at,
++      String reason,
++      Map<String, Object> details,
++      String eventPublicId) {
++    if (actor.correlationId() != null && !actor.correlationId().isBlank()) {
++      details.put("correlationId", actor.correlationId());
++    }
++    workflowEventWritePort.append(
++        new WorkflowEventRecord(
++            eventPublicId,
++            workflowRunPublicId,
++            eventType,
++            null,
++            null,
++            actor.actorIdentity(),
++            actor.actorType(),
++            reason,
++            null,
++            false,
++            at,
++            details));
++  }
++
++  private OffsetDateTime nowUtc() {
++    return OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
++  }
++}
+diff --git a/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleSnapshot.java b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleSnapshot.java
+new file mode 100644
+index 0000000..ffbcde0
+--- /dev/null
++++ b/deliveryline-backend/src/main/java/org/dradgo/application/clarification/ClarificationLifecycleSnapshot.java
+@@ -0,0 +1,68 @@
++package org.dradgo.application.clarification;
++
++import java.time.OffsetDateTime;
++import java.util.Objects;
++import org.dradgo.domain.registry.ActorType;
++
++/**
++ * Application-layer projection over a {@code clarifications} row that includes story 2.12 V9
++ * lifecycle metadata columns. Sibling of {@link Clarification} — the lean answer-time projection.
++ *
++ * <p>Trap T1: do NOT widen {@link Clarification} with the V9 fields. The lean projection is
++ * preserved for read consumers (e.g. {@code ClarificationService.submitAnswer}) that only need the
++ * core identity + answer state. {@code ClarificationLifecycleSnapshot} is the dedicated read
++ * projection for the lifecycle view-layer consumer ({@code
++ * WorkflowInspectionService.getClarificationStatus}).
++ *
++ * <p>Fields carrying lifecycle metadata (V9):
++ *
++ * <ul>
++ *   <li>{@code acceptedAt} — set on {@code answered → accepted}.
++ *   <li>{@code incorporatedAt} — set on {@code accepted → incorporated}.
++ *   <li>{@code incorporationEventPublicId} — public id of the matching {@code
++ *       clarification.incorporated} event row (derived by the adapter from {@code
++ *       incorporation_event_id} → {@code workflow_events.public_id}).
++ *   <li>{@code supersededByArtifactPublicId} / {@code supersededByArtifactVersion} — composite
++ *       reference to the spec rebuild that did not acknowledge this clarification.
++ *   <li>{@code noEffectReason} — controlled-vocabulary token (Trap T2; see {@code
++ *       ClarificationLifecycleService} for the allowed values).
++ * </ul>
++ */
++public record ClarificationLifecycleSnapshot(
++    String publicId,
++    String workflowRunId,
++    String artifactId,
++    int artifactVersion,
++    String questionId,
++    String questionText,
++    String status,
++    String answerText,
++    String answeredByActor,
++    ActorType answeredByActorType,
++    OffsetDateTime answeredAt,
++    OffsetDateTime acceptedAt,
++    OffsetDateTime incorporatedAt,
++    String incorporationEventPublicId,
++    String incorporatedIntoArtifactPublicId,
++    String supersededByArtifactPublicId,
++    Integer supersededByArtifactVersion,
++    String noEffectReason,
++    OffsetDateTime createdAt) {
++
++  public ClarificationLifecycleSnapshot {
++    Objects.requireNonNull(publicId, "publicId");
++    Objects.requireNonNull(workflowRunId, "workflowRunId");
++    Objects.requireNonNull(artifactId, "artifactId");
++    Objects.requireNonNull(questionId, "questionId");
++    Objects.requireNonNull(questionText, "questionText");
++    Objects.requireNonNull(status, "status");
++    Objects.requireNonNull(createdAt, "createdAt");
++    if (artifactVersion <= 0) {
++      throw new IllegalArgumentException("artifactVersion must be positive: " + artifactVersion);
++    }
++    if (!Clarification.ALL_STATUSES.contains(status)) {
++      throw new IllegalArgumentException(
++          "status must be one of " + Clarification.ALL_STATUSES + ", was: " + status);
++    }
++  }
++}
+diff --git a/deliveryline-backend/src/main/resources/db/migration/V9__add_clarification_lifecycle_columns.sql b/deliveryline-backend/src/main/resources/db/migration/V9__add_clarification_lifecycle_columns.sql
+new file mode 100644
+index 0000000..9cdc30a
+--- /dev/null
++++ b/deliveryline-backend/src/main/resources/db/migration/V9__add_clarification_lifecycle_columns.sql
+@@ -0,0 +1,84 @@
++-- Story 2.12: Backend Visible Incorporation Lifecycle States + Event Wiring.
++--
++-- Layers lifecycle metadata columns + CHECK + FK + partial index on top of story 2.11's V8
++-- clarifications base table. Kept as V9 (not bundled into V8) so external readers of the V8 shape
++-- remain migration-stable.
++--
++-- Five new columns:
++--   accepted_at          timestamptz  -- set on answered -> accepted transition
++--   incorporated_at      timestamptz  -- set on accepted -> incorporated transition
++--   superseded_by_artifact_id      bigint   -- FK to artifacts.id (composite with version)
++--   superseded_by_artifact_version integer  -- composite FK pair
++--   no_effect_reason     text         -- controlled vocabulary (snake_case enum, app-layer enforced)
++--
++-- The status-derivable field-presence invariant (ck_clarifications_status_fields_paired) is the
++-- defense-in-depth backstop for ClarificationLifecycleService transitions (story 2.11 trap T9
++-- pattern). The application layer writes paired fields atomically; the CHECK catches a buggy
++-- service path.
++
++alter table clarifications add column accepted_at timestamptz null;
++alter table clarifications add column incorporated_at timestamptz null;
++alter table clarifications add column superseded_by_artifact_id bigint null;
++alter table clarifications add column superseded_by_artifact_version integer null;
++alter table clarifications add column no_effect_reason text null;
++
++-- Composite FK pinning the supersession reference to a specific (artifact, version) pair, mirroring
++-- the (artifact_id, artifact_version) -> artifacts(id, version) composite FK in V8 line 38 and the
++-- approvals.(artifact_id, artifact_version) FK at V1:188. Backed by uq_artifacts_id_version.
++alter table clarifications
++    add constraint fk_clarifications_superseded_by_artifact
++    foreign key (superseded_by_artifact_id, superseded_by_artifact_version)
++    references artifacts (id, version) on delete restrict on update cascade;
++
++-- The two supersession columns travel together — partial NULLs are illegal regardless of status.
++alter table clarifications
++    add constraint ck_clarifications_supersedes_pair check (
++        (superseded_by_artifact_id is null) = (superseded_by_artifact_version is null)
++    );
++
++-- Status-derivable field-presence invariant. Defense-in-depth for ClarificationLifecycleService.
++-- AC2 state machine: open -> answered (V8) -> accepted -> incorporated | superseded, OR
++--                    answered -> rejected_invalid.
++alter table clarifications
++    add constraint ck_clarifications_status_fields_paired check (
++        case status
++            when 'open' then
++                accepted_at is null
++                and incorporated_at is null
++                and superseded_by_artifact_id is null
++                and no_effect_reason is null
++            when 'answered' then
++                accepted_at is null
++                and incorporated_at is null
++                and superseded_by_artifact_id is null
++                and no_effect_reason is null
++            when 'accepted' then
++                accepted_at is not null
++                and incorporated_at is null
++                and superseded_by_artifact_id is null
++                and no_effect_reason is null
++            when 'incorporated' then
++                accepted_at is not null
++                and incorporated_at is not null
++                and incorporation_event_id is not null
++                and superseded_by_artifact_id is null
++                and no_effect_reason is null
++            when 'superseded' then
++                accepted_at is not null
++                and incorporated_at is null
++                and superseded_by_artifact_id is not null
++                and no_effect_reason is not null
++            when 'rejected_invalid' then
++                incorporated_at is null
++                and superseded_by_artifact_id is null
++                and no_effect_reason is not null
++            else false
++        end
++    );
++
++-- Partial index accelerating ClarificationReadPort.countPendingByWorkflowRun (story 2.12 AC9 /
++-- Task 3 / Task 5). Excludes terminal-decided rows (incorporated, rejected_invalid) at the index
++-- level — see project memory `pendingClarifications` semantics deep dive.
++create index idx_clarifications_pending_by_workflow_run
++    on clarifications (workflow_run_id)
++    where status not in ('incorporated', 'rejected_invalid') and archived_at is null;
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/application/clarification/ClarificationLifecycleServiceTest.java b/deliveryline-backend/src/test/java/org/dradgo/application/clarification/ClarificationLifecycleServiceTest.java
+new file mode 100644
+index 0000000..abecca4
+--- /dev/null
++++ b/deliveryline-backend/src/test/java/org/dradgo/application/clarification/ClarificationLifecycleServiceTest.java
+@@ -0,0 +1,269 @@
++package org.dradgo.application.clarification;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++import java.time.Clock;
++import java.time.Instant;
++import java.time.OffsetDateTime;
++import java.time.ZoneOffset;
++import java.util.Optional;
++import org.dradgo.application.artifact.ActorContext;
++import org.dradgo.application.artifact.ArtifactRecordSnapshot;
++import org.dradgo.application.artifact.spi.ArtifactRecordPort;
++import org.dradgo.application.clarification.spi.ClarificationReadPort;
++import org.dradgo.application.clarification.spi.ClarificationWritePort;
++import org.dradgo.application.workflow.spi.WorkflowEventRecord;
++import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
++import org.dradgo.domain.DomainException;
++import org.dradgo.domain.registry.ActorType;
++import org.dradgo.domain.registry.ArtifactStatus;
++import org.dradgo.domain.registry.ArtifactType;
++import org.dradgo.domain.registry.DataClassification;
++import org.dradgo.domain.registry.DomainErrorCode;
++import org.dradgo.domain.registry.WorkflowEventType;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++import org.mockito.Mockito;
++
++/**
++ * Story 2.12 — focused Mockito coverage for {@link ClarificationLifecycleService}. Pins:
++ *
++ * <ul>
++ *   <li>Each happy path ({@code markAccepted}, {@code markIncorporated}, {@code markSuperseded},
++ *       {@code markRejectedInvalid}) writes the matching status + appends the matching event with
++ *       the required detail keys.
++ *   <li>Illegal transitions raise {@link DomainErrorCode#ILLEGAL_CLARIFICATION_TRANSITION} with
++ *       structured details and no row/event side effects.
++ *   <li>Cross-run leak guard (Trap T11) raises {@link DomainErrorCode#CLARIFICATION_NOT_FOUND}.
++ *   <li>Orchestrator-supplied missing artifact raises {@link DomainErrorCode#INTERNAL_ERROR} (Trap
++ *       T4).
++ *   <li>{@code noEffectReason} controlled-vocabulary enforcement (Trap T2).
++ * </ul>
++ */
++class ClarificationLifecycleServiceTest {
++
++  private static final String RUN_ID = "run_test_lifecycle_001";
++  private static final String CLR_ID = "clr_test_lifecycle_001";
++  private static final String ART_ID = "art_test_spec_v1";
++  private static final String NEW_SPEC_ID = "art_test_spec_v2";
++
++  private static final OffsetDateTime FIXED_NOW =
++      OffsetDateTime.ofInstant(Instant.parse("2026-05-25T10:15:30Z"), ZoneOffset.UTC);
++
++  private final ClarificationReadPort readPort = Mockito.mock(ClarificationReadPort.class);
++  private final ClarificationWritePort writePort = Mockito.mock(ClarificationWritePort.class);
++  private final ArtifactRecordPort artifactRecordPort = Mockito.mock(ArtifactRecordPort.class);
++  private final WorkflowEventWritePort eventWritePort = Mockito.mock(WorkflowEventWritePort.class);
++  private ClarificationLifecycleService service;
++
++  @BeforeEach
++  void setUp() {
++    Clock fixed = Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC);
++    service =
++        new ClarificationLifecycleService(
++            readPort, writePort, artifactRecordPort, eventWritePort, fixed);
++  }
++
++  @Test
++  void markAcceptedHappyPath() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
++    when(writePort.markAccepted(any()))
++        .thenReturn(answeredRow(Clarification.STATUS_ACCEPTED));
++
++    ClarificationLifecycleResult result =
++        service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM);
++
++    assertThat(result.status()).isEqualTo(Clarification.STATUS_ACCEPTED);
++    assertThat(result.transitionedAt()).isEqualTo(FIXED_NOW);
++
++    ArgumentCaptor<WorkflowEventRecord> events = ArgumentCaptor.forClass(WorkflowEventRecord.class);
++    verify(eventWritePort).append(events.capture());
++    WorkflowEventRecord event = events.getValue();
++    assertThat(event.eventType()).isEqualTo(WorkflowEventType.CLARIFICATION_ACCEPTED);
++    assertThat(event.workflowRunPublicId()).isEqualTo(RUN_ID);
++    assertThat(event.details())
++        .containsEntry("clarificationId", CLR_ID)
++        .containsEntry("artifactId", ART_ID);
++  }
++
++  @Test
++  void markAcceptedFromOpenIsIllegalTransition() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(openRow()));
++
++    assertThatThrownBy(() -> service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM))
++        .isInstanceOf(DomainException.class)
++        .extracting("errorCode")
++        .isEqualTo(DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION);
++    verify(writePort, never()).markAccepted(any());
++    verify(eventWritePort, never()).append(any());
++  }
++
++  @Test
++  void markAcceptedFromSiblingRunRaisesClarificationNotFound() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRowWithRun("run_test_other_999")));
++
++    assertThatThrownBy(() -> service.markAccepted(RUN_ID, CLR_ID, ActorContext.SYSTEM))
++        .isInstanceOf(DomainException.class)
++        .extracting("errorCode")
++        .isEqualTo(DomainErrorCode.CLARIFICATION_NOT_FOUND);
++  }
++
++  @Test
++  void markIncorporatedHappyPath() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
++    when(artifactRecordPort.findByPublicId(NEW_SPEC_ID))
++        .thenReturn(Optional.of(specV2()));
++    when(writePort.markIncorporated(any()))
++        .thenReturn(answeredRow(Clarification.STATUS_INCORPORATED));
++
++    ClarificationLifecycleResult result =
++        service.markIncorporated(RUN_ID, CLR_ID, NEW_SPEC_ID, ActorContext.SYSTEM);
++
++    assertThat(result.status()).isEqualTo(Clarification.STATUS_INCORPORATED);
++    ArgumentCaptor<WorkflowEventRecord> events = ArgumentCaptor.forClass(WorkflowEventRecord.class);
++    verify(eventWritePort, times(1)).append(events.capture());
++    WorkflowEventRecord event = events.getValue();
++    assertThat(event.eventType()).isEqualTo(WorkflowEventType.CLARIFICATION_INCORPORATED);
++    assertThat(event.details())
++        .containsKeys("clarificationId", "questionId", "incorporatedIntoArtifactId", "incorporationEventId")
++        .containsEntry("incorporatedIntoArtifactId", NEW_SPEC_ID);
++  }
++
++  @Test
++  void markIncorporatedRaisesInternalErrorWhenArtifactMissing() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
++    when(artifactRecordPort.findByPublicId(NEW_SPEC_ID)).thenReturn(Optional.empty());
++
++    assertThatThrownBy(
++            () -> service.markIncorporated(RUN_ID, CLR_ID, NEW_SPEC_ID, ActorContext.SYSTEM))
++        .isInstanceOf(DomainException.class)
++        .extracting("errorCode")
++        .isEqualTo(DomainErrorCode.INTERNAL_ERROR);
++    verify(eventWritePort, never()).append(any());
++    verify(writePort, never()).markIncorporated(any());
++  }
++
++  @Test
++  void markSupersededHappyPath() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
++    when(artifactRecordPort.findByPublicId(NEW_SPEC_ID)).thenReturn(Optional.of(specV2()));
++    when(writePort.markSuperseded(any()))
++        .thenReturn(answeredRow(Clarification.STATUS_SUPERSEDED));
++
++    service.markSuperseded(
++        RUN_ID, CLR_ID, NEW_SPEC_ID, "clarification_not_addressed", ActorContext.SYSTEM);
++    ArgumentCaptor<WorkflowEventRecord> events = ArgumentCaptor.forClass(WorkflowEventRecord.class);
++    verify(eventWritePort).append(events.capture());
++    assertThat(events.getValue().eventType()).isEqualTo(WorkflowEventType.CLARIFICATION_SUPERSEDED);
++    assertThat(events.getValue().details())
++        .containsEntry("supersededByArtifactId", NEW_SPEC_ID)
++        .containsEntry("noEffectReason", "clarification_not_addressed");
++  }
++
++  @Test
++  void markSupersededRejectsBlankNoEffectReason() {
++    assertThatThrownBy(
++            () -> service.markSuperseded(RUN_ID, CLR_ID, NEW_SPEC_ID, "", ActorContext.SYSTEM))
++        .isInstanceOf(IllegalArgumentException.class);
++  }
++
++  @Test
++  void markSupersededRejectsUnknownNoEffectReason() {
++    assertThatThrownBy(
++            () ->
++                service.markSuperseded(
++                    RUN_ID, CLR_ID, NEW_SPEC_ID, "totally_made_up_token", ActorContext.SYSTEM))
++        .isInstanceOf(IllegalArgumentException.class);
++  }
++
++  @Test
++  void markRejectedInvalidHappyPath() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ANSWERED)));
++    when(writePort.markRejectedInvalid(any()))
++        .thenReturn(answeredRow(Clarification.STATUS_REJECTED_INVALID));
++
++    service.markRejectedInvalid(RUN_ID, CLR_ID, "pm_marked_invalid", ActorContext.SYSTEM);
++    ArgumentCaptor<WorkflowEventRecord> events = ArgumentCaptor.forClass(WorkflowEventRecord.class);
++    verify(eventWritePort).append(events.capture());
++    assertThat(events.getValue().eventType())
++        .isEqualTo(WorkflowEventType.CLARIFICATION_REJECTED_INVALID);
++    assertThat(events.getValue().details()).containsEntry("noEffectReason", "pm_marked_invalid");
++  }
++
++  @Test
++  void markRejectedInvalidFromAcceptedIsIllegal() {
++    when(readPort.findByPublicId(CLR_ID))
++        .thenReturn(Optional.of(answeredRow(Clarification.STATUS_ACCEPTED)));
++
++    assertThatThrownBy(
++            () ->
++                service.markRejectedInvalid(
++                    RUN_ID, CLR_ID, "pm_marked_invalid", ActorContext.SYSTEM))
++        .isInstanceOf(DomainException.class)
++        .extracting("errorCode")
++        .isEqualTo(DomainErrorCode.ILLEGAL_CLARIFICATION_TRANSITION);
++  }
++
++  private static Clarification openRow() {
++    return new Clarification(
++        CLR_ID, RUN_ID, ART_ID, 1, "Q-AUTH-001", "Question text", Clarification.STATUS_OPEN, null,
++        null, null, null, FIXED_NOW);
++  }
++
++  private static Clarification answeredRow(String status) {
++    return answeredRowWithRun(status, RUN_ID);
++  }
++
++  private static Clarification answeredRowWithRun(String runId) {
++    return answeredRowWithRun(Clarification.STATUS_ANSWERED, runId);
++  }
++
++  private static Clarification answeredRowWithRun(String status, String runId) {
++    return new Clarification(
++        CLR_ID,
++        runId,
++        ART_ID,
++        1,
++        "Q-AUTH-001",
++        "Question text",
++        status,
++        "Answer text",
++        "alex@example.com",
++        ActorType.HUMAN,
++        FIXED_NOW.minusMinutes(5),
++        FIXED_NOW.minusHours(1));
++  }
++
++  private static ArtifactRecordSnapshot specV2() {
++    return new ArtifactRecordSnapshot(
++        NEW_SPEC_ID,
++        RUN_ID,
++        ArtifactType.SPEC,
++        2,
++        ART_ID,
++        DataClassification.LOCAL_ONLY,
++        "spec/v2/spec.md",
++        "SHA-256",
++        "abc123",
++        null,
++        null,
++        ArtifactStatus.AVAILABLE,
++        null,
++        false,
++        FIXED_NOW);
++  }
++}
+diff --git a/deliveryline-backend/src/test/java/org/dradgo/contract/ClarificationVisibleIncorporationContractTest.java b/deliveryline-backend/src/test/java/org/dradgo/contract/ClarificationVisibleIncorporationContractTest.java
+new file mode 100644
+index 0000000..4966a19
+--- /dev/null
++++ b/deliveryline-backend/src/test/java/org/dradgo/contract/ClarificationVisibleIncorporationContractTest.java
+@@ -0,0 +1,191 @@
++package org.dradgo.contract;
++
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.fail;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.stream.Stream;
++import org.junit.jupiter.api.Tag;
++import org.junit.jupiter.api.Test;
++
++/**
++ * Story 2.12 AC5 — make-or-break: <strong>silent disappearance of a clarification answer is a
++ * contract violation</strong>. For every {@code clarification.answered} event in any committed
++ * fixture stream, there MUST subsequently appear (within the same run's event sequence) either:
++ *
++ * <ul>
++ *   <li>a {@code clarification.accepted} event for the same {@code clarificationId} followed by one
++ *       of {@code clarification.incorporated}, {@code clarification.superseded}, {@code
++ *       clarification.rejectedInvalid}, OR
++ *   <li>a {@code clarification.rejectedInvalid} event for the same {@code clarificationId} (the
++ *       direct {@code answered → rejected_invalid} transition), OR
++ *   <li>a {@code clarification.noEffectReason} event for the same {@code clarificationId} (the
++ *       explicit no-op terminal).
++ * </ul>
++ *
++ * <p>Trap T9: the negative case lives <strong>inline</strong> as a synthetic event list inside this
++ * test class — committing a malformed fixture file would be rejected by {@link
++ * FixtureEventStreamSchemaConformanceContractTest} at a lower layer and mask this contract test's
++ * own assertion.
++ *
++ * <p>Tagged {@code @Tag("foundation-gate")} so the dedicated CI job picks it up.
++ */
++@Tag("contract")
++@Tag("foundation-gate")
++class ClarificationVisibleIncorporationContractTest {
++
++  private static final Path FIXTURE_ROOT =
++      Path.of("src", "test", "resources", "fixture-event-streams");
++
++  private static final String ANSWERED = "clarification.answered";
++  private static final String ACCEPTED = "clarification.accepted";
++  private static final String INCORPORATED = "clarification.incorporated";
++  private static final String SUPERSEDED = "clarification.superseded";
++  private static final String REJECTED_INVALID = "clarification.rejectedInvalid";
++  private static final String NO_EFFECT_REASON = "clarification.noEffectReason";
++
++  @Test
++  void everyAnsweredClarificationInEveryFixtureHasADownstreamLifecycleChain() throws IOException {
++    if (!Files.isDirectory(FIXTURE_ROOT)) {
++      fail("[story 2.12] fixture-event-streams directory missing at " + FIXTURE_ROOT.toAbsolutePath());
++      return;
++    }
++    ObjectMapper mapper = new ObjectMapper();
++    List<String> violations = new ArrayList<>();
++    List<Path> fixtures = listFixtureJson();
++    for (Path fixture : fixtures) {
++      String displayName = FIXTURE_ROOT.relativize(fixture).toString();
++      JsonNode root = mapper.readTree(fixture.toFile());
++      JsonNode events = root.path("events");
++      if (!events.isArray()) continue;
++      List<EventRef> refs = new ArrayList<>();
++      for (JsonNode event : events) {
++        String type = event.path("eventType").asText("");
++        String clrId = event.path("details").path("clarificationId").asText(null);
++        if (clrId == null || clrId.isEmpty()) continue;
++        refs.add(new EventRef(type, clrId));
++      }
++      List<String> fixtureViolations = assertVisibleIncorporation(refs);
++      for (String v : fixtureViolations) {
++        violations.add(displayName + ": " + v);
++      }
++    }
++    if (!violations.isEmpty()) {
++      fail(
++          "[story 2.12 AC5] visible-incorporation contract violated ("
++              + violations.size()
++              + " issue"
++              + (violations.size() == 1 ? "" : "s")
++              + "): "
++              + String.join("; ", violations));
++    }
++  }
++
++  @Test
++  void inlineNegativeStreamWithDanglingAnsweredEventIsRejected() {
++    // Trap T9: negative case lives inline so we exercise the same assertion logic on a synthetic
++    // stream that violates the contract. A clarification.answered followed by no follow-up is
++    // the canonical regression we must catch.
++    List<EventRef> dangling =
++        List.of(
++            new EventRef("workflow.stateChanged", null),
++            new EventRef(ANSWERED, "clr_neg_dangling_001"));
++    AssertionError thrown =
++        assertThrows(
++            AssertionError.class,
++            () -> {
++              List<String> violations = assertVisibleIncorporation(dangling);
++              if (!violations.isEmpty()) {
++                throw new AssertionError(String.join("; ", violations));
++              }
++            });
++    if (!thrown.getMessage().contains("clr_neg_dangling_001")) {
++      fail(
++          "[story 2.12 AC5] negative inline case should call out the dangling clarification id "
++              + "but message was: "
++              + thrown.getMessage());
++    }
++  }
++
++  /**
++   * Returns a list of violations (empty list = contract satisfied). Walks the event refs in order;
++   * for every {@code clarification.answered} record we require subsequent events for the same
++   * clarificationId that close the lifecycle per AC5.
++   */
++  private static List<String> assertVisibleIncorporation(List<EventRef> events) {
++    Map<String, List<String>> byClarification = new LinkedHashMap<>();
++    for (EventRef ref : events) {
++      if (ref.clarificationId() == null) continue;
++      byClarification.computeIfAbsent(ref.clarificationId(), k -> new ArrayList<>()).add(ref.eventType());
++    }
++    List<String> violations = new ArrayList<>();
++    for (Map.Entry<String, List<String>> entry : byClarification.entrySet()) {
++      String clr = entry.getKey();
++      List<String> types = entry.getValue();
++      if (!types.contains(ANSWERED)) continue;
++      // Find the index of the first answered and require a closing event after it.
++      int answeredIdx = types.indexOf(ANSWERED);
++      List<String> trailing = types.subList(answeredIdx + 1, types.size());
++      boolean acceptedFollowed = false;
++      boolean closingTerminalAfterAccepted = false;
++      boolean directRejectedInvalid = false;
++      boolean noEffectReasonClose = false;
++      for (int i = 0; i < trailing.size(); i++) {
++        String t = trailing.get(i);
++        if (ACCEPTED.equals(t)) {
++          acceptedFollowed = true;
++          // Look ahead for INCORPORATED / SUPERSEDED / REJECTED_INVALID after this accepted.
++          for (int j = i + 1; j < trailing.size(); j++) {
++            String later = trailing.get(j);
++            if (INCORPORATED.equals(later)
++                || SUPERSEDED.equals(later)
++                || REJECTED_INVALID.equals(later)) {
++              closingTerminalAfterAccepted = true;
++              break;
++            }
++          }
++        }
++        if (REJECTED_INVALID.equals(t) && !acceptedFollowed) {
++          directRejectedInvalid = true;
++        }
++        if (NO_EFFECT_REASON.equals(t)) {
++          noEffectReasonClose = true;
++        }
++      }
++      boolean ok =
++          (acceptedFollowed && closingTerminalAfterAccepted)
++              || directRejectedInvalid
++              || noEffectReasonClose;
++      if (!ok) {
++        violations.add(
++            "clarificationId="
++                + clr
++                + " has 'clarification.answered' with no downstream chain (expected accepted+terminal or rejectedInvalid or noEffectReason); seen=["
++                + String.join(",", trailing)
++                + "]");
++      }
++    }
++    return violations;
++  }
++
++  private static List<Path> listFixtureJson() throws IOException {
++    try (Stream<Path> stream = Files.walk(FIXTURE_ROOT)) {
++      return stream
++          .filter(Files::isRegularFile)
++          .filter(p -> p.getFileName().toString().endsWith(".json"))
++          .filter(p -> !p.startsWith(FIXTURE_ROOT.resolve("schema")))
++          .sorted()
++          .toList();
++    }
++  }
++
++  private record EventRef(String eventType, String clarificationId) {}
++}
+diff --git a/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-incorporated-happy-path.json b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-incorporated-happy-path.json
+new file mode 100644
+index 0000000..527aeb3
+--- /dev/null
++++ b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-incorporated-happy-path.json
+@@ -0,0 +1,217 @@
++{
++  "workflowRun": {
++    "publicId": "run_fix_clr_incorp_001",
++    "ticketRef": "DEL-9101",
++    "createdAt": "2026-02-01T00:00:00Z",
++    "terminalState": "WaitingForSpecApproval"
++  },
++  "events": [
++    {
++      "publicId": "evt_fix_clr_incorp_001",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "workflow.stateChanged",
++      "priorState": null,
++      "resultingState": "Inbox",
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "submitted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:00:00Z",
++      "details": {
++        "linearTicketReference": "DEL-9101",
++        "correlationId": "corr_fix_clr_incorp_001"
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_002",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "workflow.stateChanged",
++      "priorState": "Inbox",
++      "resultingState": "Investigating",
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "spec_runner_dispatched",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:01:00Z",
++      "details": { "correlationId": "corr_fix_clr_incorp_001" }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_003",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "artifact.versionCreated",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "runner-codex-mock",
++      "actorType": "agent",
++      "reason": null,
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:02:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVariant": "spec",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_004",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "workflow.stateChanged",
++      "priorState": "Investigating",
++      "resultingState": "WaitingForSpecApproval",
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "spec_drafted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:02:30Z",
++      "details": { "correlationId": "corr_fix_clr_incorp_001" }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_005",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "clarification.answered",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "alex@example.com",
++      "actorType": "human",
++      "reason": "clarification answered",
++      "failureCategory": null,
++      "interventionMarker": true,
++      "createdAt": "2026-02-01T00:03:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "clarificationId": "clr_fix_incorp_001",
++        "questionId": "Q-AUTH-001",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_006",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "clarification.answered",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "alex@example.com",
++      "actorType": "human",
++      "reason": "clarification answered",
++      "failureCategory": null,
++      "interventionMarker": true,
++      "createdAt": "2026-02-01T00:03:10Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "clarificationId": "clr_fix_incorp_002",
++        "questionId": "Q-AUTH-002",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_007",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "clarification.accepted",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "clarification accepted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:03:30Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "clarificationId": "clr_fix_incorp_001",
++        "questionId": "Q-AUTH-001",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_008",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "clarification.accepted",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "clarification accepted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:03:40Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "clarificationId": "clr_fix_incorp_002",
++        "questionId": "Q-AUTH-002",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_009",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "artifact.versionCreated",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "runner-codex-mock",
++      "actorType": "agent",
++      "reason": null,
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:04:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "artifactId": "art_spec_clr_incorp_v2",
++        "artifactVariant": "spec",
++        "artifactVersion": 2
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_010",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "clarification.incorporated",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "clarification incorporated",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:04:10Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "clarificationId": "clr_fix_incorp_001",
++        "questionId": "Q-AUTH-001",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVersion": 1,
++        "incorporatedIntoArtifactId": "art_spec_clr_incorp_v2",
++        "incorporationEventId": "evt_fix_clr_incorp_010"
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_incorp_011",
++      "workflowRunPublicId": "run_fix_clr_incorp_001",
++      "eventType": "clarification.incorporated",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "clarification incorporated",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-01T00:04:20Z",
++      "details": {
++        "correlationId": "corr_fix_clr_incorp_001",
++        "clarificationId": "clr_fix_incorp_002",
++        "questionId": "Q-AUTH-002",
++        "artifactId": "art_spec_clr_incorp_v1",
++        "artifactVersion": 1,
++        "incorporatedIntoArtifactId": "art_spec_clr_incorp_v2",
++        "incorporationEventId": "evt_fix_clr_incorp_011"
++      }
++    }
++  ]
++}
+diff --git a/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-incorporated-happy-path.md b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-incorporated-happy-path.md
+new file mode 100644
+index 0000000..5805042
+--- /dev/null
++++ b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-incorporated-happy-path.md
+@@ -0,0 +1,18 @@
++# Fixture: clarification-incorporated-happy-path
++
++Story 2.12 AC8. Demonstrates the visible-incorporation lifecycle happy path: a workflow run with two open clarifications that both progress `open → answered → accepted → incorporated` after the next spec rebuild.
++
++## Scenario
++
++1. Workflow run `run_fix_clr_incorp_001` (DEL-9101) advances through `Inbox → Investigating`.
++2. Spec v1 (`art_spec_clr_incorp_v1`) is drafted and the run lands in `WaitingForSpecApproval`.
++3. PM answers two clarifications attached to spec v1:
++   - `clr_fix_incorp_001` / `Q-AUTH-001`
++   - `clr_fix_incorp_002` / `Q-AUTH-002`
++4. Each answered clarification is auto-accepted by the lifecycle service.
++5. A new spec version (`art_spec_clr_incorp_v2`) is created; the orchestrator sweeps the run.
++6. Both clarifications are marked `incorporated` because v2's payload acknowledges both `questionId`s. Each emits a `clarification.incorporated` event with `incorporatedIntoArtifactId` + `incorporationEventId`.
++
++## Contract test coverage
++
++`ClarificationVisibleIncorporationContractTest` walks this stream and asserts that every `clarification.answered` event has a downstream `clarification.accepted` followed by a `clarification.incorporated` event for the same `clarificationId`.
+diff --git a/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-superseded-and-rejected.json b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-superseded-and-rejected.json
+new file mode 100644
+index 0000000..08818ae
+--- /dev/null
++++ b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-superseded-and-rejected.json
+@@ -0,0 +1,182 @@
++{
++  "workflowRun": {
++    "publicId": "run_fix_clr_supersede_001",
++    "ticketRef": "DEL-9102",
++    "createdAt": "2026-02-02T00:00:00Z",
++    "terminalState": "WaitingForSpecApproval"
++  },
++  "events": [
++    {
++      "publicId": "evt_fix_clr_supersede_001",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "workflow.stateChanged",
++      "priorState": null,
++      "resultingState": "Inbox",
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "submitted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-02T00:00:00Z",
++      "details": {
++        "linearTicketReference": "DEL-9102",
++        "correlationId": "corr_fix_clr_supersede_001"
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_002",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "artifact.versionCreated",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "runner-codex-mock",
++      "actorType": "agent",
++      "reason": null,
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-02T00:01:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "artifactId": "art_spec_clr_supersede_v1",
++        "artifactVariant": "spec",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_003",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "workflow.stateChanged",
++      "priorState": "Inbox",
++      "resultingState": "WaitingForSpecApproval",
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "spec_drafted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-02T00:01:30Z",
++      "details": { "correlationId": "corr_fix_clr_supersede_001" }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_004",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "clarification.answered",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "alex@example.com",
++      "actorType": "human",
++      "reason": "clarification answered",
++      "failureCategory": null,
++      "interventionMarker": true,
++      "createdAt": "2026-02-02T00:02:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "clarificationId": "clr_fix_supersede_001",
++        "questionId": "Q-SCOPE-001",
++        "artifactId": "art_spec_clr_supersede_v1",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_005",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "clarification.accepted",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "clarification accepted",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-02T00:02:30Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "clarificationId": "clr_fix_supersede_001",
++        "questionId": "Q-SCOPE-001",
++        "artifactId": "art_spec_clr_supersede_v1",
++        "artifactVersion": 1
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_006",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "artifact.versionCreated",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "runner-codex-mock",
++      "actorType": "agent",
++      "reason": null,
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-02T00:03:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "artifactId": "art_spec_clr_supersede_v2",
++        "artifactVariant": "spec",
++        "artifactVersion": 2
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_007",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "clarification.superseded",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "system",
++      "actorType": "system",
++      "reason": "clarification superseded",
++      "failureCategory": null,
++      "interventionMarker": false,
++      "createdAt": "2026-02-02T00:03:10Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "clarificationId": "clr_fix_supersede_001",
++        "questionId": "Q-SCOPE-001",
++        "artifactId": "art_spec_clr_supersede_v1",
++        "artifactVersion": 1,
++        "supersededByArtifactId": "art_spec_clr_supersede_v2",
++        "noEffectReason": "clarification_not_addressed"
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_008",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "clarification.answered",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "alex@example.com",
++      "actorType": "human",
++      "reason": "clarification answered",
++      "failureCategory": null,
++      "interventionMarker": true,
++      "createdAt": "2026-02-02T00:04:00Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "clarificationId": "clr_fix_supersede_002",
++        "questionId": "Q-SCOPE-002",
++        "artifactId": "art_spec_clr_supersede_v2",
++        "artifactVersion": 2
++      }
++    },
++    {
++      "publicId": "evt_fix_clr_supersede_009",
++      "workflowRunPublicId": "run_fix_clr_supersede_001",
++      "eventType": "clarification.rejectedInvalid",
++      "priorState": null,
++      "resultingState": null,
++      "actorIdentity": "alex@example.com",
++      "actorType": "human",
++      "reason": "clarification rejected as invalid",
++      "failureCategory": null,
++      "interventionMarker": true,
++      "createdAt": "2026-02-02T00:04:30Z",
++      "details": {
++        "correlationId": "corr_fix_clr_supersede_001",
++        "clarificationId": "clr_fix_supersede_002",
++        "questionId": "Q-SCOPE-002",
++        "artifactId": "art_spec_clr_supersede_v2",
++        "artifactVersion": 2,
++        "noEffectReason": "pm_marked_invalid"
++      }
++    }
++  ]
++}
+diff --git a/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-superseded-and-rejected.md b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-superseded-and-rejected.md
+new file mode 100644
+index 0000000..bcc577e
+--- /dev/null
++++ b/deliveryline-backend/src/test/resources/fixture-event-streams/clarification-superseded-and-rejected.md
+@@ -0,0 +1,17 @@
++# Fixture: clarification-superseded-and-rejected
++
++Story 2.12 AC8. Demonstrates the two terminal alternates to `incorporated`: an accepted clarification superseded by a spec rebuild that did not acknowledge it, plus an answered clarification rejected as invalid by the PM.
++
++## Scenario
++
++1. Workflow run `run_fix_clr_supersede_001` (DEL-9102) drafts spec v1 (`art_spec_clr_supersede_v1`).
++2. PM answers clarification `clr_fix_supersede_001` (`Q-SCOPE-001`) attached to v1.
++3. Clarification is auto-accepted by the lifecycle service.
++4. Spec v2 (`art_spec_clr_supersede_v2`) is created; the rebuild does NOT acknowledge `Q-SCOPE-001`, so the orchestrator marks the clarification `superseded` with `noEffectReason = "clarification_not_addressed"` and `supersededByArtifactId = art_spec_clr_supersede_v2`.
++5. A new clarification `clr_fix_supersede_002` (`Q-SCOPE-002`) is opened against v2 and answered by the PM.
++6. The PM (future Epic 4 operator-action path) marks the answer invalid (`clarification.rejectedInvalid` with `noEffectReason = "pm_marked_invalid"`).
++
++## Notes
++
++- Clarification 3 (originally scoped as "answered but no follow-up") is intentionally omitted; the make-or-break contract test requires every `clarification.answered` to have a downstream chain, so the negative case lives **inline** in `ClarificationVisibleIncorporationContractTest` rather than as a malformed fixture file (Trap T9 — `FixtureEventStreamSchemaConformanceTest` would reject a malformed file before the contract test ever ran).
++- The PM-driven `rejected_invalid` path is modeled in this fixture (`actorType=human`) even though MVP wiring has no REST endpoint for it (Trap T10); a future Epic 4 operator-action story owns the surface. The fixture documents the desired event shape today so the contract test stays exhaustive.
