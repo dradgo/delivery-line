@@ -72,3 +72,13 @@ deliveryline-data/
 # Local Spring Boot run logs (developer-only, never committed)
 spring-boot-run-local.log
 spring-boot-run-local.err.log
+
+# Local Maven caches and home overrides (per-developer; some are multi-GB)
+.m2/
+.m2repo/
+.mvn-home/
+
+# Scratch / throwaway logs
+_tmp/
+_tmp-*.log
+*.log
