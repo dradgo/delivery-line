@@ -39,15 +39,14 @@ describe('apiClient header middleware', () => {
       }),
     );
 
-    // Story 2.13: Idempotency-Key header is now declared required in the OpenAPI
-    // contract. The middleware still auto-attaches a UUIDv7 fallback (asserted by
-    // the assertions below) — pass an empty placeholder header to satisfy the
-    // generated TS types; the middleware overwrites it when no real key is supplied.
+    // Story 2.13: Idempotency-Key is now a required header in the generated TS
+    // contract, but this test exists specifically to verify that the middleware
+    // auto-mints a UUIDv7 FALLBACK when the caller omits the key. Suppress the TS
+    // error and skip the header at runtime so the middleware's fallback path runs.
     await apiClient.POST('/api/v1/workflows/{workflowRunId}/approve-spec', {
-      params: {
-        path: { workflowRunId: 'run_abcd' },
-        header: { 'Idempotency-Key': '' },
-      },
+      // @ts-expect-error — intentionally omitting required Idempotency-Key header
+      //   to assert middleware fallback (lines 53-57 below).
+      params: { path: { workflowRunId: 'run_abcd' } },
       body: {
         artifactId: 'art_abcd',
         expectedArtifactVersion: 1,
