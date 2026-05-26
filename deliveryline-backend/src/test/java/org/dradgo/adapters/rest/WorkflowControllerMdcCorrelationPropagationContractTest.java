@@ -41,7 +41,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles({"test", "linear-mock"})
-class WorkflowControllerMdcCorrelationPropagationTest {
+class WorkflowControllerMdcCorrelationPropagationContractTest {
 
   @Autowired private Environment environment;
   @MockitoBean private WorkflowCommandService workflowCommandService;
