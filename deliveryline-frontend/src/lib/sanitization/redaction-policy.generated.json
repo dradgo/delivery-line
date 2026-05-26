@@ -1,0 +1,76 @@
+{
+  "$comment": "Story 2.24 AC16 — canonical redaction-policy spec shared between backend SensitivePayloadAnalyzer (implementation source of truth) and frontend redactionFilter (defense-in-depth second pass). Trap T6: backend STAYS the implementation SoT; this JSON MIRRORS the backend. The contract test enforces parity in that direction. Patterns use ECMAScript regex syntax (JS-compatible); Java consumers compile via Pattern.compile after light tweaks documented per-pattern.",
+  "schemaVersion": 1,
+  "patterns": [
+    {
+      "category": "GITHUB_TOKEN",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "regex": "\\bghp_[A-Za-z0-9]{20,}\\b",
+      "flags": ""
+    },
+    {
+      "category": "GITHUB_TOKEN",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "regex": "\\bgithub_pat_[A-Za-z0-9_]{20,}\\b",
+      "flags": ""
+    },
+    {
+      "category": "LINEAR_API_KEY",
+      "placeholder": "[REDACTED_LINEAR_API_KEY]",
+      "regex": "\\blin_api_[A-Za-z0-9]{20,}\\b",
+      "flags": ""
+    },
+    {
+      "category": "AUTHORIZATION_HEADER",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "regex": "(?:Authorization\\s*:\\s*(?:Bearer|Basic)\\s+)[^\\s\\r\\n]+",
+      "flags": "i"
+    },
+    {
+      "category": "IDEMPOTENCY_KEY",
+      "placeholder": "[REDACTED_IDEMPOTENCY_KEY]",
+      "regex": "(?:Idempotency-Key\\s*:\\s*)[^\\s\\r\\n]+",
+      "flags": "im"
+    },
+    {
+      "category": "SSH_PRIVATE_KEY",
+      "placeholder": "[REDACTED_SSH_PRIVATE_KEY]",
+      "regex": "-----BEGIN OPENSSH PRIVATE KEY-----[\\s\\S]*?-----END OPENSSH PRIVATE KEY-----",
+      "flags": ""
+    },
+    {
+      "category": "PEM_PRIVATE_KEY",
+      "placeholder": "[REDACTED_PEM_PRIVATE_KEY]",
+      "regex": "-----BEGIN (RSA PRIVATE KEY|EC PRIVATE KEY|DSA PRIVATE KEY|ENCRYPTED PRIVATE KEY|PRIVATE KEY)-----[\\s\\S]*?-----END \\1-----",
+      "flags": ""
+    },
+    {
+      "category": "PEM_CERTIFICATE_WITH_PRIVATE_KEY",
+      "placeholder": "[REDACTED_PEM_CERTIFICATE_WITH_PRIVATE_KEY]",
+      "regex": "(?:-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----\\s*)+-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+      "flags": ""
+    }
+  ],
+  "secretFieldNames": [
+    "secret",
+    "token",
+    "apiKey",
+    "api_key",
+    "accessToken",
+    "access_token",
+    "password",
+    "credential",
+    "linearApiKey",
+    "bearer",
+    "private",
+    "private_key",
+    "privateKey",
+    "refresh_token",
+    "refreshToken",
+    "client_secret",
+    "clientSecret",
+    "sessionToken",
+    "authToken",
+    "auth_token"
+  ]
+}

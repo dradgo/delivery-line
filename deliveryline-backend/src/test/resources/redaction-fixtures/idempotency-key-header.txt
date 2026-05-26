@@ -1,0 +1,6 @@
+A request shape log fragment:
+POST /workflows/approve HTTP/1.1
+Host: api.example
+Idempotency-Key: 01HFAKEFAKEFAKE0123456789ABCDEF
+Content-Type: application/json
+End.

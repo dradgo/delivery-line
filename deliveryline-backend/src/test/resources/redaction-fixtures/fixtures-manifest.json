@@ -7,6 +7,18 @@
       "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
     },
     {
+      "file": "bundle-json-nested-credentials.json",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": [
+        "FAKE-CRED-DO-NOT-USE-aaaaaaaaaaaaaaaaaaaa",
+        "FAKE-BEARER-DO-NOT-USE-bbbbbbbbbbbbbbbbbbb",
+        "FAKE-PRIVATE-DO-NOT-USE-cccccccccccccccccc",
+        "FAKE-REFRESH-DO-NOT-USE-dddddddddddddddddd",
+        "FAKE-CLIENT-DO-NOT-USE-eeeeeeeeeeeeeeeeee"
+      ]
+    },
+    {
       "file": "dotenv-secret.env",
       "placeholder": "[REDACTED_ENV_VALUE]",
       "minimumClassification": "shareable-redacted",
@@ -31,6 +43,12 @@
       "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
     },
     {
+      "file": "idempotency-key-header.txt",
+      "placeholder": "[REDACTED_IDEMPOTENCY_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["01HFAKEFAKEFAKE0123456789ABCDEF"]
+    },
+    {
       "file": "json-secret.json",
       "placeholder": "[REDACTED_SECRET_FIELD]",
       "minimumClassification": "shareable-redacted",
@@ -47,6 +65,33 @@
       "placeholder": "[REDACTED_GITHUB_TOKEN]",
       "minimumClassification": "shareable-redacted",
       "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
+    },
+    {
+      "file": "pem-certificate-with-private-key.pem",
+      "placeholder": "[REDACTED_PEM_CERTIFICATE_WITH_PRIVATE_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": [
+        "FAKE-CERT-DO-NOT-USE-GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+        "FAKE-PAIRED-PRIVATE-KEY-DO-NOT-USE-IIIIIIIIIIIIIIIIIIIIIIIIII"
+      ]
+    },
+    {
+      "file": "pem-ec-private-key.pem",
+      "placeholder": "[REDACTED_PEM_PRIVATE_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["FAKE-EC-PRIVATE-KEY-DO-NOT-USE-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"]
+    },
+    {
+      "file": "pem-pkcs8-private-key.pem",
+      "placeholder": "[REDACTED_PEM_PRIVATE_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["FAKE-PKCS8-PRIVATE-KEY-DO-NOT-USE-EEEEEEEEEEEEEEEEEEEEEEEEEE"]
+    },
+    {
+      "file": "pem-rsa-private-key.pem",
+      "placeholder": "[REDACTED_PEM_PRIVATE_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["FAKE-RSA-PRIVATE-KEY-DO-NOT-USE-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
     },
     {
       "file": "query-secret.txt",

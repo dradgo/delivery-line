@@ -1,0 +1,3 @@
+A nested credential bundle pasted into an artifact:
+
+{"runner": {"linearApiKey": "lin_api_abcdefghijklmnopqrstuvwxyz1234567890FAKE", "github_pat": "github_pat_FAKE000000000000000000000000000000abc"}}

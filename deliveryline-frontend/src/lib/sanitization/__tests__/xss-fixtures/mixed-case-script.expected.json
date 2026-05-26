@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["Before.", "After."],
+  "renderedTextDoesNotContain": ["alert('xss-mixedcase-1')", "alert('xss-mixedcase-2')"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dradgo.org/runner-contracts/redaction-policy.schema.json",
+  "title": "Redaction Policy",
+  "description": "Story 2.24 AC16 — canonical schema for the cross-side redaction policy. Consumed by RedactionPolicyContractTest to validate the policy file and by the frontend contract test to validate the runtime-copied policy.",
+  "type": "object",
+  "required": ["schemaVersion", "patterns", "secretFieldNames"],
+  "additionalProperties": true,
+  "properties": {
+    "$comment": { "type": "string" },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["category", "placeholder", "regex"],
+        "additionalProperties": false,
+        "properties": {
+          "category": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "placeholder": { "type": "string", "pattern": "^\\[REDACTED_[A-Z0-9_]+\\]$" },
+          "regex": { "type": "string", "minLength": 1 },
+          "flags": { "type": "string", "pattern": "^[gimsuy]*$" }
+        }
+      }
+    },
+    "secretFieldNames": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

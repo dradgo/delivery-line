@@ -430,4 +430,19 @@
   .prose > * + * {
     margin-top: 1rem;
   }
+
+  /* Story 2.24 AC17 — render-time redaction wrapper. The frontend filter
+   * emits `<mark class="redaction-applied">[REDACTED: <category>]</mark>`
+   * around secrets the backend missed. Background is the 2.3 amber subtle
+   * (`--state-warning`) so the operator can see at a glance that the
+   * placeholder is render-time, not author-written. Code review P8
+   * (2026-05-26) added the binding — previously the class emitted browser-
+   * default `<mark>` yellow with no token contract. */
+  .redaction-applied {
+    background-color: hsl(var(--state-warning));
+    color: hsl(var(--state-warning-foreground));
+    border-radius: 0.125rem;
+    padding: 0 0.25rem;
+    font-weight: var(--weight-medium);
+  }
 }

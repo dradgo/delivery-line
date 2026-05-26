@@ -1,0 +1,5 @@
+{
+  "expectedDetectedCategories": ["IDEMPOTENCY_KEY"],
+  "renderedTextDoesNotContain": ["01HFAKEFAKEFAKEFAKE01234567"],
+  "renderedTextContains": ["[REDACTED: IDEMPOTENCY_KEY]"]
+}

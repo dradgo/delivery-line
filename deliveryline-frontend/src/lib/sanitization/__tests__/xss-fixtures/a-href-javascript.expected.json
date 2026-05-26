@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["evil scheme"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true,
+  "noJavascriptHrefAnchors": true
+}

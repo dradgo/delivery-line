@@ -1,0 +1,5 @@
+{
+  "expectedDetectedCategories": ["PEM_PRIVATE_KEY"],
+  "renderedTextDoesNotContain": ["FAKE-EC-PRIVATE-KEY-DO-NOT-USE-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"],
+  "renderedTextContains": ["[REDACTED: PEM_PRIVATE_KEY]"]
+}

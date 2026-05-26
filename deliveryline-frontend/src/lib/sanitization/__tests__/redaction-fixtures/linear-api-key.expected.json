@@ -1,0 +1,5 @@
+{
+  "expectedDetectedCategories": ["LINEAR_API_KEY"],
+  "renderedTextDoesNotContain": ["lin_api_abcdefghijklmnopqrstuvwxyz0123FAKE"],
+  "renderedTextContains": ["[REDACTED: LINEAR_API_KEY]"]
+}

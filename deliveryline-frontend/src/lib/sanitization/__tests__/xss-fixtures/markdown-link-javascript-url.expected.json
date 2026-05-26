@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["click here", "whitespace evader", "data attack"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true,
+  "noJavascriptHrefAnchors": true
+}

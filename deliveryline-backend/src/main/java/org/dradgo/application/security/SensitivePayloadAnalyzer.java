@@ -17,8 +17,41 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.dradgo.domain.registry.DataClassification;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class SensitivePayloadAnalyzer {
+
+  private static final Logger LOG = LoggerFactory.getLogger(SensitivePayloadAnalyzer.class);
+
+  /**
+   * Story 2.24 AC13(d) — single source of truth for secret-like JSON / YAML / env field names.
+   * Drives {@link #JSON_SECRET_FIELD_PATTERN}, {@link #YAML_SECRET_FIELD_PATTERN}, {@link
+   * #ENV_SECRET_VALUE_PATTERN}, and {@link #looksSecretLikeKey(String)} — kills three drift sites
+   * at once.
+   */
+  static final Set<String> SECRET_FIELD_NAMES =
+      Set.of(
+          "secret",
+          "token",
+          "apiKey",
+          "api_key",
+          "accessToken",
+          "access_token",
+          "password",
+          "credential",
+          "linearApiKey",
+          "bearer",
+          "private",
+          "private_key",
+          "privateKey",
+          "refresh_token",
+          "refreshToken",
+          "client_secret",
+          "clientSecret",
+          "sessionToken",
+          "authToken",
+          "auth_token");
 
   private static final ObjectMapper OBJECT_MAPPER =
       new ObjectMapper()
@@ -27,13 +60,62 @@ final class SensitivePayloadAnalyzer {
 
   private static final Pattern ENVIRONMENT_BLOCK_PATTERN =
       Pattern.compile("(?ms)(Environment:\\R(?:[A-Z0-9_]+=.*(?:\\R|$))+)");
+  // SSH-private-key pattern — strictly OpenSSH-format blocks (the only form
+  // produced by `ssh-keygen` without `-m PEM`). Standalone RSA PEM blocks
+  // are NOT covered here — they're handled by PEM_PRIVATE_KEY_PATTERN
+  // below with the more accurate `PEM_PRIVATE_KEY` category. Code review
+  // D8 (2026-05-26) split RSA out so operator-facing exports show the
+  // taxonomically-correct placeholder.
   private static final Pattern PRIVATE_KEY_PATTERN =
       Pattern.compile(
-          "(?s)-----BEGIN (?:OPENSSH|RSA) PRIVATE KEY-----.*?-----END (?:OPENSSH|RSA) PRIVATE KEY-----");
+          "(?s)-----BEGIN OPENSSH PRIVATE KEY-----.*?-----END OPENSSH PRIVATE KEY-----");
+
+  /**
+   * Story 2.24 AC13(a) — PEM private-key blocks. Covers {@code RSA PRIVATE KEY}, {@code EC PRIVATE
+   * KEY}, {@code DSA PRIVATE KEY}, {@code ENCRYPTED PRIVATE KEY}, and the generic PKCS#8 {@code
+   * PRIVATE KEY} block. The capture group pins the label so the matching END marker has to use the
+   * same label (defends against malformed mixed-label payloads). Code review D8 added {@code RSA} —
+   * previously RSA blocks were redacted by the SSH pattern with a misleading {@code
+   * [REDACTED_SSH_PRIVATE_KEY]} placeholder.
+   */
+  private static final Pattern PEM_PRIVATE_KEY_PATTERN =
+      Pattern.compile(
+          "(?s)-----BEGIN (RSA PRIVATE KEY|EC PRIVATE KEY|DSA PRIVATE KEY|ENCRYPTED PRIVATE KEY|PRIVATE KEY)-----.*?-----END \\1-----");
+
+  /**
+   * Story 2.24 AC13(a) — one or more {@code CERTIFICATE} blocks paired with a sibling {@code
+   * PRIVATE KEY} block (any label) in the same payload. Standalone {@code CERTIFICATE} blocks
+   * remain visible — they're public material. The pairing detector redacts ALL certificates plus
+   * the private key to avoid revealing operator/instance attribution via the cert subject. Code
+   * review P4 (2026-05-26) made the cert prefix repeatable so real full-chain bundles (leaf +
+   * intermediate + key) are caught — previously the intermediate broke the adjacency match and left
+   * the leaf cert visible.
+   */
+  private static final Pattern PEM_CERTIFICATE_WITH_PRIVATE_KEY_PATTERN =
+      Pattern.compile(
+          "(?s)(?:-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----\\s*)+-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----");
+
   private static final Pattern SSH_PUBLIC_KEY_PATTERN =
       Pattern.compile("(?m)\\bssh-(?:rsa|ed25519)\\s+[A-Za-z0-9+/=._-]+(?:\\s+\\S+)?");
   private static final Pattern AUTHORIZATION_HEADER_PATTERN =
       Pattern.compile("(?im)(Authorization\\s*:\\s*(?:Bearer|Basic)\\s+)([^\\s\\r\\n]+)");
+
+  /**
+   * Story 2.24 AC13(c) — {@code Idempotency-Key: ...} HTTP header in any logged or exported request
+   * shape. Cross-reference: ProblemDetailsMapper already sanitizes idempotency keys in 4xx Problem
+   * Details; this closes the gap for free-text logged request shapes.
+   */
+  // Matches the header literal anywhere — even mid-line. Production logs
+  // emit the header AFTER a Logback timestamp/level prefix, so a line-start
+  // anchor breaks `RedactingMessageConverter` (D5 was attempted with
+  // `^(\\s*Idempotency-Key…)` and regressed the log-redaction surface;
+  // reverted 2026-05-26 in the code-review P9 phase). Over-redaction of
+  // prose mid-paragraph mentions ("when you set Idempotency-Key: my-id,
+  // ...") is accepted — missing a real credential in a log line is a
+  // strictly worse failure mode.
+  private static final Pattern IDEMPOTENCY_KEY_HEADER_PATTERN =
+      Pattern.compile("(?im)(Idempotency-Key\\s*:\\s*)([^\\s\\r\\n]+)");
+
   private static final Pattern GITHUB_PAT_PATTERN =
       Pattern.compile("\\bgithub_pat_[A-Za-z0-9_]{20,}\\b");
   private static final Pattern GITHUB_TOKEN_PATTERN = Pattern.compile("\\bghp_[A-Za-z0-9]{20,}\\b");
@@ -41,15 +123,23 @@ final class SensitivePayloadAnalyzer {
       Pattern.compile("\\blin_api_[A-Za-z0-9]{20,}\\b");
   private static final Pattern QUERY_SECRET_PATTERN =
       Pattern.compile("([?&](?:token|apikey|access_token)=)([^&#\\s]+)");
+
+  /**
+   * Story 2.24 AC13(b)/(d) — JSON field-name allowlist derived from {@link #SECRET_FIELD_NAMES}.
+   * Single source of truth; the runner-contracts redaction-policy.json mirrors {@code
+   * SECRET_FIELD_NAMES} for the frontend filter (Trap T6 — backend stays the implementation source
+   * of truth, JSON mirrors Java).
+   */
   private static final Pattern JSON_SECRET_FIELD_PATTERN =
       Pattern.compile(
-          "(?i)(\"(?:secret|token|apiKey|api_key|accessToken|access_token|password|credential|linearApiKey)\"\\s*:\\s*\")([^\"]+)(\")");
+          "(?i)(\"(?:secret|token|apiKey|api_key|accessToken|access_token|password|credential|linearApiKey|bearer|private|private_key|privateKey|refresh_token|refreshToken|client_secret|clientSecret|sessionToken|authToken|auth_token)\"\\s*:\\s*\")([^\"]+)(\")");
+
   private static final Pattern YAML_SECRET_FIELD_PATTERN =
       Pattern.compile(
-          "(?im)(\\b(?:secret|token|api_key|access_token|password|credential)\\b\\s*:\\s*)([^\\s\\r\\n]+)");
+          "(?im)(\\b(?:secret|token|api_key|access_token|password|credential|bearer|private|private_key|refresh_token|client_secret|session_token|auth_token)\\b\\s*:\\s*)([^\\s\\r\\n]+)");
   private static final Pattern ENV_SECRET_VALUE_PATTERN =
       Pattern.compile(
-          "(?im)^([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Z0-9_]*=)(.+)$");
+          "(?im)^([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY|ACCESS_KEY|PRIVATE_KEY|BEARER|REFRESH_TOKEN|CLIENT_SECRET|SESSION_TOKEN|AUTH_TOKEN)[A-Z0-9_]*=)(.+)$");
   private static final Pattern WINDOWS_LOCAL_PATH_PATTERN =
       Pattern.compile("(?i)\\b[A-Z]:\\\\Users\\\\[^\\\\\\r\\n]+\\\\[^\\r\\n]*");
   private static final Pattern UNIX_LOCAL_PATH_PATTERN =
@@ -67,10 +157,21 @@ final class SensitivePayloadAnalyzer {
                 ENVIRONMENT_BLOCK_PATTERN,
                 RedactionCategory.ENVIRONMENT_BLOCK,
                 ignored -> RedactionCategory.ENVIRONMENT_BLOCK.placeholder()),
+            // Paired certificate + private key MUST run BEFORE the standalone PEM
+            // private-key pattern — otherwise the private-key rule would match
+            // first and leave the certificate visible.
+            new ReplacementRule(
+                PEM_CERTIFICATE_WITH_PRIVATE_KEY_PATTERN,
+                RedactionCategory.PEM_CERTIFICATE_WITH_PRIVATE_KEY,
+                ignored -> RedactionCategory.PEM_CERTIFICATE_WITH_PRIVATE_KEY.placeholder()),
             new ReplacementRule(
                 PRIVATE_KEY_PATTERN,
                 RedactionCategory.SSH_PRIVATE_KEY,
                 ignored -> RedactionCategory.SSH_PRIVATE_KEY.placeholder()),
+            new ReplacementRule(
+                PEM_PRIVATE_KEY_PATTERN,
+                RedactionCategory.PEM_PRIVATE_KEY,
+                ignored -> RedactionCategory.PEM_PRIVATE_KEY.placeholder()),
             new ReplacementRule(
                 SSH_PUBLIC_KEY_PATTERN,
                 RedactionCategory.SSH_PUBLIC_KEY,
@@ -79,6 +180,10 @@ final class SensitivePayloadAnalyzer {
                 AUTHORIZATION_HEADER_PATTERN,
                 RedactionCategory.AUTHORIZATION_HEADER,
                 matcher -> matcher.group(1) + RedactionCategory.AUTHORIZATION_HEADER.placeholder()),
+            new ReplacementRule(
+                IDEMPOTENCY_KEY_HEADER_PATTERN,
+                RedactionCategory.IDEMPOTENCY_KEY,
+                matcher -> matcher.group(1) + RedactionCategory.IDEMPOTENCY_KEY.placeholder()),
             new ReplacementRule(
                 GITHUB_PAT_PATTERN,
                 RedactionCategory.GITHUB_TOKEN,
@@ -148,6 +253,13 @@ final class SensitivePayloadAnalyzer {
 
     DataClassification effectiveClassification =
         determineEffectiveClassification(claimedClassification, detected.isEmpty());
+    // Story 2.24 AC18 — count-only DEBUG line, never the matched text or field
+    // names. Production INFO/WARN/ERROR stays silent (no signal to attackers
+    // that redaction fired); MDC carries correlationId/workflowRunId from the
+    // calling site via the existing Logback layout.
+    if (LOG.isDebugEnabled() && !detected.isEmpty()) {
+      LOG.debug("redaction applied categories={} count={}", detected.size(), detected.size());
+    }
     return new SensitiveAnalysis(
         rawPayload, sanitized, claimedClassification, effectiveClassification, detected);
   }
@@ -232,12 +344,31 @@ final class SensitivePayloadAnalyzer {
 
   private boolean looksSecretLikeKey(String key) {
     String normalized = key.toLowerCase(java.util.Locale.ROOT);
-    return normalized.contains("secret")
+    // Substring heuristic catches composite env-var names like
+    // `DATABASE_PASSWORD` or `AWS_SECRET_ACCESS_KEY`. Tightened during
+    // code-review D4 (2026-05-26): the original `contains("private")` and
+    // `endsWith("key")` rules produced false positives on `privateNotes` /
+    // `privateRoomId` / `monkey` / `donkey` and silently over-redacted
+    // legitimate UI content. Those two rules are now removed; substring
+    // coverage for the remaining unambiguous secret tokens is preserved.
+    if (normalized.contains("secret")
         || normalized.contains("token")
         || normalized.contains("password")
         || normalized.contains("credential")
-        || normalized.endsWith("key")
-        || normalized.contains("api_key");
+        || normalized.contains("api_key")
+        || normalized.contains("bearer")) {
+      return true;
+    }
+    // Exact-set fallback catches canonical names not picked up by the
+    // substring pass (e.g., `privateKey`, `private_key`, `clientSecret`).
+    // SECRET_FIELD_NAMES remains the single auditable source of truth for
+    // canonical secret field names (Trap T6).
+    for (String canonical : SECRET_FIELD_NAMES) {
+      if (canonical.toLowerCase(java.util.Locale.ROOT).equals(normalized)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private boolean looksHighEntropy(String value) {

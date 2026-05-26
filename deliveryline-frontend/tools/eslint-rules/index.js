@@ -5,6 +5,7 @@
  */
 import noWorkflowDomainInUiPrimitives from './no-workflow-domain-in-ui-primitives.js';
 import noInlineQueryKeys from './no-inline-query-keys.js';
+import noUnsanitizedHtml from './no-unsanitized-html.js';
 
 /** @type {import('eslint').ESLint.Plugin} */
 const plugin = {
@@ -12,6 +13,7 @@ const plugin = {
   rules: {
     'no-workflow-domain-in-ui-primitives': noWorkflowDomainInUiPrimitives,
     'no-inline-query-keys': noInlineQueryKeys,
+    'no-unsanitized-html': noUnsanitizedHtml,
   },
 };
 

@@ -1,0 +1,5 @@
+{
+  "expectedDetectedCategories": ["GITHUB_TOKEN"],
+  "renderedTextDoesNotContain": ["ghp_abcdefghijklmnopqrstuvwxFAKE"],
+  "renderedTextContains": ["[REDACTED: GITHUB_TOKEN]"]
+}

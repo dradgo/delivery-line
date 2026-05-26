@@ -1,0 +1,7 @@
+EC private key dumped into an artifact body:
+
+-----BEGIN EC PRIVATE KEY-----
+FAKE-EC-PRIVATE-KEY-DO-NOT-USE-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+-----END EC PRIVATE KEY-----
+
+Done.

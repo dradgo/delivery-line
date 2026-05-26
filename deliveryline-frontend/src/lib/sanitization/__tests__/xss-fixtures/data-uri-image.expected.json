@@ -1,0 +1,8 @@
+{
+  "renderedTextContains": ["An image with a data URI:", "After."],
+  "renderedTextDoesNotContain": ["alert('xss-data-uri')"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true,
+  "noDataUriImages": true
+}

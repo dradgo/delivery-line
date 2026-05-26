@@ -11,6 +11,7 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Stream;
 import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.RedactionCategory;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.infrastructure.observability.RedactingMessageConverter;
 import org.dradgo.infrastructure.observability.RedactionLayoutHolder;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
 import org.slf4j.LoggerFactory;
 
@@ -142,5 +144,60 @@ class LoggingRedactionContractTest {
 
   private static String abbreviate(String s) {
     return s.length() > 120 ? s.substring(0, 120) + "..." : s;
+  }
+
+  // Story 2.24 cross-cutting (code review P9, 2026-05-26) — the new
+  // RedactionCategory placeholders (IDEMPOTENCY_KEY, PEM_PRIVATE_KEY,
+  // PEM_CERTIFICATE_WITH_PRIVATE_KEY) MUST surface VERBATIM in Logback's
+  // RedactionLayoutInitializer output. The spec referenced
+  // `RedactingMessageConverterUnitTest`; that file does not exist — this
+  // contract test is the canonical converter sweep, so the assertions
+  // landed here. Each test emits a fixture-shaped payload, runs the
+  // converter, and asserts the placeholder string survives verbatim.
+
+  @Test
+  void idempotencyKeyHeaderRedactsToCanonicalPlaceholder() {
+    String rendered = convertPayload("Idempotency-Key: 01HABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    assertThat(rendered)
+        .as("IDEMPOTENCY_KEY placeholder must survive verbatim in converter output")
+        .contains(RedactionCategory.IDEMPOTENCY_KEY.placeholder())
+        .doesNotContain("01HABCDEFGHIJKLMNOPQRSTUVWXYZ");
+  }
+
+  @Test
+  void pemPrivateKeyRedactsToCanonicalPlaceholder() {
+    String rendered =
+        convertPayload(
+            "-----BEGIN EC PRIVATE KEY-----\n"
+                + "FAKE-EC-PRIVATE-KEY-DO-NOT-USE-BBBBBBBBBBBBBBBBBBBB\n"
+                + "-----END EC PRIVATE KEY-----");
+    assertThat(rendered)
+        .as("PEM_PRIVATE_KEY placeholder must survive verbatim in converter output")
+        .contains(RedactionCategory.PEM_PRIVATE_KEY.placeholder())
+        .doesNotContain("FAKE-EC-PRIVATE-KEY-DO-NOT-USE-BBBBBBBBBBBBBBBBBBBB");
+  }
+
+  @Test
+  void pemCertificateWithPrivateKeyRedactsToCanonicalPlaceholder() {
+    String rendered =
+        convertPayload(
+            "-----BEGIN CERTIFICATE-----\n"
+                + "FAKE-CERT-PUBLIC-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\n"
+                + "-----END CERTIFICATE-----\n"
+                + "-----BEGIN PRIVATE KEY-----\n"
+                + "FAKE-PKCS8-PRIVATE-KEY-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD\n"
+                + "-----END PRIVATE KEY-----");
+    assertThat(rendered)
+        .as(
+            "PEM_CERTIFICATE_WITH_PRIVATE_KEY placeholder must survive verbatim in converter output")
+        .contains(RedactionCategory.PEM_CERTIFICATE_WITH_PRIVATE_KEY.placeholder())
+        .doesNotContain("FAKE-PKCS8-PRIVATE-KEY-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
+  }
+
+  private String convertPayload(String payload) {
+    appender.list.clear();
+    LoggerFactory.getLogger(LoggingRedactionContractTest.class).info("payload {}", payload);
+    assertThat(appender.list).hasSize(1);
+    return converter.convert(appender.list.get(0));
   }
 }

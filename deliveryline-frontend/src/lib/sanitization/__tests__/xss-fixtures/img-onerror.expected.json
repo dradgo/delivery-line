@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["Before.", "After."],
+  "renderedTextDoesNotContain": ["onerror", "alert('xss-img-onerror')"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

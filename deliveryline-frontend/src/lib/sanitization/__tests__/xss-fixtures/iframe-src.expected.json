@@ -1,0 +1,6 @@
+{
+  "renderedTextContains": ["Before.", "After."],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

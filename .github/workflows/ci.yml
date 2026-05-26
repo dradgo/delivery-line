@@ -718,10 +718,39 @@ jobs:
           cache: maven
 
       - name: Redaction policy + logging redaction contract tests
+        # Story 2.24 AC8 — extended to cover the new RedactionPolicyParityContractTest
+        # (backend ↔ runner-contracts JSON parity, AC16) and the schema-side
+        # RedactionPolicyContractTest in deliveryline-runner-contracts. The
+        # cross-side drift test runs as the second step below.
         run: |
           ./mvnw -B -ntp -pl deliveryline-backend -am test \
-            -Dtest='*RedactionContractTest,*RedactionPolicyService*Test,RedactingMessageConverterUnitTest' \
+            -Dtest='*RedactionContractTest,*RedactionPolicyService*Test,*RedactionPolicy*ContractTest,RedactingMessageConverterUnitTest' \
             -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Runner-contracts redaction-policy schema contract test
+        # Story 2.24 AC16 — schema validation of the canonical
+        # runner-contracts/redaction-policy.json. A drift in either direction
+        # fails CI.
+        run: |
+          ./mvnw -B -ntp -pl deliveryline-runner-contracts test \
+            -Dtest='RedactionPolicyContractTest' \
+            -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Set up Node.js for the frontend drift contract test
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Frontend redaction-policy mirror drift contract test
+        # Story 2.24 AC16 (P3, code-review 2026-05-26) — the frontend mirror at
+        # deliveryline-frontend/src/lib/sanitization/redaction-policy.generated.json
+        # MUST be byte-for-byte identical to the canonical runner-contracts copy.
+        # If this test fails, run `scripts/regen-redaction-policy.sh` from repo
+        # root and commit both files together.
+        working-directory: deliveryline-frontend
+        run: |
+          npm ci
+          npx vitest run src/lib/sanitization/__tests__/redaction-policy-drift.test.ts
 
       - name: Upload surefire reports
         if: always()

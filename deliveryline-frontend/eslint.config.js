@@ -92,6 +92,10 @@ export default tseslint.config(
 
       // AC5 — query keys must come from a factory (forward-looking to 2.6)
       'local-rules/no-inline-query-keys': 'error',
+
+      // Story 2.24 AC11 — no `dangerouslySetInnerHTML` / `innerHTML` writes
+      // outside the sanitization package's trusted boundary.
+      'local-rules/no-unsanitized-html': 'error',
     },
   },
 

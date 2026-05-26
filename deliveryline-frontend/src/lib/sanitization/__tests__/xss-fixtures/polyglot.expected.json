@@ -1,0 +1,9 @@
+{
+  "renderedTextContains": ["Polyglot attack", "End."],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true,
+  "noStyleElements": true,
+  "noJavascriptHrefAnchors": true,
+  "noDataUriImages": true
+}

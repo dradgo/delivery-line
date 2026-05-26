@@ -1,0 +1,6 @@
+{
+  "renderedTextContains": ["Before.", "After.", "<script>alert('xss-entity')</script>"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

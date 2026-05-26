@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["Inert paragraph before.", "After paragraph."],
+  "renderedTextDoesNotContain": ["alert('xss-script-tag')"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

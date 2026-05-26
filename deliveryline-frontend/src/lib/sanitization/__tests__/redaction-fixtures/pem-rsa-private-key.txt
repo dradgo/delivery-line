@@ -1,0 +1,7 @@
+A markdown body that pastes a PEM RSA private key:
+
+-----BEGIN RSA PRIVATE KEY-----
+FAKE-RSA-PRIVATE-KEY-DO-NOT-USE-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+-----END RSA PRIVATE KEY-----
+
+End of body.

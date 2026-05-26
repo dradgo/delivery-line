@@ -1,0 +1,6 @@
+{
+  "renderedTextContains": ["A javascript fenced block follows.", "<script>alert('xss-code-fence-js')</script>", "End."],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}
