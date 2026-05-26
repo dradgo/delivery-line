@@ -58,6 +58,10 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.REST_AND_CLI_ADAPTERS_MUST_NOT_TOUCH_JPA_ENTITIES;
 
   @ArchTest
+  static final ArchRule rest_controllers_stay_thin_and_avoid_spi_or_persistence_or_runner =
+      ArchitectureRuleCatalog.REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER;
+
+  @ArchTest
   static final ArchRule rest_controllers_must_be_named_as_controllers =
       ArchitectureRuleCatalog.REST_CONTROLLERS_MUST_BE_NAMED_AS_CONTROLLERS;
 

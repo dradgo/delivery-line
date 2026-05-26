@@ -549,6 +549,8 @@ class WorkflowCommandServiceContractTest {
 
     assertEquals(first, replay);
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, replay.currentState());
+    assertEquals("answered", first.clarificationStatus());
+    assertEquals("answered", replay.clarificationStatus());
     assertEquals(
         1, jdbcTemplate.queryForObject("select count(*) from clarifications", Integer.class));
     assertEquals(
@@ -588,6 +590,7 @@ class WorkflowCommandServiceContractTest {
 
     assertEquals(first, replay);
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, replay.currentState());
+    assertEquals("answered", replay.clarificationStatus());
   }
 
   @Test

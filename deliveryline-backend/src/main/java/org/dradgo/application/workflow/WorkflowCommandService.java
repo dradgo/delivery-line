@@ -13,8 +13,10 @@ import java.util.Set;
 import org.dradgo.application.approval.ApprovalResult;
 import org.dradgo.application.approval.ApprovalService;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationResult;
 import org.dradgo.application.clarification.ClarificationService;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
@@ -61,6 +63,15 @@ public class WorkflowCommandService {
 
   private static final String LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR = "|";
 
+  /**
+   * Sentinel surfaced for clarification idempotent replays whose underlying row was hard-deleted
+   * before the replay arrived (story-2.13 round-3 decision D-Round3-1). Preserves the
+   * idempotent-replay-never-fails contract for previously-successful 200s — callers see {@code
+   * clarificationStatus="unknown"} instead of a 500. Only ever surfaced for the legacy 2-segment
+   * replay-ref population; fresh writes embed the real status in the ref.
+   */
+  static final String LEGACY_CLARIFICATION_REPLAY_STATUS_UNKNOWN = "unknown";
+
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowRunCreatePort workflowRunCreatePort;
   private final WorkflowEventWritePort workflowEventWritePort;
@@ -72,6 +83,7 @@ public class WorkflowCommandService {
   private final IntegrationLinkService integrationLinkService;
   private final ApprovalService approvalService;
   private final ClarificationService clarificationService;
+  private final ClarificationReadPort clarificationReadPort;
   private final TransactionTemplate failureCompletionTemplate;
   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
@@ -88,7 +100,8 @@ public class WorkflowCommandService {
       WorkflowCommandFingerprintFactory fingerprintFactory,
       IntegrationLinkService integrationLinkService,
       ApprovalService approvalService,
-      ClarificationService clarificationService) {
+      ClarificationService clarificationService,
+      ClarificationReadPort clarificationReadPort) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -101,6 +114,7 @@ public class WorkflowCommandService {
     this.integrationLinkService = integrationLinkService;
     this.approvalService = approvalService;
     this.clarificationService = clarificationService;
+    this.clarificationReadPort = clarificationReadPort;
   }
 
   @Transactional
@@ -224,12 +238,14 @@ public class WorkflowCommandService {
       SubmitClarificationCommand command) {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
-      ClarificationResult result = clarificationService.submitAnswer(command);
-      // Answering a clarification does NOT mutate the workflow state — read the run's live state
-      // fresh so the legacy WorkflowStateChangeResult is honest (rather than hard-coding a state
-      // value that would lie about runs that have advanced through story 2.12's lifecycle since).
-      // replayStateChange's default branch falls back to the same live read for SubmitClarification
-      // (story 2.11 trap T4 — no invariant post-state).
+      // Story 2.13 round-4 P-R4-4: read currentState FIRST so the response reflects the workflow
+      // state at the START of the answer operation, not whatever a concurrent reject/takeover/retry
+      // happened to commit during the answer write. Trap T6 says answering does NOT advance state —
+      // if the read came after the clarification write, a concurrent state-change could surface as
+      // the answer's "post-mutation" state and contradict AC9. Both calls sit inside the outer
+      // @Transactional answerClarification, so READ COMMITTED still sees the latest committed value
+      // at this point, but the resulting currentState now belongs to the snapshot the answer
+      // started from — not to an unrelated concurrent transition.
       WorkflowState currentState =
           workflowRunReadPort
               .findByPublicId(command.workflowRunId())
@@ -240,8 +256,9 @@ public class WorkflowCommandService {
                           DomainErrorCode.RUN_NOT_FOUND,
                           "Workflow run not found: " + command.workflowRunId(),
                           Map.of("runId", command.workflowRunId())));
+      ClarificationResult result = clarificationService.submitAnswer(command);
       return new WorkflowStateChangeResult(
-          result.workflowRunId(), currentState, result.correlationId());
+          result.workflowRunId(), currentState, result.correlationId(), result.status());
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
@@ -489,6 +506,13 @@ public class WorkflowCommandService {
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();
         };
+    if (command instanceof SubmitClarificationCommand submitClarificationCommand) {
+      return new WorkflowStateChangeResult(
+          workflowRun.publicId(),
+          resultingState,
+          normalizeOptional(command.correlationId()),
+          clarificationReplayStatus(resultRef, submitClarificationCommand));
+    }
     return new WorkflowStateChangeResult(
         workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));
   }
@@ -501,38 +525,137 @@ public class WorkflowCommandService {
       throw new IllegalStateException(
           "WorkflowStateChangeResult.currentState() is null for clarification replay ref");
     }
+    String clarificationStatus = normalizeOptional(result.clarificationStatus());
+    if (clarificationStatus == null) {
+      throw new IllegalStateException(
+          "WorkflowStateChangeResult.clarificationStatus() is null for clarification replay ref");
+    }
     return result.workflowRunId()
         + CLARIFICATION_REPLAY_REF_SEPARATOR
-        + result.currentState().value();
+        + result.currentState().value()
+        + CLARIFICATION_REPLAY_REF_SEPARATOR
+        + clarificationStatus;
   }
 
   private String clarificationReplayRunId(String resultRef) {
-    int separator = clarificationReplaySeparatorIndex(resultRef);
-    if (separator <= 0 || separator == resultRef.length() - 1) {
-      throw malformedClarificationReplayRef(resultRef);
-    }
-    return resultRef.substring(0, separator);
+    return parseClarificationReplayRef(resultRef).workflowRunId();
   }
 
   private WorkflowState clarificationReplayState(String resultRef) {
-    int separator = clarificationReplaySeparatorIndex(resultRef);
-    if (separator <= 0 || separator == resultRef.length() - 1) {
-      throw malformedClarificationReplayRef(resultRef);
-    }
-    int separatorLength =
-        resultRef.startsWith(CLARIFICATION_REPLAY_REF_SEPARATOR, separator)
-            ? CLARIFICATION_REPLAY_REF_SEPARATOR.length()
-            : LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR.length();
-    return WorkflowState.fromValue(
-        resultRef.substring(separator + separatorLength), "idempotency.resultRef");
+    return parseClarificationReplayRef(resultRef).workflowState();
   }
 
-  private int clarificationReplaySeparatorIndex(String resultRef) {
-    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
-    if (separator >= 0) {
+  /**
+   * Story 2.13 review D1: legacy two-segment {@code resultRef} values written before this story
+   * stored only {@code workflowRunId + SEP + state.value()} — they do not encode the {@code
+   * clarificationStatus} that callers now expect on replay. For these legacy refs the resolver
+   * falls back to a live read against {@link ClarificationReadPort}, which means:
+   *
+   * <ul>
+   *   <li>If the row has advanced (answered → accepted / incorporated / superseded /
+   *       rejected_invalid) between original-answer time and replay time, the replay observes the
+   *       <em>current</em> row status, not the answer-time status. Idempotent replays across the
+   *       legacy migration window may therefore not reproduce the original response byte-for-byte.
+   *   <li>If the row has been hard-deleted (operator action, retention sweep), the replay returns
+   *       the {@link #LEGACY_CLARIFICATION_REPLAY_STATUS_UNKNOWN} sentinel (story-2.13 round-3
+   *       decision D-Round3-1) so the previously-200 response stays 200 and the idempotent-replay
+   *       contract is preserved. Bounded to the legacy window; fresh writes always carry the
+   *       3-segment ref with the embedded status.
+   * </ul>
+   *
+   * <p>This drift is accepted (story-2.13 review decision D1 + D-Round3-1) rather than
+   * reject-legacy or backfill, because the migration window is bounded and the operator-visible
+   * blast radius is limited to the small population of pre-2.13 idempotency rows still in flight.
+   */
+  private String clarificationReplayStatus(String resultRef, SubmitClarificationCommand command) {
+    ClarificationReplayRef replayRef = parseClarificationReplayRef(resultRef);
+    if (replayRef.clarificationStatus() != null) {
+      return replayRef.clarificationStatus();
+    }
+    // Story 2.13 round-4 P-R4-1: cross-run guard on the legacy 2-segment replay-ref fallback. The
+    // idempotency record fingerprint normally blocks cross-run replays, but the legacy path reads
+    // from a port keyed on clarificationId alone — a tampered URL or migration-era leaked ref
+    // would otherwise surface another run's clarification status. Reject mismatches as
+    // CLARIFICATION_NOT_FOUND (same code/HTTP-status the caller would see for an unknown id, so we
+    // don't leak the existence of a foreign run's clarification through error code variance).
+    return clarificationReadPort
+        .findByPublicId(command.clarificationId())
+        .map(
+            clarification -> {
+              if (!clarification.workflowRunId().equals(command.workflowRunId())) {
+                throw new DomainException(
+                    DomainErrorCode.CLARIFICATION_NOT_FOUND,
+                    "Clarification not found on workflow run",
+                    Map.of(
+                        "clarificationId",
+                        command.clarificationId(),
+                        "workflowRunId",
+                        command.workflowRunId()));
+              }
+              return clarification.status();
+            })
+        .orElse(LEGACY_CLARIFICATION_REPLAY_STATUS_UNKNOWN);
+  }
+
+  private ClarificationReplayRef parseClarificationReplayRef(String resultRef) {
+    int firstSeparator = clarificationReplaySeparatorIndex(resultRef, 0);
+    if (firstSeparator <= 0) {
+      throw malformedClarificationReplayRef(resultRef);
+    }
+    int firstSeparatorLength = clarificationReplaySeparatorLength(resultRef, firstSeparator);
+    int stateStart = firstSeparator + firstSeparatorLength;
+    if (stateStart >= resultRef.length()) {
+      throw malformedClarificationReplayRef(resultRef);
+    }
+    int secondSeparator = clarificationReplaySeparatorIndex(resultRef, stateStart);
+    String stateValue =
+        secondSeparator < 0
+            ? resultRef.substring(stateStart)
+            : resultRef.substring(stateStart, secondSeparator);
+    if (stateValue.isBlank()) {
+      throw malformedClarificationReplayRef(resultRef);
+    }
+    String clarificationStatus = null;
+    if (secondSeparator >= 0) {
+      int secondSeparatorLength = clarificationReplaySeparatorLength(resultRef, secondSeparator);
+      int statusStart = secondSeparator + secondSeparatorLength;
+      if (statusStart >= resultRef.length()) {
+        throw malformedClarificationReplayRef(resultRef);
+      }
+      clarificationStatus = resultRef.substring(statusStart);
+      if (!Clarification.ALL_STATUSES.contains(clarificationStatus)) {
+        throw malformedClarificationReplayRef(resultRef);
+      }
+    }
+    return new ClarificationReplayRef(
+        resultRef.substring(0, firstSeparator),
+        WorkflowState.fromValue(stateValue, "idempotency.resultRef"),
+        clarificationStatus);
+  }
+
+  private int clarificationReplaySeparatorIndex(String resultRef, int fromIndex) {
+    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR, fromIndex);
+    int legacySeparator = resultRef.indexOf(LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR, fromIndex);
+    if (separator < 0) {
+      return legacySeparator;
+    }
+    if (legacySeparator < 0) {
       return separator;
     }
-    return resultRef.indexOf(LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR);
+    // Story 2.13 review P16: a single ref must encode with one separator scheme. A ref carrying
+    // both the new U+001F and the legacy '|' is ambiguous — Math.min would silently pick one and
+    // misparse. Reject as malformed so callers see a typed error rather than corrupted parsing.
+    throw malformedClarificationReplayRef(resultRef);
+  }
+
+  private int clarificationReplaySeparatorLength(String resultRef, int separatorIndex) {
+    if (resultRef.startsWith(CLARIFICATION_REPLAY_REF_SEPARATOR, separatorIndex)) {
+      return CLARIFICATION_REPLAY_REF_SEPARATOR.length();
+    }
+    if (resultRef.startsWith(LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR, separatorIndex)) {
+      return LEGACY_CLARIFICATION_REPLAY_REF_SEPARATOR.length();
+    }
+    throw malformedClarificationReplayRef(resultRef);
   }
 
   private DomainException malformedClarificationReplayRef(String resultRef) {
@@ -574,4 +697,7 @@ public class WorkflowCommandService {
     template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     return template;
   }
+
+  private record ClarificationReplayRef(
+      String workflowRunId, WorkflowState workflowState, String clarificationStatus) {}
 }

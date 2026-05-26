@@ -197,6 +197,33 @@ final class ArchitectureRuleCatalog {
                   RUNNER_ADAPTER_PACKAGE,
                   INTEGRATION_ADAPTER_PACKAGE));
 
+  /**
+   * Story 2.13 AC8 — REST controllers stay thin. They may parse headers/path/body, construct
+   * application command records, invoke {@code workflowCommandService.*} / {@code
+   * workflowInspectionService.*}, and map results into response DTOs. They must NOT reach into
+   * application-layer SPI ports (workflow / clarification / artifact / runner) — those are
+   * persistence-facing and meant to be consumed by application services only. Combined with the
+   * existing {@link #REST_AND_CLI_ADAPTERS_MUST_NOT_TOUCH_PERSISTENCE_OR_EXTERNAL_ADAPTERS} rule
+   * this confines transports to {@code application.* (non-spi)} + {@code domain.*} + framework
+   * types.
+   */
+  static final ArchRule REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER =
+      namedRule(
+          "REST controllers must stay thin: no direct depend on application SPI ports, persistence, or runner adapters",
+          "Remediation: route workflow orchestration through the application service surface (WorkflowCommandService / WorkflowInspectionService / ApprovalService / ClarificationService / ArtifactOperationService) instead of reaching past it into adapter-facing ports.",
+          noClasses()
+              .that()
+              .resideInAPackage(REST_ADAPTER_PACKAGE)
+              .should()
+              .dependOnClassesThat()
+              .resideInAnyPackage(
+                  "org.dradgo.application.workflow.spi..",
+                  "org.dradgo.application.clarification.spi..",
+                  "org.dradgo.application.artifact.spi..",
+                  "org.dradgo.application.runner..",
+                  PERSISTENCE_ADAPTER_PACKAGE,
+                  RUNNER_ADAPTER_PACKAGE));
+
   static final ArchRule REST_AND_CLI_ADAPTERS_MUST_NOT_TOUCH_JPA_ENTITIES =
       namedRule(
           "REST and CLI adapters must not directly reference JPA entity types",

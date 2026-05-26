@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.SpecificationArtifact;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
@@ -85,7 +86,9 @@ class WorkflowCommandsContextBundleFlagTest {
           () -> "01964c38-1c45-7000-8000-000000000000",
           () -> "01964c38-1c45-7000-8000-000000000001",
           new IdempotencyKeyValidator(),
-          recovery);
+          recovery,
+          null,
+          new LocalActorIdentityResolver("local-operator"));
 
   @Test
   void textModeAppendsPrettyPrintedBundleBlock() throws Exception {

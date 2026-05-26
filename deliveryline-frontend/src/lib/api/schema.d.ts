@@ -70,8 +70,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve a run's specification */
+        /** Approve a run's specification (story 2.13 rebuild) */
         post: operations["approveSpec"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/clarifications/{clarificationId}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer an open clarification on a spec */
+        post: operations["answerClarification"];
         delete?: never;
         options?: never;
         head?: never;
@@ -107,7 +124,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reject a run's specification */
+        /** Reject a run's specification (story 2.13 rebuild) */
         post: operations["rejectSpec"];
         delete?: never;
         options?: never;
@@ -153,18 +170,28 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        ApproveSpecRequest: {
-            actorIdentity: string;
-            /** @enum {string} */
-            actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
+        AnswerClarificationRequest: {
+            answerText: string;
             artifactId: string;
             /** Format: int32 */
-            artifactVersion: number;
+            expectedArtifactVersion: number;
+        };
+        ApproveSpecRequest: {
+            artifactId: string;
             /** Format: int32 */
-            contextVersion: number;
-            correlationId?: string;
+            expectedArtifactVersion: number;
+            /** Format: int32 */
+            expectedContextBundleVersion: number;
             reason?: string;
             reviewerRole?: string;
+        };
+        ClarificationAnswerResponse: {
+            clarificationId: string;
+            /** @description Clarification row status after the answer commit. Typical values follow the clarification lifecycle (open / answered / accepted / incorporated / superseded / rejected_invalid). Story 2.13 round-4 P-R4-16: idempotent replays of pre-2.13 ("legacy 2-segment") result-refs whose underlying clarification row has been hard-deleted before the replay arrived surface the sentinel value "unknown" so the previously-200 response stays 200 and the idempotent-replay contract is preserved. TS clients should default-case unknown status values rather than narrowing exhaustively. */
+            clarificationStatus: string;
+            correlationId?: string;
+            currentState: string;
+            workflowRunId: string;
         };
         LatestArtifact: {
             /** @example spec */
@@ -213,15 +240,11 @@ export interface components {
             type: string;
         };
         RejectSpecRequest: {
-            actorIdentity: string;
-            /** @enum {string} */
-            actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
             artifactId: string;
             /** Format: int32 */
-            artifactVersion: number;
+            expectedArtifactVersion: number;
             /** Format: int32 */
-            contextVersion: number;
-            correlationId?: string;
+            expectedContextBundleVersion: number;
             reasonText: string;
             reviewerRole?: string;
             /** @enum {string} */
@@ -367,8 +390,8 @@ export interface components {
         };
         WorkflowStateChangeResponse: {
             correlationId?: string;
-            currentState?: string;
-            workflowRunId?: string;
+            currentState: string;
+            workflowRunId: string;
         };
         /** @description Queue/list summary of a workflow run. */
         WorkflowSummary: {
@@ -516,8 +539,9 @@ export interface operations {
     approveSpec: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
             };
             path: {
                 workflowRunId: string;
@@ -530,13 +554,106 @@ export interface operations {
             };
         };
         responses: {
-            /** @description OK */
+            /** @description Approval recorded; state advanced. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    answerClarification: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+                clarificationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerClarificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Answer recorded against the clarification. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationAnswerResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND, CLARIFICATION_NOT_FOUND, or ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description CLARIFICATION_ARTIFACT_VERSION_MISMATCH, CLARIFICATION_TERMINAL_STATE, ILLEGAL_CLARIFICATION_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };
@@ -588,8 +705,9 @@ export interface operations {
     rejectSpec: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
             };
             path: {
                 workflowRunId: string;
@@ -602,13 +720,49 @@ export interface operations {
             };
         };
         responses: {
-            /** @description OK */
+            /** @description Rejection recorded; state advanced. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

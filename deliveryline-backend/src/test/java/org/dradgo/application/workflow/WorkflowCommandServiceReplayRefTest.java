@@ -2,17 +2,24 @@ package org.dradgo.application.workflow;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import jakarta.validation.Validator;
+import java.time.OffsetDateTime;
+import java.util.Optional;
 import org.dradgo.application.approval.ApprovalService;
+import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationService;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
+import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,9 +29,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 class WorkflowCommandServiceReplayRefTest {
 
   private WorkflowCommandService service;
+  private ClarificationReadPort clarificationReadPort;
 
   @BeforeEach
   void setUp() {
+    clarificationReadPort = mock(ClarificationReadPort.class);
     service =
         new WorkflowCommandService(
             mock(WorkflowRunReadPort.class),
@@ -38,7 +47,8 @@ class WorkflowCommandServiceReplayRefTest {
             mock(WorkflowCommandFingerprintFactory.class),
             mock(IntegrationLinkService.class),
             mock(ApprovalService.class),
-            mock(ClarificationService.class));
+            mock(ClarificationService.class),
+            clarificationReadPort);
   }
 
   @Test
@@ -55,13 +65,67 @@ class WorkflowCommandServiceReplayRefTest {
 
   @Test
   void newUnitSeparatorReplayRefsStillParse() {
-    String resultRef = "run_new123WaitingForSpecApproval";
+    String resultRef = "run_new123\u001FWaitingForSpecApproval\u001Fanswered";
 
     String runId = ReflectionTestUtils.invokeMethod(service, "clarificationReplayRunId", resultRef);
     WorkflowState state =
         ReflectionTestUtils.invokeMethod(service, "clarificationReplayState", resultRef);
+    String clarificationStatus =
+        ReflectionTestUtils.invokeMethod(
+            service,
+            "clarificationReplayStatus",
+            resultRef,
+            new SubmitClarificationCommand(
+                "run_new123",
+                "clr_new123",
+                "art_new123",
+                1,
+                "answer",
+                "alex",
+                ActorType.HUMAN,
+                "idem-new-123",
+                "corr-new-123"));
 
     assertEquals("run_new123", runId);
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, state);
+    assertEquals("answered", clarificationStatus);
+  }
+
+  @Test
+  void legacyReplayRefsRecoverClarificationStatusFromStoredRow() {
+    when(clarificationReadPort.findByPublicId("clr_legacy123"))
+        .thenReturn(
+            Optional.of(
+                new Clarification(
+                    "clr_legacy123",
+                    "run_legacy123",
+                    "art_legacy123",
+                    1,
+                    "Q1",
+                    "What changed?",
+                    Clarification.STATUS_ACCEPTED,
+                    "answer",
+                    "alex",
+                    ActorType.HUMAN,
+                    OffsetDateTime.parse("2026-05-26T10:00:00Z"),
+                    OffsetDateTime.parse("2026-05-26T09:00:00Z"))));
+
+    String clarificationStatus =
+        ReflectionTestUtils.invokeMethod(
+            service,
+            "clarificationReplayStatus",
+            "run_legacy123|WaitingForSpecApproval",
+            new SubmitClarificationCommand(
+                "run_legacy123",
+                "clr_legacy123",
+                "art_legacy123",
+                1,
+                "answer",
+                "alex",
+                ActorType.HUMAN,
+                "idem-legacy-123",
+                "corr-legacy-123"));
+
+    assertEquals("accepted", clarificationStatus);
   }
 }

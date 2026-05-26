@@ -72,6 +72,17 @@ public class ProblemDetailsMapper {
       DomainException exception, HttpServletRequest request) {
     ProblemDetailsCatalog.ProblemDetailsMetadata metadata =
         ProblemDetailsCatalog.metadataFor(exception.errorCode());
+    // Story 2.13 logging instrumentation: pin a WARN at the typed-domain-rejection catch-site so a
+    // log scrape can correlate request id → outcome without re-deploying. Code + status + path are
+    // machine-readable and free of caller-private payload data (architecture line 712 forbids
+    // human-text assertions on Problem Details, mirrored here for log content).
+    LOG.warn(
+        "REST domain exception code={} status={} method={} path={} correlationId={}",
+        exception.errorCode().value(),
+        metadata.status().value(),
+        MdcKeys.sanitizeForLog(request.getMethod()),
+        MdcKeys.sanitizeForLog(request.getRequestURI()),
+        MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID)));
     return problemResponse(
         metadata,
         exception.errorCode(),
@@ -113,11 +124,41 @@ public class ProblemDetailsMapper {
     return invalidCommandPayload(request.getRequestURI(), details);
   }
 
+  /**
+   * Story 2.13 round-4 P-R4-14: registry of header-name → typed DomainErrorCode so future required
+   * headers can claim a typed Problem Details code via a one-line addition instead of growing the
+   * if/else chain. Lookup is case-insensitive (Spring's {@code getHeaderName()} echoes the declared
+   * parameter name, which may differ in case from what the client sent).
+   */
+  private static final Map<String, DomainErrorCode> MISSING_HEADER_CODES =
+      Map.of("idempotency-key", DomainErrorCode.MISSING_IDEMPOTENCY_KEY);
+
   @ExceptionHandler(MissingRequestHeaderException.class)
   public ResponseEntity<ProblemDetail> handleMissingRequestHeader(
       MissingRequestHeaderException exception, HttpServletRequest request) {
+    // Story 2.13 trap T3: missing Idempotency-Key must surface as the typed
+    // MISSING_IDEMPOTENCY_KEY Problem Details code (not the generic INVALID_COMMAND_PAYLOAD), so
+    // clients can distinguish "you forgot the header" from "the body failed validation". Other
+    // missing required headers still fall through to INVALID_COMMAND_PAYLOAD with field-level
+    // details so future required headers do not become silently typed.
+    String headerName = exception.getHeaderName();
+    DomainErrorCode typed =
+        headerName == null
+            ? null
+            : MISSING_HEADER_CODES.get(headerName.toLowerCase(java.util.Locale.ROOT));
+    if (typed != null) {
+      ProblemDetailsCatalog.ProblemDetailsMetadata metadata =
+          ProblemDetailsCatalog.metadataFor(typed);
+      List<Map<String, Object>> details = List.of(fieldError(headerName, null, "required"));
+      return problemResponse(
+          metadata,
+          typed,
+          "Missing required header: " + headerName,
+          request.getRequestURI(),
+          details);
+    }
     return invalidCommandPayload(
-        request.getRequestURI(), List.of(fieldError(exception.getHeaderName(), null, "required")));
+        request.getRequestURI(), List.of(fieldError(headerName, null, "required")));
   }
 
   @ExceptionHandler(MethodArgumentTypeMismatchException.class)

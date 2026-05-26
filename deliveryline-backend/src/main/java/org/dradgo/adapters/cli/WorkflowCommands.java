@@ -13,12 +13,14 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
+import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
@@ -26,10 +28,15 @@ import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLo
 import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
+import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RejectionTaxonomy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,6 +67,8 @@ public class WorkflowCommands {
   private final Supplier<String> correlationIdSupplier;
   private final IdempotencyKeyValidator idempotencyKeyValidator;
   private final RecoveryService recoveryService;
+  private final ApprovalReviewerRoleResolver approvalReviewerRoleResolver;
+  private final LocalActorIdentityResolver localActorIdentityResolver;
 
   @Autowired
   public WorkflowCommands(
@@ -69,7 +78,9 @@ public class WorkflowCommands {
       CliInteractivityDetector cliInteractivityDetector,
       UuidV7Generator uuidV7Generator,
       IdempotencyKeyValidator idempotencyKeyValidator,
-      RecoveryService recoveryService) {
+      RecoveryService recoveryService,
+      ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
+      LocalActorIdentityResolver localActorIdentityResolver) {
     this(
         workflowCommandService,
         workflowInspectionService,
@@ -78,14 +89,16 @@ public class WorkflowCommands {
         uuidV7Generator::generate,
         uuidV7Generator::generate,
         idempotencyKeyValidator,
-        recoveryService);
+        recoveryService,
+        approvalReviewerRoleResolver,
+        localActorIdentityResolver);
   }
 
   /**
    * Three-arg constructor kept for backward compatibility with the existing {@link
    * org.dradgo.adapters.cli.WorkflowCommandsTest} unit tests. The {@code submit}-only path does not
-   * need the inspection or recovery services, so callers can pass nulls as long as they only invoke
-   * {@link #submit}.
+   * need the inspection, recovery, or actor-identity-resolver services, so callers can pass nulls
+   * as long as they only invoke {@link #submit}.
    */
   public WorkflowCommands(
       WorkflowCommandService workflowCommandService,
@@ -99,6 +112,8 @@ public class WorkflowCommands {
         generatedKeySupplier,
         generatedKeySupplier,
         new IdempotencyKeyValidator(),
+        null,
+        null,
         null);
   }
 
@@ -110,7 +125,9 @@ public class WorkflowCommands {
       Supplier<String> generatedKeySupplier,
       Supplier<String> correlationIdSupplier,
       IdempotencyKeyValidator idempotencyKeyValidator,
-      RecoveryService recoveryService) {
+      RecoveryService recoveryService,
+      ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
+      LocalActorIdentityResolver localActorIdentityResolver) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.outputs = outputs;
@@ -119,6 +136,8 @@ public class WorkflowCommands {
     this.correlationIdSupplier = correlationIdSupplier;
     this.idempotencyKeyValidator = idempotencyKeyValidator;
     this.recoveryService = recoveryService;
+    this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
+    this.localActorIdentityResolver = localActorIdentityResolver;
   }
 
   @Command(
@@ -356,6 +375,291 @@ public class WorkflowCommands {
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
     }
+  }
+
+  @Command(
+      name = "approve-spec",
+      description =
+          "Approve a workflow run's specification (story 2.13 — CLI/REST equivalence for the spec-loop).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String approveSpec(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(longName = "artifact-id", description = "Spec artifact public id", required = true)
+          String artifactId,
+      @Option(
+              longName = "expected-artifact-version",
+              description = "Spec artifact version reviewed",
+              required = true)
+          Integer expectedArtifactVersion,
+      @Option(
+              longName = "expected-context-bundle-version",
+              description = "Context bundle version reviewed",
+              required = true)
+          Integer expectedContextBundleVersion,
+      @Option(
+              longName = "reviewer-role",
+              description = "Reviewer role (optional)",
+              required = false)
+          String reviewerRole,
+      @Option(longName = "reason", description = "Optional reviewer reason", required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 2.13 review D2: CLI mirrors REST's HUMAN-only audit posture for the spec-loop
+    // mutation commands. The pre-existing submit/retry/takeover CLI commands keep --actor-type.
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      String resolvedReviewer = approvalReviewerRoleResolver.resolveFor(reviewerRole);
+      WorkflowStateChangeResult result =
+          workflowCommandService.approveSpec(
+              new ApproveSpecCommand(
+                  runId,
+                  artifactId,
+                  expectedArtifactVersion,
+                  expectedContextBundleVersion,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation,
+                  resolvedReviewer,
+                  reason));
+      StringBuilder output =
+          new StringBuilder()
+              .append(result.workflowRunId())
+              .append(" approve-spec accepted (state: ")
+              .append(result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow approve-spec", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow approve-spec", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow approve-spec", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "reject-spec",
+      description = "Reject a workflow run's specification with structured feedback (story 2.13).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String rejectSpec(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(longName = "artifact-id", description = "Spec artifact public id", required = true)
+          String artifactId,
+      @Option(
+              longName = "expected-artifact-version",
+              description = "Spec artifact version reviewed",
+              required = true)
+          Integer expectedArtifactVersion,
+      @Option(
+              longName = "expected-context-bundle-version",
+              description = "Context bundle version reviewed",
+              required = true)
+          Integer expectedContextBundleVersion,
+      @Option(
+              longName = "tagged-feedback",
+              description =
+                  "Structured rework taxonomy (missing_scope | unclear_specification | misunderstood_implementation)",
+              required = true)
+          RejectionTaxonomy taggedFeedback,
+      @Option(longName = "reason-text", description = "Reviewer reason text", required = true)
+          String reasonText,
+      @Option(
+              longName = "reviewer-role",
+              description = "Reviewer role (optional)",
+              required = false)
+          String reviewerRole,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 2.13 review D2: CLI mirrors REST's HUMAN-only audit posture for the spec-loop
+    // mutation commands.
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      String resolvedReviewer = approvalReviewerRoleResolver.resolveFor(reviewerRole);
+      WorkflowStateChangeResult result =
+          workflowCommandService.rejectSpec(
+              new RejectSpecCommand(
+                  runId,
+                  artifactId,
+                  expectedArtifactVersion,
+                  expectedContextBundleVersion,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation,
+                  resolvedReviewer,
+                  taggedFeedback,
+                  reasonText));
+      StringBuilder output =
+          new StringBuilder()
+              .append(result.workflowRunId())
+              .append(" reject-spec accepted (state: ")
+              .append(result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow reject-spec", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow reject-spec", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow reject-spec", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "answer-clarification",
+      description =
+          "Answer an open clarification on a spec (story 2.13 — CLI/REST equivalence for the spec-loop).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String answerClarification(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Argument(index = 1, description = "Clarification public id (clr_...)")
+          String clarificationId,
+      @Option(longName = "artifact-id", description = "Spec artifact public id", required = true)
+          String artifactId,
+      @Option(
+              longName = "expected-artifact-version",
+              description = "Spec artifact version reviewed",
+              required = true)
+          Integer expectedArtifactVersion,
+      @Option(longName = "answer-text", description = "Reviewer answer text", required = true)
+          String answerText,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 2.13 review D2: CLI mirrors REST's HUMAN-only audit posture for the spec-loop
+    // mutation commands.
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      WorkflowStateChangeResult result =
+          workflowCommandService.answerClarification(
+              new SubmitClarificationCommand(
+                  runId,
+                  clarificationId,
+                  artifactId,
+                  expectedArtifactVersion,
+                  answerText,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation));
+      // Story 2.13 review P15: surface "unknown" rather than guessing "answered" — the underlying
+      // row may have moved to incorporated/superseded/rejected_invalid since the original answer.
+      String clarificationStatus =
+          result.clarificationStatus() == null ? "unknown" : result.clarificationStatus();
+      StringBuilder output =
+          new StringBuilder()
+              .append(clarificationId)
+              .append(" answer accepted (clarificationStatus: ")
+              .append(clarificationStatus)
+              .append(", currentState: ")
+              .append(result.currentState() == null ? "unknown" : result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow answer-clarification", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow answer-clarification", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure(
+          "workflow answer-clarification", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  /**
+   * Story 2.13 round-3 review P5 — CLI delegates actor-identity resolution to the same {@link
+   * LocalActorIdentityResolver} instance the REST side uses, so length / control-char / Unicode
+   * FORMAT-category gates apply uniformly across both transports and a malformed {@code
+   * --actor-identity} flag value can't bypass the audit-safe sanitisation that {@code
+   * X-Actor-Identity} headers already pass through.
+   */
+  private String resolveActorIdentity(String supplied) {
+    if (localActorIdentityResolver == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_mutation_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without LocalActorIdentityResolver; "
+              + "inject LocalActorIdentityResolver to use approve-spec/reject-spec/answer-clarification",
+          details);
+    }
+    // Story 2.13 round-4 D-R4-1: mirror REST's fail-closed check so CLI and REST behave identically
+    // for unsafe --actor-identity values (length/control-char/FORMAT-category/surrogate gates).
+    // requireSafe is a no-op for null/blank — those land on the property fallback inside resolve.
+    localActorIdentityResolver.requireSafe(supplied);
+    return localActorIdentityResolver.resolve(supplied);
   }
 
   private OffsetDateTime parseSince(String since) {

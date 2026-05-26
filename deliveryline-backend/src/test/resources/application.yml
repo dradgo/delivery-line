@@ -28,6 +28,12 @@ deliveryline:
       enabled: false
 
 spring:
+  # Story 2.13 round-3 review D3 follow-up: keep test slice fail-on-unknown aligned with prod config
+  # so the @JsonIgnoreProperties(ignoreUnknown = false) annotation on request DTOs actually rejects
+  # legacy bodies (pre-2.13 `actorIdentity` field, etc.) instead of silently accepting them.
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
   docker:
     compose:
       enabled: false

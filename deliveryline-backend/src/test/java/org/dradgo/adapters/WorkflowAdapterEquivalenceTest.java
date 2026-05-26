@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.dradgo.adapters.cli.WorkflowCommands;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
@@ -22,6 +23,7 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +45,26 @@ class WorkflowAdapterEquivalenceTest {
   // This @WebMvcTest slice exercises only the POST command equivalence, but the bean must exist
   // for the controller to construct.
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
+
+  // Story 2.13 — WorkflowController depends on LocalActorIdentityResolver. The submit endpoint
+  // doesn't use it, but the controller bean still requires injection at construction.
+  @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
+
+  @BeforeEach
+  void stubActorResolver() {
+    // Story 2.13 review P13: stub resolve(...) so any future approve/reject coverage added here
+    // doesn't silently inject a null actorIdentity into captured commands. Mirrors the resolver's
+    // production behavior: trim non-blank header → identity; blank/null → "local-operator".
+    when(localActorIdentityResolver.resolve(any()))
+        .thenAnswer(
+            invocation -> {
+              String supplied = invocation.getArgument(0);
+              if (supplied == null || supplied.isBlank()) {
+                return "local-operator";
+              }
+              return supplied.trim();
+            });
+  }
 
   @Test
   void cliAndRestSubmitTranslateTheSameLogicalPayloadIntoTheSameCommand() throws Exception {

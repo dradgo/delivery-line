@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
@@ -84,7 +85,9 @@ class WorkflowCommandsStatusHistoryTest {
           () -> "01964c38-1c45-7000-8000-000000000000",
           () -> "01964c38-1c45-7000-8000-000000000001",
           new IdempotencyKeyValidator(),
-          recovery);
+          recovery,
+          null,
+          new LocalActorIdentityResolver("local-operator"));
 
   @Test
   void statusInvokesInspectionServiceOnceAndRendersText() {

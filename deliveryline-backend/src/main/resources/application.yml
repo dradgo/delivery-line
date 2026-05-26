@@ -6,6 +6,16 @@ spring:
       local: [runners.mock, linear-mock]
       test: [runners.mock, linear-mock]
       demo: [runners.mock, linear-mock]
+  # Story 2.13 round-3 review D3 follow-up: make `@JsonIgnoreProperties(ignoreUnknown = false)` on
+  # request DTOs actually enforce rejection. Spring Boot's autoconfigured ObjectMapper otherwise
+  # disables FAIL_ON_UNKNOWN_PROPERTIES, leaving the annotation no global default to defer to and
+  # silently accepting legacy fields (e.g. pre-2.13 `actorIdentity` in body). Flipping the global
+  # to `true` lets the per-class annotation surface unknown properties as INVALID_COMMAND_PAYLOAD
+  # via ProblemDetailsMapper.handleHttpMessageNotReadable. DTOs that legitimately need lenient
+  # behaviour must opt in with `@JsonIgnoreProperties(ignoreUnknown = true)`.
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
 
 # Story 6.9 — localhost-only safe-by-default REST binding. The Phase-1 MVP ships no
 # auth; loopback-only binding IS the security control. RestBindingGuard fails startup
@@ -41,6 +51,12 @@ deliveryline:
     # Optional override for server.address. Leave unset to inherit the loopback default above.
     # bind-address: 0.0.0.0
     unsafe-network-bind: false
+  security:
+    # Story 2.13 — MVP local-trusted-user fallback for the actor identity stamped on REST mutation
+    # commands when the X-Actor-Identity request header (or CLI --actor-identity flag) is missing or
+    # blank. Mirrors the localhost-only safe-by-default REST binding posture (architecture lines
+    # 256-257, audit-only RBAC). Production deployments MUST override.
+    local-actor-identity: local-operator
   linear:
     base-url: https://api.linear.app/graphql
     poll-interval-ms: 60000

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.security.RedactionCategory;
 import org.dradgo.application.security.RedactionPolicyService;
@@ -44,6 +45,10 @@ class ProblemDetailsContractTest {
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
 
   @MockitoBean private RedactionPolicyService redactionPolicyService;
+
+  // Story 2.13 — WorkflowController depends on LocalActorIdentityResolver; mocked here so the
+  // @WebMvcTest slice can construct the controller without the SecurityProperties auto-config.
+  @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -122,6 +127,7 @@ class ProblemDetailsContractTest {
                     "expectedArtifactVersion", 6,
                     "currentArtifactVersion", 7)));
 
+    when(localActorIdentityResolver.resolve(any())).thenReturn("alex");
     mockMvc
         .perform(
             post("/api/v1/workflows/run_approve1234/approve-spec")
@@ -132,11 +138,8 @@ class ProblemDetailsContractTest {
                     """
 					{
 					  "artifactId": "art_spec1234",
-					  "artifactVersion": 6,
-					  "contextVersion": 2,
-					  "actorIdentity": "alex",
-					  "actorType": "HUMAN",
-					  "correlationId": "corr-approve-1"
+					  "expectedArtifactVersion": 6,
+					  "expectedContextBundleVersion": 2
 					}
 					"""))
         .andExpect(status().isConflict())

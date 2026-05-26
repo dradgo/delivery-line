@@ -18,6 +18,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.SpecificationArtifact;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
@@ -59,7 +60,9 @@ class WorkflowCliJsonSchemaContractTest {
           () -> "01964c38-1c45-7000-8000-000000000000",
           () -> "01964c38-1c45-7000-8000-000000000001",
           new IdempotencyKeyValidator(),
-          mock(RecoveryService.class));
+          mock(RecoveryService.class),
+          null,
+          new LocalActorIdentityResolver("local-operator"));
   private final SchemaRegistry schemaRegistry =
       SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
 

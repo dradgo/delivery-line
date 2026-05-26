@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Method;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -41,7 +42,9 @@ class WorkflowCliCommandRegistrationIT {
                       () -> "01964c38-1c45-7000-8000-000000000000",
                       () -> "01964c38-1c45-7000-8000-000000000001",
                       new IdempotencyKeyValidator(),
-                      mock(RecoveryService.class)));
+                      mock(RecoveryService.class),
+                      null,
+                      new LocalActorIdentityResolver("local-operator")));
 
   @Test
   void deliverylinePrefixedWorkflowCommandsAreRegisteredInTheRuntimeShellRegistry() {

@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.dradgo.adapters.cli.WorkflowCommands;
+import org.dradgo.adapters.rest.LocalActorIdentityResolver;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
@@ -74,6 +75,15 @@ class CommandModelSymmetryFoundationContract {
   @MockitoBean
   private org.dradgo.application.workflow.WorkflowInspectionService workflowInspectionService;
 
+  // Story 2.13 — WorkflowController depends on LocalActorIdentityResolver; mocked here to
+  // deterministically return "alex" so the captured commands match the expected actor identity.
+  @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
+
+  @org.junit.jupiter.api.BeforeEach
+  void stubActorResolver() {
+    when(localActorIdentityResolver.resolve(any())).thenReturn("alex");
+  }
+
   @Test
   void everyWorkflowCommandPermitRoundTripsThroughRestAsTheCanonicalRecord() throws Exception {
     Class<?>[] permits = WorkflowCommand.class.getPermittedSubclasses();
@@ -126,6 +136,11 @@ class CommandModelSymmetryFoundationContract {
               + capturedSubmit);
     }
 
+    // Story 2.13: actorIdentity comes from X-Actor-Identity header (mocked resolver returns
+    // "alex"); correlationId from MDC is null in this @WebMvcTest slice (no CorrelationIdFilter
+    // registered). Wire DTO renames artifactVersion → expectedArtifactVersion and contextVersion
+    // → expectedContextBundleVersion; the command record keeps the short names for fingerprint
+    // symmetry with SubmitClarificationCommand.
     ApproveSpecCommand expectedApprove =
         new ApproveSpecCommand(
             "run_found_submit01",
@@ -135,10 +150,10 @@ class CommandModelSymmetryFoundationContract {
             "alex",
             ActorType.HUMAN,
             "idem-approve-bbbbbbbbbbbbbbbb",
-            "corr-approve-1",
+            null,
             // The REST body intentionally omits reviewerRole below so this assertion also pins
             // the ApprovalReviewerRoleResolver MVP-fallback default (product_reviewer) wired by
-            // story 2.9. Story 2.13 will rebuild the request DTO with explicit role parsing.
+            // story 2.9.
             "product_reviewer",
             null);
     when(workflowCommandService.approveSpec(any()))
@@ -152,11 +167,8 @@ class CommandModelSymmetryFoundationContract {
             """
             {
               "artifactId": "art_spec_v1_xyz",
-              "artifactVersion": 1,
-              "contextVersion": 1,
-              "actorIdentity": "alex",
-              "actorType": "HUMAN",
-              "correlationId": "corr-approve-1"
+              "expectedArtifactVersion": 1,
+              "expectedContextBundleVersion": 1
             }
             """);
     if (!expectedApprove.equals(capturedApprove)) {
@@ -167,6 +179,7 @@ class CommandModelSymmetryFoundationContract {
               + capturedApprove);
     }
 
+    // Story 2.13: header-derived actor, MDC-null correlation, renamed wire versions (see approve).
     RejectSpecCommand expectedReject =
         new RejectSpecCommand(
             "run_found_submit01",
@@ -176,7 +189,7 @@ class CommandModelSymmetryFoundationContract {
             "alex",
             ActorType.HUMAN,
             "idem-reject-cccccccccccccccc",
-            "corr-reject-1",
+            null,
             "product_reviewer",
             org.dradgo.domain.registry.RejectionTaxonomy.UNCLEAR_SPECIFICATION,
             "Spec missing acceptance criteria for the negative path");
@@ -191,11 +204,8 @@ class CommandModelSymmetryFoundationContract {
             """
             {
               "artifactId": "art_spec_v1_xyz",
-              "artifactVersion": 1,
-              "contextVersion": 1,
-              "actorIdentity": "alex",
-              "actorType": "HUMAN",
-              "correlationId": "corr-reject-1",
+              "expectedArtifactVersion": 1,
+              "expectedContextBundleVersion": 1,
               "taggedFeedback": "UNCLEAR_SPECIFICATION",
               "reasonText": "Spec missing acceptance criteria for the negative path"
             }
