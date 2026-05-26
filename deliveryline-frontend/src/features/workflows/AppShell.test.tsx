@@ -17,7 +17,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -241,7 +241,9 @@ describe('AppShell — right-panel composition slot (AC4)', () => {
     const panel = await screen.findByTestId('registered-panel');
     const aside = screen.getByRole('complementary', { name: 'Supporting context' });
     expect(aside).toContainElement(panel);
-    expect(aside).toHaveClass('w-80');
+    // Slot-registration triggers an effect-driven width transition (w-12 → w-80);
+    // wait for the class update so this test doesn't race the re-render in CI.
+    await waitFor(() => expect(aside).toHaveClass('w-80'));
   });
 
   it('preserves registered panel state across tablet drawer close and reopen', async () => {
