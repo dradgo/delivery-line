@@ -30,11 +30,9 @@ function mutationClient() {
 }
 
 const APPROVE_BODY = {
-  actorIdentity: 'tester',
-  actorType: 'HUMAN' as const,
   artifactId: 'art_abcd',
-  artifactVersion: 1,
-  contextVersion: 1,
+  expectedArtifactVersion: 1,
+  expectedContextBundleVersion: 1,
 };
 
 describe('useApproveSpec / useWorkflowMutation', () => {
@@ -104,20 +102,25 @@ describe('useApproveSpec / useWorkflowMutation', () => {
   });
 
   it('isolates overlapping mutation attempts so each keeps its own retry key', async () => {
-    const keysByActor = new Map<string, string[]>();
-    const attemptsByActor = new Map<string, number>();
+    // Story 2.13: actor identity moved from request body to the X-Actor-Identity header.
+    // Distinguish overlapping attempts by their distinct artifactId payloads instead.
+    const keysByArtifact = new Map<string, string[]>();
+    const attemptsByArtifact = new Map<string, number>();
 
     server.use(
       http.post('http://localhost/api/v1/workflows/:id/approve-spec', async ({ request }) => {
         const body = (await request.json()) as typeof APPROVE_BODY;
-        const actor = body.actorIdentity;
-        const attempts = (attemptsByActor.get(actor) ?? 0) + 1;
-        attemptsByActor.set(actor, attempts);
+        const artifactId = body.artifactId;
+        const attempts = (attemptsByArtifact.get(artifactId) ?? 0) + 1;
+        attemptsByArtifact.set(artifactId, attempts);
 
         const idempotencyKey = request.headers.get('Idempotency-Key');
-        keysByActor.set(actor, [...(keysByActor.get(actor) ?? []), idempotencyKey ?? '']);
+        keysByArtifact.set(artifactId, [
+          ...(keysByArtifact.get(artifactId) ?? []),
+          idempotencyKey ?? '',
+        ]);
 
-        if (actor === 'first' && attempts === 1) {
+        if (artifactId === 'art_first' && attempts === 1) {
           return HttpResponse.json(
             {
               type: 'about:blank',
@@ -142,13 +145,13 @@ describe('useApproveSpec / useWorkflowMutation', () => {
 
     await act(async () => {
       await Promise.all([
-        result.current.mutateAsync({ ...APPROVE_BODY, actorIdentity: 'first' }),
-        result.current.mutateAsync({ ...APPROVE_BODY, actorIdentity: 'second' }),
+        result.current.mutateAsync({ ...APPROVE_BODY, artifactId: 'art_first' }),
+        result.current.mutateAsync({ ...APPROVE_BODY, artifactId: 'art_second' }),
       ]);
     });
 
-    const firstKeys = keysByActor.get('first') ?? [];
-    const secondKeys = keysByActor.get('second') ?? [];
+    const firstKeys = keysByArtifact.get('art_first') ?? [];
+    const secondKeys = keysByArtifact.get('art_second') ?? [];
 
     expect(firstKeys).toHaveLength(2);
     expect(Array.from(new Set(firstKeys))).toHaveLength(1);
