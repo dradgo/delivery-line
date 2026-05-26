@@ -13,7 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
-import org.dradgo.adapters.rest.LocalActorIdentityResolver;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;

@@ -15,7 +15,8 @@ import jakarta.validation.constraints.Size;
  * <ul>
  *   <li>Actor identity is resolved from the {@code X-Actor-Identity} request header with
  *       property-fallback to {@code deliveryline.security.local-actor-identity} (default {@code
- *       local-operator}); see {@link LocalActorIdentityResolver}. Actor type is always {@code
+ *       local-operator}); see {@link org.dradgo.application.security.LocalActorIdentityResolver}.
+ *       Actor type is always {@code
  *       HUMAN} at this transport (audit-only RBAC per architecture line 256).
  *   <li>Correlation id is read from MDC after {@code
  *       org.dradgo.infrastructure.observability.CorrelationIdFilter} parses {@code

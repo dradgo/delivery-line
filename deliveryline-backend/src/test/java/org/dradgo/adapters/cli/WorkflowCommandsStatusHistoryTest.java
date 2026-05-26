@@ -14,7 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import org.dradgo.adapters.rest.LocalActorIdentityResolver;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;

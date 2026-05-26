@@ -1,4 +1,4 @@
-package org.dradgo.adapters.rest;
+package org.dradgo.application.security;
 
 import jakarta.annotation.PostConstruct;
 import java.util.LinkedHashMap;

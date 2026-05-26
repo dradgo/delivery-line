@@ -18,7 +18,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.dradgo.adapters.rest.LocalActorIdentityResolver;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.SpecificationArtifact;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;

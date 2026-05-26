@@ -9,7 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Method;
 import java.util.Set;
 import java.util.stream.Collectors;
-import org.dradgo.adapters.rest.LocalActorIdentityResolver;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.workflow.WorkflowCommandService;

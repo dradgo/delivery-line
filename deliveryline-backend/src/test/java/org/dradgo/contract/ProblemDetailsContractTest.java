@@ -12,7 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.dradgo.adapters.rest.LocalActorIdentityResolver;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.security.RedactionCategory;
 import org.dradgo.application.security.RedactionPolicyService;

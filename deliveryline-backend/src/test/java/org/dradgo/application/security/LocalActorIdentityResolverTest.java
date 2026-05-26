@@ -1,4 +1,4 @@
-package org.dradgo.adapters.rest;
+package org.dradgo.application.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
