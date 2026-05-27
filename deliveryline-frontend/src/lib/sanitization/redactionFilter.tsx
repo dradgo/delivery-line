@@ -184,7 +184,7 @@ function renderChildWithRedactions(child: ReactNode, index: number): ReactNode {
   }
   if (isValidElement(child)) {
     const element = child as ReactElement<{ children?: ReactNode }>;
-    const innerChildren = element.props?.children;
+    const innerChildren = element.props.children;
     if (innerChildren === undefined || innerChildren === null) {
       return element;
     }

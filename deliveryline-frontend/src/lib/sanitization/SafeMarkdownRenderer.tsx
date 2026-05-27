@@ -223,7 +223,7 @@ function extractShikiCodeChildren(hast: HastRoot): RootContent[] {
   if (code === undefined) {
     return [];
   }
-  return code.children as RootContent[];
+  return code.children;
 }
 
 /**

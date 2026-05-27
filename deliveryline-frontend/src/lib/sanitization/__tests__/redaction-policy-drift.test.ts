@@ -57,8 +57,8 @@ describe('AC16 — frontend redaction-policy mirror parity', () => {
   });
 
   it('parses as JSON in both files', () => {
-    const mirror = JSON.parse(readNormalized(FRONTEND_MIRROR));
-    const canonical = JSON.parse(readNormalized(CANONICAL_SOURCE));
+    const mirror: unknown = JSON.parse(readNormalized(FRONTEND_MIRROR));
+    const canonical: unknown = JSON.parse(readNormalized(CANONICAL_SOURCE));
     expect(mirror).toEqual(canonical);
   });
 });
