@@ -21,21 +21,12 @@
  */
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
 import { ExternalLink } from 'lucide-react';
-import {
-  Fragment,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeSanitize from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
-import {
-  createHighlighterCore,
-  type HighlighterCore,
-} from 'shiki/core';
+import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import type { Element as HastElement, Root as HastRoot, RootContent } from 'hast';
 
@@ -117,8 +108,7 @@ function SafeAnchor({
   try {
     const url = new URL(validation.href, window.location.origin);
     isExternal =
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      url.host !== window.location.host;
+      (url.protocol === 'http:' || url.protocol === 'https:') && url.host !== window.location.host;
   } catch {
     isExternal = false;
   }
@@ -136,9 +126,7 @@ function SafeAnchor({
       target={isExternal ? '_blank' : undefined}
     >
       {children}
-      {isExternal ? (
-        <ExternalLink className="external-link-icon" aria-hidden="true" />
-      ) : null}
+      {isExternal ? <ExternalLink className="external-link-icon" aria-hidden="true" /> : null}
     </a>
   );
 }
@@ -147,11 +135,7 @@ function SafeAnchor({
  * Component override for `<img>`. Enforces the host allowlist; off-origin
  * images render as a link with the same scheme validation applied.
  */
-function SafeImage({
-  src,
-  alt,
-  ...rest
-}: React.ImgHTMLAttributes<HTMLImageElement>): ReactNode {
+function SafeImage({ src, alt, ...rest }: React.ImgHTMLAttributes<HTMLImageElement>): ReactNode {
   if (src === undefined || src === '') {
     return <span data-testid="rejected-image">{alt ?? ''}</span>;
   }
@@ -210,15 +194,13 @@ function flattenChildrenToString(node: ReactNode): string {
  */
 function extractShikiCodeChildren(hast: HastRoot): RootContent[] {
   const pre = hast.children.find(
-    (child): child is HastElement =>
-      child.type === 'element' && child.tagName === 'pre',
+    (child): child is HastElement => child.type === 'element' && child.tagName === 'pre',
   );
   if (pre === undefined) {
     return [];
   }
   const code = pre.children.find(
-    (child): child is HastElement =>
-      child.type === 'element' && child.tagName === 'code',
+    (child): child is HastElement => child.type === 'element' && child.tagName === 'code',
   );
   if (code === undefined) {
     return [];
@@ -238,11 +220,7 @@ function extractShikiCodeChildren(hast: HastRoot): RootContent[] {
  * Trap T2 — Inline `style` on token spans is shiki-controlled (token color
  *           lookup table), never derived from input.
  */
-function SafeCode({
-  className,
-  children,
-  ...rest
-}: React.HTMLAttributes<HTMLElement>): ReactNode {
+function SafeCode({ className, children, ...rest }: React.HTMLAttributes<HTMLElement>): ReactNode {
   const language =
     typeof className === 'string' && className.startsWith('language-')
       ? className.slice('language-'.length)
@@ -354,10 +332,7 @@ export function SafeMarkdownRenderer({ source, className }: SafeMarkdownRenderer
   // Memoize sanitization plugin instance to avoid re-creating it on every
   // render — re-creating the plugin doesn't change behavior but causes
   // unnecessary work inside react-markdown's unified pipeline.
-  const rehypePlugins = useMemo(
-    () => [[rehypeSanitize, SANITIZATION_SCHEMA] as const],
-    [],
-  );
+  const rehypePlugins = useMemo(() => [[rehypeSanitize, SANITIZATION_SCHEMA] as const], []);
   const remarkPlugins = useMemo(() => [remarkGfm], []);
   return (
     <div className={className} data-component="safe-markdown">

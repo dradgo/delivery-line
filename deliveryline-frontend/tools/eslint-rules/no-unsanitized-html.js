@@ -45,11 +45,11 @@ const rule = {
     schema: [],
     messages: {
       dangerouslySetInnerHTML:
-        "Direct use of `dangerouslySetInnerHTML` is forbidden outside src/lib/sanitization/. Use SafeMarkdownRenderer/SafeDiffRenderer instead (story 2.24 AC11).",
+        'Direct use of `dangerouslySetInnerHTML` is forbidden outside src/lib/sanitization/. Use SafeMarkdownRenderer/SafeDiffRenderer instead (story 2.24 AC11).',
       innerHTMLAssignment:
-        "Direct assignment to `{{ property }}` is forbidden outside src/lib/sanitization/. Use SafeMarkdownRenderer instead (story 2.24 AC11).",
+        'Direct assignment to `{{ property }}` is forbidden outside src/lib/sanitization/. Use SafeMarkdownRenderer instead (story 2.24 AC11).',
       htmlSink:
-        "Call to `{{ method }}` is forbidden outside src/lib/sanitization/ — it bypasses the sanctioned renderers (story 2.24 AC11 + code-review P6).",
+        'Call to `{{ method }}` is forbidden outside src/lib/sanitization/ — it bypasses the sanctioned renderers (story 2.24 AC11 + code-review P6).',
     },
   },
   create(context) {

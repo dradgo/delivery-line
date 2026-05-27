@@ -42,9 +42,7 @@ describe('SafeDiffRenderer', () => {
   });
 
   it('renders context lines via <span class="diff-line-context"> on both sides', () => {
-    const { container } = render(
-      <SafeDiffRenderer before={'shared line'} after={'shared line'} />,
-    );
+    const { container } = render(<SafeDiffRenderer before={'shared line'} after={'shared line'} />);
     const contexts = container.querySelectorAll('span.diff-line-context');
     expect(contexts.length).toBe(2);
   });
@@ -54,9 +52,7 @@ describe('SafeDiffRenderer', () => {
     // "context" because the single after-line was present in the after set.
     // With proper LCS (Myers via diffLines), two of the three "a" lines on
     // the before side must be removed; the surviving one is context.
-    const { container } = render(
-      <SafeDiffRenderer before={'a\na\na'} after={'a'} />,
-    );
+    const { container } = render(<SafeDiffRenderer before={'a\na\na'} after={'a'} />);
     const dels = container.querySelectorAll('del.diff-line-removed');
     const beforeContexts = container.querySelectorAll(
       'section[data-side="before"] span.diff-line-context',
@@ -68,9 +64,7 @@ describe('SafeDiffRenderer', () => {
   it('reports duplicate-line insertions correctly', () => {
     // Inverse of the above — one before "a", three after; two of the three
     // after-lines must be added; the surviving one is context.
-    const { container } = render(
-      <SafeDiffRenderer before={'a'} after={'a\na\na'} />,
-    );
+    const { container } = render(<SafeDiffRenderer before={'a'} after={'a\na\na'} />);
     const ins = container.querySelectorAll('ins.diff-line-added');
     const afterContexts = container.querySelectorAll(
       'section[data-side="after"] span.diff-line-context',

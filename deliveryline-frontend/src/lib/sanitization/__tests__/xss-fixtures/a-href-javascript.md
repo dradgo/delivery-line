@@ -1,1 +1,1 @@
-A link with [evil scheme](javascript:alert('xss-a-href')) inline.
+A link with [evil scheme](<javascript:alert('xss-a-href')>) inline.

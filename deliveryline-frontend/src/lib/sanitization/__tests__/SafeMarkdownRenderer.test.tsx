@@ -22,10 +22,11 @@ interface ExpectedContract {
 }
 
 // Vite's `import.meta.glob` resolves fixture pairs at test time.
-const markdownFixtures: Record<string, string> = import.meta.glob(
-  './xss-fixtures/*.md',
-  { query: '?raw', import: 'default', eager: true },
-);
+const markdownFixtures: Record<string, string> = import.meta.glob('./xss-fixtures/*.md', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
 const expectedFixtures: Record<string, ExpectedContract> = import.meta.glob(
   './xss-fixtures/*.expected.json',
   { import: 'default', eager: true },
@@ -93,10 +94,9 @@ describe('SafeMarkdownRenderer — XSS fixture loop (AC7, AC12)', () => {
         ).toHaveLength(0);
       }
       if (expected!.noActiveElements === true) {
-        expect(
-          screen.queryAllByRole('script'),
-          `${name}: no role="script" elements`,
-        ).toHaveLength(0);
+        expect(screen.queryAllByRole('script'), `${name}: no role="script" elements`).toHaveLength(
+          0,
+        );
         // Belt-and-suspenders DOM scan for executable handlers
         for (const el of container.querySelectorAll('*')) {
           for (const attr of el.attributes) {
@@ -195,12 +195,9 @@ describe('SafeMarkdownRenderer — Shiki active highlighting (AC3)', () => {
   });
 
   it('keeps <script> content inert when placed inside a javascript fence', async () => {
-    const source = [
-      '```javascript',
-      "<script>alert('xss')</script>",
-      'const x = 1;',
-      '```',
-    ].join('\n');
+    const source = ['```javascript', "<script>alert('xss')</script>", 'const x = 1;', '```'].join(
+      '\n',
+    );
     const { container } = render(<SafeMarkdownRenderer source={source} />);
     await waitFor(
       () => {

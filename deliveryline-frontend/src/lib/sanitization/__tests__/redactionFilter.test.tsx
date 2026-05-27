@@ -91,7 +91,9 @@ describe('SafeMarkdownRenderer applies the redaction filter (AC15, AC17)', () =>
   });
 
   it('P1 (regression) — wraps secrets inside fenced code blocks (Shiki skipped)', () => {
-    const source = ['```javascript', 'const token = "ghp_abcdefghijklmnopqrstuvwx6"', '```'].join('\n');
+    const source = ['```javascript', 'const token = "ghp_abcdefghijklmnopqrstuvwx6"', '```'].join(
+      '\n',
+    );
     const { container } = render(<SafeMarkdownRenderer source={source} />);
     const marks = container.querySelectorAll('mark.redaction-applied');
     expect(marks.length, 'fenced-code token must be wrapped').toBeGreaterThanOrEqual(1);

@@ -76,7 +76,10 @@ function changesToLineDiff(changes: Change[]): {
   return { beforeLines, afterLines };
 }
 
-function computeLineDiff(before: string, after: string): {
+function computeLineDiff(
+  before: string,
+  after: string,
+): {
   beforeLines: DiffLine[];
   afterLines: DiffLine[];
 } {

@@ -26,13 +26,13 @@ test('no-unsanitized-html', () => {
       },
       // Reading innerHTML is fine — only assignment is dangerous.
       {
-        code: "function inspect(el) { return el.innerHTML; }",
+        code: 'function inspect(el) { return el.innerHTML; }',
         filename: 'src/features/workflows/inspect.ts',
       },
       // Direct assignment INSIDE the sanitization package is the allowed
       // trusted boundary (Trap T10).
       {
-        code: "function applyShiki(target, html) { target.innerHTML = html; }",
+        code: 'function applyShiki(target, html) { target.innerHTML = html; }',
         filename: 'src/lib/sanitization/shiki-wire.ts',
       },
       {
@@ -47,12 +47,12 @@ test('no-unsanitized-html', () => {
         errors: [{ messageId: 'dangerouslySetInnerHTML' }],
       },
       {
-        code: "function leak(el, payload) { el.innerHTML = payload; }",
+        code: 'function leak(el, payload) { el.innerHTML = payload; }',
         filename: 'src/features/workflows/leak.ts',
         errors: [{ messageId: 'innerHTMLAssignment' }],
       },
       {
-        code: "function leakOuter(el, payload) { el.outerHTML = payload; }",
+        code: 'function leakOuter(el, payload) { el.outerHTML = payload; }',
         filename: 'src/features/workflows/leak.ts',
         errors: [{ messageId: 'innerHTMLAssignment' }],
       },
@@ -76,13 +76,13 @@ test('no-unsanitized-html', () => {
       },
       // P6 — document.write call.
       {
-        code: "function leakWrite(payload) { document.write(payload); }",
+        code: 'function leakWrite(payload) { document.write(payload); }',
         filename: 'src/features/workflows/leak.ts',
         errors: [{ messageId: 'htmlSink' }],
       },
       // P6 — document.writeln call.
       {
-        code: "function leakWriteln(payload) { document.writeln(payload); }",
+        code: 'function leakWriteln(payload) { document.writeln(payload); }',
         filename: 'src/features/workflows/leak.ts',
         errors: [{ messageId: 'htmlSink' }],
       },

@@ -1,5 +1,5 @@
 An image with a data URI:
 
-![evil](data:text/html,<script>alert('xss-data-uri')</script>)
+![evil](<data:text/html,%3Cscript%3Ealert('xss-data-uri')%3C/script%3E>)
 
 After.

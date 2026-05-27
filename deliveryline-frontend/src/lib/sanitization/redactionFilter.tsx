@@ -11,13 +11,7 @@
  * Trap T11 — author-written literal `[REDACTED]` strings (no `<mark>` wrapper)
  *            render unchanged; only newly-detected patterns get wrapped.
  */
-import {
-  Children,
-  cloneElement,
-  type ReactElement,
-  type ReactNode,
-  isValidElement,
-} from 'react';
+import { Children, cloneElement, type ReactElement, type ReactNode, isValidElement } from 'react';
 
 import redactionPolicy from './redaction-policy.generated.json';
 
@@ -91,7 +85,7 @@ export function scanForRedactions(text: string): RedactionScanResult {
     }
   }
   // Resolve overlap by preferring earlier-start + longer match.
-  matches.sort((a, b) => (a.start - b.start) || (b.end - a.end));
+  matches.sort((a, b) => a.start - b.start || b.end - a.end);
   const filtered: RedactionMatch[] = [];
   let lastEnd = -1;
   for (const m of matches) {

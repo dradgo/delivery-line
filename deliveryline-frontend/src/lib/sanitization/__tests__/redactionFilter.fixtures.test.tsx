@@ -18,10 +18,11 @@ interface RedactionExpected {
   noRedactionMarks?: boolean;
 }
 
-const textFixtures: Record<string, string> = import.meta.glob(
-  './redaction-fixtures/*.txt',
-  { query: '?raw', import: 'default', eager: true },
-);
+const textFixtures: Record<string, string> = import.meta.glob('./redaction-fixtures/*.txt', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
 const expectedFixtures: Record<string, RedactionExpected> = import.meta.glob(
   './redaction-fixtures/*.expected.json',
   { import: 'default', eager: true },
@@ -47,10 +48,9 @@ describe('Redaction-fixture loop (AC15, AC17)', () => {
 
       const scan = scanForRedactions(source);
       if (expected.expectedDetectedCategories !== undefined) {
-        expect(
-          scan.detectedCategories.sort(),
-          `${name}: detected categories must match`,
-        ).toEqual([...expected.expectedDetectedCategories].sort());
+        expect(scan.detectedCategories.sort(), `${name}: detected categories must match`).toEqual(
+          [...expected.expectedDetectedCategories].sort(),
+        );
       }
 
       const { container } = render(<SafeMarkdownRenderer source={source} />);
@@ -65,10 +65,9 @@ describe('Redaction-fixture loop (AC15, AC17)', () => {
       }
       if (expected.renderedTextDoesNotContain) {
         for (const banned of expected.renderedTextDoesNotContain) {
-          expect(
-            renderedText,
-            `${name}: must NOT contain ${JSON.stringify(banned)}`,
-          ).not.toContain(banned);
+          expect(renderedText, `${name}: must NOT contain ${JSON.stringify(banned)}`).not.toContain(
+            banned,
+          );
         }
       }
       if (expected.noRedactionMarks === true) {

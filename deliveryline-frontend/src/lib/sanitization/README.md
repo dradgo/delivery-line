@@ -6,14 +6,14 @@ redaction-policy gaps deferred from Epic 1.
 
 ## Public surface
 
-| Symbol                  | Source                       | Purpose                                                              |
-| ----------------------- | ---------------------------- | -------------------------------------------------------------------- |
-| `SafeMarkdownRenderer`  | `SafeMarkdownRenderer.tsx`   | The sanctioned renderer for ALL untrusted markdown bodies (AC1–AC4). |
-| `SafeDiffRenderer`      | `SafeDiffRenderer.tsx`       | Plain-text before/after panels with `<ins>`/`<del>` semantics (AC5). |
-| `MetadataChrome`        | `MetadataChrome.tsx`         | Trusted-metadata wrapper above the generated-content slot (AC6).     |
-| `validateUrlScheme`     | `policy.ts`                  | Case-insensitive, whitespace-trimming URL scheme validator (AC4).    |
-| `scanForRedactions`     | `redactionFilter.tsx`        | Pure scan over text → match offsets + detected categories.           |
-| `renderTextWithRedactions` | `redactionFilter.tsx`     | Wraps newly-detected secrets in `<mark class="redaction-applied">`.  |
+| Symbol                     | Source                     | Purpose                                                              |
+| -------------------------- | -------------------------- | -------------------------------------------------------------------- |
+| `SafeMarkdownRenderer`     | `SafeMarkdownRenderer.tsx` | The sanctioned renderer for ALL untrusted markdown bodies (AC1–AC4). |
+| `SafeDiffRenderer`         | `SafeDiffRenderer.tsx`     | Plain-text before/after panels with `<ins>`/`<del>` semantics (AC5). |
+| `MetadataChrome`           | `MetadataChrome.tsx`       | Trusted-metadata wrapper above the generated-content slot (AC6).     |
+| `validateUrlScheme`        | `policy.ts`                | Case-insensitive, whitespace-trimming URL scheme validator (AC4).    |
+| `scanForRedactions`        | `redactionFilter.tsx`      | Pure scan over text → match offsets + detected categories.           |
+| `renderTextWithRedactions` | `redactionFilter.tsx`      | Wraps newly-detected secrets in `<mark class="redaction-applied">`.  |
 
 All composites outside this package MUST import from `src/lib/sanitization/`
 (the barrel), never from individual files. The AC11 ESLint rule
@@ -48,11 +48,11 @@ The AC9 ceiling is **≤ 250 KB gzipped delta** vs the pre-2-24 baseline.
 
 ### Measured 2026-05-26 (code review, post-Shiki integration)
 
-| Scenario | Main JS gz | Lazy grammars gz | Theme gz | CSS gz | Worst-case total gz |
-| -------- | ---------- | ---------------- | -------- | ------ | ------------------- |
-| Baseline (HEAD pre-2-24, isolated worktree) | 134.26 KB | — | — | 8.48 KB | 142.74 KB |
-| Story 2-24 shipped (sanitization package not yet imported anywhere; tree-shaken) | 134.26 KB | — | — | 8.49 KB | 142.75 KB |
-| **Story 2-24 fully wired** (probe imports the entire sanitization barrel into `main.tsx` so nothing tree-shakes) | **232.42 KB** | **60.57 KB** (sum of 8 grammars) | **2.49 KB** | **8.49 KB** | **303.97 KB** |
+| Scenario                                                                                                         | Main JS gz    | Lazy grammars gz                 | Theme gz    | CSS gz      | Worst-case total gz |
+| ---------------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------- | ----------- | ----------- | ------------------- |
+| Baseline (HEAD pre-2-24, isolated worktree)                                                                      | 134.26 KB     | —                                | —           | 8.48 KB     | 142.74 KB           |
+| Story 2-24 shipped (sanitization package not yet imported anywhere; tree-shaken)                                 | 134.26 KB     | —                                | —           | 8.49 KB     | 142.75 KB           |
+| **Story 2-24 fully wired** (probe imports the entire sanitization barrel into `main.tsx` so nothing tree-shakes) | **232.42 KB** | **60.57 KB** (sum of 8 grammars) | **2.49 KB** | **8.49 KB** | **303.97 KB**       |
 
 Grammar chunks are **code-split** by Vite — they lazy-load on the first
 `SafeMarkdownRenderer` mount of a fenced block in that language. Per-grammar

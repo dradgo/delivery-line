@@ -1,5 +1,7 @@
 {
   "expectedDetectedCategories": ["PEM_PRIVATE_KEY"],
-  "renderedTextDoesNotContain": ["FAKE-RSA-PRIVATE-KEY-DO-NOT-USE-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+  "renderedTextDoesNotContain": [
+    "FAKE-RSA-PRIVATE-KEY-DO-NOT-USE-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  ],
   "renderedTextContains": ["[REDACTED: PEM_PRIVATE_KEY]"]
 }
