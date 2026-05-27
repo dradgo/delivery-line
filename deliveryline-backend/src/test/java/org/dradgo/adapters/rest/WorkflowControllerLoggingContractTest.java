@@ -2,7 +2,9 @@ package org.dradgo.adapters.rest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -15,7 +17,10 @@ import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
+import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsVersionStamp;
+import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsView;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -201,5 +206,40 @@ class WorkflowControllerLoggingContractTest {
         .noneMatch(line -> line.contains(secretAnswer))
         .as("substring of answerText must not appear in any INFO log line either")
         .noneMatch(line -> line.contains(secretSubstring));
+  }
+
+  @Test
+  void allowedActionsEntryLogIncludesWorkflowRunIdAndActorRole() throws Exception {
+    // Story 2.14 — controller-side INFO entry pin. workflowRunId and actorRole are the two pieces
+    // of telemetry that let an operator correlate a stale-UI 409 back to which actor (role) was
+    // last looking at the run when the stamp went stale.
+    when(workflowInspectionService.getAllowedActions(eq(RUN_ID), eq("workflow_owner")))
+        .thenReturn(
+            new AllowedActionsView(
+                List.of(AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS),
+                new AllowedActionsVersionStamp("Failed", 1, 1, "evt_log_allow")));
+
+    mockMvc
+        .perform(
+            get("/api/v1/workflows/{runId}/allowed-actions", RUN_ID)
+                .param("actorRole", "workflow_owner")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    assertThat(
+            appender.list.stream()
+                .filter(e -> e.getLevel() == Level.INFO)
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList())
+        .anyMatch(
+            line ->
+                line.contains("REST get allowed-actions received")
+                    && line.contains("workflowRunId=" + RUN_ID)
+                    && line.contains("actorRole=workflow_owner"))
+        .anyMatch(
+            line ->
+                line.contains("REST get allowed-actions success")
+                    && line.contains("actionCount=2")
+                    && line.contains("workflowState=Failed"));
   }
 }

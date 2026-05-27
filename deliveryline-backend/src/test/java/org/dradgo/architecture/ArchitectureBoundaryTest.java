@@ -132,4 +132,8 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule clarification_lifecycle_lives_in_application_clarification =
       ArchitectureRuleCatalog.CLARIFICATION_LIFECYCLE_LIVES_IN_APPLICATION_CLARIFICATION;
+
+  @ArchTest
+  static final ArchRule allowed_action_derivation_lives_only_in_workflow_inspection_service =
+      ArchitectureRuleCatalog.ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE;
 }

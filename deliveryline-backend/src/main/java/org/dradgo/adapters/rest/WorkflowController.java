@@ -193,6 +193,84 @@ public class WorkflowController {
     return response;
   }
 
+  /**
+   * Returns the backend-derived allowed actions for a workflow run plus a version stamp the UI
+   * echoes back on mutations (story 2.14 AC1, AC6, AC11).
+   *
+   * <p><strong>Forward-compatibility contract (AC11):</strong> the {@code actions} array may grow
+   * to include future Epic 3 / Epic 4 wire values (e.g., {@code approve_implementation}, {@code
+   * resume}, {@code clear_escalation_marker}). The UI MUST gracefully handle unknown action values
+   * by hiding them — UX-DR12 + UX-DR6 cover the unsupported-state rendering path on the frontend.
+   * Adding a new {@link org.dradgo.domain.registry.AllowedAction} value is therefore a binary-
+   * compatible change on this endpoint.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/allowed-actions",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getAllowedActions",
+      summary = "Get backend-derived allowed actions for a workflow run",
+      description =
+          "Returns the typed list of actions valid for the run's current state + actor role, "
+              + "plus a version stamp the UI echoes back on mutations to detect staleness "
+              + "(story 2.14). Read-only and idempotent — no Idempotency-Key required. "
+              + "Forward-compatible: the UI must gracefully hide unknown action values "
+              + "(UX-DR12, UX-DR6).")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Allowed actions + version stamp."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole "
+                + "(UNKNOWN_ACTOR_ROLE).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public AllowedActionsResponse getAllowedActions(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId,
+      @Parameter(
+              description =
+                  "Actor role for action gating; defaults to product_reviewer when absent. "
+                      + "Recognized values are case-sensitive — any other value returns "
+                      + "400 UNKNOWN_ACTOR_ROLE.",
+              example = "product_reviewer",
+              schema =
+                  @Schema(
+                      type = "string",
+                      allowableValues = {"product_reviewer", "workflow_owner"},
+                      nullable = true))
+          @RequestParam(name = "actorRole", required = false)
+          String actorRole) {
+    // Review P6: normalize the query-param at the controller boundary so the same value is logged
+    // here and inside the service (otherwise grepping `actorRole=workflow_owner` misses
+    // whitespace-padded requests that succeed via the service's internal `.strip()`).
+    String normalizedActorRole = (actorRole == null) ? null : actorRole.strip();
+    log.info(
+        "REST get allowed-actions received workflowRunId={} actorRole={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(normalizedActorRole));
+    AllowedActionsResponse response =
+        AllowedActionsResponse.from(
+            workflowInspectionService.getAllowedActions(workflowRunId, normalizedActorRole));
+    log.info(
+        "REST get allowed-actions success workflowRunId={} actionCount={} workflowState={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.actions().size(),
+        MdcKeys.sanitizeForLog(response.versionStamp().workflowState()));
+    return response;
+  }
+
   // ---------------------------------------------------------------------------
   // Command endpoints
   // ---------------------------------------------------------------------------

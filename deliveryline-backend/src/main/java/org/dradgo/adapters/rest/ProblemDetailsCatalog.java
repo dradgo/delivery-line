@@ -256,6 +256,12 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.UNKNOWN_ACTOR_ROLE,
+        HttpStatus.BAD_REQUEST,
+        "Unknown actor role",
+        false);
+    register(
+        metadata,
         DomainErrorCode.DOCTOR_POSTGRES_UNREACHABLE,
         HttpStatus.SERVICE_UNAVAILABLE,
         "Postgres unreachable",

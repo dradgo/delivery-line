@@ -1,6 +1,72 @@
 {
   "components" : {
     "schemas" : {
+      "AllowedActions" : {
+        "description" : "Backend-derived list of allowed actions for the current state + actor role.",
+        "properties" : {
+          "actions" : {
+            "description" : "Typed action wire values. Primary action first (e.g. approve_spec before reject_spec), then passive views. UI must gracefully ignore unknown values for forward compatibility (UX-DR12, UX-DR6).",
+            "example" : [
+              "approve_spec",
+              "reject_spec",
+              "answer_clarification"
+            ],
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "versionStamp" : {
+            "$ref" : "#/components/schemas/AllowedActionsVersionStamp",
+            "description" : "Version stamp the UI echoes back as expectedAllowedActionsVersionStamp on the next mutation so a stale UI surfaces APPROVAL_VERSION_MISMATCH."
+          }
+        },
+        "required" : [
+          "actions",
+          "versionStamp"
+        ],
+        "type" : "object"
+      },
+      "AllowedActionsVersionStamp" : {
+        "description" : "Version stamp the UI echoes back on mutations so stale UI surfaces a typed version-mismatch error.",
+        "properties" : {
+          "currentContextBundleVersion" : {
+            "description" : "Context-bundle version of the latest spec's runner execution; null if absent.",
+            "example" : 1,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "currentSpecArtifactVersion" : {
+            "description" : "Version of the LATEST spec artifact (any approval status); null if none.",
+            "example" : 1,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "lastEventId" : {
+            "description" : "Public id of the most recent workflow event; null on event-less runs.",
+            "example" : "evt_abc123",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "workflowState" : {
+            "description" : "Current workflow state (wire-string form).",
+            "example" : "WaitingForSpecApproval",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "workflowState"
+        ],
+        "type" : "object"
+      },
       "AnswerClarificationRequest" : {
         "properties" : {
           "answerText" : {
@@ -911,6 +977,74 @@
           }
         },
         "summary" : "Get workflow run detail",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/allowed-actions" : {
+      "get" : {
+        "description" : "Returns the typed list of actions valid for the run's current state + actor role, plus a version stamp the UI echoes back on mutations to detect staleness (story 2.14). Read-only and idempotent — no Idempotency-Key required. Forward-compatible: the UI must gracefully hide unknown action values (UX-DR12, UX-DR6).",
+        "operationId" : "getAllowedActions",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Actor role for action gating; defaults to product_reviewer when absent. Recognized values are case-sensitive — any other value returns 400 UNKNOWN_ACTOR_ROLE.",
+            "example" : "product_reviewer",
+            "in" : "query",
+            "name" : "actorRole",
+            "required" : false,
+            "schema" : {
+              "enum" : [
+                "product_reviewer",
+                "workflow_owner"
+              ],
+              "type" : "null"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/AllowedActions"
+                }
+              }
+            },
+            "description" : "Allowed actions + version stamp."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole (UNKNOWN_ACTOR_ROLE)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get backend-derived allowed actions for a workflow run",
         "tags" : [
           "Workflows"
         ]

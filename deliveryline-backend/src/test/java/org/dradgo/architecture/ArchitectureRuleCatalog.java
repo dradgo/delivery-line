@@ -27,6 +27,7 @@ import org.dradgo.application.workflow.DomainResult;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
+import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.shell.core.command.annotation.CommandGroup;
 import org.springframework.stereotype.Service;
@@ -507,6 +508,34 @@ final class ArchitectureRuleCatalog {
               .and()
               .resideOutsideOfPackage("org.dradgo.runnercontracts..")
               .should(notDeclareSensitiveDetectionArtifacts()));
+
+  /**
+   * Story 2.14 AC9 — backend-authoritative allowed-action derivation must live in exactly one place
+   * (UX-DR12). The state×role → action-set matrix is encoded inside {@code
+   * WorkflowInspectionService.getAllowedActions}; no other application service or transport adapter
+   * may reference the {@link AllowedAction} enum constants. The {@code adapters.rest} layer is
+   * exempted only for {@code AllowedActionsResponse} (and any nested records/helpers — {@code
+   * AllowedActionsResponse$Inner}), which performs the wire mapping from the typed enum list to
+   * {@code List<String>} via the static {@code from(...)} factory. Inner records of {@code
+   * WorkflowInspectionService} (e.g. {@code AllowedActionsView}) are exempted via the same
+   * inner-class regex {@code (\\$.*)?}.
+   */
+  static final ArchRule ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE =
+      namedRule(
+          "AllowedAction enum constants may only be referenced from WorkflowInspectionService (application) and AllowedActionsResponse (adapters.rest)",
+          "Remediation: route all state×role → action-set derivation through WorkflowInspectionService.getAllowedActions (story 2.14 AC9). Only AllowedActionsResponse may translate the typed enum list to the wire-string list.",
+          noClasses()
+              .that()
+              .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService(\\$.*)?")
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.adapters\\.rest\\.AllowedActionsResponse(\\$.*)?")
+              .should()
+              .dependOnClassesThat()
+              .haveFullyQualifiedName(AllowedAction.class.getName()));
 
   private ArchitectureRuleCatalog() {}
 

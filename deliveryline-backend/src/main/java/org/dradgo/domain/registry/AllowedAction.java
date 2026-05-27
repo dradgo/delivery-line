@@ -3,9 +3,6 @@ package org.dradgo.domain.registry;
 import java.util.Map;
 
 public enum AllowedAction implements RegistryValue {
-  // TODO(story-2.14): wire ApprovalService as the canonical executor for AllowedAction.APPROVE_SPEC
-  // — story 2.14 owns the full state×role → action-set logic in
-  // WorkflowInspectionService.getAllowedActions.
   APPROVE_SPEC("approve_spec"),
   REJECT_SPEC("reject_spec"),
   ANSWER_CLARIFICATION("answer_clarification"),

@@ -61,6 +61,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/allowed-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get backend-derived allowed actions for a workflow run
+         * @description Returns the typed list of actions valid for the run's current state + actor role, plus a version stamp the UI echoes back on mutations to detect staleness (story 2.14). Read-only and idempotent — no Idempotency-Key required. Forward-compatible: the UI must gracefully hide unknown action values (UX-DR12, UX-DR6).
+         */
+        get: operations["getAllowedActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/approve-spec": {
         parameters: {
             query?: never;
@@ -170,6 +190,45 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Backend-derived list of allowed actions for the current state + actor role. */
+        AllowedActions: {
+            /**
+             * @description Typed action wire values. Primary action first (e.g. approve_spec before reject_spec), then passive views. UI must gracefully ignore unknown values for forward compatibility (UX-DR12, UX-DR6).
+             * @example [
+             *       "approve_spec",
+             *       "reject_spec",
+             *       "answer_clarification"
+             *     ]
+             */
+            actions: string[];
+            /** @description Version stamp the UI echoes back as expectedAllowedActionsVersionStamp on the next mutation so a stale UI surfaces APPROVAL_VERSION_MISMATCH. */
+            versionStamp: components["schemas"]["AllowedActionsVersionStamp"];
+        };
+        /** @description Version stamp the UI echoes back on mutations so stale UI surfaces a typed version-mismatch error. */
+        AllowedActionsVersionStamp: {
+            /**
+             * Format: int32
+             * @description Context-bundle version of the latest spec's runner execution; null if absent.
+             * @example 1
+             */
+            currentContextBundleVersion?: number | null;
+            /**
+             * Format: int32
+             * @description Version of the LATEST spec artifact (any approval status); null if none.
+             * @example 1
+             */
+            currentSpecArtifactVersion?: number | null;
+            /**
+             * @description Public id of the most recent workflow event; null on event-less runs.
+             * @example evt_abc123
+             */
+            lastEventId?: string | null;
+            /**
+             * @description Current workflow state (wire-string form).
+             * @example WaitingForSpecApproval
+             */
+            workflowState: string;
+        };
         AnswerClarificationRequest: {
             answerText: string;
             artifactId: string;
@@ -517,6 +576,56 @@ export interface operations {
                 };
             };
             /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getAllowedActions: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Actor role for action gating; defaults to product_reviewer when absent. Recognized values are case-sensitive — any other value returns 400 UNKNOWN_ACTOR_ROLE.
+                 * @example product_reviewer
+                 */
+                actorRole?: "product_reviewer" | "workflow_owner";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Allowed actions + version stamp. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllowedActions"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole (UNKNOWN_ACTOR_ROLE). */
             400: {
                 headers: {
                     [name: string]: unknown;

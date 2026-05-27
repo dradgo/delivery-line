@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
@@ -33,6 +34,7 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -255,6 +257,207 @@ public class WorkflowInspectionService {
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
+  }
+
+  /**
+   * Story 2.14 — recognized {@code actorRole} query-param values for the allowed-actions endpoint.
+   * Distinct from {@link ApprovalReviewerRoleResolver}'s set: that resolver always falls back to a
+   * default and must never reject (used in the spec-approval mutation path where a missing role
+   * must still let the mutation proceed). This set is the "fail closed" identity used by AC7 — an
+   * unrecognized value surfaces a typed {@link DomainErrorCode#UNKNOWN_ACTOR_ROLE} so the UI can
+   * render a typed error rather than silently fall back.
+   */
+  /**
+   * Story 2.14 review P2 — canonical wire strings for the two recognized {@code actorRole} values.
+   * Used by both {@link #RECOGNIZED_ACTOR_ROLES} membership and the matrix switch below so a rename
+   * cannot drift the two sources of truth apart.
+   */
+  static final String ROLE_PRODUCT_REVIEWER = "product_reviewer";
+
+  static final String ROLE_WORKFLOW_OWNER = "workflow_owner";
+
+  static final Set<String> RECOGNIZED_ACTOR_ROLES =
+      Set.of(ROLE_PRODUCT_REVIEWER, ROLE_WORKFLOW_OWNER);
+
+  /** Default {@code actorRole} when the query param is null/blank (story 2.14 AC6 MVP). */
+  static final String DEFAULT_ACTOR_ROLE = ROLE_PRODUCT_REVIEWER;
+
+  /**
+   * Story 2.14 — backend-authoritative allowed-actions derivation for the {@code GET
+   * /api/v1/workflows/{workflowRunId}/allowed-actions} endpoint. The sole source of truth for the
+   * state×role → action-set matrix (UX-DR12) — controllers and adapters MUST NOT compose this set
+   * themselves, pinned by {@code
+   * ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE} ArchUnit rule.
+   *
+   * <p>The returned {@link AllowedActionsView} carries the typed action list plus a version stamp
+   * the UI Approval/Decision Bar (story 2.19) echoes back on mutations so a stale UI surfaces
+   * {@code APPROVAL_VERSION_MISMATCH} on the next approve attempt.
+   *
+   * <p>SEAM (Epic 3 / Epic 4): the matrix below currently emits the 7 in-scope actions. Future
+   * stories will additively wire {@code approve_implementation}, {@code reject_implementation},
+   * {@code takeover} (Epic 3) and {@code resume}, {@code reconcile}, {@code rerun_from_step},
+   * {@code pause}, {@code clear_escalation_marker} (Epic 4). The current switch's affected cases
+   * are marked with {@code // SEAM (Epic 3/4)} comments so the next consumer doesn't have to
+   * rediscover the seam.
+   *
+   * @param workflowRunPublicId the {@code run_}-prefixed run id (prefix-validated first)
+   * @param actorRole the role string from the query param; null/blank defaults to {@code
+   *     product_reviewer}; any other value not in {@link #RECOGNIZED_ACTOR_ROLES} throws {@link
+   *     DomainErrorCode#UNKNOWN_ACTOR_ROLE}
+   * @return view carrying the typed action list and version stamp
+   */
+  @Transactional(readOnly = true)
+  public AllowedActionsView getAllowedActions(String workflowRunPublicId, String actorRole) {
+    // Review P1: open MDC scope BEFORE validation calls so INVALID_ID_PREFIX +
+    // UNKNOWN_ACTOR_ROLE rejection log lines carry the workflowRunId MDC key (otherwise
+    // operators tracing 400-shaped rejections see entry without the structured correlation key
+    // even though the message string carries it).
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+      String resolvedRole = resolveActorRole(actorRole, workflowRunPublicId);
+      log.info(
+          "getAllowedActions entry workflowRunId={} actorRole={}",
+          MdcKeys.sanitizeForLog(workflowRunPublicId),
+          MdcKeys.sanitizeForLog(resolvedRole));
+
+      WorkflowRunDetailedSummaryView summary = getRunSummary(workflowRunPublicId);
+
+      // TRAP 2: use the LATEST spec artifact (any status), NOT the last approved one. The UI's
+      // version stamp must match what the reviewer currently sees in the artifact panel; deriving
+      // from the approved spec would drift on reject-and-resubmit loops.
+      Optional<ArtifactRecordSnapshot> latestSpecOpt =
+          artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(
+              workflowRunPublicId, ArtifactType.SPEC.value());
+      Integer specVersion = latestSpecOpt.map(ArtifactRecordSnapshot::version).orElse(null);
+      String latestSpecPublicId = latestSpecOpt.map(ArtifactRecordSnapshot::publicId).orElse(null);
+
+      Integer bundleVersion = null;
+      if (latestSpecPublicId != null) {
+        ContextBundleLookupResult lookup = getContextBundleLookupForArtifact(latestSpecPublicId);
+        if (lookup.available()) {
+          bundleVersion = lookup.bundle().contextBundleVersion();
+        }
+      }
+
+      String latestEventId =
+          workflowEventReadPort
+              .findLatestByWorkflowRunPublicId(workflowRunPublicId)
+              .map(WorkflowEventRecord::publicId)
+              .orElse(null);
+
+      WorkflowState state = WorkflowState.fromValue(summary.currentState(), "currentState");
+      List<AllowedAction> actions =
+          computeActionMatrix(
+              state, resolvedRole, summary.pendingClarifications(), latestSpecPublicId);
+
+      AllowedActionsView view =
+          new AllowedActionsView(
+              List.copyOf(actions),
+              new AllowedActionsVersionStamp(
+                  summary.currentState(), specVersion, bundleVersion, latestEventId));
+      log.info(
+          "getAllowedActions success workflowRunId={} actorRole={} workflowState={} actionCount={} versionStampLastEventId={}",
+          MdcKeys.sanitizeForLog(workflowRunPublicId),
+          MdcKeys.sanitizeForLog(resolvedRole),
+          view.versionStamp().workflowState(),
+          actions.size(),
+          MdcKeys.sanitizeForLog(latestEventId));
+      return view;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private String resolveActorRole(String rawActorRole, String workflowRunPublicId) {
+    if (rawActorRole == null || rawActorRole.isBlank()) {
+      return DEFAULT_ACTOR_ROLE;
+    }
+    String trimmed = rawActorRole.strip();
+    if (!RECOGNIZED_ACTOR_ROLES.contains(trimmed)) {
+      log.warn(
+          "getAllowedActions rejected UNKNOWN_ACTOR_ROLE workflowRunId={} actorRole={}",
+          MdcKeys.sanitizeForLog(workflowRunPublicId),
+          MdcKeys.sanitizeForLog(trimmed));
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("actorRole", trimmed);
+      throw new DomainException(
+          DomainErrorCode.UNKNOWN_ACTOR_ROLE, "Unknown actor role: " + trimmed, details);
+    }
+    return trimmed;
+  }
+
+  private List<AllowedAction> computeActionMatrix(
+      WorkflowState state, String actorRole, int pendingClarifications, String latestSpecPublicId) {
+    // Single switch — the sole place in the codebase where state×role → action-set is encoded
+    // (UX-DR12 + ArchUnit pin). Any duplication outside this method is a future-bug seed.
+    switch (state) {
+      case INBOX:
+      case PLANNED:
+        return List.of(AllowedAction.VIEW_ONLY);
+      case INVESTIGATING:
+        {
+          // AC3 semantic: "open" = status literally 'open' (unanswered). This is DIFFERENT from
+          // story 2.12's pendingClarifications gate which counts NOT-in-{incorporated,
+          // rejected_invalid}. The AC4 gate (below) uses the 2.12 definition; this AC3 row asks
+          // "are there unanswered questions on the latest in-flight spec?".
+          if (latestSpecPublicId != null && hasOpenClarificationOnArtifact(latestSpecPublicId)) {
+            return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
+          }
+          return List.of(AllowedAction.VIEW_ONLY);
+        }
+      case WAITING_FOR_SPEC_APPROVAL:
+        {
+          if (ROLE_PRODUCT_REVIEWER.equals(actorRole)) {
+            // AC4: drop approve_spec when pending clarifications block approval (story 2.12 gate).
+            if (pendingClarifications > 0) {
+              return List.of(AllowedAction.REJECT_SPEC, AllowedAction.ANSWER_CLARIFICATION);
+            }
+            return List.of(
+                AllowedAction.APPROVE_SPEC,
+                AllowedAction.REJECT_SPEC,
+                AllowedAction.ANSWER_CLARIFICATION);
+          }
+          return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
+        }
+      case EXECUTING:
+        return List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME);
+      case WAITING_FOR_REVIEW:
+        // SEAM (Epic 3/4): Epic 3 adds approve_implementation / reject_implementation / takeover
+        // for the developer-review actor here. MVP returns view_only for all roles.
+        return List.of(AllowedAction.VIEW_ONLY);
+      case COMPLETED:
+        return List.of(AllowedAction.VIEW_ONLY);
+      case FAILED:
+        {
+          if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            return List.of(AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS);
+          }
+          return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS);
+        }
+      case PAUSED:
+        // SEAM (Epic 4): Epic 4 adds resume here for workflow_owner.
+        return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS);
+      case TAKEN_OVER:
+        // SEAM (Epic 4): Epic 4 adds reconcile / clear_escalation_marker here for workflow_owner.
+        return List.of(AllowedAction.VIEW_ONLY);
+      case RECONCILED:
+        return List.of(AllowedAction.VIEW_ONLY);
+      default:
+        // Future-state guard (AC8) — any new WorkflowState that forgets to update this switch
+        // surfaces immediately rather than silently returning an empty action list.
+        throw new IllegalStateException(
+            "Allowed-actions matrix missing case for state " + state.value());
+    }
+  }
+
+  private boolean hasOpenClarificationOnArtifact(String artifactPublicId) {
+    for (Clarification clarification : clarificationReadPort.listByArtifactId(artifactPublicId)) {
+      if (clarification.isOpen()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static ClarificationStatusView toClarificationStatusView(
@@ -970,6 +1173,31 @@ public class WorkflowInspectionService {
    * everything {@link WorkflowRunSummaryView} carries plus is dedicated to single-run inspection
    * (story 2.14 reads this directly).
    */
+  /**
+   * Story 2.14 — typed allowed-actions view returned by {@link #getAllowedActions(String, String)}.
+   * Carries the action list plus a version stamp the UI Approval/Decision Bar (story 2.19) echoes
+   * back on subsequent mutations so the existing {@code expectedArtifactVersion} + {@code
+   * expectedContextBundleVersion} checks on approve/reject surface {@code
+   * APPROVAL_VERSION_MISMATCH} if the UI is stale.
+   */
+  public record AllowedActionsView(
+      List<AllowedAction> actions, AllowedActionsVersionStamp versionStamp) {}
+
+  /**
+   * Story 2.14 — version stamp composed from the run state, the LATEST spec artifact (any approval
+   * status — see TRAP 2 in the story spec), the linked context-bundle version, and the latest event
+   * id. The three integer/string fields are nullable: a run with no spec yet returns {@code
+   * currentSpecArtifactVersion = null}, {@code currentContextBundleVersion = null}; a spec produced
+   * via the CLI/seed path with no linked runner execution returns {@code
+   * currentContextBundleVersion = null}; an unreachable event-less run returns {@code lastEventId =
+   * null}.
+   */
+  public record AllowedActionsVersionStamp(
+      String workflowState,
+      Integer currentSpecArtifactVersion,
+      Integer currentContextBundleVersion,
+      String lastEventId) {}
+
   public record WorkflowRunDetailedSummaryView(
       String workflowRunId,
       String currentState,
