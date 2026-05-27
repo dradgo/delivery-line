@@ -115,6 +115,7 @@
     "UNKNOWN_REGISTRY_VALUE": "https://deliveryline.local/problems/unknown-registry-value",
     "INVALID_ID_PREFIX": "https://deliveryline.local/problems/invalid-id-prefix",
     "RUN_NOT_FOUND": "https://deliveryline.local/problems/run-not-found",
+    "UNKNOWN_ACTOR_ROLE": "https://deliveryline.local/problems/unknown-actor-role",
     "DOCTOR_POSTGRES_UNREACHABLE": "https://deliveryline.local/problems/doctor-postgres-unreachable",
     "DOCTOR_FLYWAY_FAILED": "https://deliveryline.local/problems/doctor-flyway-failed",
     "DOCTOR_REST_BIND_UNAVAILABLE": "https://deliveryline.local/problems/doctor-rest-bind-unavailable",
