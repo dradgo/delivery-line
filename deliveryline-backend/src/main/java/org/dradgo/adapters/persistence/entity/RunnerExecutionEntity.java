@@ -60,6 +60,9 @@ public class RunnerExecutionEntity {
   @Column(name = "archived_at")
   private OffsetDateTime archivedAt;
 
+  @Column(name = "heartbeat_stale_emitted_at")
+  private OffsetDateTime heartbeatStaleEmittedAt;
+
   public Long getId() {
     return id;
   }
@@ -148,6 +151,14 @@ public class RunnerExecutionEntity {
 
   public void setArchivedAt(OffsetDateTime archivedAt) {
     this.archivedAt = archivedAt;
+  }
+
+  public OffsetDateTime getHeartbeatStaleEmittedAt() {
+    return heartbeatStaleEmittedAt;
+  }
+
+  public void setHeartbeatStaleEmittedAt(OffsetDateTime heartbeatStaleEmittedAt) {
+    this.heartbeatStaleEmittedAt = heartbeatStaleEmittedAt;
   }
 
   @PrePersist

@@ -19,6 +19,7 @@ public class RunnerExecutionEntityMapper {
         entity.getFailureCategory(),
         entity.getCompletedAt(),
         entity.getCreatedAt(),
-        entity.getArchivedAt());
+        entity.getArchivedAt(),
+        entity.getHeartbeatStaleEmittedAt());
   }
 }

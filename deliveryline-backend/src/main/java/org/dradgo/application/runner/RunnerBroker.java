@@ -24,6 +24,7 @@ import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
@@ -238,26 +239,34 @@ public class RunnerBroker {
         throw error;
       }
 
+      // Story 3.2 AC8 (OQ-4): emit RUNNER_STARTED only when the active adapter does NOT take
+      // over the dispatch-event family. Docker adapter takes over via RUNNER_DISPATCHED emitted
+      // post-ack (below) so the audit trail stays single-source.
+      boolean adapterTakesOverDispatchEvent =
+          runnerAdapter instanceof RecoverableRunnerAdapter recoverable
+              && recoverable.emitsDispatchedAfterAck();
       RunnerExecutionSnapshot inserted =
           dispatchTransactionTemplate.execute(
               status -> {
                 RunnerExecutionSnapshot row =
                     recordPort.insertPending(
                         reservedRexId, workflowRunId, stage, nextContextBundleVersion, constraints);
-                Map<String, Object> details = new LinkedHashMap<>();
-                details.put("runnerExecutionId", row.publicId());
-                details.put("stage", stage.value());
-                details.put("contextBundleVersion", row.contextBundleVersion());
-                details.put("timeoutAt", row.timeoutAt().toString());
-                details.put("idempotencyKey", idempotencyKey);
-                eventPort.append(
-                    workflowRunId,
-                    WorkflowEventType.RUNNER_STARTED,
-                    actor,
-                    "runner_dispatched",
-                    null,
-                    OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
-                    details);
+                if (!adapterTakesOverDispatchEvent) {
+                  Map<String, Object> details = new LinkedHashMap<>();
+                  details.put("runnerExecutionId", row.publicId());
+                  details.put("stage", stage.value());
+                  details.put("contextBundleVersion", row.contextBundleVersion());
+                  details.put("timeoutAt", row.timeoutAt().toString());
+                  details.put("idempotencyKey", idempotencyKey);
+                  eventPort.append(
+                      workflowRunId,
+                      WorkflowEventType.RUNNER_STARTED,
+                      actor,
+                      "runner_dispatched",
+                      null,
+                      OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+                      details);
+                }
                 return row;
               });
 
@@ -275,6 +284,13 @@ public class RunnerBroker {
               constraints,
               bundle.effectiveClassification());
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
+
+      // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy
+      // RUNNER_STARTED). Mock path keeps the existing RUNNER_STARTED event (emitted above inside
+      // the dispatchTransactionTemplate) — see OQ-4. Path discriminated by adapter ref prefix so
+      // the broker stays adapter-type-agnostic.
+      appendRunnerDispatchedEventIfDocker(
+          workflowRunId, reservedRexId, request.runnerKind(), ack, actor);
 
       log.info(
           "dispatch ok workflowRunId={} stage={} runnerExecutionId={} contextBundleVersion={} adapterRef={}",
@@ -479,6 +495,11 @@ public class RunnerBroker {
     }
 
     executionService.recordCompleted(runnerExecutionId);
+    // Story 3.2 AC8: emit RUNNER_COMPLETED so the happy-path success has a dedicated audit-trail
+    // entry instead of being inferred from the workflow-state transition only. Exit code is not
+    // surfaced on the success path (the runner contract considers any payload with valid
+    // artifactReferences a successful completion); operators trace failures via RUNNER_FAILED.
+    appendRunnerCompletedEvent(workflowRunId, runnerExecutionId, null);
     log.info(
         "onResult success runnerExecutionId={} workflowRunId={} artifactCount={}",
         runnerExecutionId,
@@ -714,6 +735,76 @@ public class RunnerBroker {
     return FailureCategory.RUNNER_CONTRACT_VIOLATION;
   }
 
+  /**
+   * Story 3.2 AC8: emit {@code runner.dispatched} on the docker path after the adapter's dispatch
+   * ack returns. The mock path's {@code emitsDispatchedAfterAck()} returns {@code false}, so this
+   * is a no-op under {@code runners.mock}.
+   */
+  private void appendRunnerDispatchedEventIfDocker(
+      String workflowRunId,
+      String runnerExecutionId,
+      org.dradgo.domain.registry.RunnerKind runnerKind,
+      RunnerDispatchAck ack,
+      ActorContext actor) {
+    if (!(runnerAdapter instanceof RecoverableRunnerAdapter recoverable)
+        || !recoverable.emitsDispatchedAfterAck()) {
+      return;
+    }
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("runnerKind", runnerKind.value());
+    recoverable
+        .findContainerIdFor(runnerExecutionId)
+        .ifPresent(id -> details.put("containerId", id));
+    String image = runnerProperties.docker().imageTagFor(runnerKind);
+    if (image != null && !image.isBlank()) {
+      details.put("image", image);
+    }
+    details.put(
+        "dispatchedAt", OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).toString());
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_DISPATCHED,
+        actor,
+        "runner_dispatched",
+        null,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+    log.info(
+        "RUNNER_DISPATCHED appended workflowRunId={} runnerExecutionId={} runnerKind={} adapterRef={}",
+        workflowRunId,
+        runnerExecutionId,
+        runnerKind.value(),
+        ack.adapterRef());
+  }
+
+  /** Story 3.2 AC8: emit {@code runner.completed} after a successful happy-path result ingest. */
+  private void appendRunnerCompletedEvent(
+      String workflowRunId, String runnerExecutionId, Integer exitCode) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerExecutionId", runnerExecutionId);
+    if (runnerAdapter instanceof RecoverableRunnerAdapter recoverable) {
+      recoverable
+          .findContainerIdFor(runnerExecutionId)
+          .ifPresent(id -> details.put("containerId", id));
+    }
+    if (exitCode != null) {
+      details.put("exitCode", exitCode);
+    }
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_COMPLETED,
+        ActorContext.SYSTEM,
+        "runner_completed",
+        null,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+    log.info(
+        "RUNNER_COMPLETED appended workflowRunId={} runnerExecutionId={}",
+        workflowRunId,
+        runnerExecutionId);
+  }
+
   private void appendRunnerFailedEvent(
       String workflowRunId,
       String runnerExecutionId,
@@ -806,18 +897,221 @@ public class RunnerBroker {
           now);
       return false;
     }
+    // Story 3.2 AC1: when the active adapter exposes the recovery sub-interface (the docker
+    // path), issue a graceful stop + kill-after-grace BEFORE flipping the row to TIMED_OUT. The
+    // mock adapter implements terminate as a no-op-y cancel(), so this stays safe under
+    // runners.mock. Trap T1 — the heartbeat-race guard above runs FIRST.
+    RecoverableRunnerAdapter.TerminationOutcome terminationOutcome =
+        RecoverableRunnerAdapter.TerminationOutcome.UNKNOWN;
+    Optional<String> containerId = Optional.empty();
+    if (runnerAdapter instanceof RecoverableRunnerAdapter recoverable) {
+      containerId = recoverable.findContainerIdFor(runnerExecutionId);
+      try {
+        terminationOutcome = recoverable.terminate(runnerExecutionId, Duration.ofSeconds(10L));
+        log.info(
+            "scanForTimeouts terminate runnerExecutionId={} outcome={}",
+            runnerExecutionId,
+            terminationOutcome);
+      } catch (RuntimeException terminateError) {
+        log.error(
+            "scanForTimeouts terminate threw unexpectedly runnerExecutionId={} cause={}",
+            runnerExecutionId,
+            terminateError.toString());
+      }
+    }
     executionService.recordTimedOut(runnerExecutionId);
-    appendRunnerFailedEvent(
+    appendRunnerTimeoutEvent(
         snapshot.workflowRunPublicId(),
         runnerExecutionId,
-        FailureCategory.RUNNER_TIMEOUT,
-        "runner_timeout",
-        ActorContext.SYSTEM);
+        containerId.orElse(null),
+        terminationOutcome,
+        freshTimeoutAt);
     driveWorkflowFailed(
         snapshot.workflowRunPublicId(),
         runnerExecutionId,
         FailureCategory.RUNNER_TIMEOUT,
         "runner timeout");
+    return true;
+  }
+
+  private void appendRunnerTimeoutEvent(
+      String workflowRunId,
+      String runnerExecutionId,
+      String containerId,
+      RecoverableRunnerAdapter.TerminationOutcome terminationOutcome,
+      OffsetDateTime timeoutAt) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerExecutionId", runnerExecutionId);
+    if (containerId != null) {
+      details.put("containerId", containerId);
+    }
+    details.put("failureCategory", FailureCategory.RUNNER_TIMEOUT.value());
+    if (timeoutAt != null) {
+      details.put("timeoutAt", timeoutAt.toString());
+    }
+    details.put("terminationOutcome", terminationOutcome.name());
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_TIMEOUT,
+        ActorContext.SYSTEM,
+        "runner_timeout",
+        FailureCategory.RUNNER_TIMEOUT,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+  }
+
+  // =====================================================================
+  // scanForStaleExecutions — heartbeat-stale warn + orphan flip (story 3.2 AC3)
+  // =====================================================================
+
+  /**
+   * Story 3.2 AC3: scheduled scan that emits {@code runner.heartbeatStale} once per stale-window
+   * for rows past {@code 1 × stage_timeout} but inside {@code 2 × stage_timeout}, and flips rows
+   * past {@code 2 × stage_timeout} to {@code orphaned} with {@code runner.orphaned}.
+   *
+   * <p>The {@code heartbeat_stale_emitted_at} column gates re-emission (Trap T4 / OQ-1). The orphan
+   * flip does NOT drive workflow state — Epic 4 recovery decides reconcile vs. fail-forward (AC3
+   * sub-bullet (c)).
+   */
+  public int scanForStaleExecutions() {
+    log.info("scanForStaleExecutions start");
+    int heartbeatWarnings = 0;
+    int orphanFlips = 0;
+    int batchSize = runnerProperties.timeoutScanBatchSize();
+    Duration baselineWindow = runnerProperties.timeoutFor(RunnerStage.INVESTIGATION);
+    for (RunnerStage stage : RunnerStage.values()) {
+      Duration stageTimeout = runnerProperties.timeoutFor(stage);
+      Duration orphanThreshold = runnerProperties.staleThresholdFor(stage);
+      // Phase 1 — heartbeat-stale WARN per row (idempotent on heartbeat_stale_emitted_at).
+      List<RunnerExecutionSnapshot> heartbeatStaleCandidates =
+          recordPort.findStaleByStatusInAndLastActivityAtBefore(
+              ACTIVE_STATUSES, stageTimeout, batchSize);
+      for (RunnerExecutionSnapshot snapshot : heartbeatStaleCandidates) {
+        if (snapshot.stage() != stage) {
+          continue;
+        }
+        try {
+          Boolean emitted =
+              perItemTransactionTemplate.execute(
+                  status -> processHeartbeatStale(snapshot, orphanThreshold));
+          if (Boolean.TRUE.equals(emitted)) {
+            heartbeatWarnings++;
+          }
+        } catch (Exception error) {
+          log.error(
+              "scanForStaleExecutions heartbeat-stale item failed runnerExecutionId={} cause={}",
+              snapshot.publicId(),
+              error.toString());
+        }
+      }
+      // Phase 2 — orphan flip per row past the orphan threshold.
+      List<RunnerExecutionSnapshot> orphanCandidates =
+          recordPort.findStaleByStatusInAndLastActivityAtBefore(
+              ACTIVE_STATUSES, orphanThreshold, batchSize);
+      for (RunnerExecutionSnapshot snapshot : orphanCandidates) {
+        if (snapshot.stage() != stage) {
+          continue;
+        }
+        try {
+          Boolean flipped =
+              perItemTransactionTemplate.execute(status -> processStaleOrphan(snapshot));
+          if (Boolean.TRUE.equals(flipped)) {
+            orphanFlips++;
+          }
+        } catch (Exception error) {
+          log.error(
+              "scanForStaleExecutions orphan item failed runnerExecutionId={} cause={}",
+              snapshot.publicId(),
+              error.toString());
+        }
+      }
+      // Best-effort progress signal across stages.
+      log.debug(
+          "scanForStaleExecutions stage progress stage={} stageTimeout={} orphanThreshold={} baseline={}",
+          stage.value(),
+          stageTimeout,
+          orphanThreshold,
+          baselineWindow);
+    }
+    log.info(
+        "scanForStaleExecutions done heartbeatWarnings={} orphanFlips={}",
+        heartbeatWarnings,
+        orphanFlips);
+    return heartbeatWarnings + orphanFlips;
+  }
+
+  private boolean processHeartbeatStale(
+      RunnerExecutionSnapshot snapshot, Duration orphanThreshold) {
+    String runnerExecutionId = snapshot.publicId();
+    Optional<RunnerExecutionSnapshot> fresh = recordPort.findByPublicId(runnerExecutionId);
+    if (fresh.isEmpty() || isTerminal(fresh.get().status())) {
+      return false;
+    }
+    RunnerExecutionSnapshot current = fresh.get();
+    if (current.heartbeatStaleEmittedAt() != null) {
+      return false;
+    }
+    OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+    OffsetDateTime orphanCutoff = now.minus(orphanThreshold).withOffsetSameInstant(ZoneOffset.UTC);
+    OffsetDateTime lastActivity = current.lastActivityAt();
+    if (lastActivity == null || lastActivity.isBefore(orphanCutoff)) {
+      // Past the orphan threshold — orphan phase will handle it, do not double-emit.
+      return false;
+    }
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("lastActivityAt", lastActivity.toString());
+    details.put("reason", "heartbeat_stale");
+    eventPort.append(
+        current.workflowRunPublicId(),
+        WorkflowEventType.RUNNER_HEARTBEAT_STALE,
+        ActorContext.SYSTEM,
+        "heartbeat_stale",
+        null,
+        now,
+        details);
+    recordPort.markHeartbeatStaleEmitted(runnerExecutionId, now);
+    log.warn(
+        "RUNNER_HEARTBEAT_STALE appended runnerExecutionId={} workflowRunId={} lastActivityAt={}",
+        runnerExecutionId,
+        current.workflowRunPublicId(),
+        lastActivity);
+    return true;
+  }
+
+  private boolean processStaleOrphan(RunnerExecutionSnapshot snapshot) {
+    String runnerExecutionId = snapshot.publicId();
+    Optional<RunnerExecutionSnapshot> fresh = recordPort.findByPublicId(runnerExecutionId);
+    if (fresh.isEmpty() || isTerminal(fresh.get().status())) {
+      return false;
+    }
+    RunnerExecutionSnapshot current = fresh.get();
+    executionService.recordOrphaned(runnerExecutionId);
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("failureCategory", FailureCategory.ORPHAN.value());
+    details.put("reason", "lease_expired");
+    if (current.lastActivityAt() != null) {
+      details.put("lastActivityAt", current.lastActivityAt().toString());
+    }
+    if (runnerAdapter instanceof RecoverableRunnerAdapter recoverable) {
+      recoverable
+          .findContainerIdFor(runnerExecutionId)
+          .ifPresent(id -> details.put("containerId", id));
+    }
+    eventPort.append(
+        snapshot.workflowRunPublicId(),
+        WorkflowEventType.RUNNER_ORPHANED,
+        ActorContext.SYSTEM,
+        "lease_expired",
+        FailureCategory.ORPHAN,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+    log.warn(
+        "RUNNER_ORPHANED appended runnerExecutionId={} workflowRunId={} lastActivityAt={}",
+        runnerExecutionId,
+        snapshot.workflowRunPublicId(),
+        current.lastActivityAt());
     return true;
   }
 
@@ -954,6 +1248,8 @@ public class RunnerBroker {
 
   private boolean processOrphan(RunnerExecutionSnapshot snapshot) {
     String runnerExecutionId = snapshot.publicId();
+    // Trap T6: scratch-replay branch FIRST so a mock-runner happy-path that completed during JVM
+    // downtime resumes via the scratch leaf file, exactly as story 1.13 / 3.1 defined.
     Optional<byte[]> maybeResult = scratchStore.tryReadRunnerResult(runnerExecutionId);
     if (maybeResult.isPresent()) {
       ValidationContext context =
@@ -962,15 +1258,107 @@ public class RunnerBroker {
           contractValidator.validate(ValidationTarget.RUNNER_RESULT, maybeResult.get(), context);
       if (validation.valid()) {
         onResult(runnerExecutionId, maybeResult.get());
-        log.info("recoverOnStartup resumed runnerExecutionId={}", runnerExecutionId);
+        log.info("recoverOnStartup resumed runnerExecutionId={} via=scratch", runnerExecutionId);
         return true;
       }
     }
+
+    // Story 3.2 AC4 / Trap T5: docker recovery probe SECOND — only when the active adapter
+    // exposes the RecoverableRunnerAdapter sub-interface AND returns a non-empty handle. Mock
+    // returns empty so this branch is a no-op under runners.mock.
+    if (runnerAdapter instanceof RecoverableRunnerAdapter recoverable) {
+      Optional<RunnerPollStatus> recovered = recoverable.recoverHandle(runnerExecutionId);
+      if (recovered.isPresent()) {
+        RunnerPollStatus status = recovered.get();
+        switch (status) {
+          case RunnerPollStatus.Running ignored -> {
+            // Review decision D2: re-arm the lease on recovery. AC4 literally says "no row change"
+            // for a recovered-running container, but its pre-crash timeout_at may already be
+            // elapsed after a long broker outage, so the next scanForTimeouts would immediately
+            // kill a genuinely-alive container. Refresh last_activity_at to now so the recovered
+            // container gets a fresh stage window. (Documented deviation from AC4.)
+            OffsetDateTime nowUtc = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+            try {
+              executionService.touchActivity(
+                  runnerExecutionId, nowUtc, runnerProperties.staleThresholdFor(snapshot.stage()));
+            } catch (DomainException terminalRow) {
+              // touchActivity on terminal row — next pollActiveExecutions tick handles it.
+            }
+            log.info(
+                "recoverOnStartup resumed runnerExecutionId={} via=docker_probe status=running rearmed=true",
+                runnerExecutionId);
+            return false;
+          }
+          case RunnerPollStatus.HeartbeatTouched heartbeat -> {
+            OffsetDateTime nowUtc = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+            // P12: clamp a future-dated engine StartedAt / filesystem mtime to the broker clock so
+            // the deadline is not over-extended past now (engine/FS clocks may run ahead).
+            OffsetDateTime activity = heartbeat.activityTimestamp();
+            OffsetDateTime clamped = activity.isAfter(nowUtc) ? nowUtc : activity;
+            try {
+              executionService.touchActivity(
+                  runnerExecutionId, clamped, runnerProperties.staleThresholdFor(snapshot.stage()));
+            } catch (DomainException ignored) {
+              // touchActivity on terminal row — ignore, the next pollActiveExecutions tick handles
+              // it.
+            }
+            log.info(
+                "recoverOnStartup resumed runnerExecutionId={} via=docker_probe status=heartbeat",
+                runnerExecutionId);
+            return false;
+          }
+          case RunnerPollStatus.Completed ignored -> {
+            boolean harvested = harvestResultFromAdapter(snapshot);
+            log.info(
+                "recoverOnStartup harvested runnerExecutionId={} via=docker_probe harvested={}",
+                runnerExecutionId,
+                harvested);
+            return harvested;
+          }
+          case RunnerPollStatus.Failed failed -> {
+            handlePollFailure(snapshot, failed.failureCategory());
+            log.info(
+                "recoverOnStartup failed runnerExecutionId={} via=docker_probe category={}",
+                runnerExecutionId,
+                failed.failureCategory().value());
+            return true;
+          }
+          case RunnerPollStatus.Unknown ignored -> {
+            // Fall through to the orphan flip.
+          }
+        }
+      } else {
+        log.warn(
+            "recoverOnStartup docker probe no-container-found runnerExecutionId={} workflowRunId={}",
+            runnerExecutionId,
+            snapshot.workflowRunPublicId());
+      }
+    }
+
+    // Final fallback: flip to orphaned + emit RUNNER_ORPHANED (and keep RECOVERY_RECONCILED for
+    // the recovery-axis audit per AC8 Trap T10 — they are complementary).
     executionService.recordOrphaned(runnerExecutionId);
-    Map<String, Object> details = new LinkedHashMap<>();
-    details.put("runnerExecutionId", runnerExecutionId);
-    details.put("failureCategory", FailureCategory.ORPHAN.value());
-    details.put("reason", "broker_restart_orphan");
+    Map<String, Object> orphanDetails = new LinkedHashMap<>();
+    orphanDetails.put("runnerExecutionId", runnerExecutionId);
+    orphanDetails.put("failureCategory", FailureCategory.ORPHAN.value());
+    orphanDetails.put("reason", "broker_restart_orphan");
+    if (runnerAdapter instanceof RecoverableRunnerAdapter recoverableForId) {
+      recoverableForId
+          .findContainerIdFor(runnerExecutionId)
+          .ifPresent(id -> orphanDetails.put("containerId", id));
+    }
+    eventPort.append(
+        snapshot.workflowRunPublicId(),
+        WorkflowEventType.RUNNER_ORPHANED,
+        ActorContext.SYSTEM,
+        "broker_restart_orphan",
+        FailureCategory.ORPHAN,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        orphanDetails);
+    Map<String, Object> recoveryDetails = new LinkedHashMap<>();
+    recoveryDetails.put("runnerExecutionId", runnerExecutionId);
+    recoveryDetails.put("failureCategory", FailureCategory.ORPHAN.value());
+    recoveryDetails.put("reason", "broker_restart_orphan");
     eventPort.append(
         snapshot.workflowRunPublicId(),
         WorkflowEventType.RECOVERY_RECONCILED,
@@ -978,7 +1366,7 @@ public class RunnerBroker {
         "broker_restart_orphan",
         FailureCategory.ORPHAN,
         OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
-        details);
+        recoveryDetails);
     log.warn(
         "recoverOnStartup orphaned runnerExecutionId={} workflowRunId={}",
         runnerExecutionId,

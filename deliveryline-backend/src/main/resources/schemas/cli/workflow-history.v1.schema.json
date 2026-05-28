@@ -68,7 +68,17 @@
                   "pm_marked_invalid",
                   "spec_runner_skipped_question"
                 ]
-              }
+              },
+              "runnerExecutionId": { "type": "string", "pattern": "^rex_" },
+              "containerId": { "type": "string" },
+              "workspaceRoot": { "type": "string" },
+              "image": { "type": "string" },
+              "runnerKind": { "type": "string" },
+              "failureCategory": { "type": "string" },
+              "lastActivityAt": { "type": "string", "format": "date-time" },
+              "timeoutAt": { "type": "string", "format": "date-time" },
+              "dispatchedAt": { "type": "string", "format": "date-time" },
+              "exitCode": { "type": "integer" }
             }
           }
         }

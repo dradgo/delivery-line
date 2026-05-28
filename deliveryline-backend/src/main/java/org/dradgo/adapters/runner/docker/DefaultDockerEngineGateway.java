@@ -4,17 +4,26 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
+import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Bind;
+import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.Volume;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.dradgo.application.runner.spi.DockerHostPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,7 +32,7 @@ import org.slf4j.LoggerFactory;
  * surface is confined to this class (story 3.1 trap T8) — the rest of the adapter slice only sees
  * {@link CreateContainerSpec} / {@link ContainerState} records.
  */
-public class DefaultDockerEngineGateway implements DockerEngineGateway {
+public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHostPort {
 
   private static final Logger log = LoggerFactory.getLogger(DefaultDockerEngineGateway.class);
   private static final Pattern WINDOWS_DRIVE_PATH = Pattern.compile("^([A-Za-z]):[/\\\\](.*)$");
@@ -101,7 +110,9 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway {
       labels.putAll(response.getConfig().getLabels());
     }
 
-    return new ContainerState(status, exitCode, networkMode, binds, labels);
+    OffsetDateTime startedAt = state != null ? parseIso8601(state.getStartedAt()) : null;
+
+    return new ContainerState(status, exitCode, networkMode, binds, labels, startedAt);
   }
 
   @Override
@@ -119,8 +130,116 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway {
   @Override
   public void removeContainer(String containerId, boolean force) {
     Objects.requireNonNull(containerId, "containerId");
-    client.removeContainerCmd(containerId).withForce(force).exec();
-    log.info("docker rm containerId={} force={}", containerId, force);
+    try {
+      client.removeContainerCmd(containerId).withForce(force).exec();
+      log.info("docker rm containerId={} force={}", containerId, force);
+    } catch (NotFoundException missing) {
+      log.info("docker rm containerId={} reason=not_found (treated as no-op)", containerId);
+    }
+  }
+
+  @Override
+  public void killContainer(String containerId) {
+    Objects.requireNonNull(containerId, "containerId");
+    try {
+      client.killContainerCmd(containerId).exec();
+      log.info("docker kill containerId={}", containerId);
+    } catch (com.github.dockerjava.api.exception.NotModifiedException alreadyStopped) {
+      log.info("docker kill containerId={} reason=already_stopped (treated as no-op)", containerId);
+    } catch (NotFoundException missing) {
+      log.info("docker kill containerId={} reason=not_found (treated as no-op)", containerId);
+    }
+  }
+
+  @Override
+  public Optional<String> findContainerIdByRunnerExecutionId(String runnerExecutionId) {
+    Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
+    Map<String, String> labelFilter = Map.of("deliveryline.runnerExecutionId", runnerExecutionId);
+    List<Container> matches =
+        client.listContainersCmd().withShowAll(true).withLabelFilter(labelFilter).exec();
+    if (matches == null || matches.isEmpty()) {
+      log.info("docker ps -a --filter runnerExecutionId={} matches=0", runnerExecutionId);
+      return Optional.empty();
+    }
+    // Order: a still-running container wins first, then newest-created. With multiple matches for
+    // one rex (recovery-after-retry race + leaked containers from prior crashes), preferring the
+    // running container avoids letting a newer-but-exited retry container shadow the live one (a
+    // pure newest-created sort would mis-rank that case). null getState()/getCreated() sort last.
+    matches.sort(
+        Comparator.comparing((Container c) -> "running".equalsIgnoreCase(c.getState()))
+            .thenComparing(DefaultDockerEngineGateway::safeCreated)
+            .reversed());
+    log.info(
+        "docker ps -a --filter runnerExecutionId={} matches={} chosenContainerId={}",
+        runnerExecutionId,
+        matches.size(),
+        matches.get(0).getId());
+    return Optional.of(matches.get(0).getId());
+  }
+
+  @Override
+  public List<DockerHostPort.DanglingContainerInfo> listContainersByLabel(
+      String labelKey, String labelValuePrefix) {
+    Objects.requireNonNull(labelKey, "labelKey");
+    // Docker engine supports `--filter label=<key>` for presence-only matches. Value-prefix
+    // filtering is applied client-side after the engine returns the candidate set, since the
+    // engine does not natively support prefix filtering on label values.
+    List<Container> containers =
+        client.listContainersCmd().withShowAll(true).withLabelFilter(List.of(labelKey)).exec();
+    if (containers == null || containers.isEmpty()) {
+      log.info("docker ps -a --filter label={} matches=0", labelKey);
+      return List.of();
+    }
+    List<DockerHostPort.DanglingContainerInfo> out = new ArrayList<>(containers.size());
+    for (Container container : containers) {
+      Map<String, String> labels = container.getLabels();
+      String rex = labels == null ? null : labels.get(labelKey);
+      if (rex == null) {
+        continue;
+      }
+      if (labelValuePrefix != null
+          && !labelValuePrefix.isEmpty()
+          && !rex.startsWith(labelValuePrefix)) {
+        continue;
+      }
+      String status = container.getState() != null ? container.getState() : container.getStatus();
+      if (status == null) {
+        status = "unknown";
+      }
+      OffsetDateTime createdAt = null;
+      if (container.getCreated() != null) {
+        createdAt =
+            OffsetDateTime.ofInstant(Instant.ofEpochSecond(container.getCreated()), ZoneOffset.UTC);
+      }
+      out.add(new DockerHostPort.DanglingContainerInfo(container.getId(), rex, status, createdAt));
+    }
+    log.info(
+        "docker ps -a --filter label={} prefix={} matches={}",
+        labelKey,
+        labelValuePrefix,
+        out.size());
+    return out;
+  }
+
+  private static long safeCreated(Container container) {
+    Long created = container.getCreated();
+    return created == null ? 0L : created;
+  }
+
+  private static OffsetDateTime parseIso8601(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    // Docker engine returns the StartedAt sentinel "0001-01-01T00:00:00Z" before the container has
+    // started. Treat that as null so callers do not see an artificially-early activity timestamp.
+    if (raw.startsWith("0001-01-01")) {
+      return null;
+    }
+    try {
+      return OffsetDateTime.parse(raw).withOffsetSameInstant(ZoneOffset.UTC);
+    } catch (DateTimeParseException ignored) {
+      return null;
+    }
   }
 
   static String formatHostPathForDocker(java.nio.file.Path hostPath) {

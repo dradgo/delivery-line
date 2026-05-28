@@ -11,7 +11,7 @@ import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
-import org.dradgo.application.runner.spi.RunnerAdapter;
+import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.domain.registry.FailureCategory;
 import org.slf4j.Logger;
@@ -29,7 +29,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @Profile("!runners.docker")
-public class MockRunnerAdapter implements RunnerAdapter {
+public class MockRunnerAdapter implements RecoverableRunnerAdapter {
 
   private static final Logger log = LoggerFactory.getLogger(MockRunnerAdapter.class);
 
@@ -139,6 +139,26 @@ public class MockRunnerAdapter implements RunnerAdapter {
   public void cancel(String runnerExecutionId) {
     dispatched.remove(runnerExecutionId);
     dispatchedAt.remove(runnerExecutionId);
+  }
+
+  @Override
+  public Optional<RunnerPollStatus> recoverHandle(String runnerExecutionId) {
+    // The mock adapter has no external state to probe — the broker's existing scratch-replay
+    // branch (Trap T6) handles JVM-restart recovery. Returning empty preserves that posture.
+    return Optional.empty();
+  }
+
+  @Override
+  public org.dradgo.application.runner.spi.RecoverableRunnerAdapter.TerminationOutcome terminate(
+      String runnerExecutionId, java.time.Duration graceful) {
+    // Mock has no external process. cancel() drops the registration; report STOPPED_GRACEFULLY
+    // when the row was known, UNKNOWN otherwise — matches the docker contract semantics.
+    boolean known = dispatched.containsKey(runnerExecutionId);
+    cancel(runnerExecutionId);
+    return known
+        ? org.dradgo.application.runner.spi.RecoverableRunnerAdapter.TerminationOutcome
+            .STOPPED_GRACEFULLY
+        : org.dradgo.application.runner.spi.RecoverableRunnerAdapter.TerminationOutcome.UNKNOWN;
   }
 
   private void executeScenarioSideEffect(

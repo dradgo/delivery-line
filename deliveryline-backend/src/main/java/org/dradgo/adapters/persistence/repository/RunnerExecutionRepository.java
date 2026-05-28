@@ -45,4 +45,36 @@ public interface RunnerExecutionRepository extends JpaRepository<RunnerExecution
       Limit limit);
 
   List<RunnerExecutionEntity> findByStatusInOrderByCreatedAtAsc(List<String> statuses, Limit limit);
+
+  @Query(
+      """
+		select runnerExecution
+		from RunnerExecutionEntity runnerExecution
+		where runnerExecution.status in :statuses
+		  and runnerExecution.lastActivityAt < :cutoff
+		order by runnerExecution.lastActivityAt asc
+		""")
+  List<RunnerExecutionEntity> findStaleByStatusInAndLastActivityAtBefore(
+      @Param("statuses") List<String> statuses,
+      @Param("cutoff") OffsetDateTime cutoff,
+      Limit limit);
+
+  // Story 3.2 AC5: workspace cleanup uses status IN (completed, failed, timed_out, orphaned) AS
+  // the primary defense against deleting workspaces whose row is still live (Trap T16). The
+  // adapter constructs the status list from the closed-set RunnerExecutionStatus enum, NOT from
+  // a free-form caller, so SQL injection is not a concern.
+  @Query(
+      """
+		select runnerExecution
+		from RunnerExecutionEntity runnerExecution
+		where runnerExecution.status in :statuses
+		  and runnerExecution.completedAt is not null
+		  and runnerExecution.completedAt < :cutoff
+		  and runnerExecution.archivedAt is null
+		order by runnerExecution.completedAt asc
+		""")
+  List<RunnerExecutionEntity> findCompletedBeforeAndNotArchived(
+      @Param("statuses") List<String> statuses,
+      @Param("cutoff") OffsetDateTime cutoff,
+      Limit limit);
 }

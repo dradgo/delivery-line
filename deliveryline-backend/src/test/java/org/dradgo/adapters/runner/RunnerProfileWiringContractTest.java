@@ -91,7 +91,11 @@ class RunnerProfileWiringContractTest {
             pattern = ".*TestConfiguration"),
         @org.springframework.context.annotation.ComponentScan.Filter(
             type = org.springframework.context.annotation.FilterType.REGEX,
-            pattern = "org\\.dradgo\\.adapters\\.runner\\.docker\\.DockerConfiguration")
+            pattern = "org\\.dradgo\\.adapters\\.runner\\.docker\\.DockerConfiguration"),
+        @org.springframework.context.annotation.ComponentScan.Filter(
+            type = org.springframework.context.annotation.FilterType.REGEX,
+            pattern =
+                "org\\.dradgo\\.adapters\\.runner\\.docker\\.DockerRunnerLifecycleConfiguration.*")
       })
   static class RunnerStackTestConfiguration {
 

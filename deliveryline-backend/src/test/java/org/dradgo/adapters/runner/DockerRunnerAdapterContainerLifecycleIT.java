@@ -75,6 +75,7 @@ class DockerRunnerAdapterContainerLifecycleIT {
             java.util.Map.of(RunnerKind.CODEX, TEST_IMAGE, RunnerKind.CLAUDE, TEST_IMAGE),
             tempHome.resolve("runner-work"),
             1L,
+            3_600_000L,
             Duration.ofSeconds(30L),
             Duration.ofSeconds(30L));
     RunnerProperties properties =
@@ -83,6 +84,8 @@ class DockerRunnerAdapterContainerLifecycleIT {
             java.util.Map.of(),
             10_000L,
             50,
+            60_000L,
+            5_000L,
             RunnerProperties.Recovery.defaults(),
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),

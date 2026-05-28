@@ -3,18 +3,26 @@ package org.dradgo.adapters.files;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermission;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
 import org.dradgo.domain.DomainException;
@@ -44,6 +52,8 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   private static final String LOGS_SUBDIR = "logs";
   private static final String CONTEXT_BUNDLE_FILENAME = "context-bundle.v1.json";
   private static final String RUNNER_RESULT_FILENAME = "runner-result.v1.json";
+  private static final String HEARTBEAT_TOUCH_FILENAME = "heartbeat.touch";
+  private static final String RUNNER_STDOUT_FILENAME = "runner.stdout";
   private static final String TEMP_SUFFIX = ".tmp";
 
   private static final Set<PosixFilePermission> OWNER_ONLY_DIR_PERMS =
@@ -201,6 +211,147 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
       return Optional.empty();
     }
     return Optional.of(outputDir);
+  }
+
+  @Override
+  public Optional<OffsetDateTime> tryReadHeartbeatTouch(String runnerExecutionId) {
+    Path outputDir = subdirPath(runnerExecutionId, OUTPUT_SUBDIR);
+    Path target = outputDir.resolve(HEARTBEAT_TOUCH_FILENAME).normalize();
+    if (!target.startsWith(outputDir)) {
+      return Optional.empty();
+    }
+    if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      return Optional.empty();
+    }
+    try {
+      if (Files.isSymbolicLink(target)) {
+        return Optional.empty();
+      }
+      Path realOutput = outputDir.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      Path real = target.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      if (!real.startsWith(realOutput)) {
+        return Optional.empty();
+      }
+      FileTime modified = Files.getLastModifiedTime(target, LinkOption.NOFOLLOW_LINKS);
+      // Trap T3: collapse FileTime to OffsetDateTime at MILLISECOND precision in UTC — keep the
+      // heartbeat compare monotonic across filesystems with different native precision (some report
+      // ns, some ms). truncatedTo(MILLIS) actually delivers the documented monotonicity (a bare
+      // toInstant() would preserve ns and re-introduce cross-FS jitter).
+      return Optional.of(
+          OffsetDateTime.ofInstant(
+              modified.toInstant().truncatedTo(ChronoUnit.MILLIS), ZoneOffset.UTC));
+    } catch (IOException error) {
+      log.warn(
+          "tryReadHeartbeatTouch io failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+      return Optional.empty();
+    }
+  }
+
+  @Override
+  public Optional<LogGrowthObservation> observeLogGrowth(String runnerExecutionId) {
+    Path logsDir = subdirPath(runnerExecutionId, LOGS_SUBDIR);
+    Path target = logsDir.resolve(RUNNER_STDOUT_FILENAME).normalize();
+    if (!target.startsWith(logsDir)) {
+      return Optional.empty();
+    }
+    if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      return Optional.empty();
+    }
+    try {
+      if (Files.isSymbolicLink(target)) {
+        return Optional.empty();
+      }
+      Path realLogs = logsDir.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      Path real = target.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      if (!real.startsWith(realLogs)) {
+        return Optional.empty();
+      }
+      if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+        return Optional.empty();
+      }
+      BasicFileAttributes attrs =
+          Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+      // Trap T3: ms-precision truncation (mirrors tryReadHeartbeatTouch) for cross-FS monotonicity.
+      OffsetDateTime modified =
+          OffsetDateTime.ofInstant(
+              attrs.lastModifiedTime().toInstant().truncatedTo(ChronoUnit.MILLIS), ZoneOffset.UTC);
+      return Optional.of(new LogGrowthObservation(attrs.size(), modified));
+    } catch (IOException error) {
+      log.warn(
+          "observeLogGrowth io failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+      return Optional.empty();
+    }
+  }
+
+  @Override
+  public void deleteWorkspace(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path root = resolveWorkspaceRoot(runnerExecutionId);
+    if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
+      log.warn(
+          "deleteWorkspace skipped runnerExecutionId={} reason=missing_workspace_dir",
+          runnerExecutionId);
+      return;
+    }
+    try {
+      Path realWorkspaceRoot = workspaceRoot.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      Path realRoot = root.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      if (!realRoot.startsWith(realWorkspaceRoot)) {
+        throw pathTraversal(runnerExecutionId, "");
+      }
+      walkAndDelete(root);
+      log.info("workspace deleted runnerExecutionId={} root={}", runnerExecutionId, root);
+    } catch (IOException error) {
+      throw new IllegalStateException(
+          "Failed to delete runner workspace for " + runnerExecutionId, error);
+    }
+  }
+
+  private static void walkAndDelete(Path root) throws IOException {
+    Files.walkFileTree(
+        root,
+        new SimpleFileVisitor<>() {
+          @Override
+          public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+              throws IOException {
+            Files.delete(file);
+            return FileVisitResult.CONTINUE;
+          }
+
+          @Override
+          public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+            if (exc != null) {
+              throw exc;
+            }
+            Files.delete(dir);
+            return FileVisitResult.CONTINUE;
+          }
+        });
+  }
+
+  /** Story 3.2: enumerate {@code rex_*} subdirectories under the workspace root for AC5 (k). */
+  @Override
+  public java.util.List<Path> listWorkspaceSubdirectories() {
+    java.util.List<Path> out = new java.util.ArrayList<>();
+    if (!Files.isDirectory(workspaceRoot, LinkOption.NOFOLLOW_LINKS)) {
+      return out;
+    }
+    try (java.util.stream.Stream<Path> entries = Files.list(workspaceRoot)) {
+      entries.forEach(
+          entry -> {
+            if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)
+                && entry.getFileName().toString().startsWith("rex_")) {
+              out.add(entry);
+            }
+          });
+    } catch (IOException error) {
+      log.warn("listWorkspaceSubdirectories io failure cause={}", error.toString());
+    }
+    return out;
   }
 
   public Path deliverylineHome() {

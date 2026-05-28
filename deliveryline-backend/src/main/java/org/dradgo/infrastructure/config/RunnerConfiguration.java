@@ -56,6 +56,19 @@ public class RunnerConfiguration {
     runnerBroker.pollActiveExecutions();
   }
 
+  /**
+   * Story 3.2 AC3: scheduled trigger for the heartbeat-stale + orphan-flip scan. Runs on its own
+   * cadence (default 60s) because stale-detection is slower-changing than timeout enforcement
+   * (OQ-7).
+   */
+  @Scheduled(fixedDelayString = "${deliveryline.runner.stale-scan-interval-ms:60000}")
+  public void scanRunnerStaleExecutions() {
+    if (!runnerProperties.scheduling().enabled()) {
+      return;
+    }
+    runnerBroker.scanForStaleExecutions();
+  }
+
   @EventListener(ApplicationReadyEvent.class)
   public void recoverRunnerExecutionsOnStartup() {
     if (!runnerProperties.scheduling().enabled()) {

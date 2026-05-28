@@ -71,6 +71,11 @@ deliveryline:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000
     timeout-scan-batch-size: 50
+    # Story 3.2 — separate cadence for the heartbeat-stale + orphan-flip scan (stale-detection is
+    # a slower-changing signal than timeout enforcement, OQ-7).
+    stale-scan-interval-ms: 60000
+    # Story 3.2 — bind the previously implicit poll cadence so RunnerProperties owns it.
+    poll-interval-ms: 5000
     stage-timeouts:
       investigation: 600s
       execution: 600s
@@ -93,5 +98,7 @@ deliveryline:
         claude: deliveryline/claude-runner:latest
       workspace-root: ${deliveryline.home:./}/runner-work
       workspace-retention-hours: 24
+      # Story 3.2 — fixed-delay between RunnerWorkspaceCleanupJob runs. Default 1h.
+      workspace-cleanup-interval-ms: 3600000
       container-create-timeout: 30s
       container-start-timeout: 30s

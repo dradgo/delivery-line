@@ -1,6 +1,8 @@
 package org.dradgo.application.runner.spi;
 
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -56,4 +58,38 @@ public interface RunnerWorkspaceStore {
    * was never called for this rex-id.
    */
   Optional<Path> resolveOutputRoot(String runnerExecutionId);
+
+  /**
+   * Story 3.2 AC2 sub-bullet (b): read the optional heartbeat-touch marker file at {@code
+   * output/heartbeat.touch}. Returns the file's last-modified timestamp (UTC) when present and the
+   * file's real path remains inside the workspace; returns {@link Optional#empty()} when the file
+   * is missing, unreadable, or fails the symlink-escape guard. Never throws — adapter treats
+   * emptiness as "no heartbeat marker".
+   */
+  Optional<OffsetDateTime> tryReadHeartbeatTouch(String runnerExecutionId);
+
+  /**
+   * Story 3.2 AC2 sub-bullet (c): observe {@code logs/runner.stdout} byte count + last-modified
+   * timestamp. Returns {@link Optional#empty()} when the file is missing, fails the symlink-escape
+   * guard, or cannot be read. The adapter compares this observation against its in-memory previous
+   * observation and emits {@code HeartbeatTouched} when both byte count and modified-at advance.
+   */
+  Optional<LogGrowthObservation> observeLogGrowth(String runnerExecutionId);
+
+  /**
+   * Story 3.2 AC5: recursively delete the workspace directory tree for the given runner execution.
+   * Containment-guarded: the resolved real path of the workspace root MUST start with the
+   * configured workspace root; otherwise throws. Tolerates a missing workspace directory by logging
+   * WARN and returning normally — the cleanup job marks the row archived either way.
+   */
+  void deleteWorkspace(String runnerExecutionId);
+
+  /**
+   * Story 3.2 AC5 sub-bullet (d) / Trap T7: enumerate immediate subdirectories under the workspace
+   * root whose name matches the {@code rex_*} prefix. Used by the cleanup job to detect orphan
+   * directories that lack a corresponding {@code runner_executions} row so they can be preserved
+   * (WARN-only). The returned paths are absolute. Returns an empty list when the workspace root is
+   * missing.
+   */
+  List<Path> listWorkspaceSubdirectories();
 }

@@ -28,6 +28,8 @@ public record RunnerProperties(
     Map<RunnerStage, Duration> stageTimeouts,
     long timeoutScanIntervalMs,
     int timeoutScanBatchSize,
+    long staleScanIntervalMs,
+    long pollIntervalMs,
     Recovery recovery,
     Mock mock,
     Scheduling scheduling,
@@ -48,6 +50,14 @@ public record RunnerProperties(
       throw new IllegalArgumentException(
           "deliveryline.runner.timeout-scan-batch-size must be positive: " + timeoutScanBatchSize);
     }
+    if (staleScanIntervalMs <= 0L) {
+      throw new IllegalArgumentException(
+          "deliveryline.runner.stale-scan-interval-ms must be positive: " + staleScanIntervalMs);
+    }
+    if (pollIntervalMs <= 0L) {
+      throw new IllegalArgumentException(
+          "deliveryline.runner.poll-interval-ms must be positive: " + pollIntervalMs);
+    }
     stageTimeouts = stageTimeouts == null ? Map.of() : Map.copyOf(stageTimeouts);
     recovery = recovery == null ? Recovery.defaults() : recovery;
     mock = mock == null ? Mock.defaults() : mock;
@@ -64,6 +74,8 @@ public record RunnerProperties(
         timeouts,
         10_000L,
         50,
+        60_000L,
+        5_000L,
         Recovery.defaults(),
         Mock.defaults(),
         Scheduling.defaults(),
@@ -139,6 +151,7 @@ public record RunnerProperties(
       Map<RunnerKind, String> imageTags,
       Path workspaceRoot,
       long workspaceRetentionHours,
+      long workspaceCleanupIntervalMs,
       Duration containerCreateTimeout,
       Duration containerStartTimeout) {
 
@@ -157,6 +170,11 @@ public record RunnerProperties(
         throw new IllegalArgumentException(
             "deliveryline.runner.docker.workspace-retention-hours must be positive: "
                 + workspaceRetentionHours);
+      }
+      if (workspaceCleanupIntervalMs <= 0L) {
+        throw new IllegalArgumentException(
+            "deliveryline.runner.docker.workspace-cleanup-interval-ms must be positive: "
+                + workspaceCleanupIntervalMs);
       }
       Objects.requireNonNull(containerCreateTimeout, "containerCreateTimeout");
       Objects.requireNonNull(containerStartTimeout, "containerStartTimeout");
@@ -179,6 +197,7 @@ public record RunnerProperties(
           tags,
           Path.of("runner-work"),
           24L,
+          3_600_000L,
           Duration.ofSeconds(30L),
           Duration.ofSeconds(30L));
     }

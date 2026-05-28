@@ -61,6 +61,21 @@ public final class WorkflowEventDetailKeys {
   public static final String SUPERSEDED_BY_ARTIFACT_ID = "supersededByArtifactId";
   public static final String NO_EFFECT_REASON = "noEffectReason";
 
+  // Runner lifecycle keys (added story 3.2). All allow-listed: container/runner ids and image
+  // refs are non-secret operator forensics; timestamps and status fields are derived signals.
+  // workspaceRoot is a filesystem path under DELIVERYLINE_HOME; redaction posture from story 1.10
+  // covers absolute-path log lines so the value is safe to surface in CLI history.
+  public static final String RUNNER_EXECUTION_ID = "runnerExecutionId";
+  public static final String CONTAINER_ID = "containerId";
+  public static final String WORKSPACE_ROOT = "workspaceRoot";
+  public static final String IMAGE = "image";
+  public static final String RUNNER_KIND = "runnerKind";
+  public static final String FAILURE_CATEGORY = "failureCategory";
+  public static final String LAST_ACTIVITY_AT = "lastActivityAt";
+  public static final String TIMEOUT_AT = "timeoutAt";
+  public static final String DISPATCHED_AT = "dispatchedAt";
+  public static final String EXIT_CODE = "exitCode";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -89,7 +104,17 @@ public final class WorkflowEventDetailKeys {
           INCORPORATED_INTO_ARTIFACT_ID,
           INCORPORATION_EVENT_ID,
           SUPERSEDED_BY_ARTIFACT_ID,
-          NO_EFFECT_REASON);
+          NO_EFFECT_REASON,
+          RUNNER_EXECUTION_ID,
+          CONTAINER_ID,
+          WORKSPACE_ROOT,
+          IMAGE,
+          RUNNER_KIND,
+          FAILURE_CATEGORY,
+          LAST_ACTIVITY_AT,
+          TIMEOUT_AT,
+          DISPATCHED_AT,
+          EXIT_CODE);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

@@ -101,6 +101,11 @@
         "artifact.versionCreated",
         "runner.started",
         "runner.failed",
+        "runner.dispatched",
+        "runner.heartbeatStale",
+        "runner.timeout",
+        "runner.orphaned",
+        "runner.completed",
         "recovery.retried",
         "recovery.dispatchFailed",
         "recovery.reconciled",
@@ -237,7 +242,20 @@
                 "pm_marked_invalid",
                 "spec_runner_skipped_question"
               ]
-            }
+            },
+            "runnerExecutionId": {
+              "type": "string",
+              "pattern": "^rex_[A-Za-z0-9_-]{4,}$"
+            },
+            "containerId": { "type": "string", "minLength": 1 },
+            "workspaceRoot": { "type": "string", "minLength": 1 },
+            "image": { "type": "string", "minLength": 1 },
+            "runnerKind": { "type": "string", "enum": ["codex", "claude", "mock"] },
+            "failureCategory": { "$ref": "#/$defs/failureCategory" },
+            "lastActivityAt": { "type": "string", "format": "date-time" },
+            "timeoutAt": { "type": "string", "format": "date-time" },
+            "dispatchedAt": { "type": "string", "format": "date-time" },
+            "exitCode": { "type": "integer" }
           }
         }
       }

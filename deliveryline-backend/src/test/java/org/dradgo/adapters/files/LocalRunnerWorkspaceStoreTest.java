@@ -188,6 +188,8 @@ class LocalRunnerWorkspaceStoreTest {
         java.util.Map.of(),
         10_000L,
         50,
+        60_000L,
+        5_000L,
         RunnerProperties.Recovery.defaults(),
         RunnerProperties.Mock.defaults(),
         RunnerProperties.Scheduling.defaults(),
@@ -200,6 +202,7 @@ class LocalRunnerWorkspaceStoreTest {
                 "deliveryline/claude-runner:latest"),
             workspaceRoot,
             24L,
+            3_600_000L,
             java.time.Duration.ofSeconds(30L),
             java.time.Duration.ofSeconds(30L)));
   }

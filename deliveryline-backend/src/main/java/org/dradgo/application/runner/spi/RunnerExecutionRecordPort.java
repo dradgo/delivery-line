@@ -63,4 +63,34 @@ public interface RunnerExecutionRecordPort {
   RunnerExecutionSnapshot markTimedOut(String publicId, OffsetDateTime completedAt);
 
   RunnerExecutionSnapshot markOrphaned(String publicId, OffsetDateTime completedAt);
+
+  /**
+   * Story 3.2 AC5: marks the row as {@code archived_at = archivedAt} once its on-disk workspace has
+   * been deleted by {@code RunnerWorkspaceCleanupJob}. The row stays in its terminal status; only
+   * the archive marker advances. Throws {@link org.dradgo.domain.DomainException} when the row is
+   * missing.
+   */
+  RunnerExecutionSnapshot markArchived(String publicId, OffsetDateTime archivedAt);
+
+  /**
+   * Story 3.2 AC3 sub-bullet (d) — gates re-emission of {@code runner.heartbeatStale} to at most
+   * once per stale window. Sets the column when the event is appended and is implicitly cleared on
+   * any subsequent activity / terminal transition.
+   */
+  RunnerExecutionSnapshot markHeartbeatStaleEmitted(String publicId, OffsetDateTime emittedAt);
+
+  /**
+   * Story 3.2 AC3: find pending/running rows whose {@code last_activity_at < now() - staleWindow}.
+   * Used by {@link org.dradgo.application.runner.RunnerBroker#scanForStaleExecutions} as the input
+   * for both the heartbeat-stale (1x stage timeout) and orphan (2x stage timeout) sub-passes.
+   */
+  List<RunnerExecutionSnapshot> findStaleByStatusInAndLastActivityAtBefore(
+      List<RunnerExecutionStatus> statuses, Duration staleWindow, int limit);
+
+  /**
+   * Story 3.2 AC5: find rows past the workspace-retention horizon whose workspace has not been
+   * archived yet. SQL guard: {@code status IN (completed, failed, timed_out, orphaned)} so live
+   * rows (pending/running) are never returned even if {@code completed_at} drifted (Trap T16).
+   */
+  List<RunnerExecutionSnapshot> findCompletedBeforeAndNotArchived(OffsetDateTime cutoff, int limit);
 }

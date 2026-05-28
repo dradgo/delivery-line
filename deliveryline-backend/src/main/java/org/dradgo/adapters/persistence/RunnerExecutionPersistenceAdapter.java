@@ -196,6 +196,7 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
           entity.setLastActivityAt(activity);
           ensureTimeoutAfterActivity(entity, activity, Duration.ZERO);
           entity.setStatus(RunnerExecutionStatus.RUNNING);
+          entity.setHeartbeatStaleEmittedAt(null);
         });
   }
 
@@ -223,6 +224,7 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     OffsetDateTime activity = lastActivityAt.withOffsetSameInstant(ZoneOffset.UTC);
     entity.setLastActivityAt(activity);
     ensureTimeoutAfterActivity(entity, activity, staleTimeoutWindow);
+    entity.setHeartbeatStaleEmittedAt(null);
     return mapper.toSnapshot(runnerExecutionRepository.saveAndFlush(entity));
   }
 
@@ -236,6 +238,7 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
           entity.setStatus(RunnerExecutionStatus.COMPLETED);
           entity.setCompletedAt(completedAt.withOffsetSameInstant(ZoneOffset.UTC));
           entity.setFailureCategory(null);
+          entity.setHeartbeatStaleEmittedAt(null);
         });
   }
 
@@ -251,6 +254,7 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
           entity.setStatus(RunnerExecutionStatus.FAILED);
           entity.setFailureCategory(failureCategory);
           entity.setCompletedAt(completedAt.withOffsetSameInstant(ZoneOffset.UTC));
+          entity.setHeartbeatStaleEmittedAt(null);
         });
   }
 
@@ -264,6 +268,7 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
           entity.setStatus(RunnerExecutionStatus.TIMED_OUT);
           entity.setFailureCategory(FailureCategory.RUNNER_TIMEOUT);
           entity.setCompletedAt(completedAt.withOffsetSameInstant(ZoneOffset.UTC));
+          entity.setHeartbeatStaleEmittedAt(null);
         });
   }
 
@@ -277,7 +282,86 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
           entity.setStatus(RunnerExecutionStatus.ORPHANED);
           entity.setFailureCategory(FailureCategory.ORPHAN);
           entity.setCompletedAt(completedAt.withOffsetSameInstant(ZoneOffset.UTC));
+          entity.setHeartbeatStaleEmittedAt(null);
         });
+  }
+
+  @Override
+  public RunnerExecutionSnapshot markArchived(String publicId, OffsetDateTime archivedAt) {
+    Objects.requireNonNull(archivedAt, "archivedAt");
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setArchivedAt(archivedAt.withOffsetSameInstant(ZoneOffset.UTC));
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info("markArchived runnerExecutionId={} archivedAt={}", publicId, entity.getArchivedAt());
+    return mapper.toSnapshot(saved);
+  }
+
+  @Override
+  public RunnerExecutionSnapshot markHeartbeatStaleEmitted(
+      String publicId, OffsetDateTime emittedAt) {
+    Objects.requireNonNull(emittedAt, "emittedAt");
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setHeartbeatStaleEmittedAt(emittedAt.withOffsetSameInstant(ZoneOffset.UTC));
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "markHeartbeatStaleEmitted runnerExecutionId={} emittedAt={}",
+        publicId,
+        entity.getHeartbeatStaleEmittedAt());
+    return mapper.toSnapshot(saved);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<RunnerExecutionSnapshot> findStaleByStatusInAndLastActivityAtBefore(
+      List<RunnerExecutionStatus> statuses, Duration staleWindow, int limit) {
+    Objects.requireNonNull(staleWindow, "staleWindow");
+    if (statuses == null || statuses.isEmpty()) {
+      return List.of();
+    }
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be positive");
+    }
+    OffsetDateTime cutoff =
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).minus(staleWindow);
+    List<String> rawStatuses =
+        statuses.stream().map(RunnerExecutionStatus::value).collect(Collectors.toList());
+    return runnerExecutionRepository
+        .findStaleByStatusInAndLastActivityAtBefore(rawStatuses, cutoff, Limit.of(limit))
+        .stream()
+        .map(mapper::toSnapshot)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<RunnerExecutionSnapshot> findCompletedBeforeAndNotArchived(
+      OffsetDateTime cutoff, int limit) {
+    Objects.requireNonNull(cutoff, "cutoff");
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be positive");
+    }
+    // Trap T16: the SQL guard restricts status to terminal values so a live row whose completed_at
+    // drifted is never returned to the cleanup sweep.
+    List<String> rawStatuses =
+        List.of(
+            RunnerExecutionStatus.COMPLETED.value(),
+            RunnerExecutionStatus.FAILED.value(),
+            RunnerExecutionStatus.TIMED_OUT.value(),
+            RunnerExecutionStatus.ORPHANED.value());
+    return runnerExecutionRepository
+        .findCompletedBeforeAndNotArchived(
+            rawStatuses, cutoff.withOffsetSameInstant(ZoneOffset.UTC), Limit.of(limit))
+        .stream()
+        .map(mapper::toSnapshot)
+        .collect(Collectors.toList());
   }
 
   private RunnerExecutionSnapshot mutateWithGuard(

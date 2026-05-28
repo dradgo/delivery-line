@@ -19,7 +19,8 @@ import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
-import org.dradgo.application.runner.spi.RunnerAdapter;
+import org.dradgo.application.runner.spi.LogGrowthObservation;
+import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
@@ -45,7 +46,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @Profile("runners.docker")
-public class DockerRunnerAdapter implements RunnerAdapter {
+public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
 
   private static final Logger log = LoggerFactory.getLogger(DockerRunnerAdapter.class);
 
@@ -60,6 +61,8 @@ public class DockerRunnerAdapter implements RunnerAdapter {
   private final RunnerProperties runnerProperties;
   private final Clock clock;
   private final ConcurrentMap<String, String> rexIdToContainerId = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, LogGrowthObservation> rexIdToLastLogObservation =
+      new ConcurrentHashMap<>();
 
   @org.springframework.beans.factory.annotation.Autowired
   public DockerRunnerAdapter(
@@ -120,6 +123,7 @@ public class DockerRunnerAdapter implements RunnerAdapter {
     labels.put("deliveryline.runnerExecutionId", rexId);
     labels.put("deliveryline.workflowRunId", request.workflowRunId());
     labels.put("deliveryline.runnerKind", kind.value());
+    labels.put("deliveryline.stage", request.stage().value());
     labels.put(
         "deliveryline.dispatchedAt",
         OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).toString());
@@ -197,7 +201,22 @@ public class DockerRunnerAdapter implements RunnerAdapter {
       return new RunnerPollStatus.Unknown();
     }
 
-    switch (state.status()) {
+    String status = state.status();
+    boolean runningLike =
+        "created".equals(status)
+            || "running".equals(status)
+            || "paused".equals(status)
+            || "restarting".equals(status);
+    // Trap T2: heartbeat detection only modifies the Running branch — Completed / Failed / Unknown
+    // classification stays unchanged. Short-circuit when the container has already exited.
+    if (runningLike) {
+      RunnerPollStatus heartbeat = detectHeartbeat(runnerExecutionId, containerId, state);
+      if (heartbeat != null) {
+        return heartbeat;
+      }
+    }
+
+    switch (status) {
       case "created":
       case "running":
       case "paused":
@@ -206,7 +225,7 @@ public class DockerRunnerAdapter implements RunnerAdapter {
             "docker poll running runnerExecutionId={} containerId={} status={}",
             runnerExecutionId,
             containerId,
-            state.status());
+            status);
         return new RunnerPollStatus.Running();
       case "exited":
         return classifyExited(runnerExecutionId, containerId, state);
@@ -216,15 +235,130 @@ public class DockerRunnerAdapter implements RunnerAdapter {
             "docker poll terminal-failure runnerExecutionId={} containerId={} status={}",
             runnerExecutionId,
             containerId,
-            state.status());
+            status);
         return new RunnerPollStatus.Failed(FailureCategory.RUNNER_CRASH);
       default:
         log.warn(
             "docker poll unknown-status runnerExecutionId={} containerId={} status={}",
             runnerExecutionId,
             containerId,
-            state.status());
+            status);
         return new RunnerPollStatus.Unknown();
+    }
+  }
+
+  /**
+   * Story 3.2 AC2: priority-ordered heartbeat-source check. Returns a {@link
+   * RunnerPollStatus.HeartbeatTouched} when any source advances; otherwise returns {@code null} so
+   * the caller falls through to the existing {@link RunnerPollStatus.Running} classification.
+   */
+  private RunnerPollStatus detectHeartbeat(
+      String runnerExecutionId, String containerId, ContainerState state) {
+    LogGrowthObservation previous = rexIdToLastLogObservation.get(runnerExecutionId);
+    OffsetDateTime previousActivity =
+        previous == null ? OffsetDateTime.MIN : previous.lastModifiedAt();
+
+    // (a) container State.StartedAt — a brand-new start counts as activity.
+    OffsetDateTime startedAt = state.startedAt();
+    if (startedAt != null && startedAt.isAfter(previousActivity)) {
+      // Persist the started-at marker as the floor for future log-growth comparisons.
+      rexIdToLastLogObservation.put(runnerExecutionId, new LogGrowthObservation(0L, startedAt));
+      log.debug(
+          "docker heartbeat startedAt runnerExecutionId={} containerId={} startedAt={}",
+          runnerExecutionId,
+          containerId,
+          startedAt);
+      return new RunnerPollStatus.HeartbeatTouched(startedAt);
+    }
+
+    // (b) heartbeat.touch file — optional marker the runner image MAY touch periodically.
+    Optional<OffsetDateTime> heartbeatTouch =
+        workspaceStore.tryReadHeartbeatTouch(runnerExecutionId);
+    if (heartbeatTouch.isPresent() && heartbeatTouch.get().isAfter(previousActivity)) {
+      rexIdToLastLogObservation.put(
+          runnerExecutionId,
+          previous == null
+              ? new LogGrowthObservation(0L, heartbeatTouch.get())
+              : new LogGrowthObservation(previous.byteCount(), heartbeatTouch.get()));
+      log.debug(
+          "docker heartbeat heartbeatTouch runnerExecutionId={} containerId={} modifiedAt={}",
+          runnerExecutionId,
+          containerId,
+          heartbeatTouch.get());
+      return new RunnerPollStatus.HeartbeatTouched(heartbeatTouch.get());
+    }
+
+    // (c) logs/runner.stdout byte-count growth.
+    Optional<LogGrowthObservation> observation = workspaceStore.observeLogGrowth(runnerExecutionId);
+    if (observation.isPresent()) {
+      LogGrowthObservation fresh = observation.get();
+      // Review fix: baseline 0 (not -1) so a freshly-created EMPTY runner.stdout (byteCount == 0)
+      // does NOT register as growth on the first poll — only real bytes count as activity.
+      long previousBytes = previous == null ? 0L : previous.byteCount();
+      if (fresh.byteCount() > previousBytes && fresh.lastModifiedAt().isAfter(previousActivity)) {
+        rexIdToLastLogObservation.put(runnerExecutionId, fresh);
+        log.debug(
+            "docker heartbeat logGrowth runnerExecutionId={} containerId={} bytes={} modifiedAt={}",
+            runnerExecutionId,
+            containerId,
+            fresh.byteCount(),
+            fresh.lastModifiedAt());
+        return new RunnerPollStatus.HeartbeatTouched(fresh.lastModifiedAt());
+      }
+    }
+
+    return null;
+  }
+
+  @Override
+  public Optional<RunnerPollStatus> recoverHandle(String runnerExecutionId) {
+    Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
+    if (rexIdToContainerId.containsKey(runnerExecutionId)) {
+      // Already have a live in-process handle; the broker should keep using normal polling.
+      log.info(
+          "docker recoverHandle skip runnerExecutionId={} reason=handle_already_present",
+          runnerExecutionId);
+      return safeRecoverPoll(runnerExecutionId);
+    }
+    Optional<String> probed;
+    try {
+      probed = docker.findContainerIdByRunnerExecutionId(runnerExecutionId);
+    } catch (RuntimeException error) {
+      log.warn(
+          "docker recoverHandle probe failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+      return Optional.empty();
+    }
+    if (probed.isEmpty()) {
+      log.info("docker recoverHandle no-container-found runnerExecutionId={}", runnerExecutionId);
+      return Optional.empty();
+    }
+    String containerId = probed.get();
+    rexIdToContainerId.putIfAbsent(runnerExecutionId, containerId);
+    log.info(
+        "docker recoverHandle container-id recovered runnerExecutionId={} containerId={}",
+        runnerExecutionId,
+        containerId);
+    return safeRecoverPoll(runnerExecutionId);
+  }
+
+  /**
+   * Wraps {@link #poll(String)} for the recovery probe so the {@link
+   * RecoverableRunnerAdapter#recoverHandle(String)} contract ("must NOT throw — best-effort") holds
+   * even if the engine inspect inside {@code poll} throws. A failed probe degrades to {@code
+   * Optional.empty()} so the broker falls through to its orphan path rather than poisoning the
+   * per-row recovery transaction.
+   */
+  private Optional<RunnerPollStatus> safeRecoverPoll(String runnerExecutionId) {
+    try {
+      return Optional.of(poll(runnerExecutionId));
+    } catch (RuntimeException error) {
+      log.warn(
+          "docker recoverHandle poll failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+      return Optional.empty();
     }
   }
 
@@ -245,6 +379,7 @@ public class DockerRunnerAdapter implements RunnerAdapter {
   public void cancel(String runnerExecutionId) {
     Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
     String containerId = rexIdToContainerId.remove(runnerExecutionId);
+    rexIdToLastLogObservation.remove(runnerExecutionId);
     if (containerId == null) {
       log.info("docker cancel no-op runnerExecutionId={} reason=unknown_id", runnerExecutionId);
       return;
@@ -270,6 +405,88 @@ public class DockerRunnerAdapter implements RunnerAdapter {
           runnerExecutionId,
           containerId,
           error.toString());
+    }
+  }
+
+  /**
+   * Story 3.2 AC1: exposes the in-memory container-id handle so {@code
+   * RunnerBroker.processSingleTimeout} can issue {@code docker stop}/{@code docker kill} against
+   * the live container during the per-row timeout transition. Package-private — only the broker
+   * (and the docker-adapter test surface) is allowed to call this.
+   */
+  public Optional<String> findContainerIdForTesting(String runnerExecutionId) {
+    return Optional.ofNullable(rexIdToContainerId.get(runnerExecutionId));
+  }
+
+  @Override
+  public Optional<String> findContainerIdFor(String runnerExecutionId) {
+    return findContainerIdForTesting(runnerExecutionId);
+  }
+
+  @Override
+  public boolean emitsDispatchedAfterAck() {
+    return true;
+  }
+
+  @Override
+  public TerminationOutcome terminate(String runnerExecutionId, Duration graceful) {
+    Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
+    Objects.requireNonNull(graceful, "graceful");
+    String containerId = rexIdToContainerId.get(runnerExecutionId);
+    if (containerId == null) {
+      log.info("docker terminate no-op runnerExecutionId={} reason=unknown_id", runnerExecutionId);
+      return TerminationOutcome.UNKNOWN;
+    }
+    try {
+      docker.stopContainer(containerId, graceful);
+      log.info(
+          "docker terminate stop issued runnerExecutionId={} containerId={} graceful={}",
+          runnerExecutionId,
+          containerId,
+          graceful);
+    } catch (RuntimeException stopError) {
+      log.warn(
+          "docker terminate stop best-effort failure runnerExecutionId={} containerId={} cause={}",
+          runnerExecutionId,
+          containerId,
+          stopError.toString());
+      // fall through to the kill attempt
+    }
+    ContainerState postStop;
+    try {
+      postStop = docker.inspectContainer(containerId);
+    } catch (RuntimeException inspectError) {
+      log.warn(
+          "docker terminate post-stop inspect failure runnerExecutionId={} containerId={} cause={}",
+          runnerExecutionId,
+          containerId,
+          inspectError.toString());
+      // Review fix: the post-stop state is unconfirmed — do NOT claim STOPPED_GRACEFULLY (which
+      // would also suppress the kill fallback and be written as authoritative into the
+      // runner.timeout event). Report UNKNOWN so the caller treats termination as unconfirmed.
+      return TerminationOutcome.UNKNOWN;
+    }
+    boolean stillRunning =
+        "running".equals(postStop.status())
+            || "paused".equals(postStop.status())
+            || "restarting".equals(postStop.status());
+    if (!stillRunning) {
+      return TerminationOutcome.STOPPED_GRACEFULLY;
+    }
+    try {
+      docker.killContainer(containerId);
+      log.warn(
+          "docker terminate kill fallback runnerExecutionId={} containerId={}",
+          runnerExecutionId,
+          containerId);
+      return TerminationOutcome.KILLED_AFTER_GRACE;
+    } catch (RuntimeException killError) {
+      log.error(
+          "docker terminate kill best-effort failure runnerExecutionId={} containerId={} cause={}",
+          runnerExecutionId,
+          containerId,
+          killError.toString());
+      return TerminationOutcome.BEST_EFFORT_FAILURE;
     }
   }
 

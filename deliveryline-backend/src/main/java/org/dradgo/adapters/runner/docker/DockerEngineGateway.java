@@ -1,6 +1,7 @@
 package org.dradgo.adapters.runner.docker;
 
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * Adapter-internal wrapper around the Docker client surface. The {@code DockerRunnerAdapter} never
@@ -34,4 +35,17 @@ public interface DockerEngineGateway {
 
   /** Reserved for story 3.2's cleanup job. The 3.1 adapter MUST NOT call this from cancel. */
   void removeContainer(String containerId, boolean force);
+
+  /**
+   * Story 3.2 AC1: issues {@code docker kill} (immediate {@code SIGKILL}). Idempotent — already
+   * exited / removed containers are treated as no-ops.
+   */
+  void killContainer(String containerId);
+
+  /**
+   * Story 3.2 AC4: probes the Docker engine for a container labeled with the given runner-execution
+   * id. Uses {@code docker ps -a --filter label=deliveryline.runnerExecutionId={rex}}. Returns
+   * {@link Optional#empty()} when no matching container survives on the host.
+   */
+  Optional<String> findContainerIdByRunnerExecutionId(String runnerExecutionId);
 }

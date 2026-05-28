@@ -616,10 +616,12 @@ class RunnerBrokerUnitTest {
 
     assertEquals(1, flipped);
     verify(executionService).recordTimedOut(REX_ID);
+    // Story 3.2 AC8 / Trap T10: RUNNER_FAILED + details.failureCategory=runner_timeout is
+    // replaced by the dedicated RUNNER_TIMEOUT event.
     verify(eventPort)
         .append(
             eq(RUN_ID),
-            eq(WorkflowEventType.RUNNER_FAILED),
+            eq(WorkflowEventType.RUNNER_TIMEOUT),
             any(),
             any(),
             eq(FailureCategory.RUNNER_TIMEOUT),
@@ -682,6 +684,9 @@ class RunnerBrokerUnitTest {
     verify(executionService, never()).recordTimedOut(any());
     verify(eventPort, never())
         .append(any(), eq(WorkflowEventType.RUNNER_FAILED), any(), any(), any(), any(), any());
+    // Story 3.2 AC8: dedicated RUNNER_TIMEOUT also must NOT fire on the heartbeat-extended path.
+    verify(eventPort, never())
+        .append(any(), eq(WorkflowEventType.RUNNER_TIMEOUT), any(), any(), any(), any(), any());
     verify(workflowTransitionService, never())
         .transition(any(), any(), any(), any(), any(), any(FailureCategory.class), any());
   }

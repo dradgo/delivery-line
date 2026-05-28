@@ -8,6 +8,7 @@ import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import com.github.dockerjava.transport.DockerHttpClient;
 import java.time.Duration;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.spi.DockerHostPort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -52,6 +53,18 @@ class DockerConfiguration {
   @ConditionalOnMissingBean(DockerEngineGateway.class)
   DockerEngineGateway dockerEngineGateway(DockerClient dockerClient) {
     return new DefaultDockerEngineGateway(dockerClient);
+  }
+
+  /**
+   * Story 3.2: expose the engine gateway under the {@link DockerHostPort} application port so the
+   * {@code RunnerWorkspaceCleanupJob} can stay in {@code application.runner} without crossing the
+   * Adapters-mayNotBeAccessedByAnyLayer architectural boundary. {@link ConditionalOnMissingBean}
+   * keeps slice tests that stub the port in control.
+   */
+  @Bean
+  @ConditionalOnMissingBean(DockerHostPort.class)
+  DockerHostPort dockerHostPort(DockerEngineGateway gateway) {
+    return (DockerHostPort) gateway;
   }
 
   private static Duration max(Duration left, Duration right) {

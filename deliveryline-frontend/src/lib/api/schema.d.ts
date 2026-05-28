@@ -414,7 +414,7 @@ export interface components {
              * @example workflow.stateChanged
              * @enum {string}
              */
-            eventType: "workflow.stateChanged" | "approval.requested" | "approval.approved" | "approval.rejected" | "escalation.required" | "artifact.draftCreated" | "artifact.available" | "artifact.failed" | "artifact.versionCreated" | "runner.started" | "runner.failed" | "recovery.retried" | "recovery.dispatchFailed" | "recovery.reconciled" | "artifact.lineageRecovered" | "integration.linked" | "export.created" | "clarification.answered" | "clarification.accepted" | "clarification.incorporated" | "clarification.superseded" | "clarification.rejectedInvalid" | "clarification.noEffectReason";
+            eventType: "workflow.stateChanged" | "approval.requested" | "approval.approved" | "approval.rejected" | "escalation.required" | "artifact.draftCreated" | "artifact.available" | "artifact.failed" | "artifact.versionCreated" | "runner.started" | "runner.failed" | "runner.dispatched" | "runner.heartbeatStale" | "runner.timeout" | "runner.orphaned" | "runner.completed" | "recovery.retried" | "recovery.dispatchFailed" | "recovery.reconciled" | "artifact.lineageRecovered" | "integration.linked" | "export.created" | "clarification.answered" | "clarification.accepted" | "clarification.incorporated" | "clarification.superseded" | "clarification.rejectedInvalid" | "clarification.noEffectReason";
             /** @enum {string|null} */
             failureCategory?: "runner_timeout" | "runner_crash" | "runner_contract_violation" | "runner_non_zero_exit" | "runner_late_result" | "runner_duplicate_result" | "runner_malformed_output" | "orphan" | null;
             interventionMarker: boolean;

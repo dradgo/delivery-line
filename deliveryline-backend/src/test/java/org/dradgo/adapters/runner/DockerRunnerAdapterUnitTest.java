@@ -143,6 +143,7 @@ class DockerRunnerAdapterUnitTest {
                 "deliveryline/claude-runner:latest"),
             Path.of("runner-work"),
             24L,
+            3_600_000L,
             Duration.ofSeconds(30L),
             Duration.ofSeconds(30L));
     properties =
@@ -151,6 +152,8 @@ class DockerRunnerAdapterUnitTest {
             Map.of(),
             10_000L,
             50,
+            60_000L,
+            5_000L,
             RunnerProperties.Recovery.defaults(),
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
