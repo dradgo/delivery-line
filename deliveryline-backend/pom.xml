@@ -560,7 +560,13 @@
 				<artifactId>maven-failsafe-plugin</artifactId>
 				<configuration>
 					<argLine>@{argLine} -Duser.timezone=UTC -Dfile.encoding=UTF-8</argLine>
-					<excludedGroups>known-failure</excludedGroups>
+					<!-- Story 3.1 — docker-runner-it is the opt-in tier for Testcontainers-backed
+					     DockerRunnerAdapter ITs that pull real container images. Default-exclude it
+					     so the backend-contract-tests CI job does NOT run those ITs (they need
+					     image pulls that the foundation gate intentionally avoids). The dedicated
+					     `docker-runner-it` profile below clears this exclusion. Story 3-8 ships
+					     the real CI tier for the real Codex/Claude images. -->
+					<excludedGroups>known-failure,docker-runner-it</excludedGroups>
 					<includes>
 						<include>**/*IT.java</include>
 						<include>**/IT*.java</include>
