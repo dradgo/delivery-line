@@ -54,14 +54,19 @@ class LocalRunnerWorkspaceStoreTest {
   }
 
   @Test
-  void prepareHonorsConfiguredWorkspaceRoot() {
+  void prepareHonorsConfiguredWorkspaceRoot() throws IOException {
     Path customRoot = tempHome.resolve("custom-runner-work");
+    Files.createDirectories(customRoot);
     LocalRunnerWorkspaceStore customStore =
         new LocalRunnerWorkspaceStore(tempHome.toAbsolutePath().toString(), customRoot);
 
     WorkspaceLayout layout = customStore.prepare(REX_ID);
 
-    assertThat(layout.root()).isEqualTo(customRoot.toAbsolutePath().normalize().resolve(REX_ID));
+    // The store canonicalizes via toRealPath(), so on Windows the JUnit @TempDir short-path
+    // (RUNNER~1) resolves to the long form (runneradmin). Compare against the canonicalized
+    // form on both sides.
+    Path expectedRoot = customRoot.toRealPath().resolve(REX_ID);
+    assertThat(layout.root()).isEqualTo(expectedRoot);
     assertThat(Files.isDirectory(customRoot.resolve(REX_ID).resolve("input"))).isTrue();
   }
 
