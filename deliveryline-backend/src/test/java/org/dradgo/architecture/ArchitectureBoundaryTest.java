@@ -136,4 +136,12 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule allowed_action_derivation_lives_only_in_workflow_inspection_service =
       ArchitectureRuleCatalog.ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE;
+
+  @ArchTest
+  static final ArchRule docker_runner_adapter_must_not_depend_on_artifact_application =
+      ArchitectureRuleCatalog.DOCKER_RUNNER_ADAPTER_MUST_NOT_DEPEND_ON_ARTIFACT_APPLICATION;
+
+  @ArchTest
+  static final ArchRule adapters_runner_docker_types_stay_behind_gateway =
+      ArchitectureRuleCatalog.ADAPTERS_RUNNER_DOCKER_TYPES_STAY_BEHIND_GATEWAY;
 }

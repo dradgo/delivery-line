@@ -1,9 +1,12 @@
 package org.dradgo.application.runner;
 
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -27,7 +30,8 @@ public record RunnerProperties(
     int timeoutScanBatchSize,
     Recovery recovery,
     Mock mock,
-    Scheduling scheduling) {
+    Scheduling scheduling,
+    Docker docker) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -48,6 +52,7 @@ public record RunnerProperties(
     recovery = recovery == null ? Recovery.defaults() : recovery;
     mock = mock == null ? Mock.defaults() : mock;
     scheduling = scheduling == null ? Scheduling.defaults() : scheduling;
+    docker = docker == null ? Docker.defaults() : docker;
   }
 
   public static RunnerProperties defaults() {
@@ -55,7 +60,14 @@ public record RunnerProperties(
     timeouts.put(RunnerStage.INVESTIGATION, Duration.ofSeconds(600));
     timeouts.put(RunnerStage.EXECUTION, Duration.ofSeconds(600));
     return new RunnerProperties(
-        2.0d, timeouts, 10_000L, 50, Recovery.defaults(), Mock.defaults(), Scheduling.defaults());
+        2.0d,
+        timeouts,
+        10_000L,
+        50,
+        Recovery.defaults(),
+        Mock.defaults(),
+        Scheduling.defaults(),
+        Docker.defaults());
   }
 
   public Duration timeoutFor(RunnerStage stage) {
@@ -109,6 +121,80 @@ public record RunnerProperties(
 
     public static Scheduling defaults() {
       return new Scheduling(true);
+    }
+  }
+
+  /**
+   * Story 3.1 — Docker runner adapter configuration. The {@code @Profile("runners.docker")}-gated
+   * {@code DockerRunnerAdapter} reads {@link #imageTags()} (kind → tag) and {@link
+   * #workspaceRoot()}. {@code workspaceRetentionHours} is declared here so story 3.2's cleanup job
+   * has a property to read (this story forbids immediate deletion).
+   *
+   * <p>Trap T3: {@link #defaultKind()} is the only sanctioned source of the runner kind for the
+   * broker → adapter dispatch path. Reading the kind from the (untrusted) context bundle is
+   * forbidden.
+   */
+  public record Docker(
+      RunnerKind defaultKind,
+      Map<RunnerKind, String> imageTags,
+      Path workspaceRoot,
+      long workspaceRetentionHours,
+      Duration containerCreateTimeout,
+      Duration containerStartTimeout) {
+
+    public Docker {
+      Objects.requireNonNull(defaultKind, "defaultKind");
+      imageTags = imageTags == null ? Map.of() : Map.copyOf(new EnumMap<>(imageTags));
+      for (RunnerKind kind : RunnerKind.values()) {
+        String tag = imageTags.get(kind);
+        if (tag == null || tag.isBlank()) {
+          throw new IllegalArgumentException(
+              "deliveryline.runner.docker.image-tags." + kind.value() + " must be configured");
+        }
+      }
+      Objects.requireNonNull(workspaceRoot, "workspaceRoot");
+      if (workspaceRetentionHours <= 0L) {
+        throw new IllegalArgumentException(
+            "deliveryline.runner.docker.workspace-retention-hours must be positive: "
+                + workspaceRetentionHours);
+      }
+      Objects.requireNonNull(containerCreateTimeout, "containerCreateTimeout");
+      Objects.requireNonNull(containerStartTimeout, "containerStartTimeout");
+      if (containerCreateTimeout.isZero() || containerCreateTimeout.isNegative()) {
+        throw new IllegalArgumentException(
+            "deliveryline.runner.docker.container-create-timeout must be positive");
+      }
+      if (containerStartTimeout.isZero() || containerStartTimeout.isNegative()) {
+        throw new IllegalArgumentException(
+            "deliveryline.runner.docker.container-start-timeout must be positive");
+      }
+    }
+
+    public static Docker defaults() {
+      EnumMap<RunnerKind, String> tags = new EnumMap<>(RunnerKind.class);
+      tags.put(RunnerKind.CODEX, "deliveryline/codex-runner:latest");
+      tags.put(RunnerKind.CLAUDE, "deliveryline/claude-runner:latest");
+      return new Docker(
+          RunnerKind.CODEX,
+          tags,
+          Path.of("runner-work"),
+          24L,
+          Duration.ofSeconds(30L),
+          Duration.ofSeconds(30L));
+    }
+
+    public String imageTagFor(RunnerKind kind) {
+      Objects.requireNonNull(kind, "kind");
+      String tag = imageTags.get(kind);
+      if (tag == null || tag.isBlank()) {
+        throw new IllegalStateException(
+            "No image tag configured for runner kind "
+                + kind.value()
+                + " (deliveryline.runner.docker.image-tags."
+                + kind.value()
+                + ")");
+      }
+      return tag;
     }
   }
 }

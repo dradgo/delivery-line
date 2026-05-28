@@ -1,0 +1,343 @@
+package org.dradgo.adapters.runner;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.dradgo.adapters.runner.docker.ContainerState;
+import org.dradgo.adapters.runner.docker.CreateContainerSpec;
+import org.dradgo.adapters.runner.docker.DockerEngineGateway;
+import org.dradgo.application.runner.ExecutionConstraints;
+import org.dradgo.application.runner.RunnerDispatchAck;
+import org.dradgo.application.runner.RunnerDispatchRequest;
+import org.dradgo.application.runner.RunnerPollStatus;
+import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.spi.RunnerScratchStore;
+import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
+import org.dradgo.application.runner.spi.WorkspaceLayout;
+import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.RunnerKind;
+import org.dradgo.domain.registry.RunnerStage;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
+
+/**
+ * Story 3.1 Task 7 — unit-level behavior of {@link DockerRunnerAdapter}. The {@link
+ * DockerEngineGateway} is mocked, so these assertions cover the adapter's per-branch logic without
+ * needing a real Docker daemon. Heavy-weight container ITs live in {@code
+ * DockerRunnerAdapterContainerLifecycleIT} (tagged {@code docker-runner-it}).
+ */
+class DockerRunnerAdapterUnitTest {
+
+  private static final String REX_ID = "rex_dr1234567890";
+  private static final String RUN_ID = "run_dr1234567890";
+  private static final String CONTAINER_ID = "abcdef0123456789";
+  private static final Clock CLOCK =
+      Clock.fixed(Instant.parse("2026-05-28T12:00:00Z"), ZoneOffset.UTC);
+
+  private RunnerScratchStore scratchStore;
+  private RunnerWorkspaceStore workspaceStore;
+  private DockerEngineGateway gateway;
+  private RunnerProperties properties;
+  private DockerRunnerAdapter adapter;
+
+  @BeforeEach
+  void setUp() {
+    scratchStore = Mockito.mock(RunnerScratchStore.class);
+    workspaceStore = Mockito.mock(RunnerWorkspaceStore.class);
+    gateway = Mockito.mock(DockerEngineGateway.class);
+    properties = RunnerProperties.defaults();
+    adapter = new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties, CLOCK);
+  }
+
+  @Test
+  void dispatchBuildsContainerSpecWithReadOnlyInputAndNoNetwork() {
+    // AC2: input read-only, output/logs read-write, --network=none, four labels.
+    WorkspaceLayout layout = stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID))
+        .thenReturn(Optional.of("bundle-bytes".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    RunnerDispatchAck ack = adapter.dispatch(dispatchRequest());
+
+    assertThat(ack.adapterRef()).isEqualTo("docker:" + CONTAINER_ID);
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    verify(gateway).startContainer(CONTAINER_ID);
+    verify(workspaceStore).writeInputBundle(eq(REX_ID), any(byte[].class));
+
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.image()).isEqualTo("deliveryline/codex-runner:latest");
+    assertThat(spec.networkMode()).isEqualTo("none");
+    assertThat(spec.binds()).hasSize(3);
+    assertThat(spec.binds().get(0).containerPath()).isEqualTo("/workspace/input");
+    assertThat(spec.binds().get(0).readOnly()).isTrue();
+    assertThat(spec.binds().get(1).containerPath()).isEqualTo("/workspace/output");
+    assertThat(spec.binds().get(1).readOnly()).isFalse();
+    assertThat(spec.binds().get(2).containerPath()).isEqualTo("/workspace/logs");
+    assertThat(spec.binds().get(2).readOnly()).isFalse();
+    assertThat(spec.labels())
+        .containsEntry("deliveryline.runnerExecutionId", REX_ID)
+        .containsEntry("deliveryline.workflowRunId", RUN_ID)
+        .containsEntry("deliveryline.runnerKind", "codex")
+        .containsKey("deliveryline.dispatchedAt");
+  }
+
+  @Test
+  void dispatchIsIdempotentForSameRunnerExecutionId() {
+    dispatchSuccessfully();
+
+    RunnerDispatchAck replay = adapter.dispatch(dispatchRequest());
+
+    assertThat(replay.adapterRef()).isEqualTo("docker:" + CONTAINER_ID);
+    verify(gateway, times(1)).createContainer(any());
+    verify(gateway, times(1)).startContainer(CONTAINER_ID);
+  }
+
+  @Test
+  void dispatchRemovesCreatedContainerWhenStartFails() {
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+    org.mockito.Mockito.doThrow(new RuntimeException("start failed"))
+        .when(gateway)
+        .startContainer(CONTAINER_ID);
+
+    assertThatThrownBy(() -> adapter.dispatch(dispatchRequest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Docker dispatch failed");
+
+    verify(gateway).removeContainer(CONTAINER_ID, true);
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Unknown.class);
+  }
+
+  @Test
+  void dispatchLogsRedactedImageTagWhenCredentialsAppearInRegistryUrl() {
+    RunnerProperties.Docker dockerConfig =
+        new RunnerProperties.Docker(
+            RunnerKind.CODEX,
+            Map.of(
+                RunnerKind.CODEX,
+                "user:secret@registry.example.test/deliveryline/codex:latest",
+                RunnerKind.CLAUDE,
+                "deliveryline/claude-runner:latest"),
+            Path.of("runner-work"),
+            24L,
+            Duration.ofSeconds(30L),
+            Duration.ofSeconds(30L));
+    properties =
+        new RunnerProperties(
+            2.0d,
+            Map.of(),
+            10_000L,
+            50,
+            RunnerProperties.Recovery.defaults(),
+            RunnerProperties.Mock.defaults(),
+            RunnerProperties.Scheduling.defaults(),
+            dockerConfig);
+    adapter = new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties, CLOCK);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(DockerRunnerAdapter.class);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      adapter.dispatch(dispatchRequest());
+    } finally {
+      logger.detachAppender(appender);
+    }
+
+    String logs =
+        appender.list.stream()
+            .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+            .collect(java.util.stream.Collectors.joining("\n"));
+    assertThat(logs).doesNotContain("secret");
+    assertThat(logs).contains("***@registry.example.test/deliveryline/codex:latest");
+  }
+
+  @Test
+  void dispatchRaisesWhenScratchBundleMissing() {
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> adapter.dispatch(dispatchRequest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("broker contract violated");
+  }
+
+  @Test
+  void pollReturnsUnknownWhenRexIdNotDispatched() {
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Unknown.class);
+  }
+
+  @Test
+  void pollReturnsRunningForCreatedRunningPausedRestarting() {
+    dispatchSuccessfully();
+    for (String status : List.of("created", "running", "paused", "restarting")) {
+      when(gateway.inspectContainer(CONTAINER_ID))
+          .thenReturn(new ContainerState(status, null, "none", List.of(), Map.of()));
+      assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Running.class);
+    }
+  }
+
+  @Test
+  void pollReturnsCompletedWhenExitedWithResultFile() {
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("exited", 0, "none", List.of(), Map.of()));
+    when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.of("result".getBytes()));
+
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Completed.class);
+  }
+
+  @Test
+  void pollReturnsFailedRunnerCrashWhenExitedZeroWithoutResult() {
+    // AC3.c: clean exit with no result file → RUNNER_CRASH.
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("exited", 0, "none", List.of(), Map.of()));
+    when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.empty());
+
+    RunnerPollStatus status = adapter.poll(REX_ID);
+    assertThat(status).isInstanceOf(RunnerPollStatus.Failed.class);
+    assertThat(((RunnerPollStatus.Failed) status).failureCategory())
+        .isEqualTo(FailureCategory.RUNNER_CRASH);
+  }
+
+  @Test
+  void pollReturnsFailedRunnerCrashWhenExitedNonZeroWithoutResult() {
+    // AC3.b: non-zero exit without result → RUNNER_CRASH.
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("exited", 137, "none", List.of(), Map.of()));
+    when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.empty());
+
+    RunnerPollStatus status = adapter.poll(REX_ID);
+    assertThat(status).isInstanceOf(RunnerPollStatus.Failed.class);
+    assertThat(((RunnerPollStatus.Failed) status).failureCategory())
+        .isEqualTo(FailureCategory.RUNNER_CRASH);
+  }
+
+  @Test
+  void pollReturnsFailedRunnerCrashForDeadOrRemovingState() {
+    dispatchSuccessfully();
+    for (String status : List.of("dead", "removing")) {
+      when(gateway.inspectContainer(CONTAINER_ID))
+          .thenReturn(new ContainerState(status, null, "none", List.of(), Map.of()));
+      RunnerPollStatus poll = adapter.poll(REX_ID);
+      assertThat(poll).isInstanceOf(RunnerPollStatus.Failed.class);
+      assertThat(((RunnerPollStatus.Failed) poll).failureCategory())
+          .isEqualTo(FailureCategory.RUNNER_CRASH);
+    }
+  }
+
+  @Test
+  void tryReadResultDelegatesToWorkspaceStore() {
+    when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.of("payload".getBytes()));
+
+    assertThat(adapter.tryReadResult(REX_ID)).isPresent();
+    verify(workspaceStore).tryReadResult(REX_ID);
+  }
+
+  @Test
+  void cancelUnknownRexIdIsNoOpAndDoesNotThrow() {
+    assertThatNoException().isThrownBy(() -> adapter.cancel(REX_ID));
+    verify(gateway, never()).stopContainer(anyString(), any());
+  }
+
+  @Test
+  void cancelOnAlreadyExitedDoesNotIssueStop() {
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("exited", 0, "none", List.of(), Map.of()));
+
+    adapter.cancel(REX_ID);
+
+    verify(gateway, never()).stopContainer(anyString(), any());
+    verify(gateway, never()).removeContainer(anyString(), anyBoolean());
+  }
+
+  @Test
+  void cancelOnRunningIssuesDockerStopWithTenSecondGrace() {
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("running", null, "none", List.of(), Map.of()));
+
+    adapter.cancel(REX_ID);
+
+    verify(gateway, times(1)).stopContainer(CONTAINER_ID, Duration.ofSeconds(10L));
+    // Trap T11: cancel MUST NOT call remove — that's story 3.2's cleanup job.
+    verify(gateway, never()).removeContainer(anyString(), anyBoolean());
+  }
+
+  @Test
+  void cancelTolerablyAbsorbsInspectFailure() {
+    // cancel contract: best-effort, idempotent, MUST NOT throw.
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenThrow(new RuntimeException("docker inspect blew up"));
+
+    assertThatNoException().isThrownBy(() -> adapter.cancel(REX_ID));
+  }
+
+  // ===== test helpers ============================================================
+
+  private WorkspaceLayout stubWorkspace() {
+    WorkspaceLayout layout =
+        new WorkspaceLayout(
+            Path.of("/workspaces/rex"),
+            Path.of("/workspaces/rex/input"),
+            Path.of("/workspaces/rex/output"),
+            Path.of("/workspaces/rex/logs"));
+    when(workspaceStore.prepare(REX_ID)).thenReturn(layout);
+    return layout;
+  }
+
+  private void dispatchSuccessfully() {
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+    adapter.dispatch(dispatchRequest());
+  }
+
+  private RunnerDispatchRequest dispatchRequest() {
+    return dispatchRequest(RunnerKind.CODEX);
+  }
+
+  private RunnerDispatchRequest dispatchRequest(RunnerKind kind) {
+    return new RunnerDispatchRequest(
+        REX_ID,
+        RUN_ID,
+        RunnerStage.INVESTIGATION,
+        kind,
+        Path.of("/scratch/context-bundle.v1.json"),
+        new ExecutionConstraints(Duration.ofSeconds(600L), false),
+        DataClassification.SHAREABLE_REDACTED);
+  }
+}

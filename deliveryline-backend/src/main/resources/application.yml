@@ -82,3 +82,16 @@ deliveryline:
         execution: happy-implementation-plan
     scheduling:
       enabled: true
+    # Story 3.1 — Docker runner adapter config. Bound to RunnerProperties.Docker.
+    # Activated only under the runners.docker profile (the wiring is profile-gated;
+    # leaving this block in the shared application.yml keeps the defaults discoverable
+    # without making them load-bearing under the default runners.mock activation).
+    docker:
+      default-kind: codex
+      image-tags:
+        codex: deliveryline/codex-runner:latest
+        claude: deliveryline/claude-runner:latest
+      workspace-root: ${deliveryline.home:./}/runner-work
+      workspace-retention-hours: 24
+      container-create-timeout: 30s
+      container-start-timeout: 30s

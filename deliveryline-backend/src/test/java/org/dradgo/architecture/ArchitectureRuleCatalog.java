@@ -520,6 +520,44 @@ final class ArchitectureRuleCatalog {
    * WorkflowInspectionService} (e.g. {@code AllowedActionsView}) are exempted via the same
    * inner-class regex {@code (\\$.*)?}.
    */
+  /**
+   * Story 3.1 AC6 + Task 5 — the Docker runner adapter must NEVER reach into the artifact
+   * application slice. Artifact ingestion belongs to {@code RunnerBroker.onResult} (via {@code
+   * ArtifactOperationService}); the adapter is a pure transport for the result bytes. Scope is
+   * {@code adapters.runner..} only — the broker (in {@code application.runner}) is allowed to call
+   * into {@code application.artifact} (story 3.1 trap T6).
+   */
+  static final ArchRule DOCKER_RUNNER_ADAPTER_MUST_NOT_DEPEND_ON_ARTIFACT_APPLICATION =
+      namedRule(
+          "Docker runner adapter slice must not depend on application.artifact",
+          "Remediation: keep DockerRunnerAdapter a transport (returns result bytes to the broker). All artifact ingest goes through RunnerBroker.onResult → ArtifactOperationService.",
+          noClasses()
+              .that()
+              .resideInAPackage(RUNNER_ADAPTER_PACKAGE)
+              .should()
+              .dependOnClassesThat()
+              .resideInAPackage("org.dradgo.application.artifact.."));
+
+  /**
+   * Story 3.1 trap T8 — Docker client types ({@code com.github.dockerjava.api.model.*} and
+   * relatives) must stay confined to the {@code adapters.runner.docker..} subpackage where the
+   * {@code DockerEngineGateway} wrapper lives. Any other class under {@code adapters.runner..} that
+   * reaches into docker-java types breaks the boundary that lets us upgrade the Docker client
+   * library without touching the rest of the slice.
+   */
+  static final ArchRule ADAPTERS_RUNNER_DOCKER_TYPES_STAY_BEHIND_GATEWAY =
+      namedRule(
+          "Docker-java model types must stay behind the adapters.runner.docker gateway",
+          "Remediation: route Docker actions through DockerEngineGateway (project-owned CreateContainerSpec + ContainerState records). docker-java imports outside adapters.runner.docker.. break the trap-T8 boundary.",
+          noClasses()
+              .that()
+              .resideInAPackage(RUNNER_ADAPTER_PACKAGE)
+              .and()
+              .resideOutsideOfPackage("org.dradgo.adapters.runner.docker..")
+              .should()
+              .dependOnClassesThat()
+              .resideInAPackage("com.github.dockerjava.."));
+
   static final ArchRule ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE =
       namedRule(
           "AllowedAction enum constants may only be referenced from WorkflowInspectionService (application) and AllowedActionsResponse (adapters.rest)",

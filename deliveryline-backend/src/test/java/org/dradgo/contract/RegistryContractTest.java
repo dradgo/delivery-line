@@ -41,6 +41,7 @@ import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -109,8 +110,16 @@ class RegistryContractTest {
     assertEquals(
         registryValues(RunnerSchemaVersion.values()), DomainRegistry.runnerSchemaVersions());
     assertEquals(registryValues(RunnerStage.values()), DomainRegistry.runnerStages());
+    assertEquals(registryValues(RunnerKind.values()), DomainRegistry.runnerKinds());
     assertEquals(registryValues(WorkflowEventType.values()), DomainRegistry.workflowEventTypes());
     assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
+  }
+
+  @Test
+  void runnerKindPersistedRegistryParserAcceptsCanonicalValues() {
+    assertEquals(RunnerKind.CODEX, PersistedRegistryValues.runnerKind("codex"));
+    assertEquals(RunnerKind.CLAUDE, PersistedRegistryValues.runnerKind("claude"));
+    assertThrows(DomainException.class, () -> PersistedRegistryValues.runnerKind("CODEX"));
   }
 
   @Test

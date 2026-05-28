@@ -108,6 +108,23 @@
 			<artifactId>spring-boot-docker-compose</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+		<!--
+			Story 3.1 — Docker client for the runners.docker-profile-gated DockerRunnerAdapter.
+			Pinned explicitly in compile scope here (rather than relying on Testcontainers'
+			transitive copy at test scope) because the adapter runs in production. Story 3.1
+			trap T8: all com.github.dockerjava.* types stay behind DockerEngineGateway —
+			ArchUnit rule ADAPTERS_RUNNER_DOCKER_TYPES_STAY_BEHIND_GATEWAY pins this.
+		-->
+		<dependency>
+			<groupId>com.github.docker-java</groupId>
+			<artifactId>docker-java-core</artifactId>
+			<version>3.4.1</version>
+		</dependency>
+		<dependency>
+			<groupId>com.github.docker-java</groupId>
+			<artifactId>docker-java-transport-httpclient5</artifactId>
+			<version>3.4.1</version>
+		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>

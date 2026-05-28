@@ -270,6 +270,7 @@ public class RunnerBroker {
               reservedRexId,
               workflowRunId,
               stage,
+              runnerProperties.docker().defaultKind(),
               bundlePath,
               constraints,
               bundle.effectiveClassification());
@@ -890,7 +891,7 @@ public class RunnerBroker {
         handlePollFailure(snapshot, failed.failureCategory());
         yield true;
       }
-      case RunnerPollStatus.Completed ignored -> harvestResultFromScratch(snapshot);
+      case RunnerPollStatus.Completed ignored -> harvestResultFromAdapter(snapshot);
     };
   }
 
@@ -915,8 +916,8 @@ public class RunnerBroker {
         category.value());
   }
 
-  private boolean harvestResultFromScratch(RunnerExecutionSnapshot snapshot) {
-    Optional<byte[]> result = scratchStore.tryReadRunnerResult(snapshot.publicId());
+  private boolean harvestResultFromAdapter(RunnerExecutionSnapshot snapshot) {
+    Optional<byte[]> result = runnerAdapter.tryReadResult(snapshot.publicId());
     if (result.isEmpty()) {
       return false;
     }

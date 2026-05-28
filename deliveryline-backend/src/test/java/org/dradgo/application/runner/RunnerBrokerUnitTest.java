@@ -869,9 +869,8 @@ class RunnerBrokerUnitTest {
 
   @Test
   void pollActiveExecutionsHarvestsCompletedResultAndMarksRunnerExecutionCompleted() {
-    // Fix #5: poll returning Completed must trigger broker.harvestResultFromScratch which
-    // reads the runner-result file and routes through onResult, marking the runner-execution
-    // COMPLETED via the normal success path.
+    // Story 3.1: poll returning Completed must harvest through the active RunnerAdapter.
+    // DockerRunnerAdapter stores the result in runner-work/output, not runner-scratch.
     RunnerExecutionSnapshot active = snapshot(REX_ID, RunnerExecutionStatus.RUNNING);
     when(recordPort.findActiveStatuses(any(), anyInt())).thenReturn(List.of(active));
     when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(active));
@@ -893,7 +892,7 @@ class RunnerBrokerUnitTest {
 			}
 			"""
             .formatted(RUN_ID, REX_ID);
-    when(scratchStore.tryReadRunnerResult(REX_ID))
+    when(runnerAdapter.tryReadResult(REX_ID))
         .thenReturn(Optional.of(resultPayload.getBytes(StandardCharsets.UTF_8)));
     when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq("spec/v1.json")))
         .thenReturn(Optional.of("harvest-bytes".getBytes(StandardCharsets.UTF_8)));
@@ -931,7 +930,8 @@ class RunnerBrokerUnitTest {
     int processed = broker.pollActiveExecutions();
 
     assertEquals(1, processed);
-    verify(scratchStore).tryReadRunnerResult(REX_ID);
+    verify(runnerAdapter).tryReadResult(REX_ID);
+    verify(scratchStore, never()).tryReadRunnerResult(REX_ID);
     verify(artifactOperationService).recordOperation(any());
     verify(executionService).recordCompleted(REX_ID);
   }
@@ -944,7 +944,7 @@ class RunnerBrokerUnitTest {
     RunnerExecutionSnapshot active = snapshot(REX_ID, RunnerExecutionStatus.RUNNING);
     when(recordPort.findActiveStatuses(any(), anyInt())).thenReturn(List.of(active));
     when(runnerAdapter.poll(REX_ID)).thenReturn(new RunnerPollStatus.Completed());
-    when(scratchStore.tryReadRunnerResult(REX_ID)).thenReturn(Optional.empty());
+    when(runnerAdapter.tryReadResult(REX_ID)).thenReturn(Optional.empty());
 
     int processed = broker.pollActiveExecutions();
 
