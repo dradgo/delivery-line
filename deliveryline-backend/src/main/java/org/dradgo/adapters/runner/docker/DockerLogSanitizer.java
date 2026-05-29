@@ -1,19 +1,16 @@
 package org.dradgo.adapters.runner.docker;
 
+import org.dradgo.application.runner.RunnerProperties;
+
 public final class DockerLogSanitizer {
 
   private DockerLogSanitizer() {}
 
+  /**
+   * Delegates to the application-layer canonical implementation so the broker (which must not call
+   * into this adapter package) and the adapter share one redaction rule.
+   */
   public static String redactImageTag(String image) {
-    if (image == null || image.isBlank()) {
-      return image;
-    }
-    int at = image.indexOf('@');
-    int slash = image.indexOf('/');
-    int colon = image.indexOf(':');
-    if (at > 0 && (slash < 0 || at < slash) && colon > 0 && colon < at) {
-      return "***" + image.substring(at);
-    }
-    return image;
+    return RunnerProperties.Docker.redactImageTag(image);
   }
 }

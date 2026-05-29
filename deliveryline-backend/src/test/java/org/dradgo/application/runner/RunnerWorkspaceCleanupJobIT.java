@@ -13,14 +13,12 @@ import ch.qos.logback.core.read.ListAppender;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.OffsetDateTime;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.adapters.files.LocalRunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.DockerHostPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.domain.id.PublicIdPrefixes;
-import org.dradgo.domain.registry.RunnerStage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -79,6 +77,12 @@ class RunnerWorkspaceCleanupJobIT {
     if (jobLogger != null && appender != null) {
       jobLogger.detachAppender(appender);
     }
+    // This @SpringBootTest is not @Transactional and shares its Postgres with other same-config
+    // contract tests. Delete the rows it seeded (FK-safe order) so leftover runner_executions don't
+    // break a sibling test's own cleanup (e.g. `delete from workflow_runs` failing on
+    // fk_runner_executions_workflow_runs).
+    jdbcTemplate.update("delete from runner_executions");
+    jdbcTemplate.update("delete from workflow_runs");
   }
 
   @Test
@@ -134,11 +138,14 @@ class RunnerWorkspaceCleanupJobIT {
   }
 
   @Test
-  void runningRowWithBackdatedCompletedAtIsNotReturnedByCleanupQuery() {
-    // Trap T16: even if completed_at drifted to 25h ago, a row whose status is NOT terminal must
-    // never be returned to the workspace sweep (SQL status IN (completed, failed, timed_out,
-    // orphaned)).
-    String rex = seedRunningRunnerWithBackdatedCompletedAt(/* hoursAgo= */ 25);
+  void runningRowIsNeverReturnedByCleanupQueryRegardlessOfAge() {
+    // Trap T16: the cleanup query restricts status to terminal values
+    // (completed/failed/timed_out/orphaned), so a non-terminal row is never swept. (A running row
+    // cannot even carry completed_at — the ck_runner_executions_completed_correlation CHECK forbids
+    // it — so the SQL status guard is belt-and-suspenders.) Seed an old running row and assert it
+    // is
+    // excluded.
+    String rex = seedRunningRunner();
 
     boolean returned =
         recordPort.findCompletedBeforeAndNotArchived(OffsetDateTime.now(), 50).stream()
@@ -148,40 +155,49 @@ class RunnerWorkspaceCleanupJobIT {
   }
 
   // ----- seed helpers -----
+  // Raw JdbcTemplate inserts (not the record port): the port's mutating methods take a pessimistic
+  // lock and require an active transaction, which this non-@Transactional @SpringBootTest does not
+  // provide.
 
   private String seedTerminalRunner(long hoursAgo) {
-    String rex = insertPendingRow();
-    recordPort.markCompleted(rex, OffsetDateTime.now());
-    backdateCompletedAt(rex, hoursAgo);
-    return rex;
-  }
-
-  private String seedRunningRunnerWithBackdatedCompletedAt(long hoursAgo) {
-    String rex = insertPendingRow();
-    recordPort.transitionToRunning(rex, OffsetDateTime.now());
-    backdateCompletedAt(rex, hoursAgo); // forces the drift the T16 guard must ignore
-    return rex;
-  }
-
-  private String insertPendingRow() {
     String runId = PublicIdPrefixes.WORKFLOW_RUN.next();
     jdbcTemplate.update(
         "insert into workflow_runs (public_id, current_state) values (?, 'Inbox')", runId);
     String rex = PublicIdPrefixes.RUNNER_EXECUTION.next();
-    recordPort.insertPending(
+    jdbcTemplate.update(
+        """
+        insert into runner_executions
+          (public_id, workflow_run_id, stage, status, context_bundle_version,
+           last_activity_at, timeout_at, completed_at, created_at)
+        values (?, (select id from workflow_runs where public_id = ?), 'investigation', 'completed',
+                1, now() - (interval '1 hour' * ?), now() - (interval '1 hour' * ?),
+                now() - (interval '1 hour' * ?), now() - (interval '1 hour' * ?))
+        """,
         rex,
         runId,
-        RunnerStage.INVESTIGATION,
-        1,
-        new ExecutionConstraints(Duration.ofSeconds(600L), false));
+        hoursAgo,
+        hoursAgo,
+        hoursAgo,
+        hoursAgo);
     return rex;
   }
 
-  private void backdateCompletedAt(String rex, long hoursAgo) {
+  private String seedRunningRunner() {
+    String runId = PublicIdPrefixes.WORKFLOW_RUN.next();
     jdbcTemplate.update(
-        "update runner_executions set completed_at = now() - (interval '1 hour' * ?) where public_id = ?",
-        hoursAgo,
-        rex);
+        "insert into workflow_runs (public_id, current_state) values (?, 'Inbox')", runId);
+    String rex = PublicIdPrefixes.RUNNER_EXECUTION.next();
+    jdbcTemplate.update(
+        """
+        insert into runner_executions
+          (public_id, workflow_run_id, stage, status, context_bundle_version,
+           last_activity_at, timeout_at, created_at)
+        values (?, (select id from workflow_runs where public_id = ?), 'investigation', 'running', 1,
+                now() - interval '25 hours', now() - interval '24 hours', now() - interval '25 hours')
+        """,
+        rex,
+        runId);
+    return rex;
   }
 
   private OffsetDateTime archivedAt(String rex) {

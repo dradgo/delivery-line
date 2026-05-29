@@ -226,5 +226,27 @@ public record RunnerProperties(
       }
       return tag;
     }
+
+    /**
+     * Redacts credentials embedded in a registry image reference of the form {@code
+     * user:pass@host/image:tag} → {@code ***@host/image:tag}, leaving an un-credentialed reference
+     * untouched. Lives in the application layer (the image tags are application-owned config) so
+     * {@code RunnerBroker} can redact before writing the {@code runner.dispatched} audit event
+     * without reaching into {@code adapters.runner.docker} (which the layered-boundary ArchUnit
+     * rule forbids). The adapter's {@code DockerLogSanitizer} delegates here so there is a single
+     * implementation.
+     */
+    public static String redactImageTag(String image) {
+      if (image == null || image.isBlank()) {
+        return image;
+      }
+      int at = image.indexOf('@');
+      int slash = image.indexOf('/');
+      int colon = image.indexOf(':');
+      if (at > 0 && (slash < 0 || at < slash) && colon > 0 && colon < at) {
+        return "***" + image.substring(at);
+      }
+      return image;
+    }
   }
 }

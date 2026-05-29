@@ -292,7 +292,16 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         });
   }
 
+  // Story 3.2a: self-transactional (REQUIRED) — unlike the other mutators (always called inside the
+  // broker's TransactionTemplate), markArchived is invoked by
+  // RunnerWorkspaceCleanupJob.sweepWorkspaces,
+  // which runs outside any transaction. findByPublicIdForUpdate takes a pessimistic lock and needs
+  // an
+  // active transaction, so without this annotation every cleanup tick threw "No active transaction"
+  // (caught best-effort), leaving workspaces deleted-but-never-archived and re-processed forever.
+  // REQUIRED joins the broker's transaction when one is already active.
   @Override
+  @Transactional
   public RunnerExecutionSnapshot markArchived(String publicId, OffsetDateTime archivedAt) {
     Objects.requireNonNull(archivedAt, "archivedAt");
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);

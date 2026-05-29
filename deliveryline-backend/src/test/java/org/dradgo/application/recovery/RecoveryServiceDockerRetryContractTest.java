@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.runner.spi.DockerHostPort;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.AfterEach;
@@ -45,6 +46,14 @@ class RecoveryServiceDockerRetryContractTest {
 
   @MockitoBean private DockerEngineGateway dockerEngineGateway;
 
+  // The runners.docker DockerConfiguration derives the DockerHostPort bean by casting the
+  // DockerEngineGateway (the real DefaultDockerEngineGateway implements both). A Mockito mock of
+  // the
+  // gateway does NOT implement DockerHostPort, so that cast throws at context-load. Mock the port
+  // directly too: its @ConditionalOnMissingBean factory is then skipped, and the retry path under
+  // test never touches it.
+  @MockitoBean private DockerHostPort dockerHostPort;
+
   @AfterEach
   void cleanDatabase() {
     jdbcTemplate.update("delete from recovery_actions");
@@ -77,7 +86,8 @@ class RecoveryServiceDockerRetryContractTest {
     RetryRecoveryResult result =
         recoveryService.retry(
             runId,
-            "idem-docker-retry-" + seededRex,
+            // Idempotency keys are [A-Za-z0-9-]{16,128}; seededRex contains '_', so hyphenate it.
+            "idem-docker-retry-" + seededRex.replace('_', '-'),
             new ActorContext(ACTOR_IDENTITY, ActorType.HUMAN, CORRELATION_ID),
             "docker retry");
 

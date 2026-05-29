@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import org.dradgo.adapters.runner.docker.DockerLogSanitizer;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactOperationService;
 import org.dradgo.application.artifact.RecordArtifactOperationCommand;
@@ -776,7 +775,7 @@ public class RunnerBroker {
         .ifPresent(id -> details.put("containerId", id));
     String image = runnerProperties.docker().imageTagFor(runnerKind);
     if (image != null && !image.isBlank()) {
-      details.put("image", DockerLogSanitizer.redactImageTag(image));
+      details.put("image", RunnerProperties.Docker.redactImageTag(image));
     }
     details.put(
         "dispatchedAt", OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).toString());
