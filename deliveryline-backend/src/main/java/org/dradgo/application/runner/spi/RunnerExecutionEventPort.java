@@ -16,7 +16,13 @@ import org.dradgo.domain.registry.WorkflowEventType;
  */
 public interface RunnerExecutionEventPort {
 
-  void append(
+  /**
+   * Append a runner-lifecycle event and return the public id ({@code evt_…}) assigned to the new
+   * row. Story 3.2a AC10 needs the {@code runner.dispatched} id surfaced back to {@link
+   * org.dradgo.application.recovery.RecoveryService} so the retry result can anchor the audit trail
+   * to the new dispatch; callers that do not need the id may ignore the return value.
+   */
+  String append(
       String workflowRunPublicId,
       WorkflowEventType eventType,
       ActorContext actor,

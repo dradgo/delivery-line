@@ -202,10 +202,14 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
           && !rex.startsWith(labelValuePrefix)) {
         continue;
       }
-      String status = container.getState() != null ? container.getState() : container.getStatus();
-      if (status == null) {
-        status = "unknown";
-      }
+      // Story 3.2a AC4 (b): normalize to the engine STATE (running|exited|created|paused|dead|
+      // restarting), not the human getStatus() ("Up 3 minutes"). The cleanup sweep matches on this
+      // normalized state to decide stop-before-rm, so a human status string would break the match.
+      String rawState = container.getState();
+      String status =
+          (rawState == null || rawState.isBlank())
+              ? "unknown"
+              : rawState.toLowerCase(java.util.Locale.ROOT);
       OffsetDateTime createdAt = null;
       if (container.getCreated() != null) {
         createdAt =

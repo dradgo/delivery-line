@@ -270,7 +270,12 @@ class WorkflowCommandsStatusHistoryTest {
     when(recovery.retry(eq("run_retry01234"), any(), any(ActorContext.class), any()))
         .thenReturn(
             new RetryRecoveryResult(
-                "rcv_recov-aaaaa", "evt_retried-bbbbb", "rex_new1-ccccc", "corr-retry-1", false));
+                "rcv_recov-aaaaa",
+                "evt_retried-bbbbb",
+                null,
+                "rex_new1-ccccc",
+                "corr-retry-1",
+                false));
 
     String rendered =
         commands.retry(
@@ -297,7 +302,12 @@ class WorkflowCommandsStatusHistoryTest {
     when(recovery.retry(eq("run_retry01234"), any(), any(ActorContext.class), any()))
         .thenReturn(
             new RetryRecoveryResult(
-                "rcv_recov-aaaaa", "evt_retried-bbbbb", "rex_new1-ccccc", "corr-retry-2", false));
+                "rcv_recov-aaaaa",
+                "evt_retried-bbbbb",
+                null,
+                "rex_new1-ccccc",
+                "corr-retry-2",
+                false));
 
     String rendered =
         commands.retry(
@@ -319,7 +329,7 @@ class WorkflowCommandsStatusHistoryTest {
     when(recovery.retry(eq("run_retry01234"), any(), any(ActorContext.class), any()))
         .thenReturn(
             new RetryRecoveryResult(
-                "rcv_recov-prior", "evt_prior-bbbbb", null, "corr-retry-3", true));
+                "rcv_recov-prior", "evt_prior-bbbbb", null, null, "corr-retry-3", true));
 
     String rendered =
         commands.retry(

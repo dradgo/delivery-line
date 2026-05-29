@@ -31,6 +31,7 @@ import org.dradgo.application.artifact.RecordArtifactOperationResult;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
+import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
@@ -1118,6 +1119,163 @@ class RunnerBrokerUnitTest {
     assertEquals(1, handled);
     verify(executionService).recordOrphaned(REX_ID);
     verify(executionService, never()).recordCompleted(any());
+  }
+
+  @Test
+  void onResultPropagatesNonDuplicateRecordCompletedDomainFailure() {
+    RunnerExecutionSnapshot active = snapshot(REX_ID, RunnerExecutionStatus.RUNNING);
+    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(active));
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq("spec/v1.json")))
+        .thenReturn(Optional.of("spec-bytes".getBytes(StandardCharsets.UTF_8)));
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              ArtifactRecordSnapshot artifact =
+                  ArtifactRecordSnapshot.withoutFailureMetadata(
+                      "art_propagate0001",
+                      command.workflowRunId(),
+                      command.artifactType(),
+                      1,
+                      null,
+                      org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                      null,
+                      null,
+                      null,
+                      org.dradgo.domain.registry.ArtifactStatus.PENDING,
+                      null);
+              ArtifactOperationSnapshot op =
+                  new ArtifactOperationSnapshot(
+                      "op_propagate0001",
+                      command.workflowRunId(),
+                      "art_propagate0001",
+                      command.operationType().value(),
+                      org.dradgo.domain.registry.ArtifactOperationStatus.PENDING,
+                      command.idempotencyKey(),
+                      null,
+                      null,
+                      OffsetDateTime.now(CLOCK));
+              return new RecordArtifactOperationResult(artifact, op);
+            });
+    when(executionService.recordCompleted(REX_ID))
+        .thenThrow(
+            new DomainException(
+                DomainErrorCode.RUNNER_EXECUTION_NOT_FOUND,
+                "runner execution disappeared during completion"));
+
+    String payload =
+        """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_propagate0001", "artifactType": "spec", "contentReference": "spec/v1.json"}
+          ],
+          "normalizedOutput": {"summary": "ok", "outcome": "success"},
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+            .formatted(RUN_ID, REX_ID);
+
+    DomainException thrown =
+        assertThrows(
+            DomainException.class,
+            () -> broker.onResult(REX_ID, payload.getBytes(StandardCharsets.UTF_8)));
+
+    assertEquals(DomainErrorCode.RUNNER_EXECUTION_NOT_FOUND, thrown.errorCode());
+    verify(eventPort, never())
+        .append(any(), eq(WorkflowEventType.RUNNER_COMPLETED), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void dockerDispatchedEventRedactsCredentialBearingImageTag() {
+    RecoverableRunnerAdapter dockerAdapter = mock(RecoverableRunnerAdapter.class);
+    runnerAdapter = dockerAdapter;
+    RunnerProperties.Docker dockerConfig =
+        new RunnerProperties.Docker(
+            org.dradgo.domain.registry.RunnerKind.CODEX,
+            java.util.Map.of(
+                org.dradgo.domain.registry.RunnerKind.CODEX,
+                "user:secret@registry.example.test/deliveryline/codex:latest",
+                org.dradgo.domain.registry.RunnerKind.CLAUDE,
+                "deliveryline/claude-runner:latest"),
+            java.nio.file.Path.of("runner-work"),
+            24L,
+            3_600_000L,
+            java.time.Duration.ofSeconds(30L),
+            java.time.Duration.ofSeconds(30L),
+            120L);
+    runnerProperties =
+        new RunnerProperties(
+            2.0d,
+            java.util.Map.of(),
+            10_000L,
+            50,
+            60_000L,
+            5_000L,
+            RunnerProperties.Recovery.defaults(),
+            RunnerProperties.Mock.defaults(),
+            RunnerProperties.Scheduling.defaults(),
+            dockerConfig);
+    broker =
+        new RunnerBroker(
+            recordPort,
+            eventPort,
+            executionService,
+            contextBundleService,
+            idempotencyService,
+            workflowTransitionService,
+            artifactOperationService,
+            runnerAdapter,
+            scratchStore,
+            new RunnerContractValidator(),
+            runnerProperties,
+            callthroughTemplate(),
+            callthroughTemplate(),
+            CLOCK);
+    when(dockerAdapter.emitsDispatchedAfterAck()).thenReturn(true);
+    when(dockerAdapter.findContainerIdFor(any())).thenReturn(Optional.of("container_redact"));
+    when(dockerAdapter.dispatch(any()))
+        .thenReturn(new RunnerDispatchAck("docker:container_redact"));
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.INVESTIGATION)).thenReturn(1);
+    when(idempotencyService.checkAndReserve(any(), any(), any(), any()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(contextBundleService.create(any(), any(), any(), anyInt(), any(), any(), any()))
+        .thenReturn(
+            new ContextBundle(
+                RUN_ID,
+                RunnerStage.INVESTIGATION,
+                REX_ID,
+                1,
+                org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                "{}".getBytes(StandardCharsets.UTF_8)));
+    when(recordPort.insertPending(any(), any(), any(), anyInt(), any()))
+        .thenAnswer(
+            invocation -> snapshot(invocation.getArgument(0), RunnerExecutionStatus.PENDING));
+    when(scratchStore.writeContextBundle(any(), any()))
+        .thenReturn(Paths.get("/tmp/context-bundle.v1.json"));
+    when(eventPort.append(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn("evt_dispatched001");
+
+    broker.dispatch(RUN_ID, RunnerStage.INVESTIGATION, "idem-redact", ACTOR);
+
+    ArgumentCaptor<java.util.Map<String, Object>> detailsCaptor =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(eventPort)
+        .append(
+            eq(RUN_ID),
+            eq(WorkflowEventType.RUNNER_DISPATCHED),
+            eq(ACTOR),
+            any(),
+            any(),
+            any(),
+            detailsCaptor.capture());
+    assertEquals(
+        "***@registry.example.test/deliveryline/codex:latest",
+        detailsCaptor.getValue().get("image"));
   }
 
   private static RunnerExecutionSnapshot snapshot(String publicId, RunnerExecutionStatus status) {

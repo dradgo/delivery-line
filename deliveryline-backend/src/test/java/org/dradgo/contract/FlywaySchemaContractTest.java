@@ -176,6 +176,14 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void runnerExecutionsCarriesTheV10HeartbeatStaleEmittedAtColumn() {
+    // Story 3.2 V10 (pinned by 3.2a AC12): heartbeat_stale_emitted_at gates RUNNER_HEARTBEAT_STALE
+    // re-emission to at most once per stale window (Trap T4). Nullable; cleared on activity.
+    assertColumnType("runner_executions", "heartbeat_stale_emitted_at", "timestamp with time zone");
+    assertColumnNullable("runner_executions", "heartbeat_stale_emitted_at", true);
+  }
+
+  @Test
   void clarificationsSchemaCarriesTheExpectedV8ColumnsConstraintsAndIndexes() {
     assertColumnType("clarifications", "artifact_version", "integer");
     assertColumnType("clarifications", "question_id", "text");

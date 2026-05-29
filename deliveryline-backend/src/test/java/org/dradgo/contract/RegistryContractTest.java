@@ -300,6 +300,25 @@ class RegistryContractTest {
   }
 
   @Test
+  void workflowEventTypesIncludeTheFiveStory32RunnerLifecycleValues() {
+    // Story 3.2a AC12 (o): the five story-3.2 lifecycle event types are registered and (via the
+    // alignment test above) present in the wire-form fixture. This focused assertion guards against
+    // accidental removal of any one of them.
+    Set<String> eventTypes = registryValues(WorkflowEventType.values());
+    for (String expected :
+        List.of(
+            "runner.dispatched",
+            "runner.heartbeatStale",
+            "runner.timeout",
+            "runner.orphaned",
+            "runner.completed")) {
+      assertTrue(
+          eventTypes.contains(expected),
+          () -> "WorkflowEventType registry must include " + expected + " but had " + eventTypes);
+    }
+  }
+
+  @Test
   void allowedActionsStayAlignedWithFrontendPlaceholder() throws IOException {
     assertEquals(
         DomainRegistry.allowedActions(),

@@ -77,7 +77,8 @@ class DockerRunnerAdapterContainerLifecycleIT {
             1L,
             3_600_000L,
             Duration.ofSeconds(30L),
-            Duration.ofSeconds(30L));
+            Duration.ofSeconds(30L),
+            120L);
     RunnerProperties properties =
         new RunnerProperties(
             2.0d,
@@ -108,8 +109,9 @@ class DockerRunnerAdapterContainerLifecycleIT {
   }
 
   @Test
-  void dispatchedContainerCarriesAllFourLabelsAndNetworkModeNone() throws Exception {
+  void dispatchedContainerCarriesAllFiveLabelsAndNetworkModeNone() throws Exception {
     // AC7 (labels) + AC8 (--network=none): inspect the launched container directly.
+    // Story 3.2a AC10 (m): assert the FULL five-label set, including the new deliveryline.stage.
     String rexId = PublicIdPrefixes.RUNNER_EXECUTION.next();
     scratchStore.writeContextBundle(rexId, "{\"schemaVersion\":1}".getBytes());
 
@@ -131,11 +133,13 @@ class DockerRunnerAdapterContainerLifecycleIT {
 
     // AC8 + Trap T7: NetworkMode=none, set at create time.
     assertThat(inspect.getHostConfig().getNetworkMode()).isEqualTo("none");
-    // AC7: four labels.
+    // AC7 + story 3.2a AC10 (m): the full five-label set, with deliveryline.stage carrying the
+    // dispatched stage value.
     assertThat(inspect.getConfig().getLabels())
         .containsKey("deliveryline.runnerExecutionId")
         .containsKey("deliveryline.workflowRunId")
-        .containsKey("deliveryline.runnerKind")
+        .containsEntry("deliveryline.runnerKind", "codex")
+        .containsEntry("deliveryline.stage", "investigation")
         .containsKey("deliveryline.dispatchedAt");
     // AC10(j): input mount is read-only.
     var binds = inspect.getHostConfig().getBinds();

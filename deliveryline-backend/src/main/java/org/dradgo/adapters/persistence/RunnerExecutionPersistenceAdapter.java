@@ -114,7 +114,13 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         .collect(Collectors.toList());
   }
 
+  // Story 3.2a: must be readOnly-transactional like the sibling finders above so the lazy
+  // `workflowRun` association survives the `mapper::toSnapshot` call. This backs the broker's
+  // pollActiveExecutions() + recoverOnStartup() paths; the gap was latent because the broker unit
+  // tests mock this port, and only the story-3.2a broker-driven docker lifecycle ITs exercise it
+  // against a real session — they surfaced the LazyInitializationException it caused.
   @Override
+  @Transactional(readOnly = true)
   public List<RunnerExecutionSnapshot> findActiveStatuses(
       List<RunnerExecutionStatus> statuses, int limit) {
     if (statuses == null || statuses.isEmpty()) {
@@ -335,6 +341,30 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         statuses.stream().map(RunnerExecutionStatus::value).collect(Collectors.toList());
     return runnerExecutionRepository
         .findStaleByStatusInAndLastActivityAtBefore(rawStatuses, cutoff, Limit.of(limit))
+        .stream()
+        .map(mapper::toSnapshot)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<RunnerExecutionSnapshot> findStaleByStatusInAndStageAndLastActivityAtBefore(
+      List<RunnerExecutionStatus> statuses, RunnerStage stage, Duration staleWindow, int limit) {
+    Objects.requireNonNull(stage, "stage");
+    Objects.requireNonNull(staleWindow, "staleWindow");
+    if (statuses == null || statuses.isEmpty()) {
+      return List.of();
+    }
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be positive");
+    }
+    OffsetDateTime cutoff =
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).minus(staleWindow);
+    List<String> rawStatuses =
+        statuses.stream().map(RunnerExecutionStatus::value).collect(Collectors.toList());
+    return runnerExecutionRepository
+        .findStaleByStatusInAndStageAndLastActivityAtBefore(
+            rawStatuses, stage.value(), cutoff, Limit.of(limit))
         .stream()
         .map(mapper::toSnapshot)
         .collect(Collectors.toList());

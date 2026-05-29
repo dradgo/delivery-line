@@ -262,7 +262,8 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     OffsetDateTime startedAt = state.startedAt();
     if (startedAt != null && startedAt.isAfter(previousActivity)) {
       // Persist the started-at marker as the floor for future log-growth comparisons.
-      rexIdToLastLogObservation.put(runnerExecutionId, new LogGrowthObservation(0L, startedAt));
+      mergeObservationKeepingHighWaterMark(
+          runnerExecutionId, new LogGrowthObservation(0L, startedAt));
       log.debug(
           "docker heartbeat startedAt runnerExecutionId={} containerId={} startedAt={}",
           runnerExecutionId,
@@ -275,7 +276,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     Optional<OffsetDateTime> heartbeatTouch =
         workspaceStore.tryReadHeartbeatTouch(runnerExecutionId);
     if (heartbeatTouch.isPresent() && heartbeatTouch.get().isAfter(previousActivity)) {
-      rexIdToLastLogObservation.put(
+      mergeObservationKeepingHighWaterMark(
           runnerExecutionId,
           previous == null
               ? new LogGrowthObservation(0L, heartbeatTouch.get())
@@ -296,7 +297,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       // does NOT register as growth on the first poll — only real bytes count as activity.
       long previousBytes = previous == null ? 0L : previous.byteCount();
       if (fresh.byteCount() > previousBytes && fresh.lastModifiedAt().isAfter(previousActivity)) {
-        rexIdToLastLogObservation.put(runnerExecutionId, fresh);
+        mergeObservationKeepingHighWaterMark(runnerExecutionId, fresh);
         log.debug(
             "docker heartbeat logGrowth runnerExecutionId={} containerId={} bytes={} modifiedAt={}",
             runnerExecutionId,
@@ -308,6 +309,28 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     }
 
     return null;
+  }
+
+  /**
+   * Story 3.2a AC8 (a): atomically fold {@code candidate} into {@link #rexIdToLastLogObservation}
+   * keeping the high-water mark on BOTH byte count and last-modified timestamp. Using {@link
+   * java.util.concurrent.ConcurrentMap#merge} (rather than a {@code get} then {@code put}) means
+   * two concurrent polls of the same runner-execution can never regress the stored observation —
+   * the activity floor only ever advances.
+   */
+  private LogGrowthObservation mergeObservationKeepingHighWaterMark(
+      String runnerExecutionId, LogGrowthObservation candidate) {
+    return rexIdToLastLogObservation.merge(
+        runnerExecutionId,
+        candidate,
+        (existing, incoming) -> {
+          long bytes = Math.max(existing.byteCount(), incoming.byteCount());
+          OffsetDateTime timestamp =
+              incoming.lastModifiedAt().isAfter(existing.lastModifiedAt())
+                  ? incoming.lastModifiedAt()
+                  : existing.lastModifiedAt();
+          return new LogGrowthObservation(bytes, timestamp);
+        });
   }
 
   @Override
@@ -336,10 +359,26 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     }
     String containerId = probed.get();
     rexIdToContainerId.putIfAbsent(runnerExecutionId, containerId);
-    log.info(
-        "docker recoverHandle container-id recovered runnerExecutionId={} containerId={}",
+    // Story 3.2a AC8 (b): re-seed the log-growth observation floor on recovery so the first poll
+    // after a broker restart does NOT re-emit HeartbeatTouched off the container's (stale)
+    // StartedAt
+    // or its already-written log bytes. The floor is the current log size at recovery time; only
+    // genuine NEW growth after recovery counts as activity. The Running-branch lease re-arm in
+    // RunnerBroker.processOrphan handles the deadline refresh for a recovered-running container.
+    long recoveredLogBytes =
+        workspaceStore
+            .observeLogGrowth(runnerExecutionId)
+            .map(LogGrowthObservation::byteCount)
+            .orElse(0L);
+    mergeObservationKeepingHighWaterMark(
         runnerExecutionId,
-        containerId);
+        new LogGrowthObservation(
+            recoveredLogBytes, OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC)));
+    log.info(
+        "docker recoverHandle container-id recovered runnerExecutionId={} containerId={} reseededLogBytes={}",
+        runnerExecutionId,
+        containerId,
+        recoveredLogBytes);
     return safeRecoverPoll(runnerExecutionId);
   }
 

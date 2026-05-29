@@ -13,6 +13,12 @@ package org.dradgo.application.recovery;
  *
  * @param recoveryActionPublicId rcv_… id of the recovery_actions row (always present)
  * @param recoveryRetriedEventPublicId evt_… id of the recovery.retried event (null on replay)
+ * @param runnerDispatchedEventPublicId evt_… id of the {@code runner.dispatched} event emitted by
+ *     {@link org.dradgo.application.runner.RunnerBroker#dispatch} on the docker path (story 3.2a
+ *     AC10 / Trap T13). It is the audit anchor for the NEW dispatch — distinct from {@code
+ *     recoveryRetriedEventPublicId} (the recovery.retried event). {@code null} on the mock path
+ *     (which emits {@code runner.started} instead) and {@code null} on replay (no new dispatch
+ *     occurs).
  * @param newRunnerExecutionPublicId rex_… id of the new runner_executions row (null on replay)
  * @param correlationId sanitized correlationId carried through the operation
  * @param replayed true when this call returned an existing row without re-appending events or
@@ -21,6 +27,7 @@ package org.dradgo.application.recovery;
 public record RetryRecoveryResult(
     String recoveryActionPublicId,
     String recoveryRetriedEventPublicId,
+    String runnerDispatchedEventPublicId,
     String newRunnerExecutionPublicId,
     String correlationId,
     boolean replayed) {}

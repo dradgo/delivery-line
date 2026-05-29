@@ -158,22 +158,59 @@ public class RunnerWorkspaceCleanupJob {
       log.warn("sweepDanglingContainers list failure cause={}", error.toString());
       return 0;
     }
+    long minAgeSeconds = runnerProperties.docker().danglingContainerMinAgeSeconds();
+    OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
     int removed = 0;
     for (DockerHostPort.DanglingContainerInfo container : containers) {
       try {
-        Optional<RunnerExecutionSnapshot> row =
-            recordPort.findByPublicId(container.runnerExecutionId());
+        Optional<RunnerExecutionSnapshot> row;
+        try {
+          row = recordPort.findByPublicId(container.runnerExecutionId());
+        } catch (DomainException invalidId) {
+          // The container's runnerExecutionId label is `rex_`-prefixed but not a valid public id
+          // (truncated/garbage). We cannot correlate it to a row, so we PRESERVE rather than
+          // destroy an uncorrelatable container (mirrors the orphan-dir Trap-T7 posture).
+          log.warn(
+              "dangling container skip containerId={} reason=invalid_id labelValue={}",
+              container.containerId(),
+              container.runnerExecutionId());
+          continue;
+        }
         if (row.isPresent() && isStillActive(row.get())) {
           continue;
         }
-        String status = container.status();
-        if (status != null
-            && (status.startsWith("running")
-                || "paused".equals(status)
-                || "restarting".equals(status))) {
-          docker.stopContainer(container.containerId(), Duration.ofSeconds(10L));
+        // Story 3.2a AC4 (a): min-age guard. A labelled-but-rowless container may be in the
+        // dispatch→row-insert window — preserve it until it ages past the grace window so a
+        // freshly-launching runner is never destroyed mid-dispatch. The guard applies ONLY to
+        // rowless containers; a container whose row exists and is terminal is genuinely dangling.
+        if (row.isEmpty()
+            && minAgeSeconds > 0L
+            && (container.createdAt() == null
+                || container.createdAt().isAfter(now.minusSeconds(minAgeSeconds)))) {
+          log.info(
+              "dangling container skip containerId={} reason=within_min_age createdAt={} minAgeSeconds={}",
+              container.containerId(),
+              container.createdAt(),
+              minAgeSeconds);
+          continue;
         }
-        docker.removeContainer(container.containerId(), false);
+        // Story 3.2a AC4 (b)+(c): match on the normalized engine state and use a two-pass
+        // stop-then-force-rm for a still-running container so the stop→rm 409 race cannot leak it.
+        String status = container.status();
+        boolean running =
+            status != null
+                && ("running".equals(status)
+                    || "paused".equals(status)
+                    || "restarting".equals(status)
+                    || "unknown".equals(status));
+        if (running) {
+          docker.stopContainer(container.containerId(), Duration.ofSeconds(10L));
+          // force=true: the container was running; removing with force avoids the brief window
+          // between `docker stop` returning and the engine marking the container exited (409 race).
+          docker.removeContainer(container.containerId(), true);
+        } else {
+          docker.removeContainer(container.containerId(), false);
+        }
         log.info(
             "dangling container removed runnerExecutionId={} containerId={} status={}",
             container.runnerExecutionId(),

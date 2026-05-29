@@ -14,6 +14,7 @@ deliveryline:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000
     timeout-scan-batch-size: 50
+    stale-scan-interval-ms: 60000
     poll-interval-ms: 5000
     stage-timeouts:
       investigation: 600s
@@ -37,8 +38,11 @@ deliveryline:
         claude: alpine:3.20
       workspace-root: ${deliveryline.home}/runner-work
       workspace-retention-hours: 1
+      workspace-cleanup-interval-ms: 3600000
       container-create-timeout: 30s
       container-start-timeout: 30s
+      # Story 3.2a AC4 — dangling-container sweep min-age grace window.
+      dangling-container-min-age-seconds: 120
 
 spring:
   # Story 2.13 round-3 review D3 follow-up: keep test slice fail-on-unknown aligned with prod config

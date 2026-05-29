@@ -302,7 +302,12 @@ public class RecoveryService {
             prior.publicId(),
             validatedIdempotencyKey);
         return new RetryRecoveryResult(
-            prior.publicId(), prior.resultingEventPublicId(), null, actor.correlationId(), true);
+            prior.publicId(),
+            prior.resultingEventPublicId(),
+            null,
+            null,
+            actor.correlationId(),
+            true);
       }
 
       // Step 2 — current-state guard. retry is only meaningful from Failed. Read run snapshot in
@@ -473,6 +478,13 @@ public class RecoveryService {
       }
 
       String newRunnerExecutionId = dispatchResult.handle().runnerExecutionId();
+      // Story 3.2a AC10 / Trap T13: surface the runner.dispatched event id (docker path) as the
+      // retry audit anchor for the NEW dispatch. Null on the mock path (which emits runner.started
+      // inside the dispatch transaction) and on a replayed dispatch.
+      String runnerDispatchedEventPublicId =
+          (dispatchResult instanceof RunnerDispatchResult.Dispatched dispatched)
+              ? dispatched.runnerDispatchedEventPublicId()
+              : null;
       try {
         resultStatusTransactionTemplate.executeWithoutResult(
             status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));
@@ -516,6 +528,7 @@ public class RecoveryService {
       return new RetryRecoveryResult(
           prep.recoveryActionPublicId,
           prep.recoveryRetriedEventPublicId,
+          runnerDispatchedEventPublicId,
           newRunnerExecutionId,
           correlationId,
           false);
@@ -685,6 +698,7 @@ public class RecoveryService {
         new RetryRecoveryResult(
             snapshot.publicId(),
             snapshot.resultingEventPublicId(),
+            null,
             null,
             actor.correlationId(),
             true));

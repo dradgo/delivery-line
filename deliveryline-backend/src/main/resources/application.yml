@@ -102,3 +102,7 @@ deliveryline:
       workspace-cleanup-interval-ms: 3600000
       container-create-timeout: 30s
       container-start-timeout: 30s
+      # Story 3.2a AC4 — grace window during which a labelled-but-rowless container is preserved by
+      # the dangling-container sweep, so a container in the dispatch→row-insert window is never
+      # destroyed. 0 disables the guard.
+      dangling-container-min-age-seconds: 120

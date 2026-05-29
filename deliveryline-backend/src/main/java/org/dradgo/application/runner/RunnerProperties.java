@@ -153,7 +153,8 @@ public record RunnerProperties(
       long workspaceRetentionHours,
       long workspaceCleanupIntervalMs,
       Duration containerCreateTimeout,
-      Duration containerStartTimeout) {
+      Duration containerStartTimeout,
+      long danglingContainerMinAgeSeconds) {
 
     public Docker {
       Objects.requireNonNull(defaultKind, "defaultKind");
@@ -186,6 +187,15 @@ public record RunnerProperties(
         throw new IllegalArgumentException(
             "deliveryline.runner.docker.container-start-timeout must be positive");
       }
+      // Story 3.2a AC4: a non-negative grace window during which a labelled-but-rowless container
+      // is
+      // preserved by the dangling-container sweep (covers the dispatch→row-insert window). Zero
+      // disables the guard (every rowless container is eligible for removal immediately).
+      if (danglingContainerMinAgeSeconds < 0L) {
+        throw new IllegalArgumentException(
+            "deliveryline.runner.docker.dangling-container-min-age-seconds must be >= 0: "
+                + danglingContainerMinAgeSeconds);
+      }
     }
 
     public static Docker defaults() {
@@ -199,7 +209,8 @@ public record RunnerProperties(
           24L,
           3_600_000L,
           Duration.ofSeconds(30L),
-          Duration.ofSeconds(30L));
+          Duration.ofSeconds(30L),
+          120L);
     }
 
     public String imageTagFor(RunnerKind kind) {

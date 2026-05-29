@@ -15,10 +15,17 @@ import org.springframework.stereotype.Component;
 
 /**
  * Adapts {@link RunnerExecutionEventPort} onto the canonical {@link WorkflowEventWritePort}. The
- * port restricts the type whitelist to {@link WorkflowEventType#RUNNER_STARTED}, {@link
- * WorkflowEventType#RUNNER_FAILED}, and {@link WorkflowEventType#RECOVERY_RECONCILED} so callers
- * cannot accidentally append {@code WORKFLOW_STATE_CHANGED} (which must go through {@code
+ * port restricts the type whitelist to the runner-lifecycle + recovery-reconcile event family so
+ * callers cannot accidentally append {@code WORKFLOW_STATE_CHANGED} (which must go through {@code
  * WorkflowTransitionService}).
+ *
+ * <p>Story 3.2a: the whitelist is extended to the five story-3.2 lifecycle event types ({@code
+ * RUNNER_DISPATCHED}, {@code RUNNER_HEARTBEAT_STALE}, {@code RUNNER_TIMEOUT}, {@code
+ * RUNNER_ORPHANED}, {@code RUNNER_COMPLETED}). Before this fix the broker emitted these types
+ * through this port but the whitelist still only allowed the three legacy types — so a real docker
+ * boot (where the broker actually emits {@code RUNNER_DISPATCHED}/etc.) would throw {@link
+ * IllegalArgumentException}. Existing broker unit tests mock this port, so the gap was latent until
+ * the story-3.2a docker contract/IT surface exercised the real adapter.
  */
 @Component
 public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEventPort {
@@ -27,7 +34,12 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
       java.util.EnumSet.of(
           WorkflowEventType.RUNNER_STARTED,
           WorkflowEventType.RUNNER_FAILED,
-          WorkflowEventType.RECOVERY_RECONCILED);
+          WorkflowEventType.RECOVERY_RECONCILED,
+          WorkflowEventType.RUNNER_DISPATCHED,
+          WorkflowEventType.RUNNER_HEARTBEAT_STALE,
+          WorkflowEventType.RUNNER_TIMEOUT,
+          WorkflowEventType.RUNNER_ORPHANED,
+          WorkflowEventType.RUNNER_COMPLETED);
 
   private final WorkflowEventWritePort workflowEventWritePort;
 
@@ -37,7 +49,7 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
   }
 
   @Override
-  public void append(
+  public String append(
       String workflowRunPublicId,
       WorkflowEventType eventType,
       ActorContext actor,
@@ -58,9 +70,10 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
               + eventType.value());
     }
     Map<String, Object> safeDetails = new LinkedHashMap<>(details);
+    String eventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
     workflowEventWritePort.append(
         new WorkflowEventRecord(
-            PublicIdPrefixes.WORKFLOW_EVENT.next(),
+            eventPublicId,
             workflowRunPublicId,
             eventType,
             null,
@@ -72,5 +85,6 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
             false,
             createdAt,
             safeDetails));
+    return eventPublicId;
   }
 }

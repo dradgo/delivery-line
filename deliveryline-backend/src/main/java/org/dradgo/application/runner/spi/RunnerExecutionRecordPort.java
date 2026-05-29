@@ -88,6 +88,17 @@ public interface RunnerExecutionRecordPort {
       List<RunnerExecutionStatus> statuses, Duration staleWindow, int limit);
 
   /**
+   * Story 3.2a AC2: stage-scoped variant of {@link
+   * #findStaleByStatusInAndLastActivityAtBefore(List, Duration, int)}. The {@code stage} predicate
+   * is pushed into the query so the {@code limit} applies <em>per stage</em>. This closes the
+   * stage-starvation bug (3.2 review HIGH edge#2 / blind#1 / auditor F8): the non-scoped query was
+   * {@code LIMIT batchSize} across all stages, then rows of the wrong stage were discarded
+   * in-memory, so a backlog of one stage could starve every other stage on each scan tick.
+   */
+  List<RunnerExecutionSnapshot> findStaleByStatusInAndStageAndLastActivityAtBefore(
+      List<RunnerExecutionStatus> statuses, RunnerStage stage, Duration staleWindow, int limit);
+
+  /**
    * Story 3.2 AC5: find rows past the workspace-retention horizon whose workspace has not been
    * archived yet. SQL guard: {@code status IN (completed, failed, timed_out, orphaned)} so live
    * rows (pending/running) are never returned even if {@code completed_at} drifted (Trap T16).

@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import org.dradgo.adapters.runner.docker.DockerLogSanitizer;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactOperationService;
 import org.dradgo.application.artifact.RecordArtifactOperationCommand;
@@ -289,8 +290,9 @@ public class RunnerBroker {
       // RUNNER_STARTED). Mock path keeps the existing RUNNER_STARTED event (emitted above inside
       // the dispatchTransactionTemplate) — see OQ-4. Path discriminated by adapter ref prefix so
       // the broker stays adapter-type-agnostic.
-      appendRunnerDispatchedEventIfDocker(
-          workflowRunId, reservedRexId, request.runnerKind(), ack, actor);
+      String runnerDispatchedEventPublicId =
+          appendRunnerDispatchedEventIfDocker(
+              workflowRunId, reservedRexId, request.runnerKind(), ack, actor);
 
       log.info(
           "dispatch ok workflowRunId={} stage={} runnerExecutionId={} contextBundleVersion={} adapterRef={}",
@@ -299,7 +301,8 @@ public class RunnerBroker {
           reservedRexId,
           nextContextBundleVersion,
           ack.adapterRef());
-      return new RunnerDispatchResult.Dispatched(toHandle(inserted), ack);
+      return new RunnerDispatchResult.Dispatched(
+          toHandle(inserted), ack, runnerDispatchedEventPublicId);
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
@@ -494,7 +497,22 @@ public class RunnerBroker {
       return;
     }
 
-    executionService.recordCompleted(runnerExecutionId);
+    // Story 3.2a AC9: gate the RUNNER_COMPLETED append on the row ACTUALLY transitioning. A
+    // duplicate onResult (recovery scratch-replay re-entering, or a concurrent harvest) on an
+    // already-completed row throws ILLEGAL_TRANSITION here — skip the append so the lifecycle event
+    // is emitted at most once per completion.
+    try {
+      executionService.recordCompleted(runnerExecutionId);
+    } catch (DomainException raceTerminal) {
+      if (raceTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw raceTerminal;
+      }
+      log.info(
+          "onResult complete skip runnerExecutionId={} reason=already_terminal errorCode={}",
+          runnerExecutionId,
+          raceTerminal.errorCode().value());
+      return;
+    }
     // Story 3.2 AC8: emit RUNNER_COMPLETED so the happy-path success has a dedicated audit-trail
     // entry instead of being inferred from the workflow-state transition only. Exit code is not
     // surfaced on the success path (the runner contract considers any payload with valid
@@ -740,7 +758,7 @@ public class RunnerBroker {
    * ack returns. The mock path's {@code emitsDispatchedAfterAck()} returns {@code false}, so this
    * is a no-op under {@code runners.mock}.
    */
-  private void appendRunnerDispatchedEventIfDocker(
+  private String appendRunnerDispatchedEventIfDocker(
       String workflowRunId,
       String runnerExecutionId,
       org.dradgo.domain.registry.RunnerKind runnerKind,
@@ -748,7 +766,7 @@ public class RunnerBroker {
       ActorContext actor) {
     if (!(runnerAdapter instanceof RecoverableRunnerAdapter recoverable)
         || !recoverable.emitsDispatchedAfterAck()) {
-      return;
+      return null;
     }
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("runnerExecutionId", runnerExecutionId);
@@ -758,24 +776,29 @@ public class RunnerBroker {
         .ifPresent(id -> details.put("containerId", id));
     String image = runnerProperties.docker().imageTagFor(runnerKind);
     if (image != null && !image.isBlank()) {
-      details.put("image", image);
+      details.put("image", DockerLogSanitizer.redactImageTag(image));
     }
     details.put(
         "dispatchedAt", OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).toString());
-    eventPort.append(
-        workflowRunId,
-        WorkflowEventType.RUNNER_DISPATCHED,
-        actor,
-        "runner_dispatched",
-        null,
-        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
-        details);
+    // Story 3.2a AC10: capture the appended event's public id so the dispatch result can surface it
+    // back to RecoveryService as the retry audit anchor.
+    String dispatchedEventPublicId =
+        eventPort.append(
+            workflowRunId,
+            WorkflowEventType.RUNNER_DISPATCHED,
+            actor,
+            "runner_dispatched",
+            null,
+            OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+            details);
     log.info(
-        "RUNNER_DISPATCHED appended workflowRunId={} runnerExecutionId={} runnerKind={} adapterRef={}",
+        "RUNNER_DISPATCHED appended workflowRunId={} runnerExecutionId={} runnerKind={} adapterRef={} eventId={}",
         workflowRunId,
         runnerExecutionId,
         runnerKind.value(),
-        ack.adapterRef());
+        ack.adapterRef(),
+        dispatchedEventPublicId);
+    return dispatchedEventPublicId;
   }
 
   /** Story 3.2 AC8: emit {@code runner.completed} after a successful happy-path result ingest. */
@@ -983,13 +1006,12 @@ public class RunnerBroker {
       Duration stageTimeout = runnerProperties.timeoutFor(stage);
       Duration orphanThreshold = runnerProperties.staleThresholdFor(stage);
       // Phase 1 — heartbeat-stale WARN per row (idempotent on heartbeat_stale_emitted_at).
+      // Story 3.2a AC2: the query is stage-scoped so the per-stage LIMIT cannot be exhausted by a
+      // backlog of another stage (no cross-stage starvation).
       List<RunnerExecutionSnapshot> heartbeatStaleCandidates =
-          recordPort.findStaleByStatusInAndLastActivityAtBefore(
-              ACTIVE_STATUSES, stageTimeout, batchSize);
+          recordPort.findStaleByStatusInAndStageAndLastActivityAtBefore(
+              ACTIVE_STATUSES, stage, stageTimeout, batchSize);
       for (RunnerExecutionSnapshot snapshot : heartbeatStaleCandidates) {
-        if (snapshot.stage() != stage) {
-          continue;
-        }
         try {
           Boolean emitted =
               perItemTransactionTemplate.execute(
@@ -1004,14 +1026,11 @@ public class RunnerBroker {
               error.toString());
         }
       }
-      // Phase 2 — orphan flip per row past the orphan threshold.
+      // Phase 2 — orphan flip per row past the orphan threshold (also stage-scoped, AC2).
       List<RunnerExecutionSnapshot> orphanCandidates =
-          recordPort.findStaleByStatusInAndLastActivityAtBefore(
-              ACTIVE_STATUSES, orphanThreshold, batchSize);
+          recordPort.findStaleByStatusInAndStageAndLastActivityAtBefore(
+              ACTIVE_STATUSES, stage, orphanThreshold, batchSize);
       for (RunnerExecutionSnapshot snapshot : orphanCandidates) {
-        if (snapshot.stage() != stage) {
-          continue;
-        }
         try {
           Boolean flipped =
               perItemTransactionTemplate.execute(status -> processStaleOrphan(snapshot));
@@ -1054,7 +1073,17 @@ public class RunnerBroker {
     OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
     OffsetDateTime orphanCutoff = now.minus(orphanThreshold).withOffsetSameInstant(ZoneOffset.UTC);
     OffsetDateTime lastActivity = current.lastActivityAt();
-    if (lastActivity == null || lastActivity.isBefore(orphanCutoff)) {
+    // Story 3.2a AC9: handle a null last_activity_at explicitly rather than silently conflating it
+    // with "past the orphan threshold". A live row should always carry last_activity_at (set on
+    // insert); a null here is anomalous, so we skip the heartbeat-stale emission and surface the
+    // anomaly distinctly instead of guessing the row is orphan-eligible.
+    if (lastActivity == null) {
+      log.warn(
+          "scanForStaleExecutions heartbeat-stale skip runnerExecutionId={} reason=null_last_activity_at",
+          runnerExecutionId);
+      return false;
+    }
+    if (lastActivity.isBefore(orphanCutoff)) {
       // Past the orphan threshold — orphan phase will handle it, do not double-emit.
       return false;
     }
@@ -1086,7 +1115,23 @@ public class RunnerBroker {
       return false;
     }
     RunnerExecutionSnapshot current = fresh.get();
-    executionService.recordOrphaned(runnerExecutionId);
+    // Story 3.2a AC9: gate the RUNNER_ORPHANED append on the row ACTUALLY transitioning. The
+    // isTerminal pre-check above is a non-locking read; a concurrent poll/recovery can move the row
+    // terminal between that read and this guarded transition. recordOrphaned re-reads under a write
+    // lock and throws ILLEGAL_TRANSITION if the row is already terminal — catch it and skip the
+    // append so a scan-vs-recovery race cannot emit a duplicate lifecycle event.
+    try {
+      executionService.recordOrphaned(runnerExecutionId);
+    } catch (DomainException raceTerminal) {
+      if (raceTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw raceTerminal;
+      }
+      log.info(
+          "scanForStaleExecutions orphan skip runnerExecutionId={} reason=already_terminal errorCode={}",
+          runnerExecutionId,
+          raceTerminal.errorCode().value());
+      return false;
+    }
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("runnerExecutionId", runnerExecutionId);
     details.put("failureCategory", FailureCategory.ORPHAN.value());
@@ -1337,7 +1382,21 @@ public class RunnerBroker {
 
     // Final fallback: flip to orphaned + emit RUNNER_ORPHANED (and keep RECOVERY_RECONCILED for
     // the recovery-axis audit per AC8 Trap T10 — they are complementary).
-    executionService.recordOrphaned(runnerExecutionId);
+    // Story 3.2a AC9: gate the dual append on the row actually transitioning so a concurrent
+    // scan-vs-recovery race (or a scratch result landing between the read above and here) cannot
+    // append duplicate RUNNER_ORPHANED / RECOVERY_RECONCILED events.
+    try {
+      executionService.recordOrphaned(runnerExecutionId);
+    } catch (DomainException raceTerminal) {
+      if (raceTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw raceTerminal;
+      }
+      log.info(
+          "recoverOnStartup orphan skip runnerExecutionId={} reason=already_terminal errorCode={}",
+          runnerExecutionId,
+          raceTerminal.errorCode().value());
+      return false;
+    }
     Map<String, Object> orphanDetails = new LinkedHashMap<>();
     orphanDetails.put("runnerExecutionId", runnerExecutionId);
     orphanDetails.put("failureCategory", FailureCategory.ORPHAN.value());

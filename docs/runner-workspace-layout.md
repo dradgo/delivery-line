@@ -223,4 +223,42 @@ Before pushing, run the docker-tagged IT tier natively on WSL2 Ubuntu per memory
 `wsl-linux-ci-reproduction.md`. Windows-vs-Linux `docker stop`/`docker kill` signal
 propagation differs subtly — the `timed_out` flip relies on `state.exitCode()` being non-null
 after the kill. Test images that ignore `SIGTERM` (e.g., `trap '' TERM; sleep 3600`) deliberately
-exercise the kill fallback path.
+exercise the kill fallback path. The tier needs `alpine:3.20` pre-pulled (`docker pull
+alpine:3.20`) — the adapter uses a raw DockerClient that does not auto-pull.
+
+> **`docker stop` semantics (story 3.2a):** `docker stop -t N` sends SIGTERM then SIGKILLs after
+> the grace, so `DockerRunnerAdapter.terminate` typically observes the container already exited and
+> reports `STOPPED_GRACEFULLY`; `KILLED_AFTER_GRACE` only arises when the `docker stop` call itself
+> fails to stop the container. Both outcomes are written verbatim into the `runner.timeout` event.
+
+## Story 3.2a hardening notes
+
+### Recovery lease re-arm (documented AC4 deviation, D2)
+
+`RunnerBroker.processOrphan` re-arms the lease on a container recovered as **Running** after a
+broker restart: it advances `last_activity_at` to `now()` (`executionService.touchActivity`).
+Story 3.2 AC4 literally says "no row change" for a recovered-running container, but a long broker
+outage may leave the pre-crash `timeout_at` already elapsed — without the re-arm the very next
+`scanForTimeouts` would immediately kill a genuinely-alive container. A future-dated engine
+`StartedAt` / FS mtime is clamped to the broker clock so the deadline is never over-extended.
+`DockerRunnerAdapter.recoverHandle` also re-seeds its in-process log-growth observation floor at
+recovery time so a stale `StartedAt` cannot re-emit a spurious heartbeat after a restart.
+
+### Dangling-container sweep — min-age guard + two-pass removal (AC4)
+
+`RunnerWorkspaceCleanupJob.sweepDanglingContainers`:
+
+- **Min-age guard** (`deliveryline.runner.docker.dangling-container-min-age-seconds`, default
+  `120`, `0` disables): a labelled container with **no** `runner_executions` row is preserved
+  while it is younger than the window — it may be in the dispatch→row-insert gap, so destroying it
+  would kill a just-launching runner. The guard applies only to rowless containers; a container
+  whose row exists and is terminal is genuinely dangling and removed regardless of age.
+- **Normalized status**: `DefaultDockerEngineGateway.listContainersByLabel` populates
+  `DanglingContainerInfo.status()` from the engine **state** (`running|exited|created|paused|dead|
+  restarting`, lower-cased), never the human `getStatus()` ("Up 3 minutes"), so the sweep's
+  running-match is reliable.
+- **Two-pass removal**: a still-running dangling container is `docker stop`ped (10s grace) then
+  removed with `force=true`, avoiding the stop→rm 409 race; an already-exited container is removed
+  with `force=false`.
+- A `rex_`-prefixed but malformed label value (not a valid public id) is preserved (logged
+  `reason=invalid_id`) rather than destroyed — mirrors the orphan-workspace-dir Trap-T7 posture.

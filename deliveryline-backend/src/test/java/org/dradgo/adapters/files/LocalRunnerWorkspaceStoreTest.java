@@ -204,6 +204,7 @@ class LocalRunnerWorkspaceStoreTest {
             24L,
             3_600_000L,
             java.time.Duration.ofSeconds(30L),
-            java.time.Duration.ofSeconds(30L)));
+            java.time.Duration.ofSeconds(30L),
+            120L));
   }
 }

@@ -59,6 +59,23 @@ public interface RunnerExecutionRepository extends JpaRepository<RunnerExecution
       @Param("cutoff") OffsetDateTime cutoff,
       Limit limit);
 
+  // Story 3.2a AC2: stage-scoped variant so the LIMIT applies per-stage (no cross-stage
+  // starvation). The stage is the persisted string value of RunnerStage (closed enum set).
+  @Query(
+      """
+		select runnerExecution
+		from RunnerExecutionEntity runnerExecution
+		where runnerExecution.status in :statuses
+		  and runnerExecution.stage = :stage
+		  and runnerExecution.lastActivityAt < :cutoff
+		order by runnerExecution.lastActivityAt asc
+		""")
+  List<RunnerExecutionEntity> findStaleByStatusInAndStageAndLastActivityAtBefore(
+      @Param("statuses") List<String> statuses,
+      @Param("stage") String stage,
+      @Param("cutoff") OffsetDateTime cutoff,
+      Limit limit);
+
   // Story 3.2 AC5: workspace cleanup uses status IN (completed, failed, timed_out, orphaned) AS
   // the primary defense against deleting workspaces whose row is still live (Trap T16). The
   // adapter constructs the status list from the closed-set RunnerExecutionStatus enum, NOT from

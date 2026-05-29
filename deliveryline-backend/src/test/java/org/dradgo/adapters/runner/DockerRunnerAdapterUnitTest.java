@@ -16,10 +16,13 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.dradgo.adapters.runner.docker.ContainerState;
 import org.dradgo.adapters.runner.docker.CreateContainerSpec;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
@@ -28,6 +31,7 @@ import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
@@ -145,7 +149,8 @@ class DockerRunnerAdapterUnitTest {
             24L,
             3_600_000L,
             Duration.ofSeconds(30L),
-            Duration.ofSeconds(30L));
+            Duration.ofSeconds(30L),
+            120L);
     properties =
         new RunnerProperties(
             2.0d,
@@ -307,6 +312,146 @@ class DockerRunnerAdapterUnitTest {
         .thenThrow(new RuntimeException("docker inspect blew up"));
 
     assertThatNoException().isThrownBy(() -> adapter.cancel(REX_ID));
+  }
+
+  // ===== Story 3.2a AC8 — detectHeartbeat residual hardening ====================
+
+  @Test
+  void emptyRunnerStdoutDoesNotRegisterAsGrowthOnFirstPoll() {
+    // Story 3.2a AC8: a freshly-created EMPTY runner.stdout (byteCount == 0) must NOT count as
+    // heartbeat activity on the first poll — only real bytes do. startedAt=null so branch (a) is
+    // skipped; heartbeat.touch absent; log growth is 0 bytes → no HeartbeatTouched.
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("running", null, "none", List.of(), Map.of(), null));
+    when(workspaceStore.tryReadHeartbeatTouch(REX_ID)).thenReturn(Optional.empty());
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(0L, OffsetDateTime.now(CLOCK))));
+
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Running.class);
+  }
+
+  @Test
+  void logGrowthAdvancesMonotonicallyAcrossMillisecondPrecisionTimestamps() {
+    // Story 3.2a AC8: ms-precision timestamps compare monotonically — genuine growth on a later
+    // (by ms) timestamp fires; a stale observation (fewer bytes / earlier ts) never regresses the
+    // stored high-water mark, so it returns Running rather than a spurious HeartbeatTouched.
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("running", null, "none", List.of(), Map.of(), null));
+    when(workspaceStore.tryReadHeartbeatTouch(REX_ID)).thenReturn(Optional.empty());
+    OffsetDateTime t1 = OffsetDateTime.now(CLOCK);
+    OffsetDateTime t2 = t1.plusNanos(5_000_000L); // +5ms
+
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(100L, t1)));
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.HeartbeatTouched.class);
+
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(200L, t2)));
+    RunnerPollStatus second = adapter.poll(REX_ID);
+    assertThat(second).isInstanceOf(RunnerPollStatus.HeartbeatTouched.class);
+    assertThat(((RunnerPollStatus.HeartbeatTouched) second).activityTimestamp()).isEqualTo(t2);
+
+    // A stale observation (fewer bytes, earlier ts) must NOT regress the mark → Running, not a
+    // spurious heartbeat.
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(50L, t1)));
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Running.class);
+  }
+
+  @Test
+  void concurrentPollsNeverRegressTheStoredObservation() throws InterruptedException {
+    // Story 3.2a AC8 (a): two threads polling the same rex concurrently must not corrupt or regress
+    // the stored high-water mark (atomic merge). After a storm of polls at a HIGH observation, a
+    // subsequent poll at a LOW observation returns Running (the mark held).
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("running", null, "none", List.of(), Map.of(), null));
+    when(workspaceStore.tryReadHeartbeatTouch(REX_ID)).thenReturn(Optional.empty());
+    OffsetDateTime high = OffsetDateTime.now(CLOCK).plusSeconds(60);
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(1_000_000L, high)));
+
+    CountDownLatch start = new CountDownLatch(1);
+    Runnable hammer =
+        () -> {
+          try {
+            start.await();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+          }
+          for (int i = 0; i < 200; i++) {
+            adapter.poll(REX_ID);
+          }
+        };
+    Thread a = new Thread(hammer);
+    Thread b = new Thread(hammer);
+    a.start();
+    b.start();
+    start.countDown();
+    a.join(TimeUnit.SECONDS.toMillis(10));
+    b.join(TimeUnit.SECONDS.toMillis(10));
+
+    // The stored mark is now (1_000_000, high). A stale, lower observation must not fire.
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(
+            Optional.of(new LogGrowthObservation(10L, OffsetDateTime.now(CLOCK).minusSeconds(60))));
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Running.class);
+  }
+
+  @Test
+  void recoverHandleReSeedsObservationFloorSoStaleStartedAtDoesNotReEmitHeartbeat() {
+    // Story 3.2a AC8 (b): on a broker restart the in-process observation map is empty.
+    // recoverHandle
+    // must re-seed the floor so the container's (stale, past) StartedAt and already-written log
+    // bytes do NOT re-emit HeartbeatTouched — the first recovery poll classifies Running instead.
+    when(gateway.findContainerIdByRunnerExecutionId(REX_ID)).thenReturn(Optional.of(CONTAINER_ID));
+    OffsetDateTime staleStartedAt = OffsetDateTime.now(CLOCK).minusHours(1);
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(
+            new ContainerState("running", null, "none", List.of(), Map.of(), staleStartedAt));
+    when(workspaceStore.tryReadHeartbeatTouch(REX_ID)).thenReturn(Optional.empty());
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(500L, staleStartedAt)));
+
+    Optional<RunnerPollStatus> recovered = adapter.recoverHandle(REX_ID);
+
+    assertThat(recovered).isPresent();
+    assertThat(recovered.get()).isInstanceOf(RunnerPollStatus.Running.class);
+  }
+
+  @Test
+  void recoverHandleReSeedDoesNotRegressExistingHighWaterObservation() throws Exception {
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("running", null, "none", List.of(), Map.of(), null));
+    when(workspaceStore.tryReadHeartbeatTouch(REX_ID)).thenReturn(Optional.empty());
+    OffsetDateTime high = OffsetDateTime.now(CLOCK).plusSeconds(60);
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(1_000L, high)));
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.HeartbeatTouched.class);
+
+    java.lang.reflect.Field handles =
+        DockerRunnerAdapter.class.getDeclaredField("rexIdToContainerId");
+    handles.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    java.util.concurrent.ConcurrentMap<String, String> handleMap =
+        (java.util.concurrent.ConcurrentMap<String, String>) handles.get(adapter);
+    handleMap.remove(REX_ID);
+
+    when(gateway.findContainerIdByRunnerExecutionId(REX_ID)).thenReturn(Optional.of(CONTAINER_ID));
+    OffsetDateTime lower = OffsetDateTime.now(CLOCK).plusSeconds(30);
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(500L, lower)));
+    assertThat(adapter.recoverHandle(REX_ID)).isPresent();
+
+    when(workspaceStore.observeLogGrowth(REX_ID))
+        .thenReturn(Optional.of(new LogGrowthObservation(800L, lower)));
+    assertThat(adapter.poll(REX_ID))
+        .as("recoverHandle must not lower the previous high-water mark")
+        .isInstanceOf(RunnerPollStatus.Running.class);
   }
 
   // ===== test helpers ============================================================
