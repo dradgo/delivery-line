@@ -20,6 +20,8 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -53,6 +55,9 @@ import org.testcontainers.DockerClientFactory;
 @EnabledIfDockerAvailable
 abstract class BrokerDrivenDockerLifecycleITSupport {
 
+  private static final Logger log =
+      LoggerFactory.getLogger(BrokerDrivenDockerLifecycleITSupport.class);
+
   protected static final String TEST_IMAGE = "alpine:3.20";
 
   @Autowired protected RunnerBroker broker;
@@ -76,18 +81,23 @@ abstract class BrokerDrivenDockerLifecycleITSupport {
 
   @AfterEach
   void brokerBaseTearDown() {
+    // Story 3.2a code-review (2026-05-29): surface cleanup failures at WARN instead of silently
+    // swallowing them. A daemon that fails to remove a still-running labelled container would
+    // otherwise leak it across the shared suite with no signal, weakening the dangling-container
+    // IT's "untouched control container" guarantee. We do NOT rethrow — failing @AfterEach would
+    // mask the actual test outcome — but the leak is now visible in the build log.
     for (String id : containersToCleanup) {
       try {
         dockerClient.removeContainerCmd(id).withForce(true).exec();
-      } catch (RuntimeException ignored) {
-        // best-effort cleanup
+      } catch (RuntimeException e) {
+        log.warn("teardown failed to remove container id={} cause={}", id, e.toString());
       }
     }
     for (String rex : workspacesToCleanup) {
       try {
         workspaceStore.deleteWorkspace(rex);
-      } catch (RuntimeException ignored) {
-        // best-effort cleanup
+      } catch (RuntimeException e) {
+        log.warn("teardown failed to delete workspace rex={} cause={}", rex, e.toString());
       }
     }
     // Append-only tables first (FK children), then parents. Mirrors
@@ -181,7 +191,7 @@ abstract class BrokerDrivenDockerLifecycleITSupport {
     return Boolean.TRUE.equals(inspect.getState().getRunning());
   }
 
-  /** Poll the engine until the container is not running, or the timeout elapses. */
+  /** Poll the engine until the container is not running; fail if it is still running at timeout. */
   protected void awaitNotRunning(String containerId, Duration timeout) {
     long deadline = System.currentTimeMillis() + timeout.toMillis();
     while (System.currentTimeMillis() < deadline) {
@@ -190,6 +200,15 @@ abstract class BrokerDrivenDockerLifecycleITSupport {
       }
       sleepQuietly(Duration.ofMillis(200));
     }
+    // Story 3.2a code-review (2026-05-29): fail loudly instead of returning silently. A silent
+    // return let a test proceed against a still-running container (recovery exercising the wrong
+    // branch) and still pass for the wrong reason.
+    throw new AssertionError(
+        "container "
+            + containerId
+            + " was still running after "
+            + timeout
+            + " — awaitNotRunning timed out");
   }
 
   protected String runnerStatus(String rex) {

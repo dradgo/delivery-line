@@ -139,7 +139,7 @@ abstract class DockerLifecycleITSupport {
     return Boolean.TRUE.equals(running);
   }
 
-  /** Poll the engine until the container is not running, or the timeout elapses. */
+  /** Poll the engine until the container is not running; fail if it is still running at timeout. */
   protected void awaitNotRunning(String containerId, Duration timeout) {
     long deadline = System.currentTimeMillis() + timeout.toMillis();
     while (System.currentTimeMillis() < deadline) {
@@ -148,6 +148,15 @@ abstract class DockerLifecycleITSupport {
       }
       sleepQuietly(Duration.ofMillis(200));
     }
+    // Story 3.2a code-review (2026-05-29): fail loudly instead of returning silently. A silent
+    // return let a test proceed against a still-running container (recovery exercising the wrong
+    // branch) and still pass for the wrong reason.
+    throw new AssertionError(
+        "container "
+            + containerId
+            + " was still running after "
+            + timeout
+            + " — awaitNotRunning timed out");
   }
 
   protected static void sleepQuietly(Duration duration) {

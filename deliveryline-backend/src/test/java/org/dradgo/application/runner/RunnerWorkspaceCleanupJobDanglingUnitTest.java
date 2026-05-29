@@ -78,7 +78,11 @@ class RunnerWorkspaceCleanupJobDanglingUnitTest {
   }
 
   @Test
-  void rowlessContainerWithUnknownCreatedAtIsPreservedByMinAgeGuard() {
+  void rowlessContainerWithUnknownCreatedAtAgesOutAndIsRemoved() {
+    // Story 3.2a code-review (2026-05-29): a null createdAt now ages OUT (is removed) rather than
+    // being preserved on every tick. An unknown-age container that can never satisfy the grace
+    // comparison would otherwise leak forever; the min-age guard only protects containers with a
+    // known, recent createdAt.
     DanglingContainerInfo unknownCreated =
         new DanglingContainerInfo("containerunknown", "rex_unknown00001", "exited", null);
     when(docker.listContainersByLabel(any(), any())).thenReturn(List.of(unknownCreated));
@@ -86,8 +90,9 @@ class RunnerWorkspaceCleanupJobDanglingUnitTest {
 
     int removed = job.sweepDanglingContainers();
 
-    verify(docker, never()).removeContainer(eq("containerunknown"), anyBoolean());
-    org.junit.jupiter.api.Assertions.assertEquals(0, removed);
+    // exited → single-pass force=false removal.
+    verify(docker).removeContainer("containerunknown", false);
+    org.junit.jupiter.api.Assertions.assertEquals(1, removed);
   }
 
   @Test

@@ -183,10 +183,13 @@ public class RunnerWorkspaceCleanupJob {
         // dispatch→row-insert window — preserve it until it ages past the grace window so a
         // freshly-launching runner is never destroyed mid-dispatch. The guard applies ONLY to
         // rowless containers; a container whose row exists and is terminal is genuinely dangling.
+        // Story 3.2a code-review (2026-05-29): a null createdAt now ages OUT (is removed) rather
+        // than being preserved on every tick — an unknown-age container that can never satisfy the
+        // grace comparison would otherwise leak forever.
         if (row.isEmpty()
             && minAgeSeconds > 0L
-            && (container.createdAt() == null
-                || container.createdAt().isAfter(now.minusSeconds(minAgeSeconds)))) {
+            && container.createdAt() != null
+            && container.createdAt().isAfter(now.minusSeconds(minAgeSeconds))) {
           log.info(
               "dangling container skip containerId={} reason=within_min_age createdAt={} minAgeSeconds={}",
               container.containerId(),

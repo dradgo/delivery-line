@@ -75,6 +75,32 @@ class RunnerPropertiesTest {
     assertThrows(IllegalArgumentException.class, () -> docker(3_600_000L, -1L));
   }
 
+  @Test
+  void danglingContainerMinAgeRejectsValueAboveOneDay() {
+    // Story 3.2a code-review (2026-05-29): the upper bound guards now.minusSeconds(...) overflow.
+    docker(3_600_000L, 86_400L); // exactly one day — boundary allowed, no throw
+    assertThrows(IllegalArgumentException.class, () -> docker(3_600_000L, 86_401L));
+  }
+
+  @Test
+  void redactImageTagStripsEmbeddedCredentialsAndLeavesPlainRefsUntouched() {
+    // Story 3.2a code-review (2026-05-29): directly pin the credential-redaction contract so a
+    // credential-bearing image tag can never leak into the runner.dispatched audit event / logs.
+    assertEquals(
+        "***@host/image:tag", RunnerProperties.Docker.redactImageTag("user:secret@host/image:tag"));
+    // Un-credentialed reference is untouched.
+    assertEquals(
+        "deliveryline/codex-runner:latest",
+        RunnerProperties.Docker.redactImageTag("deliveryline/codex-runner:latest"));
+    // Registry with a port + digest (no credentials) must NOT be over-redacted.
+    assertEquals(
+        "registry.example:5000/image@sha256:abc",
+        RunnerProperties.Docker.redactImageTag("registry.example:5000/image@sha256:abc"));
+    // Null / blank pass through unchanged.
+    assertEquals(null, RunnerProperties.Docker.redactImageTag(null));
+    assertEquals("  ", RunnerProperties.Docker.redactImageTag("  "));
+  }
+
   private static RunnerProperties.Docker docker(
       long workspaceCleanupIntervalMs, long danglingContainerMinAgeSeconds) {
     EnumMap<RunnerKind, String> tags = new EnumMap<>(RunnerKind.class);

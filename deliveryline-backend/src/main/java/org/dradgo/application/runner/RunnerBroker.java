@@ -941,7 +941,26 @@ public class RunnerBroker {
             terminateError.toString());
       }
     }
-    executionService.recordTimedOut(runnerExecutionId);
+    // Story 3.2a code-review (2026-05-29): gate the TIMED_OUT flip on the row ACTUALLY
+    // transitioning, mirroring recordCompleted/recordOrphaned. The isTerminal pre-check above is a
+    // non-locking read; a concurrent onResult/recovery can move the row terminal between that read
+    // and recordTimedOut. recordTimedOut re-reads under a write lock and throws ILLEGAL_TRANSITION
+    // if the row is already terminal — catch it and skip the event + workflow-fail so a
+    // scan-vs-completion race cannot emit a duplicate runner.timeout or double-fail the run. The
+    // terminate() above already ran (best-effort stop of a past-deadline container); only the
+    // bookkeeping is gated.
+    try {
+      executionService.recordTimedOut(runnerExecutionId);
+    } catch (DomainException raceTerminal) {
+      if (raceTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw raceTerminal;
+      }
+      log.info(
+          "scanForTimeouts timeout skip runnerExecutionId={} reason=already_terminal errorCode={}",
+          runnerExecutionId,
+          raceTerminal.errorCode().value());
+      return false;
+    }
     appendRunnerTimeoutEvent(
         snapshot.workflowRunPublicId(),
         runnerExecutionId,

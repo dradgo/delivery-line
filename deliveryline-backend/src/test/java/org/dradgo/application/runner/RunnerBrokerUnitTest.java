@@ -693,6 +693,64 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
+  void scanForTimeoutsHeartbeatExtendedDeadlineDoesNotInvokeDockerTerminate() {
+    // Story 3.2a code-review (2026-05-29) — AC6 Trap T1: a heartbeat that bumps timeout_at past
+    // now() between the initial scan and the per-item transaction must make the broker skip the row
+    // BEFORE issuing any container stop/kill. This is the docker-path variant of
+    // scanForTimeoutsSkipsRowWhoseTimeoutAtWasExtendedByHeartbeatBeforeRescan: that test uses a
+    // plain RunnerAdapter (so terminate is unreachable by type); here a RecoverableRunnerAdapter is
+    // wired so the assertion that terminate/findContainerIdFor are NEVER called actually proves the
+    // heartbeat-race guard runs ahead of the kill block (RunnerBroker.processSingleTimeout).
+    RecoverableRunnerAdapter dockerAdapter = mock(RecoverableRunnerAdapter.class);
+    runnerAdapter = dockerAdapter;
+    broker =
+        new RunnerBroker(
+            recordPort,
+            eventPort,
+            executionService,
+            contextBundleService,
+            idempotencyService,
+            workflowTransitionService,
+            artifactOperationService,
+            runnerAdapter,
+            scratchStore,
+            new RunnerContractValidator(),
+            runnerProperties,
+            callthroughTemplate(),
+            callthroughTemplate(),
+            CLOCK);
+
+    RunnerExecutionSnapshot staleInitial = staleSnapshot(REX_ID, RunnerExecutionStatus.RUNNING);
+    OffsetDateTime now = OffsetDateTime.now(CLOCK);
+    RunnerExecutionSnapshot extendedByHeartbeat =
+        new RunnerExecutionSnapshot(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.INVESTIGATION,
+            RunnerExecutionStatus.RUNNING,
+            1,
+            now,
+            now.plusSeconds(120),
+            null,
+            null,
+            now,
+            null);
+    when(recordPort.findStaleByStatusInAndTimeoutAtBefore(any(), any(), anyInt()))
+        .thenReturn(List.of(staleInitial));
+    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(extendedByHeartbeat));
+
+    int flipped = broker.scanForTimeouts();
+
+    assertEquals(0, flipped, "heartbeat-extended deadline must not flip the row");
+    // The kill path must be unreachable: neither the container lookup nor terminate may run.
+    verify(dockerAdapter, never()).findContainerIdFor(any());
+    verify(dockerAdapter, never()).terminate(any(), any());
+    verify(executionService, never()).recordTimedOut(any());
+    verify(eventPort, never())
+        .append(any(), eq(WorkflowEventType.RUNNER_TIMEOUT), any(), any(), any(), any(), any());
+  }
+
+  @Test
   void onResultLateAgainstTimedOutRowEmitsRunnerLateResultEventWithoutTransition() {
     // AC5 split: a result arriving at a TIMED_OUT row classifies as runner_late_result.
     // The runner-execution row stays TIMED_OUT (no further transition allowed by state machine);

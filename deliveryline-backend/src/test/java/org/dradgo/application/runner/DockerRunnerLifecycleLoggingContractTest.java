@@ -30,6 +30,7 @@ import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.runnercontracts.RunnerContractValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -199,6 +200,12 @@ class DockerRunnerLifecycleLoggingContractTest {
     broker.recoverOnStartup();
 
     assertThat(brokerLog()).contains("recoverOnStartup docker probe no-container-found");
+    // Story 3.2a code-review (2026-05-29) — AC10(h): assert the BEHAVIOR, not just the WARN log.
+    // No container matching the label filter must flip the row to orphaned and emit
+    // RUNNER_ORPHANED.
+    Mockito.verify(executionService).recordOrphaned(rex);
+    Mockito.verify(eventPort)
+        .append(any(), eq(WorkflowEventType.RUNNER_ORPHANED), any(), any(), any(), any(), any());
   }
 
   @Test

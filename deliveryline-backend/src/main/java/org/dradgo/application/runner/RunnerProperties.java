@@ -156,6 +156,9 @@ public record RunnerProperties(
       Duration containerStartTimeout,
       long danglingContainerMinAgeSeconds) {
 
+    /** Upper bound (1 day) for the dangling-container grace window; guards against overflow. */
+    private static final long MAX_DANGLING_CONTAINER_MIN_AGE_SECONDS = 86_400L;
+
     public Docker {
       Objects.requireNonNull(defaultKind, "defaultKind");
       imageTags = imageTags == null ? Map.of() : Map.copyOf(new EnumMap<>(imageTags));
@@ -191,9 +194,16 @@ public record RunnerProperties(
       // is
       // preserved by the dangling-container sweep (covers the dispatch→row-insert window). Zero
       // disables the guard (every rowless container is eligible for removal immediately).
-      if (danglingContainerMinAgeSeconds < 0L) {
+      // Story 3.2a code-review (2026-05-29): bound the upper end too. The sweep computes
+      // now.minusSeconds(minAgeSeconds); an unbounded value overflows OffsetDateTime arithmetic
+      // (DateTimeException), which the per-container handler swallows so every dangling container
+      // leaks. A day is far beyond any sane dispatch→row-insert grace window.
+      if (danglingContainerMinAgeSeconds < 0L
+          || danglingContainerMinAgeSeconds > MAX_DANGLING_CONTAINER_MIN_AGE_SECONDS) {
         throw new IllegalArgumentException(
-            "deliveryline.runner.docker.dangling-container-min-age-seconds must be >= 0: "
+            "deliveryline.runner.docker.dangling-container-min-age-seconds must be between 0 and "
+                + MAX_DANGLING_CONTAINER_MIN_AGE_SECONDS
+                + ": "
                 + danglingContainerMinAgeSeconds);
       }
     }
