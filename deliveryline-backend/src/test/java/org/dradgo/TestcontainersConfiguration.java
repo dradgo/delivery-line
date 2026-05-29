@@ -14,24 +14,35 @@ public class TestcontainersConfiguration {
   // (postgres:17.2@sha256:…) once Docker Hub publishes a stable manifest for the
   // image. Tracked in deferred-work.md.
   //
-  // Singleton container — shared across all @SpringBootTest ApplicationContexts
-  // and lifecycle-managed by Spring Boot's @ServiceConnection ContextCustomizer
-  // (calls start() on first bean access, stop() on context shutdown).
-  // `.withReuse(true)` lets developers reuse the container across `./mvnw test`
-  // invocations locally (requires `testcontainers.reuse.enable=true` in
-  // ~/.testcontainers.properties; CI containers are always fresh per workflow run).
+  // Per-context container — NOT a shared static singleton. Each @SpringBootTest
+  // ApplicationContext gets (and Spring Boot's @ServiceConnection lifecycle-manages)
+  // its OWN Postgres instance, started on first use and stopped when that context
+  // closes.
   //
-  // No `static { CONTAINER.start(); }` block — eager class-init start crashes the
-  // Windows backend-unit-tests CI job (no Docker) when Spring auto-discovers this
-  // @TestConfiguration via flywayContainerConnectionDetailsForPostgresContainer.
-  // Spring's @ServiceConnection wiring starts the container lazily on first use,
-  // which is what we want on every OS.
-  private static final PostgreSQLContainer<?> CONTAINER =
-      new PostgreSQLContainer<>(DockerImageName.parse("postgres:17.2")).withReuse(true);
-
+  // Why not a shared static singleton (the previous design): @ServiceConnection calls
+  // stop() on the container when ANY context closes (context-cache eviction once the
+  // tier exceeds the 32-context cache, a @MockitoBean/@DirtiesContext class, etc.). A
+  // shared singleton therefore gets torn down mid-suite while OTHER still-cached
+  // contexts keep using it → HikariPool "Connection refused" → 30s connect-timeout
+  // retries → the backend-contract-tests tier hangs to its CI timeout. Making stop()
+  // inert instead (so the singleton survives) breaks the other direction: the DB is
+  // never reset, so rows accumulate across every test class and FK-constrained
+  // cleanups fail. Per-context containers resolve both: no sharing means no
+  // stop-mid-suite race, and each context starts from a fresh, migrated, empty schema
+  // so tests are isolated without depending on a shared container being restarted.
+  //
+  // No `static { … .start(); }` block and no eager start here — constructing the
+  // container does not touch Docker (only start() does), so the Docker-less Windows
+  // backend-unit-tests CI job stays green even though Spring auto-discovers this
+  // @TestConfiguration; @ServiceConnection starts the container lazily, only when a
+  // context actually needs the datasource.
+  //
+  // withReuse(true) is intentionally NOT set: reuse shares one container across
+  // contexts (when testcontainers.reuse.enable=true), which would reintroduce the
+  // shared-container teardown race for any developer who enables reuse locally.
   @Bean
   @ServiceConnection
   PostgreSQLContainer<?> postgresContainer() {
-    return CONTAINER;
+    return new PostgreSQLContainer<>(DockerImageName.parse("postgres:17.2"));
   }
 }
