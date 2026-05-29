@@ -36,9 +36,10 @@ import org.testcontainers.DockerClientFactory;
  *
  * <p>Unlike {@link DockerLifecycleITSupport} (a hand-wired adapter over a {@code @TempDir}), this
  * base boots the full application under {@code runners.docker} with Testcontainers Postgres so the
- * autowired {@link RunnerBroker}, {@link DockerRunnerAdapter}, and {@link LocalRunnerWorkspaceStore}
- * are the production beans. Tests seed a real DB row + launch a real labeled container, then drive a
- * broker entry point and assert the DB transition + the dedicated lifecycle event.
+ * autowired {@link RunnerBroker}, {@link DockerRunnerAdapter}, and {@link
+ * LocalRunnerWorkspaceStore} are the production beans. Tests seed a real DB row + launch a real
+ * labeled container, then drive a broker entry point and assert the DB transition + the dedicated
+ * lifecycle event.
  *
  * <p><b>WSL2 gate (Trap T15):</b> these ITs exercise real {@code docker stop}/{@code kill} signal
  * behavior, which differs between Windows Docker Desktop and Linux. They MUST be run on WSL2 Ubuntu
@@ -142,14 +143,16 @@ abstract class BrokerDrivenDockerLifecycleITSupport {
   // ----- container launch helpers -----
 
   /** Launch a started container running {@code cmd}, tagged with the deliveryline 5-label set. */
-  protected String launchLabeledContainer(String rex, String runId, String stageValue, String... cmd) {
+  protected String launchLabeledContainer(
+      String rex, String runId, String stageValue, String... cmd) {
     Map<String, String> labels = new LinkedHashMap<>();
     labels.put("deliveryline.runnerExecutionId", rex);
     labels.put("deliveryline.workflowRunId", runId);
     labels.put("deliveryline.runnerKind", "codex");
     labels.put("deliveryline.stage", stageValue);
     labels.put("deliveryline.dispatchedAt", OffsetDateTime.now().toString());
-    String id = dockerClient.createContainerCmd(TEST_IMAGE).withCmd(cmd).withLabels(labels).exec().getId();
+    String id =
+        dockerClient.createContainerCmd(TEST_IMAGE).withCmd(cmd).withLabels(labels).exec().getId();
     containersToCleanup.add(id);
     dockerClient.startContainerCmd(id).exec();
     return id;

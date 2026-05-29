@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Story 3.2a AC7 / story-3.2 AC10 (b) + (c) — <b>broker-driven</b> heartbeat activity extension
  * against a real running container. Closes the {@code [Review][Patch]} finding that the original
- * scaffold asserted {@code adapter.poll(...)} returned {@code HeartbeatTouched} but never proved the
- * broker translated that into a {@code last_activity_at} / {@code timeout_at} advance via {@link
- * org.dradgo.application.runner.RunnerBroker#pollActiveExecutions()}.
+ * scaffold asserted {@code adapter.poll(...)} returned {@code HeartbeatTouched} but never proved
+ * the broker translated that into a {@code last_activity_at} / {@code timeout_at} advance via
+ * {@link org.dradgo.application.runner.RunnerBroker#pollActiveExecutions()}.
  *
  * <p>The container is a plain {@code sleep} so {@code poll} classifies it running and reaches the
  * heartbeat-source check; the heartbeat sources (log-file growth, then the {@code heartbeat.touch}
@@ -25,7 +25,9 @@ class DockerRunnerLifecycleHeartbeatIT extends BrokerDrivenDockerLifecycleITSupp
   void logFileGrowthDrivesBrokerActivityExtensionAcrossPolls() throws Exception {
     String runId = seedWorkflowRun("Executing");
     // Far-future deadline: this IT proves activity advance, not the timeout path.
-    String rex = seedRunningRunner(runId, "execution", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ 600);
+    String rex =
+        seedRunningRunner(
+            runId, "execution", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ 600);
     prepareWorkspace(rex);
     launchLabeledContainer(rex, runId, "execution", "sleep", "3600");
 
@@ -62,7 +64,9 @@ class DockerRunnerLifecycleHeartbeatIT extends BrokerDrivenDockerLifecycleITSupp
   @Test
   void heartbeatTouchMarkerDrivesBrokerActivityExtension() throws Exception {
     String runId = seedWorkflowRun("Executing");
-    String rex = seedRunningRunner(runId, "execution", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ 600);
+    String rex =
+        seedRunningRunner(
+            runId, "execution", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ 600);
     prepareWorkspace(rex);
     launchLabeledContainer(rex, runId, "execution", "sleep", "3600");
 

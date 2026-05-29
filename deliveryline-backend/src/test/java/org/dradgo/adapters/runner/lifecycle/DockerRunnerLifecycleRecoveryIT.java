@@ -9,10 +9,11 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Story 3.2a AC5 / story-3.2 AC10 (f) + (g) — <b>broker-driven</b> restart recovery via {@link
- * org.dradgo.application.runner.RunnerBroker#recoverOnStartup()}. Closes the {@code [Review][Patch]}
- * finding that the original scaffold only asserted {@code adapter.recoverHandle(...)}'s in-process
- * classification and never proved the broker's restart path against a real {@code runner_executions}
- * row (no DB row, no lease re-arm, no completion ingestion).
+ * org.dradgo.application.runner.RunnerBroker#recoverOnStartup()}. Closes the {@code
+ * [Review][Patch]} finding that the original scaffold only asserted {@code
+ * adapter.recoverHandle(...)}'s in-process classification and never proved the broker's restart
+ * path against a real {@code runner_executions} row (no DB row, no lease re-arm, no completion
+ * ingestion).
  *
  * <p>(f) A {@code running} row whose lease has already elapsed (simulating a broker outage) is
  * recovered from a still-running container via the {@code deliveryline.runnerExecutionId} label
@@ -20,8 +21,9 @@ import org.junit.jupiter.api.Test;
  * review decision D2), and the broker now holds the container handle.
  *
  * <p>(g) A {@code running} row whose container has already exited after writing a valid {@code
- * output/runner-result.v1.json} is recovered by harvesting that result through {@code onResult}: the
- * row transitions to {@code completed} and a dedicated {@code runner.completed} event is appended.
+ * output/runner-result.v1.json} is recovered by harvesting that result through {@code onResult}:
+ * the row transitions to {@code completed} and a dedicated {@code runner.completed} event is
+ * appended.
  */
 class DockerRunnerLifecycleRecoveryIT extends BrokerDrivenDockerLifecycleITSupport {
 
@@ -30,7 +32,12 @@ class DockerRunnerLifecycleRecoveryIT extends BrokerDrivenDockerLifecycleITSuppo
     String runId = seedWorkflowRun("Executing");
     // Lease already elapsed (1h idle) — a naive next scanForTimeouts would kill a genuinely-alive
     // container, which is exactly why recovery re-arms the lease (D2).
-    String rex = seedRunningRunner(runId, "execution", /* lastActivitySecondsAgo= */ 3600, /* timeoutSecondsFromNow= */ -60);
+    String rex =
+        seedRunningRunner(
+            runId,
+            "execution",
+            /* lastActivitySecondsAgo= */ 3600,
+            /* timeoutSecondsFromNow= */ -60);
     String containerId = launchLabeledContainer(rex, runId, "execution", "sleep", "3600");
     OffsetDateTime leaseBefore = lastActivityAt(rex);
 
@@ -52,12 +59,18 @@ class DockerRunnerLifecycleRecoveryIT extends BrokerDrivenDockerLifecycleITSuppo
   void recoverOnStartupIngestsExitedContainerResultAndCompletesRow() throws Exception {
     // Investigation stage producing a spec; run must be non-terminal for artifact ingestion.
     String runId = seedWorkflowRun("Investigating");
-    String rex = seedRunningRunner(runId, "investigation", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ 600);
+    String rex =
+        seedRunningRunner(
+            runId,
+            "investigation",
+            /* lastActivitySecondsAgo= */ 30,
+            /* timeoutSecondsFromNow= */ 600);
     prepareWorkspace(rex);
 
     // The runner wrote a schema-valid result + its referenced artifact content before exiting.
     writeFile(outputDir(rex).resolve("runner-result.v1.json"), happySpecResult(runId, rex));
-    scratchStore.writeArtifactContent(rex, "spec/v1.json", "# Generated spec\n".getBytes(StandardCharsets.UTF_8));
+    scratchStore.writeArtifactContent(
+        rex, "spec/v1.json", "# Generated spec\n".getBytes(StandardCharsets.UTF_8));
 
     String containerId = launchLabeledContainer(rex, runId, "investigation", "true");
     awaitNotRunning(containerId, Duration.ofSeconds(10));

@@ -15,15 +15,15 @@ import org.junit.jupiter.api.Test;
  * already in the past, primes the adapter's container handle (exactly as the broker's startup
  * recovery would), then drives {@code broker.scanForTimeouts()} and asserts the full broker
  * outcome: the row flips to {@code timed_out}, a dedicated {@code runner.timeout} event is appended
- * (NOT the generic {@code runner.failed}), and the SIGTERM-ignoring container is force-exited by the
- * {@code stop → kill-after-grace} path.
+ * (NOT the generic {@code runner.failed}), and the SIGTERM-ignoring container is force-exited by
+ * the {@code stop → kill-after-grace} path.
  *
  * <p><b>AC nuance to confirm on WSL2 (Trap T15):</b> {@code docker stop -t N} sends SIGTERM then
  * SIGKILLs after the grace, so the broker usually observes the container already exited →
  * termination outcome {@code STOPPED_GRACEFULLY} (the {@code terminationOutcome} written into the
  * {@code runner.timeout} event details); {@code KILLED_AFTER_GRACE} only arises when {@code docker
- * stop} itself fails. Either way the row is {@code timed_out} and the container has exited — this IT
- * asserts that broker-level invariant.
+ * stop} itself fails. Either way the row is {@code timed_out} and the container has exited — this
+ * IT asserts that broker-level invariant.
  */
 class DockerRunnerLifecycleTimeoutIT extends BrokerDrivenDockerLifecycleITSupport {
 
@@ -32,12 +32,15 @@ class DockerRunnerLifecycleTimeoutIT extends BrokerDrivenDockerLifecycleITSuppor
     // Run in Executing so the broker's driveWorkflowFailed (Executing → Failed) is a legal
     // transition; runner row deadline is already elapsed.
     String runId = seedWorkflowRun("Executing");
-    String rex = seedRunningRunner(runId, "execution", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ -5);
+    String rex =
+        seedRunningRunner(
+            runId, "execution", /* lastActivitySecondsAgo= */ 30, /* timeoutSecondsFromNow= */ -5);
     String containerId =
         launchLabeledContainer(rex, runId, "execution", "sh", "-c", "trap '' TERM; sleep 3600");
 
     // Prime the broker's in-process handle for this rex via the production recovery probe (the
-    // broker does this on startup before scans). recoverHandle only caches the container id; it does
+    // broker does this on startup before scans). recoverHandle only caches the container id; it
+    // does
     // not mutate the DB row, so the seeded past-deadline timeout_at is preserved for the scan.
     assertThat(adapter.recoverHandle(rex)).isPresent();
     assertThat(adapter.findContainerIdFor(rex)).contains(containerId);
