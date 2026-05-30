@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
@@ -110,6 +111,13 @@ class DockerRunnerProfileWiringContractTest {
     @Bean
     DockerEngineGateway dockerEngineGateway() {
       return Mockito.mock(DockerEngineGateway.class);
+    }
+
+    // Story 3.5: DockerRunnerAdapter's constructor now requires RunnerSecretsService. The slice
+    // only exercises profile-wiring (no dispatch), so a mock satisfies the dependency.
+    @Bean
+    RunnerSecretsService runnerSecretsService() {
+      return Mockito.mock(RunnerSecretsService.class);
     }
 
     @Bean

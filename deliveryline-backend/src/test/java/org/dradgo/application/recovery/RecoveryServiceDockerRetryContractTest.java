@@ -33,7 +33,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * runner.started}, which the docker path does not emit).
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+// Story 3.5: the real DockerRunnerAdapter dispatch path now resolves the agent-provider secret
+// via RunnerSecretsService (reads the canonical env-var name from the Spring Environment). Provide
+// dummy values so the retry dispatch under test resolves a secret instead of failing fast with
+// DOCTOR_RUNNER_SECRET_MISSING. Never real keys.
+@SpringBootTest(
+    properties = {"CODEX_API_KEY=sk-codex-test-value", "ANTHROPIC_API_KEY=sk-ant-test-value"})
 @ActiveProfiles({"test", "linear-mock", "runners.docker"})
 @Tag("integration")
 class RecoveryServiceDockerRetryContractTest {

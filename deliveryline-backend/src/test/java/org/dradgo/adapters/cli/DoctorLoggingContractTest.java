@@ -58,6 +58,7 @@ class DoctorLoggingContractTest {
     when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
     when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
     when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+    when(probes.probeRunnerSecrets()).thenReturn(ProbeResult.pass("Runner secrets present"));
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
@@ -79,7 +80,7 @@ class DoctorLoggingContractTest {
     assertThat(infoEvents.get(1).getFormattedMessage())
         .contains("doctor diagnostics finished")
         .contains("overallStatus=PASS")
-        .contains("checksRun=11");
+        .contains("checksRun=12");
   }
 
   @Test
