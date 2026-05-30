@@ -82,10 +82,19 @@ function RunReviewQueueRoute() {
 The shell is **structurally stable** across every Epic-2 view it hosts and every Epic-4 mode it grows into. Compare Mode, clarification state, and normal review are **not "mode switches"** that swap layouts — they are different content inside the same three landmarks.
 
 - The same `<nav>` / `<main>` / `<aside>` exist on the queue route, every `$workflowRunId` route, every artifact route, and the dead-end / 404 / error routes (per Q4 — dead-end routes render _inside_ the shell).
-- The catastrophic-error overlay (story 2.22 AC8) **lives in this shell**. A documented seam is reserved in `AppShell.tsx` (search for `// SEAM:`). Do not build the overlay here.
+- The catastrophic-error overlay (story 2.22 AC8) does **NOT** live in this shell — see "Catastrophic-error overlay (closed by 2.22)" below. The seam story 2.7 reserved in `AppShell.tsx` is closed; story 2.22 mounts the overlay in `App.tsx` outside the shell and portals to `document.body` so a shell crash still surfaces it.
 - Compare Mode (Epic 4) does **not** ship a different shell. It ships content that occupies `<main>` and may split it into two artifact views — at which point the artifact-primacy exception in §1 applies.
 
 This is tested by `AppShell.test.tsx` ("structural stability" describe block): mounting the shell at `/workflows` and at `/workflows/:id` both yield the three landmarks.
+
+### Catastrophic-error overlay (closed by 2.22)
+
+Story 2.7 reserved a placement inside `AppShell.tsx` for the global catastrophic-error overlay. **Story 2.22 closed that seam without using it** (AC8.c, Trap T11):
+
+- The overlay (`src/lib/navigation/CatastrophicErrorOverlay.tsx`) mounts **once in `src/App.tsx`**, OUTSIDE the `<RouterProvider>` / `AppShell` subtree, and renders via `createPortal(..., document.body)`. A crash inside the shell (or the router) therefore still surfaces the overlay rather than being swallowed by the same subtree that failed.
+- The boundary that catches the crash (`CatastrophicErrorBoundary`, backed by `react-error-boundary`) and the `CatastrophicErrorProvider` likewise live in `App.tsx`, wrapping the router.
+- The overlay uses `role="alertdialog"` with a focus trap; "Reload" resets the page (and the breadcrumb stack), "Dismiss" resets the error boundary so the router subtree re-mounts while preserving the breadcrumb stack (OQ-8).
+- The shell's reserved `// SEAM` comment is now annotated `SEAM CLOSED`. Do not re-add an overlay mount inside the shell.
 
 ---
 

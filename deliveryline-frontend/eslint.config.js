@@ -96,6 +96,10 @@ export default tseslint.config(
       // Story 2.24 AC11 — no `dangerouslySetInnerHTML` / `innerHTML` writes
       // outside the sanitization package's trusted boundary.
       'local-rules/no-unsanitized-html': 'error',
+
+      // Story 2.22 AC7 — <LoadingState> needs an explicit variant; no raw
+      // spinners outside src/components/feedback/states + src/components/ui.
+      'local-rules/no-untyped-loading-state': 'error',
     },
   },
 
@@ -137,6 +141,19 @@ export default tseslint.config(
       parser: tseslint.parser,
       parserOptions: { project: false, projectService: false },
       globals: { ...globals.node },
+    },
+  },
+
+  // ---- Test files: relax type-aware "unnecessary" rules (story 2.22) ----
+  // Tests legitimately use defensive null-handling (`?? ''`, `?.`) and casts on
+  // mocked / loosely-typed values (vi.fn, query-result mocks) that the type
+  // checker deems redundant. Production code keeps the full strict rule set.
+  {
+    files: ['src/**/*.test.{ts,tsx}', 'src/**/__tests__/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-unnecessary-condition': 'off',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/unbound-method': 'off',
     },
   },
 

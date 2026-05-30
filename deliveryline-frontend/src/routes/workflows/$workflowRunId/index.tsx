@@ -3,6 +3,7 @@ import { Link, createFileRoute, notFound } from '@tanstack/react-router';
 import { Stack } from '@/components/layout';
 import { detailQueryOptions } from '@/lib/api/queryOptions';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
+import { isValidClarificationId } from '@/lib/routing/publicId';
 import {
   InvalidRouteParamError,
   assertValidRunRouteParams,
@@ -62,7 +63,21 @@ const RECOGNIZED_STATES = new Set([
   'Reconciled',
 ]);
 
+/**
+ * Story 2.22 (AC1) — typed `?clarificationId=cla_xxx` deep-link search param.
+ * `useNavigateToClarification` writes it; the Clarification Region (story 2.18)
+ * reads it. Validated at the route boundary via `isValidClarificationId`, mirroring
+ * the `beforeLoad` param defense — a malformed value is dropped, not surfaced.
+ */
+interface WorkflowDetailSearch {
+  clarificationId?: string;
+}
+
 export const Route = createFileRoute('/workflows/$workflowRunId/')({
+  validateSearch: (search: Record<string, unknown>): WorkflowDetailSearch =>
+    typeof search.clarificationId === 'string' && isValidClarificationId(search.clarificationId)
+      ? { clarificationId: search.clarificationId }
+      : {},
   beforeLoad: ({ params }) => {
     // AC2 — reject malformed IDs at the route boundary so loaders never run for
     // impossible deep links.

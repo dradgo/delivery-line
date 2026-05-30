@@ -2,6 +2,8 @@ import type { QueryClient } from '@tanstack/react-query';
 import { Outlet, createRootRouteWithContext } from '@tanstack/react-router';
 
 import { AppShell } from '@/features/workflows/AppShell';
+import { RunContextSnapshotProvider } from '@/lib/navigation/RunContextSnapshotProvider';
+import { NavigationBreadcrumbTracker } from '@/lib/navigation/NavigationBreadcrumbTracker';
 import { GenericErrorState, PageNotFoundState } from './-states/DeadEndState';
 
 /**
@@ -38,9 +40,15 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 });
 
 function RootLayout() {
+  // Story 2.22 — the run-context snapshot provider is at the __root level (AC10.a);
+  // the breadcrumb auto-tracker runs INSIDE the router (Trap T3), reading router
+  // state while its provider lives OUTSIDE the router in App.tsx.
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <RunContextSnapshotProvider>
+      <NavigationBreadcrumbTracker />
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </RunContextSnapshotProvider>
   );
 }

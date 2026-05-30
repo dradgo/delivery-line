@@ -9,6 +9,9 @@ export declare const RUN_ID_PATTERN: RegExp;
 /** `^art_[A-Za-z0-9_-]{4,64}$` — a well-formed artifact public id. */
 export declare const ART_ID_PATTERN: RegExp;
 
+/** `^cla_[A-Za-z0-9_-]{4,64}$` — a well-formed clarification public id (story 2.22). */
+export declare const CLARIFICATION_ID_PATTERN: RegExp;
+
 /**
  * Generic predicate: does `value` match `^<prefix>_[A-Za-z0-9_-]{4,64}$`?
  * `prefix` is a registry prefix WITHOUT the trailing underscore (`'run'`, `'art'`).
@@ -20,3 +23,6 @@ export declare function isValidRunId(value: unknown): value is string;
 
 /** True iff `value` is a well-formed `art_…` public id. */
 export declare function isValidArtifactId(value: unknown): value is string;
+
+/** True iff `value` is a well-formed `cla_…` public id (story 2.22). */
+export declare function isValidClarificationId(value: unknown): value is string;

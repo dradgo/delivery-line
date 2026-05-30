@@ -30,6 +30,13 @@ export const RUN_ID_PATTERN = new RegExp(`^run_${SUFFIX}$`);
 export const ART_ID_PATTERN = new RegExp(`^art_${SUFFIX}$`);
 
 /**
+ * `^cla_[A-Za-z0-9_-]{4,64}$` — a well-formed clarification public id.
+ * Story 2.22 extension: mirrors the `run_` / `art_` shapes. Keep in lockstep
+ * with the backend `PublicIdPrefixes.CLARIFICATION` (`clr_`/`cla_`) prefix.
+ */
+export const CLARIFICATION_ID_PATTERN = new RegExp(`^cla_${SUFFIX}$`);
+
+/**
  * Generic predicate: does `value` match `^<prefix>_[A-Za-z0-9_-]{4,64}$`?
  * `prefix` is a registered registry prefix WITHOUT the trailing underscore
  * (e.g. `'run'`, `'art'`). Non-string input is rejected (never throws).
@@ -58,4 +65,14 @@ export function isValidRunId(value) {
  */
 export function isValidArtifactId(value) {
   return typeof value === 'string' && ART_ID_PATTERN.test(value);
+}
+
+/**
+ * Story 2.22 (AC1) — clarification public-id validator. Mirrors
+ * {@link isValidRunId} / {@link isValidArtifactId} for the `cla_` prefix.
+ * @param {unknown} value
+ * @returns {boolean} true iff `value` is a well-formed `cla_…` public id.
+ */
+export function isValidClarificationId(value) {
+  return typeof value === 'string' && CLARIFICATION_ID_PATTERN.test(value);
 }

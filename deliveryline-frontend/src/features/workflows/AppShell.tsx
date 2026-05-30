@@ -409,10 +409,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         ) : null}
 
         {/*
-         * SEAM (story 2.22 AC8) — the global catastrophic-error overlay "lives in
-         * the AppShell from story 2.7". It mounts here, as a sibling of the shell
-         * regions and drawers, so it can cover the whole frame. Story 2.7 reserves
-         * the placement only; story 2.22 builds the overlay itself.
+         * SEAM CLOSED (story 2.22 AC8.c, Trap T11) — story 2.7 reserved a
+         * placement here for the global catastrophic-error overlay. Story 2.22
+         * intentionally does NOT use it: a shell crash must still surface the
+         * overlay, so `CatastrophicErrorOverlay` mounts in `App.tsx` OUTSIDE the
+         * AppShell subtree and portals to `document.body`. See
+         * `src/lib/navigation/README.md` and LAYOUT.md §4 for the rationale.
          */}
         <Toaster />
       </TooltipProvider>

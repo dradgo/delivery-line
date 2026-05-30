@@ -5,6 +5,10 @@ import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { createQueryClient } from './lib/api/queryOptions';
 import { routeTree } from './routeTree.gen';
 import { GenericErrorState, PageNotFoundState } from './routes/-states/DeadEndState';
+import { NavigationBreadcrumbProvider } from './lib/navigation/NavigationBreadcrumbProvider';
+import { CatastrophicErrorProvider } from './lib/navigation/CatastrophicErrorProvider';
+import { CatastrophicErrorBoundary } from './lib/navigation/CatastrophicErrorBoundary';
+import { CatastrophicErrorOverlay } from './lib/navigation/CatastrophicErrorOverlay';
 
 // Story 2.6 — the single app-wide QueryClient (server-state source of truth,
 // architecture.md:454). Created once at module scope so it is stable across
@@ -60,10 +64,23 @@ function App() {
     );
   }
 
+  // Story 2.22 — navigation + catastrophic-error infrastructure wraps the router:
+  //   • CatastrophicErrorProvider + NavigationBreadcrumbProvider live OUTSIDE the
+  //     router (Traps T3/T11) so a router/shell crash still surfaces the overlay
+  //     and the breadcrumb stack survives router re-mounts;
+  //   • the overlay is a sibling of the boundary (portals to document.body), so a
+  //     crash inside the boundary cannot also take the overlay down.
   return (
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <CatastrophicErrorProvider>
+      <NavigationBreadcrumbProvider>
+        <QueryClientProvider client={queryClient}>
+          <CatastrophicErrorOverlay />
+          <CatastrophicErrorBoundary>
+            <RouterProvider router={router} />
+          </CatastrophicErrorBoundary>
+        </QueryClientProvider>
+      </NavigationBreadcrumbProvider>
+    </CatastrophicErrorProvider>
   );
 }
 
