@@ -304,6 +304,12 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Runner provider secret missing",
+        false);
+    register(
+        metadata,
         DomainErrorCode.RETRY_NOT_APPLICABLE,
         HttpStatus.CONFLICT,
         "Retry not applicable",
