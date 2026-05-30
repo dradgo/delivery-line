@@ -22,15 +22,18 @@ const VARIANTS: EmptyVariant[] = [
 ];
 
 describe('EmptyState', () => {
-  it.each(VARIANTS)('AC11.k — renders variant "%s" with a title, default message, and no live region', (variant) => {
-    render(<EmptyState variant={variant} />);
-    const el = screen.getByTestId('empty-state');
-    expect(el).toHaveAttribute('data-variant', variant);
-    expect(el.querySelector('h2')?.textContent?.length ?? 0).toBeGreaterThan(0);
-    expect(el.textContent?.length ?? 0).toBeGreaterThan(0);
-    // AC9.c — empty states are benign: no aria-live region.
-    expect(el.querySelector('[aria-live]')).toBeNull();
-  });
+  it.each(VARIANTS)(
+    'AC11.k — renders variant "%s" with a title, default message, and no live region',
+    (variant) => {
+      render(<EmptyState variant={variant} />);
+      const el = screen.getByTestId('empty-state');
+      expect(el).toHaveAttribute('data-variant', variant);
+      expect(el.querySelector('h2')?.textContent?.length ?? 0).toBeGreaterThan(0);
+      expect(el.textContent?.length ?? 0).toBeGreaterThan(0);
+      // AC9.c — empty states are benign: no aria-live region.
+      expect(el.querySelector('[aria-live]')).toBeNull();
+    },
+  );
 
   it('AC11.k — renders an optional action when provided', () => {
     render(<EmptyState variant="queue" action={<button type="button">Go</button>} />);

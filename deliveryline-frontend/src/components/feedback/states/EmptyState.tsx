@@ -63,7 +63,8 @@ function emptyDefaults(variant: EmptyVariant): EmptyDefault {
       return {
         icon: Inbox,
         title: 'No runs yet',
-        defaultMessage: 'No workflow runs are in the queue yet. New runs appear here as they start.',
+        defaultMessage:
+          'No workflow runs are in the queue yet. New runs appear here as they start.',
       };
     case 'filtered':
       return {

@@ -19,11 +19,11 @@ typed `params` + `search` are the only sanctioned data-passing surfaces.
 
 ### 1. Typed navigation helpers
 
-| Export | Purpose |
-| --- | --- |
-| `useReturnToRunContext()` | Walks the breadcrumb stack backwards (excluding the current top), returns to the most recent `runDetail \| artifact \| clarification` entry via the typed router; falls back to `/workflows` and `console.debug({ event: 'navigation.fallback', reason: 'empty_stack' })` when none exists. `useCallback`-wrapped so memoized children keep referential equality (Trap T1, T4). |
-| `useNavigateToArtifact(runId, artifactId)` | Validates both ids via `isValidRunId` / `isValidArtifactId` **synchronously at hook-call time**; `console.warn({ event: 'navigation.invalidId', ... })` then throws `InvalidNavigationTargetError` on call when invalid (Trap T6). Returns a stable callback. |
-| `useNavigateToClarification(runId, clarificationId)` | Navigates to `/workflows/$workflowRunId` with a typed `search: { clarificationId }` param (NOT a hash anchor — OQ-6). Validates `clarificationId` via `isValidClarificationId`. The Clarification Region (story 2.18) reads the search param and scrolls itself into view. |
+| Export                                               | Purpose                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useReturnToRunContext()`                            | Walks the breadcrumb stack backwards (excluding the current top), returns to the most recent `runDetail \| artifact \| clarification` entry via the typed router; falls back to `/workflows` and `console.debug({ event: 'navigation.fallback', reason: 'empty_stack' })` when none exists. `useCallback`-wrapped so memoized children keep referential equality (Trap T1, T4). |
+| `useNavigateToArtifact(runId, artifactId)`           | Validates both ids via `isValidRunId` / `isValidArtifactId` **synchronously at hook-call time**; `console.warn({ event: 'navigation.invalidId', ... })` then throws `InvalidNavigationTargetError` on call when invalid (Trap T6). Returns a stable callback.                                                                                                                   |
+| `useNavigateToClarification(runId, clarificationId)` | Navigates to `/workflows/$workflowRunId` with a typed `search: { clarificationId }` param (NOT a hash anchor — OQ-6). Validates `clarificationId` via `isValidClarificationId`. The Clarification Region (story 2.18) reads the search param and scrolls itself into view.                                                                                                      |
 
 ### 2. Per-session breadcrumb stack (AC3)
 
@@ -47,7 +47,7 @@ Orthogonal to the breadcrumb stack (Trap T14): the breadcrumb tracks _"what page
 was I on?"_, the boundary tracks _"what scroll/selection state was I in?"_.
 
 - `RunContextBoundary` captures `{ runId, artifactId?, clarificationId?, scrollY,
-  mainPaneScrollTop }` on mount and restores `scrollY` + `<main id="main-content">`
+mainPaneScrollTop }` on mount and restores `scrollY` + `<main id="main-content">`
   scrollTop on unmount via `useLayoutEffect` cleanup (NOT `useEffect` — paint must
   happen with the restored scroll, no flash — Trap T12).
 - `withRunContext(Component)` is the declarative HOC variant; it forwards full props

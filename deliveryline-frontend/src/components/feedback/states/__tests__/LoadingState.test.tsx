@@ -17,13 +17,16 @@ const VARIANTS: LoadingVariant[] = [
 ];
 
 describe('LoadingState', () => {
-  it.each(VARIANTS)('AC11.l — variant "%s" is role=status, aria-live=polite, with a default label', (variant) => {
-    render(<LoadingState variant={variant} />);
-    const el = screen.getByRole('status');
-    expect(el).toHaveAttribute('aria-live', 'polite');
-    expect(el).toHaveAttribute('data-variant', variant);
-    expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
-  });
+  it.each(VARIANTS)(
+    'AC11.l — variant "%s" is role=status, aria-live=polite, with a default label',
+    (variant) => {
+      render(<LoadingState variant={variant} />);
+      const el = screen.getByRole('status');
+      expect(el).toHaveAttribute('aria-live', 'polite');
+      expect(el).toHaveAttribute('data-variant', variant);
+      expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    },
+  );
 
   it('overrides the default label when message is supplied', () => {
     render(<LoadingState variant="fetchingData" message="Hang tight…" />);

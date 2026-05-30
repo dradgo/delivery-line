@@ -25,11 +25,23 @@ export function useNavigateToArtifact(runId: string, artifactId: string): () => 
   }, [navigate, runId, artifactId]);
 
   if (!isValidRunId(runId)) {
-    console.warn({ event: 'navigation.invalidId', kind: 'artifact', runId, artifactId, reason: 'invalid runId' });
+    console.warn({
+      event: 'navigation.invalidId',
+      kind: 'artifact',
+      runId,
+      artifactId,
+      reason: 'invalid runId',
+    });
     throw new InvalidNavigationTargetError('run', runId);
   }
   if (!isValidArtifactId(artifactId)) {
-    console.warn({ event: 'navigation.invalidId', kind: 'artifact', runId, artifactId, reason: 'invalid artifactId' });
+    console.warn({
+      event: 'navigation.invalidId',
+      kind: 'artifact',
+      runId,
+      artifactId,
+      reason: 'invalid artifactId',
+    });
     throw new InvalidNavigationTargetError('artifact', artifactId);
   }
   return go;

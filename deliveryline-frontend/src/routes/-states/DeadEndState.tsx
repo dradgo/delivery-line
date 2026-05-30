@@ -32,9 +32,9 @@ export function InvalidLinkState() {
       nextAction={{ kind: 'NavigateBack' }}
       message={
         <p>
-          This link contains an identifier that isn&rsquo;t in the expected format, so it can&rsquo;t
-          point to a real run or artifact. Check the URL — it may have been copied incompletely or
-          corrupted in transit.
+          This link contains an identifier that isn&rsquo;t in the expected format, so it
+          can&rsquo;t point to a real run or artifact. Check the URL — it may have been copied
+          incompletely or corrupted in transit.
         </p>
       }
     />
@@ -93,8 +93,8 @@ export function PageNotFoundState() {
       title="Page not found"
       message={
         <p>
-          This address doesn&rsquo;t match any page in the review workspace. Use the run queue to find
-          the run you&rsquo;re looking for.
+          This address doesn&rsquo;t match any page in the review workspace. Use the run queue to
+          find the run you&rsquo;re looking for.
         </p>
       }
       action={
@@ -172,7 +172,8 @@ export function UnrenderableArtifactState({ artifactType }: { artifactType?: str
           ) : (
             <>This artifact type isn&rsquo;t</>
           )}{' '}
-          renderable in this build of the review panel. The viewer for it arrives in a later release.
+          renderable in this build of the review panel. The viewer for it arrives in a later
+          release.
         </p>
       }
     />
@@ -194,8 +195,8 @@ export function PermissionRestrictedState() {
       message={
         <p>
           Your recorded role isn&rsquo;t associated with this view. This is an informational signal
-          based on recorded role context — it isn&rsquo;t a security control, and access decisions are
-          made by the backend, not here.
+          based on recorded role context — it isn&rsquo;t a security control, and access decisions
+          are made by the backend, not here.
         </p>
       }
     />

@@ -30,7 +30,8 @@ function classify(
   const params = deepest.params;
   const runId = params.workflowRunId;
   const artifactId = params.artifactId;
-  const clarificationId = typeof search.clarificationId === 'string' ? search.clarificationId : undefined;
+  const clarificationId =
+    typeof search.clarificationId === 'string' ? search.clarificationId : undefined;
   const base = { scrollY: window.scrollY, createdAt: Date.now() };
 
   if (id.includes('artifacts/$artifactId')) {

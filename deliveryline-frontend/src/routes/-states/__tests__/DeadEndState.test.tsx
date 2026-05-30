@@ -86,7 +86,7 @@ const CASES: Case[] = [
     node: <PageNotFoundState />,
     kind: 'empty',
     title: 'Page not found',
-    body: "doesn’t match any page in the review workspace",
+    body: 'doesn’t match any page in the review workspace',
   },
   {
     name: 'GenericErrorState',
@@ -123,34 +123,31 @@ const CASES: Case[] = [
 describe('DeadEndState migration (AC11.u)', () => {
   const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-  it.each(CASES)('$name preserves its title + body copy and adopts the a11y baseline', async ({
-    node,
-    kind,
-    title,
-    body,
-    ariaLive,
-  }) => {
-    const { container } = renderInRouter(node);
-    // RouterProvider mounts the matched route asynchronously.
-    await waitFor(() => expect(container.textContent).toContain(title));
-    // Body copy preserved verbatim (Trap T15; whitespace-normalized comparison).
-    expect(normalize(container.textContent ?? '')).toContain(normalize(body));
-    // a11y baseline.
-    if (kind === 'error') {
-      // Assert the EXACT aria-live value (Trap T13) — a flip to assertive on a
-      // passive page-load state (or vice-versa) is a regression, not just presence.
-      expect(screen.getByRole('alert')).toHaveAttribute('aria-live', ariaLive);
-    } else {
-      expect(screen.getByTestId('empty-state')).toBeInTheDocument();
-      expect(screen.queryByTestId('empty-state')?.querySelector('[aria-live]')).toBeNull();
-    }
-  });
+  it.each(CASES)(
+    '$name preserves its title + body copy and adopts the a11y baseline',
+    async ({ node, kind, title, body, ariaLive }) => {
+      const { container } = renderInRouter(node);
+      // RouterProvider mounts the matched route asynchronously.
+      await waitFor(() => expect(container.textContent).toContain(title));
+      // Body copy preserved verbatim (Trap T15; whitespace-normalized comparison).
+      expect(normalize(container.textContent ?? '')).toContain(normalize(body));
+      // a11y baseline.
+      if (kind === 'error') {
+        // Assert the EXACT aria-live value (Trap T13) — a flip to assertive on a
+        // passive page-load state (or vice-versa) is a regression, not just presence.
+        expect(screen.getByRole('alert')).toHaveAttribute('aria-live', ariaLive);
+      } else {
+        expect(screen.getByTestId('empty-state')).toBeInTheDocument();
+        expect(screen.queryByTestId('empty-state')?.querySelector('[aria-live]')).toBeNull();
+      }
+    },
+  );
 
   it('Trap T7 — PermissionRestrictedState preserves the audit-only role language verbatim', async () => {
     const { container } = renderInRouter(<PermissionRestrictedState />);
     await waitFor(() => expect(container.textContent).toContain('recorded role'));
     expect(normalize(container.textContent ?? '')).toContain(
-      "isn’t a security control, and access decisions are made by the backend, not here",
+      'isn’t a security control, and access decisions are made by the backend, not here',
     );
   });
 });

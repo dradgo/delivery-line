@@ -22,8 +22,6 @@ export function CatastrophicErrorProvider({ children }: { children: ReactNode })
     [activeError, signalCatastrophic, dismiss, resetToken],
   );
   return (
-    <CatastrophicErrorContext.Provider value={value}>
-      {children}
-    </CatastrophicErrorContext.Provider>
+    <CatastrophicErrorContext.Provider value={value}>{children}</CatastrophicErrorContext.Provider>
   );
 }

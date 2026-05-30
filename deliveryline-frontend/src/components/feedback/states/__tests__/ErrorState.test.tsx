@@ -108,11 +108,19 @@ describe('ErrorState', () => {
   it('AC11.p / Trap T13 — urgency drives aria-live (active=assertive, passive=polite)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { rerender } = render(
-      <ErrorState variant="failedRetrieval" urgency="passive" nextAction={{ kind: 'NavigateBack' }} />,
+      <ErrorState
+        variant="failedRetrieval"
+        urgency="passive"
+        nextAction={{ kind: 'NavigateBack' }}
+      />,
     );
     expect(screen.getByTestId('error-state')).toHaveAttribute('aria-live', 'polite');
     rerender(
-      <ErrorState variant="failedRetrieval" urgency="active" nextAction={{ kind: 'NavigateBack' }} />,
+      <ErrorState
+        variant="failedRetrieval"
+        urgency="active"
+        nextAction={{ kind: 'NavigateBack' }}
+      />,
     );
     expect(screen.getByTestId('error-state')).toHaveAttribute('aria-live', 'assertive');
     warn.mockRestore();

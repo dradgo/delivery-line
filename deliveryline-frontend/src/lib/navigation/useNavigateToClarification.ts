@@ -27,11 +27,23 @@ export function useNavigateToClarification(runId: string, clarificationId: strin
   }, [navigate, runId, clarificationId]);
 
   if (!isValidRunId(runId)) {
-    console.warn({ event: 'navigation.invalidId', kind: 'clarification', runId, clarificationId, reason: 'invalid runId' });
+    console.warn({
+      event: 'navigation.invalidId',
+      kind: 'clarification',
+      runId,
+      clarificationId,
+      reason: 'invalid runId',
+    });
     throw new InvalidNavigationTargetError('run', runId);
   }
   if (!isValidClarificationId(clarificationId)) {
-    console.warn({ event: 'navigation.invalidId', kind: 'clarification', runId, clarificationId, reason: 'invalid clarificationId' });
+    console.warn({
+      event: 'navigation.invalidId',
+      kind: 'clarification',
+      runId,
+      clarificationId,
+      reason: 'invalid clarificationId',
+    });
     throw new InvalidNavigationTargetError('clarification', clarificationId);
   }
   return go;
