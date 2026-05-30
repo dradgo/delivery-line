@@ -88,6 +88,7 @@ public class RunnerBroker {
   private final RunnerScratchStore scratchStore;
   private final RunnerContractValidator contractValidator;
   private final RunnerProperties runnerProperties;
+  private final RunnerSecretScanService runnerSecretScanService;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate dispatchTransactionTemplate;
   private final TransactionTemplate perItemTransactionTemplate;
@@ -106,6 +107,7 @@ public class RunnerBroker {
       RunnerScratchStore scratchStore,
       RunnerContractValidator contractValidator,
       RunnerProperties runnerProperties,
+      RunnerSecretScanService runnerSecretScanService,
       PlatformTransactionManager transactionManager) {
     this(
         recordPort,
@@ -119,6 +121,7 @@ public class RunnerBroker {
         scratchStore,
         contractValidator,
         runnerProperties,
+        runnerSecretScanService,
         requiredTemplate(transactionManager),
         requiresNewTemplate(transactionManager),
         Clock.systemUTC());
@@ -136,6 +139,7 @@ public class RunnerBroker {
       RunnerScratchStore scratchStore,
       RunnerContractValidator contractValidator,
       RunnerProperties runnerProperties,
+      RunnerSecretScanService runnerSecretScanService,
       TransactionTemplate dispatchTransactionTemplate,
       TransactionTemplate perItemTransactionTemplate,
       Clock clock) {
@@ -153,6 +157,8 @@ public class RunnerBroker {
     this.scratchStore = Objects.requireNonNull(scratchStore, "scratchStore");
     this.contractValidator = Objects.requireNonNull(contractValidator, "contractValidator");
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
+    this.runnerSecretScanService =
+        Objects.requireNonNull(runnerSecretScanService, "runnerSecretScanService");
     this.dispatchTransactionTemplate =
         Objects.requireNonNull(dispatchTransactionTemplate, "dispatchTransactionTemplate");
     this.perItemTransactionTemplate =
@@ -496,6 +502,80 @@ public class RunnerBroker {
       return;
     }
 
+    // Story 3.5 AC4/AC5: post-execution workspace secret scan. Runs AFTER artifact harvest and
+    // immediately BEFORE recordCompleted — a leaked-secret execution must NEVER reach the completed
+    // branch. Two detectors (known-shape via RedactionPolicyService + mandatory literal-substring
+    // of
+    // the injected provider key). On a hit: record the execution FAILED with runner_secret_leak,
+    // emit RUNNER_FAILED with leakedFile + category names (never a value), quarantine the workspace
+    // (Trap T10), and return. Per AC4 this does NOT drive the workflow-run state (the
+    // EXECUTING→FAILED
+    // transition allowlist is deliberately narrow — story 1.13 — and leak handling is scoped to the
+    // execution + event + quarantine); operator-driven recovery owns the run-state path.
+    // Story 3.5 review note (defaultKind coupling): the scan re-resolves the injected key for
+    // runnerProperties.docker().defaultKind(), which is the SAME source the dispatch path uses when
+    // building the RunnerDispatchRequest (see :288 above) — so the substring detector compares
+    // against exactly the key this dispatch injected. This holds ONLY because dispatch is currently
+    // hardwired to defaultKind(); RunnerExecutionSnapshot carries no runnerKind (the runner_kind
+    // column is deferred to story 3-19/4-9 per 3.1 OQ-7). When per-run kind selection lands
+    // (stories
+    // 3.3/3.4), resolve the kind from the execution row (or the deliveryline.runnerKind container
+    // label) here instead of defaultKind() so the detector cannot compare against the wrong key.
+    org.dradgo.domain.registry.RunnerKind runnerKind = runnerProperties.docker().defaultKind();
+    RunnerSecretScanService.ScanOutcome secretScan =
+        runnerSecretScanService.scanWorkspace(
+            runnerExecutionId, runnerKind, row.stage(), workflowRunId);
+    if (secretScan.leakDetected()) {
+      // Story 3.5 review patch: quarantine FIRST (best-effort) so the leaked workspace is preserved
+      // even if the terminal transition below races, and so a duplicate onResult re-entering this
+      // branch re-asserts the marker before the guarded recordFailed short-circuits. A marker-write
+      // failure must NOT prevent recording the leak as FAILED — log and continue.
+      try {
+        runnerSecretScanService.quarantine(
+            runnerExecutionId,
+            "leakedFile="
+                + secretScan.leakedFile()
+                + " categories="
+                + secretScan.detectedCategories());
+      } catch (RuntimeException quarantineFailure) {
+        log.error(
+            "onResult secret-leak quarantine-marker write failed runnerExecutionId={} workflowRunId={} leakedFile={}",
+            runnerExecutionId,
+            workflowRunId,
+            secretScan.leakedFile(),
+            quarantineFailure);
+      }
+      // Story 3.2a AC9 parity: a duplicate onResult (recovery scratch-replay / concurrent harvest)
+      // on an already-terminal row re-runs the scan and reaches here again; recordFailed then
+      // throws
+      // ILLEGAL_TRANSITION. Guard it exactly like the recordCompleted gate below so re-entry is a
+      // no-op instead of an uncaught error and the RUNNER_FAILED leak event fires at most once.
+      try {
+        executionService.recordFailed(runnerExecutionId, FailureCategory.RUNNER_SECRET_LEAK);
+      } catch (DomainException raceTerminal) {
+        if (raceTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+          throw raceTerminal;
+        }
+        log.info(
+            "onResult secret-leak skip runnerExecutionId={} reason=already_terminal errorCode={}",
+            runnerExecutionId,
+            raceTerminal.errorCode().value());
+        return;
+      }
+      appendRunnerSecretLeakEvent(
+          workflowRunId,
+          runnerExecutionId,
+          secretScan.leakedFile(),
+          secretScan.detectedCategories());
+      log.warn(
+          "onResult secret-leak runnerExecutionId={} workflowRunId={} leakedFile={} categories={}",
+          runnerExecutionId,
+          workflowRunId,
+          secretScan.leakedFile(),
+          secretScan.detectedCategories());
+      return;
+    }
+
     // Story 3.2a AC9: gate the RUNNER_COMPLETED append on the row ACTUALLY transitioning. A
     // duplicate onResult (recovery scratch-replay re-entering, or a concurrent harvest) on an
     // already-completed row throws ILLEGAL_TRANSITION here — skip the append so the lifecycle event
@@ -734,7 +814,10 @@ public class RunnerBroker {
           RUNNER_NON_ZERO_EXIT,
           RUNNER_MALFORMED_OUTPUT,
           RUNNER_DUPLICATE_RESULT,
-          RUNNER_LATE_RESULT ->
+          RUNNER_LATE_RESULT,
+          // Story 3.5: a secret-leak failure means a result WAS harvested + scanned then rejected,
+          // so a subsequent arrival is a duplicate (not a fresh result).
+          RUNNER_SECRET_LEAK ->
           true;
       case RUNNER_CRASH, RUNNER_TIMEOUT, ORPHAN -> false;
     };
@@ -843,6 +926,33 @@ public class RunnerBroker {
         actor,
         reason,
         category,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+  }
+
+  /**
+   * Story 3.5 AC4 — emit {@code RUNNER_FAILED} for a post-execution secret leak. {@code details}
+   * carries {@code failureCategory=runner_secret_leak}, {@code leakedFile} (relative path), and
+   * {@code detectedCategories} (category NAMES only; a substring-only hit is labelled {@code
+   * injected_provider_key}). NEVER a secret value.
+   */
+  private void appendRunnerSecretLeakEvent(
+      String workflowRunId,
+      String runnerExecutionId,
+      String leakedFile,
+      List<String> detectedCategories) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("failureCategory", FailureCategory.RUNNER_SECRET_LEAK.value());
+    details.put("reason", "runner_secret_leak");
+    details.put("leakedFile", leakedFile);
+    details.put("detectedCategories", List.copyOf(detectedCategories));
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_FAILED,
+        ActorContext.SYSTEM,
+        "runner_secret_leak",
+        FailureCategory.RUNNER_SECRET_LEAK,
         OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
         details);
   }

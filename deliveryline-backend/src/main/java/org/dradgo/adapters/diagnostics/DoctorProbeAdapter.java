@@ -28,8 +28,10 @@ import org.dradgo.application.diagnostics.DiagnosticsStatus;
 import org.dradgo.application.diagnostics.spi.DoctorProbePort;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
+import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.domain.net.LoopbackAddressResolver;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RunnerKind;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.MigrationState;
@@ -76,6 +78,7 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   private final Function<Path, Optional<String>> osReleaseReader;
   private final Supplier<String> powerShellVersionSupplier;
   private final Supplier<String> shellEnvSupplier;
+  private final RunnerProperties runnerProperties;
 
   @Autowired
   public DoctorProbeAdapter(
@@ -87,6 +90,12 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       ObjectProvider<DataSource> dataSourceProvider,
       ObjectProvider<Flyway> flywayProvider,
       UuidV7Generator uuidV7Generator,
+      // ObjectProvider so the adapter also wires in lean contexts that omit RunnerConfiguration's
+      // @EnableConfigurationProperties(RunnerProperties.class) (e.g. doctor-smoke / the
+      // DoctorProbeAdapter ApplicationContextRunner slice). Absent → defaults() (story 3.5 secret
+      // env-var NAMES; the runner-secrets probe still reports presence against those default
+      // names).
+      ObjectProvider<RunnerProperties> runnerPropertiesProvider,
       @Value("${deliveryline.home}") String deliverylineHome,
       @Value("${deliveryline.rest.bind-address:${server.address:localhost}}") String serverAddress,
       @Value("${server.port:8080}") int serverPort) {
@@ -106,7 +115,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultFileRead,
         DoctorProbeAdapter::defaultFileRead,
         DoctorProbeAdapter::defaultPowerShellVersion,
-        DoctorProbeAdapter::defaultShellValue);
+        DoctorProbeAdapter::defaultShellValue,
+        runnerPropertiesProvider.getIfAvailable());
   }
 
   // Public so tests in other packages can construct an adapter without the
@@ -138,7 +148,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultFileRead,
         DoctorProbeAdapter::defaultFileRead,
         DoctorProbeAdapter::defaultPowerShellVersion,
-        DoctorProbeAdapter::defaultShellValue);
+        DoctorProbeAdapter::defaultShellValue,
+        RunnerProperties.defaults());
   }
 
   DoctorProbeAdapter(
@@ -157,7 +168,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       Function<Path, Optional<String>> procVersionReader,
       Function<Path, Optional<String>> osReleaseReader,
       Supplier<String> powerShellVersionSupplier,
-      Supplier<String> shellEnvSupplier) {
+      Supplier<String> shellEnvSupplier,
+      RunnerProperties runnerProperties) {
     this.environment = environment;
     this.dataSource = dataSource;
     this.flyway = flyway;
@@ -174,6 +186,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
     this.osReleaseReader = osReleaseReader;
     this.powerShellVersionSupplier = powerShellVersionSupplier;
     this.shellEnvSupplier = shellEnvSupplier;
+    this.runnerProperties =
+        runnerProperties == null ? RunnerProperties.defaults() : runnerProperties;
   }
 
   private static Optional<String> defaultFileRead(Path path) {
@@ -466,6 +480,42 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         process.destroyForcibly();
       }
     }
+  }
+
+  /**
+   * Story 3.5 AC8 — per-runner-kind agent-provider secret presence check. Iterates {@link
+   * RunnerKind#values()}; for each kind reports {@code present} when ANY of the configured env-var
+   * names resolves to a non-blank value, else {@code missing}. {@code PASS} when every kind has its
+   * secret present, otherwise {@code FAIL} with {@link
+   * DomainErrorCode#DOCTOR_RUNNER_SECRET_MISSING} and a remediation pointer to {@code
+   * .env.example}. Reports PRESENCE only — never an env-var value (NFR8/NFR9).
+   */
+  @Override
+  public ProbeResult probeRunnerSecrets() {
+    Map<String, String> details = new LinkedHashMap<>();
+    List<String> missingKinds = new java.util.ArrayList<>();
+    for (RunnerKind kind : RunnerKind.values()) {
+      boolean present = false;
+      for (String name : runnerProperties.secretEnvNamesFor(kind)) {
+        String value = environment.getProperty(name);
+        if (value != null && !value.isBlank()) {
+          present = true;
+          break;
+        }
+      }
+      details.put(kind.value(), present ? "present" : "missing");
+      if (!present) {
+        missingKinds.add(kind.value());
+      }
+    }
+    if (missingKinds.isEmpty()) {
+      return ProbeResult.pass(
+          "Runner provider secrets present for all kinds: " + details.keySet(), details);
+    }
+    return ProbeResult.fail(
+        "Runner provider secret(s) missing for: " + missingKinds,
+        DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING.value(),
+        details);
   }
 
   @Override

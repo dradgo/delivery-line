@@ -81,6 +81,7 @@ class RunnerBrokerStaleDetectionUnitTest {
             mock(RunnerScratchStore.class),
             new RunnerContractValidator(),
             RunnerProperties.defaults(),
+            cleanScanService(),
             callthroughTemplate(),
             callthroughTemplate(),
             CLOCK);
@@ -314,6 +315,13 @@ class RunnerBrokerStaleDetectionUnitTest {
   @SuppressWarnings("unchecked")
   private static ArgumentCaptor<Map<String, Object>> detailsCaptor() {
     return ArgumentCaptor.forClass(Map.class);
+  }
+
+  private static RunnerSecretScanService cleanScanService() {
+    RunnerSecretScanService scanService = mock(RunnerSecretScanService.class);
+    when(scanService.scanWorkspace(any(), any(), any(), any()))
+        .thenReturn(RunnerSecretScanService.ScanOutcome.clean());
+    return scanService;
   }
 
   private static TransactionTemplate callthroughTemplate() {

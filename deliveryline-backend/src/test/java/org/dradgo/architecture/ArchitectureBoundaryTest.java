@@ -144,4 +144,8 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule adapters_runner_docker_types_stay_behind_gateway =
       ArchitectureRuleCatalog.ADAPTERS_RUNNER_DOCKER_TYPES_STAY_BEHIND_GATEWAY;
+
+  @ArchTest
+  static final ArchRule runner_secrets_service_scope =
+      ArchitectureRuleCatalog.RUNNER_SECRETS_SERVICE_SCOPE;
 }

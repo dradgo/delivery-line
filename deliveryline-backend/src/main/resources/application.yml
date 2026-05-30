@@ -1,6 +1,13 @@
 spring:
   application:
     name: deliveryline
+  # Story 3.5 AC2 — load runner secrets (agent-provider API keys) from a local ./.env file when
+  # present. The [.properties] extension hint makes Spring parse the extensionless .env as
+  # KEY=VALUE properties. `optional:` keeps startup working when no .env exists (process env or
+  # Compose env_file then supplies the values). Values are NEVER committed and NEVER appear as
+  # application.yml defaults — only env-var NAMES are configured (deliveryline.runner.secret-env-names).
+  config:
+    import: "optional:file:./.env[.properties]"
   profiles:
     group:
       local: [runners.mock, linear-mock]
@@ -87,6 +94,17 @@ deliveryline:
         execution: happy-implementation-plan
     scheduling:
       enabled: true
+    # Story 3.5 Trap T2 — per-kind agent-provider env-var NAMES (never values). Stories 3.3/3.4
+    # read these names; RunnerSecretsService resolves the matching values from .env / process env
+    # at dispatch time. NAMES ONLY here — putting a secret VALUE in application.yml is forbidden
+    # (AC2). Codex resolves the first present of [CODEX_API_KEY, OPENAI_API_KEY]; Claude reads
+    # ANTHROPIC_API_KEY.
+    secret-env-names:
+      codex:
+        - CODEX_API_KEY
+        - OPENAI_API_KEY
+      claude:
+        - ANTHROPIC_API_KEY
     # Story 3.1 — Docker runner adapter config. Bound to RunnerProperties.Docker.
     # Activated only under the runners.docker profile (the wiring is profile-gated;
     # leaving this block in the shared application.yml keeps the defaults discoverable

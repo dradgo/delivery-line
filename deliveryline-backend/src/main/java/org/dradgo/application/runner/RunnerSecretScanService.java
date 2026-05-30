@@ -1,0 +1,178 @@
+package org.dradgo.application.runner;
+
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
+import org.dradgo.application.runner.spi.WorkspaceScanFile;
+import org.dradgo.application.security.RedactionCategory;
+import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.application.security.RedactionResult;
+import org.dradgo.domain.DomainException;
+import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RunnerKind;
+import org.dradgo.domain.registry.RunnerStage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+/**
+ * Story 3.5 AC4/AC5 — post-execution workspace secret scan. Runs two detectors over every regular
+ * file under {@code input/}, {@code output/}, {@code logs/}:
+ *
+ * <ol>
+ *   <li>{@link RedactionPolicyService} for the <em>known</em> secret shapes (GitHub/Linear/auth
+ *       header/env block/PEM/SSH) — the single sanctioned detection engine (Trap T7).
+ *   <li>a <b>mandatory</b> exact-substring containment check against the literal agent-provider key
+ *       value(s) this dispatch injected. The provider keys are arbitrary strings that match NO
+ *       {@link RedactionCategory} regex, so pattern scanning alone would not catch this story's own
+ *       secrets. A literal value compare is NOT a credential <em>pattern</em>, so the {@code
+ *       CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY} rule still holds (Trap T7).
+ * </ol>
+ *
+ * <p>This service lives in {@code application.runner} so it may depend on {@link
+ * RunnerSecretsService} (ArchUnit AC10 confines that dependency to {@code application.runner..} +
+ * {@code adapters.runner.docker..}). It exposes no secret value in logs, events, or its {@link
+ * ScanOutcome}: a substring-only hit is labelled with the synthetic category {@code
+ * injected_provider_key}, never the value.
+ */
+@Service
+public class RunnerSecretScanService {
+
+  private static final Logger log = LoggerFactory.getLogger(RunnerSecretScanService.class);
+
+  /**
+   * Synthetic category name for a literal injected-provider-key substring hit (never the value).
+   */
+  static final String INJECTED_PROVIDER_KEY_CATEGORY = "injected_provider_key";
+
+  private final RunnerWorkspaceStore workspaceStore;
+  private final RedactionPolicyService redactionPolicyService;
+  private final RunnerSecretsService runnerSecretsService;
+
+  public RunnerSecretScanService(
+      RunnerWorkspaceStore workspaceStore,
+      RedactionPolicyService redactionPolicyService,
+      RunnerSecretsService runnerSecretsService) {
+    this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
+    this.redactionPolicyService =
+        Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
+    this.runnerSecretsService =
+        Objects.requireNonNull(runnerSecretsService, "runnerSecretsService");
+  }
+
+  /**
+   * Outcome of a workspace scan. On a leak, {@link #leakedFile()} is the workspace-relative path of
+   * the first offending file and {@link #detectedCategories()} carries category NAMES only (never
+   * values).
+   */
+  public record ScanOutcome(
+      boolean leakDetected, String leakedFile, List<String> detectedCategories) {
+
+    public ScanOutcome {
+      detectedCategories = detectedCategories == null ? List.of() : List.copyOf(detectedCategories);
+    }
+
+    public static ScanOutcome clean() {
+      return new ScanOutcome(false, null, List.of());
+    }
+  }
+
+  /**
+   * Scan the workspace for this execution. Returns {@link ScanOutcome#clean()} when no detector
+   * fires, otherwise a leak outcome naming the first offending file + detected category names.
+   */
+  public ScanOutcome scanWorkspace(
+      String runnerExecutionId, RunnerKind runnerKind, RunnerStage stage, String workflowRunId) {
+    Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
+    Objects.requireNonNull(runnerKind, "runnerKind");
+    Objects.requireNonNull(stage, "stage");
+
+    List<WorkspaceScanFile> files = workspaceStore.readFilesForSecretScan(runnerExecutionId);
+    Set<String> injectedValues =
+        resolveInjectedValues(runnerExecutionId, runnerKind, stage, workflowRunId);
+
+    log.info(
+        "runner secret scan start runnerExecutionId={} workflowRunId={} runnerKind={} fileCount={} injectedValueCount={}",
+        runnerExecutionId,
+        workflowRunId,
+        runnerKind.value(),
+        files.size(),
+        injectedValues.size());
+
+    for (WorkspaceScanFile file : files) {
+      Set<String> categories = new LinkedHashSet<>();
+
+      // (i) known-shape detection via the sanctioned engine.
+      RedactionResult result =
+          redactionPolicyService.redact(file.text(), DataClassification.LOCAL_ONLY.value());
+      for (RedactionCategory category : result.detectedCategories()) {
+        categories.add(category.name());
+      }
+
+      // (ii) mandatory literal substring containment of THIS dispatch's injected provider key(s).
+      for (String value : injectedValues) {
+        if (file.text().contains(value)) {
+          categories.add(INJECTED_PROVIDER_KEY_CATEGORY);
+          break;
+        }
+      }
+
+      if (!categories.isEmpty()) {
+        List<String> categoryNames = List.copyOf(categories);
+        log.warn(
+            "runner secret leak detected runnerExecutionId={} workflowRunId={} file={} categories={}",
+            runnerExecutionId,
+            workflowRunId,
+            file.relativePath(),
+            categoryNames);
+        return new ScanOutcome(true, file.relativePath(), categoryNames);
+      }
+    }
+
+    log.info(
+        "runner secret scan clean runnerExecutionId={} workflowRunId={} fileCount={}",
+        runnerExecutionId,
+        workflowRunId,
+        files.size());
+    return ScanOutcome.clean();
+  }
+
+  /**
+   * Re-resolve the literal value(s) this dispatch injected so the substring detector has something
+   * to compare against. Reads the Spring Environment per call (no caching — AC9). If the secret is
+   * absent at scan time (e.g. rotated to blank mid-run), degrade to known-shape detection only with
+   * a WARN — never let a resolution failure mask the rest of the scan.
+   */
+  private Set<String> resolveInjectedValues(
+      String runnerExecutionId, RunnerKind runnerKind, RunnerStage stage, String workflowRunId) {
+    Set<String> values = new LinkedHashSet<>();
+    try {
+      for (String value :
+          runnerSecretsService.resolveSecretsForRunner(runnerKind, stage, workflowRunId).values()) {
+        if (value != null && !value.isBlank()) {
+          values.add(value);
+        }
+      }
+    } catch (DomainException missing) {
+      if (missing.errorCode() != DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING) {
+        throw missing;
+      }
+      log.warn(
+          "runner secret scan substring-check degraded runnerExecutionId={} reason=injected_secret_absent_at_scan_time",
+          runnerExecutionId);
+    }
+    return values;
+  }
+
+  /**
+   * Trap T10 — preserve a leaked-secret workspace for diagnostics by writing the {@code
+   * .quarantine} marker the cleanup job honors. {@code reason} carries the relative file path +
+   * category names only (never a value).
+   */
+  public void quarantine(String runnerExecutionId, String reason) {
+    workspaceStore.writeQuarantineMarker(runnerExecutionId, reason);
+  }
+}

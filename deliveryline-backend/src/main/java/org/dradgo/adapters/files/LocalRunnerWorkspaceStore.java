@@ -2,6 +2,9 @@ package org.dradgo.adapters.files;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -16,8 +19,10 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -25,6 +30,7 @@ import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
+import org.dradgo.application.runner.spi.WorkspaceScanFile;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -55,6 +61,9 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   private static final String HEARTBEAT_TOUCH_FILENAME = "heartbeat.touch";
   private static final String RUNNER_STDOUT_FILENAME = "runner.stdout";
   private static final String TEMP_SUFFIX = ".tmp";
+  private static final String QUARANTINE_MARKER_FILENAME = ".quarantine";
+  private static final List<String> SECRET_SCAN_SUBDIRS =
+      List.of(INPUT_SUBDIR, OUTPUT_SUBDIR, LOGS_SUBDIR);
 
   private static final Set<PosixFilePermission> OWNER_ONLY_DIR_PERMS =
       EnumSet.of(
@@ -352,6 +361,149 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
       log.warn("listWorkspaceSubdirectories io failure cause={}", error.toString());
     }
     return out;
+  }
+
+  /**
+   * Story 3.5 AC4 — enumerate regular files under {@code input/}, {@code output/}, {@code logs/}
+   * and return relative path + UTF-8 text. Binary files (strict-decode failure) are skipped with a
+   * WARN (OQ-6); symlinks and escaping paths are skipped. Trap T7: bytes-only — no detection here.
+   */
+  @Override
+  public List<WorkspaceScanFile> readFilesForSecretScan(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path root = resolveWorkspaceRoot(runnerExecutionId);
+    List<WorkspaceScanFile> out = new ArrayList<>();
+    for (String subdir : SECRET_SCAN_SUBDIRS) {
+      Path dir = subdirPath(runnerExecutionId, subdir);
+      if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+        continue;
+      }
+      try {
+        Path realDir = dir.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        Files.walkFileTree(
+            dir,
+            new SimpleFileVisitor<>() {
+              @Override
+              public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                collectScanFile(runnerExecutionId, root, realDir, file, out);
+                return FileVisitResult.CONTINUE;
+              }
+
+              @Override
+              public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                log.warn(
+                    "secret scan file skipped runnerExecutionId={} reason=visit_failed",
+                    runnerExecutionId);
+                return FileVisitResult.CONTINUE;
+              }
+            });
+      } catch (IOException error) {
+        log.warn(
+            "secret scan subdir walk failure runnerExecutionId={} subdir={} cause={}",
+            runnerExecutionId,
+            subdir,
+            error.toString());
+      }
+    }
+    log.info(
+        "secret scan files enumerated runnerExecutionId={} fileCount={}",
+        runnerExecutionId,
+        out.size());
+    return out;
+  }
+
+  private void collectScanFile(
+      String runnerExecutionId,
+      Path workspaceRootDir,
+      Path realSubdir,
+      Path file,
+      List<WorkspaceScanFile> out) {
+    try {
+      if (Files.isSymbolicLink(file) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+        return;
+      }
+      // Containment: the file's real path must remain inside the (real) subdirectory.
+      Path realFile = file.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      if (!realFile.startsWith(realSubdir)) {
+        log.warn(
+            "secret scan file skipped runnerExecutionId={} reason=escapes_workspace",
+            runnerExecutionId);
+        return;
+      }
+      byte[] bytes = Files.readAllBytes(file);
+      String text = strictUtf8(bytes);
+      if (text == null) {
+        log.warn(
+            "binary file skipped in secret scan runnerExecutionId={} relativePath={}",
+            runnerExecutionId,
+            relativePathOf(workspaceRootDir, file));
+        return;
+      }
+      out.add(new WorkspaceScanFile(relativePathOf(workspaceRootDir, file), text));
+    } catch (IOException error) {
+      log.warn(
+          "secret scan file read failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+    }
+  }
+
+  /** Strict UTF-8 decode; returns {@code null} when the bytes are not valid UTF-8 (binary). */
+  private static String strictUtf8(byte[] bytes) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(java.nio.ByteBuffer.wrap(bytes))
+          .toString();
+    } catch (CharacterCodingException notText) {
+      return null;
+    }
+  }
+
+  private static String relativePathOf(Path workspaceRootDir, Path file) {
+    return workspaceRootDir.relativize(file).toString().replace('\\', '/');
+  }
+
+  /**
+   * Story 3.5 AC4 / Trap T10 — write the {@code .quarantine} marker so cleanup preserves the dir.
+   */
+  @Override
+  public Path writeQuarantineMarker(String runnerExecutionId, String reason) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path root = resolveWorkspaceRoot(runnerExecutionId);
+    Path marker = root.resolve(QUARANTINE_MARKER_FILENAME).normalize();
+    if (!marker.startsWith(root)) {
+      throw pathTraversal(runnerExecutionId, QUARANTINE_MARKER_FILENAME);
+    }
+    String body =
+        "quarantined-at="
+            + OffsetDateTime.now(ZoneOffset.UTC)
+            + "\nreason="
+            + (reason == null ? "" : reason)
+            + "\n";
+    try {
+      Files.createDirectories(root);
+      Files.writeString(marker, body, StandardCharsets.UTF_8);
+    } catch (IOException error) {
+      throw new IllegalStateException(
+          "Failed to write quarantine marker for runner workspace " + runnerExecutionId, error);
+    }
+    log.warn("workspace quarantined runnerExecutionId={} marker={}", runnerExecutionId, marker);
+    return marker;
+  }
+
+  /** Story 3.5 AC4 / Trap T10 — true when the workspace carries a {@code .quarantine} marker. */
+  @Override
+  public boolean isQuarantined(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path root = resolveWorkspaceRoot(runnerExecutionId);
+    Path marker = root.resolve(QUARANTINE_MARKER_FILENAME).normalize();
+    if (!marker.startsWith(root)) {
+      return false;
+    }
+    return Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS);
   }
 
   public Path deliverylineHome() {

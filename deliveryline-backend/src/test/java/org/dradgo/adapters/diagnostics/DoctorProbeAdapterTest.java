@@ -51,6 +51,40 @@ class DoctorProbeAdapterTest {
   }
 
   @Test
+  void runnerSecretsProbePassesWhenEveryKindHasItsKey() {
+    // Story 3.5 AC8: both runner kinds' provider keys present → PASS, presence-only details.
+    MockEnvironment env =
+        new MockEnvironment()
+            .withProperty("CODEX_API_KEY", "sk-codex-doctor-test")
+            .withProperty("ANTHROPIC_API_KEY", "sk-ant-doctor-test");
+
+    ProbeResult result = newAdapter(env, Path.of("."), failingFactory()).probeRunnerSecrets();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+    assertThat(result.details())
+        .containsEntry("codex", "present")
+        .containsEntry("claude", "present");
+    // Presence-only — no value leaks into details.
+    assertThat(result.details().values()).containsOnly("present");
+  }
+
+  @Test
+  void runnerSecretsProbeFailsWhenAKindIsMissingItsKeyWithoutLeakingValues() {
+    // Codex present, Claude absent → FAIL with DOCTOR_RUNNER_SECRET_MISSING.
+    MockEnvironment env =
+        new MockEnvironment().withProperty("CODEX_API_KEY", "sk-codex-doctor-test");
+
+    ProbeResult result = newAdapter(env, Path.of("."), failingFactory()).probeRunnerSecrets();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.FAIL);
+    assertThat(result.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING.value());
+    assertThat(result.details())
+        .containsEntry("codex", "present")
+        .containsEntry("claude", "missing");
+    assertThat(result.details().values()).doesNotContain("sk-codex-doctor-test");
+  }
+
+  @Test
   void springProfilesPassesForLocal() {
     MockEnvironment env = new MockEnvironment();
     env.setActiveProfiles("local");
@@ -549,7 +583,8 @@ class DoctorProbeAdapterTest {
         procVersionReader,
         procVersionReader,
         powerShellVersionSupplier,
-        shellEnvSupplier);
+        shellEnvSupplier,
+        org.dradgo.application.runner.RunnerProperties.defaults());
   }
 
   private static ProcessLauncher failingFactory() {

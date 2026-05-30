@@ -38,6 +38,7 @@ public class DoctorService {
   public static final String CHECK_CONFIG_FILE_PERMISSIONS = "config-file-permissions";
   public static final String CHECK_DOCKER_AVAILABILITY = "docker-availability";
   public static final String CHECK_RUNNER_IMAGE_AVAILABILITY = "runner-image-availability";
+  public static final String CHECK_RUNNER_SECRETS = "runner-secrets";
   public static final String CHECK_REST_BIND_ADDRESS = "rest-bind-address";
   public static final String CHECK_FRONTEND_ASSET_PRESENCE = "frontend-asset-presence";
   public static final String CHECK_SUPPORTED_ENVIRONMENT = "supported-environment";
@@ -52,6 +53,7 @@ public class DoctorService {
           CHECK_CONFIG_FILE_PERMISSIONS,
           CHECK_DOCKER_AVAILABILITY,
           CHECK_RUNNER_IMAGE_AVAILABILITY,
+          CHECK_RUNNER_SECRETS,
           CHECK_REST_BIND_ADDRESS,
           CHECK_FRONTEND_ASSET_PRESENCE,
           CHECK_SUPPORTED_ENVIRONMENT);
@@ -73,6 +75,10 @@ public class DoctorService {
           Map.entry(
               CHECK_DOCKER_AVAILABILITY,
               "Start Docker Desktop (or 'systemctl start docker') if you intend to run real runners in Epic 3."),
+          Map.entry(
+              CHECK_RUNNER_SECRETS,
+              "Set the agent-provider API key(s) in .env — see .env.example (CODEX_API_KEY/OPENAI_API_KEY"
+                  + " for Codex, ANTHROPIC_API_KEY for Claude) — then restart and re-check."),
           Map.entry(
               CHECK_REST_BIND_ADDRESS,
               "Bind server.address to a loopback (e.g. 127.0.0.1) or free the configured port."),
@@ -189,6 +195,7 @@ public class DoctorService {
         case CHECK_DOCKER_AVAILABILITY -> probes.probeDockerAvailability();
         case CHECK_RUNNER_IMAGE_AVAILABILITY ->
             ProbeResult.skip("Runner image availability check populated in story 3.1");
+        case CHECK_RUNNER_SECRETS -> probes.probeRunnerSecrets();
         case CHECK_REST_BIND_ADDRESS -> probes.probeRestBindAddress();
         case CHECK_FRONTEND_ASSET_PRESENCE ->
             ProbeResult.skip("Frontend asset check populated in story 2.28");

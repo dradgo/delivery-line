@@ -14,10 +14,12 @@ import org.dradgo.adapters.files.LocalRunnerWorkspaceStore;
 import org.dradgo.adapters.runner.DockerRunnerAdapter;
 import org.dradgo.adapters.runner.docker.DefaultDockerEngineGateway;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.mock.env.MockEnvironment;
 import org.testcontainers.DockerClientFactory;
 
 /**
@@ -76,11 +78,20 @@ abstract class DockerLifecycleITSupport {
             RunnerProperties.Recovery.defaults(),
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
-            dockerConfig);
-    // Public 4-arg constructor (uses Clock.systemUTC internally) — accessible from this
-    // sub-package;
-    // the lifecycle ITs operate on real wall-clock time anyway.
-    adapter = new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties);
+            dockerConfig,
+            RunnerProperties.defaultSecretEnvNames());
+    // Story 3.5: real RunnerSecretsService backed by a MockEnvironment carrying both provider keys
+    // so dispatch resolution succeeds for either kind under the lifecycle ITs.
+    RunnerSecretsService secretsService =
+        new RunnerSecretsService(
+            new MockEnvironment()
+                .withProperty("CODEX_API_KEY", "sk-codex-it-value")
+                .withProperty("ANTHROPIC_API_KEY", "sk-ant-it-value"),
+            properties);
+    // Public 5-arg constructor (uses Clock.systemUTC internally) — accessible from this
+    // sub-package; the lifecycle ITs operate on real wall-clock time anyway.
+    adapter =
+        new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties, secretsService);
   }
 
   @AfterEach

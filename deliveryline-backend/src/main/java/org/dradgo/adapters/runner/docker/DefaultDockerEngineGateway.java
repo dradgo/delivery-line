@@ -61,13 +61,26 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
         HostConfig.newHostConfig().withBinds(binds).withNetworkMode(spec.networkMode());
     try (CreateContainerCmd cmd = client.createContainerCmd(spec.image())) {
       cmd.withHostConfig(hostConfig).withLabels(spec.labels());
+      // Story 3.5 AC3 + Trap T8: apply env via docker-java withEnv (NOT the docker CLI), so secret
+      // values land in the container's Config.Env and never appear in any process argv / docker ps
+      // command column. Empty map → omit the call entirely.
+      Map<String, String> environment = spec.environment();
+      if (!environment.isEmpty()) {
+        List<String> envPairs = new ArrayList<>(environment.size());
+        for (Map.Entry<String, String> entry : environment.entrySet()) {
+          envPairs.add(entry.getKey() + "=" + entry.getValue());
+        }
+        cmd.withEnv(envPairs);
+      }
       CreateContainerResponse response = cmd.exec();
+      // Trap T5: log the env-var COUNT only — never env names, never values.
       log.info(
-          "docker create image={} containerId={} networkMode={} bindCount={}",
+          "docker create image={} containerId={} networkMode={} bindCount={} envVarCount={}",
           DockerLogSanitizer.redactImageTag(spec.image()),
           response.getId(),
           spec.networkMode(),
-          spec.binds().size());
+          spec.binds().size(),
+          environment.size());
       return response.getId();
     }
   }

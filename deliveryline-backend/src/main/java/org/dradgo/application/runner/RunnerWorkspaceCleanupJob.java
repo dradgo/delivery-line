@@ -91,6 +91,16 @@ public class RunnerWorkspaceCleanupJob {
     int deleted = 0;
     for (RunnerExecutionSnapshot snapshot : candidates) {
       try {
+        // Story 3.5 Trap T10: a workspace flagged with the .quarantine marker (post-execution
+        // secret leak) is preserved for diagnostics rather than deleted. Mark it archived so it
+        // drops out of future candidate queries (WARN once, not every tick), but keep the files.
+        if (workspaceStore.isQuarantined(snapshot.publicId())) {
+          log.warn(
+              "workspace cleanup skip quarantined runnerExecutionId={} action=preserve reason=secret_leak",
+              snapshot.publicId());
+          recordPort.markArchived(snapshot.publicId(), OffsetDateTime.now(clock));
+          continue;
+        }
         workspaceStore.deleteWorkspace(snapshot.publicId());
         recordPort.markArchived(snapshot.publicId(), OffsetDateTime.now(clock));
         log.info(

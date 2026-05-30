@@ -98,6 +98,7 @@ class DockerRunnerLifecycleLoggingContractTest {
             scratchStore,
             new RunnerContractValidator(),
             RunnerProperties.defaults(),
+            cleanScanService(),
             callthroughTemplate(),
             callthroughTemplate(),
             CLOCK);
@@ -307,6 +308,13 @@ class DockerRunnerLifecycleLoggingContractTest {
         now.minusHours(26),
         null,
         null);
+  }
+
+  private static RunnerSecretScanService cleanScanService() {
+    RunnerSecretScanService scanService = mock(RunnerSecretScanService.class);
+    when(scanService.scanWorkspace(any(), any(), any(), any()))
+        .thenReturn(RunnerSecretScanService.ScanOutcome.clean());
+    return scanService;
   }
 
   private static TransactionTemplate callthroughTemplate() {

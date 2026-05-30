@@ -125,4 +125,32 @@ class RunnerWorkspaceCleanupJobDanglingUnitTest {
     verify(docker).stopContainer(eq("containerunknown"), any());
     verify(docker).removeContainer("containerunknown", true);
   }
+
+  @Test
+  void quarantinedWorkspaceIsPreservedNotDeletedButMarkedArchived() {
+    // Story 3.5 Trap T10: a completed workspace carrying a .quarantine marker (secret leak) is
+    // preserved for diagnostics — deleteWorkspace is NEVER called — but it is marked archived so it
+    // drops out of future sweeps (WARN once).
+    org.dradgo.application.runner.spi.RunnerExecutionSnapshot leaked =
+        new org.dradgo.application.runner.spi.RunnerExecutionSnapshot(
+            "rex_leaked000001",
+            "run_leaked000001",
+            org.dradgo.domain.registry.RunnerStage.EXECUTION,
+            org.dradgo.domain.registry.RunnerExecutionStatus.FAILED,
+            1,
+            OffsetDateTime.now(CLOCK).minusHours(48),
+            OffsetDateTime.now(CLOCK).minusHours(47),
+            org.dradgo.domain.registry.FailureCategory.RUNNER_SECRET_LEAK,
+            OffsetDateTime.now(CLOCK).minusHours(47),
+            OffsetDateTime.now(CLOCK).minusHours(48),
+            null);
+    when(recordPort.findCompletedBeforeAndNotArchived(any(), org.mockito.ArgumentMatchers.anyInt()))
+        .thenReturn(List.of(leaked));
+    when(workspaceStore.isQuarantined("rex_leaked000001")).thenReturn(true);
+
+    job.sweepWorkspaces();
+
+    verify(workspaceStore, never()).deleteWorkspace(any());
+    verify(recordPort).markArchived(eq("rex_leaked000001"), any());
+  }
 }

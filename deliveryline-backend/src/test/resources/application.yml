@@ -27,6 +27,15 @@ deliveryline:
         execution: happy-implementation-plan
     scheduling:
       enabled: false
+    # Story 3.5 — per-kind agent-provider env-var NAMES (never values). Mirrors the real
+    # application.yml so the validated @ConfigurationProperties binding does not shadow the
+    # defaults to empty in the @SpringBootTest tier (memory: validated-config-needs-test-yaml).
+    secret-env-names:
+      codex:
+        - CODEX_API_KEY
+        - OPENAI_API_KEY
+      claude:
+        - ANTHROPIC_API_KEY
     # Story 3.1 — under tests, override the Docker runner image tags to a stable, tiny
     # image (alpine:3.20) so docker-runner ITs do not depend on the not-yet-built
     # Codex / Claude images (stories 3.3 / 3.4). The fast tier never activates the

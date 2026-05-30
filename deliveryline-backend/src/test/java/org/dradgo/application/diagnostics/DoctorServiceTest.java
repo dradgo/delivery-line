@@ -122,6 +122,7 @@ class DoctorServiceTest {
         .thenReturn(
             ProbeResult.warn(
                 "Docker unreachable", DomainErrorCode.DOCTOR_DOCKER_MISSING.value(), Map.of()));
+    when(probes.probeRunnerSecrets()).thenReturn(ProbeResult.pass("Runner secrets present"));
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
@@ -148,6 +149,7 @@ class DoctorServiceTest {
                 Map.of("artifactRoot", "/var/tmp/deliveryline/artifacts")));
     when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
     when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+    when(probes.probeRunnerSecrets()).thenReturn(ProbeResult.pass("Runner secrets present"));
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
@@ -251,6 +253,7 @@ class DoctorServiceTest {
     when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
     when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
     when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+    when(probes.probeRunnerSecrets()).thenReturn(ProbeResult.pass("Runner secrets present"));
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
@@ -271,6 +274,7 @@ class DoctorServiceTest {
     when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
     when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
     when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+    when(probes.probeRunnerSecrets()).thenReturn(ProbeResult.pass("Runner secrets present"));
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
@@ -304,6 +308,7 @@ class DoctorServiceTest {
     when(probes.probeArtifactDirectory()).thenReturn(ProbeResult.pass("Writable"));
     when(probes.probeConfigFilePermissions()).thenReturn(ProbeResult.pass("Permissions ok"));
     when(probes.probeDockerAvailability()).thenReturn(ProbeResult.pass("Docker up"));
+    when(probes.probeRunnerSecrets()).thenReturn(ProbeResult.pass("Runner secrets present"));
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));

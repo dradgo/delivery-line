@@ -31,6 +31,7 @@ import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.mock.env.MockEnvironment;
 
 /**
  * Story 3.1 Task 7 — unit-level behavior of {@link DockerRunnerAdapter}. The {@link
@@ -62,6 +64,7 @@ class DockerRunnerAdapterUnitTest {
   private RunnerWorkspaceStore workspaceStore;
   private DockerEngineGateway gateway;
   private RunnerProperties properties;
+  private RunnerSecretsService secretsService;
   private DockerRunnerAdapter adapter;
 
   @BeforeEach
@@ -70,7 +73,15 @@ class DockerRunnerAdapterUnitTest {
     workspaceStore = Mockito.mock(RunnerWorkspaceStore.class);
     gateway = Mockito.mock(DockerEngineGateway.class);
     properties = RunnerProperties.defaults();
-    adapter = new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties, CLOCK);
+    // Story 3.5: provide the agent-provider key so dispatch resolution succeeds for the CODEX kind
+    // these tests dispatch. A dedicated missing-secret case lives in the secrets/scan test suites.
+    secretsService =
+        new RunnerSecretsService(
+            new MockEnvironment().withProperty("CODEX_API_KEY", "sk-codex-unit-test-value"),
+            properties);
+    adapter =
+        new DockerRunnerAdapter(
+            scratchStore, workspaceStore, gateway, properties, secretsService, CLOCK);
   }
 
   @Test
@@ -105,6 +116,79 @@ class DockerRunnerAdapterUnitTest {
         .containsEntry("deliveryline.workflowRunId", RUN_ID)
         .containsEntry("deliveryline.runnerKind", "codex")
         .containsKey("deliveryline.dispatchedAt");
+  }
+
+  @Test
+  void dispatchInjectsProviderKeyIntoEnvButNeverIntoLabels() {
+    // Story 3.5 AC3/AC11(e): the agent-provider key reaches the container ENV (Config.Env) but
+    // NEVER the label set (docker inspect labels carry no secret — Trap T9).
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(dispatchRequest());
+
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.environment()).containsEntry("CODEX_API_KEY", "sk-codex-unit-test-value");
+    assertThat(spec.labels().values())
+        .as("no container label value may carry the secret")
+        .noneMatch(v -> v.contains("sk-codex-unit-test-value"));
+  }
+
+  @Test
+  void dispatchLogsNeverContainTheProviderKeyValue() {
+    // Story 3.5 AC2/AC11(g): the dispatch path logs only a secretVarCount — never the value.
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(DockerRunnerAdapter.class);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      adapter.dispatch(dispatchRequest());
+    } finally {
+      logger.detachAppender(appender);
+    }
+
+    String logs =
+        appender.list.stream()
+            .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+            .collect(java.util.stream.Collectors.joining("\n"));
+    assertThat(logs).doesNotContain("sk-codex-unit-test-value");
+    assertThat(logs).contains("secretVarCount=1");
+  }
+
+  @Test
+  void dispatchThrowsDoctorRunnerSecretMissingWhenProviderKeyAbsent() {
+    // Story 3.5 AC1/AC11(b): an absent provider key fails fast at DISPATCH time (not startup).
+    DockerRunnerAdapter noSecretAdapter =
+        new DockerRunnerAdapter(
+            scratchStore,
+            workspaceStore,
+            gateway,
+            properties,
+            new RunnerSecretsService(new MockEnvironment(), properties),
+            CLOCK);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+
+    assertThatThrownBy(() -> noSecretAdapter.dispatch(dispatchRequest()))
+        .isInstanceOf(org.dradgo.domain.DomainException.class)
+        .satisfies(
+            ex ->
+                assertThat(((org.dradgo.domain.DomainException) ex).errorCode())
+                    .isEqualTo(
+                        org.dradgo.domain.registry.DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING));
+    // Fail fast BEFORE touching the engine — no container is created.
+    verify(gateway, org.mockito.Mockito.never()).createContainer(any());
   }
 
   @Test
@@ -162,8 +246,11 @@ class DockerRunnerAdapterUnitTest {
             RunnerProperties.Recovery.defaults(),
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
-            dockerConfig);
-    adapter = new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties, CLOCK);
+            dockerConfig,
+            RunnerProperties.defaultSecretEnvNames());
+    adapter =
+        new DockerRunnerAdapter(
+            scratchStore, workspaceStore, gateway, properties, secretsService, CLOCK);
     stubWorkspace();
     when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
     when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
@@ -185,7 +272,9 @@ class DockerRunnerAdapterUnitTest {
         appender.list.stream()
             .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
             .collect(java.util.stream.Collectors.joining("\n"));
-    assertThat(logs).doesNotContain("secret");
+    // Story 3.5: the dispatch path now logs a benign "secretVarCount" field, so assert the actual
+    // embedded CREDENTIAL ("user:secret@...") is redacted rather than the bare word "secret".
+    assertThat(logs).doesNotContain("user:secret");
     assertThat(logs).contains("***@registry.example.test/deliveryline/codex:latest");
   }
 

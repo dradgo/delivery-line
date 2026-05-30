@@ -558,6 +558,30 @@ final class ArchitectureRuleCatalog {
               .dependOnClassesThat()
               .resideInAPackage("com.github.dockerjava.."));
 
+  /**
+   * Story 3.5 AC10 — {@code RunnerSecretsService} (the only class that resolves agent-provider key
+   * VALUES from the environment) may be depended on ONLY from the runner application slice ({@code
+   * application.runner..} — the broker + scan service) and the runner adapter slice ({@code
+   * adapters.runner..} — {@code DockerRunnerAdapter} resolves and injects). No controller, REST
+   * adapter, or other application service may resolve secrets directly. (The epic text names {@code
+   * adapters.runner.docker..}, but the actual consumer {@code DockerRunnerAdapter} lives in {@code
+   * adapters.runner}, so the adapter-side allowance is the whole {@code adapters.runner..} slice;
+   * docker-java types staying behind the gateway is covered separately by {@link
+   * #ADAPTERS_RUNNER_DOCKER_TYPES_STAY_BEHIND_GATEWAY}.)
+   */
+  static final ArchRule RUNNER_SECRETS_SERVICE_SCOPE =
+      namedRule(
+          "RunnerSecretsService may only be depended on from application.runner or adapters.runner",
+          "Remediation: resolve runner secrets only inside org.dradgo.application.runner.. (RunnerBroker / RunnerSecretScanService) or org.dradgo.adapters.runner.. (DockerRunnerAdapter). Any other caller — a controller, REST adapter, or unrelated application service — must NOT resolve provider keys directly (story 3.5 AC10).",
+          noClasses()
+              .that()
+              .resideOutsideOfPackage("org.dradgo.application.runner..")
+              .and()
+              .resideOutsideOfPackage("org.dradgo.adapters.runner..")
+              .should()
+              .dependOnClassesThat()
+              .haveFullyQualifiedName("org.dradgo.application.runner.RunnerSecretsService"));
+
   static final ArchRule ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE =
       namedRule(
           "AllowedAction enum constants may only be referenced from WorkflowInspectionService (application) and AllowedActionsResponse (adapters.rest)",

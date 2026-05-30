@@ -19,6 +19,7 @@ import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
@@ -59,6 +60,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private final RunnerWorkspaceStore workspaceStore;
   private final DockerEngineGateway docker;
   private final RunnerProperties runnerProperties;
+  private final RunnerSecretsService runnerSecretsService;
   private final Clock clock;
   private final ConcurrentMap<String, String> rexIdToContainerId = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, LogGrowthObservation> rexIdToLastLogObservation =
@@ -69,8 +71,15 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       RunnerScratchStore scratchStore,
       RunnerWorkspaceStore workspaceStore,
       DockerEngineGateway docker,
-      RunnerProperties runnerProperties) {
-    this(scratchStore, workspaceStore, docker, runnerProperties, Clock.systemUTC());
+      RunnerProperties runnerProperties,
+      RunnerSecretsService runnerSecretsService) {
+    this(
+        scratchStore,
+        workspaceStore,
+        docker,
+        runnerProperties,
+        runnerSecretsService,
+        Clock.systemUTC());
   }
 
   DockerRunnerAdapter(
@@ -78,11 +87,14 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       RunnerWorkspaceStore workspaceStore,
       DockerEngineGateway docker,
       RunnerProperties runnerProperties,
+      RunnerSecretsService runnerSecretsService,
       Clock clock) {
     this.scratchStore = Objects.requireNonNull(scratchStore, "scratchStore");
     this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
     this.docker = Objects.requireNonNull(docker, "docker");
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
+    this.runnerSecretsService =
+        Objects.requireNonNull(runnerSecretsService, "runnerSecretsService");
     this.clock = Objects.requireNonNull(clock, "clock");
   }
 
@@ -128,6 +140,20 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         "deliveryline.dispatchedAt",
         OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).toString());
 
+    // Story 3.5 AC1/AC3 + Trap T1/T3: resolve the agent-provider key for this dispatch immediately
+    // before building the spec, and pass it straight into CreateContainerSpec.environment — never
+    // through RunnerDispatchRequest or any persisted/serialized record. Resolution may throw
+    // DOCTOR_RUNNER_SECRET_MISSING (fail fast at dispatch time). The mock adapter never calls this
+    // (Trap T4). Log the COUNT only — never names/values (Trap T5 / Logging task).
+    Map<String, String> secretEnv =
+        runnerSecretsService.resolveSecretsForRunner(
+            kind, request.stage(), request.workflowRunId());
+    log.info(
+        "docker dispatch secrets resolved runnerExecutionId={} kind={} secretVarCount={}",
+        rexId,
+        kind.value(),
+        secretEnv.size());
+
     CreateContainerSpec spec =
         new CreateContainerSpec(
             image,
@@ -136,7 +162,8 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
                 new CreateContainerSpec.BindMount(layout.output(), CONTAINER_OUTPUT_MOUNT, false),
                 new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false)),
             NETWORK_MODE_NONE,
-            labels);
+            labels,
+            secretEnv);
 
     String containerId = null;
     try {

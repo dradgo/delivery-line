@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.dradgo.domain.registry.RunnerKind;
@@ -33,7 +34,8 @@ public record RunnerProperties(
     Recovery recovery,
     Mock mock,
     Scheduling scheduling,
-    Docker docker) {
+    Docker docker,
+    Map<RunnerKind, List<String>> secretEnvNames) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -63,6 +65,14 @@ public record RunnerProperties(
     mock = mock == null ? Mock.defaults() : mock;
     scheduling = scheduling == null ? Scheduling.defaults() : scheduling;
     docker = docker == null ? Docker.defaults() : docker;
+    // Story 3.5 AC1/AC2/Trap T2: per-kind agent-provider env-var NAMES (never values). This is the
+    // source of truth stories 3.3/3.4 read when their runner images consume the injected key. A
+    // null/empty config falls back to the documented defaults so dispatch never fails on a missing
+    // mapping; the values themselves are resolved at dispatch time from the Spring Environment.
+    secretEnvNames =
+        (secretEnvNames == null || secretEnvNames.isEmpty())
+            ? defaultSecretEnvNames()
+            : deepCopySecretEnvNames(secretEnvNames);
   }
 
   public static RunnerProperties defaults() {
@@ -79,7 +89,45 @@ public record RunnerProperties(
         Recovery.defaults(),
         Mock.defaults(),
         Scheduling.defaults(),
-        Docker.defaults());
+        Docker.defaults(),
+        defaultSecretEnvNames());
+  }
+
+  /**
+   * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. Codex also accepts
+   * {@code OPENAI_API_KEY} as a fallback name (the first present value wins at resolution time);
+   * Claude reads {@code ANTHROPIC_API_KEY}. NAMES only — the values live in {@code .env} / process
+   * env and are read per-dispatch.
+   */
+  public static Map<RunnerKind, List<String>> defaultSecretEnvNames() {
+    EnumMap<RunnerKind, List<String>> names = new EnumMap<>(RunnerKind.class);
+    names.put(RunnerKind.CODEX, List.of("CODEX_API_KEY", "OPENAI_API_KEY"));
+    names.put(RunnerKind.CLAUDE, List.of("ANTHROPIC_API_KEY"));
+    return names;
+  }
+
+  private static Map<RunnerKind, List<String>> deepCopySecretEnvNames(
+      Map<RunnerKind, List<String>> source) {
+    EnumMap<RunnerKind, List<String>> copy = new EnumMap<>(RunnerKind.class);
+    for (Map.Entry<RunnerKind, List<String>> entry : source.entrySet()) {
+      List<String> values = entry.getValue();
+      copy.put(entry.getKey(), values == null ? List.of() : List.copyOf(values));
+    }
+    return Map.copyOf(copy);
+  }
+
+  /**
+   * Resolve the ordered list of env-var names a runner of {@code kind} authenticates with. Falls
+   * back to the documented defaults when the kind is absent from config so a new {@link RunnerKind}
+   * never silently resolves to "no secret required".
+   */
+  public List<String> secretEnvNamesFor(RunnerKind kind) {
+    Objects.requireNonNull(kind, "kind");
+    List<String> configured = secretEnvNames.get(kind);
+    if (configured != null && !configured.isEmpty()) {
+      return configured;
+    }
+    return defaultSecretEnvNames().getOrDefault(kind, List.of());
   }
 
   public Duration timeoutFor(RunnerStage stage) {

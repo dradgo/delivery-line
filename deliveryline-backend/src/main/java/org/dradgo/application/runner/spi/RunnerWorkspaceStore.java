@@ -92,4 +92,33 @@ public interface RunnerWorkspaceStore {
    * missing.
    */
   List<Path> listWorkspaceSubdirectories();
+
+  /**
+   * Story 3.5 AC4 — enumerate every regular file under {@code input/}, {@code output/}, {@code
+   * logs/} and return its workspace-relative path + UTF-8 decoded text for the post-execution
+   * secret scan. Binary files (those that fail strict UTF-8 decode) are skipped with a single WARN
+   * per file (OQ-6) and excluded from the returned list. Symlinks and any path escaping the
+   * workspace are skipped (same containment guards as the other read methods). Returns an empty
+   * list when the workspace is missing. Trap T7: this method only reads bytes — it performs NO
+   * credential detection; detection is the caller's responsibility (RedactionPolicyService + the
+   * broker's literal-value substring check).
+   */
+  List<WorkspaceScanFile> readFilesForSecretScan(String runnerExecutionId);
+
+  /**
+   * Story 3.5 AC4 / Trap T10 — write a {@code .quarantine} marker file in the workspace root so the
+   * story-3.2 {@link org.dradgo.application.runner.RunnerWorkspaceCleanupJob} preserves the
+   * workspace past normal retention for leak diagnostics rather than deleting it. The {@code
+   * reason} is recorded inside the marker for the operator; it MUST NOT contain a secret value
+   * (callers pass a relative file path + category names only). Idempotent: re-marking overwrites
+   * the marker. Returns the absolute path of the marker.
+   */
+  Path writeQuarantineMarker(String runnerExecutionId, String reason);
+
+  /**
+   * Story 3.5 AC4 / Trap T10 — true when a {@code .quarantine} marker exists in the workspace root.
+   * The cleanup job consults this before deleting a workspace so a quarantined (leaked-secret)
+   * workspace is preserved for diagnostics.
+   */
+  boolean isQuarantined(String runnerExecutionId);
 }

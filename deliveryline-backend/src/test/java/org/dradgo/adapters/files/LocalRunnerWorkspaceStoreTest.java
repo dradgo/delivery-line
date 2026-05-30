@@ -7,9 +7,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.List;
 import java.util.Set;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
+import org.dradgo.application.runner.spi.WorkspaceScanFile;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.BeforeEach;
@@ -181,6 +183,59 @@ class LocalRunnerWorkspaceStoreTest {
     }
   }
 
+  @Test
+  void readFilesForSecretScanEnumeratesRegularTextFilesWithRelativePaths() throws IOException {
+    WorkspaceLayout layout = store.prepare(REX_ID);
+    Files.writeString(layout.input().resolve("context-bundle.v1.json"), "{\"ctx\":1}");
+    Files.writeString(layout.output().resolve("result.json"), "{\"ok\":true}");
+    Files.writeString(layout.logs().resolve("runner.stdout"), "hello world");
+
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
+
+    assertThat(files)
+        .extracting(WorkspaceScanFile::relativePath)
+        .containsExactlyInAnyOrder(
+            "input/context-bundle.v1.json", "output/result.json", "logs/runner.stdout");
+    assertThat(files)
+        .filteredOn(f -> f.relativePath().equals("logs/runner.stdout"))
+        .singleElement()
+        .satisfies(f -> assertThat(f.text()).isEqualTo("hello world"));
+  }
+
+  @Test
+  void readFilesForSecretScanSkipsBinaryFiles() throws IOException {
+    WorkspaceLayout layout = store.prepare(REX_ID);
+    Files.writeString(layout.output().resolve("result.json"), "{\"ok\":true}");
+    // Invalid UTF-8 byte sequence → treated as binary and skipped (OQ-6).
+    Files.write(
+        layout.output().resolve("artifact.bin"),
+        new byte[] {(byte) 0xC3, (byte) 0x28, (byte) 0xFF});
+
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
+
+    assertThat(files)
+        .extracting(WorkspaceScanFile::relativePath)
+        .containsExactly("output/result.json");
+  }
+
+  @Test
+  void readFilesForSecretScanReturnsEmptyForMissingWorkspace() {
+    assertThat(store.readFilesForSecretScan(REX_ID)).isEmpty();
+  }
+
+  @Test
+  void quarantineMarkerRoundTrips() {
+    store.prepare(REX_ID);
+    assertThat(store.isQuarantined(REX_ID)).isFalse();
+
+    Path marker =
+        store.writeQuarantineMarker(
+            REX_ID, "leakedFile=output/result.json categories=[GITHUB_TOKEN]");
+
+    assertThat(Files.isRegularFile(marker)).isTrue();
+    assertThat(store.isQuarantined(REX_ID)).isTrue();
+  }
+
   @SuppressWarnings("unused")
   private static RunnerProperties dockerProperties(Path workspaceRoot) {
     return new RunnerProperties(
@@ -205,6 +260,7 @@ class LocalRunnerWorkspaceStoreTest {
             3_600_000L,
             java.time.Duration.ofSeconds(30L),
             java.time.Duration.ofSeconds(30L),
-            120L));
+            120L),
+        RunnerProperties.defaultSecretEnvNames());
   }
 }

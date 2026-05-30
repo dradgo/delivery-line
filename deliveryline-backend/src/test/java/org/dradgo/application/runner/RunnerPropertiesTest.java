@@ -42,7 +42,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.Recovery.defaults(),
                 RunnerProperties.Mock.defaults(),
                 RunnerProperties.Scheduling.defaults(),
-                RunnerProperties.Docker.defaults()));
+                RunnerProperties.Docker.defaults(),
+                RunnerProperties.defaultSecretEnvNames()));
   }
 
   @Test
@@ -60,7 +61,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.Recovery.defaults(),
                 RunnerProperties.Mock.defaults(),
                 RunnerProperties.Scheduling.defaults(),
-                RunnerProperties.Docker.defaults()));
+                RunnerProperties.Docker.defaults(),
+                RunnerProperties.defaultSecretEnvNames()));
   }
 
   @Test

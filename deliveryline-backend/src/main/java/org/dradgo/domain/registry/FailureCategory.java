@@ -10,6 +10,7 @@ public enum FailureCategory implements RegistryValue {
   RUNNER_LATE_RESULT("runner_late_result"),
   RUNNER_DUPLICATE_RESULT("runner_duplicate_result"),
   RUNNER_MALFORMED_OUTPUT("runner_malformed_output"),
+  RUNNER_SECRET_LEAK("runner_secret_leak"),
   ORPHAN("orphan");
 
   private static final Map<String, FailureCategory> LOOKUP = RegistryParsers.index(values());

@@ -190,6 +190,7 @@ public record WorkflowEventsResponse(
                 "runner_late_result",
                 "runner_duplicate_result",
                 "runner_malformed_output",
+                "runner_secret_leak",
                 "orphan"
               })
           String failureCategory,

@@ -73,6 +73,7 @@ class RunnerBrokerUnitTest {
   private RunnerAdapter runnerAdapter;
   private RunnerScratchStore scratchStore;
   private RunnerProperties runnerProperties;
+  private RunnerSecretScanService secretScanService;
   private RunnerBroker broker;
 
   @BeforeEach
@@ -87,6 +88,10 @@ class RunnerBrokerUnitTest {
     runnerAdapter = mock(RunnerAdapter.class);
     scratchStore = mock(RunnerScratchStore.class);
     runnerProperties = RunnerProperties.defaults();
+    // Story 3.5: default to a clean scan; the secret-leak tests re-stub this mock per case.
+    secretScanService = mock(RunnerSecretScanService.class);
+    when(secretScanService.scanWorkspace(any(), any(), any(), any()))
+        .thenReturn(RunnerSecretScanService.ScanOutcome.clean());
     broker =
         new RunnerBroker(
             recordPort,
@@ -100,6 +105,7 @@ class RunnerBrokerUnitTest {
             scratchStore,
             new RunnerContractValidator(),
             runnerProperties,
+            secretScanService,
             callthroughTemplate(),
             callthroughTemplate(),
             CLOCK);
@@ -343,6 +349,96 @@ class RunnerBrokerUnitTest {
     verify(executionService).recordCompleted(REX_ID);
     verify(workflowTransitionService, never())
         .transition(any(), any(), any(), any(), any(), any(FailureCategory.class), any());
+    // Story 3.5 AC4: the happy path runs the post-execution secret scan before completing.
+    verify(secretScanService).scanWorkspace(eq(REX_ID), any(), any(), eq(RUN_ID));
+  }
+
+  @Test
+  void onResultSecretLeakMarksFailedQuarantinesAndDoesNotComplete() {
+    // Story 3.5 AC4/AC11(c): a schema-valid result whose workspace leaks a secret is recorded
+    // FAILED with runner_secret_leak, emits RUNNER_FAILED (leakedFile + category names),
+    // quarantines
+    // the workspace, and NEVER reaches recordCompleted.
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(snapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    byte[] artifactBytes = "spec-payload-bytes".getBytes(StandardCharsets.UTF_8);
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq("spec/v1.json")))
+        .thenReturn(Optional.of(artifactBytes));
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              ArtifactRecordSnapshot artifact =
+                  ArtifactRecordSnapshot.withoutFailureMetadata(
+                      "art_test01234567",
+                      command.workflowRunId(),
+                      command.artifactType(),
+                      1,
+                      null,
+                      org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                      null,
+                      null,
+                      null,
+                      org.dradgo.domain.registry.ArtifactStatus.PENDING,
+                      null);
+              ArtifactOperationSnapshot op =
+                  new ArtifactOperationSnapshot(
+                      "op_test01234567",
+                      command.workflowRunId(),
+                      "art_test01234567",
+                      command.operationType().value(),
+                      org.dradgo.domain.registry.ArtifactOperationStatus.PENDING,
+                      command.idempotencyKey(),
+                      null,
+                      null,
+                      OffsetDateTime.now(CLOCK));
+              return new RecordArtifactOperationResult(artifact, op);
+            });
+    when(secretScanService.scanWorkspace(eq(REX_ID), any(), any(), eq(RUN_ID)))
+        .thenReturn(
+            new RunnerSecretScanService.ScanOutcome(
+                true, "output/result.json", java.util.List.of("injected_provider_key")));
+
+    String payload =
+        """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "spec", "contentReference": "spec/v1.json"}
+          ],
+          "normalizedOutput": {"summary": "ok", "outcome": "success"},
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+            .formatted(RUN_ID, REX_ID);
+    broker.onResult(REX_ID, payload.getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_SECRET_LEAK);
+    verify(executionService, never()).recordCompleted(any());
+    verify(secretScanService).quarantine(eq(REX_ID), any());
+    // Story 3.5 AC4 (review patch): a leak is scoped to the runner_execution + event + quarantine
+    // and must NOT drive the workflow-run state — operator-driven recovery owns that path. Pin the
+    // load-bearing invariant the production comment asserts so a future change that wires
+    // driveWorkflowFailed into the leak branch is caught.
+    verify(workflowTransitionService, never())
+        .transition(any(), any(), any(), any(), any(), any(), any());
+    ArgumentCaptor<java.util.Map<String, Object>> detailsCaptor =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(eventPort)
+        .append(
+            eq(RUN_ID),
+            eq(WorkflowEventType.RUNNER_FAILED),
+            any(),
+            eq("runner_secret_leak"),
+            eq(FailureCategory.RUNNER_SECRET_LEAK),
+            any(),
+            detailsCaptor.capture());
+    assertEquals("runner_secret_leak", detailsCaptor.getValue().get("failureCategory"));
+    assertEquals("output/result.json", detailsCaptor.getValue().get("leakedFile"));
   }
 
   @Test
@@ -716,6 +812,7 @@ class RunnerBrokerUnitTest {
             scratchStore,
             new RunnerContractValidator(),
             runnerProperties,
+            secretScanService,
             callthroughTemplate(),
             callthroughTemplate(),
             CLOCK);
@@ -1277,7 +1374,8 @@ class RunnerBrokerUnitTest {
             RunnerProperties.Recovery.defaults(),
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
-            dockerConfig);
+            dockerConfig,
+            RunnerProperties.defaultSecretEnvNames());
     broker =
         new RunnerBroker(
             recordPort,
@@ -1291,6 +1389,7 @@ class RunnerBrokerUnitTest {
             scratchStore,
             new RunnerContractValidator(),
             runnerProperties,
+            secretScanService,
             callthroughTemplate(),
             callthroughTemplate(),
             CLOCK);

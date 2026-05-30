@@ -17,6 +17,7 @@ import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.domain.id.PublicIdPrefixes;
@@ -90,11 +91,18 @@ class DockerRunnerAdapterContainerLifecycleIT {
             RunnerProperties.Recovery.defaults(),
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
-            dockerConfig);
+            dockerConfig,
+            RunnerProperties.defaultSecretEnvNames());
 
+    RunnerSecretsService secretsService =
+        new RunnerSecretsService(
+            new org.springframework.mock.env.MockEnvironment()
+                .withProperty("CODEX_API_KEY", "sk-codex-it-value")
+                .withProperty("ANTHROPIC_API_KEY", "sk-ant-it-value"),
+            properties);
     adapter =
         new DockerRunnerAdapter(
-            scratchStore, workspaceStore, gateway, properties, Clock.systemUTC());
+            scratchStore, workspaceStore, gateway, properties, secretsService, Clock.systemUTC());
   }
 
   @AfterEach

@@ -96,6 +96,7 @@ class RunnerLoggingContractTest {
             scratchStore,
             new RunnerContractValidator(),
             RunnerProperties.defaults(),
+            cleanScanService(),
             callthroughTemplate(),
             callthroughTemplate(),
             CLOCK);
@@ -347,6 +348,13 @@ class RunnerLoggingContractTest {
         RunnerExecutionStateMachine.isTerminal(status) ? now : null,
         now,
         null);
+  }
+
+  private static RunnerSecretScanService cleanScanService() {
+    RunnerSecretScanService scanService = mock(RunnerSecretScanService.class);
+    when(scanService.scanWorkspace(any(), any(), any(), any()))
+        .thenReturn(RunnerSecretScanService.ScanOutcome.clean());
+    return scanService;
   }
 
   private static TransactionTemplate callthroughTemplate() {
