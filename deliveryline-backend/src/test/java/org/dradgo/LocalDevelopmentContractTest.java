@@ -1,5 +1,6 @@
 package org.dradgo;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -40,12 +41,25 @@ class LocalDevelopmentContractTest {
   }
 
   @Test
-  void dockerComposeRunnerImagesAreDefaultBuildTargets() throws IOException {
+  void dockerComposeRunnerImagesAreProfileGatedBuildTargets() throws IOException {
     String composeFile = Files.readString(REPO_ROOT.resolve("docker-compose.yml"));
 
+    // Both runner images are declared as build targets (stories 3.3 / 3.4)...
     assertTrue(composeFile.contains("codex-runner:"));
     assertTrue(composeFile.contains("claude-runner:"));
-    assertFalse(composeFile.contains("profiles: [\"runners\"]"));
+    assertTrue(composeFile.contains("dockerfile: runners/codex/Dockerfile"));
+    assertTrue(composeFile.contains("dockerfile: runners/claude/Dockerfile"));
+
+    // ...but BOTH are gated behind the "runners" profile so Spring Boot's
+    // docker-compose autoconfig (`docker compose up --wait`) does not try to run
+    // the one-shot runners — they exit non-zero and would abort app startup
+    // (doctor-smoke / jar-smoke). Profiles are the only per-service exclusion the
+    // compose lifecycle honors; build them by name or with `--profile runners`.
+    int profileGates = composeFile.split("profiles: \\[\"runners\"\\]", -1).length - 1;
+    assertEquals(
+        2,
+        profileGates,
+        "both codex-runner and claude-runner must be gated behind the \"runners\" profile");
   }
 
   @Test
