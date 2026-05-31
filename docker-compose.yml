@@ -18,5 +18,18 @@ services:
       retries: 10
       start_period: 30s
 
+  # Story 3.3 — Codex runner image build target. This is a build-only,
+  # one-shot runner image launched per-execution by the backend
+  # DockerRunnerAdapter (story 3.1) with the workspace mounts + --network=none,
+  # NOT a long-running compose service. The "runners" profile keeps it out of
+  # the default `docker compose up` (postgres stays the only runtime service);
+  # `docker compose build codex-runner` still rebuilds it by name.
+  codex-runner:
+    profiles: ["runners"]
+    build:
+      context: .
+      dockerfile: runners/codex/Dockerfile
+    image: deliveryline/codex-runner:latest
+
 volumes:
   deliveryline-postgres-data:

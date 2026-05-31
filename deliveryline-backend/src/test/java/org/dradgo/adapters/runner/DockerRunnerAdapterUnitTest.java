@@ -132,7 +132,9 @@ class DockerRunnerAdapterUnitTest {
         ArgumentCaptor.forClass(CreateContainerSpec.class);
     verify(gateway).createContainer(specCaptor.capture());
     CreateContainerSpec spec = specCaptor.getValue();
-    assertThat(spec.environment()).containsEntry("CODEX_API_KEY", "sk-codex-unit-test-value");
+    assertThat(spec.environment())
+        .containsEntry("CODEX_API_KEY", "sk-codex-unit-test-value")
+        .containsEntry("DELIVERYLINE_RUNNER_STAGE", "investigation");
     assertThat(spec.labels().values())
         .as("no container label value may carry the secret")
         .noneMatch(v -> v.contains("sk-codex-unit-test-value"));

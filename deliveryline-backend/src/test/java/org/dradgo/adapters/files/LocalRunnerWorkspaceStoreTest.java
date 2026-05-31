@@ -74,14 +74,31 @@ class LocalRunnerWorkspaceStoreTest {
 
   @Test
   @DisabledOnOs(OS.WINDOWS)
-  void prepareSetsOwnerOnlyPermissionsOnPosix() throws IOException {
+  void prepareSetsRunnerAccessiblePermissionsOnPosix() throws IOException {
     WorkspaceLayout layout = store.prepare(REX_ID);
     Set<PosixFilePermission> rootPerms = Files.getPosixFilePermissions(layout.root());
+    Set<PosixFilePermission> inputPerms = Files.getPosixFilePermissions(layout.input());
+    Set<PosixFilePermission> outputPerms = Files.getPosixFilePermissions(layout.output());
+    Set<PosixFilePermission> logsPerms = Files.getPosixFilePermissions(layout.logs());
+
     assertThat(rootPerms)
         .containsExactlyInAnyOrder(
             PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE,
             PosixFilePermission.OWNER_EXECUTE);
+    assertThat(inputPerms)
+        .containsExactlyInAnyOrder(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.GROUP_EXECUTE,
+            PosixFilePermission.OTHERS_READ,
+            PosixFilePermission.OTHERS_EXECUTE);
+    assertThat(outputPerms)
+        .containsExactlyInAnyOrderElementsOf(LocalRunnerWorkspaceStoreTest.allAccessDirPerms());
+    assertThat(logsPerms)
+        .containsExactlyInAnyOrderElementsOf(LocalRunnerWorkspaceStoreTest.allAccessDirPerms());
   }
 
   @Test
@@ -111,6 +128,21 @@ class LocalRunnerWorkspaceStoreTest {
     assertThat(written.getFileName().toString()).isEqualTo("context-bundle.v1.json");
     assertThat(written.getParent()).isEqualTo(layout.input());
     assertThat(Files.readAllBytes(written)).isEqualTo(bytes);
+  }
+
+  @Test
+  @DisabledOnOs(OS.WINDOWS)
+  void writeInputBundleSetsRunnerReadablePermissionsOnPosix() throws IOException {
+    store.prepare(REX_ID);
+
+    Path written = store.writeInputBundle(REX_ID, "{\"schemaVersion\":1}".getBytes());
+
+    assertThat(Files.getPosixFilePermissions(written))
+        .containsExactlyInAnyOrder(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ);
   }
 
   @Test
@@ -262,5 +294,18 @@ class LocalRunnerWorkspaceStoreTest {
             java.time.Duration.ofSeconds(30L),
             120L),
         RunnerProperties.defaultSecretEnvNames());
+  }
+
+  private static Set<PosixFilePermission> allAccessDirPerms() {
+    return Set.of(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.OWNER_EXECUTE,
+        PosixFilePermission.GROUP_READ,
+        PosixFilePermission.GROUP_WRITE,
+        PosixFilePermission.GROUP_EXECUTE,
+        PosixFilePermission.OTHERS_READ,
+        PosixFilePermission.OTHERS_WRITE,
+        PosixFilePermission.OTHERS_EXECUTE);
   }
 }

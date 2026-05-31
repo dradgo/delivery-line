@@ -53,6 +53,13 @@ public interface RunnerWorkspaceStore {
   Optional<byte[]> tryReadResult(String runnerExecutionId);
 
   /**
+   * Read an artifact payload written by a Docker runner under {@code output/}. The reference is
+   * resolved relative to the workspace output directory with the same containment and symlink
+   * guards as {@link #tryReadResult(String)}.
+   */
+  Optional<byte[]> tryReadArtifactContent(String runnerExecutionId, String relativeReference);
+
+  /**
    * Resolve the absolute host-side path of the workspace's {@code output/} subdirectory, used by
    * story 3.6 to mount the logs container-side. Returns {@link Optional#empty()} if {@code prepare}
    * was never called for this rex-id.

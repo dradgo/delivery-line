@@ -1,0 +1,16 @@
+# Story 3.3 — keep the docker build context lean. The codex-runner image
+# (runners/codex/Dockerfile, context: repo root) only needs runners/codex/**;
+# excluding the heavy trees keeps `docker compose build codex-runner` and the
+# Docker-tier conformance test fast and small.
+.git
+**/target
+**/node_modules
+**/dist
+**/build
+_bmad-output
+.agents
+.claude
+.mvn/wrapper/maven-wrapper.jar
+**/*.log
+**/*.diff
+**/.local-*.sh

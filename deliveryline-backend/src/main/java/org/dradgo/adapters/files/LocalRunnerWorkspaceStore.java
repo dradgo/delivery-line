@@ -70,6 +70,32 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
           PosixFilePermission.OWNER_READ,
           PosixFilePermission.OWNER_WRITE,
           PosixFilePermission.OWNER_EXECUTE);
+  private static final Set<PosixFilePermission> RUNNER_READABLE_INPUT_DIR_PERMS =
+      EnumSet.of(
+          PosixFilePermission.OWNER_READ,
+          PosixFilePermission.OWNER_WRITE,
+          PosixFilePermission.OWNER_EXECUTE,
+          PosixFilePermission.GROUP_READ,
+          PosixFilePermission.GROUP_EXECUTE,
+          PosixFilePermission.OTHERS_READ,
+          PosixFilePermission.OTHERS_EXECUTE);
+  private static final Set<PosixFilePermission> RUNNER_WRITABLE_DIR_PERMS =
+      EnumSet.of(
+          PosixFilePermission.OWNER_READ,
+          PosixFilePermission.OWNER_WRITE,
+          PosixFilePermission.OWNER_EXECUTE,
+          PosixFilePermission.GROUP_READ,
+          PosixFilePermission.GROUP_WRITE,
+          PosixFilePermission.GROUP_EXECUTE,
+          PosixFilePermission.OTHERS_READ,
+          PosixFilePermission.OTHERS_WRITE,
+          PosixFilePermission.OTHERS_EXECUTE);
+  private static final Set<PosixFilePermission> RUNNER_READABLE_FILE_PERMS =
+      EnumSet.of(
+          PosixFilePermission.OWNER_READ,
+          PosixFilePermission.OWNER_WRITE,
+          PosixFilePermission.GROUP_READ,
+          PosixFilePermission.OTHERS_READ);
 
   private final Path deliverylineHome;
   private final Path workspaceRoot;
@@ -120,9 +146,9 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
     Path logs = root.resolve(LOGS_SUBDIR);
     try {
       createWithOwnerOnlyPerms(root);
-      createWithOwnerOnlyPerms(input);
-      createWithOwnerOnlyPerms(output);
-      createWithOwnerOnlyPerms(logs);
+      createWithPerms(input, RUNNER_READABLE_INPUT_DIR_PERMS);
+      createWithPerms(output, RUNNER_WRITABLE_DIR_PERMS);
+      createWithPerms(logs, RUNNER_WRITABLE_DIR_PERMS);
       validateDirectory(root, root);
       validateDirectory(input, root);
       validateDirectory(output, root);
@@ -158,6 +184,7 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
       } catch (AtomicMoveNotSupportedException atomicUnsupported) {
         Files.move(tempTarget, target, StandardCopyOption.REPLACE_EXISTING);
       }
+      setPosixPermissionsIfSupported(target, RUNNER_READABLE_FILE_PERMS);
       try (FileChannel dir = FileChannel.open(target.getParent(), StandardOpenOption.READ)) {
         dir.force(true);
       } catch (IOException ignored) {
@@ -207,6 +234,45 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
       log.warn(
           "tryReadResult io failure runnerExecutionId={} cause={}",
           runnerExecutionId,
+          error.toString());
+      return Optional.empty();
+    }
+  }
+
+  @Override
+  public Optional<byte[]> tryReadArtifactContent(
+      String runnerExecutionId, String relativeReference) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    if (relativeReference == null || relativeReference.isBlank()) {
+      return Optional.empty();
+    }
+    Path requested = Path.of(relativeReference);
+    if (requested.isAbsolute()) {
+      return Optional.empty();
+    }
+    Path outputDir = subdirPath(runnerExecutionId, OUTPUT_SUBDIR);
+    Path target = outputDir.resolve(requested).normalize();
+    if (!target.startsWith(outputDir)) {
+      return Optional.empty();
+    }
+    if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      return Optional.empty();
+    }
+    try {
+      if (Files.isSymbolicLink(target)) {
+        return Optional.empty();
+      }
+      Path realOutput = outputDir.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      Path real = target.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      if (!real.startsWith(realOutput) || !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+        return Optional.empty();
+      }
+      return Optional.of(Files.readAllBytes(target));
+    } catch (IOException error) {
+      log.warn(
+          "tryReadArtifactContent io failure runnerExecutionId={} reference={} cause={}",
+          runnerExecutionId,
+          relativeReference,
           error.toString());
       return Optional.empty();
     }
@@ -548,14 +614,24 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   }
 
   private static void createWithOwnerOnlyPerms(Path dir) throws IOException {
+    createWithPerms(dir, OWNER_ONLY_DIR_PERMS);
+  }
+
+  private static void createWithPerms(Path dir, Set<PosixFilePermission> permissions)
+      throws IOException {
     Files.createDirectories(dir);
-    // Best-effort POSIX permission tightening (mode 0700). On Windows / any FileStore without
+    // Best-effort POSIX permission tightening. On Windows / any FileStore without
     // POSIX views the call throws UnsupportedOperationException; we swallow it because the host
     // ACL already restricts access to the running user (the workspace lives under the
     // deliveryline.home of the JVM owner), and the unit-test surface skips the permission
     // assertion on Windows via @DisabledOnOs(OS.WINDOWS).
+    setPosixPermissionsIfSupported(dir, permissions);
+  }
+
+  private static void setPosixPermissionsIfSupported(
+      Path path, Set<PosixFilePermission> permissions) throws IOException {
     try {
-      Files.setPosixFilePermissions(dir, OWNER_ONLY_DIR_PERMS);
+      Files.setPosixFilePermissions(path, permissions);
     } catch (UnsupportedOperationException ignored) {
       // POSIX views unavailable (Windows); rely on host ACL.
     }

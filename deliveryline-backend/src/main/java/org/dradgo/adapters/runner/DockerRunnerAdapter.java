@@ -1,5 +1,8 @@
 package org.dradgo.adapters.runner;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -55,6 +58,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private static final String CONTAINER_OUTPUT_MOUNT = "/workspace/output";
   private static final String CONTAINER_LOGS_MOUNT = "/workspace/logs";
   private static final String NETWORK_MODE_NONE = "none";
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private final RunnerScratchStore scratchStore;
   private final RunnerWorkspaceStore workspaceStore;
@@ -154,6 +158,9 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         kind.value(),
         secretEnv.size());
 
+    Map<String, String> containerEnv = new LinkedHashMap<>(secretEnv);
+    containerEnv.put("DELIVERYLINE_RUNNER_STAGE", request.stage().value());
+
     CreateContainerSpec spec =
         new CreateContainerSpec(
             image,
@@ -163,7 +170,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
                 new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false)),
             NETWORK_MODE_NONE,
             labels,
-            secretEnv);
+            containerEnv);
 
     String containerId = null;
     try {
@@ -438,7 +445,35 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
                 "docker tryReadResult hit runnerExecutionId={} bytes={}",
                 runnerExecutionId,
                 payload.length));
+    bytes.ifPresent(payload -> mirrorResultToScratch(runnerExecutionId, payload));
     return bytes;
+  }
+
+  private void mirrorResultToScratch(String runnerExecutionId, byte[] payload) {
+    try {
+      scratchStore.writeRunnerResult(runnerExecutionId, payload);
+      JsonNode parsed = OBJECT_MAPPER.readTree(payload);
+      JsonNode artifactRefs = parsed.path("artifactReferences");
+      if (!artifactRefs.isArray()) {
+        return;
+      }
+      for (JsonNode ref : artifactRefs) {
+        String contentReference = ref.path("contentReference").asText(null);
+        if (contentReference == null || contentReference.isBlank()) {
+          continue;
+        }
+        workspaceStore
+            .tryReadArtifactContent(runnerExecutionId, contentReference)
+            .ifPresent(
+                bytes ->
+                    scratchStore.writeArtifactContent(runnerExecutionId, contentReference, bytes));
+      }
+    } catch (IOException | RuntimeException error) {
+      log.warn(
+          "docker mirror result to scratch skipped runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+    }
   }
 
   @Override

@@ -420,26 +420,9 @@ public class RunnerBroker {
       String typeValue = ref.path("artifactType").asText();
       ArtifactType artifactType =
           ArtifactType.fromValue(typeValue, "runner_result.artifactReferences.artifactType");
-      String contentReference = ref.path("contentReference").asText(null);
-      if (contentReference == null || contentReference.isBlank()) {
-        handleFailedValidation(
-            runnerExecutionId,
-            workflowRunId,
-            row,
-            FailureCategory.RUNNER_CONTRACT_VIOLATION,
-            new ValidationResult(
-                false,
-                List.of(
-                    new ValidationError(
-                        ValidationErrorCode.SCHEMA_VALIDATION_FAILED,
-                        "/artifactReferences/contentReference",
-                        "missing or blank"))),
-            new byte[] {0});
-        return;
-      }
-      Optional<byte[]> maybeBytes =
-          scratchStore.tryReadArtifactContent(runnerExecutionId, contentReference);
-      if (maybeBytes.isEmpty()) {
+      Optional<ArtifactPayload> maybePayload = artifactPayload(runnerExecutionId, ref);
+      if (maybePayload.isEmpty()) {
+        String contentReference = ref.path("contentReference").asText(null);
         handleFailedValidation(
             runnerExecutionId,
             workflowRunId,
@@ -455,8 +438,7 @@ public class RunnerBroker {
             new byte[] {0});
         return;
       }
-      byte[] artifactBytes = maybeBytes.get();
-      String payloadRef = leafFilename(contentReference);
+      ArtifactPayload payload = maybePayload.get();
       String idempotencyKey =
           "runner-result:" + runnerExecutionId + ":" + ref.path("artifactId").asText();
       RecordArtifactOperationCommand command =
@@ -465,8 +447,8 @@ public class RunnerBroker {
               artifactType,
               ArtifactOperationType.CREATE,
               idempotencyKey,
-              payloadRef,
-              artifactBytes,
+              payload.payloadRef(),
+              payload.bytes(),
               "system",
               org.dradgo.domain.registry.ActorType.SYSTEM,
               correlationId,
@@ -613,6 +595,32 @@ public class RunnerBroker {
     return slash < 0 ? normalized : normalized.substring(slash + 1);
   }
 
+  private Optional<ArtifactPayload> artifactPayload(String runnerExecutionId, JsonNode ref) {
+    String contentReference = ref.path("contentReference").asText(null);
+    if (contentReference != null && !contentReference.isBlank()) {
+      return scratchStore
+          .tryReadArtifactContent(runnerExecutionId, contentReference)
+          .map(bytes -> new ArtifactPayload(leafFilename(contentReference), bytes));
+    }
+    JsonNode artifactId = ref.path("artifactId");
+    if (!artifactId.isTextual() || artifactId.asText().isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(
+          new ArtifactPayload(artifactId.asText() + ".json", objectMapper.writeValueAsBytes(ref)));
+    } catch (java.io.IOException error) {
+      log.warn(
+          "artifact payload serialization failed runnerExecutionId={} artifactId={} cause={}",
+          runnerExecutionId,
+          artifactId.asText(),
+          error.toString());
+      return Optional.empty();
+    }
+  }
+
+  private record ArtifactPayload(String payloadRef, byte[] bytes) {}
+
   /**
    * A result arriving for a row that is already in a non-result-bearing terminal state ({@code
    * TIMED_OUT} or {@code ORPHANED}) is, by AC5, classified as {@code runner_late_result}: emit a
@@ -649,15 +657,11 @@ public class RunnerBroker {
           String correlationId = UUID.randomUUID().toString();
           for (JsonNode ref : artifactRefs) {
             try {
-              String contentReference = ref.path("contentReference").asText(null);
-              if (contentReference == null || contentReference.isBlank()) {
+              Optional<ArtifactPayload> maybePayload = artifactPayload(runnerExecutionId, ref);
+              if (maybePayload.isEmpty()) {
                 continue;
               }
-              Optional<byte[]> maybeBytes =
-                  scratchStore.tryReadArtifactContent(runnerExecutionId, contentReference);
-              if (maybeBytes.isEmpty()) {
-                continue;
-              }
+              ArtifactPayload payload = maybePayload.get();
               String typeValue = ref.path("artifactType").asText();
               ArtifactType artifactType =
                   ArtifactType.fromValue(
@@ -670,8 +674,8 @@ public class RunnerBroker {
                       artifactType,
                       ArtifactOperationType.CREATE,
                       idempotencyKey,
-                      leafFilename(contentReference),
-                      maybeBytes.get(),
+                      payload.payloadRef(),
+                      payload.bytes(),
                       "system",
                       org.dradgo.domain.registry.ActorType.SYSTEM,
                       correlationId,
