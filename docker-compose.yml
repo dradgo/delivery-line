@@ -21,18 +21,31 @@ services:
   # Story 3.3 — Codex runner image build target. This is a build-only,
   # one-shot runner image launched per-execution by the backend
   # DockerRunnerAdapter (story 3.1) with the workspace mounts + --network=none,
-  # NOT a long-running compose service. It is a default build target so plain
-  # `docker compose build` rebuilds runner images without a separate script.
+  # NOT a long-running compose service.
+  #
+  # The "runners" profile keeps it out of the default `docker compose up`:
+  # Spring Boot 4's docker-compose autoconfig (doctor-smoke, jar-smoke) runs
+  # `docker compose up --wait` against this file, and a one-shot runner that
+  # exits non-zero would fail that wait and abort app startup. Profiles are the
+  # only per-service exclusion Spring Boot's compose lifecycle honors.
+  #
+  # Still buildable without activating the profile — `docker compose build
+  # codex-runner` (by name) builds it; rebuild BOTH at once with
+  # `docker compose --profile runners build` (AC5 / AR24).
   codex-runner:
+    profiles: ["runners"]
     build:
       context: .
       dockerfile: runners/codex/Dockerfile
     image: deliveryline/codex-runner:latest
 
   # Story 3.4 — Claude runner image build target (the Claude twin of
-  # codex-runner). Same build-only, one-shot posture; `docker compose build`
-  # rebuilds BOTH runner images (AC5).
+  # codex-runner). Same build-only, one-shot, profile-gated posture (see the
+  # codex-runner note above for why the "runners" profile is required).
+  # `docker compose build claude-runner` builds it by name; `docker compose
+  # --profile runners build` rebuilds BOTH runner images (AC5).
   claude-runner:
+    profiles: ["runners"]
     build:
       context: .
       dockerfile: runners/claude/Dockerfile

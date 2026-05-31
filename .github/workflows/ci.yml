@@ -463,7 +463,13 @@ jobs:
         run: docker build -f runners/codex/Dockerfile --build-arg INSTALL_CODEX_CLI=false -t deliveryline/runners-codex:ci .
 
       - name: Build claude runner image
-        run: docker build -t deliveryline/runners-claude:ci runners/claude
+        # Story 3.4 turned this into a real image whose Dockerfile uses repo-root
+        # build context (COPY runners/claude/...; see the Dockerfile header). Build
+        # from the repo root with -f, and bake the deterministic mock CLI
+        # (INSTALL_CLAUDE_CLI=false) so the gate stays offline/deterministic — no
+        # network npm install of @anthropic-ai/claude-code. This is a build-shape +
+        # contract re-validation gate, not a real-CLI test.
+        run: docker build -f runners/claude/Dockerfile --build-arg INSTALL_CLAUDE_CLI=false -t deliveryline/runners-claude:ci .
 
       - name: Re-validate runner contract fixtures against schema v1
         run: ./mvnw -B -ntp -pl deliveryline-runner-contracts -am test -Dtest='RunnerContractValidatorTest'
