@@ -454,7 +454,13 @@ jobs:
           cache: maven
 
       - name: Build codex runner image
-        run: docker build -t deliveryline/runners-codex:ci runners/codex
+        # Story 3.3 turned this into a real image whose Dockerfile uses repo-root
+        # build context (COPY runners/codex/...; see the Dockerfile header). Build
+        # from the repo root with -f, and bake the deterministic mock CLI
+        # (INSTALL_CODEX_CLI=false) so the gate stays offline/deterministic — no
+        # network npm install of @openai/codex. This is a build-shape + contract
+        # re-validation gate, not a real-CLI test.
+        run: docker build -f runners/codex/Dockerfile --build-arg INSTALL_CODEX_CLI=false -t deliveryline/runners-codex:ci .
 
       - name: Build claude runner image
         run: docker build -t deliveryline/runners-claude:ci runners/claude
