@@ -94,15 +94,19 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. Codex also accepts
-   * {@code OPENAI_API_KEY} as a fallback name (the first present value wins at resolution time);
-   * Claude reads {@code ANTHROPIC_API_KEY}. NAMES only — the values live in {@code .env} / process
+   * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. The list is ordered =
+   * the runner image's resolution preference (first present wins at dispatch time, and the value is
+   * injected under the name it was found — see {@link RunnerSecretsService}). Codex also accepts
+   * {@code OPENAI_API_KEY} as a fallback alias for the same OpenAI key. Story 3.4 made Claude
+   * dual-mode: {@code CLAUDE_CODE_OAUTH_TOKEN} (Pro/Max subscription token, preferred) then {@code
+   * ANTHROPIC_API_KEY} (per-token API billing) — two DISTINCT credential types, not aliases, so
+   * doctor reports PASS when either is set. NAMES only — the values live in {@code .env} / process
    * env and are read per-dispatch.
    */
   public static Map<RunnerKind, List<String>> defaultSecretEnvNames() {
     EnumMap<RunnerKind, List<String>> names = new EnumMap<>(RunnerKind.class);
     names.put(RunnerKind.CODEX, List.of("CODEX_API_KEY", "OPENAI_API_KEY"));
-    names.put(RunnerKind.CLAUDE, List.of("ANTHROPIC_API_KEY"));
+    names.put(RunnerKind.CLAUDE, List.of("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"));
     return names;
   }
 

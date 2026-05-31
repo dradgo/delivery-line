@@ -78,7 +78,7 @@ public class DoctorService {
           Map.entry(
               CHECK_RUNNER_SECRETS,
               "Set the agent-provider API key(s) in .env — see .env.example (CODEX_API_KEY/OPENAI_API_KEY"
-                  + " for Codex, ANTHROPIC_API_KEY for Claude) — then restart and re-check."),
+                  + " for Codex, CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY for Claude) — then restart and re-check."),
           Map.entry(
               CHECK_REST_BIND_ADDRESS,
               "Bind server.address to a loopback (e.g. 127.0.0.1) or free the configured port."),

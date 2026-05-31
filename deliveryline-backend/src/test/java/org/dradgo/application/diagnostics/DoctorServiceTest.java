@@ -136,6 +136,24 @@ class DoctorServiceTest {
   }
 
   @Test
+  void runnerSecretsRemediationNamesClaudeSubscriptionToken() {
+    stubAllProbesPass();
+    when(probes.probeRunnerSecrets())
+        .thenReturn(
+            ProbeResult.fail(
+                "Runner provider secrets missing",
+                DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING.value(),
+                Map.of("claude", "missing")));
+
+    DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
+
+    DiagnosticsCheck runnerSecrets = findCheck(report, DoctorService.CHECK_RUNNER_SECRETS);
+    assertThat(runnerSecrets.remediation())
+        .contains("CLAUDE_CODE_OAUTH_TOKEN")
+        .contains("ANTHROPIC_API_KEY");
+  }
+
+  @Test
   void artifactDirectoryRemediationIncludesResolvedPathContext() {
     when(probes.probeJavaVersion()).thenReturn(ProbeResult.pass("Java 21"));
     when(probes.probeSpringProfiles()).thenReturn(ProbeResult.pass("local"));

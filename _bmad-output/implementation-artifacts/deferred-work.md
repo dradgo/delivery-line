@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3.4 (2026-05-31)
+
+- **Real Claude execution still conflicts with the inherited `--network=none` runner contract** — Story 3.4 inherits the DockerRunnerAdapter/file-based contract that launches runners with `--network=none`, while the production Claude Code CLI path is expected to call Anthropic/Claude subscription services. Mock conformance can pass, but real API/subscription execution remains a story 3.8 / runner-network architecture decision rather than a safe patch inside this image-only story. [`runners/RUNNER_CONTRACT.md:26`, `runners/claude/entrypoint.sh:331`]
+
 ## Deferred from: code review of story-2.20 (2026-05-31)
 
 - **`error` precedence blanks already-loaded rows on a background-refetch failure** — `resolveQueueState` returns `error` whenever `isError`, even when `query.data` still holds a prior successful list. Spec-correct for 2.20 (no refetch trigger ships yet — no filter control, first-load dominant). Revisit when story 2.15 (rows) + a filter control land: branch `isError && count > 0` to keep stale rows with an inline error instead of the full-page error state. [`deliveryline-frontend/src/features/workflows/queueState.ts:45`]

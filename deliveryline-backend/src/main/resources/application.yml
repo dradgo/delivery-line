@@ -96,14 +96,17 @@ deliveryline:
       enabled: true
     # Story 3.5 Trap T2 — per-kind agent-provider env-var NAMES (never values). Stories 3.3/3.4
     # read these names; RunnerSecretsService resolves the matching values from .env / process env
-    # at dispatch time. NAMES ONLY here — putting a secret VALUE in application.yml is forbidden
-    # (AC2). Codex resolves the first present of [CODEX_API_KEY, OPENAI_API_KEY]; Claude reads
-    # ANTHROPIC_API_KEY.
+    # at dispatch time and injects each under the name it was found. NAMES ONLY here — putting a
+    # secret VALUE in application.yml is forbidden (AC2). Codex resolves the first present of
+    # [CODEX_API_KEY, OPENAI_API_KEY] (aliases for the same OpenAI key). Claude is dual-mode
+    # (story 3.4): CLAUDE_CODE_OAUTH_TOKEN (Pro/Max subscription token, preferred) then
+    # ANTHROPIC_API_KEY (API billing) — two distinct credential types; doctor PASSes on either.
     secret-env-names:
       codex:
         - CODEX_API_KEY
         - OPENAI_API_KEY
       claude:
+        - CLAUDE_CODE_OAUTH_TOKEN
         - ANTHROPIC_API_KEY
     # Story 3.1 — Docker runner adapter config. Bound to RunnerProperties.Docker.
     # Activated only under the runners.docker profile (the wiring is profile-gated;

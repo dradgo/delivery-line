@@ -8,6 +8,11 @@ same way it dispatches the deterministic mock runner — no HTTP, no socket, `--
 > This image is **not** a long-running service. It is launched per execution by the backend with the
 > workspace bind-mounts, runs once, and exits.
 
+> The env-var, mount, context-file, result-file, exit-code, and diagnostics contract shared with the
+> Claude runner is documented once in [`../RUNNER_CONTRACT.md`](../RUNNER_CONTRACT.md). A schema change
+> must update **both** runners in the same PR (see that doc's change rule). The sections below repeat
+> the Codex-relevant parts for convenience.
+
 ## File-based contract (the only runner ↔ backend boundary)
 
 | Mount | Mode | Contents |

@@ -40,6 +40,15 @@ class LocalDevelopmentContractTest {
   }
 
   @Test
+  void dockerComposeRunnerImagesAreDefaultBuildTargets() throws IOException {
+    String composeFile = Files.readString(REPO_ROOT.resolve("docker-compose.yml"));
+
+    assertTrue(composeFile.contains("codex-runner:"));
+    assertTrue(composeFile.contains("claude-runner:"));
+    assertFalse(composeFile.contains("profiles: [\"runners\"]"));
+  }
+
+  @Test
   void envExampleDocumentsPostgresPasswordAndPortContract() throws IOException {
     String envExample = Files.readString(REPO_ROOT.resolve(".env.example"));
 

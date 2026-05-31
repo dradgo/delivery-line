@@ -53,15 +53,22 @@ public class RunnerSecretsService {
 
   /**
    * Resolve the {@code env-var name → value} map a runner container of {@code runnerKind} needs for
-   * this dispatch (the agent-provider key only — Trap T1). The first configured name for the kind
-   * is the <em>canonical</em> name the runner image consumes; the remaining names are accepted as
-   * alternate host-side sources (first present value wins) so the value is always injected under
-   * the canonical name regardless of which source supplied it.
+   * this dispatch (the agent-provider key only — Trap T1). The configured names are tried in order
+   * and the <em>first present</em> non-blank value wins; the value is injected under the name it
+   * was <em>actually found under</em>, so the runner image reads it back under that exact name.
+   *
+   * <p>Story 3.4: this matched-name injection is required because a kind's names are not always
+   * interchangeable aliases. Codex's {@code [CODEX_API_KEY, OPENAI_API_KEY]} are two names for the
+   * same OpenAI key, but Claude's {@code [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY]} are two
+   * DISTINCT credential types (subscription OAuth token vs API key) the CLI reads from different
+   * env vars — collapsing them to a single canonical name would inject an API key under the
+   * OAuth-token name. The first configured name remains the <em>preferred</em> credential and the
+   * name hinted on a missing-secret failure.
    *
    * @throws DomainException {@link DomainErrorCode#DOCTOR_RUNNER_SECRET_MISSING} when no configured
    *     name resolves to a non-blank value — dispatch fails fast (runners may be optional in early
    *     pilot phases, so this is a per-dispatch failure, not a startup failure). {@code details}
-   *     carries {@code runnerKind} + {@code missingEnvVar} (the canonical NAME, never a value).
+   *     carries {@code runnerKind} + {@code missingEnvVar} (the preferred NAME, never a value).
    */
   public Map<String, String> resolveSecretsForRunner(
       RunnerKind runnerKind, RunnerStage stage, String workflowRunId) {
@@ -79,13 +86,16 @@ public class RunnerSecretsService {
       // explicitly blanked the mapping for this kind. Treat as missing-secret with no name to hint.
       throw secretMissing(runnerKind, runnerKind.value() + " (no env-var name configured)");
     }
-    String canonicalName = candidateNames.get(0);
+    String preferredName = candidateNames.get(0);
 
     for (String name : candidateNames) {
       String value = environment.getProperty(name);
       if (value != null && !value.isBlank()) {
         Map<String, String> resolved = new LinkedHashMap<>();
-        resolved.put(canonicalName, value);
+        // Inject under the name the value was found under (story 3.4) so the runner image reads it
+        // back under that exact name — required for non-alias credentials like Claude's
+        // OAuth-token-or-API-key dual mode.
+        resolved.put(name, value);
         log.info(
             "runner secrets resolve ok runnerKind={} stage={} workflowRunId={} resolvedVarCount={}",
             runnerKind.value(),
@@ -101,8 +111,8 @@ public class RunnerSecretsService {
         runnerKind.value(),
         stage.value(),
         workflowRunId,
-        canonicalName);
-    throw secretMissing(runnerKind, canonicalName);
+        preferredName);
+    throw secretMissing(runnerKind, preferredName);
   }
 
   /**

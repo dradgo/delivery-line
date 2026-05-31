@@ -17,6 +17,7 @@ class RunnerSecretsServiceTest {
   private static final String CODEX_VALUE = "sk-codex-abc123-not-a-real-key";
   private static final String OPENAI_VALUE = "sk-openai-def456-not-a-real-key";
   private static final String ANTHROPIC_VALUE = "sk-ant-ghi789-not-a-real-key";
+  private static final String OAUTH_TOKEN_VALUE = "sk-ant-oat01-not-a-real-token";
 
   private RunnerSecretsService serviceWith(MockEnvironment env) {
     return new RunnerSecretsService(env, RunnerProperties.defaults());
@@ -45,20 +46,22 @@ class RunnerSecretsServiceTest {
   }
 
   @Test
-  void fallsBackToAlternateSourceButInjectsUnderCanonicalName() {
-    // Only the fallback OPENAI_API_KEY is set; the value is injected under the canonical
-    // CODEX_API_KEY name the Codex runner image consumes (Trap T2).
+  void fallsBackToAlternateSourceInjectedUnderItsOwnName() {
+    // Story 3.4: only the fallback OPENAI_API_KEY is set; the value is injected under the name it
+    // was found under (OPENAI_API_KEY), which the Codex runner image also reads. Matched-name
+    // injection (not canonical collapse) is required so non-alias credentials reach the CLI under
+    // the right name — see resolvesClaudeApiKeyUnderItsOwnNameNotTheOauthName.
     MockEnvironment env = new MockEnvironment().withProperty("OPENAI_API_KEY", OPENAI_VALUE);
 
     Map<String, String> resolved =
         serviceWith(env)
             .resolveSecretsForRunner(RunnerKind.CODEX, RunnerStage.EXECUTION, "run_workflow1");
 
-    assertThat(resolved).containsExactly(Map.entry("CODEX_API_KEY", OPENAI_VALUE));
+    assertThat(resolved).containsExactly(Map.entry("OPENAI_API_KEY", OPENAI_VALUE));
   }
 
   @Test
-  void canonicalNameWinsWhenBothSourcesPresent() {
+  void preferredNameWinsWhenBothSourcesPresent() {
     MockEnvironment env =
         new MockEnvironment()
             .withProperty("CODEX_API_KEY", CODEX_VALUE)
@@ -69,6 +72,48 @@ class RunnerSecretsServiceTest {
             .resolveSecretsForRunner(RunnerKind.CODEX, RunnerStage.EXECUTION, "run_workflow1");
 
     assertThat(resolved).containsExactly(Map.entry("CODEX_API_KEY", CODEX_VALUE));
+  }
+
+  @Test
+  void resolvesClaudeOauthTokenWhenPresent() {
+    // Story 3.4 subscription mode: CLAUDE_CODE_OAUTH_TOKEN is the preferred (first) Claude
+    // credential and is injected under its own name.
+    MockEnvironment env =
+        new MockEnvironment().withProperty("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN_VALUE);
+
+    Map<String, String> resolved =
+        serviceWith(env)
+            .resolveSecretsForRunner(RunnerKind.CLAUDE, RunnerStage.INVESTIGATION, "run_workflow1");
+
+    assertThat(resolved).containsExactly(Map.entry("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN_VALUE));
+  }
+
+  @Test
+  void resolvesClaudeApiKeyUnderItsOwnNameNotTheOauthName() {
+    // Story 3.4: when ONLY the API key is set, it must be injected under ANTHROPIC_API_KEY — NOT
+    // collapsed onto the preferred CLAUDE_CODE_OAUTH_TOKEN name (the entrypoint would otherwise
+    // treat an API key as an OAuth token). This is the regression guard for matched-name injection.
+    MockEnvironment env = new MockEnvironment().withProperty("ANTHROPIC_API_KEY", ANTHROPIC_VALUE);
+
+    Map<String, String> resolved =
+        serviceWith(env)
+            .resolveSecretsForRunner(RunnerKind.CLAUDE, RunnerStage.INVESTIGATION, "run_workflow1");
+
+    assertThat(resolved).containsExactly(Map.entry("ANTHROPIC_API_KEY", ANTHROPIC_VALUE));
+  }
+
+  @Test
+  void prefersOauthTokenOverApiKeyWhenBothClaudeCredentialsPresent() {
+    MockEnvironment env =
+        new MockEnvironment()
+            .withProperty("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN_VALUE)
+            .withProperty("ANTHROPIC_API_KEY", ANTHROPIC_VALUE);
+
+    Map<String, String> resolved =
+        serviceWith(env)
+            .resolveSecretsForRunner(RunnerKind.CLAUDE, RunnerStage.INVESTIGATION, "run_workflow1");
+
+    assertThat(resolved).containsExactly(Map.entry("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN_VALUE));
   }
 
   @Test
@@ -85,7 +130,8 @@ class RunnerSecretsServiceTest {
             ex -> {
               assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING);
               assertThat(ex.details()).containsEntry("runnerKind", "claude");
-              assertThat(ex.details()).containsEntry("missingEnvVar", "ANTHROPIC_API_KEY");
+              // The preferred (first-configured) Claude credential name is hinted (story 3.4).
+              assertThat(ex.details()).containsEntry("missingEnvVar", "CLAUDE_CODE_OAUTH_TOKEN");
               // No secret value leaks into details (none exists, but assert the shape is
               // name-only).
               assertThat(ex.details().keySet())
