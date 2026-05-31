@@ -1,46 +1,34 @@
-import { Link, createFileRoute } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 
-import { Stack } from '@/components/layout';
 import { listQueryOptions } from '@/lib/api/queryOptions';
+import type { WorkflowListFilters } from '@/lib/queryKeys/workflowKeys';
+import { QueueShell } from '@/features/workflows/QueueShell';
 
 /**
- * WorkflowsRoute: the `/workflows` run queue/list.
+ * WorkflowsRoute: the `/workflows` run review queue.
  *
- * The BODY is still a MINIMAL PLACEHOLDER — the real Run Review Queue (Queue Item
- * 2.15, queue shell states 2.20) replaces it. Story 2.7 now hosts this content in
- * the tri-pane AppShell's central main pane, so this route renders plain content
- * (no `<Container>` wrapper) — the shell owns the single `<main>` + base padding.
- * Story 2.6 added the DATA seam: the loader warms the run-list query so the queue
- * UI (when 2.15/2.20 land) renders flash-free off the shared cache. The
- * X-Correlation-Id header rides the request via the client middleware (2.6/1.19).
+ * Story 2.20 replaced the story-2.5 placeholder body with the real
+ * `<QueueShell>`, which owns the four non-row queue states (loading / empty /
+ * filtered-empty / error) and the ready list. The row UI itself arrives in story
+ * 2.15 via the shell's `renderItem` seam.
+ *
+ * Filters live in the URL (AC6): `validateSearch` types + sanitizes `?state=...`;
+ * the component reads it via `Route.useSearch()` and Clear-filters navigates to the
+ * empty-search URL. The loader warms the SAME `listQueryOptions(search)` the shell
+ * reads, so a deep link with filters renders flash-free off one shared cache entry
+ * (story 2.6 data seam). The X-Correlation-Id header rides each request via the
+ * client middleware (2.6/1.19). Building the filter CONTROLS is out of scope (AC9).
  */
 export const Route = createFileRoute('/workflows/')({
-  loader: ({ context }) => context.queryClient.ensureQueryData(listQueryOptions()),
+  validateSearch: (search: Record<string, unknown>): WorkflowListFilters =>
+    typeof search.state === 'string' && search.state.length > 0 ? { state: search.state } : {},
+  loaderDeps: ({ search }): WorkflowListFilters => search,
+  loader: ({ context, deps }) => context.queryClient.ensureQueryData(listQueryOptions(deps)),
   component: WorkflowsRoute,
 });
 
-const SAMPLE_RUN_IDS = ['run_sample0001', 'run_sample0002', 'run_sample0003'] as const;
-
 function WorkflowsRoute() {
-  return (
-    <Stack gap="4" className="items-start">
-      <h1 className="text-page-title">Run review queue</h1>
-      <p className="text-body text-text-secondary max-w-prose">
-        Navigation skeleton (story 2.5), now hosted in the tri-pane shell (story 2.7). The real
-        review queue arrives in stories 2.15 / 2.20; data wiring landed in 2.6.
-      </p>
-      <Stack gap="2" className="items-start">
-        {SAMPLE_RUN_IDS.map((runId) => (
-          <Link
-            key={runId}
-            to="/workflows/$workflowRunId"
-            params={{ workflowRunId: runId }}
-            className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
-          >
-            {runId}
-          </Link>
-        ))}
-      </Stack>
-    </Stack>
-  );
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  return <QueueShell filters={search} onClearFilters={() => void navigate({ search: {} })} />;
 }
