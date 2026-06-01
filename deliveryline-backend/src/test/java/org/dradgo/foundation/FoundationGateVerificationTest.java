@@ -1,5 +1,6 @@
 package org.dradgo.foundation;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
@@ -217,6 +218,52 @@ class FoundationGateVerificationTest {
           }
         }
       }
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #11 — GitHub adapter port exists and the mock implements it (story 3.13)")
+  class Contract11GitHubMockAdapter {
+
+    @Test
+    @DisplayName("GitHubMockAdapterUnitTest passes (mock implements the GitHubAdapter port)")
+    void gitHubMockImplementsPort() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.13", "org.dradgo.adapters.integration.github.GitHubMockAdapterUnitTest");
+    }
+
+    @Test
+    @DisplayName("GitHubScenarioContractTest passes (port + deterministic fixtures load)")
+    void gitHubFixturesLoad() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.13", "org.dradgo.adapters.integration.github.GitHubScenarioContractTest");
+    }
+
+    @Test
+    @DisplayName(
+        "GITHUB_TYPES_MUST_NOT_LEAK_THROUGH_PORT is enforced (via ArchitectureBoundaryTest)")
+    void gitHubPortBoundaryEnforced() {
+      // The dedicated ArchUnit rule is registered as an @ArchTest field in ArchitectureBoundaryTest
+      // (already delegate-run by Contract #1); re-running it here keeps the GitHub port-boundary
+      // assertion legible at the GitHub contract site.
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.13", "org.dradgo.architecture.ArchitectureBoundaryTest");
+    }
+
+    /**
+     * Story 3.13 AC10 — mock-vs-real interface parity is explicitly deferred to story 3.14 ("once
+     * story 3.14 lands"). The {@code GitHubRealAdapter} does not exist yet, so authoring a parity
+     * test now would assert against a non-existent type. This disabled placeholder is the
+     * documented TODO referencing 3.14; story 3.14 removes the {@code @Disabled} and implements the
+     * parity assertion (both adapters implement the same {@code GitHubAdapter} method set).
+     */
+    @Test
+    @Disabled(
+        "Deferred to story 3.14 (AC10): GitHubRealAdapter does not exist yet — parity asserted then.")
+    @DisplayName("TODO(story 3.14) — GitHub mock vs real adapter interface parity")
+    void gitHubMockVsRealParityDeferredToStory314() {
+      // Intentionally empty — enabled by story 3.14.
     }
   }
 }

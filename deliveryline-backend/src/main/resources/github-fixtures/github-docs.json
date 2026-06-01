@@ -1,0 +1,22 @@
+{
+  "repository": {
+    "repoRef": "GH-103",
+    "fullName": "deliveryline/recovery-runbook",
+    "defaultBranch": "main",
+    "url": "https://github.com/deliveryline/recovery-runbook"
+  },
+  "pullRequest": {
+    "prRef": "PR-103",
+    "repoRef": "GH-103",
+    "number": 103,
+    "sourceBranch": "docs/recovery-runbook",
+    "state": "open",
+    "url": "https://github.com/deliveryline/recovery-runbook/pull/103",
+    "createdAt": "2026-04-24T07:55:00Z"
+  },
+  "branch": {
+    "repoRef": "GH-103",
+    "name": "docs/recovery-runbook",
+    "headSha": "c3d4e5f60718293a4b5c6d7e8f90011223344556"
+  }
+}

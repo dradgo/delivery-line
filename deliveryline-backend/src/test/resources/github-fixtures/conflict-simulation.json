@@ -1,0 +1,7 @@
+{
+  "marker": "conflict-simulation",
+  "ref": "PR-conflict",
+  "behaviour": "CONFLICT",
+  "expectedFailureCategory": null,
+  "description": "getPullRequestByRef('PR-conflict') returns a PR whose repoRef is GH-999-unrelated — deliberately conflicting with any linked repo. Consumed by story 3.12 AC6 PR_REF_CONTEXT_MISMATCH (AC4). Returns (does not throw)."
+}

@@ -500,6 +500,22 @@ final class ArchitectureRuleCatalog {
                   "org.springframework.web.client..",
                   "org.springframework.http.client.."));
 
+  static final ArchRule GITHUB_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
+      namedRule(
+          "GitHub-specific REST/SDK types must not leak through the application.integration.github port",
+          "Remediation: keep GitHub REST DTOs, the org.kohsuke.github SDK, and HTTP-client surface inside adapters.integration.github; the application port "
+              + "may only depend on domain-shaped records (GitHubRepository, GitHubPullRequest, GitHubBranch). Story 3.13 AC1/AC11 invariant.",
+          noClasses()
+              .that()
+              .resideInAPackage("org.dradgo.application.integration..")
+              .should()
+              .dependOnClassesThat()
+              .resideInAnyPackage(
+                  "org.kohsuke.github..",
+                  "com.github..",
+                  "org.springframework.web.client..",
+                  "org.springframework.http.client.."));
+
   static final ArchRule CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY =
       namedRule(
           "credential-detection regex catalogs and predicates may only live in application.security",

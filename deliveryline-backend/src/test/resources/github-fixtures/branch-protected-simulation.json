@@ -1,0 +1,7 @@
+{
+  "marker": "branch-protected-simulation",
+  "ref": "protected-branch",
+  "behaviour": "BRANCH_PROTECTED",
+  "expectedFailureCategory": "github_branch_protected",
+  "description": "createPullRequest(repoRef, 'protected-branch', ...) throws GitHubAdapterException(GITHUB_BRANCH_PROTECTED). The injection key is the source-branch name (AC5)."
+}

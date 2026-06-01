@@ -1,0 +1,7 @@
+{
+  "marker": "rate-limited-simulation",
+  "ref": "pr-rate-limited",
+  "behaviour": "RATE_LIMITED",
+  "expectedFailureCategory": "github_rate_limited",
+  "description": "commentOnPullRequest('pr-rate-limited', ...) throws GitHubAdapterException(GITHUB_RATE_LIMITED). Simulates real adapter's 429 path (AC5)."
+}

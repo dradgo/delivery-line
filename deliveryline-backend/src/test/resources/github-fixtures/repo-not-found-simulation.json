@@ -1,0 +1,7 @@
+{
+  "marker": "repo-not-found-simulation",
+  "ref": "repo-not-found",
+  "behaviour": "REPO_NOT_FOUND",
+  "expectedFailureCategory": "github_repo_not_found",
+  "description": "getRepositoryByRef('repo-not-found') throws GitHubAdapterException(GITHUB_REPO_NOT_FOUND). Simulates real adapter's 404 path (AC5)."
+}

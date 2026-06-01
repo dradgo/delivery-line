@@ -1,0 +1,7 @@
+{
+  "marker": "permission-denied-simulation",
+  "ref": "pr-403",
+  "behaviour": "PERMISSION_DENIED",
+  "expectedFailureCategory": "github_permission_denied",
+  "description": "getPullRequestByRef('pr-403') throws GitHubAdapterException(GITHUB_PERMISSION_DENIED). Simulates real adapter's 403 path (AC5)."
+}

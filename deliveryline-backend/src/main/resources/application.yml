@@ -10,9 +10,11 @@ spring:
     import: "optional:file:./.env[.properties]"
   profiles:
     group:
-      local: [runners.mock, linear-mock]
-      test: [runners.mock, linear-mock]
-      demo: [runners.mock, linear-mock]
+      # Story 3.13 — github-mock joins the default mock stack alongside linear-mock so the full
+      # execution loop runs against deterministic, zero-network integrations in test/local/demo.
+      local: [runners.mock, linear-mock, github-mock]
+      test: [runners.mock, linear-mock, github-mock]
+      demo: [runners.mock, linear-mock, github-mock]
   # Story 2.13 round-3 review D3 follow-up: make `@JsonIgnoreProperties(ignoreUnknown = false)` on
   # request DTOs actually enforce rejection. Spring Boot's autoconfigured ObjectMapper otherwise
   # disables FAIL_ON_UNKNOWN_PROPERTIES, leaving the annotation no global default to defer to and

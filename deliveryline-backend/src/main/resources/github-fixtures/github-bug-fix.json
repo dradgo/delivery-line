@@ -1,0 +1,22 @@
+{
+  "repository": {
+    "repoRef": "GH-102",
+    "fullName": "deliveryline/artifact-pagination",
+    "defaultBranch": "main",
+    "url": "https://github.com/deliveryline/artifact-pagination"
+  },
+  "pullRequest": {
+    "prRef": "PR-102",
+    "repoRef": "GH-102",
+    "number": 102,
+    "sourceBranch": "fix/pagination-off-by-one",
+    "state": "open",
+    "url": "https://github.com/deliveryline/artifact-pagination/pull/102",
+    "createdAt": "2026-04-22T11:45:00Z"
+  },
+  "branch": {
+    "repoRef": "GH-102",
+    "name": "fix/pagination-off-by-one",
+    "headSha": "b2c3d4e5f60718293a4b5c6d7e8f900112233445"
+  }
+}
