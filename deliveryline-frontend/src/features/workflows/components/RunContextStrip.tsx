@@ -207,8 +207,14 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
     if (Number.isNaN(activityMs)) {
       return;
     }
-    const delayMs = Math.max(activityMs + RUN_STALE_THRESHOLD_MS + 1 - nowMs, 1);
-    const timeout = window.setTimeout(() => setNowMs(Date.now()), delayMs);
+    // The timer is scheduled to fire exactly when the stale boundary is reached, so
+    // snap `nowMs` AT LEAST to that boundary on fire. Reading `Date.now()` alone is
+    // fragile: a timer that fires a hair early (clamping/imprecision, or a pinned
+    // clock under test) would recompute an unchanged `nowMs`, React would bail on the
+    // equal state, the effect would not re-run, and staleness would never latch.
+    const staleAtMs = activityMs + RUN_STALE_THRESHOLD_MS + 1;
+    const delayMs = Math.max(staleAtMs - nowMs, 1);
+    const timeout = window.setTimeout(() => setNowMs(Math.max(Date.now(), staleAtMs)), delayMs);
     return () => window.clearTimeout(timeout);
   }, [nowMs, view?.lastActivityAt, view?.staleIndicator]);
 
