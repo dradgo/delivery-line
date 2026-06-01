@@ -87,11 +87,18 @@ class WorkflowCliCommandRegistrationIT {
 
   private static Method method(String methodName) throws Exception {
     // Story 2.8 added `--include-context-bundle` (5th arg) on status; story 1.19 added `--verbose`
-    // (4th arg) on status/history. The reflective lookup signature must match the current shape.
+    // (4th arg) on status/history; story 3.6 added `--include-runner-logs` (6th arg) on status. The
+    // reflective lookup signature must match the current shape.
     return switch (methodName) {
       case "status" ->
           WorkflowCommands.class.getMethod(
-              "status", String.class, String.class, String.class, boolean.class, boolean.class);
+              "status",
+              String.class,
+              String.class,
+              String.class,
+              boolean.class,
+              boolean.class,
+              boolean.class);
       case "history" ->
           WorkflowCommands.class.getMethod(
               "history", String.class, String.class, String.class, String.class, boolean.class);

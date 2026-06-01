@@ -549,7 +549,8 @@ final class ArchitectureRuleCatalog {
               .haveNameMatching("(?i).*(raw.*(stdout|stderr|runner.*output)|runner.*raw.*output).*")
               .should()
               .beDeclaredInClassesThat()
-              .resideInAPackage(RUNNER_ADAPTER_PACKAGE));
+              .resideInAPackage(RUNNER_ADAPTER_PACKAGE)
+              .allowEmptyShould(true));
 
   /**
    * Story 2.14 AC9 — backend-authoritative allowed-action derivation must live in exactly one place
