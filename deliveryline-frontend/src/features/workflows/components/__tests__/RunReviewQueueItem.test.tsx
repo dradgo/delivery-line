@@ -1,0 +1,293 @@
+/**
+ * Story 2.15 (Task 5 / AC2–AC12) — `RunReviewQueueItem` component tests.
+ *
+ * Router-free (mirrors `RunContextStrip.test.tsx` / memory
+ * `vitest-cross-file-router-mock`): `@tanstack/react-router`'s `Link` is mocked to a
+ * plain `<a>` that surfaces the navigation target as `data-to` / `data-run-param`
+ * (so the open-run intent is assertable without a real router), forwarding
+ * `onClick` / `onKeyDown` / `aria-label` / `data-*` through.
+ *
+ * `Date.now` is pinned (NOT fake timers) so `formatRelativeTime` is deterministic.
+ */
+import type { ComponentProps, MouseEvent } from 'react';
+import type * as ReactRouter from '@tanstack/react-router';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { RunQueueRow } from '../../runQueueRow';
+import { toRunQueueRow } from '../../runQueueRow';
+import { specRejectAndResubmitSummary } from '@/test/fixtures/runQueue/specRejectAndResubmit';
+import { executionFailureSummary } from '@/test/fixtures/runQueue/executionFailure';
+
+vi.mock('@tanstack/react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactRouter>();
+  const LinkMock = ({
+    to,
+    params,
+    children,
+    onClick,
+    ...rest
+  }: ComponentProps<'a'> & { to?: string; params?: Record<string, string> }) => (
+    <a
+      href={`/workflows/${params?.workflowRunId ?? ''}`}
+      data-to={to}
+      data-run-param={params?.workflowRunId}
+      onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        onClick?.(event);
+      }}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+  return { ...actual, Link: LinkMock };
+});
+
+import { RunReviewQueueItem } from '../RunReviewQueueItem';
+
+/** Pinned "now" — 3 minutes after the fixtures' last transition (deterministic relative time). */
+const NOW_MS = Date.parse('2026-05-30T12:03:00Z');
+
+const BASE_ROW: RunQueueRow = {
+  runId: 'run_abc123',
+  linearTicketReference: 'DEL-1234',
+  currentState: 'WaitingForSpecApproval',
+  lastTransitionAt: '2026-05-30T12:00:00Z',
+};
+
+function row() {
+  return screen.getByTestId('run-review-queue-item');
+}
+
+beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+describe('RunReviewQueueItem — states (AC3)', () => {
+  it('renders the default state for a plain row', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'default');
+  });
+
+  it('renders selected (accent) when selected', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} selected />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'selected');
+  });
+
+  it('renders unread with a dot indicator', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} unread />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'unread');
+    expect(screen.getByTestId('queue-item-unread-dot')).toBeInTheDocument();
+    expect(screen.getByText('Unread')).toBeInTheDocument();
+  });
+
+  it('renders blocked when blockerCount > 0 (dormant from live data, via fixture)', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, blockerCount: 2 }} />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'blocked');
+  });
+
+  it('renders stale when staleIndicator is true (dormant from live data, via fixture)', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, staleIndicator: true }} />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'stale');
+  });
+
+  it('renders disabled as an inert, non-navigable control (Trap T9)', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} disabled />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'disabled');
+    expect(row()).toHaveAttribute('aria-disabled', 'true');
+    // No link — not in the tab order.
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(row().tagName).toBe('DIV');
+  });
+});
+
+describe('RunReviewQueueItem — one primary attention signal (AC5/T7)', () => {
+  it('shows exactly one primary signal and demotes the rest to the secondary cluster', () => {
+    render(
+      <RunReviewQueueItem
+        run={{
+          ...BASE_ROW,
+          blockerCount: 1,
+          escalationMarker: true,
+          openQuestionCount: 3,
+          staleIndicator: true,
+        }}
+      />,
+    );
+    // Exactly one primary chip, and it is the highest-priority signal (blocker).
+    const primaries = screen.getAllByTestId('queue-item-primary-attention');
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0]).toHaveTextContent('1 blocker');
+    // The other active signals demote to the secondary cluster.
+    const secondary = screen.getByTestId('queue-item-secondary');
+    expect(secondary).toHaveTextContent('Escalated');
+    expect(secondary).toHaveTextContent('3 open questions');
+    expect(secondary).toHaveTextContent('Stale');
+  });
+
+  it('renders the escalation marker as the primary signal when it is the only one', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, escalationMarker: true }} />);
+    expect(screen.getByTestId('queue-item-primary-attention')).toHaveTextContent('Escalated');
+  });
+});
+
+describe('RunReviewQueueItem — open-run intent + keyboard (AC6/AC8)', () => {
+  it('renders a typed Link to the run detail when the run id is well-formed (Enter is native)', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    const link = row();
+    // The navigable row is rendered as the router <Link> (here a mocked <a>).
+    expect(link.tagName).toBe('A');
+    expect(link).toHaveAttribute('data-to', '/workflows/$workflowRunId');
+    expect(link).toHaveAttribute('data-run-param', 'run_abc123');
+  });
+
+  it('activates (opens) on Space — Trap T8', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    fireEvent.keyDown(row(), { key: ' ' });
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'queueItem.open' }));
+  });
+
+  it('does not repeatedly activate while Space is held down', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    fireEvent.keyDown(row(), { key: ' ', repeat: true });
+    expect(console.info).not.toHaveBeenCalled();
+  });
+
+  it('activates (opens) on Enter explicitly and can receive focus', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    row().focus();
+    expect(row()).toHaveFocus();
+    fireEvent.keyDown(row(), { key: 'Enter' });
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'queueItem.open' }));
+  });
+
+  it('logs queueItem.open on click activation', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    fireEvent.click(row());
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'queueItem.open' }));
+  });
+
+  it('renders inert and disabled when the run id is malformed — never builds a bad route param', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, runId: 'not-a-valid-id' }} />);
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(row().tagName).toBe('DIV');
+    expect(row()).toHaveAttribute('data-queue-item-state', 'disabled');
+    expect(row()).toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+describe('RunReviewQueueItem — relative time refresh', () => {
+  it('recomputes relative time when the row rerenders after queue data refreshes later', () => {
+    const { rerender } = render(<RunReviewQueueItem run={BASE_ROW} />);
+    expect(screen.getByTestId('queue-item-age')).toHaveTextContent('3 minutes ago');
+
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-05-30T12:07:00Z'));
+    rerender(
+      <RunReviewQueueItem run={{ ...BASE_ROW, lastTransitionAt: '2026-05-30T12:02:00Z' }} />,
+    );
+
+    expect(screen.getByTestId('queue-item-age')).toHaveTextContent('5 minutes ago');
+  });
+});
+
+describe('RunReviewQueueItem — aria-label (AC6)', () => {
+  it('composes present fields and includes state + escalation + relative time', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, escalationMarker: true }} />);
+    expect(row()).toHaveAttribute(
+      'aria-label',
+      'DEL-1234 run_abc123, WaitingForSpecApproval, escalated, last updated 3 minutes ago',
+    );
+  });
+
+  it('omits absent fields and never renders the literal "undefined"', () => {
+    render(<RunReviewQueueItem run={{ runId: 'run_abc123' }} />);
+    const label = row().getAttribute('aria-label') ?? '';
+    expect(label).toBe('run_abc123');
+    expect(label).not.toMatch(/undefined/);
+  });
+});
+
+describe('RunReviewQueueItem — density variants (AC4)', () => {
+  it('applies the standard (8px) gap by default', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    expect(screen.getByTestId('queue-item-anatomy')).toHaveClass('gap-2');
+  });
+
+  it('applies the compact (4px) gap when density="compact"', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} density="compact" />);
+    const anatomy = screen.getByTestId('queue-item-anatomy');
+    expect(anatomy).toHaveClass('gap-1');
+    expect(anatomy).not.toHaveClass('gap-2');
+  });
+});
+
+describe('RunReviewQueueItem — variants (AC4/OQ-4)', () => {
+  it('renders the operator placeholder affordance (E4) and is non-navigable', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} variant="operator" />);
+    expect(screen.getByTestId('queue-item-operator-placeholder')).toHaveTextContent(
+      'Operator view — available in Epic 4',
+    );
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
+describe('RunReviewQueueItem — logging contract (Task 6)', () => {
+  it('logs only field-only data, never ticketRef / summary / runId', () => {
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, summary: 'sensitive text', specRejectionLoopCount: 2 }}
+      />,
+    );
+    fireEvent.click(row());
+    const infoMock = vi.mocked(console.info);
+    const call = infoMock.mock.calls.find(
+      ([arg]) => (arg as { event?: string } | undefined)?.event === 'queueItem.open',
+    );
+    expect(call).toBeDefined();
+    const payload = call![0] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual([
+      'attention',
+      'event',
+      'hasEscalation',
+      'rejectionLoopCount',
+      'state',
+    ]);
+    // Negative assertion — no content/identity fields leak.
+    expect(payload).not.toHaveProperty('ticketRef');
+    expect(payload).not.toHaveProperty('summary');
+    expect(payload).not.toHaveProperty('runId');
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain('DEL-1234');
+    expect(serialized).not.toContain('run_abc123');
+    expect(serialized).not.toContain('sensitive text');
+  });
+});
+
+describe('RunReviewQueueItem — fixture-driven rendering (AC12)', () => {
+  it('renders the spec-rejection-and-resubmit terminal row (Completed + N rejections)', () => {
+    render(<RunReviewQueueItem run={toRunQueueRow(specRejectAndResubmitSummary)} />);
+    expect(row()).toHaveTextContent('run_fix_rej_001');
+    expect(row()).toHaveTextContent('DEL-9002');
+    const badge = screen.getByTestId('workflow-state-badge');
+    expect(badge).toHaveTextContent('Completed');
+    expect(badge).toHaveAttribute('data-state-name', 'success');
+    // specRejectionLoopCount = 1 → a secondary "1 rejection" trust signal (OQ-3).
+    expect(screen.getByTestId('queue-item-rejections')).toHaveTextContent('1 rejection');
+    expect(screen.getByTestId('queue-item-age')).toBeInTheDocument();
+  });
+
+  it('renders the execution-failure terminal row (Failed + escalation primary)', () => {
+    render(<RunReviewQueueItem run={toRunQueueRow(executionFailureSummary)} />);
+    expect(row()).toHaveTextContent('run_exec_fail_001');
+    const badge = screen.getByTestId('workflow-state-badge');
+    expect(badge).toHaveTextContent('Failed');
+    expect(badge).toHaveAttribute('data-state-name', 'error');
+    expect(screen.getByTestId('queue-item-primary-attention')).toHaveTextContent('Escalated');
+  });
+});

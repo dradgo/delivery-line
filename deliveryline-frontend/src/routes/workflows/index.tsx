@@ -3,6 +3,8 @@ import { createFileRoute } from '@tanstack/react-router';
 import { listQueryOptions } from '@/lib/api/queryOptions';
 import type { WorkflowListFilters } from '@/lib/queryKeys/workflowKeys';
 import { QueueShell } from '@/features/workflows/QueueShell';
+import { RunReviewQueueItem } from '@/features/workflows/components/RunReviewQueueItem';
+import { toRunQueueRow } from '@/features/workflows/runQueueRow';
 
 /**
  * WorkflowsRoute: the `/workflows` run review queue.
@@ -30,5 +32,11 @@ export const Route = createFileRoute('/workflows/')({
 function WorkflowsRoute() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  return <QueueShell filters={search} onClearFilters={() => void navigate({ search: {} })} />;
+  return (
+    <QueueShell
+      filters={search}
+      onClearFilters={() => void navigate({ search: {} })}
+      renderItem={(summary) => <RunReviewQueueItem run={toRunQueueRow(summary)} />}
+    />
+  );
 }

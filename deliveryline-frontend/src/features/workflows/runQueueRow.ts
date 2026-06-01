@@ -1,0 +1,154 @@
+/**
+ * Story 2.15 (AC1, AC3, AC5) — the `RunReviewQueueItem` view-model + pure helpers.
+ *
+ * Mirrors story 2.16's `runContextView` pattern EXACTLY: a rich view-model
+ * (`RunQueueRow`) built to the full epic anatomy + a single pure mapper
+ * (`toRunQueueRow`) that is the one `WorkflowSummary → RunQueueRow` seam. Epic 3 /
+ * story 6.9 enrich the mapper later; today it populates ONLY the 7 fields the live
+ * list contract exposes and leaves the rest `undefined`.
+ *
+ * THE CENTRAL RECONCILIATION (same rule as 2.16): the epic's 12-field
+ * `RunQueueRow` predates the real backend read model. The live
+ * `GET /api/v1/workflows → WorkflowSummary[]` carries only 7 fields. The live
+ * contract is authoritative — `summary`, `blockerCount`, `openQuestionCount`,
+ * `currentArtifactType`, `assigneeHint`, and `staleIndicator` are DORMANT (built +
+ * tested via constructed fixtures, never fabricated from live data).
+ *
+ * `lastTransitionAt` maps from `lastEventAt`, NOT `lastActivityTimestamp` (Trap T2;
+ * the list summary carries no `lastActivityTimestamp` at all — Trap T3).
+ *
+ * Kept in a NON-component module (per `frontend-react-refresh-no-fn-exports`) so the
+ * component file exports only components and these pure helpers stay unit-testable.
+ */
+import type { WorkflowSummary } from '@/lib/api/queryOptions';
+
+/**
+ * The full Queue-Item anatomy (epic AC1). Fields absent from the live
+ * `WorkflowSummary` are optional and stay `undefined` until the backend projection
+ * grows (story 6.9) — the component renders + tests them via constructed fixtures.
+ */
+export interface RunQueueRow {
+  /** Run public id (`workflowRunId`) — validated with `isValidRunId` before routing. */
+  runId?: string | undefined;
+  /** Linear ticket reference (`ticketRef`, e.g. `DEL-1234`); absent ⇒ no ticket chip. */
+  linearTicketReference?: string | undefined;
+  /** Short scannable summary line — DORMANT (no live source); render only when present. */
+  summary?: string | undefined;
+  /** Backend `currentState` enum → `WorkflowStateBadge`. */
+  currentState?: string | undefined;
+  /** Latest artifact type — DORMANT (list summary has no artifact projection). */
+  currentArtifactType?: string | undefined;
+  /** Last transition instant (ISO-8601 UTC) — from `lastEventAt` (Trap T2). */
+  lastTransitionAt?: string | undefined;
+  /** Assignee hint — DORMANT (no live source). */
+  assigneeHint?: string | undefined;
+  /** Active blocker count — DORMANT (drives the `blocked` state via fixtures only). */
+  blockerCount?: number | undefined;
+  /** Open-question count — DORMANT (no live source). */
+  openQuestionCount?: number | undefined;
+  /** Escalation marker — a real live trust signal. */
+  escalationMarker?: boolean | undefined;
+  /** Accumulated spec rejections — a real live trust signal ("N rejections"). */
+  specRejectionLoopCount?: number | undefined;
+  /** Stale flag — DORMANT (not derivable from the live list; Trap T3). */
+  staleIndicator?: boolean | undefined;
+}
+
+/**
+ * The single typed union of primary-attention signals (AC5). Ordered by the
+ * documented priority `blocker > escalation > openQuestion > stale`.
+ */
+export type AttentionIndicator = 'blocker' | 'escalation' | 'openQuestion' | 'stale';
+
+/** The mutually-exclusive dominant row state (AC3), surfaced as `data-queue-item-state`. */
+export type QueueItemState = 'default' | 'selected' | 'unread' | 'blocked' | 'stale' | 'disabled';
+
+/**
+ * The ONE `WorkflowSummary → RunQueueRow` seam (AC1). Maps the 7 live fields per
+ * the reconciliation table; every field the live list does not expose is left
+ * `undefined` (built + tested via fixtures, never fabricated). `lastTransitionAt`
+ * comes from `lastEventAt` (Trap T2).
+ */
+export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
+  return {
+    runId: summary.workflowRunId,
+    linearTicketReference: summary.ticketRef,
+    currentState: summary.currentState,
+    lastTransitionAt: summary.lastEventAt,
+    escalationMarker: summary.escalationMarker,
+    specRejectionLoopCount: summary.specRejectionLoopCount,
+    // DORMANT — no live source (reconciliation): summary, currentArtifactType,
+    // assigneeHint, blockerCount, openQuestionCount, staleIndicator.
+    summary: undefined,
+    currentArtifactType: undefined,
+    assigneeHint: undefined,
+    blockerCount: undefined,
+    openQuestionCount: undefined,
+    staleIndicator: undefined,
+  };
+}
+
+/** A count is "active" when it is a positive number (defensive against undefined/0/NaN). */
+function isPositive(count: number | undefined): boolean {
+  return typeof count === 'number' && count > 0;
+}
+
+/**
+ * AC5 — return the SINGLE highest-priority active attention signal, or `null` when
+ * none is active. Priority `blocker > escalation > openQuestion > stale`; the
+ * non-winning signals demote to the secondary trust cluster (never the primary
+ * slot). Today live data can only yield `escalation`; fixtures exercise the ladder.
+ */
+export function resolvePrimaryAttentionIndicator(row: RunQueueRow): AttentionIndicator | null {
+  if (isPositive(row.blockerCount)) {
+    return 'blocker';
+  }
+  if (row.escalationMarker === true) {
+    return 'escalation';
+  }
+  if (isPositive(row.openQuestionCount)) {
+    return 'openQuestion';
+  }
+  if (row.staleIndicator === true) {
+    return 'stale';
+  }
+  return null;
+}
+
+export interface ResolveQueueItemStateInput {
+  readonly row: RunQueueRow;
+  readonly selected?: boolean | undefined;
+  readonly unread?: boolean | undefined;
+  readonly disabled?: boolean | undefined;
+}
+
+/**
+ * AC3 — collapse the row inputs to EXACTLY ONE dominant state. Documented
+ * precedence (highest first): `disabled > blocked > stale > selected > unread >
+ * default`. Centralizing it here makes the states mutually exclusive by
+ * construction (mirrors `resolveQueueState`, story 2.20). `blocked`/`stale` are
+ * dormant from live data but fully supported via constructed fixtures (Traps T3/T4).
+ */
+export function resolveQueueItemState({
+  row,
+  selected,
+  unread,
+  disabled,
+}: ResolveQueueItemStateInput): QueueItemState {
+  if (disabled === true) {
+    return 'disabled';
+  }
+  if (isPositive(row.blockerCount)) {
+    return 'blocked';
+  }
+  if (row.staleIndicator === true) {
+    return 'stale';
+  }
+  if (selected === true) {
+    return 'selected';
+  }
+  if (unread === true) {
+    return 'unread';
+  }
+  return 'default';
+}
