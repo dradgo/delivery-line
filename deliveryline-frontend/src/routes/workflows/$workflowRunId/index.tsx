@@ -9,6 +9,7 @@ import {
   assertValidRunRouteParams,
 } from '@/lib/routing/routeParamValidation';
 import { useWorkflowDetail } from '@/features/workflows/hooks/useWorkflowDetail';
+import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
 import {
   GenericErrorState,
   InvalidLinkState,
@@ -116,6 +117,9 @@ function WorkflowDetailRoute() {
 
   return (
     <Stack gap="4" className="items-start">
+      {/* Story 2.16 — persistent run-context orientation strip, above the (future
+          2.17) artifact body. Reads the same warmed `useWorkflowDetail` cache. */}
+      <RunContextStrip workflowRunId={workflowRunId} />
       <Link
         to="/workflows"
         className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
@@ -134,8 +138,7 @@ function WorkflowDetailRoute() {
       </p>
       <p className="text-body text-text-secondary max-w-prose">
         Navigation skeleton (story 2.5) now backed by the live data layer (story 2.6) and hosted in
-        the tri-pane shell (story 2.7). The Run Context Strip (2.16) and the Artifact Review Panel
-        (2.17) render here once they land.
+        the tri-pane shell (story 2.7). The Artifact Review Panel (2.17) renders here once it lands.
       </p>
       <Link
         to="/workflows/$workflowRunId/artifacts/$artifactId"
