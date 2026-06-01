@@ -1034,7 +1034,8 @@ class RunnerBrokerUnitTest {
     // DockerRunnerAdapter stores the result in runner-work/output, not runner-scratch.
     RunnerExecutionSnapshot active = snapshot(REX_ID, RunnerExecutionStatus.RUNNING);
     when(recordPort.findActiveStatuses(any(), anyInt())).thenReturn(List.of(active));
-    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(active));
+    RunnerExecutionSnapshot captured = snapshotWithRawOutput(REX_ID, RunnerExecutionStatus.RUNNING);
+    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(active), Optional.of(captured));
     when(runnerAdapter.poll(REX_ID)).thenReturn(new RunnerPollStatus.Completed());
 
     String resultPayload =
@@ -1095,6 +1096,21 @@ class RunnerBrokerUnitTest {
     verify(scratchStore, never()).tryReadRunnerResult(REX_ID);
     verify(artifactOperationService).recordOperation(any());
     verify(executionService).recordCompleted(REX_ID);
+    ArgumentCaptor<java.util.Map<String, Object>> detailsCaptor =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(eventPort)
+        .append(
+            eq(RUN_ID),
+            eq(WorkflowEventType.RUNNER_COMPLETED),
+            any(),
+            any(),
+            any(),
+            any(),
+            detailsCaptor.capture());
+    assertEquals(RUN_ID, detailsCaptor.getValue().get("workflowRunId"));
+    assertEquals(2, detailsCaptor.getValue().get("redactionCount"));
+    assertEquals(42L, detailsCaptor.getValue().get("rawOutputByteSize"));
+    assertEquals("local-only", detailsCaptor.getValue().get("rawOutputClassification"));
   }
 
   @Test
@@ -1375,7 +1391,8 @@ class RunnerBrokerUnitTest {
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
             dockerConfig,
-            RunnerProperties.defaultSecretEnvNames());
+            RunnerProperties.defaultSecretEnvNames(),
+            false);
     broker =
         new RunnerBroker(
             recordPort,
@@ -1449,6 +1466,28 @@ class RunnerBrokerUnitTest {
         RunnerExecutionStateMachine.isTerminal(status) ? now : null,
         now,
         null);
+  }
+
+  private static RunnerExecutionSnapshot snapshotWithRawOutput(
+      String publicId, RunnerExecutionStatus status) {
+    OffsetDateTime now = OffsetDateTime.now(CLOCK);
+    return new RunnerExecutionSnapshot(
+        publicId,
+        RUN_ID,
+        RunnerStage.INVESTIGATION,
+        status,
+        1,
+        now,
+        now.plusSeconds(600),
+        null,
+        RunnerExecutionStateMachine.isTerminal(status) ? now : null,
+        now,
+        null,
+        null,
+        "/runner-logs/" + publicId,
+        org.dradgo.domain.registry.DataClassification.LOCAL_ONLY,
+        42L,
+        2);
   }
 
   /**

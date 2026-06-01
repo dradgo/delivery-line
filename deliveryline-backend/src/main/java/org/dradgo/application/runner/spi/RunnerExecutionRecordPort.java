@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.runner.ExecutionConstraints;
+import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
@@ -104,4 +105,18 @@ public interface RunnerExecutionRecordPort {
    * rows (pending/running) are never returned even if {@code completed_at} drifted (Trap T16).
    */
   List<RunnerExecutionSnapshot> findCompletedBeforeAndNotArchived(OffsetDateTime cutoff, int limit);
+
+  /**
+   * Story 3.6 AC3/AC6 / Trap T10 — persist the durable redacted-log capture reference + metrics
+   * onto the row. This is a METADATA-ONLY update: it never changes {@code status} (no state-machine
+   * guard) and tolerates an already-terminal row (the row is always terminal by the time logs are
+   * captured at container exit). Throws {@link org.dradgo.domain.DomainException} only when the row
+   * is missing.
+   */
+  RunnerExecutionSnapshot recordRawOutput(
+      String publicId,
+      String reference,
+      DataClassification classification,
+      long byteSize,
+      int redactionCount);
 }

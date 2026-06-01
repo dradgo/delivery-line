@@ -95,6 +95,37 @@ class RunnerExecutionServiceUnitTest {
     assertTrue(result == pending);
   }
 
+  @Test
+  void recordRawOutputUnpacksCapturedLogsAndDelegatesToPort() {
+    // Story 3.6 AC3/AC6 — metadata-only delegation: the service unpacks CapturedLogs into the port
+    // call (no status change, terminal-tolerant — enforced in the adapter).
+    RunnerExecutionRecordPort port = mock(RunnerExecutionRecordPort.class);
+    when(port.recordRawOutput(
+            eq(REX),
+            eq("/runner-logs/" + REX),
+            eq(org.dradgo.domain.registry.DataClassification.LOCAL_ONLY),
+            eq(2048L),
+            eq(5)))
+        .thenReturn(snapshot(RunnerExecutionStatus.COMPLETED));
+
+    RunnerExecutionService service = new RunnerExecutionService(port, FIXED_CLOCK);
+    CapturedLogs captured =
+        new CapturedLogs(
+            "/runner-logs/" + REX,
+            2048L,
+            org.dradgo.domain.registry.DataClassification.LOCAL_ONLY,
+            5);
+
+    assertNotNull(service.recordRawOutput(REX, captured));
+    verify(port)
+        .recordRawOutput(
+            eq(REX),
+            eq("/runner-logs/" + REX),
+            eq(org.dradgo.domain.registry.DataClassification.LOCAL_ONLY),
+            eq(2048L),
+            eq(5));
+  }
+
   private static RunnerExecutionSnapshot snapshot(RunnerExecutionStatus status) {
     OffsetDateTime now = OffsetDateTime.parse("2026-05-11T08:00:00Z");
     return new RunnerExecutionSnapshot(

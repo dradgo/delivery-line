@@ -94,6 +94,10 @@ deliveryline:
         execution: happy-implementation-plan
     scheduling:
       enabled: true
+    # Story 3.6 AC4 — when true, captured runner logs that the redaction pass found to contain zero
+    # secrets (both streams) may be elevated from local-only to shareable-redacted. Default false:
+    # logs stay local-only (never shipped by story 3.7's ELK filter) unless explicitly opted in.
+    allow-shareable-logs: false
     # Story 3.5 Trap T2 — per-kind agent-provider env-var NAMES (never values). Stories 3.3/3.4
     # read these names; RunnerSecretsService resolves the matching values from .env / process env
     # at dispatch time and injects each under the name it was found. NAMES ONLY here — putting a

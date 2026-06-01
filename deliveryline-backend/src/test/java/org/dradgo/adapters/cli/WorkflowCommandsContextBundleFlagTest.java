@@ -104,7 +104,7 @@ class WorkflowCommandsContextBundleFlagTest {
     when(inspection.getContextBundleLookupForArtifact(SPEC_ART_ID))
         .thenReturn(ContextBundleLookupResult.available(SPEC_ART_ID, sampleBundle()));
 
-    String rendered = commands.status(RUN_ID, "text", "corr-1", false, true);
+    String rendered = commands.status(RUN_ID, "text", "corr-1", false, true, false);
 
     assertTrue(rendered.contains("# context-bundle (artifact " + SPEC_ART_ID + "):"));
     assertTrue(
@@ -127,7 +127,7 @@ class WorkflowCommandsContextBundleFlagTest {
     when(inspection.getContextBundleLookupForArtifact(SPEC_ART_ID))
         .thenReturn(ContextBundleLookupResult.available(SPEC_ART_ID, sampleBundle()));
 
-    String rendered = commands.status(RUN_ID, "json", "corr-1", false, true);
+    String rendered = commands.status(RUN_ID, "json", "corr-1", false, true, false);
 
     // Must be parseable as a single JSON document with a versioned structured contextBundle field.
     JsonNode root = new ObjectMapper().readTree(rendered);
@@ -150,7 +150,7 @@ class WorkflowCommandsContextBundleFlagTest {
     stubStatusNoSpec();
     when(inspection.getSpecHistory(RUN_ID)).thenReturn(List.of());
 
-    String rendered = commands.status(RUN_ID, "text", "corr-1", false, true);
+    String rendered = commands.status(RUN_ID, "text", "corr-1", false, true, false);
 
     assertTrue(rendered.contains("# context-bundle: none (no spec artifact yet)"));
   }
@@ -170,7 +170,7 @@ class WorkflowCommandsContextBundleFlagTest {
         .thenReturn(
             ContextBundleLookupResult.unavailable(SPEC_ART_ID, "runnerExecutionLinkMissing"));
 
-    String rendered = commands.status(RUN_ID, "text", "corr-1", false, true);
+    String rendered = commands.status(RUN_ID, "text", "corr-1", false, true, false);
 
     assertTrue(
         rendered.contains(
@@ -181,7 +181,7 @@ class WorkflowCommandsContextBundleFlagTest {
   void includeContextBundleFlagFalseSkipsAllBundleLookups() {
     stubStatus();
 
-    String rendered = commands.status(RUN_ID, "text", "corr-1", false, false);
+    String rendered = commands.status(RUN_ID, "text", "corr-1", false, false, false);
 
     assertFalse(rendered.contains("# context-bundle"));
   }

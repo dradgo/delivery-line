@@ -15,9 +15,9 @@
     "lastActivityTimestamp",
     "nextSafeAction",
     "specRejectionLoopCount",
-    "escalationMarker",
-    "contextBundle"
+    "escalationMarker"
   ],
+  "$comment": "Story 3.6 OQ-8: contextBundle and runnerLogs are now both optional (additive) so --include-runner-logs can produce a v2 document without a contextBundle, and vice versa. The renderer attaches whichever flag(s) were requested.",
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": 2 },
@@ -86,6 +86,33 @@
         },
         "reason": { "type": ["string", "null"] },
         "bundle": { "type": ["object", "null"] }
+      }
+    },
+    "runnerLogs": {
+      "$comment": "Story 3.6 AC7 — typed reference + metrics ONLY, never log content.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "runnerExecutionId", "reason", "logs"],
+      "properties": {
+        "status": { "type": "string", "enum": ["available", "unavailable"] },
+        "runnerExecutionId": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^rex_[A-Za-z0-9_-]{4,64}$" }
+          ]
+        },
+        "reason": { "type": ["string", "null"] },
+        "logs": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["reference", "byteSize", "classification", "redactionCount"],
+          "properties": {
+            "reference": { "type": "string" },
+            "byteSize": { "type": "integer", "minimum": 0 },
+            "classification": { "type": "string" },
+            "redactionCount": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     }
   }

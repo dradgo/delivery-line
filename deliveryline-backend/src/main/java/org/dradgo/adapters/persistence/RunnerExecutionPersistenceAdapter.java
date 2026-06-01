@@ -403,6 +403,47 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         .collect(Collectors.toList());
   }
 
+  // Story 3.6 AC3/AC6 / Trap T10: self-transactional like markArchived — the capture call site (the
+  // Docker adapter at container exit) runs outside any transaction, and findByPublicIdForUpdate
+  // needs an active one for its pessimistic lock. METADATA-ONLY: no state-machine guard, no status
+  // mutation; an already-terminal row is the normal case (logs are captured after the row
+  // completed)
+  // and must be tolerated. REQUIRED joins an ambient transaction when one is already active.
+  @Override
+  @Transactional
+  public RunnerExecutionSnapshot recordRawOutput(
+      String publicId,
+      String reference,
+      org.dradgo.domain.registry.DataClassification classification,
+      long byteSize,
+      int redactionCount) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Objects.requireNonNull(reference, "reference");
+    Objects.requireNonNull(classification, "classification");
+    if (byteSize < 0L) {
+      throw new IllegalArgumentException("byteSize must not be negative");
+    }
+    if (redactionCount < 0) {
+      throw new IllegalArgumentException("redactionCount must not be negative");
+    }
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setRawOutputReference(reference);
+    entity.setRawOutputClassification(classification.value());
+    entity.setRawOutputByteSize(byteSize);
+    entity.setRedactionCount(redactionCount);
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "persisting runner raw-output reference runnerExecutionId={} classification={} byteSize={} redactionCount={}",
+        publicId,
+        classification.value(),
+        byteSize,
+        redactionCount);
+    return mapper.toSnapshot(saved);
+  }
+
   private RunnerExecutionSnapshot mutateWithGuard(
       String publicId,
       RunnerExecutionStatus targetStatus,

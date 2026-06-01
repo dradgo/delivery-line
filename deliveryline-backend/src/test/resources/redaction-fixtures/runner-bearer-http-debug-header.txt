@@ -1,0 +1,3 @@
+> GET /v1/models HTTP/1.1
+> Host: api.example.com
+> Authorization: Bearer FAKE-BEARER-HTTP-DEBUG-DO-NOT-USE-9876543210

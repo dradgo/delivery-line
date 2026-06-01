@@ -128,6 +128,24 @@
       "placeholder": "[REDACTED_SECRET_FIELD]",
       "minimumClassification": "shareable-redacted",
       "forbiddenSnippets": ["super-secret-yaml-token-123"]
+    },
+    {
+      "file": "runner-codex-auth-header-echo.txt",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["sk-codex-FAKE-DO-NOT-USE-1234567890abcdefghij"]
+    },
+    {
+      "file": "runner-claude-verbose-token-print.txt",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["sk-ant-FAKE-DO-NOT-USE-abcdefghijklmnopqrstuvwxyz0123"]
+    },
+    {
+      "file": "runner-bearer-http-debug-header.txt",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["FAKE-BEARER-HTTP-DEBUG-DO-NOT-USE-9876543210"]
     }
   ]
 }

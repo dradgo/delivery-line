@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
+import java.util.Optional;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.domain.registry.FailureCategory;
@@ -41,6 +42,10 @@ public class RunnerExecutionService {
     log.info(
         "markRunning runnerExecutionId={} status={}", runnerExecutionId, updated.status().value());
     return updated;
+  }
+
+  public Optional<RunnerExecutionSnapshot> findByPublicId(String runnerExecutionId) {
+    return recordPort.findByPublicId(runnerExecutionId);
   }
 
   public RunnerExecutionSnapshot touchActivity(
@@ -97,6 +102,29 @@ public class RunnerExecutionService {
         "recordOrphaned runnerExecutionId={} status={}",
         runnerExecutionId,
         updated.status().value());
+    return updated;
+  }
+
+  /**
+   * Story 3.6 AC3/AC6 / Trap T10 — persist the durable redacted-log capture reference + metrics
+   * onto the row. Metadata-only: never changes {@code status}, tolerates an already-terminal row.
+   */
+  public RunnerExecutionSnapshot recordRawOutput(
+      String runnerExecutionId, CapturedLogs capturedLogs) {
+    Objects.requireNonNull(capturedLogs, "capturedLogs");
+    RunnerExecutionSnapshot updated =
+        recordPort.recordRawOutput(
+            runnerExecutionId,
+            capturedLogs.referencePath(),
+            capturedLogs.classification(),
+            capturedLogs.byteSize(),
+            capturedLogs.redactionCount());
+    log.info(
+        "recordRawOutput runnerExecutionId={} classification={} redactionCount={} byteSize={}",
+        runnerExecutionId,
+        capturedLogs.classification().value(),
+        capturedLogs.redactionCount(),
+        capturedLogs.byteSize());
     return updated;
   }
 }

@@ -63,6 +63,20 @@ public class RunnerExecutionEntity {
   @Column(name = "heartbeat_stale_emitted_at")
   private OffsetDateTime heartbeatStaleEmittedAt;
 
+  // Story 3.6 AC3 — capture reference + metrics for the durable redacted runner-logs store. All
+  // nullable: populated by a metadata-only recordRawOutput update after log capture (Trap T10).
+  @Column(name = "raw_output_reference")
+  private String rawOutputReference;
+
+  @Column(name = "raw_output_classification")
+  private String rawOutputClassification;
+
+  @Column(name = "raw_output_byte_size")
+  private Long rawOutputByteSize;
+
+  @Column(name = "redaction_count")
+  private Integer redactionCount;
+
   public Long getId() {
     return id;
   }
@@ -159,6 +173,38 @@ public class RunnerExecutionEntity {
 
   public void setHeartbeatStaleEmittedAt(OffsetDateTime heartbeatStaleEmittedAt) {
     this.heartbeatStaleEmittedAt = heartbeatStaleEmittedAt;
+  }
+
+  public String getRawOutputReference() {
+    return rawOutputReference;
+  }
+
+  public void setRawOutputReference(String rawOutputReference) {
+    this.rawOutputReference = rawOutputReference;
+  }
+
+  public String getRawOutputClassification() {
+    return rawOutputClassification;
+  }
+
+  public void setRawOutputClassification(String rawOutputClassification) {
+    this.rawOutputClassification = rawOutputClassification;
+  }
+
+  public Long getRawOutputByteSize() {
+    return rawOutputByteSize;
+  }
+
+  public void setRawOutputByteSize(Long rawOutputByteSize) {
+    this.rawOutputByteSize = rawOutputByteSize;
+  }
+
+  public Integer getRedactionCount() {
+    return redactionCount;
+  }
+
+  public void setRedactionCount(Integer redactionCount) {
+    this.redactionCount = redactionCount;
   }
 
   @PrePersist

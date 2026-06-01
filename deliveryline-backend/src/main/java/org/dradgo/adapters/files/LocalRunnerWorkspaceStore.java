@@ -1,6 +1,7 @@
 package org.dradgo.adapters.files;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -28,6 +29,7 @@ import java.util.Optional;
 import java.util.Set;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
+import org.dradgo.application.runner.spi.RawRunnerLog;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
 import org.dradgo.application.runner.spi.WorkspaceScanFile;
@@ -60,6 +62,15 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   private static final String RUNNER_RESULT_FILENAME = "runner-result.v1.json";
   private static final String HEARTBEAT_TOUCH_FILENAME = "heartbeat.touch";
   private static final String RUNNER_STDOUT_FILENAME = "runner.stdout";
+  // Story 3.6 Trap T5: the stderr counterpart of runner.stdout — net-new (the store only had stdout
+  // for the heartbeat log-growth observation). AC2 captures BOTH streams.
+  private static final String RUNNER_STDERR_FILENAME = "runner.stderr";
+  // Story 3.6 OQ-6: cap a single raw stream read so a runaway runner log cannot OOM the capture
+  // path (the 3.5 review flagged unbounded readAllBytes). 8 MiB is far above any realistic
+  // diagnostic log; the overflow is truncated with a marker rather than dropped.
+  public static final int MAX_RAW_LOG_CAPTURE_BYTES_FOR_TEST = 8 * 1024 * 1024;
+  private static final long MAX_RAW_LOG_CAPTURE_BYTES = MAX_RAW_LOG_CAPTURE_BYTES_FOR_TEST;
+  private static final int TRUNCATED_TRAILING_GUARD_BYTES = 4096;
   private static final String TEMP_SUFFIX = ".tmp";
   private static final String QUARANTINE_MARKER_FILENAME = ".quarantine";
   private static final List<String> SECRET_SCAN_SUBDIRS =
@@ -357,6 +368,80 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
       log.warn(
           "observeLogGrowth io failure runnerExecutionId={} cause={}",
           runnerExecutionId,
+          error.toString());
+      return Optional.empty();
+    }
+  }
+
+  @Override
+  public Optional<RawRunnerLog> readRawStdoutForCapture(String runnerExecutionId) {
+    return readRawLogForCapture(runnerExecutionId, RUNNER_STDOUT_FILENAME);
+  }
+
+  @Override
+  public Optional<RawRunnerLog> readRawStderrForCapture(String runnerExecutionId) {
+    return readRawLogForCapture(runnerExecutionId, RUNNER_STDERR_FILENAME);
+  }
+
+  /**
+   * Story 3.6 AC2 / Trap T5 / OQ-6 — read a raw workspace log file, decoded lossy-UTF-8 and capped
+   * at {@link #MAX_RAW_LOG_CAPTURE_BYTES}. Same containment + symlink-escape guards as the other
+   * read methods. Returns empty only for a missing / escaping / unreadable file.
+   */
+  private Optional<RawRunnerLog> readRawLogForCapture(String runnerExecutionId, String filename) {
+    Path logsDir = subdirPath(runnerExecutionId, LOGS_SUBDIR);
+    Path target = logsDir.resolve(filename).normalize();
+    if (!target.startsWith(logsDir)) {
+      return Optional.empty();
+    }
+    if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      return Optional.empty();
+    }
+    try {
+      if (Files.isSymbolicLink(target)) {
+        return Optional.empty();
+      }
+      Path realLogs = logsDir.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      Path real = target.toRealPath(LinkOption.NOFOLLOW_LINKS);
+      if (!real.startsWith(realLogs)) {
+        return Optional.empty();
+      }
+      if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+        return Optional.empty();
+      }
+      try (FileChannel channel =
+          FileChannel.open(target, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+        long size = channel.size();
+        boolean truncated = size > MAX_RAW_LOG_CAPTURE_BYTES;
+        int limit = (int) Math.min(size, MAX_RAW_LOG_CAPTURE_BYTES);
+        ByteBuffer buffer = ByteBuffer.allocate(limit);
+        while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
+          // keep reading until the bounded buffer is full or EOF
+        }
+        byte[] bytes = buffer.array();
+        int length = buffer.position();
+        if (!truncated) {
+          return Optional.of(
+              new RawRunnerLog(new String(bytes, 0, length, StandardCharsets.UTF_8), false));
+        }
+        int guardedLength = Math.max(0, length - TRUNCATED_TRAILING_GUARD_BYTES);
+        String text = new String(bytes, 0, guardedLength, StandardCharsets.UTF_8);
+        log.warn(
+            "raw runner log truncated for capture runnerExecutionId={} filename={} sourceBytes={} cap={}",
+            runnerExecutionId,
+            filename,
+            size,
+            MAX_RAW_LOG_CAPTURE_BYTES);
+        return Optional.of(
+            new RawRunnerLog(
+                text + "\n[TRUNCATED " + (size - MAX_RAW_LOG_CAPTURE_BYTES) + " bytes over cap]\n",
+                true));
+      }
+    } catch (IOException error) {
+      log.warn(
+          "readRawLogForCapture io failure runnerExecutionId={} filename={} cause={}",
+          runnerExecutionId,
+          filename,
           error.toString());
       return Optional.empty();
     }

@@ -18,12 +18,17 @@ import org.dradgo.adapters.runner.docker.ContainerState;
 import org.dradgo.adapters.runner.docker.CreateContainerSpec;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.adapters.runner.docker.DockerLogSanitizer;
+import org.dradgo.application.runner.CapturedLogs;
 import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
+import org.dradgo.application.runner.RunnerExecutionService;
+import org.dradgo.application.runner.RunnerLogCaptureService;
+import org.dradgo.application.runner.RunnerLogCaptureService.RunnerLogTruncation;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
+import org.dradgo.application.runner.spi.RawRunnerLog;
 import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
@@ -65,6 +70,12 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private final DockerEngineGateway docker;
   private final RunnerProperties runnerProperties;
   private final RunnerSecretsService runnerSecretsService;
+  // Story 3.6 AC2/AC8: the adapter is the ONLY class allowed to touch raw runner output. It reads
+  // the raw workspace logs at container exit and hands them straight to the capture service (which
+  // redacts before any persist). The raw bytes are method-local — never field-stored here (Trap
+  // T1).
+  private final RunnerLogCaptureService runnerLogCaptureService;
+  private final RunnerExecutionService runnerExecutionService;
   private final Clock clock;
   private final ConcurrentMap<String, String> rexIdToContainerId = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, LogGrowthObservation> rexIdToLastLogObservation =
@@ -76,13 +87,17 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       RunnerWorkspaceStore workspaceStore,
       DockerEngineGateway docker,
       RunnerProperties runnerProperties,
-      RunnerSecretsService runnerSecretsService) {
+      RunnerSecretsService runnerSecretsService,
+      RunnerLogCaptureService runnerLogCaptureService,
+      RunnerExecutionService runnerExecutionService) {
     this(
         scratchStore,
         workspaceStore,
         docker,
         runnerProperties,
         runnerSecretsService,
+        runnerLogCaptureService,
+        runnerExecutionService,
         Clock.systemUTC());
   }
 
@@ -92,6 +107,8 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       DockerEngineGateway docker,
       RunnerProperties runnerProperties,
       RunnerSecretsService runnerSecretsService,
+      RunnerLogCaptureService runnerLogCaptureService,
+      RunnerExecutionService runnerExecutionService,
       Clock clock) {
     this.scratchStore = Objects.requireNonNull(scratchStore, "scratchStore");
     this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
@@ -99,6 +116,10 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
     this.runnerSecretsService =
         Objects.requireNonNull(runnerSecretsService, "runnerSecretsService");
+    this.runnerLogCaptureService =
+        Objects.requireNonNull(runnerLogCaptureService, "runnerLogCaptureService");
+    this.runnerExecutionService =
+        Objects.requireNonNull(runnerExecutionService, "runnerExecutionService");
     this.clock = Objects.requireNonNull(clock, "clock");
   }
 
@@ -265,6 +286,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         return classifyExited(runnerExecutionId, containerId, state);
       case "dead":
       case "removing":
+        captureRunnerLogs(runnerExecutionId);
         log.warn(
             "docker poll terminal-failure runnerExecutionId={} containerId={} status={}",
             runnerExecutionId,
@@ -593,6 +615,10 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
 
   private RunnerPollStatus classifyExited(
       String runnerExecutionId, String containerId, ContainerState state) {
+    // Story 3.6 AC2: the container has exited — capture BOTH raw streams now (regardless of clean
+    // vs crash exit), redacting before any persist. Best-effort: a capture failure must never
+    // change how the result harvest classifies the exit.
+    captureRunnerLogs(runnerExecutionId);
     Optional<byte[]> result = workspaceStore.tryReadResult(runnerExecutionId);
     Integer exitCode = state.exitCode();
     if (result.isEmpty()) {
@@ -612,5 +638,58 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         exitCode,
         result.get().length);
     return new RunnerPollStatus.Completed();
+  }
+
+  /**
+   * Story 3.6 AC2/AC8 — read the raw workspace stdout/stderr (method-local, never field-stored),
+   * hand them to {@link RunnerLogCaptureService} for redaction + durable write, then persist the
+   * resulting reference + metrics onto the row via a metadata-only update. Best-effort: capture is
+   * observability — any failure is logged and swallowed so it never derails result classification
+   * or the container exit path. The capture call is idempotent enough to tolerate the broker
+   * polling {@code classifyExited} more than once (it re-redacts + re-writes the same redacted
+   * files and re-records the same reference).
+   */
+  private void captureRunnerLogs(String runnerExecutionId) {
+    try {
+      RawRunnerLog stdout =
+          workspaceStore.readRawStdoutForCapture(runnerExecutionId).orElse(RawRunnerLog.empty());
+      RawRunnerLog stderr =
+          workspaceStore.readRawStderrForCapture(runnerExecutionId).orElse(RawRunnerLog.empty());
+      String workflowRunId =
+          runnerExecutionService
+              .findByPublicId(runnerExecutionId)
+              .map(org.dradgo.application.runner.spi.RunnerExecutionSnapshot::workflowRunPublicId)
+              .orElse(null);
+      CapturedLogs captured =
+          runnerLogCaptureService.captureLogs(
+              runnerExecutionId,
+              workflowRunId,
+              stdout.text(),
+              stderr.text(),
+              truncation(stdout, stderr));
+      runnerExecutionService.recordRawOutput(runnerExecutionId, captured);
+      log.info(
+          "docker runner logs captured runnerExecutionId={} redactionCount={} logsCaptured=true",
+          runnerExecutionId,
+          captured.redactionCount());
+    } catch (RuntimeException error) {
+      log.warn(
+          "docker runner log capture failed runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+    }
+  }
+
+  private static RunnerLogTruncation truncation(RawRunnerLog stdout, RawRunnerLog stderr) {
+    if (stdout.truncated() && stderr.truncated()) {
+      return RunnerLogTruncation.BOTH;
+    }
+    if (stdout.truncated()) {
+      return RunnerLogTruncation.STDOUT;
+    }
+    if (stderr.truncated()) {
+      return RunnerLogTruncation.STDERR;
+    }
+    return RunnerLogTruncation.NONE;
   }
 }

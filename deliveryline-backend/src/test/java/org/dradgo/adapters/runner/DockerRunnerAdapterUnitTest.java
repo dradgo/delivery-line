@@ -26,13 +26,17 @@ import java.util.concurrent.TimeUnit;
 import org.dradgo.adapters.runner.docker.ContainerState;
 import org.dradgo.adapters.runner.docker.CreateContainerSpec;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
+import org.dradgo.application.runner.CapturedLogs;
 import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
+import org.dradgo.application.runner.RunnerLogCaptureService.RunnerLogTruncation;
 import org.dradgo.application.runner.RunnerPollStatus;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
+import org.dradgo.application.runner.spi.RawRunnerLog;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
@@ -65,6 +69,8 @@ class DockerRunnerAdapterUnitTest {
   private DockerEngineGateway gateway;
   private RunnerProperties properties;
   private RunnerSecretsService secretsService;
+  private org.dradgo.application.runner.RunnerLogCaptureService logCaptureService;
+  private org.dradgo.application.runner.RunnerExecutionService executionService;
   private DockerRunnerAdapter adapter;
 
   @BeforeEach
@@ -79,9 +85,21 @@ class DockerRunnerAdapterUnitTest {
         new RunnerSecretsService(
             new MockEnvironment().withProperty("CODEX_API_KEY", "sk-codex-unit-test-value"),
             properties);
+    // Story 3.6: the capture path is exercised end-to-end in RunnerLogCaptureServiceTest +
+    // DockerRunnerAdapterLogCaptureUnitTest; here we stub it so the existing lifecycle assertions
+    // stay focused on dispatch/poll behavior.
+    logCaptureService = Mockito.mock(org.dradgo.application.runner.RunnerLogCaptureService.class);
+    executionService = Mockito.mock(org.dradgo.application.runner.RunnerExecutionService.class);
     adapter =
         new DockerRunnerAdapter(
-            scratchStore, workspaceStore, gateway, properties, secretsService, CLOCK);
+            scratchStore,
+            workspaceStore,
+            gateway,
+            properties,
+            secretsService,
+            logCaptureService,
+            executionService,
+            CLOCK);
   }
 
   @Test
@@ -178,6 +196,8 @@ class DockerRunnerAdapterUnitTest {
             gateway,
             properties,
             new RunnerSecretsService(new MockEnvironment(), properties),
+            logCaptureService,
+            executionService,
             CLOCK);
     stubWorkspace();
     when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
@@ -249,10 +269,18 @@ class DockerRunnerAdapterUnitTest {
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
             dockerConfig,
-            RunnerProperties.defaultSecretEnvNames());
+            RunnerProperties.defaultSecretEnvNames(),
+            false);
     adapter =
         new DockerRunnerAdapter(
-            scratchStore, workspaceStore, gateway, properties, secretsService, CLOCK);
+            scratchStore,
+            workspaceStore,
+            gateway,
+            properties,
+            secretsService,
+            logCaptureService,
+            executionService,
+            CLOCK);
     stubWorkspace();
     when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
     when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
@@ -313,6 +341,51 @@ class DockerRunnerAdapterUnitTest {
     when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.of("result".getBytes()));
 
     assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Completed.class);
+  }
+
+  @Test
+  void pollExitedCapturesStdoutAndStderrAndPersistsRawOutputReference() {
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("exited", 0, "none", List.of(), Map.of()));
+    when(workspaceStore.readRawStdoutForCapture(REX_ID))
+        .thenReturn(Optional.of(new RawRunnerLog("stdout secret", false)));
+    when(workspaceStore.readRawStderrForCapture(REX_ID))
+        .thenReturn(Optional.of(new RawRunnerLog("stderr secret", false)));
+    when(executionService.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(runnerExecutionSnapshot()));
+    CapturedLogs captured =
+        new CapturedLogs("/runner-logs/" + REX_ID, 42L, DataClassification.LOCAL_ONLY, 2);
+    when(logCaptureService.captureLogs(
+            REX_ID, RUN_ID, "stdout secret", "stderr secret", RunnerLogTruncation.NONE))
+        .thenReturn(captured);
+    when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.of("result".getBytes()));
+
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Completed.class);
+
+    verify(logCaptureService)
+        .captureLogs(REX_ID, RUN_ID, "stdout secret", "stderr secret", RunnerLogTruncation.NONE);
+    verify(executionService).recordRawOutput(REX_ID, captured);
+  }
+
+  @Test
+  void pollExitedSwallowsCaptureFailureAndStillClassifiesResult() {
+    dispatchSuccessfully();
+    when(gateway.inspectContainer(CONTAINER_ID))
+        .thenReturn(new ContainerState("exited", 0, "none", List.of(), Map.of()));
+    when(workspaceStore.readRawStdoutForCapture(REX_ID))
+        .thenReturn(Optional.of(new RawRunnerLog("stdout", false)));
+    when(workspaceStore.readRawStderrForCapture(REX_ID))
+        .thenReturn(Optional.of(RawRunnerLog.empty()));
+    when(executionService.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(runnerExecutionSnapshot()));
+    when(logCaptureService.captureLogs(anyString(), anyString(), anyString(), anyString(), any()))
+        .thenThrow(new IllegalStateException("disk full"));
+    when(workspaceStore.tryReadResult(REX_ID)).thenReturn(Optional.of("result".getBytes()));
+
+    assertThat(adapter.poll(REX_ID)).isInstanceOf(RunnerPollStatus.Completed.class);
+
+    verify(executionService, never()).recordRawOutput(eq(REX_ID), any());
   }
 
   @Test
@@ -578,5 +651,21 @@ class DockerRunnerAdapterUnitTest {
         Path.of("/scratch/context-bundle.v1.json"),
         new ExecutionConstraints(Duration.ofSeconds(600L), false),
         DataClassification.SHAREABLE_REDACTED);
+  }
+
+  private static RunnerExecutionSnapshot runnerExecutionSnapshot() {
+    OffsetDateTime now = OffsetDateTime.now(CLOCK);
+    return new RunnerExecutionSnapshot(
+        REX_ID,
+        RUN_ID,
+        RunnerStage.EXECUTION,
+        org.dradgo.domain.registry.RunnerExecutionStatus.RUNNING,
+        1,
+        now,
+        now.plusSeconds(600),
+        null,
+        null,
+        now,
+        null);
   }
 }

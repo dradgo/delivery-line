@@ -69,6 +69,7 @@
                   "spec_runner_skipped_question"
                 ]
               },
+              "workflowRunId": { "type": "string", "pattern": "^run_" },
               "runnerExecutionId": { "type": "string", "pattern": "^rex_" },
               "containerId": { "type": "string" },
               "workspaceRoot": { "type": "string" },
@@ -78,7 +79,10 @@
               "lastActivityAt": { "type": "string", "format": "date-time" },
               "timeoutAt": { "type": "string", "format": "date-time" },
               "dispatchedAt": { "type": "string", "format": "date-time" },
-              "exitCode": { "type": "integer" }
+              "exitCode": { "type": "integer" },
+              "redactionCount": { "type": "integer" },
+              "rawOutputByteSize": { "type": "integer" },
+              "rawOutputClassification": { "type": "string" }
             }
           }
         }

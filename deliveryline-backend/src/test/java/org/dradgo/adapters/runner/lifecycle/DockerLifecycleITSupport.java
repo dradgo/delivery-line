@@ -79,7 +79,8 @@ abstract class DockerLifecycleITSupport {
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
             dockerConfig,
-            RunnerProperties.defaultSecretEnvNames());
+            RunnerProperties.defaultSecretEnvNames(),
+            false);
     // Story 3.5: real RunnerSecretsService backed by a MockEnvironment carrying both provider keys
     // so dispatch resolution succeeds for either kind under the lifecycle ITs.
     RunnerSecretsService secretsService =
@@ -88,10 +89,24 @@ abstract class DockerLifecycleITSupport {
                 .withProperty("CODEX_API_KEY", "sk-codex-it-value")
                 .withProperty("ANTHROPIC_API_KEY", "sk-ant-it-value"),
             properties);
-    // Public 5-arg constructor (uses Clock.systemUTC internally) — accessible from this
-    // sub-package; the lifecycle ITs operate on real wall-clock time anyway.
+    // Story 3.6: these lifecycle ITs assert container stop/kill/recovery behavior, not log capture
+    // (which has dedicated unit + contract coverage). Stub the capture collaborators so the exit
+    // path's capture call is a no-op here and the ITs stay focused + DB-free.
+    org.dradgo.application.runner.RunnerLogCaptureService logCaptureService =
+        org.mockito.Mockito.mock(org.dradgo.application.runner.RunnerLogCaptureService.class);
+    org.dradgo.application.runner.RunnerExecutionService executionService =
+        org.mockito.Mockito.mock(org.dradgo.application.runner.RunnerExecutionService.class);
+    // Public constructor (uses Clock.systemUTC internally) — accessible from this sub-package; the
+    // lifecycle ITs operate on real wall-clock time anyway.
     adapter =
-        new DockerRunnerAdapter(scratchStore, workspaceStore, gateway, properties, secretsService);
+        new DockerRunnerAdapter(
+            scratchStore,
+            workspaceStore,
+            gateway,
+            properties,
+            secretsService,
+            logCaptureService,
+            executionService);
   }
 
   @AfterEach

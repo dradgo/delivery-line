@@ -27,6 +27,9 @@ deliveryline:
         execution: happy-implementation-plan
     scheduling:
       enabled: false
+    # Story 3.6 AC4 — explicit local-only default (mirrors the real application.yml so the
+    # validated binding does not shadow it to a surprising value in the @SpringBootTest tier).
+    allow-shareable-logs: false
     # Story 3.5 — per-kind agent-provider env-var NAMES (never values). Mirrors the real
     # application.yml so the validated @ConfigurationProperties binding does not shadow the
     # defaults to empty in the @SpringBootTest tier (memory: validated-config-needs-test-yaml).

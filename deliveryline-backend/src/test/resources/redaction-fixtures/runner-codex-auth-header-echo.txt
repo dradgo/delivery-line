@@ -1,0 +1,3 @@
+[codex] DEBUG outbound http request headers:
+  Authorization: Bearer sk-codex-FAKE-DO-NOT-USE-1234567890abcdefghij
+  Content-Type: application/json

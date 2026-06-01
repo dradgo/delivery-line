@@ -23,6 +23,7 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.FailureDescription;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.ContextBundle;
+import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
@@ -880,6 +881,91 @@ public class WorkflowInspectionService {
     }
   }
 
+  /**
+   * Story 3.6 AC7 — typed inspection of a runner execution's durable redacted log store. Mirrors
+   * {@link #getContextBundleForArtifact(String)}: validates the {@code rex_} prefix, opens an MDC
+   * scope, reads the persisted {@code raw_output_*} columns off the {@code runner_executions} row
+   * (via the already-injected {@link RunnerExecutionRecordPort#findByPublicId(String)}), and
+   * returns an available/unavailable result. NEVER renders log <em>content</em> — only the
+   * content-free {@link RunnerLogReference} (path + byteSize + classification + redactionCount).
+   *
+   * <p>Unavailable reasons: {@code runnerExecutionNotFound} (no row) and {@code logsNotCaptured}
+   * (row exists but the capture columns are null — honest "not captured", e.g. mock runner or a
+   * pre-3.6 execution).
+   */
+  /**
+   * Story 3.6 AC7 / OQ-4 — resolve the most-recently-created runner execution for a workflow run so
+   * {@code status --include-runner-logs} can pick which {@code rex} to render. Returns {@link
+   * Optional#empty()} when the run has no runner executions yet. {@link #getRunnerLogReference}
+   * stays {@code rex}-scoped; this is only the run→rex lookup.
+   */
+  @Transactional(readOnly = true)
+  public Optional<String> findLatestRunnerExecutionId(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    return runnerExecutionRecordPort
+        .findByWorkflowRunPublicIdAndStatusIn(
+            workflowRunId, List.of(org.dradgo.domain.registry.RunnerExecutionStatus.values()))
+        .stream()
+        .max(
+            java.util.Comparator.comparing(
+                RunnerExecutionSnapshot::createdAt,
+                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+        .map(RunnerExecutionSnapshot::publicId);
+  }
+
+  @Transactional(readOnly = true)
+  public RunnerLogReferenceResult getRunnerLogReference(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      log.info("getRunnerLogReference entry runnerExecutionId={}", runnerExecutionId);
+      Optional<RunnerExecutionSnapshot> rex =
+          runnerExecutionRecordPort.findByPublicId(runnerExecutionId);
+      if (rex.isEmpty()) {
+        log.warn(
+            "getRunnerLogReference miss runnerExecutionId={} reason=runnerExecutionNotFound",
+            runnerExecutionId);
+        return RunnerLogReferenceResult.unavailable(runnerExecutionId, "runnerExecutionNotFound");
+      }
+      RunnerExecutionSnapshot snapshot = rex.get();
+      boolean noneCaptured =
+          snapshot.rawOutputReference() == null
+              && snapshot.rawOutputClassification() == null
+              && snapshot.rawOutputByteSize() == null
+              && snapshot.redactionCount() == null;
+      if (noneCaptured) {
+        log.warn(
+            "getRunnerLogReference miss runnerExecutionId={} reason=logsNotCaptured",
+            runnerExecutionId);
+        return RunnerLogReferenceResult.unavailable(runnerExecutionId, "logsNotCaptured");
+      }
+      if (snapshot.rawOutputReference() == null
+          || snapshot.rawOutputClassification() == null
+          || snapshot.rawOutputByteSize() == null
+          || snapshot.redactionCount() == null) {
+        log.warn(
+            "getRunnerLogReference miss runnerExecutionId={} reason=incompleteLogMetadata",
+            runnerExecutionId);
+        return RunnerLogReferenceResult.unavailable(runnerExecutionId, "incompleteLogMetadata");
+      }
+      RunnerLogReference reference =
+          new RunnerLogReference(
+              snapshot.rawOutputReference(),
+              snapshot.rawOutputByteSize(),
+              snapshot.rawOutputClassification(),
+              snapshot.redactionCount());
+      log.info(
+          "getRunnerLogReference success runnerExecutionId={} classification={} redactionCount={} byteSize={}",
+          runnerExecutionId,
+          reference.classification().value(),
+          reference.redactionCount(),
+          reference.byteSize());
+      return RunnerLogReferenceResult.available(runnerExecutionId, reference);
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+    }
+  }
+
   private static String specVersionKey(String artifactId, int version) {
     return artifactId + ":" + version;
   }
@@ -1325,6 +1411,42 @@ public class WorkflowInspectionService {
 
     public boolean available() {
       return bundle != null;
+    }
+  }
+
+  /**
+   * Story 3.6 AC7 — available/unavailable result for {@link #getRunnerLogReference(String)},
+   * mirroring {@link ContextBundleLookupResult}. Exactly one of {@code reference} / {@code reason}
+   * is set. The reference carries metrics ONLY (never log content, never a secret value).
+   */
+  public record RunnerLogReferenceResult(
+      String runnerExecutionId, RunnerLogReference reference, String reason) {
+
+    public RunnerLogReferenceResult {
+      if (reference != null) {
+        Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
+      }
+      if ((reference == null) == (reason == null)) {
+        throw new IllegalArgumentException(
+            "Exactly one of reference or reason must be set on RunnerLogReferenceResult");
+      }
+    }
+
+    public static RunnerLogReferenceResult available(
+        String runnerExecutionId, RunnerLogReference reference) {
+      return new RunnerLogReferenceResult(
+          runnerExecutionId, Objects.requireNonNull(reference, "reference"), null);
+    }
+
+    public static RunnerLogReferenceResult unavailable(String runnerExecutionId, String reason) {
+      if (reason == null || reason.isBlank()) {
+        throw new IllegalArgumentException("reason must not be blank");
+      }
+      return new RunnerLogReferenceResult(runnerExecutionId, null, reason);
+    }
+
+    public boolean available() {
+      return reference != null;
     }
   }
 }

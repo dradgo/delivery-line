@@ -1,6 +1,8 @@
 package org.dradgo.architecture;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
@@ -23,6 +25,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.workflow.DomainResult;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
@@ -508,6 +511,45 @@ final class ArchitectureRuleCatalog {
               .and()
               .resideOutsideOfPackage("org.dradgo.runnercontracts..")
               .should(notDeclareSensitiveDetectionArtifacts()));
+
+  /**
+   * Story 3.6 AC8 — raw (unredacted) runner stdout/stderr is referenced only transiently inside
+   * {@code adapters.runner..} during capture. The sole sanctioned readers of the raw workspace log
+   * streams are {@link RunnerWorkspaceStore#readRawStdoutForCapture(String)} / {@link
+   * RunnerWorkspaceStore#readRawStderrForCapture(String)}, and only the Docker adapter (which hands
+   * them straight to {@code RunnerLogCaptureService} for redaction before any persist) may call
+   * them. No application/domain/other-adapter class may touch the raw streams; everywhere else
+   * consumes the redacted {@code RunnerLogReference}/{@code CapturedLogs} produced via {@code
+   * application.security}. This pairs with {@link
+   * #CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY} (the redacted form is produced only
+   * there).
+   */
+  static final ArchRule RAW_RUNNER_OUTPUT_READS_STAY_IN_RUNNER_ADAPTER =
+      namedRule(
+          "raw runner stdout/stderr may only be read inside adapters.runner during capture",
+          "Remediation: the only sanctioned reader of RunnerWorkspaceStore.readRaw*ForCapture is the"
+              + " Docker runner adapter, which redacts via application.security before any persist."
+              + " Consume the redacted RunnerLogReference/CapturedLogs instead of the raw streams.",
+          methods()
+              .that()
+              .areDeclaredIn(RunnerWorkspaceStore.class)
+              .and()
+              .haveNameMatching("readRaw(Stdout|Stderr)ForCapture")
+              .should()
+              .onlyBeCalled()
+              .byClassesThat()
+              .resideInAPackage(RUNNER_ADAPTER_PACKAGE));
+
+  static final ArchRule RAW_RUNNER_OUTPUT_FIELDS_STAY_OUT_OF_APPLICATION =
+      namedRule(
+          "raw runner stdout/stderr fields may only be declared in adapters.runner",
+          "Remediation: raw runner output must stay method-local. Do not add rawStdout/rawStderr/rawRunnerOutput fields outside the Docker adapter capture path.",
+          fields()
+              .that()
+              .haveNameMatching("(?i).*(raw.*(stdout|stderr|runner.*output)|runner.*raw.*output).*")
+              .should()
+              .beDeclaredInClassesThat()
+              .resideInAPackage(RUNNER_ADAPTER_PACKAGE));
 
   /**
    * Story 2.14 AC9 — backend-authoritative allowed-action derivation must live in exactly one place

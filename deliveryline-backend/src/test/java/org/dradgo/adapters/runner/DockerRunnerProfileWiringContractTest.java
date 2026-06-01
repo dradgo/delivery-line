@@ -120,6 +120,18 @@ class DockerRunnerProfileWiringContractTest {
       return Mockito.mock(RunnerSecretsService.class);
     }
 
+    // Story 3.6: the adapter now also depends on the log-capture service + execution service for
+    // the container-exit capture path. Wiring-only slice → mocks satisfy the constructor.
+    @Bean
+    org.dradgo.application.runner.RunnerLogCaptureService runnerLogCaptureService() {
+      return Mockito.mock(org.dradgo.application.runner.RunnerLogCaptureService.class);
+    }
+
+    @Bean
+    org.dradgo.application.runner.RunnerExecutionService runnerExecutionService() {
+      return Mockito.mock(org.dradgo.application.runner.RunnerExecutionService.class);
+    }
+
     @Bean
     RunnerProperties runnerProperties() {
       return RunnerProperties.defaults();

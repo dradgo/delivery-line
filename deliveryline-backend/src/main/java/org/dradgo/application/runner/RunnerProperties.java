@@ -35,7 +35,8 @@ public record RunnerProperties(
     Mock mock,
     Scheduling scheduling,
     Docker docker,
-    Map<RunnerKind, List<String>> secretEnvNames) {
+    Map<RunnerKind, List<String>> secretEnvNames,
+    boolean allowShareableLogs) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -90,7 +91,20 @@ public record RunnerProperties(
         Mock.defaults(),
         Scheduling.defaults(),
         Docker.defaults(),
-        defaultSecretEnvNames());
+        defaultSecretEnvNames(),
+        false);
+  }
+
+  /**
+   * Story 3.6 AC4 — when {@code true}, captured runner logs whose redaction pass detected zero
+   * secrets across both streams may be elevated from {@code local-only} to {@code
+   * shareable-redacted}. Defaults to {@code false} (Trap T3): logs stay {@code local-only} (never
+   * shipped by story 3.7's ELK filter) unless the operator explicitly opts in via {@code
+   * deliveryline.runner.allow-shareable-logs=true}. The elevation is gated on BOTH the zero-secret
+   * detection AND this flag — it is never sufficient on its own.
+   */
+  public boolean allowShareableLogs() {
+    return allowShareableLogs;
   }
 
   /**

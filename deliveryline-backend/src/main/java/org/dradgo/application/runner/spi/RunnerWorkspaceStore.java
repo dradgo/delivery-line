@@ -128,4 +128,24 @@ public interface RunnerWorkspaceStore {
    * workspace is preserved for diagnostics.
    */
   boolean isQuarantined(String runnerExecutionId);
+
+  /**
+   * Story 3.6 AC2 / Trap T5 / OQ-6 — read the raw container-written {@code logs/runner.stdout}
+   * (resp. {@code logs/runner.stderr}) for the host-side capture path. The bytes are decoded as
+   * lossy UTF-8 (malformed bytes become the replacement char rather than throwing) and capped at a
+   * fixed size; when the source exceeds the cap the returned text is truncated and a single-line
+   * {@code [TRUNCATED ...]} marker is appended (guards against an unbounded {@code readAllBytes}
+   * OOM the 3.5 review flagged). Returns {@link Optional#empty()} only when the file is missing or
+   * fails the symlink-escape guard — an empty (but present) log returns {@code Optional.of("")}.
+   *
+   * <p>Trap T1/T8: this returns RAW bytes. The ONLY sanctioned caller is the Docker adapter, which
+   * hands the result straight to {@code RunnerLogCaptureService} for redaction before any persist.
+   */
+  Optional<RawRunnerLog> readRawStdoutForCapture(String runnerExecutionId);
+
+  /**
+   * Story 3.6 AC2 / Trap T5 — raw {@code logs/runner.stderr} counterpart of {@link
+   * #readRawStdoutForCapture(String)}.
+   */
+  Optional<RawRunnerLog> readRawStderrForCapture(String runnerExecutionId);
 }

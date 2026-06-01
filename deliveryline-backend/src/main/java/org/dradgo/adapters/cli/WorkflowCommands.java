@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import org.dradgo.application.artifact.ActorContext;
@@ -19,12 +20,14 @@ import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
+import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLookupResult;
+import org.dradgo.application.workflow.WorkflowInspectionService.RunnerLogReferenceResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
@@ -223,7 +226,14 @@ public class WorkflowCommands {
                   "Append the latest spec-stage context bundle to the output (FR55 inspection)",
               required = false,
               defaultValue = "false")
-          boolean includeContextBundle) {
+          boolean includeContextBundle,
+      @Option(
+              longName = "include-runner-logs",
+              description =
+                  "Append the latest runner execution's redacted log reference (story 3.6 inspection)",
+              required = false,
+              defaultValue = "false")
+          boolean includeRunnerLogs) {
     requireInspectionWired();
     long start = System.nanoTime();
     CorrelationScope scope = pushCorrelation(correlationId);
@@ -233,6 +243,9 @@ public class WorkflowCommands {
       String rendered = renderStatus(view, format);
       if (includeContextBundle) {
         rendered = appendContextBundle(rendered, view, runId, format);
+      }
+      if (includeRunnerLogs) {
+        rendered = appendRunnerLogs(rendered, view, runId, format);
       }
       if (verbose) {
         rendered = appendCorrelationSuffix(rendered, resolvedCorrelation);
@@ -830,6 +843,115 @@ public class WorkflowCommands {
       throw new DomainException(
           DomainErrorCode.INTERNAL_ERROR,
           "Failed to splice context bundle into JSON status output",
+          details);
+    }
+  }
+
+  /**
+   * Story 3.6 AC7 — append the latest runner execution's redacted-log reference to the status
+   * output. NEVER renders log <em>content</em> — only the typed reference (path + byteSize +
+   * classification + redactionCount). Text mode appends a {@code # runner-logs} section; JSON mode
+   * upgrades to the v2 status document and attaches a structured {@code runnerLogs} object whose
+   * shape is stable across available / unavailable states. The {@code rex} is resolved as the
+   * latest runner execution for the run (OQ-4); {@code getRunnerLogReference} stays rex-scoped.
+   */
+  private String appendRunnerLogs(
+      String rendered, WorkflowStatusView view, String runId, String format) {
+    String normalizedFormat = normalizeFormat(format);
+    Optional<String> rexId = workflowInspectionService.findLatestRunnerExecutionId(runId);
+    if (rexId.isEmpty()) {
+      return appendRunnerLogsResult(
+          rendered,
+          view,
+          normalizedFormat,
+          RunnerLogReferenceResult.unavailable(null, "noRunnerExecutionYet"));
+    }
+    RunnerLogReferenceResult result = workflowInspectionService.getRunnerLogReference(rexId.get());
+    return appendRunnerLogsResult(rendered, view, normalizedFormat, result);
+  }
+
+  private String appendRunnerLogsResult(
+      String rendered,
+      WorkflowStatusView view,
+      String normalizedFormat,
+      RunnerLogReferenceResult result) {
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      return spliceRunnerLogsJson(rendered, view, result);
+    }
+    StringBuilder out = new StringBuilder(rendered);
+    if (!rendered.isEmpty() && !rendered.endsWith("\n")) {
+      out.append('\n');
+    }
+    if (result.available()) {
+      RunnerLogReference ref = result.reference();
+      out.append("# runner-logs (")
+          .append(result.runnerExecutionId())
+          .append("):\n")
+          .append("  reference: ")
+          .append(ref.referencePath())
+          .append('\n')
+          .append("  classification: ")
+          .append(ref.classification().value())
+          .append('\n')
+          .append("  byteSize: ")
+          .append(ref.byteSize())
+          .append('\n')
+          .append("  redactionCount: ")
+          .append(ref.redactionCount())
+          .append('\n');
+    } else {
+      out.append("# runner-logs: none (").append(result.reason()).append(")\n");
+    }
+    return out.toString();
+  }
+
+  private String spliceRunnerLogsJson(
+      String renderedStatusJson, WorkflowStatusView view, RunnerLogReferenceResult result) {
+    try {
+      ObjectMapper mapper = jsonMapper();
+      JsonNode parsed = mapper.readTree(renderedStatusJson);
+      if (!parsed.isObject()) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "runner_logs_json_splice_failed");
+        details.put("cause", "rendered_status_not_object");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR,
+            "Rendered status JSON is not a JSON object — cannot splice runner logs",
+            details);
+      }
+      com.fasterxml.jackson.databind.node.ObjectNode root =
+          (com.fasterxml.jackson.databind.node.ObjectNode) parsed;
+      root.put("schemaVersion", STATUS_WITH_CONTEXT_BUNDLE_SCHEMA_VERSION);
+      root.put("specRejectionLoopCount", view.specRejectionLoopCount());
+      root.put("escalationMarker", view.escalationMarker());
+      com.fasterxml.jackson.databind.node.ObjectNode runnerLogs = root.putObject("runnerLogs");
+      if (result.runnerExecutionId() == null) {
+        runnerLogs.putNull("runnerExecutionId");
+      } else {
+        runnerLogs.put("runnerExecutionId", result.runnerExecutionId());
+      }
+      if (result.available()) {
+        RunnerLogReference ref = result.reference();
+        runnerLogs.put("status", "available");
+        runnerLogs.putNull("reason");
+        com.fasterxml.jackson.databind.node.ObjectNode logs = runnerLogs.putObject("logs");
+        logs.put("reference", ref.referencePath());
+        logs.put("byteSize", ref.byteSize());
+        logs.put("classification", ref.classification().value());
+        logs.put("redactionCount", ref.redactionCount());
+      } else {
+        runnerLogs.put("status", "unavailable");
+        runnerLogs.put("reason", result.reason());
+        runnerLogs.putNull("logs");
+      }
+      return mapper.writeValueAsString(root);
+    } catch (IOException error) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "runner_logs_json_splice_failed");
+      details.put("cause", error.getClass().getSimpleName());
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "Failed to splice runner logs into JSON status output",
           details);
     }
   }

@@ -111,7 +111,8 @@ class WorkflowCommandsStatusHistoryTest {
             false);
     when(inspection.getStatus("run_status12345")).thenReturn(view);
 
-    String rendered = commands.status("run_status12345", "text", "corr-status-1", false, false);
+    String rendered =
+        commands.status("run_status12345", "text", "corr-status-1", false, false, false);
     assertTrue(rendered.startsWith("current state: Executing"));
     verify(inspection).getStatus("run_status12345");
   }
@@ -121,7 +122,7 @@ class WorkflowCommandsStatusHistoryTest {
     DomainException error =
         assertThrows(
             DomainException.class,
-            () -> commands.status("run_status12345", "yaml", "corr-status-1", false, false));
+            () -> commands.status("run_status12345", "yaml", "corr-status-1", false, false, false));
     assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, error.errorCode());
     assertEquals("yaml", error.details().get("format"));
   }
@@ -148,7 +149,7 @@ class WorkflowCommandsStatusHistoryTest {
                 0,
                 false));
 
-    String rendered = commands.status("run_status12345", "json", null, false, false);
+    String rendered = commands.status("run_status12345", "json", null, false, false, false);
     assertTrue(
         rendered.startsWith("{") && rendered.endsWith("}"),
         () -> "JSON output should be a single object, was: " + rendered);
@@ -205,7 +206,7 @@ class WorkflowCommandsStatusHistoryTest {
     DomainException error =
         assertThrows(
             DomainException.class,
-            () -> commands.status("run_missing12345", "text", null, false, false));
+            () -> commands.status("run_missing12345", "text", null, false, false, false));
     assertEquals(DomainErrorCode.RUN_NOT_FOUND, error.errorCode());
   }
 
@@ -231,7 +232,7 @@ class WorkflowCommandsStatusHistoryTest {
                 0,
                 false));
 
-    commands.status("run_status12345", "json", "corr-status-42", false, false);
+    commands.status("run_status12345", "json", "corr-status-42", false, false, false);
 
     assertTrue(
         output
@@ -251,7 +252,7 @@ class WorkflowCommandsStatusHistoryTest {
 
     assertThrows(
         DomainException.class,
-        () -> commands.status("run_missing12345", "text", null, false, false));
+        () -> commands.status("run_missing12345", "text", null, false, false, false));
 
     assertTrue(
         output

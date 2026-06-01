@@ -63,7 +63,8 @@ class WorkflowCommandsInspectionIT {
         BASE_TIME.plusMinutes(1));
 
     JsonNode status =
-        objectMapper.readTree(commands.status(runId, "json", "corr-archived-status", false, false));
+        objectMapper.readTree(
+            commands.status(runId, "json", "corr-archived-status", false, false, false));
     JsonNode history =
         objectMapper.readTree(
             commands.history(runId, "json", null, "corr-archived-history", false));
@@ -95,7 +96,7 @@ class WorkflowCommandsInspectionIT {
     assertTrue(historyIndexExists(), "Expected workflow_events history index to exist");
 
     long statusStart = System.nanoTime();
-    String statusJson = commands.status(runId, "json", "corr-perf-status", false, false);
+    String statusJson = commands.status(runId, "json", "corr-perf-status", false, false, false);
     long statusElapsedMs = elapsedMs(statusStart);
 
     long historyStart = System.nanoTime();

@@ -106,6 +106,14 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY;
 
   @ArchTest
+  static final ArchRule raw_runner_output_reads_stay_in_runner_adapter =
+      ArchitectureRuleCatalog.RAW_RUNNER_OUTPUT_READS_STAY_IN_RUNNER_ADAPTER;
+
+  @ArchTest
+  static final ArchRule raw_runner_output_fields_stay_out_of_application =
+      ArchitectureRuleCatalog.RAW_RUNNER_OUTPUT_FIELDS_STAY_OUT_OF_APPLICATION;
+
+  @ArchTest
   static final ArchRule artifact_writes_must_go_through_artifact_operation_service =
       ArchitectureRuleCatalog.ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE;
 

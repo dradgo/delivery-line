@@ -88,7 +88,7 @@ class WorkflowCliJsonSchemaContractTest {
             false);
     when(inspection.getStatus("run_status12345")).thenReturn(view);
 
-    String json = commands.status("run_status12345", "json", "corr-status-1", false, false);
+    String json = commands.status("run_status12345", "json", "corr-status-1", false, false, false);
     JsonNode payload = mapper.readTree(json);
 
     assertEquals(1, payload.get("schemaVersion").asInt());
@@ -158,7 +158,7 @@ class WorkflowCliJsonSchemaContractTest {
                     """
                         .getBytes())));
 
-    String json = commands.status("run_status12345", "json", "corr-status-2", false, true);
+    String json = commands.status("run_status12345", "json", "corr-status-2", false, true, false);
     JsonNode payload = mapper.readTree(json);
 
     assertEquals(2, payload.get("schemaVersion").asInt());
@@ -192,7 +192,8 @@ class WorkflowCliJsonSchemaContractTest {
             false);
     when(inspection.getStatus("run_failed01234")).thenReturn(view);
 
-    String json = commands.status("run_failed01234", "json", "corr-status-failed", false, false);
+    String json =
+        commands.status("run_failed01234", "json", "corr-status-failed", false, false, false);
     JsonNode payload = mapper.readTree(json);
 
     assertEquals("execution", payload.get("failedStage").asText());
@@ -284,7 +285,7 @@ class WorkflowCliJsonSchemaContractTest {
             false);
     when(inspection.getStatus("run_emptystatus12345")).thenReturn(view);
 
-    String json = commands.status("run_emptystatus12345", "json", null, false, false);
+    String json = commands.status("run_emptystatus12345", "json", null, false, false, false);
     JsonNode payload = mapper.readTree(json);
 
     assertTrue(payload.get("currentActor").isNull());

@@ -66,6 +66,7 @@ public final class WorkflowEventDetailKeys {
   // workspaceRoot is a filesystem path under DELIVERYLINE_HOME; redaction posture from story 1.10
   // covers absolute-path log lines so the value is safe to surface in CLI history.
   public static final String RUNNER_EXECUTION_ID = "runnerExecutionId";
+  public static final String WORKFLOW_RUN_ID = "workflowRunId";
   public static final String CONTAINER_ID = "containerId";
   public static final String WORKSPACE_ROOT = "workspaceRoot";
   public static final String IMAGE = "image";
@@ -75,6 +76,14 @@ public final class WorkflowEventDetailKeys {
   public static final String TIMEOUT_AT = "timeoutAt";
   public static final String DISPATCHED_AT = "dispatchedAt";
   public static final String EXIT_CODE = "exitCode";
+
+  // Runner log-capture keys (added story 3.6 AC6). Metadata only — NEVER log content or secret
+  // values. redactionCount is a non-negative integer; rawOutputByteSize a non-negative long;
+  // rawOutputClassification a DataClassification wire value. All allow-listed so CLI history
+  // surfaces the capture metrics on the enriched RUNNER_COMPLETED / RUNNER_FAILED events.
+  public static final String REDACTION_COUNT = "redactionCount";
+  public static final String RAW_OUTPUT_BYTE_SIZE = "rawOutputByteSize";
+  public static final String RAW_OUTPUT_CLASSIFICATION = "rawOutputClassification";
 
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
@@ -105,6 +114,7 @@ public final class WorkflowEventDetailKeys {
           INCORPORATION_EVENT_ID,
           SUPERSEDED_BY_ARTIFACT_ID,
           NO_EFFECT_REASON,
+          WORKFLOW_RUN_ID,
           RUNNER_EXECUTION_ID,
           CONTAINER_ID,
           WORKSPACE_ROOT,
@@ -114,7 +124,10 @@ public final class WorkflowEventDetailKeys {
           LAST_ACTIVITY_AT,
           TIMEOUT_AT,
           DISPATCHED_AT,
-          EXIT_CODE);
+          EXIT_CODE,
+          REDACTION_COUNT,
+          RAW_OUTPUT_BYTE_SIZE,
+          RAW_OUTPUT_CLASSIFICATION);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

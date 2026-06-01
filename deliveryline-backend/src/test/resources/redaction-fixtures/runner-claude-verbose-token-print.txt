@@ -1,0 +1,2 @@
+[claude-code] verbose: sending request with header set
+Authorization: Bearer sk-ant-FAKE-DO-NOT-USE-abcdefghijklmnopqrstuvwxyz0123

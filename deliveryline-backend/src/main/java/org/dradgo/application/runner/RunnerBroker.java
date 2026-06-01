@@ -891,6 +891,7 @@ public class RunnerBroker {
   private void appendRunnerCompletedEvent(
       String workflowRunId, String runnerExecutionId, Integer exitCode) {
     Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
     details.put("runnerExecutionId", runnerExecutionId);
     if (runnerAdapter instanceof RecoverableRunnerAdapter recoverable) {
       recoverable
@@ -900,6 +901,7 @@ public class RunnerBroker {
     if (exitCode != null) {
       details.put("exitCode", exitCode);
     }
+    addCapturedLogDetails(details, runnerExecutionId);
     eventPort.append(
         workflowRunId,
         WorkflowEventType.RUNNER_COMPLETED,
@@ -921,9 +923,11 @@ public class RunnerBroker {
       String reason,
       ActorContext actor) {
     Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
     details.put("runnerExecutionId", runnerExecutionId);
     details.put("failureCategory", category.value());
     details.put("reason", reason);
+    addCapturedLogDetails(details, runnerExecutionId);
     eventPort.append(
         workflowRunId,
         WorkflowEventType.RUNNER_FAILED,
@@ -932,6 +936,37 @@ public class RunnerBroker {
         category,
         OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
         details);
+  }
+
+  /**
+   * Story 3.6 AC6 / Trap T6 — enrich the existing {@code RUNNER_COMPLETED} / {@code RUNNER_FAILED}
+   * event details with the durable redacted-log capture metrics (metadata ONLY — never content,
+   * never a secret value). The Docker adapter persisted these onto the row at container exit
+   * (recordRawOutput) before the result reached the broker, so a fresh read of the row surfaces
+   * them. Rows captured before this story, or runners that produced no logs, leave the columns null
+   * and no keys are added.
+   */
+  private void addCapturedLogDetails(Map<String, Object> details, String runnerExecutionId) {
+    recordPort
+        .findByPublicId(runnerExecutionId)
+        .ifPresent(
+            snapshot -> {
+              if (snapshot.redactionCount() != null) {
+                details.put(
+                    org.dradgo.domain.registry.WorkflowEventDetailKeys.REDACTION_COUNT,
+                    snapshot.redactionCount());
+              }
+              if (snapshot.rawOutputByteSize() != null) {
+                details.put(
+                    org.dradgo.domain.registry.WorkflowEventDetailKeys.RAW_OUTPUT_BYTE_SIZE,
+                    snapshot.rawOutputByteSize());
+              }
+              if (snapshot.rawOutputClassification() != null) {
+                details.put(
+                    org.dradgo.domain.registry.WorkflowEventDetailKeys.RAW_OUTPUT_CLASSIFICATION,
+                    snapshot.rawOutputClassification().value());
+              }
+            });
   }
 
   /**

@@ -92,7 +92,8 @@ class DockerRunnerAdapterContainerLifecycleIT {
             RunnerProperties.Mock.defaults(),
             RunnerProperties.Scheduling.defaults(),
             dockerConfig,
-            RunnerProperties.defaultSecretEnvNames());
+            RunnerProperties.defaultSecretEnvNames(),
+            false);
 
     RunnerSecretsService secretsService =
         new RunnerSecretsService(
@@ -100,9 +101,27 @@ class DockerRunnerAdapterContainerLifecycleIT {
                 .withProperty("CODEX_API_KEY", "sk-codex-it-value")
                 .withProperty("ANTHROPIC_API_KEY", "sk-ant-it-value"),
             properties);
+    // Story 3.6: real capture service (writes redacted logs/runner-logs) backed by a stubbed
+    // execution service so the DB persist is a no-op in this container-only IT. The capture path's
+    // redaction + durable-write behavior is pinned in the dedicated capture unit/contract tests.
+    org.dradgo.application.runner.RunnerLogCaptureService logCaptureService =
+        new org.dradgo.application.runner.RunnerLogCaptureService(
+            new org.dradgo.application.security.RedactionPolicyService(
+                new org.dradgo.application.security.DataClassificationService()),
+            new org.dradgo.adapters.files.LocalRunnerLogStore(tempHome.toAbsolutePath().toString()),
+            properties);
+    org.dradgo.application.runner.RunnerExecutionService executionService =
+        org.mockito.Mockito.mock(org.dradgo.application.runner.RunnerExecutionService.class);
     adapter =
         new DockerRunnerAdapter(
-            scratchStore, workspaceStore, gateway, properties, secretsService, Clock.systemUTC());
+            scratchStore,
+            workspaceStore,
+            gateway,
+            properties,
+            secretsService,
+            logCaptureService,
+            executionService,
+            Clock.systemUTC());
   }
 
   @AfterEach

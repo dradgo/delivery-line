@@ -25,6 +25,28 @@ class RunnerPropertiesTest {
     assertEquals(3_600_000L, defaults.docker().workspaceCleanupIntervalMs());
     // Story 3.2a AC4 — the new dangling-container min-age grace window.
     assertEquals(120L, defaults.docker().danglingContainerMinAgeSeconds());
+    // Story 3.6 AC4 — log capture stays local-only by default (no shareable elevation).
+    assertEquals(false, defaults.allowShareableLogs());
+  }
+
+  @Test
+  void allowShareableLogsBindsTheConfiguredValue() {
+    // Story 3.6 AC4 — the flag is the operator opt-in gate for shareable-redacted log elevation.
+    RunnerProperties enabled =
+        new RunnerProperties(
+            2.0d,
+            java.util.Map.of(),
+            10_000L,
+            50,
+            60_000L,
+            5_000L,
+            RunnerProperties.Recovery.defaults(),
+            RunnerProperties.Mock.defaults(),
+            RunnerProperties.Scheduling.defaults(),
+            RunnerProperties.Docker.defaults(),
+            RunnerProperties.defaultSecretEnvNames(),
+            true);
+    assertEquals(true, enabled.allowShareableLogs());
   }
 
   @Test
@@ -43,7 +65,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.Mock.defaults(),
                 RunnerProperties.Scheduling.defaults(),
                 RunnerProperties.Docker.defaults(),
-                RunnerProperties.defaultSecretEnvNames()));
+                RunnerProperties.defaultSecretEnvNames(),
+                false));
   }
 
   @Test
@@ -62,7 +85,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.Mock.defaults(),
                 RunnerProperties.Scheduling.defaults(),
                 RunnerProperties.Docker.defaults(),
-                RunnerProperties.defaultSecretEnvNames()));
+                RunnerProperties.defaultSecretEnvNames(),
+                false));
   }
 
   @Test

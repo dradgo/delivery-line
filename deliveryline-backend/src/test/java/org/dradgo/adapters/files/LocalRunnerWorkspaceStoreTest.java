@@ -10,6 +10,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
 import java.util.Set;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.spi.RawRunnerLog;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
 import org.dradgo.application.runner.spi.WorkspaceScanFile;
 import org.dradgo.domain.DomainException;
@@ -256,6 +257,33 @@ class LocalRunnerWorkspaceStoreTest {
   }
 
   @Test
+  void readRawLogsForCaptureReportsTruncationAndDropsTrailingPartialWindow() throws IOException {
+    WorkspaceLayout layout = store.prepare(REX_ID);
+    int cap = LocalRunnerWorkspaceStore.MAX_RAW_LOG_CAPTURE_BYTES_FOR_TEST;
+    String prefix = "a".repeat(cap - 20);
+    String boundarySecret = "Authorization: Bearer ghp_partial_secret_crosses_the_boundary";
+    Files.writeString(layout.logs().resolve("runner.stdout"), prefix + boundarySecret);
+
+    RawRunnerLog log = store.readRawStdoutForCapture(REX_ID).orElseThrow();
+
+    assertThat(log.truncated()).isTrue();
+    assertThat(log.text()).contains("[TRUNCATED ");
+    assertThat(log.text()).doesNotContain("ghp_partial_secret");
+    assertThat(log.text().length()).isLessThan(cap);
+  }
+
+  @Test
+  @EnabledOnOs({OS.LINUX, OS.MAC})
+  void readRawLogsForCaptureRejectsSymlinkedSourceFile() throws IOException {
+    WorkspaceLayout layout = store.prepare(REX_ID);
+    Path secret = tempHome.resolve("outside-secret.txt");
+    Files.writeString(secret, "Authorization: Bearer ghp_outside_secret");
+    Files.createSymbolicLink(layout.logs().resolve("runner.stdout"), secret);
+
+    assertThat(store.readRawStdoutForCapture(REX_ID)).isEmpty();
+  }
+
+  @Test
   void quarantineMarkerRoundTrips() {
     store.prepare(REX_ID);
     assertThat(store.isQuarantined(REX_ID)).isFalse();
@@ -293,7 +321,8 @@ class LocalRunnerWorkspaceStoreTest {
             java.time.Duration.ofSeconds(30L),
             java.time.Duration.ofSeconds(30L),
             120L),
-        RunnerProperties.defaultSecretEnvNames());
+        RunnerProperties.defaultSecretEnvNames(),
+        false);
   }
 
   private static Set<PosixFilePermission> allAccessDirPerms() {
