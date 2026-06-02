@@ -251,13 +251,16 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     // Story 3.9 AC2/AC4 (Decision D0/D3) — when the dispatch carries a repositoryRef AND the
     // repository-workspace service is wired, clone the linked repo and add a /workspace/repo (rw)
     // mount. Every mock + no-repo dispatch (repositoryRef == null) is byte-for-byte unchanged.
-    if (request.repositoryRef() != null && repositoryWorkspaceService == null) {
-      throw new IllegalStateException(
-          "repository workspace service is unavailable for repositoryRef-bearing dispatch");
-    }
+    // Read the nullable field once into a local so the null-guard and the dereference observe the
+    // same value (the field is injected via ObjectProvider and absent in mock/no-repo profiles).
     if (request.repositoryRef() != null) {
+      RepositoryWorkspaceService workspaceService = this.repositoryWorkspaceService;
+      if (workspaceService == null) {
+        throw new IllegalStateException(
+            "repository workspace service is unavailable for repositoryRef-bearing dispatch");
+      }
       RepositoryWorkspaceService.RepositoryMount repoMount =
-          repositoryWorkspaceService.prepareWorkspace(
+          workspaceService.prepareWorkspace(
               request.workflowRunId(),
               request.stage(),
               rexId,
