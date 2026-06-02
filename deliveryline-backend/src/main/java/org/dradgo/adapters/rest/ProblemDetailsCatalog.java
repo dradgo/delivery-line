@@ -310,6 +310,18 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.DOCTOR_GITHUB_AUTH_FAILED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "GitHub authentication failed",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_GITHUB_TOKEN_MISSING,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "GitHub token missing",
+        false);
+    register(
+        metadata,
         DomainErrorCode.RETRY_NOT_APPLICABLE,
         HttpStatus.CONFLICT,
         "Retry not applicable",

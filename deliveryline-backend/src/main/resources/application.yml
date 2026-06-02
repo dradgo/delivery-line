@@ -76,6 +76,20 @@ deliveryline:
       read-ms: 30000
     polling:
       enabled: true
+  github:
+    # Story 3.14 — real GitHub adapter config (active only under the opt-in github-real profile,
+    # which is NEVER in a profile group; the mock stays the default). The PAT is supplied at
+    # runtime via the GITHUB_TOKEN env var (.env / process env) — NEVER committed here. Only the
+    # non-secret knobs carry defaults; a blank token is allowed at bind time and is fatal only when
+    # the github-real profile activates the gitHubRestClient bean.
+    token: ${GITHUB_TOKEN:}
+    base-url: https://api.github.com
+    api-version: "2022-11-28"
+    # AC5 — WARN when X-RateLimit-Remaining drops below this; raise GITHUB_RATE_LIMITED at 0.
+    rate-limit-warn-threshold: 100
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000

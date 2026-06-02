@@ -62,6 +62,7 @@ class DoctorLoggingContractTest {
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
+    when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
     DoctorService service =
         new DoctorService(
             probes,
@@ -80,7 +81,7 @@ class DoctorLoggingContractTest {
     assertThat(infoEvents.get(1).getFormattedMessage())
         .contains("doctor diagnostics finished")
         .contains("overallStatus=PASS")
-        .contains("checksRun=12");
+        .contains("checksRun=13");
   }
 
   @Test

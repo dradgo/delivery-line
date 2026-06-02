@@ -28,6 +28,7 @@ import org.dradgo.application.diagnostics.DiagnosticsStatus;
 import org.dradgo.application.diagnostics.spi.DoctorProbePort;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
+import org.dradgo.application.integration.github.GitHubProperties;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.domain.net.LoopbackAddressResolver;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -39,10 +40,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 @Component
 public class DoctorProbeAdapter implements DoctorProbePort {
@@ -51,6 +56,7 @@ public class DoctorProbeAdapter implements DoctorProbePort {
 
   private static final Set<String> BLOCKED_PROFILES = Set.of("prod", "production", "prd");
   private static final Set<String> ALLOWED_PROFILES = Set.of("local", "test", "demo");
+  private static final String GITHUB_REAL_PROFILE = "github-real";
   private static final int JAVA_VERSION_MIN = 21;
   private static final int POSTGRES_TIMEOUT_SECONDS = 5;
   private static final int DOCKER_TIMEOUT_SECONDS = 3;
@@ -79,6 +85,11 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   private final Supplier<String> powerShellVersionSupplier;
   private final Supplier<String> shellEnvSupplier;
   private final RunnerProperties runnerProperties;
+  // GitHub auth probe (story 3.14 AC9). Both are null unless the github-real profile is active and
+  // its config/RestClient beans exist — the probe returns PASS-not-applicable (no network) when
+  // github-real is inactive, so a null client here is the normal default-profile case.
+  @Nullable private final RestClient gitHubRestClient;
+  @Nullable private final GitHubProperties gitHubProperties;
 
   @Autowired
   public DoctorProbeAdapter(
@@ -96,6 +107,11 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       // env-var NAMES; the runner-secrets probe still reports presence against those default
       // names).
       ObjectProvider<RunnerProperties> runnerPropertiesProvider,
+      // ObjectProvider (qualified) so the github-auth probe (story 3.14 AC9) wires in every context
+      // — the gitHubRestClient bean exists only under github-real, and GitHubProperties may be
+      // absent in lean doctor-smoke boots. Absent → null → probe reports PASS-not-applicable.
+      @Qualifier("gitHubRestClient") ObjectProvider<RestClient> gitHubRestClientProvider,
+      ObjectProvider<GitHubProperties> gitHubPropertiesProvider,
       @Value("${deliveryline.home}") String deliverylineHome,
       @Value("${deliveryline.rest.bind-address:${server.address:localhost}}") String serverAddress,
       @Value("${server.port:8080}") int serverPort) {
@@ -116,7 +132,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultFileRead,
         DoctorProbeAdapter::defaultPowerShellVersion,
         DoctorProbeAdapter::defaultShellValue,
-        runnerPropertiesProvider.getIfAvailable());
+        runnerPropertiesProvider.getIfAvailable(),
+        gitHubRestClientProvider.getIfAvailable(),
+        gitHubPropertiesProvider.getIfAvailable());
   }
 
   // Public so tests in other packages can construct an adapter without the
@@ -149,7 +167,41 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultFileRead,
         DoctorProbeAdapter::defaultPowerShellVersion,
         DoctorProbeAdapter::defaultShellValue,
-        RunnerProperties.defaults());
+        RunnerProperties.defaults(),
+        null,
+        null);
+  }
+
+  /**
+   * Test seam for the github-auth probe (story 3.14 AC9): only {@code environment} (for the
+   * github-real profile check) and the two GitHub deps are load-bearing; everything else is a safe
+   * default the probe never touches. Pass a {@code null} client/properties to exercise the
+   * not-applicable / token-missing paths.
+   */
+  DoctorProbeAdapter(
+      Environment environment,
+      @Nullable RestClient gitHubRestClient,
+      @Nullable GitHubProperties gitHubProperties) {
+    this(
+        environment,
+        null,
+        null,
+        new UuidV7Generator(),
+        Path.of("."),
+        "localhost",
+        8080,
+        Path.of("."),
+        ProcessBuilder::start,
+        () -> System.getProperty("os.name", "unknown"),
+        () -> System.getProperty("os.version", "unknown"),
+        () -> System.getProperty("os.arch", "unknown"),
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultPowerShellVersion,
+        DoctorProbeAdapter::defaultShellValue,
+        RunnerProperties.defaults(),
+        gitHubRestClient,
+        gitHubProperties);
   }
 
   DoctorProbeAdapter(
@@ -169,7 +221,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       Function<Path, Optional<String>> osReleaseReader,
       Supplier<String> powerShellVersionSupplier,
       Supplier<String> shellEnvSupplier,
-      RunnerProperties runnerProperties) {
+      RunnerProperties runnerProperties,
+      @Nullable RestClient gitHubRestClient,
+      @Nullable GitHubProperties gitHubProperties) {
     this.environment = environment;
     this.dataSource = dataSource;
     this.flyway = flyway;
@@ -188,6 +242,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
     this.shellEnvSupplier = shellEnvSupplier;
     this.runnerProperties =
         runnerProperties == null ? RunnerProperties.defaults() : runnerProperties;
+    this.gitHubRestClient = gitHubRestClient;
+    this.gitHubProperties = gitHubProperties;
   }
 
   private static Optional<String> defaultFileRead(Path path) {
@@ -516,6 +572,85 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         "Runner provider secret(s) missing for: " + missingKinds,
         DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING.value(),
         details);
+  }
+
+  /**
+   * Story 3.14 AC9 — GitHub PAT auth check. Returns PASS "not-applicable" with NO network call when
+   * {@code github-real} is inactive (the default mock profile). Under {@code github-real}: a blank
+   * token ⇒ FAIL {@link DomainErrorCode#DOCTOR_GITHUB_TOKEN_MISSING}; otherwise probes the cheap
+   * {@code GET /user} endpoint and reports PASS on 2xx, FAIL {@link
+   * DomainErrorCode#DOCTOR_GITHUB_AUTH_FAILED} on 401/403 (and on any other unreachable/transport
+   * outcome — the probe's verdict is "could DeliveryLine authenticate to GitHub"). Presence-only
+   * details; the token is never logged.
+   */
+  @Override
+  public ProbeResult probeGitHubAuth() {
+    Map<String, String> details = new LinkedHashMap<>();
+    if (!isProfileActive(GITHUB_REAL_PROFILE)) {
+      details.put("githubRealProfile", "inactive");
+      // No network call — under the default mock profile this probe is a no-op PASS so a
+      // @SpringBootTest doctor run never reaches api.github.com (Decision D4).
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "github-real profile inactive; GitHub auth check not applicable",
+          null,
+          details);
+    }
+    details.put("githubRealProfile", "active");
+    boolean tokenPresent = gitHubProperties != null && gitHubProperties.hasToken();
+    details.put("tokenPresent", tokenPresent ? "present" : "missing");
+    if (!tokenPresent) {
+      log.warn("doctor github_auth probe resolution=token_missing");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "GitHub PAT missing; set GITHUB_TOKEN before activating the github-real profile",
+          DomainErrorCode.DOCTOR_GITHUB_TOKEN_MISSING.value(),
+          details);
+    }
+    if (gitHubRestClient == null) {
+      // Active + token present but the gitHubRestClient bean is unavailable — a misconfiguration
+      // rather than an auth outcome. Surface as token-missing-class so doctor flags the config gap.
+      log.warn("doctor github_auth probe resolution=client_unavailable");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "GitHub REST client unavailable under the github-real profile",
+          DomainErrorCode.DOCTOR_GITHUB_TOKEN_MISSING.value(),
+          details);
+    }
+    try {
+      gitHubRestClient.get().uri("/user").retrieve().toBodilessEntity();
+      log.info("doctor github_auth probe resolution=pass");
+      return new ProbeResult(
+          DiagnosticsStatus.PASS, "GitHub authentication succeeded (GET /user)", null, details);
+    } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden authError) {
+      log.warn(
+          "doctor github_auth probe resolution=auth_failed status={}", authError.getStatusCode());
+      details.put("status", String.valueOf(authError.getStatusCode().value()));
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "GitHub authentication failed (" + authError.getStatusCode() + ")",
+          DomainErrorCode.DOCTOR_GITHUB_AUTH_FAILED.value(),
+          details);
+    } catch (RestClientException transportError) {
+      log.warn(
+          "doctor github_auth probe resolution=auth_failed cause={}",
+          transportError.getClass().getSimpleName());
+      details.put("cause", transportError.getClass().getSimpleName());
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "GitHub auth probe could not reach GitHub: " + transportError.getClass().getSimpleName(),
+          DomainErrorCode.DOCTOR_GITHUB_AUTH_FAILED.value(),
+          details);
+    }
+  }
+
+  private boolean isProfileActive(String profile) {
+    for (String active : environment.getActiveProfiles()) {
+      if (active.equals(profile)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override

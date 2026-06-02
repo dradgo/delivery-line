@@ -584,7 +584,9 @@ class DoctorProbeAdapterTest {
         procVersionReader,
         powerShellVersionSupplier,
         shellEnvSupplier,
-        org.dradgo.application.runner.RunnerProperties.defaults());
+        org.dradgo.application.runner.RunnerProperties.defaults(),
+        null,
+        null);
   }
 
   private static ProcessLauncher failingFactory() {

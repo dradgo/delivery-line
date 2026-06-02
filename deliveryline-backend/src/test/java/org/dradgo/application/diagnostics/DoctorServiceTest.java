@@ -126,6 +126,7 @@ class DoctorServiceTest {
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
+    when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -171,6 +172,7 @@ class DoctorServiceTest {
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
+    when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -275,6 +277,7 @@ class DoctorServiceTest {
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
+    when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -296,6 +299,7 @@ class DoctorServiceTest {
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
+    when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -330,6 +334,9 @@ class DoctorServiceTest {
     when(probes.probeRestBindAddress()).thenReturn(ProbeResult.pass("Loopback"));
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
+    when(probes.probeGitHubAuth())
+        .thenReturn(
+            ProbeResult.pass("github-real profile inactive; GitHub auth check not applicable"));
   }
 
   private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

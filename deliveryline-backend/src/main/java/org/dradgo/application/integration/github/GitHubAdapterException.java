@@ -1,5 +1,6 @@
 package org.dradgo.application.integration.github;
 
+import java.util.Map;
 import java.util.Objects;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 
@@ -20,18 +21,37 @@ public final class GitHubAdapterException extends RuntimeException {
   private static final long serialVersionUID = 1L;
 
   private final IntegrationFailureCategory failureCategory;
+  private final Map<String, String> details;
 
   public GitHubAdapterException(IntegrationFailureCategory failureCategory, String message) {
-    this(failureCategory, message, null);
+    this(failureCategory, message, (Throwable) null);
+  }
+
+  public GitHubAdapterException(
+      IntegrationFailureCategory failureCategory, String message, Map<String, String> details) {
+    this(failureCategory, message, null, details);
   }
 
   public GitHubAdapterException(
       IntegrationFailureCategory failureCategory, String message, Throwable cause) {
+    this(failureCategory, message, cause, Map.of());
+  }
+
+  public GitHubAdapterException(
+      IntegrationFailureCategory failureCategory,
+      String message,
+      Throwable cause,
+      Map<String, String> details) {
     super(message, cause);
     this.failureCategory = Objects.requireNonNull(failureCategory, "failureCategory");
+    this.details = Map.copyOf(Objects.requireNonNull(details, "details"));
   }
 
   public IntegrationFailureCategory failureCategory() {
     return failureCategory;
+  }
+
+  public Map<String, String> details() {
+    return details;
   }
 }

@@ -42,6 +42,7 @@ public class DoctorService {
   public static final String CHECK_REST_BIND_ADDRESS = "rest-bind-address";
   public static final String CHECK_FRONTEND_ASSET_PRESENCE = "frontend-asset-presence";
   public static final String CHECK_SUPPORTED_ENVIRONMENT = "supported-environment";
+  public static final String CHECK_GITHUB_AUTH = "github-auth";
 
   public static final List<String> STATIC_ORDER =
       List.of(
@@ -56,7 +57,8 @@ public class DoctorService {
           CHECK_RUNNER_SECRETS,
           CHECK_REST_BIND_ADDRESS,
           CHECK_FRONTEND_ASSET_PRESENCE,
-          CHECK_SUPPORTED_ENVIRONMENT);
+          CHECK_SUPPORTED_ENVIRONMENT,
+          CHECK_GITHUB_AUTH);
 
   private static final Map<String, String> REMEDIATION =
       Map.ofEntries(
@@ -85,6 +87,11 @@ public class DoctorService {
           Map.entry(
               CHECK_SPRING_PROFILE,
               "Set spring.profiles.active=local in application-local.yml (or pass --spring.profiles.active=local)."),
+          Map.entry(
+              CHECK_GITHUB_AUTH,
+              "Set a valid GITHUB_TOKEN (PAT with repo + pull_requests:write scope) in .env — see"
+                  + " docs/adr/0021-github-write-scope.md — then restart and re-check. This check only"
+                  + " runs under the github-real profile."),
           Map.entry(
               CHECK_SUPPORTED_ENVIRONMENT,
               "To run DeliveryLine on this OS+shell combination, see docs/supported-environments.md for currently"
@@ -200,6 +207,7 @@ public class DoctorService {
         case CHECK_FRONTEND_ASSET_PRESENCE ->
             ProbeResult.skip("Frontend asset check populated in story 2.28");
         case CHECK_SUPPORTED_ENVIRONMENT -> probes.probeSupportedEnvironment();
+        case CHECK_GITHUB_AUTH -> probes.probeGitHubAuth();
         default -> ProbeResult.skip("Unknown check: " + name);
       };
     } catch (RuntimeException re) {

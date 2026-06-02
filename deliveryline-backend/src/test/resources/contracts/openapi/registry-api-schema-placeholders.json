@@ -124,6 +124,8 @@
     "DOCTOR_UNSUPPORTED_ENVIRONMENT": "https://deliveryline.local/problems/doctor-unsupported-environment",
     "DOCTOR_ARTIFACT_DIR_UNWRITABLE": "https://deliveryline.local/problems/doctor-artifact-dir-unwritable",
     "DOCTOR_RUNNER_SECRET_MISSING": "https://deliveryline.local/problems/doctor-runner-secret-missing",
+    "DOCTOR_GITHUB_AUTH_FAILED": "https://deliveryline.local/problems/doctor-github-auth-failed",
+    "DOCTOR_GITHUB_TOKEN_MISSING": "https://deliveryline.local/problems/doctor-github-token-missing",
     "RETRY_NOT_APPLICABLE": "https://deliveryline.local/problems/retry-not-applicable"
   }
 }

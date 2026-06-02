@@ -10,6 +10,18 @@ deliveryline:
       read-ms: 30000
     polling:
       enabled: false
+  github:
+    # Story 3.14 — mirror the real application.yml non-secret github knobs so the profile-neutral
+    # GitHubProperties binding does not shadow the defaults to surprising values in the
+    # @SpringBootTest tier (memory: validated-config-needs-test-yaml). No token here — github-real
+    # is never in a test profile group, so the gitHubRestClient fail-fast never fires under tests.
+    token: ${GITHUB_TOKEN:}
+    base-url: https://api.github.com
+    api-version: "2022-11-28"
+    rate-limit-warn-threshold: 100
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000

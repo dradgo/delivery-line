@@ -1,6 +1,5 @@
 package org.dradgo.foundation;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
@@ -252,18 +251,18 @@ class FoundationGateVerificationTest {
     }
 
     /**
-     * Story 3.13 AC10 — mock-vs-real interface parity is explicitly deferred to story 3.14 ("once
-     * story 3.14 lands"). The {@code GitHubRealAdapter} does not exist yet, so authoring a parity
-     * test now would assert against a non-existent type. This disabled placeholder is the
-     * documented TODO referencing 3.14; story 3.14 removes the {@code @Disabled} and implements the
-     * parity assertion (both adapters implement the same {@code GitHubAdapter} method set).
+     * Story 3.14 AC8 (reciprocal of story 3.13 AC10) — mock-vs-real adapter parity is now
+     * implemented and enabled. {@code GitHubMockVsRealParityFoundationContract} drives equivalent
+     * scenarios against both {@code GitHubMockAdapter} and {@code GitHubRealAdapter} (the real one
+     * against {@code MockRestServiceServer}-stubbed HTTP) and asserts typed-shape + {@code
+     * IntegrationFailureCategory} equivalence. The live-repo variant is {@code gh-real-tests}-gated
+     * (nightly, story 3.35 AC3) and is NOT part of this gate.
      */
     @Test
-    @Disabled(
-        "Deferred to story 3.14 (AC10): GitHubRealAdapter does not exist yet — parity asserted then.")
-    @DisplayName("TODO(story 3.14) — GitHub mock vs real adapter interface parity")
-    void gitHubMockVsRealParityDeferredToStory314() {
-      // Intentionally empty — enabled by story 3.14.
+    @DisplayName("GitHub mock vs real adapter parity (typed-shape + failure-category equivalence)")
+    void gitHubMockVsRealParity() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.14", "org.dradgo.foundation.GitHubMockVsRealParityFoundationContract");
     }
   }
 }
