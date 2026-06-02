@@ -19,6 +19,7 @@ import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -55,6 +56,7 @@ public class CliGitAdapter implements GitCommandPort {
   private final int localTimeoutSeconds;
   private final int networkTimeoutSeconds;
 
+  @Autowired
   public CliGitAdapter(RedactionPolicyService redaction) {
     this(redaction, "git", DEFAULT_LOCAL_TIMEOUT_SECONDS, DEFAULT_NETWORK_TIMEOUT_SECONDS);
   }
