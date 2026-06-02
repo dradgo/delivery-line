@@ -127,6 +127,8 @@ class DoctorServiceTest {
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
+    when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
+    when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -173,6 +175,8 @@ class DoctorServiceTest {
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
+    when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
+    when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -278,6 +282,8 @@ class DoctorServiceTest {
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
+    when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
+    when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -300,6 +306,8 @@ class DoctorServiceTest {
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
+    when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
+    when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -337,6 +345,14 @@ class DoctorServiceTest {
     when(probes.probeGitHubAuth())
         .thenReturn(
             ProbeResult.pass("github-real profile inactive; GitHub auth check not applicable"));
+    when(probes.probeGitAvailability())
+        .thenReturn(
+            ProbeResult.pass(
+                "github-real profile inactive; git availability check not applicable"));
+    when(probes.probeGitBotIdentity())
+        .thenReturn(
+            ProbeResult.pass(
+                "github-real profile inactive; git bot identity check not applicable"));
   }
 
   private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

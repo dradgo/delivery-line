@@ -322,6 +322,24 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH,
+        HttpStatus.CONFLICT,
+        "Linear ticket and GitHub repository do not reconcile",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_GIT_MISSING,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Git command-line tool missing",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Git bot identity unconfigured",
+        false);
+    register(
+        metadata,
         DomainErrorCode.RETRY_NOT_APPLICABLE,
         HttpStatus.CONFLICT,
         "Retry not applicable",

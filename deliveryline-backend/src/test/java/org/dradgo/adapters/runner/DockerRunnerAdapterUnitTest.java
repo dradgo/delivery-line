@@ -40,6 +40,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
+import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerKind;
@@ -134,6 +135,91 @@ class DockerRunnerAdapterUnitTest {
         .containsEntry("deliveryline.workflowRunId", RUN_ID)
         .containsEntry("deliveryline.runnerKind", "codex")
         .containsKey("deliveryline.dispatchedAt");
+  }
+
+  @Test
+  void dispatchAddsRepoMountAndCallsPrepareWorkspaceWhenRepositoryRefPresent() {
+    // Story 3.9 AC2/AC4 — a repositoryRef-bearing dispatch adds a 4th /workspace/repo (rw) mount
+    // and
+    // delegates to RepositoryWorkspaceService.prepareWorkspace; no-repo dispatches are unaffected
+    // (covered by dispatchBuildsContainerSpecWithReadOnlyInputAndNoNetwork above).
+    RepositoryWorkspaceService repoService = Mockito.mock(RepositoryWorkspaceService.class);
+    DockerRunnerAdapter repoAdapter =
+        new DockerRunnerAdapter(
+            scratchStore,
+            workspaceStore,
+            gateway,
+            properties,
+            secretsService,
+            logCaptureService,
+            executionService,
+            CLOCK,
+            repoService);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+    when(repoService.prepareWorkspace(
+            eq(RUN_ID),
+            eq(RunnerStage.INVESTIGATION),
+            eq(REX_ID),
+            eq("DEL-9"),
+            eq("Fix dispatch"),
+            eq("GH-101")))
+        .thenReturn(
+            new RepositoryWorkspaceService.RepositoryMount(
+                Path.of("/workspaces/rex/repo"),
+                "/workspace/repo",
+                "main",
+                "deliveryline/DEL-9/stage-12345678"));
+
+    RunnerDispatchRequest request =
+        new RunnerDispatchRequest(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.INVESTIGATION,
+            RunnerKind.CODEX,
+            Path.of("/scratch/context-bundle.v1.json"),
+            new ExecutionConstraints(Duration.ofSeconds(600L), false),
+            DataClassification.SHAREABLE_REDACTED,
+            "GH-101",
+            "DEL-9",
+            "Fix dispatch");
+
+    repoAdapter.dispatch(request);
+
+    verify(repoService)
+        .prepareWorkspace(
+            RUN_ID, RunnerStage.INVESTIGATION, REX_ID, "DEL-9", "Fix dispatch", "GH-101");
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.binds()).hasSize(4);
+    assertThat(spec.binds().get(3).containerPath()).isEqualTo("/workspace/repo");
+    assertThat(spec.binds().get(3).readOnly()).isFalse();
+  }
+
+  @Test
+  void dispatchFailsFastWhenRepositoryRefPresentButRepositoryServiceMissing() {
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    RunnerDispatchRequest request =
+        new RunnerDispatchRequest(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.INVESTIGATION,
+            RunnerKind.CODEX,
+            Path.of("/scratch/context-bundle.v1.json"),
+            new ExecutionConstraints(Duration.ofSeconds(600L), false),
+            DataClassification.SHAREABLE_REDACTED,
+            "GH-101",
+            "DEL-9",
+            "Fix dispatch");
+
+    assertThatThrownBy(() -> adapter.dispatch(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("repository workspace service");
+    verify(gateway, never()).createContainer(any());
   }
 
   @Test

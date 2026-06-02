@@ -222,13 +222,18 @@ class LocalRunnerWorkspaceStoreTest {
     Files.writeString(layout.input().resolve("context-bundle.v1.json"), "{\"ctx\":1}");
     Files.writeString(layout.output().resolve("result.json"), "{\"ok\":true}");
     Files.writeString(layout.logs().resolve("runner.stdout"), "hello world");
+    Path repo = store.prepareRepositoryDir(REX_ID);
+    Files.writeString(repo.resolve("runner-change.txt"), "repo secret text");
 
     List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
 
     assertThat(files)
         .extracting(WorkspaceScanFile::relativePath)
         .containsExactlyInAnyOrder(
-            "input/context-bundle.v1.json", "output/result.json", "logs/runner.stdout");
+            "input/context-bundle.v1.json",
+            "output/result.json",
+            "logs/runner.stdout",
+            "repo/runner-change.txt");
     assertThat(files)
         .filteredOn(f -> f.relativePath().equals("logs/runner.stdout"))
         .singleElement()

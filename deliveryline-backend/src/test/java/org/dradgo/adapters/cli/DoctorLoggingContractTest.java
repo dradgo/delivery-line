@@ -63,6 +63,8 @@ class DoctorLoggingContractTest {
     when(probes.probeSupportedEnvironment())
         .thenReturn(ProbeResult.pass("Supported environment in matrix"));
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
+    when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git check not applicable"));
+    when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity not applicable"));
     DoctorService service =
         new DoctorService(
             probes,
@@ -81,7 +83,7 @@ class DoctorLoggingContractTest {
     assertThat(infoEvents.get(1).getFormattedMessage())
         .contains("doctor diagnostics finished")
         .contains("overallStatus=PASS")
-        .contains("checksRun=13");
+        .contains("checksRun=15");
   }
 
   @Test

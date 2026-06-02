@@ -30,6 +30,8 @@ import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
+import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
+import org.dradgo.application.runner.workspace.spi.GitCommandException;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.domain.DomainException;
@@ -89,6 +91,11 @@ public class RunnerBroker {
   private final RunnerContractValidator contractValidator;
   private final RunnerProperties runnerProperties;
   private final RunnerSecretScanService runnerSecretScanService;
+  // Story 3.9 (Decision D0/OQ-2) — nullable repository-workspace seam. ObjectProvider-injected so
+  // the package-private test ctor stays stable (the ~700 fast tests pass null and are unaffected).
+  // When present, handleSuccess commits+pushes+opens the PR for a repo-backed run before
+  // completing.
+  private final RepositoryWorkspaceService repositoryWorkspaceService;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate dispatchTransactionTemplate;
   private final TransactionTemplate perItemTransactionTemplate;
@@ -108,7 +115,11 @@ public class RunnerBroker {
       RunnerContractValidator contractValidator,
       RunnerProperties runnerProperties,
       RunnerSecretScanService runnerSecretScanService,
-      PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager,
+      // Story 3.9 Trap T4 — ObjectProvider keeps the package-private test ctor stable; resolves to
+      // null when no RepositoryWorkspaceService bean exists (mock/lean contexts).
+      org.springframework.beans.factory.ObjectProvider<RepositoryWorkspaceService>
+          repositoryWorkspaceServiceProvider) {
     this(
         recordPort,
         eventPort,
@@ -124,7 +135,8 @@ public class RunnerBroker {
         runnerSecretScanService,
         requiredTemplate(transactionManager),
         requiresNewTemplate(transactionManager),
-        Clock.systemUTC());
+        Clock.systemUTC(),
+        repositoryWorkspaceServiceProvider.getIfAvailable());
   }
 
   RunnerBroker(
@@ -143,6 +155,42 @@ public class RunnerBroker {
       TransactionTemplate dispatchTransactionTemplate,
       TransactionTemplate perItemTransactionTemplate,
       Clock clock) {
+    this(
+        recordPort,
+        eventPort,
+        executionService,
+        contextBundleService,
+        idempotencyService,
+        workflowTransitionService,
+        artifactOperationService,
+        runnerAdapter,
+        scratchStore,
+        contractValidator,
+        runnerProperties,
+        runnerSecretScanService,
+        dispatchTransactionTemplate,
+        perItemTransactionTemplate,
+        clock,
+        null);
+  }
+
+  RunnerBroker(
+      RunnerExecutionRecordPort recordPort,
+      RunnerExecutionEventPort eventPort,
+      RunnerExecutionService executionService,
+      ContextBundleService contextBundleService,
+      IdempotencyService idempotencyService,
+      WorkflowTransitionService workflowTransitionService,
+      ArtifactOperationService artifactOperationService,
+      RunnerAdapter runnerAdapter,
+      RunnerScratchStore scratchStore,
+      RunnerContractValidator contractValidator,
+      RunnerProperties runnerProperties,
+      RunnerSecretScanService runnerSecretScanService,
+      TransactionTemplate dispatchTransactionTemplate,
+      TransactionTemplate perItemTransactionTemplate,
+      Clock clock,
+      RepositoryWorkspaceService repositoryWorkspaceService) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -164,6 +212,7 @@ public class RunnerBroker {
     this.perItemTransactionTemplate =
         Objects.requireNonNull(perItemTransactionTemplate, "perItemTransactionTemplate");
     this.clock = Objects.requireNonNull(clock, "clock");
+    this.repositoryWorkspaceService = repositoryWorkspaceService;
     this.objectMapper = new ObjectMapper();
   }
 
@@ -558,6 +607,46 @@ public class RunnerBroker {
       return;
     }
 
+    // Story 3.9 (Decision D0 / OQ-2): if this run had a repo workspace, commit the runner-produced
+    // changes, push the branch, and open/update the PR BEFORE marking the execution completed. A
+    // push rejection surfaces as a typed GitCommandException (AC7) which we map onto the EXISTING
+    // runner-failure transition path (RUNNER_FAILED + driveWorkflowFailed) — never auto-rebasing,
+    // force-pushing, or retrying (T8). captureAndPush is a no-op (returns empty) for non-repo runs,
+    // and repositoryWorkspaceService is null in the fast-tier unit ctor, so mock/no-repo dispatches
+    // are byte-for-byte unchanged. (Re-homing the failure transition to
+    // WorkflowOrchestrationService
+    // is story 3a-1, OQ-2.)
+    if (repositoryWorkspaceService != null) {
+      try {
+        repositoryWorkspaceService.captureAndPush(runnerExecutionId);
+      } catch (GitCommandException pushFailure) {
+        log.warn(
+            "onResult git push rejected runnerExecutionId={} workflowRunId={} category={}",
+            runnerExecutionId,
+            workflowRunId,
+            pushFailure.failureCategory().value());
+        try {
+          executionService.recordFailed(
+              runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+        } catch (DomainException raceTerminal) {
+          if (raceTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+            throw raceTerminal;
+          }
+          log.info(
+              "onResult git-push-failed skip runnerExecutionId={} reason=already_terminal",
+              runnerExecutionId);
+          return;
+        }
+        appendGitPushFailedEvent(workflowRunId, runnerExecutionId, pushFailure);
+        driveWorkflowFailed(
+            workflowRunId,
+            runnerExecutionId,
+            FailureCategory.RUNNER_CONTRACT_VIOLATION,
+            "git push rejected: " + pushFailure.failureCategory().value());
+        return;
+      }
+    }
+
     // Story 3.2a AC9: gate the RUNNER_COMPLETED append on the row ACTUALLY transitioning. A
     // duplicate onResult (recovery scratch-replay re-entering, or a concurrent harvest) on an
     // already-completed row throws ILLEGAL_TRANSITION here — skip the append so the lifecycle event
@@ -934,6 +1023,33 @@ public class RunnerBroker {
         actor,
         reason,
         category,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+  }
+
+  /**
+   * Story 3.9 AC7 (OQ-2) — emit the {@code git.pushFailed} signal for a rejected push. Reuses the
+   * existing {@code RUNNER_FAILED} event type (a dedicated {@code git.pushFailed} WorkflowEventType
+   * would be a schema-gated change — the workflow-event-types contract fixture + response schema —
+   * which story 3.6 Trap T6 deliberately avoided; the precise git classification is carried in the
+   * details instead). {@code details} carries the git {@code IntegrationFailureCategory} and the
+   * {@code git.pushFailed} marker — never a token, auth URL, or branch-protection internals.
+   */
+  private void appendGitPushFailedEvent(
+      String workflowRunId, String runnerExecutionId, GitCommandException pushFailure) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("event", "git.pushFailed");
+    details.put("failureCategory", FailureCategory.RUNNER_CONTRACT_VIOLATION.value());
+    details.put("gitFailureCategory", pushFailure.failureCategory().value());
+    details.put("reason", "git_push_rejected");
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_FAILED,
+        ActorContext.SYSTEM,
+        "git_push_rejected",
+        FailureCategory.RUNNER_CONTRACT_VIOLATION,
         OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
         details);
   }

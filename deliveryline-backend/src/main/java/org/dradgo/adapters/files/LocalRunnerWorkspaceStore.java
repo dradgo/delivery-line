@@ -58,6 +58,9 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   private static final String INPUT_SUBDIR = "input";
   private static final String OUTPUT_SUBDIR = "output";
   private static final String LOGS_SUBDIR = "logs";
+  // Story 3.9 AC4 / Decision D3 — the cloned-repo working tree, sibling of input/output/logs under
+  // the same {rex}/ root so the existing recursive deleteWorkspace reaps it for free (AC11).
+  private static final String REPO_SUBDIR = "repo";
   private static final String CONTEXT_BUNDLE_FILENAME = "context-bundle.v1.json";
   private static final String RUNNER_RESULT_FILENAME = "runner-result.v1.json";
   private static final String HEARTBEAT_TOUCH_FILENAME = "heartbeat.touch";
@@ -74,7 +77,7 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   private static final String TEMP_SUFFIX = ".tmp";
   private static final String QUARANTINE_MARKER_FILENAME = ".quarantine";
   private static final List<String> SECRET_SCAN_SUBDIRS =
-      List.of(INPUT_SUBDIR, OUTPUT_SUBDIR, LOGS_SUBDIR);
+      List.of(INPUT_SUBDIR, OUTPUT_SUBDIR, LOGS_SUBDIR, REPO_SUBDIR);
 
   private static final Set<PosixFilePermission> OWNER_ONLY_DIR_PERMS =
       EnumSet.of(
@@ -170,6 +173,40 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
     }
     log.info("workspace prepared runnerExecutionId={} root={}", runnerExecutionId, root);
     return new WorkspaceLayout(root, input, output, logs);
+  }
+
+  @Override
+  public Path prepareRepositoryDir(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path root = resolveWorkspaceRoot(runnerExecutionId);
+    Path repo = root.resolve(REPO_SUBDIR).normalize();
+    if (!repo.startsWith(root)) {
+      throw pathTraversal(runnerExecutionId, REPO_SUBDIR);
+    }
+    try {
+      // The {rex}/ root may not exist yet if prepareRepositoryDir is called before prepare();
+      // create
+      // it owner-only first, then the repo/ dir with runner-writable perms (mirrors output/).
+      createWithOwnerOnlyPerms(root);
+      createWithPerms(repo, RUNNER_WRITABLE_DIR_PERMS);
+      validateDirectory(root, root);
+      validateDirectory(repo, root);
+    } catch (IOException error) {
+      throw new IllegalStateException(
+          "Failed to prepare runner repo workspace for " + runnerExecutionId, error);
+    }
+    log.info("workspace repo dir prepared runnerExecutionId={} repo={}", runnerExecutionId, repo);
+    return repo;
+  }
+
+  @Override
+  public Optional<Path> resolveRepositoryDir(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path repo = subdirPath(runnerExecutionId, REPO_SUBDIR);
+    if (!Files.isDirectory(repo, LinkOption.NOFOLLOW_LINKS)) {
+      return Optional.empty();
+    }
+    return Optional.of(repo);
   }
 
   @Override
@@ -478,7 +515,7 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
           @Override
           public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
               throws IOException {
-            Files.delete(file);
+            deleteClearingReadOnly(file);
             return FileVisitResult.CONTINUE;
           }
 
@@ -487,10 +524,26 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
             if (exc != null) {
               throw exc;
             }
-            Files.delete(dir);
+            deleteClearingReadOnly(dir);
             return FileVisitResult.CONTINUE;
           }
         });
+  }
+
+  /**
+   * Story 3.9 — delete {@code path}, first clearing any read-only bit. A cloned git repo's pack /
+   * object files are written read-only by git; on Windows {@link Files#delete} then fails with
+   * {@code AccessDeniedException}. Clearing the read-only flag (a no-op on typical POSIX
+   * filesystems where directory perms govern deletion) keeps the recursive workspace reap (AC11)
+   * cross-platform.
+   */
+  private static void deleteClearingReadOnly(Path path) throws IOException {
+    try {
+      Files.delete(path);
+    } catch (java.nio.file.AccessDeniedException denied) {
+      path.toFile().setWritable(true, false);
+      Files.delete(path);
+    }
   }
 
   /** Story 3.2: enumerate {@code rex_*} subdirectories under the workspace root for AC5 (k). */

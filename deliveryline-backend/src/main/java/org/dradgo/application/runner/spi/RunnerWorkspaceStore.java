@@ -31,6 +31,26 @@ public interface RunnerWorkspaceStore {
   WorkspaceLayout prepare(String runnerExecutionId);
 
   /**
+   * Story 3.9 AC4 / Decision D3 — create (or open) the {@code repo/} subdirectory under the SAME
+   * {@code {runnerExecutionId}/} root as {@code input/ output/ logs/}, with runner-writable
+   * permissions (mirrors {@code output/}), and return its absolute canonical path. {@code
+   * RepositoryWorkspaceService} clones the linked GitHub repo into this dir and {@code
+   * DockerRunnerAdapter} bind-mounts it at {@code /workspace/repo} (read-write). Because it lives
+   * under the {@code {rex}/} root, the existing {@link #deleteWorkspace(String)} recursive walk
+   * reaps it for free — no new deletion logic (AC11). Idempotent: re-preparing returns the existing
+   * dir.
+   */
+  Path prepareRepositoryDir(String runnerExecutionId);
+
+  /**
+   * Story 3.9 (Decision D6) — resolve the absolute {@code repo/} path for the runner execution
+   * WITHOUT creating it. Returns {@link Optional#empty()} when {@code repo/} does not exist (the
+   * normal no-repo dispatch). {@code RepositoryWorkspaceService.captureAndPush} uses this to gate:
+   * absent ⇒ the run had no repo workspace ⇒ no commit/push.
+   */
+  Optional<Path> resolveRepositoryDir(String runnerExecutionId);
+
+  /**
    * Atomically write the redacted context-bundle bytes (already validated by the broker) to {@code
    * input/context-bundle.v1.json}. Same temp-file + rename pattern as {@code
    * LocalRunnerScratchStore.writeContextBundle} so a partial write can never expose a truncated

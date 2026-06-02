@@ -26,7 +26,20 @@ public enum IntegrationFailureCategory implements RegistryValue {
   GITHUB_BRANCH_PROTECTED("github_branch_protected"),
   GITHUB_AUTH_FAILED("github_auth_failed"),
   GITHUB_NETWORK_FAILURE("github_network_failure"),
-  GITHUB_API_VERSION_INCOMPATIBLE("github_api_version_incompatible");
+  GITHUB_API_VERSION_INCOMPATIBLE("github_api_version_incompatible"),
+
+  // Git-CLI workspace categories (story 3.9 Decision D4). These classify a `git push` rejection or
+  // failure from the host-side RepositoryWorkspaceService/CliGitAdapter — distinct from the
+  // GitHub_* values above, which classify the GitHub REST adapter's API conversation. Wire values
+  // are snake_case and wire-breaking to rename. ADDITIVE/safe: the enum is auto-derived into
+  // DomainRegistry, is NOT in the api-schema-placeholder manifest, and has NO SQL CHECK (confirmed
+  // story 3.13) — so adding these requires no openapi/schema.d.ts regen (contrast DomainErrorCode,
+  // which IS three-sites). GIT_BRANCH_PROTECTION_VIOLATION is the push-time git rejection and is
+  // deliberately distinct from the adapter's PR-create-time GITHUB_BRANCH_PROTECTED.
+  GIT_PUSH_REJECTED("git_push_rejected"),
+  GIT_BRANCH_PROTECTION_VIOLATION("git_branch_protection_violation"),
+  GIT_NETWORK_FAILURE("git_network_failure"),
+  GIT_AUTH_FAILED("git_auth_failed");
 
   private static final Map<String, IntegrationFailureCategory> LOOKUP =
       RegistryParsers.index(values());

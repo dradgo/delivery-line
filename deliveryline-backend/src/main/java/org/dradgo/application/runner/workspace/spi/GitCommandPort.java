@@ -1,0 +1,139 @@
+package org.dradgo.application.runner.workspace.spi;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Objects;
+
+/**
+ * Application-owned SPI for the host-side {@code git} operations that back {@code
+ * RepositoryWorkspaceService} (story 3.9 Decision D1). Implemented by {@code
+ * adapters.git.CliGitAdapter}, which wraps the system {@code git} binary via {@code
+ * ProcessBuilder}.
+ *
+ * <p>The port speaks only repo paths + refs + domain-shaped records — it NEVER exposes {@code
+ * Process}, exit codes, or any git-library type to the application layer (Trap T1, mirrors the
+ * {@code RunnerWorkspaceStore} SPI shape). Failures surface as {@link GitCommandException} carrying
+ * a domain {@code IntegrationFailureCategory}.
+ *
+ * <p><strong>Credential posture (Decision D2 / AC10).</strong> The {@code githubToken} passed to
+ * the network operations ({@link #cloneRepository}, {@link #checkoutOrReuseBranch}, {@link #push})
+ * is injected transiently into the git child process via a per-invocation {@code -c
+ * credential.helper=…} reading an env var — NEVER written to the remote URL, NEVER persisted to
+ * {@code .git/config}, NEVER logged. Pass {@code null}/blank for token-less transports (e.g. {@code
+ * file://} test remotes).
+ */
+public interface GitCommandPort {
+
+  /**
+   * Clone {@code spec.remoteUrl()} into {@code spec.targetDir()} (shallow per {@code depth},
+   * optional sparse paths), authenticating transiently with {@code githubToken}.
+   * Idempotent-friendly: callers guard against an already-cloned dir (the service only clones into
+   * a fresh {@code repo/}).
+   */
+  void cloneRepository(CloneSpec spec, String githubToken);
+
+  /**
+   * AC3 idempotent branch handling. When {@code branch} already exists on the remote with prior
+   * commits → fetch + hard-reset the local branch to the remote tip (preserving prior runner work);
+   * when it exists only locally from a partial prior attempt → reuse; otherwise create it from the
+   * current HEAD. Always leaves a clean working tree — never a half-merged/conflicting state (T7).
+   */
+  BranchOutcome checkoutOrReuseBranch(Path repoDir, String branch, String githubToken);
+
+  /** Configure {@code user.name} / {@code user.email} on the repo's LOCAL config (Decision D8). */
+  void configureIdentity(Path repoDir, String botName, String botEmail);
+
+  /**
+   * Persist a non-secret value into the repo's LOCAL git config (Decision D6). Used by {@code
+   * prepareWorkspace} to stamp the {@code repoRef}/{@code ticketRef}/{@code workflowRunId} so
+   * {@code captureAndPush(rex)} can re-derive them from the self-describing on-disk repo
+   * (restart-robust, no in-memory map). NEVER store a secret here — the cloned repo's {@code
+   * .git/config} is visible to the runner mount (AC10).
+   */
+  void setLocalConfig(Path repoDir, String key, String value);
+
+  /** Read a value previously stored via {@link #setLocalConfig} (Decision D6). Empty when unset. */
+  java.util.Optional<String> getLocalConfig(Path repoDir, String key);
+
+  /** The currently checked-out branch read from the on-disk {@code HEAD} (Decision D6). */
+  String currentBranch(Path repoDir);
+
+  /** The {@code origin} remote URL read from the on-disk repo config (Decision D6). */
+  String originRemoteUrl(Path repoDir);
+
+  /** True when the working tree has staged or unstaged changes (AC6). */
+  boolean hasUncommittedChanges(Path repoDir);
+
+  /**
+   * Stage all changes + commit with {@code spec.message()} (trailers included) under the bot
+   * identity. Returns the new commit SHA.
+   */
+  String commitAll(CommitSpec spec);
+
+  /** Resolve the current {@code HEAD} commit SHA. */
+  String headCommitSha(Path repoDir);
+
+  /**
+   * Push {@code branch} to {@code origin}. On rejection/failure raises {@link GitCommandException}
+   * classified to the matching git {@code IntegrationFailureCategory} (push-rejected /
+   * branch-protection / network / auth) — NEVER auto-rebases, force-pushes, or retries (AC7/T8).
+   */
+  PushResult push(Path repoDir, String branch, String githubToken);
+
+  /** Outcome of {@link #checkoutOrReuseBranch} (AC3). */
+  enum BranchOutcome {
+    /** Branch did not exist anywhere → created fresh from HEAD. */
+    CREATED,
+    /** Branch existed only locally (partial prior attempt) → reused. */
+    REUSED_LOCAL,
+    /** Branch existed on the remote with prior commits → fetched + reset local to remote tip. */
+    RESET_TO_REMOTE
+  }
+
+  /** Clone parameters (Decision D2/D3, AC5). {@code sparsePaths} empty ⇒ full-tree checkout. */
+  record CloneSpec(String remoteUrl, Path targetDir, int depth, List<String> sparsePaths) {
+
+    public CloneSpec {
+      if (remoteUrl == null || remoteUrl.isBlank()) {
+        throw new IllegalArgumentException("remoteUrl must be non-blank");
+      }
+      Objects.requireNonNull(targetDir, "targetDir");
+      depth = depth <= 0 ? 1 : depth;
+      sparsePaths = sparsePaths == null ? List.of() : List.copyOf(sparsePaths);
+    }
+
+    public boolean sparseEnabled() {
+      return !sparsePaths.isEmpty();
+    }
+  }
+
+  /** Commit parameters (AC6/AC12). {@code message} already carries the governance trailers. */
+  record CommitSpec(Path repoDir, String message, String botName, String botEmail) {
+
+    public CommitSpec {
+      Objects.requireNonNull(repoDir, "repoDir");
+      if (message == null || message.isBlank()) {
+        throw new IllegalArgumentException("commit message must be non-blank");
+      }
+      if (botName == null || botName.isBlank()) {
+        throw new IllegalArgumentException("botName must be non-blank");
+      }
+      if (botEmail == null || botEmail.isBlank()) {
+        throw new IllegalArgumentException("botEmail must be non-blank");
+      }
+    }
+  }
+
+  /** Successful push result (AC6) — the pushed commit SHA + branch + (token-free) origin URL. */
+  record PushResult(String commitSha, String branch, String remoteUrl) {
+
+    public PushResult {
+      if (commitSha == null || commitSha.isBlank()) {
+        throw new IllegalArgumentException("commitSha must be non-blank");
+      }
+      if (branch == null || branch.isBlank()) {
+        throw new IllegalArgumentException("branch must be non-blank");
+      }
+    }
+  }
+}

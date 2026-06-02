@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,12 +34,15 @@ import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
+import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Profile;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 /**
@@ -76,12 +80,45 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   // T1).
   private final RunnerLogCaptureService runnerLogCaptureService;
   private final RunnerExecutionService runnerExecutionService;
+  // Story 3.9 (Decision D0/D3, Trap T4) — nullable repository-workspace seam. Injected via
+  // ObjectProvider so the public test ctor signature stays stable and the ctor-fan-out trap is
+  // dodged; null in unit tests and absent in lean contexts. When present + the dispatch carries a
+  // repositoryRef, prepareWorkspace clones the repo and a /workspace/repo mount is added.
+  @Nullable private final RepositoryWorkspaceService repositoryWorkspaceService;
   private final Clock clock;
   private final ConcurrentMap<String, String> rexIdToContainerId = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, LogGrowthObservation> rexIdToLastLogObservation =
       new ConcurrentHashMap<>();
 
   @org.springframework.beans.factory.annotation.Autowired
+  public DockerRunnerAdapter(
+      RunnerScratchStore scratchStore,
+      RunnerWorkspaceStore workspaceStore,
+      DockerEngineGateway docker,
+      RunnerProperties runnerProperties,
+      RunnerSecretsService runnerSecretsService,
+      RunnerLogCaptureService runnerLogCaptureService,
+      RunnerExecutionService runnerExecutionService,
+      // Story 3.9 Trap T4 — ObjectProvider keeps the public test ctor stable and resolves to null
+      // when no RepositoryWorkspaceService bean exists (lean adapter slice contexts).
+      ObjectProvider<RepositoryWorkspaceService> repositoryWorkspaceServiceProvider) {
+    this(
+        scratchStore,
+        workspaceStore,
+        docker,
+        runnerProperties,
+        runnerSecretsService,
+        runnerLogCaptureService,
+        runnerExecutionService,
+        Clock.systemUTC(),
+        repositoryWorkspaceServiceProvider.getIfAvailable());
+  }
+
+  /**
+   * Back-compat public constructor (no Clock, no repo seam) for explicit construction sites such as
+   * the docker-runner lifecycle IT support — keeps the story-3.1 signature usable. NOT
+   * {@code @Autowired}: Spring uses the ObjectProvider constructor above.
+   */
   public DockerRunnerAdapter(
       RunnerScratchStore scratchStore,
       RunnerWorkspaceStore workspaceStore,
@@ -98,7 +135,8 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         runnerSecretsService,
         runnerLogCaptureService,
         runnerExecutionService,
-        Clock.systemUTC());
+        Clock.systemUTC(),
+        null);
   }
 
   DockerRunnerAdapter(
@@ -110,6 +148,28 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       RunnerLogCaptureService runnerLogCaptureService,
       RunnerExecutionService runnerExecutionService,
       Clock clock) {
+    this(
+        scratchStore,
+        workspaceStore,
+        docker,
+        runnerProperties,
+        runnerSecretsService,
+        runnerLogCaptureService,
+        runnerExecutionService,
+        clock,
+        null);
+  }
+
+  DockerRunnerAdapter(
+      RunnerScratchStore scratchStore,
+      RunnerWorkspaceStore workspaceStore,
+      DockerEngineGateway docker,
+      RunnerProperties runnerProperties,
+      RunnerSecretsService runnerSecretsService,
+      RunnerLogCaptureService runnerLogCaptureService,
+      RunnerExecutionService runnerExecutionService,
+      Clock clock,
+      @Nullable RepositoryWorkspaceService repositoryWorkspaceService) {
     this.scratchStore = Objects.requireNonNull(scratchStore, "scratchStore");
     this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
     this.docker = Objects.requireNonNull(docker, "docker");
@@ -121,6 +181,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     this.runnerExecutionService =
         Objects.requireNonNull(runnerExecutionService, "runnerExecutionService");
     this.clock = Objects.requireNonNull(clock, "clock");
+    this.repositoryWorkspaceService = repositoryWorkspaceService;
   }
 
   @Override
@@ -182,16 +243,40 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     Map<String, String> containerEnv = new LinkedHashMap<>(secretEnv);
     containerEnv.put("DELIVERYLINE_RUNNER_STAGE", request.stage().value());
 
+    List<CreateContainerSpec.BindMount> mounts = new ArrayList<>();
+    mounts.add(new CreateContainerSpec.BindMount(layout.input(), CONTAINER_INPUT_MOUNT, true));
+    mounts.add(new CreateContainerSpec.BindMount(layout.output(), CONTAINER_OUTPUT_MOUNT, false));
+    mounts.add(new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false));
+
+    // Story 3.9 AC2/AC4 (Decision D0/D3) — when the dispatch carries a repositoryRef AND the
+    // repository-workspace service is wired, clone the linked repo and add a /workspace/repo (rw)
+    // mount. Every mock + no-repo dispatch (repositoryRef == null) is byte-for-byte unchanged.
+    if (request.repositoryRef() != null && repositoryWorkspaceService == null) {
+      throw new IllegalStateException(
+          "repository workspace service is unavailable for repositoryRef-bearing dispatch");
+    }
+    if (request.repositoryRef() != null) {
+      RepositoryWorkspaceService.RepositoryMount repoMount =
+          repositoryWorkspaceService.prepareWorkspace(
+              request.workflowRunId(),
+              request.stage(),
+              rexId,
+              request.linearTicketRef(),
+              request.linearTicketSummary(),
+              request.repositoryRef());
+      mounts.add(
+          new CreateContainerSpec.BindMount(
+              repoMount.repoHostPath(), repoMount.containerMountPath(), false));
+      log.info(
+          "docker dispatch repo workspace mounted runnerExecutionId={} repoRef={} branch={}",
+          rexId,
+          request.repositoryRef(),
+          repoMount.branch());
+    }
+
     CreateContainerSpec spec =
         new CreateContainerSpec(
-            image,
-            List.of(
-                new CreateContainerSpec.BindMount(layout.input(), CONTAINER_INPUT_MOUNT, true),
-                new CreateContainerSpec.BindMount(layout.output(), CONTAINER_OUTPUT_MOUNT, false),
-                new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false)),
-            NETWORK_MODE_NONE,
-            labels,
-            containerEnv);
+            image, List.copyOf(mounts), NETWORK_MODE_NONE, labels, containerEnv);
 
     String containerId = null;
     try {

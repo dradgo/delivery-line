@@ -56,6 +56,19 @@ deliveryline:
     # the threshold from below); subsequent rejections continue to advance the counter and the
     # workflow stays in Investigating — escalation does NOT terminate the workflow.
     spec-rejection-escalation-threshold: 3
+    # Story 3.9 (Decision D8) — deliveryline-bot git identity for RepositoryWorkspaceService commits.
+    # Supplied at runtime via DELIVERYLINE_BOT_NAME / DELIVERYLINE_BOT_EMAIL (.env / process env);
+    # blank ⇒ the built-in default identity is used for commits and the doctor git-bot-identity probe
+    # WARNs (DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED) under the github-real profile.
+    bot:
+      name: ${DELIVERYLINE_BOT_NAME:}
+      email: ${DELIVERYLINE_BOT_EMAIL:}
+    # Story 3.9 AC5 — optional per-repository clone tuning, keyed by repo-key:
+    #   repos:
+    #     <repo-key>:
+    #       clone-depth: 1          # shallow by default
+    #       sparse-paths: []        # empty ⇒ full-tree checkout
+    # Defaults (depth 1, no sparse) apply when a repo-key is absent; no entries are required.
   rest:
     # Optional override for server.address. Leave unset to inherit the loopback default above.
     # bind-address: 0.0.0.0

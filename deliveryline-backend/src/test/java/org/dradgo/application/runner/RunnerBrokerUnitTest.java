@@ -37,12 +37,15 @@ import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
+import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
+import org.dradgo.application.runner.workspace.spi.GitCommandException;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
+import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -351,6 +354,99 @@ class RunnerBrokerUnitTest {
         .transition(any(), any(), any(), any(), any(), any(FailureCategory.class), any());
     // Story 3.5 AC4: the happy path runs the post-execution secret scan before completing.
     verify(secretScanService).scanWorkspace(eq(REX_ID), any(), any(), eq(RUN_ID));
+  }
+
+  @Test
+  void onResultGitPushFailureRecordsFailedAndDrivesWorkflowFailed() {
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    RunnerBroker repoBroker =
+        new RunnerBroker(
+            recordPort,
+            eventPort,
+            executionService,
+            contextBundleService,
+            idempotencyService,
+            workflowTransitionService,
+            artifactOperationService,
+            runnerAdapter,
+            scratchStore,
+            new RunnerContractValidator(),
+            runnerProperties,
+            secretScanService,
+            callthroughTemplate(),
+            callthroughTemplate(),
+            CLOCK,
+            repoService);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(snapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    byte[] artifactBytes = "spec-payload-bytes".getBytes(StandardCharsets.UTF_8);
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq("spec/v1.json")))
+        .thenReturn(Optional.of(artifactBytes));
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              ArtifactRecordSnapshot artifact =
+                  ArtifactRecordSnapshot.withoutFailureMetadata(
+                      "art_test01234567",
+                      command.workflowRunId(),
+                      command.artifactType(),
+                      1,
+                      null,
+                      org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                      null,
+                      null,
+                      null,
+                      org.dradgo.domain.registry.ArtifactStatus.PENDING,
+                      null);
+              ArtifactOperationSnapshot op =
+                  new ArtifactOperationSnapshot(
+                      "op_test01234567",
+                      command.workflowRunId(),
+                      "art_test01234567",
+                      command.operationType().value(),
+                      org.dradgo.domain.registry.ArtifactOperationStatus.PENDING,
+                      command.idempotencyKey(),
+                      null,
+                      null,
+                      OffsetDateTime.now(CLOCK));
+              return new RecordArtifactOperationResult(artifact, op);
+            });
+    when(repoService.captureAndPush(REX_ID))
+        .thenThrow(
+            new GitCommandException(
+                IntegrationFailureCategory.GIT_PUSH_REJECTED, "non-fast-forward"));
+
+    String payload =
+        """
+			{
+			  "schemaVersion": 1,
+			  "workflowRunId": "%s",
+			  "runnerExecutionId": "%s",
+			  "artifactReferences": [
+			    {"artifactId": "art_test01234567", "artifactType": "spec", "contentReference": "spec/v1.json"}
+			  ],
+			  "normalizedOutput": {"summary": "ok", "outcome": "success"},
+			  "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"},
+			  "classification": "shareable-redacted",
+			  "failureCategory": null
+			}
+			"""
+            .formatted(RUN_ID, REX_ID);
+
+    repoBroker.onResult(REX_ID, payload.getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(executionService, never()).recordCompleted(any());
+    verify(workflowTransitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.FAILED),
+            any(),
+            any(),
+            any(),
+            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
+            any());
   }
 
   @Test

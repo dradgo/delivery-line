@@ -43,6 +43,8 @@ public class DoctorService {
   public static final String CHECK_FRONTEND_ASSET_PRESENCE = "frontend-asset-presence";
   public static final String CHECK_SUPPORTED_ENVIRONMENT = "supported-environment";
   public static final String CHECK_GITHUB_AUTH = "github-auth";
+  public static final String CHECK_GIT_AVAILABLE = "git-available";
+  public static final String CHECK_GIT_BOT_IDENTITY = "git-bot-identity";
 
   public static final List<String> STATIC_ORDER =
       List.of(
@@ -58,7 +60,9 @@ public class DoctorService {
           CHECK_REST_BIND_ADDRESS,
           CHECK_FRONTEND_ASSET_PRESENCE,
           CHECK_SUPPORTED_ENVIRONMENT,
-          CHECK_GITHUB_AUTH);
+          CHECK_GITHUB_AUTH,
+          CHECK_GIT_AVAILABLE,
+          CHECK_GIT_BOT_IDENTITY);
 
   private static final Map<String, String> REMEDIATION =
       Map.ofEntries(
@@ -92,6 +96,16 @@ public class DoctorService {
               "Set a valid GITHUB_TOKEN (PAT with repo + pull_requests:write scope) in .env — see"
                   + " docs/adr/0021-github-write-scope.md — then restart and re-check. This check only"
                   + " runs under the github-real profile."),
+          Map.entry(
+              CHECK_GIT_AVAILABLE,
+              "Install the system git command-line tool and ensure it is on PATH (see"
+                  + " docs/adr/0022-git-cli-vs-jgit.md). RepositoryWorkspaceService clones/pushes via"
+                  + " system git. This check only runs under the github-real profile."),
+          Map.entry(
+              CHECK_GIT_BOT_IDENTITY,
+              "Set DELIVERYLINE_BOT_NAME and DELIVERYLINE_BOT_EMAIL in .env to configure the"
+                  + " deliveryline-bot git identity for commits. This check only runs under the"
+                  + " github-real profile (WARN-only — the built-in default is used when unset)."),
           Map.entry(
               CHECK_SUPPORTED_ENVIRONMENT,
               "To run DeliveryLine on this OS+shell combination, see docs/supported-environments.md for currently"
@@ -208,6 +222,8 @@ public class DoctorService {
             ProbeResult.skip("Frontend asset check populated in story 2.28");
         case CHECK_SUPPORTED_ENVIRONMENT -> probes.probeSupportedEnvironment();
         case CHECK_GITHUB_AUTH -> probes.probeGitHubAuth();
+        case CHECK_GIT_AVAILABLE -> probes.probeGitAvailability();
+        case CHECK_GIT_BOT_IDENTITY -> probes.probeGitBotIdentity();
         default -> ProbeResult.skip("Unknown check: " + name);
       };
     } catch (RuntimeException re) {

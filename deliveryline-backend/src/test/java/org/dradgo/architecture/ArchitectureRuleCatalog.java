@@ -50,6 +50,10 @@ final class ArchitectureRuleCatalog {
   private static final String RUNNER_ADAPTER_PACKAGE = "org.dradgo.adapters.runner..";
   private static final String INTEGRATION_ADAPTER_PACKAGE = "org.dradgo.adapters.integration..";
   private static final String DIAGNOSTICS_ADAPTER_PACKAGE = "org.dradgo.adapters.diagnostics..";
+  // Story 3.9 — system-git CLI adapter slice (CliGitAdapter implements the GitCommandPort SPI).
+  private static final String GIT_ADAPTER_PACKAGE = "org.dradgo.adapters.git..";
+  private static final String REPOSITORY_WORKSPACE_PACKAGE =
+      "org.dradgo.application.runner.workspace..";
   private static final String INFRASTRUCTURE_PACKAGE = "org.dradgo.infrastructure..";
   private static final String SECURITY_PACKAGE = "org.dradgo.application.security..";
   private static final String PERSISTENCE_ENTITY_PACKAGE =
@@ -91,7 +95,7 @@ final class ArchitectureRuleCatalog {
   static final ArchRule ADAPTER_PACKAGE_LAYOUT =
       namedRule(
           "adapter classes must stay inside the reserved adapter package layout",
-          "Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, or adapters.diagnostics.",
+          "Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, adapters.diagnostics, or adapters.git.",
           classes()
               .that()
               .resideInAPackage(ADAPTERS_PACKAGE)
@@ -103,7 +107,8 @@ final class ArchitectureRuleCatalog {
                   FILES_ADAPTER_PACKAGE,
                   RUNNER_ADAPTER_PACKAGE,
                   INTEGRATION_ADAPTER_PACKAGE,
-                  DIAGNOSTICS_ADAPTER_PACKAGE));
+                  DIAGNOSTICS_ADAPTER_PACKAGE,
+                  GIT_ADAPTER_PACKAGE));
 
   static final ArchRule DOMAIN_PACKAGE_MUST_EXIST =
       namedRule(
@@ -515,6 +520,17 @@ final class ArchitectureRuleCatalog {
                   "com.github..",
                   "org.springframework.web.client..",
                   "org.springframework.http.client.."));
+
+  static final ArchRule REPOSITORY_WORKSPACE_SERVICE_SCOPE =
+      namedRule(
+          "RepositoryWorkspaceService (application.runner.workspace) must reach git only via the GitCommandPort SPI, never adapters",
+          "Remediation: keep RepositoryWorkspaceService on the GitCommandPort SPI + GitHubAdapter port + RunnerSecretsService/RunnerWorkspaceStore/RedactionPolicyService; never import CliGitAdapter or any org.dradgo.adapters.. / git-library type. Story 3.9 AC13 / Trap T1 invariant.",
+          noClasses()
+              .that()
+              .resideInAPackage(REPOSITORY_WORKSPACE_PACKAGE)
+              .should()
+              .dependOnClassesThat()
+              .resideInAnyPackage("org.dradgo.adapters..", "org.eclipse.jgit.."));
 
   static final ArchRule CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY =
       namedRule(

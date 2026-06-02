@@ -1,0 +1,539 @@
+package org.dradgo.application.runner.workspace;
+
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.util.Objects;
+import java.util.Optional;
+import org.dradgo.application.integration.IntegrationLink;
+import org.dradgo.application.integration.github.GitHubAdapter;
+import org.dradgo.application.integration.github.GitHubAdapterException;
+import org.dradgo.application.integration.github.GitHubPullRequest;
+import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
+import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.runner.RunnerSecretsService;
+import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
+import org.dradgo.application.runner.workspace.spi.GitCommandException;
+import org.dradgo.application.runner.workspace.spi.GitCommandPort;
+import org.dradgo.application.workflow.WorkflowProperties;
+import org.dradgo.domain.DomainException;
+import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.IntegrationFailureCategory;
+import org.dradgo.domain.registry.RunnerStage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Service;
+
+/**
+ * Story 3.9 — the git half of agent execution. Clones the linked GitHub repository into a
+ * per-execution workspace ({@code {rex}/repo/}), checks out the deterministic feature branch {@code
+ * deliveryline/{ticketRef}/stage-{runIdShort}}, exposes the working tree as a {@code
+ * /workspace/repo} runner mount, captures runner-produced changes after exit, commits +
+ * direct-pushes to the target repo, and opens/updates the GitHub PR —
+ * <strong>failing-and-deferring-to-recovery on push rejection</strong> (never auto-rebasing,
+ * force-pushing, or silently retrying, AC7/T8).
+ *
+ * <p>Serves all three runner stages with an identical workspace lifecycle (the branch uses {@code
+ * runIdShort}, not the stage, so the convention is stage-agnostic).
+ *
+ * <p>Boundary (AC13/Trap T1): collaborators are the {@link GitCommandPort} SPI, the {@link
+ * GitHubAdapter} port (read-only here), {@link RunnerSecretsService}, {@link RunnerWorkspaceStore},
+ * {@link IntegrationLinkRecordPort}, and {@link WorkflowProperties} — never {@code
+ * org.dradgo.adapters..} or a git-library type. Pinned by the {@code
+ * REPOSITORY_WORKSPACE_SERVICE_SCOPE} ArchUnit rule.
+ *
+ * <p>Bean-gated on {@code github-mock}/{@code github-real} — exactly the profiles under which a
+ * {@link GitHubAdapter} bean exists ({@code GitHubMockAdapter}/{@code GitHubRealAdapter} carry the
+ * same profiles). In any other context (e.g. a lean {@code @SpringBootTest} contract on {@code
+ * [test, linear-mock]}) the bean is absent, the broker/adapter {@code
+ * ObjectProvider<RepositoryWorkspaceService>} resolves to null, and the repository seam stays
+ * dormant (Decision D0). The service-level tests construct it directly via {@code new}, so the
+ * profile gate does not affect them.
+ */
+@Service
+@Profile({"github-mock", "github-real"})
+public class RepositoryWorkspaceService {
+
+  private static final Logger log = LoggerFactory.getLogger(RepositoryWorkspaceService.class);
+
+  /** Container-side bind-mount point for the cloned working tree (AC4). */
+  public static final String CONTAINER_REPO_MOUNT = "/workspace/repo";
+
+  static final String GITHUB_TOKEN_ENV = "GITHUB_TOKEN";
+  static final String BRANCH_NAMESPACE = "deliveryline/";
+  static final String GITHUB_PR_INTEGRATION_TYPE = "github_pr";
+
+  // Decision D6 — self-describing on-disk markers re-derived by captureAndPush(rex). Non-secret.
+  static final String CONFIG_REPO_REF = "deliveryline.repoRef";
+  static final String CONFIG_TICKET_REF = "deliveryline.ticketRef";
+  static final String CONFIG_TICKET_SUMMARY = "deliveryline.ticketSummary";
+  static final String CONFIG_RUN_ID = "deliveryline.workflowRunId";
+  static final String CONFIG_STAGE = "deliveryline.stage";
+
+  private final GitCommandPort git;
+  private final GitHubAdapter gitHubAdapter;
+  private final RunnerSecretsService runnerSecretsService;
+  private final RunnerWorkspaceStore workspaceStore;
+  private final RunnerExecutionRecordPort recordPort;
+  private final IntegrationLinkRecordPort integrationLinkRecordPort;
+  private final WorkflowProperties workflowProperties;
+  private final Clock clock;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public RepositoryWorkspaceService(
+      GitCommandPort git,
+      GitHubAdapter gitHubAdapter,
+      RunnerSecretsService runnerSecretsService,
+      RunnerWorkspaceStore workspaceStore,
+      RunnerExecutionRecordPort recordPort,
+      IntegrationLinkRecordPort integrationLinkRecordPort,
+      WorkflowProperties workflowProperties) {
+    this(
+        git,
+        gitHubAdapter,
+        runnerSecretsService,
+        workspaceStore,
+        recordPort,
+        integrationLinkRecordPort,
+        workflowProperties,
+        Clock.systemUTC());
+  }
+
+  public RepositoryWorkspaceService(
+      GitCommandPort git,
+      GitHubAdapter gitHubAdapter,
+      RunnerSecretsService runnerSecretsService,
+      RunnerWorkspaceStore workspaceStore,
+      RunnerExecutionRecordPort recordPort,
+      IntegrationLinkRecordPort integrationLinkRecordPort,
+      WorkflowProperties workflowProperties,
+      Clock clock) {
+    this.git = Objects.requireNonNull(git, "git");
+    this.gitHubAdapter = Objects.requireNonNull(gitHubAdapter, "gitHubAdapter");
+    this.runnerSecretsService =
+        Objects.requireNonNull(runnerSecretsService, "runnerSecretsService");
+    this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
+    this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
+    this.integrationLinkRecordPort =
+        Objects.requireNonNull(integrationLinkRecordPort, "integrationLinkRecordPort");
+    this.workflowProperties = Objects.requireNonNull(workflowProperties, "workflowProperties");
+    this.clock = Objects.requireNonNull(clock, "clock");
+  }
+
+  /**
+   * AC1/AC2 — clone the linked repo, check out the deterministic branch, set the bot identity, and
+   * return the {@code /workspace/repo} mount reference + resolved default branch. The AC9
+   * repo-reconciliation guard runs FIRST, before any clone.
+   */
+  public RepositoryMount prepareWorkspace(
+      String workflowRunId,
+      RunnerStage stage,
+      String runnerExecutionId,
+      String linearTicketRef,
+      String linearTicketSummary,
+      String repositoryRef) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Objects.requireNonNull(stage, "stage");
+    if (repositoryRef == null || repositoryRef.isBlank()) {
+      throw repoMismatch(workflowRunId, repositoryRef, "blank repositoryRef");
+    }
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      log.info(
+          "prepareWorkspace start workflowRunId={} runnerExecutionId={} stage={} repoRef={}",
+          workflowRunId,
+          runnerExecutionId,
+          stage.value(),
+          repositoryRef);
+
+      // AC9 guard FIRST — resolve the repo and reconcile against any existing github_pr link.
+      GitHubRepository repository = resolveRepositoryOrMismatch(workflowRunId, repositoryRef);
+      assertNoConflictingRepoLink(workflowRunId, repositoryRef);
+
+      String token = runnerSecretsService.resolveHostSecret(GITHUB_TOKEN_ENV).orElse(null);
+      Path repoDir = workspaceStore.prepareRepositoryDir(runnerExecutionId);
+      String branch = branchName(linearTicketRef, workflowRunId);
+
+      WorkflowProperties.Repo repoConfig = workflowProperties.repoFor(repositoryRef);
+      if (!isExistingGitRepository(repoDir)) {
+        ensureCloneTargetEmpty(repoDir, runnerExecutionId);
+        git.cloneRepository(
+            new GitCommandPort.CloneSpec(
+                repository.url(), repoDir, repoConfig.cloneDepth(), repoConfig.sparsePaths()),
+            token);
+      } else {
+        log.warn(
+            "prepareWorkspace reusing existing local clone workflowRunId={} runnerExecutionId={} repoDir={}",
+            workflowRunId,
+            runnerExecutionId,
+            repoDir);
+      }
+
+      WorkflowProperties.Bot bot = workflowProperties.bot();
+      git.configureIdentity(repoDir, bot.effectiveName(), bot.effectiveEmail());
+      GitCommandPort.BranchOutcome outcome = git.checkoutOrReuseBranch(repoDir, branch, token);
+
+      // Decision D6 — stamp the self-describing markers so captureAndPush(rex) can re-derive them.
+      git.setLocalConfig(repoDir, CONFIG_REPO_REF, repositoryRef);
+      git.setLocalConfig(
+          repoDir, CONFIG_TICKET_REF, linearTicketRef == null ? "" : linearTicketRef);
+      git.setLocalConfig(
+          repoDir, CONFIG_TICKET_SUMMARY, linearTicketSummary == null ? "" : linearTicketSummary);
+      git.setLocalConfig(repoDir, CONFIG_RUN_ID, workflowRunId == null ? "" : workflowRunId);
+      git.setLocalConfig(repoDir, CONFIG_STAGE, stage.value());
+
+      log.info(
+          "prepareWorkspace ok workflowRunId={} runnerExecutionId={} branch={} branchOutcome={} defaultBranch={}",
+          workflowRunId,
+          runnerExecutionId,
+          branch,
+          outcome,
+          repository.defaultBranch());
+      return new RepositoryMount(repoDir, CONTAINER_REPO_MOUNT, repository.defaultBranch(), branch);
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  public RepositoryMount prepareWorkspace(
+      String workflowRunId,
+      RunnerStage stage,
+      String runnerExecutionId,
+      String linearTicketRef,
+      String repositoryRef) {
+    return prepareWorkspace(
+        workflowRunId, stage, runnerExecutionId, linearTicketRef, null, repositoryRef);
+  }
+
+  /**
+   * AC6/AC8 — after a successful runner exit, commit any runner-produced changes (with governance
+   * trailers, AC12), push the branch, and create/update the GitHub PR. Returns {@link
+   * Optional#empty()} when the run had no repo workspace (the common no-repo dispatch — the broker
+   * then proceeds to its normal completion). On push rejection raises {@link GitCommandException}
+   * (AC7) for the caller to map onto the failure path.
+   */
+  public Optional<RepositoryPushOutcome> captureAndPush(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Optional<Path> repoDirOpt = workspaceStore.resolveRepositoryDir(runnerExecutionId);
+    if (repoDirOpt.isEmpty()) {
+      log.debug(
+          "captureAndPush no-op runnerExecutionId={} reason=no_repo_workspace", runnerExecutionId);
+      return Optional.empty();
+    }
+    Path repoDir = repoDirOpt.get();
+
+    RunnerExecutionSnapshot snapshot =
+        recordPort
+            .findByPublicId(runnerExecutionId)
+            .orElseThrow(
+                () ->
+                    new DomainException(
+                        DomainErrorCode.RUNNER_EXECUTION_NOT_FOUND,
+                        "runner execution not found for captureAndPush: " + runnerExecutionId));
+    String workflowRunId = snapshot.workflowRunPublicId();
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      // Decision D6 — everything below is derived from the on-disk repo (restart-robust).
+      String branch = git.currentBranch(repoDir);
+      String repoRef = git.getLocalConfig(repoDir, CONFIG_REPO_REF).orElse(null);
+      String ticketRef = git.getLocalConfig(repoDir, CONFIG_TICKET_REF).orElse(null);
+      String ticketSummary = git.getLocalConfig(repoDir, CONFIG_TICKET_SUMMARY).orElse(null);
+      String stage = git.getLocalConfig(repoDir, CONFIG_STAGE).orElse(snapshot.stage().value());
+      String token = runnerSecretsService.resolveHostSecret(GITHUB_TOKEN_ENV).orElse(null);
+
+      boolean committed = false;
+      if (git.hasUncommittedChanges(repoDir)) {
+        WorkflowProperties.Bot bot = workflowProperties.bot();
+        String message = commitMessage(ticketRef, workflowRunId, stage, runnerExecutionId);
+        git.commitAll(
+            new GitCommandPort.CommitSpec(
+                repoDir, message, bot.effectiveName(), bot.effectiveEmail()));
+        committed = true;
+      } else {
+        log.info(
+            "captureAndPush no-op workflowRunId={} runnerExecutionId={} reason=clean_worktree branch={}",
+            workflowRunId,
+            runnerExecutionId,
+            branch);
+        return Optional.empty();
+      }
+
+      // AC7 — push rejection raises GitCommandException; do NOT catch it here (the broker maps it).
+      GitCommandPort.PushResult push = git.push(repoDir, branch, token);
+
+      String prRef =
+          createOrUpdatePullRequest(
+              workflowRunId, repoRef, branch, ticketRef, ticketSummary, stage, push.commitSha());
+
+      log.info(
+          "captureAndPush ok workflowRunId={} runnerExecutionId={} branch={} commitSha={} committed={} prRef={}",
+          workflowRunId,
+          runnerExecutionId,
+          branch,
+          push.commitSha(),
+          committed,
+          prRef);
+      return Optional.of(new RepositoryPushOutcome(push.commitSha(), branch, prRef, committed));
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /** AC11 — delegate to the workspace store's recursive delete (Decision D3). */
+  public void cleanupWorkspace(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    workspaceStore.deleteWorkspace(runnerExecutionId);
+    log.info("cleanupWorkspace done runnerExecutionId={}", runnerExecutionId);
+  }
+
+  // =====================================================================
+  // AC9 guard helpers
+  // =====================================================================
+
+  private GitHubRepository resolveRepositoryOrMismatch(String workflowRunId, String repositoryRef) {
+    Optional<GitHubRepository> repo;
+    try {
+      repo = gitHubAdapter.getRepositoryByRef(repositoryRef);
+    } catch (GitHubAdapterException adapterError) {
+      throw repoMismatch(
+          workflowRunId,
+          repositoryRef,
+          "repository ref unresolvable: " + adapterError.failureCategory().value());
+    }
+    return repo.orElseThrow(
+        () -> repoMismatch(workflowRunId, repositoryRef, "repository ref does not resolve"));
+  }
+
+  private void assertNoConflictingRepoLink(String workflowRunId, String repositoryRef) {
+    if (workflowRunId == null || workflowRunId.isBlank()) {
+      return;
+    }
+    Optional<IntegrationLink> existing =
+        integrationLinkRecordPort.findActiveByWorkflowRun(workflowRunId);
+    if (existing.isEmpty()
+        || !GITHUB_PR_INTEGRATION_TYPE.equals(existing.get().integrationType())) {
+      return;
+    }
+    String prRef = existing.get().externalRef();
+    Optional<GitHubPullRequest> pr;
+    try {
+      pr = gitHubAdapter.getPullRequestByRef(prRef);
+    } catch (GitHubAdapterException adapterError) {
+      // A linked PR we can no longer resolve is itself a reconciliation failure.
+      throw repoMismatch(workflowRunId, repositoryRef, "linked PR unresolvable");
+    }
+    if (pr.isPresent() && !repositoryRef.equals(pr.get().repoRef())) {
+      throw repoMismatch(
+          workflowRunId,
+          repositoryRef,
+          "run already linked to repo " + pr.get().repoRef() + " via PR " + prRef);
+    }
+    if (pr.isEmpty()) {
+      throw repoMismatch(workflowRunId, repositoryRef, "linked PR does not resolve");
+    }
+  }
+
+  private DomainException repoMismatch(String workflowRunId, String repositoryRef, String reason) {
+    log.warn(
+        "repo mismatch workflowRunId={} repoRef={} reason={}",
+        workflowRunId,
+        repositoryRef,
+        reason);
+    return new DomainException(
+        DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH,
+        "Requested repository cannot be reconciled with the run: " + reason);
+  }
+
+  // =====================================================================
+  // PR create/update (AC8, Decision D7)
+  // =====================================================================
+
+  private String createOrUpdatePullRequest(
+      String workflowRunId,
+      String repoRef,
+      String branch,
+      String ticketRef,
+      String ticketSummary,
+      String stage,
+      String commitSha) {
+    if (repoRef == null || repoRef.isBlank()) {
+      // No repoRef stamped (OQ-1: no Linear↔GitHub mapping yet for this run) — push succeeded, PR
+      // step deferred to a caller that supplies the linkage (3a-1/3.32). Not an error.
+      log.info(
+          "captureAndPush PR step skipped workflowRunId={} reason=no_repo_ref branch={}",
+          workflowRunId,
+          branch);
+      return null;
+    }
+    String body = pullRequestBody(workflowRunId, stage, commitSha);
+    // D7 — if a github_pr link already exists, refresh its body; else rely on createPullRequest's
+    // built-in head/base&state=open idempotency (story 3.14 AC4) — no separate existing-PR probe.
+    Optional<IntegrationLink> existing =
+        workflowRunId == null || workflowRunId.isBlank()
+            ? Optional.empty()
+            : integrationLinkRecordPort.findActiveByWorkflowRun(workflowRunId);
+    if (existing.isPresent()
+        && GITHUB_PR_INTEGRATION_TYPE.equals(existing.get().integrationType())) {
+      try {
+        GitHubPullRequest updated =
+            gitHubAdapter.updatePullRequest(existing.get().externalRef(), body);
+        log.info(
+            "captureAndPush PR updated workflowRunId={} prRef={}", workflowRunId, updated.prRef());
+        return updated.prRef();
+      } catch (GitHubAdapterException adapterFailure) {
+        throw mapGitHubFailure("updatePullRequest", adapterFailure);
+      }
+    }
+    String title = pullRequestTitle(ticketRef, ticketSummary);
+    try {
+      GitHubPullRequest created = gitHubAdapter.createPullRequest(repoRef, branch, title, body);
+      log.info(
+          "captureAndPush PR created workflowRunId={} prRef={}", workflowRunId, created.prRef());
+      return created.prRef();
+    } catch (GitHubAdapterException adapterFailure) {
+      throw mapGitHubFailure("createPullRequest", adapterFailure);
+    }
+  }
+
+  private static String pullRequestTitle(String ticketRef, String ticketSummary) {
+    String ref = (ticketRef == null || ticketRef.isBlank()) ? "DeliveryLine" : ticketRef;
+    String summary =
+        (ticketSummary == null || ticketSummary.isBlank()) ? "DeliveryLine output" : ticketSummary;
+    return "[" + ref + "] " + summary;
+  }
+
+  private static String pullRequestBody(String workflowRunId, String stage, String commitSha) {
+    return "Automated changes produced by the DeliveryLine "
+        + stage
+        + " runner for governed run "
+        + workflowRunId
+        + ".\n\nCommit: "
+        + commitSha
+        + "\n";
+  }
+
+  // =====================================================================
+  // Branch + commit-message helpers
+  // =====================================================================
+
+  /**
+   * Deterministic branch {@code deliveryline/{ticketSlug}/stage-{runIdShort}} (AC2c, Trap T6). The
+   * ticket ref is sanitized to a branch-safe slug; {@code runIdShort} is the last 8 chars of the
+   * workflow run id.
+   */
+  static String branchName(String linearTicketRef, String workflowRunId) {
+    String branch =
+        BRANCH_NAMESPACE + ticketSlug(linearTicketRef) + "/stage-" + runIdShort(workflowRunId);
+    validateBranchName(branch);
+    return branch;
+  }
+
+  static String ticketSlug(String ticketRef) {
+    if (ticketRef == null || ticketRef.isBlank()) {
+      return "no-ticket";
+    }
+    String slug = ticketRef.trim().replaceAll("[^A-Za-z0-9._-]+", "-").replaceAll("-{2,}", "-");
+    slug = slug.replaceAll("^-+", "").replaceAll("-+$", "");
+    return slug.isBlank() ? "no-ticket" : slug;
+  }
+
+  static String runIdShort(String workflowRunId) {
+    if (workflowRunId == null || workflowRunId.isBlank()) {
+      return "00000000";
+    }
+    String trimmed = workflowRunId.trim();
+    return trimmed.length() <= 8 ? trimmed : trimmed.substring(trimmed.length() - 8);
+  }
+
+  static String commitMessage(
+      String ticketRef, String workflowRunId, String stage, String runnerExecutionId) {
+    String subjectRef = (ticketRef == null || ticketRef.isBlank()) ? "DeliveryLine" : ticketRef;
+    // AC12 — stable governance trailers carried into git history (Trap T9).
+    return "["
+        + subjectRef
+        + "] DeliveryLine "
+        + stage
+        + " output\n\n"
+        + "Deliveryline-Run: "
+        + workflowRunId
+        + "\n"
+        + "Deliveryline-Stage: "
+        + stage
+        + "\n"
+        + "Deliveryline-RunnerExecution: "
+        + runnerExecutionId
+        + "\n";
+  }
+
+  private static boolean isExistingGitRepository(Path repoDir) {
+    return Files.isDirectory(repoDir.resolve(".git"), LinkOption.NOFOLLOW_LINKS);
+  }
+
+  private static void ensureCloneTargetEmpty(Path repoDir, String runnerExecutionId) {
+    if (!Files.exists(repoDir, LinkOption.NOFOLLOW_LINKS)) {
+      return;
+    }
+    try (java.util.stream.Stream<Path> entries = Files.list(repoDir)) {
+      if (entries.findAny().isPresent()) {
+        throw new IllegalStateException(
+            "runner repo workspace is not empty and is not a git repository: " + runnerExecutionId);
+      }
+    } catch (java.io.IOException error) {
+      throw new IllegalStateException(
+          "runner repo workspace could not be inspected: " + runnerExecutionId, error);
+    }
+  }
+
+  private static GitCommandException mapGitHubFailure(
+      String op, GitHubAdapterException adapterFailure) {
+    return new GitCommandException(
+        switch (adapterFailure.failureCategory()) {
+          case GITHUB_AUTH_FAILED, GITHUB_PERMISSION_DENIED ->
+              IntegrationFailureCategory.GIT_AUTH_FAILED;
+          case GITHUB_BRANCH_PROTECTED ->
+              IntegrationFailureCategory.GIT_BRANCH_PROTECTION_VIOLATION;
+          case GITHUB_NETWORK_FAILURE, GITHUB_RATE_LIMITED, GITHUB_API_VERSION_INCOMPATIBLE ->
+              IntegrationFailureCategory.GIT_NETWORK_FAILURE;
+          default -> IntegrationFailureCategory.GIT_PUSH_REJECTED;
+        },
+        "GitHub " + op + " failed after git push: " + adapterFailure.getMessage(),
+        adapterFailure);
+  }
+
+  private static void validateBranchName(String branch) {
+    if (branch.contains("..")
+        || branch.contains("@{")
+        || branch.contains("\\")
+        || branch.endsWith("/")
+        || branch.endsWith(".")
+        || branch.endsWith(".lock")
+        || branch.startsWith(".")
+        || branch.chars().anyMatch(Character::isISOControl)
+        || branch.contains(" ")) {
+      throw new IllegalArgumentException("ticket ref must produce a valid git branch: " + branch);
+    }
+    for (String part : branch.split("/")) {
+      if (part.isBlank() || part.startsWith(".") || part.endsWith(".lock")) {
+        throw new IllegalArgumentException("ticket ref must produce a valid git branch: " + branch);
+      }
+    }
+  }
+
+  /** Result of {@link #prepareWorkspace} — the runner mount reference + branch context (AC4). */
+  public record RepositoryMount(
+      Path repoHostPath, String containerMountPath, String defaultBranch, String branch) {}
+
+  /** Result of {@link #captureAndPush} — commit SHA + branch + PR ref for the prOutput artifact. */
+  public record RepositoryPushOutcome(
+      String commitSha, String branchRef, String prRef, boolean committed) {}
+}

@@ -30,6 +30,7 @@ import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.integration.github.GitHubProperties;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.workflow.WorkflowProperties;
 import org.dradgo.domain.net.LoopbackAddressResolver;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.RunnerKind;
@@ -90,6 +91,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   // github-real is inactive, so a null client here is the normal default-profile case.
   @Nullable private final RestClient gitHubRestClient;
   @Nullable private final GitHubProperties gitHubProperties;
+  // Story 3.9 AC15 — the configured deliveryline-bot identity for the git-bot-identity probe.
+  // ObjectProvider-injected; absent → defaults() (empty bot → the probe WARNs as unconfigured).
+  private final WorkflowProperties workflowProperties;
 
   @Autowired
   public DoctorProbeAdapter(
@@ -112,6 +116,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       // absent in lean doctor-smoke boots. Absent → null → probe reports PASS-not-applicable.
       @Qualifier("gitHubRestClient") ObjectProvider<RestClient> gitHubRestClientProvider,
       ObjectProvider<GitHubProperties> gitHubPropertiesProvider,
+      // ObjectProvider so the git-bot-identity probe (story 3.9 AC15) wires in every context;
+      // absent (lean doctor-smoke boots) → defaults() (empty bot → probe WARNs as unconfigured).
+      ObjectProvider<WorkflowProperties> workflowPropertiesProvider,
       @Value("${deliveryline.home}") String deliverylineHome,
       @Value("${deliveryline.rest.bind-address:${server.address:localhost}}") String serverAddress,
       @Value("${server.port:8080}") int serverPort) {
@@ -134,7 +141,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultShellValue,
         runnerPropertiesProvider.getIfAvailable(),
         gitHubRestClientProvider.getIfAvailable(),
-        gitHubPropertiesProvider.getIfAvailable());
+        gitHubPropertiesProvider.getIfAvailable(),
+        workflowPropertiesProvider.getIfAvailable());
   }
 
   // Public so tests in other packages can construct an adapter without the
@@ -169,7 +177,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultShellValue,
         RunnerProperties.defaults(),
         null,
-        null);
+        null,
+        WorkflowProperties.defaults());
   }
 
   /**
@@ -201,7 +210,41 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultShellValue,
         RunnerProperties.defaults(),
         gitHubRestClient,
-        gitHubProperties);
+        gitHubProperties,
+        WorkflowProperties.defaults());
+  }
+
+  /**
+   * Test seam for the git probes (story 3.9 AC15): {@code environment} (github-real profile check),
+   * the injected {@code processLauncher} (to simulate {@code git --version} present / missing), and
+   * {@code workflowProperties} (bot identity) are the load-bearing deps; everything else is a safe
+   * default the probes never touch.
+   */
+  DoctorProbeAdapter(
+      Environment environment,
+      ProcessLauncher processLauncher,
+      WorkflowProperties workflowProperties) {
+    this(
+        environment,
+        null,
+        null,
+        new UuidV7Generator(),
+        Path.of("."),
+        "localhost",
+        8080,
+        Path.of("."),
+        processLauncher,
+        () -> System.getProperty("os.name", "unknown"),
+        () -> System.getProperty("os.version", "unknown"),
+        () -> System.getProperty("os.arch", "unknown"),
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultPowerShellVersion,
+        DoctorProbeAdapter::defaultShellValue,
+        RunnerProperties.defaults(),
+        null,
+        null,
+        workflowProperties);
   }
 
   DoctorProbeAdapter(
@@ -223,7 +266,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       Supplier<String> shellEnvSupplier,
       RunnerProperties runnerProperties,
       @Nullable RestClient gitHubRestClient,
-      @Nullable GitHubProperties gitHubProperties) {
+      @Nullable GitHubProperties gitHubProperties,
+      @Nullable WorkflowProperties workflowProperties) {
     this.environment = environment;
     this.dataSource = dataSource;
     this.flyway = flyway;
@@ -244,6 +288,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         runnerProperties == null ? RunnerProperties.defaults() : runnerProperties;
     this.gitHubRestClient = gitHubRestClient;
     this.gitHubProperties = gitHubProperties;
+    this.workflowProperties =
+        workflowProperties == null ? WorkflowProperties.defaults() : workflowProperties;
   }
 
   private static Optional<String> defaultFileRead(Path path) {
@@ -651,6 +697,102 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       }
     }
     return false;
+  }
+
+  /**
+   * Story 3.9 AC15 — system {@code git} availability probe (mirrors {@link #probeGitHubAuth()} /
+   * {@link #probeDockerAvailability()}). PASS-not-applicable with NO process call when {@code
+   * github-real} is inactive; under {@code github-real} runs {@code git --version}.
+   */
+  @Override
+  public ProbeResult probeGitAvailability() {
+    Map<String, String> details = new LinkedHashMap<>();
+    if (!isProfileActive(GITHUB_REAL_PROFILE)) {
+      details.put("githubRealProfile", "inactive");
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "github-real profile inactive; git availability check not applicable",
+          null,
+          details);
+    }
+    details.put("githubRealProfile", "active");
+    ProcessBuilder builder = new ProcessBuilder("git", "--version").redirectErrorStream(true);
+    Process process = null;
+    try {
+      process = processLauncher.launch(builder);
+      boolean exited = process.waitFor(DOCKER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      if (!exited) {
+        process.destroyForcibly();
+        details.put("gitProbe", "timed-out");
+        return new ProbeResult(
+            DiagnosticsStatus.FAIL,
+            "git did not respond within " + DOCKER_TIMEOUT_SECONDS + "s",
+            DomainErrorCode.DOCTOR_GIT_MISSING.value(),
+            details);
+      }
+      int exit = process.exitValue();
+      details.put("gitExitCode", String.valueOf(exit));
+      if (exit == 0) {
+        return new ProbeResult(DiagnosticsStatus.PASS, "git reachable", null, details);
+      }
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "git probe failed with exit code " + exit,
+          DomainErrorCode.DOCTOR_GIT_MISSING.value(),
+          details);
+    } catch (IOException io) {
+      details.put("gitProbe", "binary-missing");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "git binary not found on PATH; RepositoryWorkspaceService cannot clone/push (see ADR 0022)",
+          DomainErrorCode.DOCTOR_GIT_MISSING.value(),
+          details);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      details.put("gitProbe", "interrupted");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "git probe interrupted",
+          DomainErrorCode.DOCTOR_GIT_MISSING.value(),
+          details);
+    } finally {
+      if (process != null && process.isAlive()) {
+        process.destroyForcibly();
+      }
+    }
+  }
+
+  /**
+   * Story 3.9 AC15 / Decision D8 — validates the configured {@code deliveryline-bot} identity.
+   * PASS-not-applicable when {@code github-real} is inactive; under {@code github-real} PASS when
+   * the operator explicitly configured a bot name + email, otherwise WARN {@code
+   * DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED}. Presence-only details; never logs a token.
+   */
+  @Override
+  public ProbeResult probeGitBotIdentity() {
+    Map<String, String> details = new LinkedHashMap<>();
+    if (!isProfileActive(GITHUB_REAL_PROFILE)) {
+      details.put("githubRealProfile", "inactive");
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "github-real profile inactive; git bot identity check not applicable",
+          null,
+          details);
+    }
+    details.put("githubRealProfile", "active");
+    WorkflowProperties.Bot bot = workflowProperties.bot();
+    details.put("botName", bot.name() == null ? "unset" : "present");
+    details.put("botEmail", bot.email() == null ? "unset" : "present");
+    if (bot.isExplicitlyConfigured()) {
+      return new ProbeResult(
+          DiagnosticsStatus.PASS, "deliveryline-bot git identity configured", null, details);
+    }
+    return new ProbeResult(
+        DiagnosticsStatus.WARN,
+        "deliveryline-bot git identity not configured; commits will use the built-in default"
+            + " (set DELIVERYLINE_BOT_NAME / DELIVERYLINE_BOT_EMAIL)",
+        DomainErrorCode.DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED.value(),
+        details);
   }
 
   @Override

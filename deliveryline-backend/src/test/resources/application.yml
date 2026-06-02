@@ -22,6 +22,14 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  workflow:
+    # Story 3.9 Trap T2 — mirror the deliveryline.workflow.* keys so the validated WorkflowProperties
+    # binding does not shadow defaults to surprising values in the @SpringBootTest tier (memory:
+    # validated-config-needs-test-yaml). Bot left unset → empty (the git-bot-identity probe is
+    # not-applicable under tests since github-real is never in a test profile group).
+    bot:
+      name: ${DELIVERYLINE_BOT_NAME:}
+      email: ${DELIVERYLINE_BOT_EMAIL:}
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000
