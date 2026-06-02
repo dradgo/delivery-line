@@ -1,6 +1,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 
 import { Stack } from '@/components/layout';
+import { ArtifactReviewPanelContainer } from '@/features/workflows/components/ArtifactReviewPanel';
 import {
   InvalidRouteParamError,
   assertValidArtifactRouteParams,
@@ -17,8 +18,15 @@ import {
  * (`/workflows/$workflowRunId/artifacts/$artifactId`).
  *
  * A full route alongside the detail route (sharing the `$workflowRunId` param),
- * not nested inside it — AC1 lists them as distinct routes. Minimal placeholder;
- * the Artifact Review Panel variants land in 2.17 / 3.26 / 3.27.
+ * not nested inside it — AC1 lists them as distinct routes.
+ *
+ * Story 2.17 — the `ArtifactReviewPanel` now mounts here (its thin container reads
+ * the disabled `useArtifact` stub → renders `empty/not-yet-generated` today; flips to
+ * the rendered artifact when the artifact-read story enables the hook). The route is
+ * NOT forked per stage (epic AC10) — the panel's internal `artifactType` dispatch
+ * selects the variant. The route-level `RENDERABLE_ARTIFACT_TYPES`/
+ * `UnrenderableArtifactState` AC8b guard is KEPT below: it guards backend-reported
+ * types this build can't render at all; the panel's dispatch is the artifact-level twin.
  */
 
 /** Typed loader stub until 2.6. `artifactType` is loose (string) so the AC8b guard is necessary. */
@@ -29,8 +37,8 @@ interface ArtifactViewerStub {
   artifactType: string;
 }
 
-/** Artifact types this build's review panel can render today (spec variant only in Epic 2). */
-const RENDERABLE_ARTIFACT_TYPES = new Set(['spec']);
+/** Artifact types this build's review panel can render today (spec full, Epic-3 variants stubbed). */
+const RENDERABLE_ARTIFACT_TYPES = new Set(['spec', 'implementationPlan', 'prOutput']);
 
 export const Route = createFileRoute('/workflows/$workflowRunId/artifacts/$artifactId')({
   beforeLoad: ({ params }) => {
@@ -81,10 +89,11 @@ function ArtifactViewerRoute() {
         <code>{artifactId}</code> &middot; type <code>{data.artifactType}</code> &middot; run{' '}
         <code>{workflowRunId}</code>
       </p>
-      <p className="text-body text-text-secondary max-w-prose">
-        Navigation skeleton (story 2.5), hosted in the tri-pane shell (story 2.7). The Artifact
-        Review Panel (2.17) renders the artifact body here once it and the data layer (2.6) land.
-      </p>
+      {/* Story 2.17 — the generalized Artifact Review Panel. The container reads the
+          disabled `useArtifact` stub, so it renders the `empty/not-yet-generated`
+          state today; it flips to the rendered artifact with no route change when the
+          artifact-read story enables the hook + endpoint. */}
+      <ArtifactReviewPanelContainer workflowRunId={workflowRunId} artifactId={artifactId} />
     </Stack>
   );
 }

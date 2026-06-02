@@ -138,7 +138,8 @@ function WorkflowDetailRoute() {
       </p>
       <p className="text-body text-text-secondary max-w-prose">
         Navigation skeleton (story 2.5) now backed by the live data layer (story 2.6) and hosted in
-        the tri-pane shell (story 2.7). The Artifact Review Panel (2.17) renders here once it lands.
+        the tri-pane shell (story 2.7). The Artifact Review Panel (story 2.17) renders in the
+        artifact-viewer route — open it via the link below.
       </p>
       <Link
         to="/workflows/$workflowRunId/artifacts/$artifactId"

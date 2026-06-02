@@ -37,7 +37,7 @@ export function MetadataChrome({
       data-component="metadata-chrome"
       data-classification={classification}
     >
-      <header data-region="trusted-metadata">
+      <header data-region="trusted-metadata" aria-label="Trusted artifact metadata">
         <h2 data-field="title">{title}</h2>
         <dl>
           <div>
