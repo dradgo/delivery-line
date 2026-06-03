@@ -30,6 +30,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
+import org.dradgo.application.runner.workspace.RepositoryContextSummary;
 import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.application.runner.workspace.spi.GitCommandException;
 import org.dradgo.application.workflow.WorkflowTransitionService;
@@ -378,13 +379,48 @@ public class RunnerBroker {
       ExecutionConstraints constraints =
           new ExecutionConstraints(runnerProperties.timeoutFor(stage), false);
 
+      // Story 3a-2 (AC7, Decision D2) — for the INVESTIGATION stage only, when the profile-gated
+      // repository-workspace seam is present AND a single repo is configured, resolve the
+      // repositoryRef now (cheap, no I/O). The clone + summarize below happen inside the try so a
+      // git failure routes through the same FAILED idempotency + dispatch-failure path (OQ-5). When
+      // the service is absent or no repo resolves, the summary stays null and the dispatch path is
+      // byte-for-byte unchanged (no clone, no extra bundle fields, dormant seam).
+      String resolvedRepositoryRef =
+          (stage == RunnerStage.INVESTIGATION && repositoryWorkspaceService != null)
+              ? repositoryWorkspaceService.resolveConfiguredRepositoryRef().orElse(null)
+              : null;
+
       ContextBundle bundle;
+      RepositoryContextSummary repositoryContextSummary = null;
       try {
+        if (resolvedRepositoryRef != null) {
+          // Materialize-then-compose (Decision D1): clone the workspace (idempotent — the later
+          // DockerRunnerAdapter clone reuses this {rex}/repo, Trap T14) and summarize it BEFORE
+          // composing the bundle so real repo content can be embedded. ticketRef/ticketSummary are
+          // left null here — the spec stage neither pushes nor opens a PR, and the repo is resolved
+          // by config, not by branch slug.
+          RepositoryWorkspaceService.RepositoryMount mount =
+              repositoryWorkspaceService.prepareWorkspace(
+                  workflowRunId, stage, reservedRexId, null, null, resolvedRepositoryRef);
+          repositoryContextSummary =
+              repositoryWorkspaceService.summarize(
+                  mount, RepositoryWorkspaceService.configMappingVersion(resolvedRepositoryRef));
+          log.info(
+              "dispatch repo-context resolved workflowRunId={} repositoryRef={} contextBundleVersion={}",
+              workflowRunId,
+              resolvedRepositoryRef,
+              nextContextBundleVersion);
+        } else if (stage == RunnerStage.INVESTIGATION) {
+          log.info(
+              "dispatch repo-context skipped workflowRunId={} reason={}",
+              workflowRunId,
+              repositoryWorkspaceService == null ? "no_workspace_service" : "no_repo_resolved");
+        }
+
         // Story 3a-1 (AC1c) — the spec-investigation stage assembles its bundle via the dedicated
         // createForSpecInvestigation composition (null approved-spec, prior spec-rejection
-        // feedback,
-        // prior spec versions — story 2.8 baseline). Every other stage uses the generic
-        // create(...).
+        // feedback, prior spec versions — story 2.8 baseline; story 3a-2 additionally embeds the
+        // nullable repo-context summary). Every other stage uses the generic create(...).
         if (stage == RunnerStage.INVESTIGATION) {
           bundle =
               contextBundleService.createForSpecInvestigation(
@@ -393,7 +429,8 @@ public class RunnerBroker {
                   nextContextBundleVersion,
                   constraints,
                   DataClassification.SHAREABLE_REDACTED,
-                  actor);
+                  actor,
+                  repositoryContextSummary);
         } else {
           bundle =
               contextBundleService.create(
@@ -405,6 +442,29 @@ public class RunnerBroker {
                   DataClassification.SHAREABLE_REDACTED,
                   actor);
         }
+      } catch (GitCommandException gitError) {
+        // OQ-5 — clone/summarize failure during composition fails the dispatch (never degrades to a
+        // no-repo bundle); orchestration then drives the run to Failed. Surface as a
+        // DomainException
+        // on the existing dispatch bundle-rejection path. Reuse INTERNAL_ERROR (no new error code,
+        // dodging the three-sites manifest fan-out); the git category is carried in details.
+        idempotencyService.complete(idempotencyKey, reservedRexId, IdempotencyRecordStatus.FAILED);
+        log.warn(
+            "dispatch repo-context preparation failed workflowRunId={} stage={} runnerExecutionId={} gitFailureCategory={}",
+            workflowRunId,
+            stage.value(),
+            reservedRexId,
+            gitError.failureCategory().value());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("workflowRunId", workflowRunId);
+        details.put("runnerExecutionId", reservedRexId);
+        details.put("stage", stage.value());
+        details.put("repositoryRef", resolvedRepositoryRef);
+        details.put("gitFailureCategory", gitError.failureCategory().value());
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR,
+            "Repository workspace preparation failed during spec-investigation dispatch",
+            details);
       } catch (DomainException error) {
         idempotencyService.complete(idempotencyKey, reservedRexId, IdempotencyRecordStatus.FAILED);
         log.warn(
@@ -414,6 +474,29 @@ public class RunnerBroker {
             reservedRexId,
             error.errorCode().value());
         throw error;
+      } catch (RuntimeException unexpected) {
+        // Story 3a-2 review — the repo-context prep (clone + summarize) now runs inside this try
+        // after the idempotency key is reserved. Any unchecked failure that is NOT a
+        // GitCommandException or DomainException (e.g. an NPE in the workspace seam) must still
+        // complete the reservation FAILED, otherwise the record is stranded RESERVED and a later
+        // same-key dispatch replays to a lost rex. Complete FAILED, then rethrow as INTERNAL_ERROR
+        // preserving the original cause.
+        idempotencyService.complete(idempotencyKey, reservedRexId, IdempotencyRecordStatus.FAILED);
+        log.error(
+            "dispatch failed unexpectedly during bundle composition workflowRunId={} stage={} runnerExecutionId={}",
+            workflowRunId,
+            stage.value(),
+            reservedRexId,
+            unexpected);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("workflowRunId", workflowRunId);
+        details.put("runnerExecutionId", reservedRexId);
+        details.put("stage", stage.value());
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR,
+            "Unexpected failure during context-bundle composition",
+            details,
+            unexpected);
       }
 
       // Story 3.2 AC8 (OQ-4): emit RUNNER_STARTED only when the active adapter does NOT take
@@ -453,6 +536,11 @@ public class RunnerBroker {
 
       // Story 3a-1 (AC10) — resolve the runner-image kind per stage (spec-investigation honors
       // deliveryline.runner.spec-stage.kind; every other stage keeps docker().defaultKind()).
+      // Story 3a-2 (AC7, Trap T14) — thread the resolved repositoryRef so DockerRunnerAdapter
+      // mounts
+      // /workspace/repo and idempotently reuses the broker's clone. Null for every
+      // non-INVESTIGATION
+      // + no-repo dispatch, making the request byte-identical to the prior 7-arg construction.
       RunnerDispatchRequest request =
           new RunnerDispatchRequest(
               reservedRexId,
@@ -461,7 +549,9 @@ public class RunnerBroker {
               runnerProperties.kindForStage(stage),
               bundlePath,
               constraints,
-              bundle.effectiveClassification());
+              bundle.effectiveClassification(),
+              resolvedRepositoryRef,
+              null);
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
 
       // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy

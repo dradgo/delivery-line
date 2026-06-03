@@ -71,7 +71,12 @@
         "correlationId": "corr_fix_happy_001",
         "artifactId": "art_spec_happy_001",
         "artifactVariant": "spec",
-        "artifactVersion": 1
+        "artifactVersion": 1,
+        "repositoryWorkspaceRef": "/workspace/repo",
+        "repositoryReadmeRef": "README.md",
+        "ticketRepositoryMappingVersion": "config:GH-101@1",
+        "repositoryTreeEntryCount": 8,
+        "packageManifestCount": 2
       }
     },
     {

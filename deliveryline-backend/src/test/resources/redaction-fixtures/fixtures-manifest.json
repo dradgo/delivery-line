@@ -146,6 +146,26 @@
       "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
       "minimumClassification": "shareable-redacted",
       "forbiddenSnippets": ["FAKE-BEARER-HTTP-DEBUG-DO-NOT-USE-9876543210"]
+    },
+    {
+      "file": "repo-context-tree-summary-with-secrets.json",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": [
+        "ghp_1234567890abcdef1234567890abcdef1234",
+        "github_pat_1234567890abcdefghijklmnopqrstuvwxyzABCDEFG",
+        "lin_api_1234567890abcdef1234567890abcdef"
+      ]
+    },
+    {
+      "file": "repo-context-readme-with-pem-and-path.md",
+      "placeholder": "[REDACTED_PEM_PRIVATE_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": [
+        "C:\\Users\\alex\\AppData\\Roaming\\deliveryline\\secrets.env",
+        "super-secret-password-123",
+        "FAKE-RSA-PRIVATE-KEY-DO-NOT-USE-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      ]
     }
   ]
 }

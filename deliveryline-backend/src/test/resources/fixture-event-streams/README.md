@@ -17,7 +17,7 @@ The schema is JSON Schema draft 2020-12 and matches the response shape that stor
 
 | Fixture | Scenario | States covered | Artifact variants | Recommended for Epic 2 stories |
 | --- | --- | --- | --- | --- |
-| [`happy-path-success.json`](happy-path-success.json) | Full lifecycle from `submit` to `Completed` with no rejections or failures. | Inbox, Planned, Investigating, WaitingForSpecApproval, Executing, WaitingForReview, Completed | spec, implementationPlan, prOutput | `2.15`, `2.16`, `2.17`, `2.19` |
+| [`happy-path-success.json`](happy-path-success.json) | Full lifecycle from `submit` to `Completed` with no rejections or failures. The spec `artifact.draftCreated` event carries story-3a-2 repo-context `details` (`repositoryWorkspaceRef`, `repositoryReadmeRef`, `ticketRepositoryMappingVersion`, tree/manifest counts). | Inbox, Planned, Investigating, WaitingForSpecApproval, Executing, WaitingForReview, Completed | spec, implementationPlan, prOutput | `2.15`, `2.16`, `2.17`, `2.19` |
 | [`spec-rejection-and-resubmit.json`](spec-rejection-and-resubmit.json) | Spec v1 rejected with structured feedback; revert to Investigating; spec v2 approved; run completes. | Inbox, Planned, Investigating, WaitingForSpecApproval (twice), Executing, WaitingForReview, Completed | spec (v1 and v2) | `2.17`, `2.18`, `2.19`, `2.20` |
 | [`execution-failure-with-retry.json`](execution-failure-with-retry.json) | Runner crashes during Executing; run transitions to Failed; recovery.retried fires; retry succeeds; run completes. | Inbox, Planned, Investigating, WaitingForSpecApproval, Executing (twice), Failed, WaitingForReview, Completed | spec, implementationPlan, prOutput | `2.15`, `2.16`, `2.19`, `2.20` |
 

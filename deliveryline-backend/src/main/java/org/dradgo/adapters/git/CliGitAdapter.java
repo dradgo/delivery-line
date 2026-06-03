@@ -9,11 +9,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import org.dradgo.application.runner.workspace.spi.GitCommandException;
 import org.dradgo.application.runner.workspace.spi.GitCommandPort;
+import org.dradgo.application.runner.workspace.spi.RepoTreeEntry;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -326,6 +328,66 @@ public class CliGitAdapter implements GitCommandPort {
     String origin = originRemoteUrl(repoDir);
     log.info("git push ok repoDir={} branch={} commitSha={}", repoDir, branch, sha);
     return new PushResult(sha, branch, origin);
+  }
+
+  @Override
+  public List<RepoTreeEntry> listTopLevelTree(Path repoDir, int maxDepth) {
+    Objects.requireNonNull(repoDir, "repoDir");
+    int depthLimit = maxDepth <= 0 ? 1 : maxDepth;
+    // ls-tree reads committed content at HEAD (deterministic, .gitignore-respecting — ignored or
+    // untracked files are never committed so never listed). No bespoke filesystem walk (Trap T4).
+    // core.quotePath=false + -z (NUL-delimited) so non-ASCII / space / quote filenames arrive raw
+    // and unescaped instead of git's default octal-quoted "\303\251.txt" form, keeping README /
+    // manifest detection and the embedded tree correct for such repos.
+    GitResult result =
+        runGit(
+            repoDir,
+            null,
+            localTimeoutSeconds,
+            List.of("-c", "core.quotePath=false", "ls-tree", "-r", "--name-only", "-z", "HEAD"));
+    if (!result.succeeded()) {
+      throw new GitCommandException(
+          IntegrationFailureCategory.GIT_NETWORK_FAILURE,
+          "git ls-tree -r --name-only -z HEAD failed: " + result.redactedOutput());
+    }
+    String out = result.redactedOutput();
+    if (out == null || out.isBlank()) {
+      return List.of();
+    }
+    // TreeMap → ascending lexicographic path order (deterministic). A given path is a file XOR a
+    // directory in git, so a depth-truncated ancestor never collides with a real file leaf; if a
+    // collision ever did surface, the directory interpretation wins (the safer shape).
+    TreeMap<String, RepoTreeEntry.Type> entries = new TreeMap<>();
+    for (String line : out.split("\0")) {
+      String filePath = line.strip();
+      if (filePath.isEmpty()) {
+        continue;
+      }
+      String[] segments = filePath.split("/");
+      int limit = Math.min(segments.length, depthLimit);
+      StringBuilder prefix = new StringBuilder();
+      for (int d = 1; d <= limit; d++) {
+        if (d > 1) {
+          prefix.append('/');
+        }
+        prefix.append(segments[d - 1]);
+        boolean isLeafFile = d == segments.length;
+        RepoTreeEntry.Type type = isLeafFile ? RepoTreeEntry.Type.FILE : RepoTreeEntry.Type.DIR;
+        entries.merge(
+            prefix.toString(),
+            type,
+            (existing, incoming) ->
+                existing == RepoTreeEntry.Type.DIR ? RepoTreeEntry.Type.DIR : incoming);
+      }
+    }
+    List<RepoTreeEntry> tree = new ArrayList<>(entries.size());
+    entries.forEach((path, type) -> tree.add(new RepoTreeEntry(path, type)));
+    log.debug(
+        "git ls-tree summary repoDir={} entryCount={} depthLimit={}",
+        repoDir,
+        tree.size(),
+        depthLimit);
+    return List.copyOf(tree);
   }
 
   private void cleanWorktree(Path repoDir) {

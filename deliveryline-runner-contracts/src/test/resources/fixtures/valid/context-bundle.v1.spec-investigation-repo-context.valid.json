@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_specinvrepo01",
+  "runnerExecutionId": "rex_specinvrepo01",
+  "ticketSummary": {
+    "ticketRef": "DL-205",
+    "title": "Add governed export pipeline",
+    "summary": "Spec-investigation with repo context (story 3a-2 AC1/AC10)."
+  },
+  "approvedSpecificationReference": null,
+  "priorFeedbackReferences": [],
+  "artifactReferences": [],
+  "executionConstraints": {
+    "timeoutSeconds": 300,
+    "allowRawOutput": false
+  },
+  "classification": "shareable-redacted",
+  "repositoryWorkspaceRef": "/workspace/repo",
+  "repositoryTreeSummary": [
+    { "path": "README.md", "type": "file" },
+    { "path": "package.json", "type": "file" },
+    { "path": "src", "type": "dir" }
+  ],
+  "repositoryReadmeRef": "README.md",
+  "packageManifestRefs": [
+    { "path": "package.json", "kind": "package.json" }
+  ],
+  "ticketRepositoryMappingVersion": "config:GH-101@1"
+}

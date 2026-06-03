@@ -120,8 +120,10 @@ class RunnerLoggingContractTest {
             1,
             DataClassification.SHAREABLE_REDACTED,
             "{}".getBytes(StandardCharsets.UTF_8));
-    // Story 3a-1 (AC1c): INVESTIGATION dispatch assembles via createForSpecInvestigation (6-arg).
-    when(contextBundleService.createForSpecInvestigation(any(), any(), eq(1), any(), any(), any()))
+    // Story 3a-1 (AC1c): INVESTIGATION dispatch assembles via createForSpecInvestigation. Story
+    // 3a-2 adds the trailing nullable repo-context summary param (null on this no-repo path).
+    when(contextBundleService.createForSpecInvestigation(
+            any(), any(), eq(1), any(), any(), any(), any()))
         .thenReturn(bundle);
     when(recordPort.insertPending(any(), eq(RUN_ID), eq(RunnerStage.INVESTIGATION), eq(1), any()))
         .thenAnswer(

@@ -114,9 +114,80 @@
         "shareable-full",
         "derived-public-safe"
       ]
+    },
+    "repositoryWorkspaceRef": {
+      "type": "string",
+      "pattern": "^/workspace/repo$",
+      "description": "Story 3a-2 (AC1) — OPTIONAL. The deterministic container mount path the runner reads the cloned working tree from. Emitted by the spec-investigation bundle ONLY when a repository workspace was prepared for the run; absent (with the four sibling repo fields) for every no-repo and execution-stage bundle, which therefore stay byte-identical to the story-2.8 baseline. Additive backward-compatible v1 patch (NOT in required; mirrors the minItems 1->0 precedent above); schemaVersion stays const:1."
+    },
+    "repositoryTreeSummary": {
+      "type": "array",
+      "description": "Story 3a-2 (AC1) — OPTIONAL, redacted. Depth-limited top-level tree listing of the cloned working tree (.gitignore-respecting, entry-capped). Embedded content; redacted by the single shareable-redacted pass.",
+      "items": {
+        "$ref": "#/$defs/repoTreeEntry"
+      }
+    },
+    "repositoryReadmeRef": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Story 3a-2 (AC1) — OPTIONAL. Mount-relative path to the detected README (reference-by-path, Decision D4), or null when none exists. Never a host absolute path (Trap T7)."
+    },
+    "packageManifestRefs": {
+      "type": "array",
+      "description": "Story 3a-2 (AC1) — OPTIONAL. Mount-relative references to detected package/build manifests (package.json / pom.xml / Cargo.toml / build.gradle / go.mod / requirements.txt / pyproject.toml). Reference-by-path, not embedded bodies (Decision D4).",
+      "items": {
+        "$ref": "#/$defs/repoManifestRef"
+      }
+    },
+    "ticketRepositoryMappingVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Story 3a-2 (AC1, Decision D2) — OPTIONAL. Marker for which Linear<->GitHub mapping resolved to this repo. Config-derived for the pilot (e.g. config:<repoKey>@1); a real mapping version is deferred to stories 3.32/3.33."
     }
   },
   "$defs": {
+    "repoTreeEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "type"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "file",
+            "dir"
+          ]
+        }
+      }
+    },
+    "repoManifestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "kind"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "artifactReference": {
       "type": "object",
       "additionalProperties": false,

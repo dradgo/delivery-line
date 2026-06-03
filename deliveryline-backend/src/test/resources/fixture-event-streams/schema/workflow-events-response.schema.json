@@ -255,7 +255,32 @@
             "lastActivityAt": { "type": "string", "format": "date-time" },
             "timeoutAt": { "type": "string", "format": "date-time" },
             "dispatchedAt": { "type": "string", "format": "date-time" },
-            "exitCode": { "type": "integer" }
+            "exitCode": { "type": "integer" },
+            "repositoryWorkspaceRef": {
+              "type": "string",
+              "pattern": "^/workspace/repo$",
+              "description": "Story 3a-2 — spec-stage repo-context indicator: the container mount path the spec runner read the cloned working tree from. Mirrors the context-bundle.v1 repositoryWorkspaceRef field so Epic 2 (story 2.17 spec-variant) can render the repo-context anchor."
+            },
+            "repositoryReadmeRef": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "description": "Story 3a-2 — mount-relative path to the detected README, or null when none. Never a host absolute path."
+            },
+            "ticketRepositoryMappingVersion": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Story 3a-2 — the Linear↔GitHub mapping marker (config-derived for the pilot, e.g. config:<repoKey>@1)."
+            },
+            "repositoryTreeEntryCount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Story 3a-2 — field-only count of embedded tree-summary entries (the fixture carries the count, not the tree body, mirroring the thin field-only logging discipline)."
+            },
+            "packageManifestCount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Story 3a-2 — field-only count of detected package/build manifest references."
+            }
           }
         }
       }

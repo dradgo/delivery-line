@@ -16,6 +16,9 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.runner.spi.TicketSummaryProvider;
+import org.dradgo.application.runner.workspace.RepoManifestRef;
+import org.dradgo.application.runner.workspace.RepositoryContextSummary;
+import org.dradgo.application.runner.workspace.spi.RepoTreeEntry;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.domain.DomainException;
@@ -240,7 +243,8 @@ public class ContextBundleService {
       int contextBundleVersion,
       ExecutionConstraints executionConstraints,
       DataClassification claimedClassification,
-      ActorContext actor) {
+      ActorContext actor,
+      RepositoryContextSummary repositoryContextSummary) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     PublicIdPrefixes.require(reservedRunnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
     Objects.requireNonNull(executionConstraints, "executionConstraints");
@@ -284,7 +288,8 @@ public class ContextBundleService {
             rejections,
             priorSpecVersions,
             executionConstraints,
-            claimedClassification);
+            claimedClassification,
+            repositoryContextSummary);
 
     RedactionResult redaction;
     try {
@@ -328,14 +333,15 @@ public class ContextBundleService {
           details);
     }
     log.info(
-        "createForSpecInvestigation ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} priorRejectionCount={} priorSpecVersionCount={}",
+        "createForSpecInvestigation ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} priorRejectionCount={} priorSpecVersionCount={} repoContextPresent={}",
         workflowRunPublicId,
         reservedRunnerExecutionId,
         RunnerStage.INVESTIGATION.value(),
         contextBundleVersion,
         DataClassification.SHAREABLE_REDACTED.value(),
         rejections.size(),
-        priorSpecVersions.size());
+        priorSpecVersions.size(),
+        repositoryContextSummary != null);
     return new ContextBundle(
         workflowRunPublicId,
         RunnerStage.INVESTIGATION,
@@ -352,7 +358,8 @@ public class ContextBundleService {
       List<ApprovalSnapshot> priorRejections,
       List<ArtifactRecordSnapshot> priorSpecVersions,
       ExecutionConstraints executionConstraints,
-      DataClassification classification) {
+      DataClassification classification,
+      RepositoryContextSummary repositoryContextSummary) {
     ObjectNode root = objectMapper.createObjectNode();
     root.put("schemaVersion", CONTEXT_BUNDLE_SCHEMA_VERSION);
     root.put("workflowRunId", workflowRunPublicId);
@@ -397,8 +404,48 @@ public class ContextBundleService {
     constraintsNode.put("timeoutSeconds", executionConstraints.timeoutSeconds());
     constraintsNode.put("allowRawOutput", executionConstraints.allowRawOutput());
 
+    // Story 3a-2 (AC1) — additive optional repo-context fields. Emitted ONLY when a workspace was
+    // prepared for this run; when null, NOTHING is written so the bundle is byte-identical to the
+    // story-2.8 baseline. The single redact(root, SHAREABLE_REDACTED) pass downstream (:292) covers
+    // every text leaf written here, including each tree-summary entry (AC3/Decision D6).
+    if (repositoryContextSummary != null) {
+      writeRepositoryContext(root, repositoryContextSummary);
+    }
+
     root.put("classification", classification.value());
     return root;
+  }
+
+  /**
+   * Writes the five additive spec-stage repo-context fields (AC1). Only the small {@code
+   * repositoryTreeSummary} is embedded; README + manifests are reference-by-mount-path (Decision
+   * D4). Every value here is the container mount path or a mount-relative path — never a host
+   * absolute path (Trap T7).
+   */
+  private void writeRepositoryContext(ObjectNode root, RepositoryContextSummary summary) {
+    root.put("repositoryWorkspaceRef", summary.mountPath());
+
+    ArrayNode treeNode = root.putArray("repositoryTreeSummary");
+    for (RepoTreeEntry entry : summary.treeSummary()) {
+      ObjectNode entryNode = treeNode.addObject();
+      entryNode.put("path", entry.path());
+      entryNode.put("type", entry.type().value());
+    }
+
+    if (summary.readmeRef() != null) {
+      root.put("repositoryReadmeRef", summary.readmeRef());
+    } else {
+      root.putNull("repositoryReadmeRef");
+    }
+
+    ArrayNode manifestNode = root.putArray("packageManifestRefs");
+    for (RepoManifestRef manifest : summary.manifestRefs()) {
+      ObjectNode manifestEntry = manifestNode.addObject();
+      manifestEntry.put("path", manifest.path());
+      manifestEntry.put("kind", manifest.kind());
+    }
+
+    root.put("ticketRepositoryMappingVersion", summary.mappingVersion());
   }
 
   private ObjectNode assemble(

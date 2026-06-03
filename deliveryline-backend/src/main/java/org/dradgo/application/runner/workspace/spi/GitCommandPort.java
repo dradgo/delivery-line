@@ -80,6 +80,19 @@ public interface GitCommandPort {
    */
   PushResult push(Path repoDir, String branch, String githubToken);
 
+  /**
+   * Story 3a-2 (AC6) — deterministic, {@code .gitignore}-respecting, depth-bounded top-level tree
+   * listing of the cloned working tree at {@code HEAD}, for the spec-stage repo-context summary.
+   *
+   * <p>Reads committed content via {@code git ls-tree} (never a bespoke filesystem walk that would
+   * sweep {@code node_modules}/{@code target} — AC6/Trap T4). Returns workspace-relative entries
+   * (each tracked file plus its ancestor directories) truncated to {@code maxDepth} path segments,
+   * sorted ascending so the embedded summary is byte-stable across runs. {@code maxDepth <= 0} is
+   * normalized to {@code 1}. Failures surface as {@link GitCommandException}; the returned paths
+   * are routed through the adapter's redaction pass like every other git line.
+   */
+  List<RepoTreeEntry> listTopLevelTree(Path repoDir, int maxDepth);
+
   /** Outcome of {@link #checkoutOrReuseBranch} (AC3). */
   enum BranchOutcome {
     /** Branch did not exist anywhere → created fresh from HEAD. */

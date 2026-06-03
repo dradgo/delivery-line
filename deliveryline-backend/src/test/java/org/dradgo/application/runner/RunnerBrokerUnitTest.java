@@ -128,10 +128,12 @@ class RunnerBrokerUnitTest {
             1,
             org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
             "{}".getBytes(StandardCharsets.UTF_8));
-    // Story 3a-1 (AC1c): the INVESTIGATION stage now assembles its bundle via
-    // createForSpecInvestigation (6-arg, no stage param).
+    // Story 3a-1 (AC1c): the INVESTIGATION stage assembles its bundle via
+    // createForSpecInvestigation. Story 3a-2 adds the trailing nullable repo-context summary param
+    // (null on this no-repo path — the broker's repositoryWorkspaceService is null in the unit
+    // ctor).
     when(contextBundleService.createForSpecInvestigation(
-            eq(RUN_ID), any(), eq(1), any(), any(), eq(ACTOR)))
+            eq(RUN_ID), any(), eq(1), any(), any(), eq(ACTOR), any()))
         .thenReturn(bundle);
     when(recordPort.insertPending(any(), eq(RUN_ID), eq(RunnerStage.INVESTIGATION), eq(1), any()))
         .thenAnswer(
@@ -184,7 +186,7 @@ class RunnerBrokerUnitTest {
     when(idempotencyService.checkAndReserve(eq("idem-bad"), any(), any(), any()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
     when(contextBundleService.createForSpecInvestigation(
-            any(), any(), anyInt(), any(), any(), any()))
+            any(), any(), anyInt(), any(), any(), any(), any()))
         .thenThrow(new DomainException(DomainErrorCode.RUNNER_CONTRACT_VIOLATION, "bundle bad"));
 
     DomainException error =
@@ -1518,7 +1520,7 @@ class RunnerBrokerUnitTest {
     when(idempotencyService.checkAndReserve(any(), any(), any(), any()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
     when(contextBundleService.createForSpecInvestigation(
-            any(), any(), anyInt(), any(), any(), any()))
+            any(), any(), anyInt(), any(), any(), any(), any()))
         .thenReturn(
             new ContextBundle(
                 RUN_ID,

@@ -14,6 +14,11 @@ appears as a draft, then `available`, then is approved or linked into the outcom
   `integration.linked`.
 - Artifact variants (`details.artifactVariant`): `spec`, `implementationPlan`, `prOutput`.
 - `ActorType`: `system`, `agent`, `human`.
+- Story 3a-2 spec-stage repo context (`details` on the spec `artifact.draftCreated` event
+  `evt_fix_happy_004`): `repositoryWorkspaceRef` (`/workspace/repo`), `repositoryReadmeRef`,
+  `ticketRepositoryMappingVersion` (`config:GH-101@1`), and the field-only
+  `repositoryTreeEntryCount` / `packageManifestCount`. Realistic data for story 2.17's
+  spec-variant repo-context rendering.
 
 ## What it does NOT cover
 

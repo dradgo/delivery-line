@@ -1,6 +1,7 @@
 package org.dradgo.application.runner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,6 +24,9 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.runner.spi.TicketSummaryProvider;
+import org.dradgo.application.runner.workspace.RepoManifestRef;
+import org.dradgo.application.runner.workspace.RepositoryContextSummary;
+import org.dradgo.application.runner.workspace.spi.RepoTreeEntry;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
@@ -36,8 +40,8 @@ import org.dradgo.runnercontracts.RunnerContractValidator;
 import org.junit.jupiter.api.Test;
 
 /**
- * Targeted unit tests for {@link ContextBundleService#createForSpecInvestigation} (story 2.8
- * AC3-5).
+ * Targeted unit tests for {@link ContextBundleService#createForSpecInvestigation} (story 2.8 AC3-5,
+ * extended by story 3a-2 AC1/AC3 with the additive repo-context fields).
  *
  * <p>Validates the composition rules that diverge from the existing {@link
  * ContextBundleService#create create(...)} path:
@@ -48,7 +52,9 @@ import org.junit.jupiter.api.Test;
  *       for SPEC, NOT from the parent-walking approach used by the execution stage;
  *   <li>{@code artifactReferences} carries prior spec versions (empty on bootstrap);
  *   <li>redaction is invoked exactly once;
- *   <li>schema validation rejection surfaces {@code DomainErrorCode.RUNNER_CONTRACT_VIOLATION}.
+ *   <li>schema validation rejection surfaces {@code DomainErrorCode.RUNNER_CONTRACT_VIOLATION};
+ *   <li>story 3a-2 — a non-null {@link RepositoryContextSummary} emits the five repo fields; a null
+ *       summary leaves the bundle byte-identical to the story-2.8 baseline.
  * </ul>
  */
 class ContextBundleServiceSpecInvestigationTest {
@@ -89,7 +95,7 @@ class ContextBundleServiceSpecInvestigationTest {
 
     ContextBundle bundle =
         service.createForSpecInvestigation(
-            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR);
+            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR, null);
 
     JsonNode tree = objectMapper.readTree(bundle.redactedPayload());
     assertEquals(1, tree.get("schemaVersion").asInt());
@@ -99,6 +105,12 @@ class ContextBundleServiceSpecInvestigationTest {
     assertEquals(0, tree.get("priorFeedbackReferences").size());
     assertEquals(0, tree.get("artifactReferences").size());
     assertEquals("shareable-redacted", tree.get("classification").asText());
+    // Story 3a-2 (AC1) — no workspace prepared → none of the five repo fields are emitted.
+    assertFalse(tree.has("repositoryWorkspaceRef"));
+    assertFalse(tree.has("repositoryTreeSummary"));
+    assertFalse(tree.has("repositoryReadmeRef"));
+    assertFalse(tree.has("packageManifestRefs"));
+    assertFalse(tree.has("ticketRepositoryMappingVersion"));
     verify(redactionPolicyService).redact(any(JsonNode.class), eq("shareable-redacted"));
   }
 
@@ -135,7 +147,7 @@ class ContextBundleServiceSpecInvestigationTest {
 
     ContextBundle bundle =
         service.createForSpecInvestigation(
-            RUN_ID, REX_ID, 3, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR);
+            RUN_ID, REX_ID, 3, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR, null);
 
     JsonNode tree = objectMapper.readTree(bundle.redactedPayload());
 
@@ -199,7 +211,7 @@ class ContextBundleServiceSpecInvestigationTest {
 
     ContextBundle bundle =
         service.createForSpecInvestigation(
-            RUN_ID, REX_ID, 2, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR);
+            RUN_ID, REX_ID, 2, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR, null);
 
     JsonNode tree = objectMapper.readTree(bundle.redactedPayload());
     JsonNode artifactReferences = tree.get("artifactReferences");
@@ -251,7 +263,7 @@ class ContextBundleServiceSpecInvestigationTest {
 
     ContextBundle bundle =
         service.createForSpecInvestigation(
-            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_FULL, ACTOR);
+            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_FULL, ACTOR, null);
 
     JsonNode tree = objectMapper.readTree(bundle.redactedPayload());
     assertEquals(DataClassification.SHAREABLE_REDACTED, bundle.effectiveClassification());
@@ -289,7 +301,7 @@ class ContextBundleServiceSpecInvestigationTest {
 
     ContextBundle bundle =
         service.createForSpecInvestigation(
-            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_FULL, ACTOR);
+            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_FULL, ACTOR, null);
 
     String serialized =
         new String(bundle.redactedPayload(), java.nio.charset.StandardCharsets.UTF_8);
@@ -347,7 +359,13 @@ class ContextBundleServiceSpecInvestigationTest {
             DomainException.class,
             () ->
                 service.createForSpecInvestigation(
-                    RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR));
+                    RUN_ID,
+                    REX_ID,
+                    1,
+                    CONSTRAINTS,
+                    DataClassification.SHAREABLE_REDACTED,
+                    ACTOR,
+                    null));
     assertEquals(DomainErrorCode.RUNNER_CONTRACT_VIOLATION, error.errorCode());
     assertEquals("investigation", error.details().get("stage"));
     assertNotNull(error.details().get("validationErrors"));
@@ -372,7 +390,8 @@ class ContextBundleServiceSpecInvestigationTest {
                 1,
                 CONSTRAINTS,
                 DataClassification.SHAREABLE_REDACTED,
-                ACTOR));
+                ACTOR,
+                null));
     assertThrows(
         DomainException.class,
         () ->
@@ -382,7 +401,171 @@ class ContextBundleServiceSpecInvestigationTest {
                 1,
                 CONSTRAINTS,
                 DataClassification.SHAREABLE_REDACTED,
-                ACTOR));
+                ACTOR,
+                null));
+  }
+
+  // =====================================================================
+  // Story 3a-2 — repo-context embedding (AC1/AC3)
+  // =====================================================================
+
+  @Test
+  void repoContextSummaryEmitsTheFiveAdditiveFieldsAndStillValidates() throws Exception {
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ApprovalReadPort approvalReadPort = mock(ApprovalReadPort.class);
+    RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
+
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("ZIM-205", "Add export pipeline", "Spec investigation."));
+    when(approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of());
+    when(artifactRecordPort.listByWorkflowRunIdAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of());
+    when(redactionPolicyService.redact(any(JsonNode.class), eq("shareable-redacted")))
+        .thenAnswer(invocation -> redactionPassthrough(invocation.getArgument(0)));
+
+    ContextBundleService service =
+        new ContextBundleService(
+            ticketProvider,
+            artifactRecordPort,
+            approvalReadPort,
+            redactionPolicyService,
+            new RunnerContractValidator());
+
+    RepositoryContextSummary summary =
+        new RepositoryContextSummary(
+            "/workspace/repo",
+            List.of(
+                new RepoTreeEntry("README.md", RepoTreeEntry.Type.FILE),
+                new RepoTreeEntry("src", RepoTreeEntry.Type.DIR),
+                new RepoTreeEntry("package.json", RepoTreeEntry.Type.FILE)),
+            "README.md",
+            List.of(new RepoManifestRef("package.json", "package.json")),
+            "config:GH-101@1");
+
+    ContextBundle bundle =
+        service.createForSpecInvestigation(
+            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR, summary);
+
+    JsonNode tree = objectMapper.readTree(bundle.redactedPayload());
+    assertEquals("/workspace/repo", tree.get("repositoryWorkspaceRef").asText());
+    assertEquals(3, tree.get("repositoryTreeSummary").size());
+    assertEquals("README.md", tree.get("repositoryTreeSummary").get(0).get("path").asText());
+    assertEquals("file", tree.get("repositoryTreeSummary").get(0).get("type").asText());
+    assertEquals("dir", tree.get("repositoryTreeSummary").get(1).get("type").asText());
+    assertEquals("README.md", tree.get("repositoryReadmeRef").asText());
+    assertEquals(1, tree.get("packageManifestRefs").size());
+    assertEquals("package.json", tree.get("packageManifestRefs").get(0).get("path").asText());
+    assertEquals("package.json", tree.get("packageManifestRefs").get(0).get("kind").asText());
+    assertEquals("config:GH-101@1", tree.get("ticketRepositoryMappingVersion").asText());
+    // The existing 2.8 fields are unchanged (AC1).
+    assertTrue(tree.get("approvedSpecificationReference").isNull());
+    assertEquals(0, tree.get("priorFeedbackReferences").size());
+  }
+
+  @Test
+  void absentReadmeIsEmittedAsNullRepositoryReadmeRef() throws Exception {
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ApprovalReadPort approvalReadPort = mock(ApprovalReadPort.class);
+    RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
+
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("ZIM-205", "Add export pipeline", "Spec investigation."));
+    when(approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of());
+    when(artifactRecordPort.listByWorkflowRunIdAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of());
+    when(redactionPolicyService.redact(any(JsonNode.class), eq("shareable-redacted")))
+        .thenAnswer(invocation -> redactionPassthrough(invocation.getArgument(0)));
+
+    ContextBundleService service =
+        new ContextBundleService(
+            ticketProvider,
+            artifactRecordPort,
+            approvalReadPort,
+            redactionPolicyService,
+            new RunnerContractValidator());
+
+    RepositoryContextSummary summary =
+        new RepositoryContextSummary(
+            "/workspace/repo",
+            List.of(new RepoTreeEntry("main.go", RepoTreeEntry.Type.FILE)),
+            null,
+            List.of(),
+            "config:GH-101@1");
+
+    ContextBundle bundle =
+        service.createForSpecInvestigation(
+            RUN_ID, REX_ID, 1, CONSTRAINTS, DataClassification.SHAREABLE_REDACTED, ACTOR, summary);
+
+    JsonNode tree = objectMapper.readTree(bundle.redactedPayload());
+    assertTrue(tree.has("repositoryReadmeRef"));
+    assertTrue(tree.get("repositoryReadmeRef").isNull());
+    assertEquals(0, tree.get("packageManifestRefs").size());
+  }
+
+  @Test
+  void malformedRepoWorkspaceRefIsRejectedBySchemaValidation() {
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ApprovalReadPort approvalReadPort = mock(ApprovalReadPort.class);
+    RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
+
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("ZIM-205", "Add export pipeline", "Spec investigation."));
+    when(approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of());
+    when(artifactRecordPort.listByWorkflowRunIdAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of());
+    // Redaction tampers the repo workspace ref into a value that violates the schema pattern
+    // (^/workspace/repo$). The post-redaction validator must reject it (story 3a-2 AC2 enforces the
+    // new optional fields' constraints when present).
+    when(redactionPolicyService.redact(any(JsonNode.class), eq("shareable-redacted")))
+        .thenAnswer(
+            invocation -> {
+              JsonNode input = invocation.getArgument(0);
+              com.fasterxml.jackson.databind.node.ObjectNode tampered = input.deepCopy();
+              tampered.put("repositoryWorkspaceRef", "/etc/passwd");
+              return new RedactionResult(
+                  null,
+                  tampered,
+                  DataClassification.SHAREABLE_REDACTED,
+                  DataClassification.SHAREABLE_REDACTED,
+                  false,
+                  Set.of());
+            });
+
+    ContextBundleService service =
+        new ContextBundleService(
+            ticketProvider,
+            artifactRecordPort,
+            approvalReadPort,
+            redactionPolicyService,
+            new RunnerContractValidator());
+
+    RepositoryContextSummary summary =
+        new RepositoryContextSummary(
+            "/workspace/repo",
+            List.of(new RepoTreeEntry("README.md", RepoTreeEntry.Type.FILE)),
+            "README.md",
+            List.of(),
+            "config:GH-101@1");
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.createForSpecInvestigation(
+                    RUN_ID,
+                    REX_ID,
+                    1,
+                    CONSTRAINTS,
+                    DataClassification.SHAREABLE_REDACTED,
+                    ACTOR,
+                    summary));
+    assertEquals(DomainErrorCode.RUNNER_CONTRACT_VIOLATION, error.errorCode());
   }
 
   private static ApprovalSnapshot rejectionRow(
