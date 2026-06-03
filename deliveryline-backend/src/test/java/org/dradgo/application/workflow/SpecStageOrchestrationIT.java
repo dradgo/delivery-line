@@ -35,7 +35,7 @@ import org.springframework.test.context.TestPropertySource;
 @SpringBootTest
 @ActiveProfiles({"test", "linear-mock"})
 @TestPropertySource(properties = "deliveryline.runner.spec-stage.auto-dispatch=true")
-class SpecStageOrchestrationIntegrationTest {
+class SpecStageOrchestrationIT {
 
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private WorkflowCommandService commandService;

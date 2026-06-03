@@ -217,7 +217,7 @@ claude-opus-4-8 (1M context) — bmad-dev-story
 ### Debug Log References
 
 - Full fast Surefire tier (PowerShell, `-Djacoco.skip=true`): 744 tests / 0 failures / 0 errors / 11 skipped.
-- New integration test `SpecStageOrchestrationIntegrationTest` (Testcontainers Postgres + mock `happy-spec`): 3/3.
+- New integration test `SpecStageOrchestrationIT` (Testcontainers Postgres + mock `happy-spec`): 3/3. Named `*IT` so Failsafe (Docker contract tier) runs it and Surefire (no-Docker Windows fast tier) excludes it — a `*IntegrationTest` name leaks into Surefire and crashes on the Docker-less unit-test runner.
 - Focused unit slices: `WorkflowOrchestrationServiceTest` 6/0, `RunnerBrokerUnitTest` 35/0, `WorkflowTransitionTableTest` 9/0, `RunnerPropertiesTest` 10/0, `RunnerLoggingContractTest` 9/0, `ApprovalServiceRejectSpecTest`/`ApprovalServiceApproveSpecTest`/`WorkflowCommandServiceReplayRefTest` green.
 - Foundation gate (`-Pfoundation-gate verify`): 30 tests / 0 failures / 1 skipped — three-sites `RUNNER_ARTIFACT_TYPE_MISMATCH`→`BAD_GATEWAY` (Contract #7), ArchUnit boundaries incl. the new AC9 rule (Contract #1), and the transition cross-product/failure-category contracts all green. `spotless:check` + `checkstyle:check` clean (0 violations).
 
@@ -264,7 +264,7 @@ Verification routed via PowerShell to avoid the RTK Bash hook (memory: rtk-hook-
 
 **Test / config:**
 - `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowOrchestrationServiceTest.java` (NEW)
-- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/SpecStageOrchestrationIntegrationTest.java` (NEW)
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/SpecStageOrchestrationIT.java` (NEW)
 - `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowTransitionTableTest.java`
 - `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowCommandServiceReplayRefTest.java`
 - `deliveryline-backend/src/test/java/org/dradgo/application/approval/ApprovalServiceApproveSpecTest.java`
@@ -308,7 +308,7 @@ _Code review 2026-06-02 (bmad-code-review) — 3 adversarial layers (Blind Hunte
 ### Deferred
 
 - [x] [Review][Defer] Originating submit/reject `correlationId` not propagated across the async poller boundary; falls back to deterministic `rex-<id>` (improvement over old random UUID), and the late-result harvest path still uses a random UUID — full propagation needs a runner-execution-row migration the story forbids. AC7 partial, documented in code. [RunnerBroker.java:590-595,resolveOutcomeCorrelationId] — deferred, needs migration out of scope (sources: blind+auditor, MEDIUM)
-- [x] [Review][Defer] AC11 failure-mode / type-mismatch / correlationId coverage lives at the unit/slice tier (`WorkflowTransitionTableTest`, `RunnerBrokerUnitTest`, `WorkflowOrchestrationServiceTest`), not the `@SpringBootTest` integration tier AC11 names. Behavior IS covered; integration-tier addition is the literal-AC11 follow-up. [SpecStageOrchestrationIntegrationTest] — deferred, behavior unit-covered (sources: auditor, MEDIUM)
+- [x] [Review][Defer] AC11 failure-mode / type-mismatch / correlationId coverage lives at the unit/slice tier (`WorkflowTransitionTableTest`, `RunnerBrokerUnitTest`, `WorkflowOrchestrationServiceTest`), not the `@SpringBootTest` integration tier AC11 names. Behavior IS covered; integration-tier addition is the literal-AC11 follow-up. [SpecStageOrchestrationIT] — deferred, behavior unit-covered (sources: auditor, MEDIUM)
 - [x] [Review][Defer] AC9 auto-advance ArchUnit rule is scoped to success only and guards the `onSpecStageSucceeded` call, not the underlying `spec_ready` transition (failure path still mutates via the broker). Intentional OQ-2 minimal choice; hardening opportunity. [ArchitectureRuleCatalog.java ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS] — deferred, intentional OQ-2 scope (sources: auditor, MEDIUM)
 - [x] [Review][Defer] In-flight dispatch guard is read-then-act (no row lock / unique constraint) → theoretical concurrent double-dispatch. Needs locking/constraint (migration-forbidden); not reachable from current callers. [WorkflowOrchestrationService.java inFlightSpecDispatch] — deferred, latent + needs constraint (sources: blind, LOW)
 - [x] [Review][Defer] `ensureInvestigating` uses a run-fixed idempotency key with no state/loop discriminator — latent collision if a future caller routes a non-Inbox→Investigating through it. No current trigger. [WorkflowOrchestrationService.java ensureInvestigating] — deferred, latent (sources: edge, LOW)
