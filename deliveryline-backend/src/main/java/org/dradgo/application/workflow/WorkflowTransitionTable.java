@@ -27,10 +27,16 @@ public final class WorkflowTransitionTable {
 
   public static WorkflowTransitionTable defaultTable() {
     Map<WorkflowState, Set<WorkflowState>> rules = new EnumMap<>(WorkflowState.class);
+    // Story 3a-1 (ADR 0004 §Decision-1 / OQ-1) — spec-stage orchestration's trigger transition is
+    // a single Inbox -> Investigating hop (the ADR's stated wording). PLANNED stays a
+    // reserved/unused intermediate (nothing in production advances into or out of it today), so
+    // INBOX -> INVESTIGATING is added directly rather than forcing orchestration through a
+    // side-effect-free PLANNED hop. The legacy INBOX -> PLANNED edge is retained for compatibility.
     put(
         rules,
         WorkflowState.INBOX,
         WorkflowState.PLANNED,
+        WorkflowState.INVESTIGATING,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -39,10 +45,17 @@ public final class WorkflowTransitionTable {
         WorkflowState.INVESTIGATING,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
+    // Story 3a-1 (AC4 / AC8) — a spec-stage runner outcome (timeout / crash / contract violation /
+    // non-zero exit, or an artifact-type mismatch routed through the contract-violation path) must
+    // be able to fail the run while it sits in INVESTIGATING. Before 3a-1 the only source state for
+    // FAILED was EXECUTING, so RunnerBroker.driveWorkflowFailed silently swallowed the resulting
+    // ILLEGAL_TRANSITION for spec-stage runs and they were stranded in INVESTIGATING. The
+    // failure-category guard below now admits both EXECUTING and INVESTIGATING as FAILED sources.
     put(
         rules,
         WorkflowState.INVESTIGATING,
         WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+        WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -119,7 +132,10 @@ public final class WorkflowTransitionTable {
           runId, sourceState, targetState, failureCategory, "target_not_allowed");
     }
 
-    if (targetState == WorkflowState.FAILED && sourceState == WorkflowState.EXECUTING) {
+    // Story 3a-1 (AC4) — runner failures fail the run from EXECUTING (implementation stage) OR
+    // INVESTIGATING (spec stage); both require an allowed runner failure category.
+    if (targetState == WorkflowState.FAILED
+        && (sourceState == WorkflowState.EXECUTING || sourceState == WorkflowState.INVESTIGATING)) {
       if (failureCategory == null) {
         throw illegalTransition(
             runId, sourceState, targetState, null, "runner_failure_category_required");

@@ -344,6 +344,14 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Retry not applicable",
         false);
+    // Story 3a-1 (AC8) — a runner emitting an artifact type the dispatching stage does not expect
+    // is a runner-side contract violation; mirror RUNNER_CONTRACT_VIOLATION's BAD_GATEWAY mapping.
+    register(
+        metadata,
+        DomainErrorCode.RUNNER_ARTIFACT_TYPE_MISMATCH,
+        HttpStatus.BAD_GATEWAY,
+        "Runner artifact type mismatch",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

@@ -36,7 +36,12 @@ public record RunnerProperties(
     Scheduling scheduling,
     Docker docker,
     Map<RunnerKind, List<String>> secretEnvNames,
-    boolean allowShareableLogs) {
+    boolean allowShareableLogs,
+    // Story 3a-1 (AC10) — per-stage runner-image kind selection. Binds
+    // deliveryline.runner.spec-stage.kind (codex | claude), defaulting to codex. Resolved into the
+    // dispatch path via kindForStage(stage); a null group falls back to the codex default so the
+    // @SpringBootTest tiers that omit the key still bind (test yaml carries it too — Trap T4).
+    SpecStage specStage) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -74,6 +79,7 @@ public record RunnerProperties(
         (secretEnvNames == null || secretEnvNames.isEmpty())
             ? defaultSecretEnvNames()
             : deepCopySecretEnvNames(secretEnvNames);
+    specStage = specStage == null ? SpecStage.defaults() : specStage;
   }
 
   public static RunnerProperties defaults() {
@@ -92,7 +98,23 @@ public record RunnerProperties(
         Scheduling.defaults(),
         Docker.defaults(),
         defaultSecretEnvNames(),
-        false);
+        false,
+        SpecStage.defaults());
+  }
+
+  /**
+   * Story 3a-1 (AC10) — resolve the runner-image {@link RunnerKind} for a dispatch stage. The
+   * spec-investigation stage ({@link RunnerStage#INVESTIGATION}) honors the configurable {@code
+   * deliveryline.runner.spec-stage.kind}; every other stage falls back to {@link
+   * Docker#defaultKind()} (the historical single-source dispatch kind). Centralizing the lookup
+   * keeps the broker's secret-scan and dispatch paths comparing against the SAME injected key.
+   */
+  public RunnerKind kindForStage(RunnerStage stage) {
+    Objects.requireNonNull(stage, "stage");
+    if (stage == RunnerStage.INVESTIGATION) {
+      return specStage.kind();
+    }
+    return docker.defaultKind();
   }
 
   /**
@@ -199,6 +221,34 @@ public record RunnerProperties(
 
     public static Scheduling defaults() {
       return new Scheduling(true);
+    }
+  }
+
+  /**
+   * Story 3a-1 — spec-stage orchestration config.
+   *
+   * <ul>
+   *   <li>{@code kind} (AC10) — runner-image flavor for the spec-investigation stage ({@code codex}
+   *       | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX} so binding
+   *       never fails and a new {@link RunnerKind} never silently resolves to an undefined image.
+   *   <li>{@code autoDispatch} — master switch for the auto-dispatch triggers (dispatch on submit +
+   *       re-dispatch on spec rejection). Production ({@code application.yml}) sets it {@code
+   *       true}; the shared test profile sets it {@code false} — mirroring {@code
+   *       scheduling.enabled: false} — so the existing suite's submit/reject tests stay
+   *       deterministic and the full submit→spec loop is exercised by the dedicated integration
+   *       test that opts in. Spring binds a missing key to {@code false} (primitive default);
+   *       {@link #defaults()} (non-Spring construction) is {@code true} to match the production
+   *       default.
+   * </ul>
+   */
+  public record SpecStage(RunnerKind kind, boolean autoDispatch) {
+
+    public SpecStage {
+      kind = kind == null ? RunnerKind.CODEX : kind;
+    }
+
+    public static SpecStage defaults() {
+      return new SpecStage(RunnerKind.CODEX, true);
     }
   }
 

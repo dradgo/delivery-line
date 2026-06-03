@@ -101,6 +101,11 @@ class ArchitectureBoundaryTest {
   static final ArchRule workflow_state_changes_must_go_through_transition_service =
       ArchitectureRuleCatalog.ONLY_WORKFLOW_TRANSITION_SERVICE_MAY_MUTATE_WORKFLOW_STATE;
 
+  // Story 3a-1 (AC9) — only WorkflowOrchestrationService auto-advances on a spec runner success.
+  @ArchTest
+  static final ArchRule only_orchestration_auto_advances_on_spec_runner_success =
+      ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS;
+
   @ArchTest
   static final ArchRule credential_detection_must_stay_in_application_security =
       ArchitectureRuleCatalog.CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY;

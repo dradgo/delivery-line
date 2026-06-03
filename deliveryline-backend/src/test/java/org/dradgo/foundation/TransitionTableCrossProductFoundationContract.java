@@ -36,18 +36,25 @@ class TransitionTableCrossProductFoundationContract {
 
   private static final Map<WorkflowState, Set<WorkflowState>> EXPECTED_ALLOWED_TARGETS =
       Map.ofEntries(
+          // Story 3a-1 (ADR 0004 §Decision-1 / OQ-1) — Inbox gains a direct Investigating edge.
           Map.entry(
               WorkflowState.INBOX,
               EnumSet.of(
-                  WorkflowState.PLANNED, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED)),
+                  WorkflowState.PLANNED,
+                  WorkflowState.INVESTIGATING,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
           Map.entry(
               WorkflowState.PLANNED,
               EnumSet.of(
                   WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED)),
+          // Story 3a-1 (AC4 / AC8) — Investigating gains a Failed edge for spec-stage runner
+          // failures.
           Map.entry(
               WorkflowState.INVESTIGATING,
               EnumSet.of(
                   WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+                  WorkflowState.FAILED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           Map.entry(
@@ -103,8 +110,11 @@ class TransitionTableCrossProductFoundationContract {
       for (WorkflowState target : WorkflowState.values()) {
         boolean expectedLegal =
             EXPECTED_ALLOWED_TARGETS.getOrDefault(prior, Set.of()).contains(target);
+        // Story 3a-1 (AC4): FAILED is reachable from EXECUTING (impl stage) and INVESTIGATING
+        // (spec stage); both require an allowed runner failure category.
         FailureCategory failureCategory =
-            (prior == WorkflowState.EXECUTING && target == WorkflowState.FAILED)
+            (target == WorkflowState.FAILED
+                    && (prior == WorkflowState.EXECUTING || prior == WorkflowState.INVESTIGATING))
                 ? FailureCategory.RUNNER_CRASH
                 : null;
         String reason =
@@ -164,14 +174,18 @@ class TransitionTableCrossProductFoundationContract {
 
     for (WorkflowState prior : WorkflowState.values()) {
       for (WorkflowState target : EXPECTED_ALLOWED_TARGETS.getOrDefault(prior, Set.of())) {
-        boolean isExecutingToFailed =
-            prior == WorkflowState.EXECUTING && target == WorkflowState.FAILED;
+        // Story 3a-1 (AC4): both EXECUTING -> FAILED and INVESTIGATING -> FAILED carry a runner
+        // failure category; every other legal transition must reject any category.
+        boolean isRunnerFailureTransition =
+            target == WorkflowState.FAILED
+                && (prior == WorkflowState.EXECUTING || prior == WorkflowState.INVESTIGATING);
+        String edge = prior.value() + " -> " + target.value();
         String reason =
             (target == WorkflowState.TAKEN_OVER || target == WorkflowState.RECONCILED)
                 ? "foundation-gate failure-category probe"
                 : null;
 
-        if (!isExecutingToFailed) {
+        if (!isRunnerFailureTransition) {
           for (FailureCategory category : FailureCategory.values()) {
             try {
               table.assertTransitionAllowed(
@@ -182,7 +196,7 @@ class TransitionTableCrossProductFoundationContract {
                       + target.value()
                       + " accepted non-null failureCategory="
                       + category.value()
-                      + " - only EXECUTING -> FAILED may carry one");
+                      + " - only EXECUTING/INVESTIGATING -> FAILED may carry one");
             } catch (DomainException expected) {
               if (expected.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
                 violations.add(
@@ -199,14 +213,15 @@ class TransitionTableCrossProductFoundationContract {
           }
         }
 
-        if (isExecutingToFailed) {
+        if (isRunnerFailureTransition) {
           try {
             table.assertTransitionAllowed("run_foundation_gate_probe", prior, target, null, reason);
-            violations.add("EXECUTING -> FAILED accepted null failureCategory");
+            violations.add(edge + " accepted null failureCategory");
           } catch (DomainException expected) {
             if (expected.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
               violations.add(
-                  "EXECUTING -> FAILED with null failureCategory raised "
+                  edge
+                      + " with null failureCategory raised "
                       + expected.errorCode().value()
                       + ", expected ILLEGAL_TRANSITION");
             }
@@ -218,7 +233,8 @@ class TransitionTableCrossProductFoundationContract {
                   "run_foundation_gate_probe", prior, target, category, reason);
               if (!expectedAllowed) {
                 violations.add(
-                    "EXECUTING -> FAILED accepted non-runner failureCategory="
+                    edge
+                        + " accepted non-runner failureCategory="
                         + category.value()
                         + " - only "
                         + ALLOWED_RUNNER_FAILURE_CATEGORIES
@@ -227,13 +243,15 @@ class TransitionTableCrossProductFoundationContract {
             } catch (DomainException expected) {
               if (expectedAllowed) {
                 violations.add(
-                    "EXECUTING -> FAILED rejected allowed failureCategory="
+                    edge
+                        + " rejected allowed failureCategory="
                         + category.value()
                         + " with "
                         + expected.errorCode().value());
               } else if (expected.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
                 violations.add(
-                    "EXECUTING -> FAILED with failureCategory="
+                    edge
+                        + " with failureCategory="
                         + category.value()
                         + " raised "
                         + expected.errorCode().value()

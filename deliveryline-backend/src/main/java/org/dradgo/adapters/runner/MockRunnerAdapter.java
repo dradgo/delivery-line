@@ -33,6 +33,9 @@ public class MockRunnerAdapter implements RecoverableRunnerAdapter {
 
   private static final Logger log = LoggerFactory.getLogger(MockRunnerAdapter.class);
 
+  private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+      new com.fasterxml.jackson.databind.ObjectMapper();
+
   private final RunnerScratchStore scratchStore;
   private final MockRunnerScenarioRegistry scenarioRegistry;
   private final RunnerProperties runnerProperties;
@@ -171,6 +174,14 @@ public class MockRunnerAdapter implements RecoverableRunnerAdapter {
         }
         byte[] tailored = tailorFixture(fixture, request);
         scratchStore.writeRunnerResult(request.runnerExecutionId(), tailored);
+        // Story 3a-1: a real runner writes both runner-result.json AND each referenced artifact
+        // file. The mock must do the same so the broker's full dispatch->onResult->ingest path
+        // (now exercised end-to-end by spec-stage orchestration) can read the spec artifact content
+        // rather than failing on an unreadable contentReference. Best-effort: only the HAPPY path
+        // needs ingestable content; failure fixtures may reference intentionally-absent files.
+        if (scenario.behaviour() == MockRunnerScenario.Behaviour.HAPPY) {
+          writeReferencedArtifactContents(request, tailored);
+        }
       }
       case DUPLICATE_RESULT -> {
         // First result written at dispatch (broker poll harvests it, marks COMPLETED).
@@ -208,6 +219,42 @@ public class MockRunnerAdapter implements RecoverableRunnerAdapter {
       case TIMEOUT, CRASH -> {
         // No result file — the broker's scheduled scan or poll path classifies the failure.
       }
+    }
+  }
+
+  /**
+   * Story 3a-1 — write a synthesized content payload for each {@code artifactReferences[].
+   * contentReference} in the (already tailored) result so the broker can ingest the artifact. The
+   * payload bytes are placeholder content (the mock has no real agent output); ingestion only needs
+   * readable bytes. Parse failures are tolerated — the result file is already written and the
+   * broker will classify any genuinely-broken reference.
+   */
+  private void writeReferencedArtifactContents(RunnerDispatchRequest request, byte[] resultBytes) {
+    try {
+      com.fasterxml.jackson.databind.JsonNode root = MAPPER.readTree(resultBytes);
+      com.fasterxml.jackson.databind.JsonNode refs = root.path("artifactReferences");
+      if (!refs.isArray()) {
+        return;
+      }
+      for (com.fasterxml.jackson.databind.JsonNode ref : refs) {
+        String contentReference = ref.path("contentReference").asText(null);
+        if (contentReference == null || contentReference.isBlank()) {
+          continue;
+        }
+        String artifactType = ref.path("artifactType").asText("artifact");
+        byte[] content =
+            ("{\n  \"mockArtifact\": true,\n  \"artifactType\": \""
+                    + artifactType
+                    + "\",\n  \"runnerExecutionId\": \""
+                    + request.runnerExecutionId()
+                    + "\"\n}\n")
+                .getBytes(StandardCharsets.UTF_8);
+        scratchStore.writeArtifactContent(request.runnerExecutionId(), contentReference, content);
+      }
+    } catch (java.io.IOException parseFailure) {
+      log.warn(
+          "mock artifact-content write skipped runnerExecutionId={} reason=unparseable_result",
+          request.runnerExecutionId());
     }
   }
 

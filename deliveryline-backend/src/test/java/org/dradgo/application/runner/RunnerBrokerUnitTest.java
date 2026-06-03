@@ -128,8 +128,10 @@ class RunnerBrokerUnitTest {
             1,
             org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
             "{}".getBytes(StandardCharsets.UTF_8));
-    when(contextBundleService.create(
-            eq(RUN_ID), eq(RunnerStage.INVESTIGATION), any(), eq(1), any(), any(), eq(ACTOR)))
+    // Story 3a-1 (AC1c): the INVESTIGATION stage now assembles its bundle via
+    // createForSpecInvestigation (6-arg, no stage param).
+    when(contextBundleService.createForSpecInvestigation(
+            eq(RUN_ID), any(), eq(1), any(), any(), eq(ACTOR)))
         .thenReturn(bundle);
     when(recordPort.insertPending(any(), eq(RUN_ID), eq(RunnerStage.INVESTIGATION), eq(1), any()))
         .thenAnswer(
@@ -181,7 +183,8 @@ class RunnerBrokerUnitTest {
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.INVESTIGATION)).thenReturn(1);
     when(idempotencyService.checkAndReserve(eq("idem-bad"), any(), any(), any()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
-    when(contextBundleService.create(any(), any(), any(), anyInt(), any(), any(), any()))
+    when(contextBundleService.createForSpecInvestigation(
+            any(), any(), anyInt(), any(), any(), any()))
         .thenThrow(new DomainException(DomainErrorCode.RUNNER_CONTRACT_VIOLATION, "bundle bad"));
 
     DomainException error =
@@ -1488,7 +1491,8 @@ class RunnerBrokerUnitTest {
             RunnerProperties.Scheduling.defaults(),
             dockerConfig,
             RunnerProperties.defaultSecretEnvNames(),
-            false);
+            false,
+            RunnerProperties.SpecStage.defaults());
     broker =
         new RunnerBroker(
             recordPort,
@@ -1513,7 +1517,8 @@ class RunnerBrokerUnitTest {
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.INVESTIGATION)).thenReturn(1);
     when(idempotencyService.checkAndReserve(any(), any(), any(), any()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
-    when(contextBundleService.create(any(), any(), any(), anyInt(), any(), any(), any()))
+    when(contextBundleService.createForSpecInvestigation(
+            any(), any(), anyInt(), any(), any(), any()))
         .thenReturn(
             new ContextBundle(
                 RUN_ID,
@@ -1546,6 +1551,127 @@ class RunnerBrokerUnitTest {
     assertEquals(
         "***@registry.example.test/deliveryline/codex:latest",
         detailsCaptor.getValue().get("image"));
+  }
+
+  // ===== Story 3a-1 — success auto-advance delegation + artifact-type guard =====
+
+  @Test
+  void specSuccessDelegatesSpecReadyToOrchestrationForInvestigationStage() {
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(snapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq("spec/v1.json")))
+        .thenReturn(Optional.of("spec-bytes".getBytes(StandardCharsets.UTF_8)));
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, specResultPayload("spec").getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    // AC2/AC3: the broker delegates the spec-ready auto-advance to orchestration after completion.
+    verify(orchestration)
+        .onSpecStageSucceeded(eq(RUN_ID), eq(REX_ID), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void artifactTypeMismatchRoutesToFailedAndDoesNotDelegateSuccess() {
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(snapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+
+    // AC8: an INVESTIGATION-stage runner emitting an implementationPlan is a contract violation.
+    orchBroker.onResult(
+        REX_ID, specResultPayload("implementationPlan").getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(executionService, never()).recordCompleted(any());
+    verify(artifactOperationService, never()).recordOperation(any());
+    verify(orchestration, never()).onSpecStageSucceeded(any(), any(), any());
+    verify(workflowTransitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.FAILED),
+            any(),
+            any(),
+            any(),
+            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
+            any());
+  }
+
+  private RunnerBroker brokerWithOrchestration(
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration) {
+    return new RunnerBroker(
+        recordPort,
+        eventPort,
+        executionService,
+        contextBundleService,
+        idempotencyService,
+        workflowTransitionService,
+        artifactOperationService,
+        runnerAdapter,
+        scratchStore,
+        new RunnerContractValidator(),
+        runnerProperties,
+        secretScanService,
+        callthroughTemplate(),
+        callthroughTemplate(),
+        CLOCK,
+        null,
+        orchestration);
+  }
+
+  private void stubArtifactRecordSuccess() {
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              ArtifactRecordSnapshot artifact =
+                  ArtifactRecordSnapshot.withoutFailureMetadata(
+                      "art_test01234567",
+                      command.workflowRunId(),
+                      command.artifactType(),
+                      1,
+                      null,
+                      org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                      null,
+                      null,
+                      null,
+                      org.dradgo.domain.registry.ArtifactStatus.PENDING,
+                      null);
+              ArtifactOperationSnapshot op =
+                  new ArtifactOperationSnapshot(
+                      "op_test01234567",
+                      command.workflowRunId(),
+                      "art_test01234567",
+                      command.operationType().value(),
+                      org.dradgo.domain.registry.ArtifactOperationStatus.PENDING,
+                      command.idempotencyKey(),
+                      null,
+                      null,
+                      OffsetDateTime.now(CLOCK));
+              return new RecordArtifactOperationResult(artifact, op);
+            });
+  }
+
+  private static String specResultPayload(String artifactType) {
+    return """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "%s", "contentReference": "spec/v1.json"}
+          ],
+          "normalizedOutput": {"summary": "ok", "outcome": "success"},
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+        .formatted(RUN_ID, REX_ID, artifactType);
   }
 
   private static RunnerExecutionSnapshot snapshot(String publicId, RunnerExecutionStatus status) {

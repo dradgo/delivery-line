@@ -72,6 +72,10 @@ public class ApprovalService {
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort;
   private final SpecRejectionEscalationThresholdProvider escalationThresholdProvider;
+  // Story 3a-1 (Task 5 / AC5) — re-dispatch the spec runner after a rejection re-enters
+  // Investigating.
+  private final org.dradgo.application.workflow.WorkflowOrchestrationService
+      workflowOrchestrationService;
   private final Clock clock;
 
   @Autowired
@@ -83,7 +87,8 @@ public class ApprovalService {
       WorkflowTransitionService workflowTransitionService,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
-      SpecRejectionEscalationThresholdProvider escalationThresholdProvider) {
+      SpecRejectionEscalationThresholdProvider escalationThresholdProvider,
+      org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService) {
     this(
         artifactRecordPort,
         artifactService,
@@ -93,6 +98,7 @@ public class ApprovalService {
         runnerExecutionRecordPort,
         workflowRunRejectionLoopPort,
         escalationThresholdProvider,
+        workflowOrchestrationService,
         Clock.systemUTC());
   }
 
@@ -107,6 +113,7 @@ public class ApprovalService {
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
       SpecRejectionEscalationThresholdProvider escalationThresholdProvider,
+      org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService,
       Clock clock) {
     this.artifactRecordPort = artifactRecordPort;
     this.artifactService = artifactService;
@@ -116,6 +123,7 @@ public class ApprovalService {
     this.runnerExecutionRecordPort = runnerExecutionRecordPort;
     this.workflowRunRejectionLoopPort = workflowRunRejectionLoopPort;
     this.escalationThresholdProvider = escalationThresholdProvider;
+    this.workflowOrchestrationService = workflowOrchestrationService;
     this.clock = clock;
   }
 
@@ -433,6 +441,16 @@ public class ApprovalService {
             "reject specification",
             command.idempotencyKey(),
             transitionEventDetailsReject(command, persisted, newLoopCount, escalationMarkerNow));
+
+        // Story 3a-1 (AC5 / Task 5 / Trap T3) — re-dispatch the spec runner AFTER the
+        // WaitingForSpecApproval->Investigating transition. This runs inside rejectSpec's MANDATORY
+        // transaction, so a dispatch failure rolls back the rejection row + counter + transition
+        // (all-or-nothing). retrySpecGeneration re-dispatches ONLY — it never re-transitions (T8):
+        // the run is already Investigating and its bumped spec_rejection_loop_count makes the
+        // idempotency key distinct from the prior attempt. No-op when
+        // spec-stage.auto-dispatch=false.
+        workflowOrchestrationService.retrySpecGeneration(
+            command.workflowRunId(), normalizeOptional(command.correlationId()));
 
         log.info(
             "rejectSpec success approvalId={} workflowRunId={} artifactId={} artifactVersion={} contextBundleVersion={} reviewerRole={} taggedFeedback={} loopCount={} escalationMarker={} resultingState={}",

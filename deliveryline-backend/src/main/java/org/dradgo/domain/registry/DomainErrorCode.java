@@ -62,7 +62,13 @@ public enum DomainErrorCode implements RegistryValue {
   LINEAR_GITHUB_REPO_MISMATCH("LINEAR_GITHUB_REPO_MISMATCH"),
   DOCTOR_GIT_MISSING("DOCTOR_GIT_MISSING"),
   DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED("DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED"),
-  RETRY_NOT_APPLICABLE("RETRY_NOT_APPLICABLE");
+  RETRY_NOT_APPLICABLE("RETRY_NOT_APPLICABLE"),
+  // Story 3a-1 (AC8 / Trap T5) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Raised when a runner emits an artifact whose type does not match the dispatching stage's
+  // expected type (e.g. a spec-stage / INVESTIGATION runner emits an implementationPlan). The
+  // run is routed to Failed via the existing runner-contract-violation failure path; this code is
+  // the typed surface for the REST / inspection layer.
+  RUNNER_ARTIFACT_TYPE_MISMATCH("RUNNER_ARTIFACT_TYPE_MISMATCH");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

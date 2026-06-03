@@ -34,16 +34,23 @@ class WorkflowTransitionTableTest {
         table.canonicalStates());
 
     Map<WorkflowState, Set<WorkflowState>> expectedTargets = new LinkedHashMap<>();
+    // Story 3a-1: INBOX gains a direct INVESTIGATING edge (ADR 0004 spec-stage trigger).
     expectedTargets.put(
         WorkflowState.INBOX,
-        Set.of(WorkflowState.PLANNED, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
+        Set.of(
+            WorkflowState.PLANNED,
+            WorkflowState.INVESTIGATING,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
     expectedTargets.put(
         WorkflowState.PLANNED,
         Set.of(WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
+    // Story 3a-1: INVESTIGATING gains a FAILED edge (spec-stage runner failures, AC4/AC8).
     expectedTargets.put(
         WorkflowState.INVESTIGATING,
         Set.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+            WorkflowState.FAILED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(
@@ -209,6 +216,46 @@ class WorkflowTransitionTableTest {
                     WorkflowState.FAILED,
                     FailureCategory.RUNNER_LATE_RESULT,
                     "runner was late"));
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, disallowedCategory.errorCode());
+    assertEquals("runner_failure_category_not_allowed", disallowedCategory.details().get("reason"));
+  }
+
+  @Test
+  void investigatingToFailedRequiresAnAllowedRunnerFailureCategory() {
+    // Story 3a-1 (AC4) — spec-stage runner failures fail the run from INVESTIGATING with the same
+    // runner-failure-category guard the EXECUTING -> FAILED edge enforces.
+    WorkflowTransitionTable table = WorkflowTransitionTable.defaultTable();
+
+    table.assertTransitionAllowed(
+        "run_demo1234",
+        WorkflowState.INVESTIGATING,
+        WorkflowState.FAILED,
+        FailureCategory.RUNNER_CONTRACT_VIOLATION,
+        "spec runner contract violation");
+
+    DomainException missingCategory =
+        assertThrows(
+            DomainException.class,
+            () ->
+                table.assertTransitionAllowed(
+                    "run_demo1234",
+                    WorkflowState.INVESTIGATING,
+                    WorkflowState.FAILED,
+                    null,
+                    "spec runner failed"));
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, missingCategory.errorCode());
+    assertEquals("runner_failure_category_required", missingCategory.details().get("reason"));
+
+    DomainException disallowedCategory =
+        assertThrows(
+            DomainException.class,
+            () ->
+                table.assertTransitionAllowed(
+                    "run_demo1234",
+                    WorkflowState.INVESTIGATING,
+                    WorkflowState.FAILED,
+                    FailureCategory.RUNNER_LATE_RESULT,
+                    "spec runner was late"));
     assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, disallowedCategory.errorCode());
     assertEquals("runner_failure_category_not_allowed", disallowedCategory.details().get("reason"));
   }

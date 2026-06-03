@@ -106,6 +106,8 @@ class ApprovalServiceApproveSpecTest {
             runnerExecutionRecordPort,
             workflowRunRejectionLoopPort,
             escalationThresholdProvider,
+            org.mockito.Mockito.mock(
+                org.dradgo.application.workflow.WorkflowOrchestrationService.class),
             FIXED_CLOCK);
 
     appender = new ListAppender<>();

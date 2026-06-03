@@ -327,7 +327,8 @@ class LocalRunnerWorkspaceStoreTest {
             java.time.Duration.ofSeconds(30L),
             120L),
         RunnerProperties.defaultSecretEnvNames(),
-        false);
+        false,
+        RunnerProperties.SpecStage.defaults());
   }
 
   private static Set<PosixFilePermission> allAccessDirPerms() {

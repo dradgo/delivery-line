@@ -115,6 +115,13 @@ deliveryline:
     stage-timeouts:
       investigation: 600s
       execution: 600s
+    # Story 3a-1 — spec-stage orchestration. `kind` (AC10) selects the runner image dispatched for
+    # the spec-investigation stage (codex | claude). `auto-dispatch` is the master switch for the
+    # submit→dispatch and reject→re-dispatch triggers; ON in production, OFF in the test profile
+    # (mirrors scheduling.enabled) so the existing suite stays deterministic.
+    spec-stage:
+      kind: codex
+      auto-dispatch: true
     recovery:
       batch-size: 100
     mock:

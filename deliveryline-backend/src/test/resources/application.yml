@@ -39,6 +39,13 @@ deliveryline:
     stage-timeouts:
       investigation: 600s
       execution: 600s
+    # Story 3a-1 (AC10 / Trap T4) — the validated spec-stage group must be present here too, since
+    # the test application.yml shadows (does not merge with) the main one. auto-dispatch is OFF in
+    # the shared test profile (mirrors scheduling.enabled: false) so the existing submit/reject
+    # tests stay deterministic; the dedicated 3a-1 integration test opts in via @TestPropertySource.
+    spec-stage:
+      kind: codex
+      auto-dispatch: false
     recovery:
       batch-size: 100
     mock:

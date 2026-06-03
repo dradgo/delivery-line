@@ -129,6 +129,7 @@
     "LINEAR_GITHUB_REPO_MISMATCH": "https://deliveryline.local/problems/linear-github-repo-mismatch",
     "DOCTOR_GIT_MISSING": "https://deliveryline.local/problems/doctor-git-missing",
     "DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED": "https://deliveryline.local/problems/doctor-git-bot-identity-unconfigured",
-    "RETRY_NOT_APPLICABLE": "https://deliveryline.local/problems/retry-not-applicable"
+    "RETRY_NOT_APPLICABLE": "https://deliveryline.local/problems/retry-not-applicable",
+    "RUNNER_ARTIFACT_TYPE_MISMATCH": "https://deliveryline.local/problems/runner-artifact-type-mismatch"
   }
 }

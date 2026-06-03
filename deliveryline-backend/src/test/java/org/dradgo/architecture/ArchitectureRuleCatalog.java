@@ -25,8 +25,10 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.workflow.DomainResult;
+import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
@@ -370,6 +372,35 @@ final class ArchitectureRuleCatalog {
                   String.class,
                   WorkflowState.class,
                   Long.class));
+
+  /**
+   * Story 3a-1 (AC9) — the spec-stage success auto-advance ({@code Investigating ->
+   * WaitingForSpecApproval}) is owned solely by {@link WorkflowOrchestrationService}. Its {@code
+   * onSpecStageSucceeded} callback may be invoked only by the {@link RunnerBroker} result-harvest
+   * seam, so no other service can react to a runner success outcome by driving workflow state.
+   *
+   * <p>OQ-2 (minimal reconciliation): the broker's pre-existing FAILURE drive ({@code
+   * driveWorkflowFailed -> WorkflowTransitionService}) is the documented exception — this rule is
+   * scoped to the SUCCESS auto-advance. The complementary {@link
+   * #ONLY_WORKFLOW_TRANSITION_SERVICE_MAY_MUTATE_WORKFLOW_STATE} keeps every state mutation routed
+   * through {@code WorkflowTransitionService}.
+   */
+  static final ArchRule ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS =
+      namedRule(
+          "only WorkflowOrchestrationService may auto-advance workflow state on a spec runner success",
+          "Remediation: route the spec-stage success auto-advance through WorkflowOrchestrationService.onSpecStageSucceeded, invoked only by the RunnerBroker result-harvest seam (story 3a-1 AC9). The broker failure-drive is the documented OQ-2 exception.",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(WorkflowOrchestrationService.class.getName())
+              .and()
+              .doNotHaveFullyQualifiedName(RunnerBroker.class.getName())
+              .should()
+              .callMethod(
+                  WorkflowOrchestrationService.class,
+                  "onSpecStageSucceeded",
+                  String.class,
+                  String.class,
+                  String.class));
 
   static final ArchRule ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE =
       namedRule(

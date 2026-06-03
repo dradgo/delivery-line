@@ -45,8 +45,44 @@ class RunnerPropertiesTest {
             RunnerProperties.Scheduling.defaults(),
             RunnerProperties.Docker.defaults(),
             RunnerProperties.defaultSecretEnvNames(),
-            true);
+            true,
+            RunnerProperties.SpecStage.defaults());
     assertEquals(true, enabled.allowShareableLogs());
+  }
+
+  @Test
+  void specStageDefaultsToCodexWithAutoDispatchOn() {
+    // Story 3a-1 (AC10) — non-Spring construction defaults: codex image + auto-dispatch ON.
+    RunnerProperties.SpecStage specStage = RunnerProperties.defaults().specStage();
+    assertEquals(RunnerKind.CODEX, specStage.kind());
+    assertEquals(true, specStage.autoDispatch());
+  }
+
+  @Test
+  void kindForStageHonorsSpecStageForInvestigationAndDockerDefaultOtherwise() {
+    // Story 3a-1 (AC10) — INVESTIGATION resolves to spec-stage.kind; other stages keep the docker
+    // default kind.
+    RunnerProperties claudeSpec =
+        new RunnerProperties(
+            2.0d,
+            java.util.Map.of(),
+            10_000L,
+            50,
+            60_000L,
+            5_000L,
+            RunnerProperties.Recovery.defaults(),
+            RunnerProperties.Mock.defaults(),
+            RunnerProperties.Scheduling.defaults(),
+            RunnerProperties.Docker.defaults(),
+            RunnerProperties.defaultSecretEnvNames(),
+            false,
+            new RunnerProperties.SpecStage(RunnerKind.CLAUDE, true));
+    assertEquals(
+        RunnerKind.CLAUDE,
+        claudeSpec.kindForStage(org.dradgo.domain.registry.RunnerStage.INVESTIGATION));
+    assertEquals(
+        RunnerKind.CODEX,
+        claudeSpec.kindForStage(org.dradgo.domain.registry.RunnerStage.EXECUTION));
   }
 
   @Test
@@ -66,7 +102,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.Scheduling.defaults(),
                 RunnerProperties.Docker.defaults(),
                 RunnerProperties.defaultSecretEnvNames(),
-                false));
+                false,
+                RunnerProperties.SpecStage.defaults()));
   }
 
   @Test
@@ -86,7 +123,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.Scheduling.defaults(),
                 RunnerProperties.Docker.defaults(),
                 RunnerProperties.defaultSecretEnvNames(),
-                false));
+                false,
+                RunnerProperties.SpecStage.defaults()));
   }
 
   @Test

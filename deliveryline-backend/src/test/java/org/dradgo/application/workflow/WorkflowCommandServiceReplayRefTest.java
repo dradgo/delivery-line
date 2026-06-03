@@ -48,7 +48,8 @@ class WorkflowCommandServiceReplayRefTest {
             mock(IntegrationLinkService.class),
             mock(ApprovalService.class),
             mock(ClarificationService.class),
-            clarificationReadPort);
+            clarificationReadPort,
+            mock(WorkflowOrchestrationService.class));
   }
 
   @Test

@@ -84,6 +84,8 @@ public class WorkflowCommandService {
   private final ApprovalService approvalService;
   private final ClarificationService clarificationService;
   private final ClarificationReadPort clarificationReadPort;
+  // Story 3a-1 (Task 5 / AC1) — auto-dispatch the spec runner once a submitted run is created.
+  private final WorkflowOrchestrationService workflowOrchestrationService;
   private final TransactionTemplate failureCompletionTemplate;
   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
@@ -101,7 +103,8 @@ public class WorkflowCommandService {
       IntegrationLinkService integrationLinkService,
       ApprovalService approvalService,
       ClarificationService clarificationService,
-      ClarificationReadPort clarificationReadPort) {
+      ClarificationReadPort clarificationReadPort,
+      WorkflowOrchestrationService workflowOrchestrationService) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -115,6 +118,7 @@ public class WorkflowCommandService {
     this.approvalService = approvalService;
     this.clarificationService = clarificationService;
     this.clarificationReadPort = clarificationReadPort;
+    this.workflowOrchestrationService = workflowOrchestrationService;
   }
 
   @Transactional
@@ -194,6 +198,15 @@ public class WorkflowCommandService {
               command.actorIdentity(),
               command.actorType(),
               normalizeOptional(command.correlationId())));
+
+      // Story 3a-1 (AC1 / Task 5) — auto-dispatch the spec runner. This shares the submit
+      // transaction (Dev Notes §"Transaction & async boundary"): the run + Linear link + the
+      // Inbox->Investigating transition + the runner_executions row commit or roll back together,
+      // so a dispatch failure unwinds the submit. The async runner RESULT arrives later via the
+      // poller (a separate transaction). No-op when spec-stage.auto-dispatch=false (test profile),
+      // so the response below still reports the run's just-created Inbox state.
+      workflowOrchestrationService.dispatchSpecGeneration(
+          workflowRun.publicId(), normalizeOptional(command.correlationId()));
 
       return new SubmitWorkflowResult(
           workflowRun.publicId(), WorkflowState.INBOX, normalizeOptional(command.correlationId()));

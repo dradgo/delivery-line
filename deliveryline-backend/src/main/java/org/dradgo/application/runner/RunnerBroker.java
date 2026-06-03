@@ -96,6 +96,18 @@ public class RunnerBroker {
   // When present, handleSuccess commits+pushes+opens the PR for a repo-backed run before
   // completing.
   private final RepositoryWorkspaceService repositoryWorkspaceService;
+  // Story 3a-1 (Task 2 / Trap T2) — spec-stage orchestration callback resolved LAZILY through a
+  // Supplier so the broker↔orchestration constructor cycle is broken (orchestration depends on the
+  // broker for dispatch; the broker calls back here for the spec-ready transition). The @Autowired
+  // ctor wires an ObjectProvider::getIfAvailable supplier — resolving eagerly in the ctor would
+  // re-enter the in-creation orchestration bean (BeanCurrentlyInCreationException). Supplies null
+  // in
+  // the package-private test ctors and lean contexts, so mock/no-orchestration dispatches are
+  // unchanged: handleSuccess only auto-advances when the resolved value is present AND the terminal
+  // execution was an INVESTIGATION-stage spec artifact.
+  private final java.util.function.Supplier<
+          org.dradgo.application.workflow.WorkflowOrchestrationService>
+      workflowOrchestrationServiceSupplier;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate dispatchTransactionTemplate;
   private final TransactionTemplate perItemTransactionTemplate;
@@ -119,7 +131,11 @@ public class RunnerBroker {
       // Story 3.9 Trap T4 — ObjectProvider keeps the package-private test ctor stable; resolves to
       // null when no RepositoryWorkspaceService bean exists (mock/lean contexts).
       org.springframework.beans.factory.ObjectProvider<RepositoryWorkspaceService>
-          repositoryWorkspaceServiceProvider) {
+          repositoryWorkspaceServiceProvider,
+      // Story 3a-1 Trap T2 — ObjectProvider breaks the broker↔orchestration constructor cycle.
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.WorkflowOrchestrationService>
+          workflowOrchestrationServiceProvider) {
     this(
         recordPort,
         eventPort,
@@ -136,7 +152,11 @@ public class RunnerBroker {
         requiredTemplate(transactionManager),
         requiresNewTemplate(transactionManager),
         Clock.systemUTC(),
-        repositoryWorkspaceServiceProvider.getIfAvailable());
+        repositoryWorkspaceServiceProvider.getIfAvailable(),
+        // Lazy: resolved at handleSuccess time, never during construction (Trap T2 — avoids the
+        // BeanCurrentlyInCreation cycle since orchestration depends on this broker).
+        (java.util.function.Supplier<org.dradgo.application.workflow.WorkflowOrchestrationService>)
+            workflowOrchestrationServiceProvider::getIfAvailable);
   }
 
   RunnerBroker(
@@ -171,7 +191,46 @@ public class RunnerBroker {
         dispatchTransactionTemplate,
         perItemTransactionTemplate,
         clock,
-        null);
+        null,
+        () -> null);
+  }
+
+  // Story 3.9 test ctor (repo seam, no orchestration) — delegates to the full ctor below.
+  RunnerBroker(
+      RunnerExecutionRecordPort recordPort,
+      RunnerExecutionEventPort eventPort,
+      RunnerExecutionService executionService,
+      ContextBundleService contextBundleService,
+      IdempotencyService idempotencyService,
+      WorkflowTransitionService workflowTransitionService,
+      ArtifactOperationService artifactOperationService,
+      RunnerAdapter runnerAdapter,
+      RunnerScratchStore scratchStore,
+      RunnerContractValidator contractValidator,
+      RunnerProperties runnerProperties,
+      RunnerSecretScanService runnerSecretScanService,
+      TransactionTemplate dispatchTransactionTemplate,
+      TransactionTemplate perItemTransactionTemplate,
+      Clock clock,
+      RepositoryWorkspaceService repositoryWorkspaceService) {
+    this(
+        recordPort,
+        eventPort,
+        executionService,
+        contextBundleService,
+        idempotencyService,
+        workflowTransitionService,
+        artifactOperationService,
+        runnerAdapter,
+        scratchStore,
+        contractValidator,
+        runnerProperties,
+        runnerSecretScanService,
+        dispatchTransactionTemplate,
+        perItemTransactionTemplate,
+        clock,
+        repositoryWorkspaceService,
+        () -> null);
   }
 
   RunnerBroker(
@@ -190,7 +249,9 @@ public class RunnerBroker {
       TransactionTemplate dispatchTransactionTemplate,
       TransactionTemplate perItemTransactionTemplate,
       Clock clock,
-      RepositoryWorkspaceService repositoryWorkspaceService) {
+      RepositoryWorkspaceService repositoryWorkspaceService,
+      java.util.function.Supplier<org.dradgo.application.workflow.WorkflowOrchestrationService>
+          workflowOrchestrationServiceSupplier) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -213,7 +274,52 @@ public class RunnerBroker {
         Objects.requireNonNull(perItemTransactionTemplate, "perItemTransactionTemplate");
     this.clock = Objects.requireNonNull(clock, "clock");
     this.repositoryWorkspaceService = repositoryWorkspaceService;
+    this.workflowOrchestrationServiceSupplier =
+        workflowOrchestrationServiceSupplier == null
+            ? () -> null
+            : workflowOrchestrationServiceSupplier;
     this.objectMapper = new ObjectMapper();
+  }
+
+  // Story 3a-1 test ctor (repo seam + a resolved orchestration instance) — wraps the instance in a
+  // Supplier and delegates to the Supplier-based ctor above. Lets unit tests pass a mock
+  // orchestration directly without constructing an ObjectProvider.
+  RunnerBroker(
+      RunnerExecutionRecordPort recordPort,
+      RunnerExecutionEventPort eventPort,
+      RunnerExecutionService executionService,
+      ContextBundleService contextBundleService,
+      IdempotencyService idempotencyService,
+      WorkflowTransitionService workflowTransitionService,
+      ArtifactOperationService artifactOperationService,
+      RunnerAdapter runnerAdapter,
+      RunnerScratchStore scratchStore,
+      RunnerContractValidator contractValidator,
+      RunnerProperties runnerProperties,
+      RunnerSecretScanService runnerSecretScanService,
+      TransactionTemplate dispatchTransactionTemplate,
+      TransactionTemplate perItemTransactionTemplate,
+      Clock clock,
+      RepositoryWorkspaceService repositoryWorkspaceService,
+      org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService) {
+    this(
+        recordPort,
+        eventPort,
+        executionService,
+        contextBundleService,
+        idempotencyService,
+        workflowTransitionService,
+        artifactOperationService,
+        runnerAdapter,
+        scratchStore,
+        contractValidator,
+        runnerProperties,
+        runnerSecretScanService,
+        dispatchTransactionTemplate,
+        perItemTransactionTemplate,
+        clock,
+        repositoryWorkspaceService,
+        () -> workflowOrchestrationService);
   }
 
   private static TransactionTemplate requiredTemplate(
@@ -274,15 +380,31 @@ public class RunnerBroker {
 
       ContextBundle bundle;
       try {
-        bundle =
-            contextBundleService.create(
-                workflowRunId,
-                stage,
-                reservedRexId,
-                nextContextBundleVersion,
-                constraints,
-                DataClassification.SHAREABLE_REDACTED,
-                actor);
+        // Story 3a-1 (AC1c) — the spec-investigation stage assembles its bundle via the dedicated
+        // createForSpecInvestigation composition (null approved-spec, prior spec-rejection
+        // feedback,
+        // prior spec versions — story 2.8 baseline). Every other stage uses the generic
+        // create(...).
+        if (stage == RunnerStage.INVESTIGATION) {
+          bundle =
+              contextBundleService.createForSpecInvestigation(
+                  workflowRunId,
+                  reservedRexId,
+                  nextContextBundleVersion,
+                  constraints,
+                  DataClassification.SHAREABLE_REDACTED,
+                  actor);
+        } else {
+          bundle =
+              contextBundleService.create(
+                  workflowRunId,
+                  stage,
+                  reservedRexId,
+                  nextContextBundleVersion,
+                  constraints,
+                  DataClassification.SHAREABLE_REDACTED,
+                  actor);
+        }
       } catch (DomainException error) {
         idempotencyService.complete(idempotencyKey, reservedRexId, IdempotencyRecordStatus.FAILED);
         log.warn(
@@ -329,12 +451,14 @@ public class RunnerBroker {
       java.nio.file.Path bundlePath =
           scratchStore.writeContextBundle(reservedRexId, bundle.redactedPayload());
 
+      // Story 3a-1 (AC10) — resolve the runner-image kind per stage (spec-investigation honors
+      // deliveryline.runner.spec-stage.kind; every other stage keeps docker().defaultKind()).
       RunnerDispatchRequest request =
           new RunnerDispatchRequest(
               reservedRexId,
               workflowRunId,
               stage,
-              runnerProperties.docker().defaultKind(),
+              runnerProperties.kindForStage(stage),
               bundlePath,
               constraints,
               bundle.effectiveClassification());
@@ -463,7 +587,31 @@ public class RunnerBroker {
       return;
     }
 
-    String correlationId = UUID.randomUUID().toString();
+    // Story 3a-1 (AC7 / Trap T6): do NOT mint a fresh random correlationId. Thread the originating
+    // correlationId from the MDC scope established by the dispatching command when present, so the
+    // artifact events and the spec-ready transition below share it; fall back to a deterministic
+    // execution-scoped id otherwise (the async poller thread carries no originating correlationId,
+    // and persisting it on the runner-execution row would require a migration this story forbids).
+    String correlationId = resolveOutcomeCorrelationId(runnerExecutionId);
+
+    // Story 3a-1 (AC8) review patch: validate EVERY referenced artifact type against the stage's
+    // allowed set BEFORE ingesting any of them. The per-ref guard previously sat INSIDE the ingest
+    // loop, so an earlier valid artifact was recorded and only THEN a later ref's type mismatch
+    // drove the run to FAILED — leaving a half-ingested artifact lineage on a failed run.
+    // Pre-scanning
+    // keeps the contract check atomic with respect to the artifact writes below.
+    // INVESTIGATION -> spec; EXECUTION -> implementationPlan / prOutput; any other type is a
+    // runner-side contract violation routed to Failed (the broker previously accepted any type).
+    for (JsonNode ref : artifactRefs) {
+      ArtifactType refType =
+          ArtifactType.fromValue(
+              ref.path("artifactType").asText(), "runner_result.artifactReferences.artifactType");
+      if (!allowedArtifactTypesForStage(row.stage()).contains(refType)) {
+        handleArtifactTypeMismatch(runnerExecutionId, workflowRunId, row, refType);
+        return;
+      }
+    }
+
     boolean artifactIngestionFailed = false;
     for (JsonNode ref : artifactRefs) {
       String typeValue = ref.path("artifactType").asText();
@@ -552,7 +700,11 @@ public class RunnerBroker {
     // (stories
     // 3.3/3.4), resolve the kind from the execution row (or the deliveryline.runnerKind container
     // label) here instead of defaultKind() so the detector cannot compare against the wrong key.
-    org.dradgo.domain.registry.RunnerKind runnerKind = runnerProperties.docker().defaultKind();
+    // Story 3a-1 (AC10) — resolve the scanned key against the SAME kind the dispatch injected
+    // (kindForStage), not the unconditional docker().defaultKind(). For an INVESTIGATION-stage run
+    // whose configured spec-stage.kind differs from defaultKind, the 3.5 secret detector must look
+    // for the key that was actually injected, otherwise it would scan for the wrong provider key.
+    org.dradgo.domain.registry.RunnerKind runnerKind = runnerProperties.kindForStage(row.stage());
     RunnerSecretScanService.ScanOutcome secretScan =
         runnerSecretScanService.scanWorkspace(
             runnerExecutionId, runnerKind, row.stage(), workflowRunId);
@@ -673,6 +825,109 @@ public class RunnerBroker {
         runnerExecutionId,
         workflowRunId,
         artifactRefs.size());
+
+    // Story 3a-1 (AC2/AC3 — the central gap): once the spec artifact for an INVESTIGATION-stage
+    // execution is available + the execution is COMPLETED, delegate the terminal outcome to
+    // WorkflowOrchestrationService so it auto-advances Investigating -> WaitingForSpecApproval. The
+    // broker harvests the result + owns runner-lifecycle events; orchestration owns the workflow
+    // state transition (AC9 / Trap T10). Guarded by stage so non-spec stages are unaffected, and by
+    // a present orchestration bean so the package-private test ctors / lean contexts are unchanged.
+    if (row.stage() == RunnerStage.INVESTIGATION) {
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+          workflowOrchestrationServiceSupplier.get();
+      if (orchestration != null) {
+        orchestration.onSpecStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
+      }
+    }
+  }
+
+  /**
+   * Story 3a-1 (AC8) — the artifact types a dispatching stage is permitted to emit. INVESTIGATION
+   * (spec stage) may only produce a {@code spec}; EXECUTION may produce an {@code
+   * implementationPlan} or {@code prOutput}. (OQ-5: the mapping lives in the broker, where the
+   * result is parsed.)
+   */
+  private static java.util.Set<ArtifactType> allowedArtifactTypesForStage(RunnerStage stage) {
+    return switch (stage) {
+      case INVESTIGATION -> java.util.EnumSet.of(ArtifactType.SPEC);
+      case EXECUTION ->
+          java.util.EnumSet.of(ArtifactType.IMPLEMENTATION_PLAN, ArtifactType.PR_OUTPUT);
+    };
+  }
+
+  /**
+   * Story 3a-1 (AC8) — record the execution failed, emit a precise {@code RUNNER_FAILED} carrying
+   * the {@code RUNNER_ARTIFACT_TYPE_MISMATCH} typed surface (the REST/inspection error code) plus
+   * the expected vs actual artifact type, and drive the run to Failed via the existing
+   * runner-contract-violation path. Never logs the artifact payload.
+   */
+  private void handleArtifactTypeMismatch(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerExecutionSnapshot row,
+      ArtifactType actualType) {
+    java.util.Set<ArtifactType> allowed = allowedArtifactTypesForStage(row.stage());
+    log.warn(
+        "onResult artifact-type mismatch runnerExecutionId={} workflowRunId={} stage={} "
+            + "expectedTypes={} actualType={} errorCode={}",
+        runnerExecutionId,
+        workflowRunId,
+        row.stage().value(),
+        allowed.stream().map(ArtifactType::value).toList(),
+        actualType.value(),
+        DomainErrorCode.RUNNER_ARTIFACT_TYPE_MISMATCH.value());
+    // Story 3a-1 review patch: a duplicate/late result for an already-terminal execution must not
+    // re-emit RUNNER_FAILED or re-drive the FAILED transition (at-most-once failure semantics,
+    // mirroring the guarded secret-leak and git-push paths). The first call already recorded it;
+    // previously only recordFailed was guarded while the event append + driveWorkflowFailed below
+    // ran unconditionally, producing duplicate failure events on result replay.
+    if (isTerminal(row.status())) {
+      log.debug(
+          "onResult artifact-type mismatch ignored for already-terminal execution "
+              + "runnerExecutionId={} status={}",
+          runnerExecutionId,
+          row.status());
+      return;
+    }
+    executionService.recordFailed(runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("failureCategory", FailureCategory.RUNNER_CONTRACT_VIOLATION.value());
+    details.put("errorCode", DomainErrorCode.RUNNER_ARTIFACT_TYPE_MISMATCH.value());
+    details.put("stage", row.stage().value());
+    details.put("expectedArtifactTypes", allowed.stream().map(ArtifactType::value).toList());
+    details.put("actualArtifactType", actualType.value());
+    details.put("reason", "runner_artifact_type_mismatch");
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_FAILED,
+        ActorContext.SYSTEM,
+        "runner_artifact_type_mismatch",
+        FailureCategory.RUNNER_CONTRACT_VIOLATION,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+    driveWorkflowFailed(
+        workflowRunId,
+        runnerExecutionId,
+        FailureCategory.RUNNER_CONTRACT_VIOLATION,
+        "runner artifact type mismatch: expected "
+            + allowed.stream().map(ArtifactType::value).toList()
+            + " got "
+            + actualType.value());
+  }
+
+  /**
+   * Story 3a-1 (AC7 / Trap T6) — resolve the correlationId for a runner outcome. Prefers the
+   * originating correlationId from the current MDC scope; falls back to a stable execution-scoped
+   * id so the artifact events + spec-ready transition share one non-random correlationId.
+   */
+  private static String resolveOutcomeCorrelationId(String runnerExecutionId) {
+    String fromMdc = org.slf4j.MDC.get(MdcKeys.CORRELATION_ID);
+    if (fromMdc != null && !fromMdc.isBlank()) {
+      return fromMdc;
+    }
+    return "rex-" + runnerExecutionId;
   }
 
   /**

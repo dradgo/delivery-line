@@ -356,7 +356,8 @@ class DockerRunnerAdapterUnitTest {
             RunnerProperties.Scheduling.defaults(),
             dockerConfig,
             RunnerProperties.defaultSecretEnvNames(),
-            false);
+            false,
+            RunnerProperties.SpecStage.defaults());
     adapter =
         new DockerRunnerAdapter(
             scratchStore,
