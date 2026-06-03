@@ -2,6 +2,7 @@ package org.dradgo.application.workflow;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -10,6 +11,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
@@ -25,9 +30,11 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowState;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 /** Story 3a-1 — unit coverage for {@link WorkflowOrchestrationService} (AC1/AC5/AC6/AC9). */
 class WorkflowOrchestrationServiceTest {
@@ -39,6 +46,7 @@ class WorkflowOrchestrationServiceTest {
   private WorkflowTransitionService transitionService;
   private WorkflowRunReadPort readPort;
   private org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort;
+  private ListAppender<ILoggingEvent> logAppender;
 
   @BeforeEach
   void setUp() {
@@ -46,6 +54,35 @@ class WorkflowOrchestrationServiceTest {
     transitionService = mock(WorkflowTransitionService.class);
     readPort = mock(WorkflowRunReadPort.class);
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
+    Logger logger = (Logger) LoggerFactory.getLogger(WorkflowOrchestrationService.class);
+    logAppender = new ListAppender<>();
+    logAppender.start();
+    logger.addAppender(logAppender);
+    logger.setLevel(Level.DEBUG);
+  }
+
+  @AfterEach
+  void tearDown() {
+    ((Logger) LoggerFactory.getLogger(WorkflowOrchestrationService.class))
+        .detachAppender(logAppender);
+  }
+
+  private void assertLoggedAt(Level level, String fragment) {
+    boolean found =
+        logAppender.list.stream()
+            .filter(event -> event.getLevel() == level)
+            .anyMatch(event -> event.getFormattedMessage().contains(fragment));
+    assertTrue(
+        found,
+        () ->
+            "Expected "
+                + level
+                + " log containing \""
+                + fragment
+                + "\" but saw: "
+                + logAppender.list.stream()
+                    .map(e -> e.getLevel() + " " + e.getFormattedMessage())
+                    .toList());
   }
 
   private WorkflowOrchestrationService service(boolean autoDispatch) {
@@ -164,15 +201,101 @@ class WorkflowOrchestrationServiceTest {
   }
 
   @Test
-  void onSpecStageSucceededSwallowsIllegalTransition() {
-    // The success callback is NOT gated by auto-dispatch and must be idempotent: a duplicate
-    // result whose run already left Investigating surfaces ILLEGAL_TRANSITION, which is swallowed.
+  void onSpecStageSucceededSwallowsIllegalTransitionAsBenignReplayWhenAlreadySpecReady() {
+    // Review finding P3 — a duplicate/replayed result whose run already reached
+    // WaitingForSpecApproval surfaces ILLEGAL_TRANSITION; that is a benign idempotent replay and is
+    // swallowed (no exception escapes). The state re-read classifies it as replay, logged at INFO.
     org.mockito.Mockito.doThrow(
             new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "already advanced"))
         .when(transitionService)
         .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN_ID, WorkflowState.WAITING_FOR_SPEC_APPROVAL, null, 1L, 0, false)));
 
-    // No exception escapes.
     service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verify(readPort).findByPublicId(RUN_ID);
+    // The branch is observable: benign replay is logged at INFO, NOT the WARN anomaly line.
+    assertLoggedAt(Level.INFO, "idempotent replay");
+  }
+
+  @Test
+  void onSpecStageSucceededSwallowsIllegalTransitionAsAnomalyWhenRunDiverged() {
+    // Review finding P3 — when the run is in an unexpected state (e.g. TAKEN_OVER) the
+    // ILLEGAL_TRANSITION is logged at WARN as a probable anomaly rather than the INFO benign-replay
+    // line. It is still swallowed: the runner succeeded + the execution is already COMPLETED in the
+    // shared poller transaction, so rethrowing would roll that back and cause infinite re-harvest.
+    org.mockito.Mockito.doThrow(
+            new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "illegal from TAKEN_OVER"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(RUN_ID, WorkflowState.TAKEN_OVER, null, 1L, 0, false)));
+
+    // No exception escapes even on a probable anomaly.
+    service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verify(readPort).findByPublicId(RUN_ID);
+    // The branch is observable: anomaly is logged at WARN, NOT the INFO benign-replay line.
+    assertLoggedAt(Level.WARN, "probable anomaly");
+  }
+
+  @Test
+  void onSpecStageSucceededLogsAnomalyWarnForBenignPostSpecReadyDivergence() {
+    // Review finding P3 (best-effort classification, resolved Option 1) — a run that GENUINELY
+    // reached spec-ready and then legitimately moved on (here: rejected back to Investigating via
+    // the reject->retry loop) is, on a late/duplicate harvest, classified from the current snapshot
+    // alone. INVESTIGATING is not in SPEC_READY_OR_BEYOND, so it falls into the WARN anomaly branch
+    // even though the replay is benign. This documents the known, accepted false-positive (WARN,
+    // not ERROR) — the signal is advisory and the outcome is still a safe swallow.
+    org.mockito.Mockito.doThrow(
+            new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "illegal from INVESTIGATING"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(RUN_ID, WorkflowState.INVESTIGATING, null, 1L, 1, false)));
+
+    service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    assertLoggedAt(Level.WARN, "probable anomaly");
+  }
+
+  @Test
+  void onSpecStageSucceededSwallowsIllegalTransitionWhenRunVanished() {
+    // Review finding P3 — a run that cannot be re-read (vanished) is treated as a probable anomaly
+    // and swallowed without throwing (defends the empty-Optional path).
+    org.mockito.Mockito.doThrow(new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "gone"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID)).thenReturn(Optional.empty());
+
+    service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    assertLoggedAt(Level.WARN, "<not_found>");
+  }
+
+  @Test
+  void onSpecStageSucceededSwallowsDiagnosticReadFailureWithoutRethrowing() {
+    // Review finding P3 re-read guard — if the diagnostic re-read itself throws (DB/connection
+    // error) it must NOT propagate: the call site shares the poller per-item transaction that
+    // already committed the runner completion, so an escape would roll that back and cause infinite
+    // re-harvest. The read failure is swallowed (logged WARN) and the method returns normally.
+    org.mockito.Mockito.doThrow(new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "illegal"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenThrow(new DomainException(DomainErrorCode.INTERNAL_ERROR, "db down"));
+
+    // No exception escapes even though the re-read threw.
+    service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    assertLoggedAt(Level.WARN, "could not re-read run state");
   }
 }

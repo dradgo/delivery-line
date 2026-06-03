@@ -59,6 +59,21 @@ public class WorkflowOrchestrationService {
               org.dradgo.domain.registry.RunnerExecutionStatus.PENDING,
               org.dradgo.domain.registry.RunnerExecutionStatus.RUNNING);
 
+  /**
+   * Review finding P3 — states in which the spec-ready transition has already effectively been
+   * applied: the run reached {@code WaitingForSpecApproval} or progressed normally beyond it. A
+   * late/duplicate spec outcome landing in one of these is a benign idempotent replay; any OTHER
+   * state behind an {@code ILLEGAL_TRANSITION} is treated as a probable anomaly (best-effort — the
+   * current snapshot cannot prove spec-ready was never applied; see {@link
+   * #handleSpecReadyIllegalTransition}).
+   */
+  private static final java.util.Set<WorkflowState> SPEC_READY_OR_BEYOND =
+      java.util.EnumSet.of(
+          WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+          WorkflowState.EXECUTING,
+          WorkflowState.WAITING_FOR_REVIEW,
+          WorkflowState.COMPLETED);
+
   private final RunnerBroker runnerBroker;
   private final WorkflowTransitionService workflowTransitionService;
   private final WorkflowRunReadPort workflowRunReadPort;
@@ -201,9 +216,11 @@ public class WorkflowOrchestrationService {
    * auto-advance the run {@code Investigating -> WaitingForSpecApproval}. Owning this here (not
    * inline in the broker) keeps the runner-outcome auto-advance in a single place (AC9).
    *
-   * <p>Idempotent: a duplicate invocation (e.g. a replayed result) whose run already left {@code
-   * Investigating} surfaces {@code ILLEGAL_TRANSITION}, which is swallowed so the spec-ready
-   * transition fires at most once.
+   * <p>Idempotent: a duplicate invocation (e.g. a replayed result) whose run already reached {@code
+   * WaitingForSpecApproval} surfaces {@code ILLEGAL_TRANSITION}, which is swallowed so the
+   * spec-ready transition fires at most once. An {@code ILLEGAL_TRANSITION} from any other current
+   * state is logged at WARN as a probable anomaly (best-effort classification — review finding P3);
+   * see {@link #handleSpecReadyIllegalTransition}.
    */
   public void onSpecStageSucceeded(
       String workflowRunId, String runnerExecutionId, String correlationId) {
@@ -228,12 +245,7 @@ public class WorkflowOrchestrationService {
             runnerExecutionId);
       } catch (DomainException error) {
         if (error.errorCode() == DomainErrorCode.ILLEGAL_TRANSITION) {
-          log.warn(
-              "onSpecStageSucceeded swallowed ILLEGAL_TRANSITION workflowRunId={} "
-                  + "runnerExecutionId={} reason={}",
-              workflowRunId,
-              runnerExecutionId,
-              error.getMessage());
+          handleSpecReadyIllegalTransition(workflowRunId, runnerExecutionId, error);
           return;
         }
         throw error;
@@ -242,6 +254,76 @@ public class WorkflowOrchestrationService {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
+  }
+
+  /**
+   * Review finding P3 — disambiguate the two causes of an {@code ILLEGAL_TRANSITION} on the
+   * spec-ready transition, which the prior blanket WARN-swallow conflated:
+   *
+   * <ul>
+   *   <li><b>Benign replay</b> — the run already reached {@code WaitingForSpecApproval} (or
+   *       progressed normally beyond it: {@code Executing} / {@code WaitingForReview} / {@code
+   *       Completed}). The spec-ready transition is already applied; logged at INFO and swallowed.
+   *   <li><b>Probable anomaly</b> — the run is in some OTHER state (taken-over / failed /
+   *       reconciled / paused / still-investigating, or vanished) when the spec outcome arrives, so
+   *       it cannot legally advance to {@code WaitingForSpecApproval}. Logged at WARN so it
+   *       surfaces in observability without raising a hard error.
+   * </ul>
+   *
+   * <p><b>Best-effort classification (review finding P3, resolved Option 1).</b> The branch is
+   * chosen from the run's CURRENT state snapshot only, which is NOT authoritative about whether
+   * spec-ready was ever applied: a run that genuinely reached {@code WaitingForSpecApproval} and
+   * then legitimately moved on — rejected back to {@code Investigating} via the reject&rarr;retry
+   * loop, or later taken-over / reconciled / paused / failed — will, on a duplicate/late result
+   * harvest, fall into the WARN branch even though the replay is benign. WARN (not ERROR) reflects
+   * that the signal is advisory: runtime behavior is identical in both branches (swallow + return).
+   *
+   * <p>Either way the exception is swallowed (never rethrown): the runner genuinely succeeded, the
+   * artifact is ingested, and the execution is already recorded {@code COMPLETED} in the SAME
+   * poller transaction ({@code RunnerBroker.onResult}); rethrowing would roll that committed
+   * completion back and the poller would re-harvest the result forever for a permanently-diverged
+   * run. The diagnostic re-read below is likewise guarded so a read failure can never unwind that
+   * committed completion.
+   */
+  private void handleSpecReadyIllegalTransition(
+      String workflowRunId, String runnerExecutionId, DomainException error) {
+    WorkflowState current;
+    try {
+      current =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .map(WorkflowRunSnapshot::currentState)
+              .orElse(null);
+    } catch (RuntimeException readError) {
+      // The re-read is purely diagnostic — it only selects the log level. It must never propagate:
+      // this runs inside the poller per-item transaction that already committed the runner
+      // completion, so letting it escape would roll that back and cause infinite re-harvest.
+      log.warn(
+          "onSpecStageSucceeded could not re-read run state to classify ILLEGAL_TRANSITION "
+              + "workflowRunId={} runnerExecutionId={} reason={} readError={}",
+          workflowRunId,
+          runnerExecutionId,
+          error.getMessage(),
+          readError.toString());
+      return;
+    }
+    if (current != null && SPEC_READY_OR_BEYOND.contains(current)) {
+      log.info(
+          "onSpecStageSucceeded idempotent replay (spec-ready already applied) workflowRunId={} "
+              + "runnerExecutionId={} currentState={}",
+          workflowRunId,
+          runnerExecutionId,
+          current.value());
+      return;
+    }
+    log.warn(
+        "onSpecStageSucceeded probable anomaly: spec outcome for a run in unexpected state — not "
+            + "advancing to WaitingForSpecApproval (best-effort classification from current state) "
+            + "workflowRunId={} runnerExecutionId={} currentState={} reason={}",
+        workflowRunId,
+        runnerExecutionId,
+        current == null ? "<not_found>" : current.value(),
+        error.getMessage());
   }
 
   // ---------------------------------------------------------------------------------------------

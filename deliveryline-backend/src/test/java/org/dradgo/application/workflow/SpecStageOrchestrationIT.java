@@ -73,13 +73,15 @@ class SpecStageOrchestrationIT {
   void submitAutoDispatchesToInvestigatingThenSpecReadyOnPoll() {
     // AC1: submit creates the run and auto-dispatches the spec runner inside the submit
     // transaction.
-    String runId =
-        commandService
-            .submit(
-                new SubmitWorkflowCommand(
-                    "alex", ActorType.HUMAN, "idem-e2e-happy-12345", "corr-e2e-happy", "LIN-101"))
-            .workflowRunId();
+    SubmitWorkflowResult submitResult =
+        commandService.submit(
+            new SubmitWorkflowCommand(
+                "alex", ActorType.HUMAN, "idem-e2e-happy-12345", "corr-e2e-happy", "LIN-101"));
+    String runId = submitResult.workflowRunId();
 
+    // Review finding P4 — submit reports the run's ACTUAL committed state (auto-advanced to
+    // Investigating in the submit transaction), not the stale just-created Inbox value.
+    assertEquals(WorkflowState.INVESTIGATING, submitResult.currentState());
     assertEquals(WorkflowState.INVESTIGATING.value(), currentState(runId));
     assertEquals(1, runnerExecutionCount(runId));
     assertEquals(

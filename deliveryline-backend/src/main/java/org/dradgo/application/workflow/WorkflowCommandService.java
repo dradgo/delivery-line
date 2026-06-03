@@ -204,12 +204,34 @@ public class WorkflowCommandService {
       // Inbox->Investigating transition + the runner_executions row commit or roll back together,
       // so a dispatch failure unwinds the submit. The async runner RESULT arrives later via the
       // poller (a separate transaction). No-op when spec-stage.auto-dispatch=false (test profile),
-      // so the response below still reports the run's just-created Inbox state.
+      // which leaves the run in Inbox.
       workflowOrchestrationService.dispatchSpecGeneration(
           workflowRun.publicId(), normalizeOptional(command.correlationId()));
 
+      // Story 3a-1 review finding P4 — report the run's ACTUAL committed state, not the stale
+      // just-created Inbox value: when auto-dispatch advanced the run to Investigating in THIS
+      // transaction the caller must see Investigating. Re-read within the transaction
+      // (auto-dispatch
+      // disabled leaves it Inbox; enabled => Investigating).
+      //
+      // The re-read is purely cosmetic — it only populates the response's currentState. Guard it so
+      // a transient read failure cannot escape and roll back this @Transactional submit (the
+      // created
+      // run + Linear link + Inbox->Investigating transition + dispatched runner_executions row all
+      // committed together). Fall back to the just-created state on an empty result OR a read
+      // error.
+      WorkflowState resultingState;
+      try {
+        resultingState =
+            workflowRunReadPort
+                .findByPublicId(workflowRun.publicId())
+                .map(WorkflowRunSnapshot::currentState)
+                .orElse(workflowRun.currentState());
+      } catch (RuntimeException readError) {
+        resultingState = workflowRun.currentState();
+      }
       return new SubmitWorkflowResult(
-          workflowRun.publicId(), WorkflowState.INBOX, normalizeOptional(command.correlationId()));
+          workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
