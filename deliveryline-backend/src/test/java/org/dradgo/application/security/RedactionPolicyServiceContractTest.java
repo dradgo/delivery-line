@@ -120,6 +120,8 @@ class RedactionPolicyServiceContractTest {
             "pem-pkcs8-private-key.pem",
             "pem-rsa-private-key.pem",
             "query-secret.txt",
+            "repo-context-readme-with-pem-and-path.md",
+            "repo-context-tree-summary-with-secrets.json",
             "runner-bearer-http-debug-header.txt",
             "runner-claude-verbose-token-print.txt",
             "runner-codex-auth-header-echo.txt",
