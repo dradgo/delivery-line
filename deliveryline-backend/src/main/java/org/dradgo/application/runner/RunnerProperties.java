@@ -132,16 +132,25 @@ public record RunnerProperties(
   /**
    * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. The list is ordered =
    * the runner image's resolution preference (first present wins at dispatch time, and the value is
-   * injected under the name it was found — see {@link RunnerSecretsService}). Codex also accepts
-   * {@code OPENAI_API_KEY} as a fallback alias for the same OpenAI key. Story 3.4 made Claude
-   * dual-mode: {@code CLAUDE_CODE_OAUTH_TOKEN} (Pro/Max subscription token, preferred) then {@code
-   * ANTHROPIC_API_KEY} (per-token API billing) — two DISTINCT credential types, not aliases, so
-   * doctor reports PASS when either is set. NAMES only — the values live in {@code .env} / process
-   * env and are read per-dispatch.
+   * injected under the name it was found — see {@link RunnerSecretsService}).
+   *
+   * <p>Story 3a-3 made Codex subscription-first/file-based: {@code CODEX_AUTH_JSON} (the raw,
+   * single-line content of {@code $CODEX_HOME/auth.json} from a ChatGPT/Pro subscription, the
+   * cost-saving path) is the PREFERRED credential; the Codex entrypoint materializes it into {@code
+   * $CODEX_HOME/auth.json} before invoking Codex. {@code CODEX_API_KEY} then {@code OPENAI_API_KEY}
+   * (aliases for the same OpenAI API key) remain the fallback. This mirrors story 3.4's Claude
+   * subscription-first dual-mode, but Codex's subscription credential travels as a file's content
+   * rather than a token the CLI reads directly — see {@code runners/codex/entrypoint.sh} + {@code
+   * runners/codex/lib/runner.mjs materialize-auth}.
+   *
+   * <p>Story 3.4 made Claude dual-mode: {@code CLAUDE_CODE_OAUTH_TOKEN} (Pro/Max subscription
+   * token, preferred) then {@code ANTHROPIC_API_KEY} (per-token API billing) — two DISTINCT
+   * credential types, not aliases, so doctor reports PASS when either is set. NAMES only — the
+   * values live in {@code .env} / process env and are read per-dispatch.
    */
   public static Map<RunnerKind, List<String>> defaultSecretEnvNames() {
     EnumMap<RunnerKind, List<String>> names = new EnumMap<>(RunnerKind.class);
-    names.put(RunnerKind.CODEX, List.of("CODEX_API_KEY", "OPENAI_API_KEY"));
+    names.put(RunnerKind.CODEX, List.of("CODEX_AUTH_JSON", "CODEX_API_KEY", "OPENAI_API_KEY"));
     names.put(RunnerKind.CLAUDE, List.of("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"));
     return names;
   }

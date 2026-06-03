@@ -117,6 +117,26 @@ secret values, auth headers, full bundle payloads, raw CLI exec-args / prompt. E
 conformance IT pins this with a negative-log assertion. The backend redaction layer (story 3.6) is a
 backstop, not a license to leak.
 
+### Runner-specific subscription credentials (NOT shared obligations)
+
+Both runners support a cost-saving **subscription** credential in addition to the API key, but the
+*mechanism differs per runner* — these are documented here for visibility, not as a shared contract
+either image must implement:
+
+- **Claude (story 3.4):** subscription auth is the env var `CLAUDE_CODE_OAUTH_TOKEN`, which the Claude
+  CLI reads directly. No file materialization.
+- **Codex (story 3a-3):** subscription auth is `CODEX_AUTH_JSON` — the raw, single-line content of
+  `$CODEX_HOME/auth.json` (Codex reads subscription credentials from a **file**, not an env var). The
+  Codex entrypoint materializes it into `$CODEX_HOME/auth.json` (mode `0600`, atomic) via
+  `runner.mjs materialize-auth` before invoking Codex, and removes it on exit. A present-but-malformed
+  `CODEX_AUTH_JSON` exits **`21`** (Codex-specific, distinct from the shared exit `20` "no credential
+  present") with a schema-valid failure result. The raw-JSON transport (not base64) keeps
+  `RunnerSecretScanService`'s literal-substring leak detector effective.
+
+Both subscription credentials are **subscription-first**: each runner's
+`deliveryline.runner.secret-env-names.<kind>` lists the subscription name first, so the
+first-present-wins resolution prefers it over the API key.
+
 ## Least privilege
 
 Non-root user (`codex:1001` / `claude:1001` — uid/gid `1000` is taken by the `node:22-slim` base's

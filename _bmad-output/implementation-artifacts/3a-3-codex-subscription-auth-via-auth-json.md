@@ -1,6 +1,6 @@
 # Story 3a-3: Codex Subscription Auth via `auth.json`
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -84,81 +84,87 @@ operationalizes it. Four decisions are **locked** (do not re-open):
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Backend config — add `CODEX_AUTH_JSON` to `secret-env-names.codex`** (AC: 1, 7)
-  - [ ] `deliveryline-backend/src/main/resources/application.yml`: change `secret-env-names.codex` to
+- [x] **Task 1: Backend config — add `CODEX_AUTH_JSON` to `secret-env-names.codex`** (AC: 1, 7)
+  - [x] `deliveryline-backend/src/main/resources/application.yml`: change `secret-env-names.codex` to
         `[CODEX_AUTH_JSON, CODEX_API_KEY, OPENAI_API_KEY]` (`:144-147`); update the explanatory comment
         above it to note the subscription-first Codex mode (mirroring the Claude comment).
-  - [ ] `deliveryline-backend/src/test/resources/application.yml`: make the **same** change — the test
+  - [x] `deliveryline-backend/src/test/resources/application.yml`: make the **same** change — the test
         yaml *shadows* (does not merge) the main one, so an omission mis-binds the `@SpringBootTest`
         tier ([[validated-config-needs-test-yaml]]).
-  - [ ] `RunnerProperties.defaultSecretEnvNames()` (`:144`): `CODEX → List.of("CODEX_AUTH_JSON",
+  - [x] `RunnerProperties.defaultSecretEnvNames()` (`:144`): `CODEX → List.of("CODEX_AUTH_JSON",
         "CODEX_API_KEY", "OPENAI_API_KEY")`. Update the javadoc on `defaultSecretEnvNames()` (`:132-141`)
         to describe Codex's subscription-first file-based mode.
-  - [ ] Update `RunnerPropertiesTest` expectations for the Codex list.
-  - [ ] **Do NOT touch `RunnerSecretsService`.** Matched-name injection (story 3.4, `:91-105`) already
+  - [x] Update `RunnerPropertiesTest` expectations for the Codex list. (Also updated
+        `RunnerSecretsServiceTest.blankValueIsTreatedAsMissing` — the preferred missing-var hint is now
+        `CODEX_AUTH_JSON`.)
+  - [x] **Do NOT touch `RunnerSecretsService`.** Matched-name injection (story 3.4, `:91-105`) already
         injects the first-present value under its found name — `CODEX_AUTH_JSON` rides for free.
-- [ ] **Task 2: `runner.mjs materialize-auth` subcommand** (AC: 2, 5)
-  - [ ] Add `commandMaterializeAuth(args)` to `runners/codex/lib/runner.mjs` and wire it into the
+- [x] **Task 2: `runner.mjs materialize-auth` subcommand** (AC: 2, 5)
+  - [x] Add `commandMaterializeAuth(args)` to `runners/codex/lib/runner.mjs` and wire it into the
         bottom `switch` (`:296-311`). Read `process.env.CODEX_AUTH_JSON` (NOT argv). Fail
         (`fail(<code>, …)`) when absent/blank or when `JSON.parse` throws or yields a non-object /
         empty object. On success call the existing `writeAtomically(out, contents)` (`:100-109`) then
         `chmodSync(out, 0o600)` (import `chmodSync` from `node:fs`).
-  - [ ] **Never** write the value to stdout/stderr. The only diagnostic is a name+presence line (or
+  - [x] **Never** write the value to stdout/stderr. The only diagnostic is a name+presence line (or
         silence) — the entrypoint owns the human-readable log.
-  - [ ] Pick a documented exit code consistent with the entrypoint's table (reuse the auth-failure
-        family; see Dev Notes "Exit codes"). Record it in the `runner.mjs` header comment + README.
-- [ ] **Task 3: Entrypoint subscription branch** (AC: 3, 4, 5, 6)
-  - [ ] In the auth-resolution block (`runners/codex/entrypoint.sh:247-278`), **before** the existing
+  - [x] Pick a documented exit code consistent with the entrypoint's table (chose **21**, new
+        auth-family code; see Dev Notes "Exit codes"). Recorded in the `runner.mjs` header comment +
+        entrypoint header + README + RUNNER_CONTRACT.
+- [x] **Task 3: Entrypoint subscription branch** (AC: 3, 4, 5, 6)
+  - [x] In the auth-resolution block (`runners/codex/entrypoint.sh:247-278`), **before** the existing
         `CODEX_API_KEY`/`OPENAI_API_KEY` checks, add: `if [ -n "${CODEX_AUTH_JSON:-}" ]; then` →
         `CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"; export CODEX_HOME;` run
         `"$NODE_BIN" "$RUNNER_LIB" materialize-auth --out "$CODEX_HOME/auth.json"`; set
-        `AUTH_KEY_VAR=CODEX_AUTH_JSON` + an `AUTH_MODE=subscription` marker; **skip** the
+        `AUTH_KEY_VAR=CODEX_AUTH_JSON` + an `mode=subscription` marker; **skip** the
         `export OPENAI_API_KEY` path. Guard every expansion with `${VAR:-}` (the script runs `set -eu`).
-  - [ ] On `materialize-auth` non-zero: log ERROR (name only), write a schema-valid failure result via
-        `runner.mjs build-failure --category runner_non_zero_exit`, exit the documented code (AC5).
-  - [ ] Update the "no agent-provider key present" guard (`:258`) so `CODEX_AUTH_JSON` presence counts
-        as a resolved credential (AC6).
-  - [ ] Extend `cleanup()` (`:37-42`) to also `rm -f "${CODEX_HOME:-$HOME/.codex}/auth.json"` (AC4).
-  - [ ] Update `print_help` (`:56-78`) auth section to list `CODEX_AUTH_JSON` (subscription) ahead of
+  - [x] On `materialize-auth` non-zero: log ERROR (name only), write a schema-valid failure result via
+        `runner.mjs build-failure --category runner_non_zero_exit`, exit the documented code 21 (AC5).
+  - [x] Update the "no agent-provider key present" guard (`:258`) so `CODEX_AUTH_JSON` presence counts
+        as a resolved credential (AC6); message names the preferred variable.
+  - [x] Extend `cleanup()` (`:37-42`) to also `rm -f` the materialized auth.json (AC4).
+  - [x] Update `print_help` (`:56-78`) auth section to list `CODEX_AUTH_JSON` (subscription) ahead of
         `CODEX_API_KEY`/`OPENAI_API_KEY`.
-  - [ ] Log auth mode by **name + presence + path only** — never the value (AC3d).
-- [ ] **Task 4: Doctor remediation text** (AC: 7)
-  - [ ] `DoctorService` `CHECK_RUNNER_SECRETS` remediation (`:85-87`): add `CODEX_AUTH_JSON` to the
+  - [x] Log auth mode by **name + presence + path only** — never the value (AC3d).
+- [x] **Task 4: Doctor remediation text** (AC: 7)
+  - [x] `DoctorService` `CHECK_RUNNER_SECRETS` remediation (`:85-87`): add `CODEX_AUTH_JSON` to the
         Codex options string. **No probe-logic change** — `probeRunnerSecrets` (`:596`) is already
         name-driven.
-  - [ ] Add/extend a focused doctor test asserting PASS for Codex when **only** `CODEX_AUTH_JSON` is
+  - [x] Add/extend a focused doctor test asserting PASS for Codex when **only** `CODEX_AUTH_JSON` is
         set (mirrors the existing dual-mode Claude assertion).
-- [ ] **Task 5: Leak-scan coverage** (AC: 8)
-  - [ ] Add a `RunnerSecretScanServiceTest` case: with `CODEX_AUTH_JSON` set in the test environment, a
+- [x] **Task 5: Leak-scan coverage** (AC: 8)
+  - [x] Add a `RunnerSecretScanServiceTest` case: with `CODEX_AUTH_JSON` set in the test environment, a
         workspace file whose text contains the injected auth.json content is reported as a leak with
         category `injected_provider_key`. **No production scan change** — this pins that the raw-JSON
         choice keeps the substring detector effective.
-- [ ] **Task 6: Conformance IT subscription scenario** (AC: 10)
-  - [ ] Extend `CodexRunnerImageConformanceIT` with a test that runs the mock-CLI image with
+- [x] **Task 6: Conformance IT subscription scenario** (AC: 10)
+  - [x] Extend `CodexRunnerImageConformanceIT` with a test that runs the mock-CLI image with
         `-e CODEX_AUTH_JSON=<single-line fixture json containing AUTH_SENTINEL>` (+ a stage), asserts
-        exit 0 + schema-valid `runner-result.v1.json`, asserts `runner.stderr` contains the
-        `name=CODEX_AUTH_JSON` materialize log line, and asserts `AUTH_SENTINEL` appears in **none** of
-        `runner.stdout`/`.stderr`/result. Reuse the existing valid `context-bundle.v1` fixture + mount
-        helpers; keep `@Tag("docker-runner-it")` + `@EnabledIfDockerAvailable` so it stays in the
-        Docker tier ([[springboot-testcontainers-test-must-be-IT]]).
-  - [ ] `mock-codex.sh` needs **no change** (it already ignores env + auth files); do not make the mock
+        exit 0 + schema-valid `runner-result.v1.json`, asserts the **container stderr** contains the
+        `name=CODEX_AUTH_JSON`/`mode=subscription` materialize log line (the entrypoint's diagnostics
+        go to the container's stderr stream, not the `runner.stderr` mount), and asserts `AUTH_SENTINEL`
+        appears in **none** of the container logs / `runner.stdout` / `runner.stderr` / result. Reuses
+        the existing valid `context-bundle.v1` fixture + mount helpers; keeps `@Tag("docker-runner-it")`
+        + `@EnabledIfDockerAvailable` so it stays in the Docker tier
+        ([[springboot-testcontainers-test-must-be-IT]]).
+  - [x] `mock-codex.sh` needs **no change** (it already ignores env + auth files); do not make the mock
         read auth.json.
-- [ ] **Task 7: Docs — README + RUNNER_CONTRACT + .env.example** (AC: 9, 11)
-  - [ ] `runners/codex/README.md`: new "Subscription authentication" section — `codex login` on a
+- [x] **Task 7: Docs — README + RUNNER_CONTRACT + .env.example** (AC: 9, 11)
+  - [x] `runners/codex/README.md`: new "Subscription authentication" section — `codex login` on a
         trusted host → minify `~/.codex/auth.json` into `CODEX_AUTH_JSON` (single line) → subscription
         beats API key when both present → materialized to `$CODEX_HOME/auth.json` (0600) → real
-        subscription execution + token refresh are story 3.8.
-  - [ ] `.env.example`: document `CODEX_AUTH_JSON` (commented; single-line minified JSON; never
+        subscription execution + token refresh are story 3.8. (Env-var + exit-code tables updated too.)
+  - [x] `.env.example`: document `CODEX_AUTH_JSON` (commented; single-line minified JSON; never
         committed).
-  - [ ] `runners/RUNNER_CONTRACT.md`: record `CODEX_AUTH_JSON` + the `$CODEX_HOME/auth.json`
+  - [x] `runners/RUNNER_CONTRACT.md`: record `CODEX_AUTH_JSON` + the `$CODEX_HOME/auth.json`
         materialization as a **Codex-specific** credential convention (not a shared obligation).
-- [ ] **Logging instrumentation** (cross-cutting; adapted for a shell entrypoint + Node helper)
-  - [ ] Entrypoint emits a structured `[codex-runner] [INFO]` line on auth-mode resolution carrying
+- [x] **Logging instrumentation** (cross-cutting; adapted for a shell entrypoint + Node helper)
+  - [x] Entrypoint emits a structured `[codex-runner] [INFO]` line on auth-mode resolution carrying
         `name=CODEX_AUTH_JSON mode=subscription` (+ path), and `[ERROR]` on materialize failure
-        (name only). Prepend `DELIVERYLINE_CORRELATION_ID` when present (existing `log()` helper).
-  - [ ] **Never** print the `CODEX_AUTH_JSON` value, the auth.json contents, or any token — name +
+        (name only). Prepends `DELIVERYLINE_CORRELATION_ID` when present (existing `log()` helper).
+  - [x] **Never** print the `CODEX_AUTH_JSON` value, the auth.json contents, or any token — name +
         presence + mode + path only. The conformance IT negative-leak assertion (Task 6) is the
-        enforcing test; add the same negative assertion in the unit/dash entrypoint matrix.
+        enforcing test; the runner.mjs unit tier + entrypoint smoke matrix add the same negative
+        assertion.
 
 ## Dev Notes
 
@@ -312,14 +318,96 @@ name + presence + path only. The conformance IT's negative-leak assertion is the
 
 ### Agent Model Used
 
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) via bmad-dev-story.
+
 ### Debug Log References
+
+- Local entrypoint smoke (git-bash `sh`, mock/probe CLI) — subscription path: exit 0, auth.json
+  materialized with sentinel, `OPENAI_API_KEY` NOT exported, no leak across all outputs, auth.json
+  cleaned on exit, log line `name=CODEX_AUTH_JSON mode=subscription`.
+- Malformed `CODEX_AUTH_JSON` → exit 21 + schema-valid failure result (`runner_non_zero_exit`,
+  `outcome=failure`), no leak. API-key-only → exit 0, `OPENAI_API_KEY` exported (byte-for-byte path),
+  no auth.json. No credential → exit 20 naming the preferred variable.
+- `node --test runners/codex/test/runner-materialize-auth.test.mjs` → 7/7 pass.
 
 ### Completion Notes List
 
+- **Backend is config-only — the name-driven secret pipeline lit up for free.** Prepending
+  `CODEX_AUTH_JSON` to `secret-env-names.codex` (both yamls + `RunnerProperties.defaultSecretEnvNames()`)
+  makes `RunnerSecretsService` (first-present-wins, matched-name injection), `DoctorProbeAdapter`
+  (`probeRunnerSecrets`, any-name PASS), and `RunnerSecretScanService` (literal-substring detector,
+  raw-JSON) all work with ZERO production logic change. Only the doctor remediation *string* changed.
+- **Subscription-first ripple:** the preferred Codex missing-credential hint is now `CODEX_AUTH_JSON`
+  (was `CODEX_API_KEY`) — updated `RunnerSecretsServiceTest.blankValueIsTreatedAsMissing` accordingly.
+- **New runner-image logic = the whole story.** `runner.mjs materialize-auth` (reads
+  `process.env.CODEX_AUTH_JSON`, validates non-empty JSON object, atomic `0600` write, never prints
+  the value, exit 21 on malformed); entrypoint subscription branch (set/export `CODEX_HOME`,
+  materialize, skip `OPENAI_API_KEY`, `build-failure`+exit 21 on failure, name/presence/path log);
+  `cleanup()` rm of the auth.json; `print_help`/header/README/RUNNER_CONTRACT updates. API-key path
+  preserved byte-for-byte.
+- **Chosen exit code = 21** (new auth-family code, distinct from exit 20 "no credential present") so
+  the failure-result summary is unambiguous ("Codex auth.json is malformed"). Recorded in the
+  entrypoint header, `runner.mjs` header, README exit-code table, and `RUNNER_CONTRACT.md`.
+- **Test surface:** `runner.mjs materialize-auth` got a new node:test unit tier
+  (`runners/codex/test/runner-materialize-auth.test.mjs`, 7 cases incl. 0600/negative-leak — runnable
+  via `node --test`); backend Java tiers extended (RunnerProperties, RunnerSecretScanService, doctor
+  PASS-on-CODEX_AUTH_JSON-only); the conformance IT got a subscription scenario. The entrypoint
+  branch + 0600 + cleanup were verified locally via git-bash smoke (the conformance IT enforces it in
+  the Docker tier on CI/WSL2).
+- **Gates (PowerShell, [[rtk-hook-only-matches-bash]]):** full fast Surefire **751/0/0/11skip**,
+  spotless:apply (3 files) + checkstyle:check **0 violations**, runner.mjs unit **7/7**.
+- **NOT run locally (no Docker-on-Linux here):** `CodexRunnerImageConformanceIT` (`docker-runner-it`
+  tier, excluded from the no-Docker PR tier) — it compiled clean in `test-compile`. Recommend a WSL2
+  Ubuntu / Docker CI confirm before merge ([[wsl-linux-ci-reproduction]], [[verify-ci-fixes-in-clean-env]]).
+- No new Maven/npm dependency, no Flyway migration, no REST/OpenAPI/`schema.d.ts` change, no
+  runner-contracts schema change (so no stale-.m2 risk — [[runner-contracts-schema-stale-in-m2]]).
+
 ### File List
+
+**Backend (production):**
+- `deliveryline-backend/src/main/resources/application.yml` (secret-env-names.codex + comment)
+- `deliveryline-backend/src/test/resources/application.yml` (same — shadow yaml)
+- `deliveryline-backend/src/main/java/org/dradgo/application/runner/RunnerProperties.java` (defaultSecretEnvNames + javadoc)
+- `deliveryline-backend/src/main/java/org/dradgo/application/diagnostics/DoctorService.java` (CHECK_RUNNER_SECRETS remediation text)
+
+**Backend (tests):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/runner/RunnerPropertiesTest.java` (new codex subscription-first assertion)
+- `deliveryline-backend/src/test/java/org/dradgo/application/runner/RunnerSecretsServiceTest.java` (preferred-missing-var hint → CODEX_AUTH_JSON)
+- `deliveryline-backend/src/test/java/org/dradgo/application/runner/RunnerSecretScanServiceTest.java` (new auth.json leak case)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/diagnostics/DoctorProbeAdapterTest.java` (new CODEX_AUTH_JSON-only PASS)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/runner/CodexRunnerImageConformanceIT.java` (new subscription scenario + captureContainerLogs helper)
+
+**Runner image:**
+- `runners/codex/lib/runner.mjs` (new `materialize-auth` subcommand, chmodSync import, header)
+- `runners/codex/entrypoint.sh` (subscription branch, cleanup trap, print_help, header, exit 21)
+- `runners/codex/README.md` (Subscription authentication section, env-var + exit-code tables)
+- `runners/codex/test/runner-materialize-auth.test.mjs` (NEW — node:test unit tier)
+- `runners/RUNNER_CONTRACT.md` (Codex-specific subscription credential convention)
+- `.env.example` (CODEX_AUTH_JSON documented)
 
 ### Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-06-03 | Story 3a-3 created via bmad-create-story (`backlog → ready-for-dev`) from the approved design spec `docs/superpowers/specs/2026-06-03-codex-subscription-auth-json-design.md`. |
+| 2026-06-03 | bmad-dev-story (`ready-for-dev → in-progress → review`): implemented Codex subscription auth via `auth.json`. Config-only backend touch (subscription-first `secret-env-names.codex` in both yamls + `RunnerProperties` + doctor remediation), new `runner.mjs materialize-auth` (0600 atomic, exit 21, no-leak), entrypoint subscription branch + cleanup trap, docs (README/RUNNER_CONTRACT/.env.example), and test surface (runner.mjs node unit tier, conformance IT subscription scenario, RunnerProperties/SecretScan/doctor Java tests). 11 ACs + Logging; 7 tasks. Gates green via PowerShell: fast Surefire 751/0/11skip, spotless+checkstyle 0, runner.mjs 7/7. Conformance IT (Docker tier) compiled, not run locally — recommend WSL2/Docker CI confirm. |
+
+## Review Findings
+
+Adversarial code review (bmad-code-review, 2026-06-03) — 3 layers (Blind Hunter, Edge Case Hunter,
+Acceptance Auditor). Acceptance Auditor verified **all 11 ACs + Logging FULLY MET in code**. Outcome:
+0 decision-needed, 3 patch, 1 defer, 12 dismissed (false-positive / by-design / out-of-scope).
+
+**Patch findings (unchecked):**
+
+- [x] [Review][Patch] **FIXED** — `auth.json` 0600 is non-atomic — created at umask mode (≈0644) then chmod'd, and chmod is best-effort so a chmod failure silently leaves the secret world/group-readable while the run proceeds (contradicts the documented "mode 0600" guarantee) [runners/codex/lib/runner.mjs commandMaterializeAuth + writeAtomically] — FIX APPLIED: `writeAtomically` now takes an optional `mode`; `commandMaterializeAuth` passes `0o600` so the temp file is created+chmod'd restricted and atomically renamed into place (no world-readable window, no silent chmod-failure gap), and a partial temp file is `rmSync`'d on write failure. Verified: node unit tier 7/7 (incl. the 0600-write/no-leak case). (MEDIUM; blind+edge)
+- [x] [Review][Patch] **FIXED** — A valid credential written into an unwritable `CODEX_HOME` exits `40` inside `runner.mjs`, but the entrypoint masks every non-zero `materialize-auth` exit to `21` with summary "Codex auth.json is malformed" — a misleading diagnosis for a destination/filesystem problem (the JSON was fine) [runners/codex/entrypoint.sh subscription branch + runner.mjs writeAtomically `fail(40,…)`] — FIX APPLIED: the `build-failure --summary` is now "Codex subscription auth.json could not be materialized (malformed/empty value or unwritable CODEX_HOME)", accurate for both cases. Verified: `bash -n` syntax OK. (LOW; blind+edge)
+- [x] [Review][Patch] **FIXED** — Bare `$HOME` under `set -eu` in `CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"` aborts the script with an opaque unbound-variable error if `HOME` is ever unset/empty — the one expansion in the new code not guarded like the rest of the entrypoint [runners/codex/entrypoint.sh:278] — FIX APPLIED: `${CODEX_HOME:-${HOME:-/home/codex}/.codex}`. Verified: `set -eu; unset HOME` no longer aborts the default expansion. (LOW; blind+edge)
+
+**Deferred findings:**
+
+- [x] [Review][Defer] No committed CI test exercises the entrypoint's subscription branch (skip-`OPENAI_API_KEY`-export, `cleanup()` rm of `auth.json`) or the real Codex CLI consuming `$CODEX_HOME/auth.json` — the conformance IT runs the mock CLI (which ignores env + auth files) and pins only the in-scope materialize-log-line + negative-leak guarantees; the branch behaviors were verified only via local git-bash smoke [CodexRunnerImageConformanceIT.java / entrypoint.sh] — deferred: real subscription execution is explicitly story 3.8 scope (locked decision #3) and the dev already recommends a WSL2/Docker CI confirm before merge. (edge+auditor)
+
+All 3 patches were fixed automatically and verified (node unit tier 7/7, `bash -n` syntax OK, `$HOME`-guard smoke). Status `review → done`. The deferred CI-confirm item still stands: run the `docker-runner-it` conformance tier on WSL2/Docker-Linux before merge.
+
+**Notable dismissals (12 — recorded for audit):** SIGKILL leaves `auth.json` on the ephemeral container layer (uncatchable signal; teardown is the mitigation; file is outside quarantined mounts); `auth.json` outside the `input/output/logs` scan surface (by design — it IS the credential, intentionally outside mounts); JSON value adds a `SECRET_FIELD` scan category (leak still detected; test uses `.contains`; no downstream breakage shown); no API-key fallback when subscription is malformed (production injects exactly one credential — unreachable; subscription-first is by design); `--out true` parseArgs sentinel (pre-existing; entrypoint always passes a real path); no symlink/path-traversal guard on `--out` (operator owns the whole container — no trust boundary crossed); `CODEX_HOME` dir created 0755 (single-user ephemeral container; file is 0600); doctor reports "present" without JSON-validity (consistent with the name-only probe, same as API keys); scanner re-derives only the resolved credential (production injects one — complete coverage); single-line-JSON unenforced (fails safely; folded into patch #2's diagnostic note); real-CLI consumption untested (explicitly story 3.8); `fail(40)` write-error path confirmed to NOT leak the value (uses path + `error.message` only).

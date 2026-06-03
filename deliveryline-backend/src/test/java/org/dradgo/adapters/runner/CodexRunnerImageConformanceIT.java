@@ -3,8 +3,10 @@ package org.dradgo.adapters.runner;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
+import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.command.WaitContainerResultCallback;
@@ -52,6 +54,14 @@ class CodexRunnerImageConformanceIT {
   // Sentinel "secret" injected as the provider key. The negative-log assertion proves it never
   // reaches runner.stdout/.stderr (or the result document).
   private static final String SECRET_SENTINEL = "sk-codex-CONFORMANCE-SENTINEL-9f3a2b";
+  // Story 3a-3 — sentinel embedded INSIDE the subscription auth.json content. The negative-leak
+  // assertion proves it never reaches container logs, the captured runner.stdout/.stderr, or the
+  // result document — only its file (cleaned on exit) ever holds it.
+  private static final String AUTH_SENTINEL = "oauth-SUBSCRIPTION-SENTINEL-7a1b2c";
+  private static final String CODEX_AUTH_JSON_FIXTURE =
+      "{\"tokens\":{\"access_token\":\""
+          + AUTH_SENTINEL
+          + "\"},\"account_id\":\"acct_conformance\"}";
   private static final Pattern WINDOWS_DRIVE_PATH = Pattern.compile("^([A-Za-z]):[/\\\\](.*)$");
 
   private static DockerClient docker;
@@ -207,6 +217,110 @@ class CodexRunnerImageConformanceIT {
     assertThat(resultJson)
         .as("runner-result.v1.json must not leak the secret")
         .doesNotContain(SECRET_SENTINEL);
+  }
+
+  @Test
+  void subscriptionAuthMaterializesAuthJsonWithoutLeakingTheValue() throws Exception {
+    // Story 3a-3 (AC10) — subscription scenario: inject CODEX_AUTH_JSON (auth.json content carrying
+    // a sentinel) INSTEAD of an API key. Asserts the run completes (exit 0, schema-valid result),
+    // the entrypoint's subscription materialize log line is present in the container stderr, and
+    // the
+    // auth.json sentinel leaks into NONE of the container logs / captured runner.stdout|.stderr /
+    // result. File existence + 0600 perms + cleanup are covered by the runner.mjs/entrypoint unit
+    // tier (no live container fs inspection needed). mock-codex.sh is unchanged — it ignores env +
+    // auth files, so a leak could only come from the entrypoint or runner.mjs, which this pins.
+    Path work = Files.createTempDirectory("codex-conformance-subscription-");
+    Path input = Files.createDirectories(work.resolve("input"));
+    Path output = Files.createDirectories(work.resolve("output"));
+    Path logs = Files.createDirectories(work.resolve("logs"));
+    makeRunnerReadable(input);
+    makeWorldWritable(output);
+    makeWorldWritable(logs);
+    Files.copy(bundleFixture, input.resolve("context-bundle.v1.json"));
+
+    var created =
+        docker
+            .createContainerCmd(IMAGE_TAG)
+            .withHostConfig(
+                HostConfig.newHostConfig()
+                    .withBinds(
+                        new Bind(
+                            dockerHostPath(input), new Volume("/workspace/input"), AccessMode.ro),
+                        new Bind(
+                            dockerHostPath(output), new Volume("/workspace/output"), AccessMode.rw),
+                        new Bind(
+                            dockerHostPath(logs), new Volume("/workspace/logs"), AccessMode.rw))
+                    .withNetworkMode("none")) // story 3.1 AC8 file-based contract
+            // Subscription credential ONLY — no CODEX_API_KEY / OPENAI_API_KEY (proves the
+            // subscription-first branch is taken, not the API-key fallback).
+            .withEnv(
+                "CODEX_AUTH_JSON=" + CODEX_AUTH_JSON_FIXTURE,
+                "DELIVERYLINE_RUNNER_STAGE=spec-investigation")
+            .exec();
+    containerIdToCleanup = created.getId();
+    docker.startContainerCmd(created.getId()).exec();
+    int exit =
+        docker
+            .waitContainerCmd(created.getId())
+            .exec(new WaitContainerResultCallback())
+            .awaitStatusCode();
+    assertThat(exit).as("subscription-auth entrypoint exit code").isZero();
+
+    // The entrypoint's structured diagnostics go to the CONTAINER's stderr stream (the log()
+    // helper writes to >&2), not the captured runner.stderr mount (which holds only the Codex CLI's
+    // own output). Capture the container's combined stdout+stderr to assert the materialize line.
+    String containerLogs = captureContainerLogs(created.getId());
+
+    Path resultFile = output.resolve("runner-result.v1.json");
+    assertThat(Files.exists(resultFile)).as("runner-result.v1.json present").isTrue();
+    byte[] resultBytes = Files.readAllBytes(resultFile);
+    ValidationResult validation =
+        new RunnerContractValidator()
+            .validate(ValidationTarget.RUNNER_RESULT, resultBytes, ValidationContext.defaults());
+    assertThat(validation.valid())
+        .as("subscription runner-result.v1 schema-valid; errors=%s", validation.errors())
+        .isTrue();
+    String resultJson = new String(resultBytes, StandardCharsets.UTF_8);
+
+    // Auth mode logged by NAME + mode only — never the value.
+    assertThat(containerLogs)
+        .as("entrypoint must log the subscription materialize line by name")
+        .contains("name=CODEX_AUTH_JSON")
+        .contains("mode=subscription");
+
+    // Negative-leak: the auth.json sentinel must not appear anywhere observable.
+    String stdoutLog = readIfExists(logs.resolve("runner.stdout"));
+    String stderrLog = readIfExists(logs.resolve("runner.stderr"));
+    assertThat(containerLogs)
+        .as("container logs must not leak the auth.json value")
+        .doesNotContain(AUTH_SENTINEL);
+    assertThat(stdoutLog)
+        .as("runner.stdout must not leak the auth.json value")
+        .doesNotContain(AUTH_SENTINEL);
+    assertThat(stderrLog)
+        .as("runner.stderr must not leak the auth.json value")
+        .doesNotContain(AUTH_SENTINEL);
+    assertThat(resultJson)
+        .as("runner-result.v1.json must not leak the auth.json value")
+        .doesNotContain(AUTH_SENTINEL);
+  }
+
+  private static String captureContainerLogs(String containerId) throws Exception {
+    StringBuilder sb = new StringBuilder();
+    docker
+        .logContainerCmd(containerId)
+        .withStdOut(true)
+        .withStdErr(true)
+        .withTailAll()
+        .exec(
+            new ResultCallback.Adapter<Frame>() {
+              @Override
+              public void onNext(Frame frame) {
+                sb.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+              }
+            })
+        .awaitCompletion();
+    return sb.toString();
   }
 
   private static String readIfExists(Path path) throws Exception {

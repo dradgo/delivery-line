@@ -51,6 +51,24 @@ class RunnerPropertiesTest {
   }
 
   @Test
+  void codexDefaultSecretEnvNamesAreSubscriptionFirst() {
+    // Story 3a-3 (AC1) — CODEX_AUTH_JSON (subscription auth.json content) is prepended to the Codex
+    // resolution list so RunnerSecretsService (first-present-wins) picks subscription over the API
+    // key. Order IS the resolution preference; the API key remains the fallback.
+    assertEquals(
+        java.util.List.of("CODEX_AUTH_JSON", "CODEX_API_KEY", "OPENAI_API_KEY"),
+        RunnerProperties.defaultSecretEnvNames().get(RunnerKind.CODEX));
+    // Story 3.4 — Claude stays subscription-first dual-mode (unchanged by 3a-3).
+    assertEquals(
+        java.util.List.of("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
+        RunnerProperties.defaultSecretEnvNames().get(RunnerKind.CLAUDE));
+    // secretEnvNamesFor delegates to the same default when the kind is unconfigured.
+    assertEquals(
+        java.util.List.of("CODEX_AUTH_JSON", "CODEX_API_KEY", "OPENAI_API_KEY"),
+        RunnerProperties.defaults().secretEnvNamesFor(RunnerKind.CODEX));
+  }
+
+  @Test
   void specStageDefaultsToCodexWithAutoDispatchOn() {
     // Story 3a-1 (AC10) — non-Spring construction defaults: codex image + auto-dispatch ON.
     RunnerProperties.SpecStage specStage = RunnerProperties.defaults().specStage();

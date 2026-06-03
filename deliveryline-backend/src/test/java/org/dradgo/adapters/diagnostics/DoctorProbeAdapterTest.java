@@ -69,6 +69,26 @@ class DoctorProbeAdapterTest {
   }
 
   @Test
+  void runnerSecretsProbeReportsCodexPresentOnSubscriptionAuthJsonOnly() {
+    // Story 3a-3 (AC7): the name-driven probe needs NO code change for subscription auth —
+    // CODEX_AUTH_JSON is simply the first configured name for Codex, so setting only it (no API
+    // key) still resolves Codex to "present". Claude's key is provided so the all-kinds aggregate
+    // is PASS; presence-only details, no value ever leaked.
+    MockEnvironment env =
+        new MockEnvironment()
+            .withProperty("CODEX_AUTH_JSON", "{\"tokens\":{\"access_token\":\"sk-sub-doctor\"}}")
+            .withProperty("ANTHROPIC_API_KEY", "sk-ant-doctor-test");
+
+    ProbeResult result = newAdapter(env, Path.of("."), failingFactory()).probeRunnerSecrets();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+    assertThat(result.details())
+        .containsEntry("codex", "present")
+        .containsEntry("claude", "present");
+    assertThat(result.details().values()).containsOnly("present");
+  }
+
+  @Test
   void runnerSecretsProbeFailsWhenAKindIsMissingItsKeyWithoutLeakingValues() {
     // Codex present, Claude absent → FAIL with DOCTOR_RUNNER_SECRET_MISSING.
     MockEnvironment env =

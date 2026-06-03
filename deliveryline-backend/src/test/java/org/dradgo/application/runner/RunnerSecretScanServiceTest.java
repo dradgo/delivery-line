@@ -95,6 +95,40 @@ class RunnerSecretScanServiceTest {
   }
 
   @Test
+  void detectsInjectedSubscriptionAuthJsonContentViaSubstring() {
+    // Story 3a-3 (AC8): the Codex subscription credential travels as RAW JSON (decision #4 — NOT
+    // base64), so RunnerSecretScanService's mandatory literal-substring detector still catches the
+    // auth.json content if it ever leaks into input/output/logs. base64 transport would have
+    // blinded it. No production scan change — this pins that the raw-JSON choice keeps the detector
+    // effective. CODEX_AUTH_JSON is first-present in the codex list, so it is the resolved injected
+    // value the scan re-derives and searches for.
+    String authJson =
+        "{\"tokens\":{\"access_token\":\"sk-codex-SUBSCRIPTION-LEAK-7a1b2c\"},"
+            + "\"account_id\":\"acct_42\"}";
+    RunnerSecretScanService subscriptionScan =
+        new RunnerSecretScanService(
+            workspaceStore,
+            redaction,
+            new RunnerSecretsService(
+                new MockEnvironment().withProperty("CODEX_AUTH_JSON", authJson),
+                RunnerProperties.defaults()));
+    when(workspaceStore.readFilesForSecretScan(REX_ID))
+        .thenReturn(
+            List.of(
+                new WorkspaceScanFile(
+                    "logs/runner.stdout",
+                    "agent dumped its auth.json " + authJson + " to the log")));
+
+    RunnerSecretScanService.ScanOutcome outcome =
+        subscriptionScan.scanWorkspace(REX_ID, RunnerKind.CODEX, RunnerStage.INVESTIGATION, RUN_ID);
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.leakedFile()).isEqualTo("logs/runner.stdout");
+    assertThat(outcome.detectedCategories())
+        .contains(RunnerSecretScanService.INJECTED_PROVIDER_KEY_CATEGORY);
+  }
+
+  @Test
   void detectsInjectedProviderKeyValueInLogs() {
     when(workspaceStore.readFilesForSecretScan(REX_ID))
         .thenReturn(

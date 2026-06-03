@@ -55,9 +55,11 @@ Accepted tokens (the three story-named artifact stages plus the `RunnerStage` en
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `CODEX_API_KEY` | one of these for a real run | Agent-provider key (story 3.5 contract). Value is **never** logged. |
-| `OPENAI_API_KEY` | fallback for the above | Used if `CODEX_API_KEY` is unset. |
-| `CODEX_BASE_URL` | no | Optional API base-URL override (exported to the CLI as `OPENAI_BASE_URL`). |
+| `CODEX_AUTH_JSON` | one of these for a real run | **Subscription auth** (story 3a-3, PREFERRED) — the raw single-line content of `$CODEX_HOME/auth.json` from a ChatGPT/Codex Pro subscription. Materialized to `$CODEX_HOME/auth.json` (mode `0600`) before Codex runs. Value is **never** logged. See "Subscription authentication" below. |
+| `CODEX_API_KEY` | fallback | Agent-provider API key (story 3.5 contract). Used when `CODEX_AUTH_JSON` is absent. Value is **never** logged. |
+| `OPENAI_API_KEY` | fallback for the above | Used if both `CODEX_AUTH_JSON` and `CODEX_API_KEY` are unset. |
+| `CODEX_HOME` | no | Codex home dir where the subscription `auth.json` is materialized (default `$HOME/.codex`). |
+| `CODEX_BASE_URL` | no | Optional API base-URL override (exported to the CLI as `OPENAI_BASE_URL`). API mode only. |
 | `DELIVERYLINE_RUNNER_STAGE` | no | Stage when `--stage` is not passed. |
 | `DELIVERYLINE_CORRELATION_ID` | no | Correlation id prepended to log lines (story 3.11 traceability). |
 | `DELIVERYLINE_RUNNER_ALLOW_SIMULATE_FAILURE` | no | Must equal `true` to enable `--simulate-failure` (off in production). |
@@ -65,9 +67,38 @@ Accepted tokens (the three story-named artifact stages plus the `RunnerStage` en
 | `CODEX_CLI_VERSION` | baked | The pinned Codex CLI version, reported by `--self-test`. |
 
 Secrets arrive **as container env** (already injected by the backend `RunnerSecretsService` →
-`CreateContainerSpec.environment`). The entrypoint reads the variable, exports `OPENAI_API_KEY` for
-the CLI, and logs only the **variable name + presence** — never the value. The backend redaction
-layer (story 3.6) is a backstop, not a license to leak.
+`CreateContainerSpec.environment`). In **API mode** the entrypoint reads the variable, exports
+`OPENAI_API_KEY` for the CLI, and logs only the **variable name + presence** — never the value. In
+**subscription mode** it materializes `CODEX_AUTH_JSON` into `$CODEX_HOME/auth.json` and does **not**
+export an API key (see below). The backend redaction layer (story 3.6) is a backstop, not a license
+to leak.
+
+## Subscription authentication (story 3a-3)
+
+Codex can authenticate against a **ChatGPT/Codex Pro subscription** (the cost-saving path) instead of
+per-token API billing. Codex keeps subscription credentials in a **file** — `$CODEX_HOME/auth.json`
+(default `~/.codex/auth.json`) — not an env var, so the runner *materializes* the file from an
+injected secret:
+
+1. **Generate `auth.json` on a trusted host.** Run `codex login` (Codex CLI) and complete the ChatGPT
+   sign-in; it writes `~/.codex/auth.json` (OAuth access + refresh tokens and account id).
+2. **Minify it into `.env`.** Put the file's content on a **single line** of JSON as `CODEX_AUTH_JSON`
+   in your `.env` (see `.env.example`). It is a secret — never commit it.
+3. **Precedence is subscription-first.** `deliveryline.runner.secret-env-names.codex` is
+   `[CODEX_AUTH_JSON, CODEX_API_KEY, OPENAI_API_KEY]`; `RunnerSecretsService` resolves the first
+   present, so when `CODEX_AUTH_JSON` is set it wins over an API key. The container then receives
+   `CODEX_AUTH_JSON` as env (injected under its own name).
+4. **Materialization.** The entrypoint detects the resolved credential is `CODEX_AUTH_JSON`, sets and
+   exports `CODEX_HOME` (default `$HOME/.codex`), and runs `runner.mjs materialize-auth --out
+   "$CODEX_HOME/auth.json"`, which validates the value is a non-empty JSON object and writes it
+   **atomically** with mode **`0600`**. The value is **never** printed; a malformed/empty value
+   writes a schema-valid failure result and exits **`21`**. The `cleanup()` trap removes the file on
+   exit (the container is ephemeral regardless). No `OPENAI_API_KEY` is exported in this mode.
+
+> **`--network=none` note:** the contract/self-test/conformance tier has no network, so subscription
+> **token refresh** (which needs egress) is **out of scope here** and deferred to **story 3.8** under
+> real execution. This story materializes exactly what the operator supplies; an expired token
+> surfaces as a normal Codex non-zero-exit failure.
 
 ## Exit codes
 
@@ -80,7 +111,8 @@ layer (story 3.6) is a backstop, not a license to leak.
 | `11` | Input bundle is not readable / not valid JSON. |
 | `12` | Unsupported `schemaVersion` (this image speaks v1 only). |
 | `13` | No stage resolved, or an unknown stage token. |
-| `20` | No agent-provider key present for a real run (`CODEX_API_KEY` / `OPENAI_API_KEY`). |
+| `20` | No agent-provider credential present for a real run (`CODEX_AUTH_JSON` / `CODEX_API_KEY` / `OPENAI_API_KEY`). |
+| `21` | Subscription `CODEX_AUTH_JSON` is present but malformed/empty (not a non-empty JSON object) — a schema-valid failure result is written (story 3a-3). |
 | `30` | The Codex CLI exited non-zero (see `runner.stderr`). No result file written. |
 | `40` | Failed to build/write `runner-result.v1.json`. |
 | `50` | `--simulate-failure=crash` — intentional non-zero exit with **no** result file. |

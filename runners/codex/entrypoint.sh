@@ -8,6 +8,14 @@
 #   write  /workspace/logs/runner.stdout|.stderr     (read-write mount)
 #   exit   0 on success; documented non-zero codes per failure mode (see README).
 #
+# Story 3a-3 — subscription-first auth. When CODEX_AUTH_JSON is present the
+# entrypoint materializes it into $CODEX_HOME/auth.json (mode 0600, via
+# runner.mjs materialize-auth) and skips the OPENAI_API_KEY export; a malformed /
+# empty CODEX_AUTH_JSON writes a schema-valid failure result and exits 21 (the
+# new auth-family code, distinct from exit 20 "no credential present"). The
+# API-key path (CODEX_API_KEY / OPENAI_API_KEY) is unchanged when no subscription
+# credential is supplied.
+#
 # The filenames above are the LIVE contract from the backend (verified against
 # LocalRunnerWorkspaceStore: CONTEXT_BUNDLE_FILENAME=context-bundle.v1.json,
 # RUNNER_RESULT_FILENAME=runner-result.v1.json). The adapter treats a missing
@@ -34,9 +42,17 @@ CODEX_CLI_BIN="${CODEX_CLI_BIN:-codex}"
 EXPECTED_CODEX_VERSION="${CODEX_CLI_VERSION:-<unset>}"
 
 PROMPT_FILE=""
+# Story 3a-3 (AC4) — path of the materialized subscription auth.json (set only when
+# CODEX_AUTH_JSON is resolved); the cleanup trap removes it on exit.
+CODEX_AUTH_FILE=""
 cleanup() {
   if [ -n "$PROMPT_FILE" ] && [ -f "$PROMPT_FILE" ]; then
     rm -f "$PROMPT_FILE" 2>/dev/null || true
+  fi
+  # Defense-in-depth: drop the materialized auth.json on EXIT/INT/TERM (the
+  # container is ephemeral anyway). rm -f is a silent no-op in API-key mode.
+  if [ -n "${CODEX_AUTH_FILE:-}" ]; then
+    rm -f "$CODEX_AUTH_FILE" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT INT TERM
@@ -70,7 +86,10 @@ Stage tokens (mapped to runner-result artifactType):
   pr-output | execution | prOutput                 -> prOutput
 
 Environment:
-  CODEX_API_KEY / OPENAI_API_KEY   agent-provider key (first present wins; value never logged)
+  CODEX_AUTH_JSON                  subscription auth.json content (PREFERRED, cost-saving path;
+                                   materialized to $CODEX_HOME/auth.json mode 0600; value never logged)
+  CODEX_API_KEY / OPENAI_API_KEY   agent-provider API key fallback (first present wins; value never logged)
+  CODEX_HOME                       Codex home dir for subscription auth.json (default $HOME/.codex)
   CODEX_BASE_URL                   optional API base URL override
   DELIVERYLINE_RUNNER_STAGE        stage when --stage is not passed (production injection seam)
   DELIVERYLINE_CORRELATION_ID      optional correlation id prepended to log lines
@@ -244,33 +263,69 @@ if ! ARTIFACT_TYPE="$(map_stage "$RAW_STAGE")"; then
 fi
 log INFO "stage resolved raw=$RAW_STAGE artifactType=$ARTIFACT_TYPE"
 
-# 4. resolve auth (story 3.5 contract): first present of CODEX_API_KEY then
-#    OPENAI_API_KEY. Value is NEVER logged — only the variable NAME + presence.
-AUTH_KEY=""
+# 4. resolve auth (story 3.5 + 3a-3 contract). SUBSCRIPTION-FIRST (mirrors the
+#    Claude runner, story 3.4): if CODEX_AUTH_JSON is present, materialize it into
+#    $CODEX_HOME/auth.json — Codex reads ChatGPT/Pro subscription credentials from
+#    a FILE, not an env var — and DO NOT export an API key. Otherwise fall back to
+#    the unchanged API-key path (first present of CODEX_API_KEY then OPENAI_API_KEY).
+#    The value is NEVER logged — only the variable NAME + presence (+ path/mode for
+#    subscription). resolution preference = the order configured in
+#    deliveryline.runner.secret-env-names.codex (RunnerSecretsService injects the
+#    first-present value under its own name, so the container sees exactly one).
 AUTH_KEY_VAR=""
-if [ -n "${CODEX_API_KEY:-}" ]; then
-  AUTH_KEY="$CODEX_API_KEY"
-  AUTH_KEY_VAR="CODEX_API_KEY"
-elif [ -n "${OPENAI_API_KEY:-}" ]; then
-  AUTH_KEY="$OPENAI_API_KEY"
-  AUTH_KEY_VAR="OPENAI_API_KEY"
-fi
-if [ -z "$AUTH_KEY" ] && [ "${DELIVERYLINE_RUNNER_SKIP_AUTH:-}" != "true" ]; then
-  log ERROR "no agent-provider key present — set CODEX_API_KEY or OPENAI_API_KEY (value is never logged)"
-  "$NODE_BIN" "$RUNNER_LIB" build-failure \
-    --bundle "$BUNDLE_FILE" \
-    --stage "$ARTIFACT_TYPE" \
-    --category runner_non_zero_exit \
-    --summary "No agent-provider key present" \
-    --out "$RESULT_FILE" >/dev/null || true
-  exit 20
-fi
-if [ -n "$AUTH_KEY_VAR" ]; then
-  log INFO "auth resolved from variable name=$AUTH_KEY_VAR (value redacted)"
-  # The Codex CLI reads OPENAI_API_KEY / OPENAI_BASE_URL; export without logging.
-  export OPENAI_API_KEY="$AUTH_KEY"
+if [ -n "${CODEX_AUTH_JSON:-}" ]; then
+  # --- subscription mode ---
+  # Guard $HOME under set -u: an unset/empty HOME would otherwise abort the script
+  # with an opaque unbound-variable error (no documented exit code, no result file).
+  CODEX_HOME="${CODEX_HOME:-${HOME:-/home/codex}/.codex}"
+  export CODEX_HOME
+  CODEX_AUTH_FILE="$CODEX_HOME/auth.json"
+  AUTH_KEY_VAR="CODEX_AUTH_JSON"
+  # runner.mjs owns the JSON validation + atomic 0600 write (the slim base has no
+  # jq). It reads the value from env (never argv) and never prints it. A malformed
+  # /empty credential — or an unwritable CODEX_HOME — exits non-zero here → schema-valid
+  # failure result + exit 21, never RUNNER_CRASH.
+  if ! "$NODE_BIN" "$RUNNER_LIB" materialize-auth --out "$CODEX_AUTH_FILE"; then
+    log ERROR "failed to materialize CODEX_AUTH_JSON into auth.json (name only; value never logged)"
+    "$NODE_BIN" "$RUNNER_LIB" build-failure \
+      --bundle "$BUNDLE_FILE" \
+      --stage "$ARTIFACT_TYPE" \
+      --category runner_non_zero_exit \
+      --summary "Codex subscription auth.json could not be materialized (malformed/empty value or unwritable CODEX_HOME)" \
+      --out "$RESULT_FILE" >/dev/null || true
+    exit 21
+  fi
+  log INFO "auth resolved from variable name=CODEX_AUTH_JSON mode=subscription path=$CODEX_AUTH_FILE (value redacted)"
+  # Subscription mode: do NOT export OPENAI_API_KEY — the CLI authenticates from auth.json.
 else
-  log WARN "no auth key present — proceeding under DELIVERYLINE_RUNNER_SKIP_AUTH=true (mock/test only)"
+  # --- API-key mode (byte-for-byte the story 3.5 path) ---
+  AUTH_KEY=""
+  if [ -n "${CODEX_API_KEY:-}" ]; then
+    AUTH_KEY="$CODEX_API_KEY"
+    AUTH_KEY_VAR="CODEX_API_KEY"
+  elif [ -n "${OPENAI_API_KEY:-}" ]; then
+    AUTH_KEY="$OPENAI_API_KEY"
+    AUTH_KEY_VAR="OPENAI_API_KEY"
+  fi
+  if [ -z "$AUTH_KEY" ] && [ "${DELIVERYLINE_RUNNER_SKIP_AUTH:-}" != "true" ]; then
+    # AC6: only the absence of ALL configured credentials fails; the message names
+    # the PREFERRED variable (CODEX_AUTH_JSON), with the API key as the fallback.
+    log ERROR "no agent-provider credential present — set CODEX_AUTH_JSON (subscription, preferred) or an agent-provider API key (value is never logged)"
+    "$NODE_BIN" "$RUNNER_LIB" build-failure \
+      --bundle "$BUNDLE_FILE" \
+      --stage "$ARTIFACT_TYPE" \
+      --category runner_non_zero_exit \
+      --summary "No agent-provider key present" \
+      --out "$RESULT_FILE" >/dev/null || true
+    exit 20
+  fi
+  if [ -n "$AUTH_KEY_VAR" ]; then
+    log INFO "auth resolved from variable name=$AUTH_KEY_VAR (value redacted)"
+    # The Codex CLI reads OPENAI_API_KEY / OPENAI_BASE_URL; export without logging.
+    export OPENAI_API_KEY="$AUTH_KEY"
+  else
+    log WARN "no auth key present — proceeding under DELIVERYLINE_RUNNER_SKIP_AUTH=true (mock/test only)"
+  fi
 fi
 if [ -n "${CODEX_BASE_URL:-}" ]; then
   export OPENAI_BASE_URL="$CODEX_BASE_URL"

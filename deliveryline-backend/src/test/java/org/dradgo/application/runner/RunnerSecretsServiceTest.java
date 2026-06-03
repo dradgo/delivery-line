@@ -141,6 +141,9 @@ class RunnerSecretsServiceTest {
 
   @Test
   void blankValueIsTreatedAsMissing() {
+    // A blank value resolves to "missing". With no credential present, the error hints the
+    // PREFERRED (first-configured) Codex name — which is CODEX_AUTH_JSON since story 3a-3 made Codex
+    // subscription-first (mirrors the Claude CLAUDE_CODE_OAUTH_TOKEN hint above).
     MockEnvironment env = new MockEnvironment().withProperty("CODEX_API_KEY", "   ");
 
     assertThatThrownBy(
@@ -152,7 +155,7 @@ class RunnerSecretsServiceTest {
         .satisfies(
             ex ->
                 assertThat(((DomainException) ex).details())
-                    .containsEntry("missingEnvVar", "CODEX_API_KEY"));
+                    .containsEntry("missingEnvVar", "CODEX_AUTH_JSON"));
   }
 
   @Test

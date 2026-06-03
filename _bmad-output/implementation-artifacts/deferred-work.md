@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3a-3 (2026-06-03)
+
+- **No CI test covers the entrypoint subscription branch or real-CLI `auth.json` consumption** — the conformance IT (`CodexRunnerImageConformanceIT.subscriptionAuthMaterializesAuthJsonWithoutLeakingTheValue`) runs the mock Codex CLI, which ignores env + auth files, so it pins only the in-scope materialize-log-line + negative-leak guarantees. The entrypoint's subscription-branch behaviors (skip `OPENAI_API_KEY` export, `cleanup()` rm of `$CODEX_HOME/auth.json`) and the real Codex CLI reading `$CODEX_HOME/auth.json` were verified only via local git-bash smoke. Deferred: real subscription execution + token refresh are explicitly story 3.8 scope (locked design decision #3); the dev already recommends a WSL2/Docker CI confirm before merge. [`CodexRunnerImageConformanceIT.java`, `runners/codex/entrypoint.sh`]
+
 ## Deferred from: code review of story-3a-2 (2026-06-03)
 
 - **(was decision-needed, MED) Manifest/README detection silently bounded by the depth-2 tree cap** — `RepositoryWorkspaceService.summarize` runs `detectReadme`/`detectManifests` over the depth-2-truncated tree, so a manifest/README deeper than 2 path segments (e.g. `modules/foo/pom.xml`, `src/main/resources/...`) is collapsed to a `DIR` entry and never detected → `packageManifestRefs`/`repositoryReadmeRef` systematically incomplete for monorepos. **Deferred (Alex): pilot scope** — acceptable for the 1:1 root-manifest pilot; nested-manifest detection (e.g. an unbounded `git ls-files`-style scan independent of the embedded-tree depth bound, T9 still capping only the embedded tree) lands with the full Linear↔GitHub mapping work, stories 3.32/3.33. [`RepositoryWorkspaceService.java:347,479,531,552`]

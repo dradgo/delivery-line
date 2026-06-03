@@ -23,11 +23,21 @@
 //       Write a deliberately schema-INVALID result file (drives the
 //       --simulate-failure=contract_violation path / story 3.6 / 3.8 tests).
 //
+//   materialize-auth --out <path>   (story 3a-3 — Codex subscription auth)
+//       Read the subscription credential from process.env.CODEX_AUTH_JSON (NEVER
+//       from argv — it must never appear on the process command line), validate it
+//       parses to a NON-EMPTY JSON object, and write it atomically with file mode
+//       0600 to --out (typically $CODEX_HOME/auth.json). Exit 21 (auth family) on
+//       absent/blank/non-JSON/non-object/empty input; exit 2 on missing --out.
+//       NEVER prints the value — only a name+presence diagnostic.
+//
 // NEVER prints secret values: the prompt is built only from the bundle's
 // non-secret ticket/spec/feedback/constraint fields; secrets live in env and
-// are consumed by the Codex CLI directly, never by this helper.
+// are consumed by the Codex CLI directly, never by this helper. The sole secret
+// this helper itself handles is CODEX_AUTH_JSON (materialize-auth), read from env
+// and held to the same no-print bar.
 
-import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, chmodSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -97,13 +107,34 @@ function deriveArtifactId(runnerExecutionId, stage) {
   return `art_${digest}`;
 }
 
-function writeAtomically(path, contents) {
+// Atomic write via tmp + rename. When `mode` is supplied (e.g. 0o600 for the
+// subscription auth.json secret) the TEMP file is created AND chmod'd to it before
+// the rename, so the destination is never world-readable for any window — a post-hoc
+// chmod on the live path would leave a brief default-umask (~0644) gap, and a chmod
+// failure would silently leave the secret readable. writeFileSync's mode only applies
+// on creation, so chmod the tmp too in case a stale tmp pre-existed.
+function writeAtomically(path, contents, mode) {
   const tmp = `${path}.tmp`;
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(tmp, contents, 'utf8');
+    if (mode !== undefined) {
+      writeFileSync(tmp, contents, { encoding: 'utf8', mode });
+      try {
+        chmodSync(tmp, mode);
+      } catch {
+        // best-effort on a non-POSIX dev fs (Windows); the production runner is Linux.
+      }
+    } else {
+      writeFileSync(tmp, contents, 'utf8');
+    }
     renameSync(tmp, path);
   } catch (error) {
+    // Never leave a partial temp file behind — for a secret write it could hold the value.
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // ignore cleanup failure
+    }
     fail(40, `failed to write ${path}: ${error.message}`);
   }
 }
@@ -290,6 +321,56 @@ function commandBuildInvalid(args) {
   process.exit(0);
 }
 
+// Story 3a-3 — exit code for a present-but-unusable CODEX_AUTH_JSON (malformed /
+// empty / not a non-empty object). The credential IS present, so this is distinct
+// from the entrypoint's exit 20 "no credential present"; the entrypoint mirrors
+// this code so the failure-result summary is unambiguous ("Codex auth.json is
+// malformed"). See entrypoint.sh, README "Exit codes", and runners/RUNNER_CONTRACT.md.
+const MATERIALIZE_AUTH_EXIT = 21;
+
+// Story 3a-3 — materialize the subscription credential from CODEX_AUTH_JSON into an
+// auth.json file (0600, atomic). The Codex CLI reads subscription credentials from a
+// FILE ($CODEX_HOME/auth.json), not an env var, so the entrypoint calls this helper
+// to bridge the env-var secret pipeline (RunnerSecretsService) to the file the CLI
+// expects. The raw value travels in env (NOT argv) and is NEVER printed — the only
+// diagnostic is a name+presence line; the entrypoint owns the human-readable log.
+function commandMaterializeAuth(args) {
+  const out = args.out;
+  if (!out || out === 'true') {
+    fail(2, 'materialize-auth: missing --out <path>');
+  }
+  const raw = process.env.CODEX_AUTH_JSON;
+  if (raw === undefined || raw === null || raw.trim() === '') {
+    fail(MATERIALIZE_AUTH_EXIT, 'materialize-auth: CODEX_AUTH_JSON is absent or blank (value never logged)');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Do NOT include the raw value or the parse error detail (which can echo the value).
+    fail(MATERIALIZE_AUTH_EXIT, 'materialize-auth: CODEX_AUTH_JSON is not valid JSON (value never logged)');
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).length === 0
+  ) {
+    fail(
+      MATERIALIZE_AUTH_EXIT,
+      'materialize-auth: CODEX_AUTH_JSON must be a non-empty JSON object (value never logged)',
+    );
+  }
+  // Write the raw credential verbatim (single-line JSON as supplied) — never re-serialized,
+  // so an operator's exact auth.json bytes reach the CLI. Pass mode 0600 so writeAtomically
+  // creates the temp file restricted and renames it into place atomically — the secret file
+  // is never world-readable for any window (no post-hoc chmod gap).
+  writeAtomically(out, raw, 0o600);
+  // Name + presence only — never the value.
+  process.stderr.write('runner.mjs: materialize-auth wrote auth.json from name=CODEX_AUTH_JSON\n');
+  process.exit(0);
+}
+
 const [command, ...rest] = process.argv.slice(2);
 const parsed = parseArgs(rest);
 
@@ -305,6 +386,9 @@ switch (command) {
     break;
   case 'build-failure':
     commandBuildFailure(parsed);
+    break;
+  case 'materialize-auth':
+    commandMaterializeAuth(parsed);
     break;
   default:
     fail(2, `unknown command: ${command ?? '(none)'}`);
