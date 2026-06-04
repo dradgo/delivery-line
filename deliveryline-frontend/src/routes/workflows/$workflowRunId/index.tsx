@@ -10,6 +10,8 @@ import {
 } from '@/lib/routing/routeParamValidation';
 import { useWorkflowDetail } from '@/features/workflows/hooks/useWorkflowDetail';
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
+import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
+import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
 import {
   GenericErrorState,
   InvalidLinkState,
@@ -107,6 +109,8 @@ export const Route = createFileRoute('/workflows/$workflowRunId/')({
 
 function WorkflowDetailRoute() {
   const { workflowRunId } = Route.useParams();
+  // Story 2.22 — the validated `?clarificationId` deep-link the Clarification Region reads.
+  const { clarificationId } = Route.useSearch();
   // Reads the cache the loader already warmed (AC10 — one shared entry).
   const { data } = useWorkflowDetail(workflowRunId);
 
@@ -120,6 +124,16 @@ function WorkflowDetailRoute() {
       {/* Story 2.16 — persistent run-context orientation strip, above the (future
           2.17) artifact body. Reads the same warmed `useWorkflowDetail` cache. */}
       <RunContextStrip workflowRunId={workflowRunId} />
+      {/* Story 2.18 — the Clarification Region, projected into the right context
+          panel via the AppShell slot (sidebar subregion, AC4). The main pane stays
+          artifact-primary; today the region renders the calm `no open questions`
+          empty state (the disabled `useClarifications` stub maps to an empty view). */}
+      <ContextPanelSlot>
+        <ClarificationRegionContainer
+          workflowRunId={workflowRunId}
+          clarificationId={clarificationId}
+        />
+      </ContextPanelSlot>
       <Link
         to="/workflows"
         className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"

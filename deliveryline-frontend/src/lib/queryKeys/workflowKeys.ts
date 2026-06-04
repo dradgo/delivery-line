@@ -61,6 +61,13 @@ export const workflowKeys = {
   /** A run's allowed operator actions (endpoint ships in story 2.14; key authored now). */
   allowedActions: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'allowedActions'] as const,
+  /**
+   * A run's clarifications (read endpoint ships with the clarification-read story;
+   * key authored now by story 2.18). A PREFIX child of `detail(id)`, so a spec
+   * mutation's `detail(id)` invalidation cascades to it for free.
+   */
+  clarifications: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'clarifications'] as const,
 
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,

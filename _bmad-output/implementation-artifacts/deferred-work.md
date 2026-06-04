@@ -2,6 +2,15 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-2.18 (2026-06-04)
+
+_All four are on the DORMANT path (no clarification-read endpoint yet); the live state today is only `no open questions`._
+
+- **First-render lifecycle transitions never announced by the ARIA live region** — `useLifecycleAnnouncements` only announces on a `prior !== undefined && prior !== status` change, so a region that MOUNTS already populated (e.g. when the read endpoint ships and returns `answered`/`accepted` items) emits nothing to assistive tech for those states. Deferred: dormant until the read endpoint, and announce-everything-on-mount is itself a debatable a11y choice (chatty live region). [`deliveryline-frontend/src/features/workflows/components/ClarificationRegion.tsx ~1312`]
+- **Only the last-in-array clarification is announced/logged when several advance in one render** — single `latest` slot (no queue, no timestamp comparison), so simultaneous lifecycle advances coalesce to one announcement + one `clarification.lifecycleAdvance` log. Deferred: dormant, low impact. [`ClarificationRegion.tsx ~1319`]
+- **Off-chain (`superseded`/`rejected_invalid`) not visibly highlighted in the lifecycle indicator** — these resolve to `currentIndex:0, offChain:true`, so the indicator renders `submitted` as reached and no stage current (visually near-identical to a fresh `answered`); the off-chain state is conveyed only by the separate `NoEffectReason` callout and a `data-lifecycle-offchain` attribute, despite the indicator's doc-comment claiming a muted off-chain marker. Deferred: cosmetic, dormant. [`ClarificationRegion.tsx ~1007`]
+- **`CompactSummary` CTA absent for an `unknown`-only view** — `firstActionable = grouped.open[0] ?? grouped.pending[0]` excludes `grouped.unknown`, so a compact view of only `unknown` sentinels shows "N pending" with no drill-in affordance. Deferred: dormant edge. [`ClarificationRegion.tsx ~1283`]
+
 ## Deferred from: code review of story-3a-3 (2026-06-03)
 
 - **No CI test covers the entrypoint subscription branch or real-CLI `auth.json` consumption** — the conformance IT (`CodexRunnerImageConformanceIT.subscriptionAuthMaterializesAuthJsonWithoutLeakingTheValue`) runs the mock Codex CLI, which ignores env + auth files, so it pins only the in-scope materialize-log-line + negative-leak guarantees. The entrypoint's subscription-branch behaviors (skip `OPENAI_API_KEY` export, `cleanup()` rm of `$CODEX_HOME/auth.json`) and the real Codex CLI reading `$CODEX_HOME/auth.json` were verified only via local git-bash smoke. Deferred: real subscription execution + token refresh are explicitly story 3.8 scope (locked design decision #3); the dev already recommends a WSL2/Docker CI confirm before merge. [`CodexRunnerImageConformanceIT.java`, `runners/codex/entrypoint.sh`]

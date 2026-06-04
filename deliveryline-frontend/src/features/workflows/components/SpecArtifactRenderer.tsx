@@ -29,6 +29,7 @@ import { MetadataChrome, SafeDiffRenderer, SafeMarkdownRenderer } from '@/lib/sa
 
 import { artifactTypeLabel, deriveSectionAnchors, type SpecArtifactView } from '../artifactView';
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
+import { CLARIFICATION_REGION_ID } from './ClarificationRegionContainer';
 
 export interface SpecArtifactRendererProps {
   artifact: SpecArtifactView;
@@ -115,6 +116,21 @@ export function SpecArtifactRenderer({
     }
     event.preventDefault();
     scrollToHeading(text, occurrence);
+  };
+
+  // Story 2.18 (Task 5 / T-ANCHOR / OQ-4) — focus/scroll the Clarification Region
+  // (sidebar subregion) rather than deep-linking a specific question: pre-read-model
+  // there is no concrete `clarificationId` target. The region is portaled into the
+  // shell aside, so we reach it by its stable DOM id.
+  const focusClarificationRegion = () => {
+    const element = document.getElementById(CLARIFICATION_REGION_ID);
+    if (element === null) {
+      return;
+    }
+    if (typeof element.scrollIntoView === 'function') {
+      element.scrollIntoView({ block: 'start' });
+    }
+    element.focus();
   };
 
   return (
@@ -228,6 +244,7 @@ export function SpecArtifactRenderer({
       <div className="mt-4 flex flex-wrap items-center gap-2" data-testid="artifact-region-anchors">
         <button
           type="button"
+          onClick={focusClarificationRegion}
           className="rounded-md border border-border px-2.5 py-1 text-sm text-text-secondary hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
           data-testid="artifact-clarification-anchor"
         >
