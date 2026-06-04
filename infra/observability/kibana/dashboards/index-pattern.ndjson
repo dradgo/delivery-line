@@ -1,0 +1,1 @@
+{"type":"index-pattern","id":"deliveryline-logs","attributes":{"title":"deliveryline-logs-*","timeFieldName":"timestamp"},"references":[],"coreMigrationVersion":"8.15.3"}

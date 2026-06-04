@@ -68,7 +68,12 @@ public enum DomainErrorCode implements RegistryValue {
   // expected type (e.g. a spec-stage / INVESTIGATION runner emits an implementationPlan). The
   // run is routed to Failed via the existing runner-contract-violation failure path; this code is
   // the typed surface for the REST / inspection layer.
-  RUNNER_ARTIFACT_TYPE_MISMATCH("RUNNER_ARTIFACT_TYPE_MISMATCH");
+  RUNNER_ARTIFACT_TYPE_MISMATCH("RUNNER_ARTIFACT_TYPE_MISMATCH"),
+  // Story 3.7 (AC10 / Decision D7) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Backs the doctor observability-memory probe: WARN (never FAIL) when the observability profile
+  // is
+  // active on a host with less than 8 GB total physical RAM, where the ELK stack may be unstable.
+  DOCTOR_OBSERVABILITY_LOW_MEMORY("DOCTOR_OBSERVABILITY_LOW_MEMORY");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

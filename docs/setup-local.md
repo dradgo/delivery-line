@@ -228,16 +228,34 @@ cp .env.example .env
 | `DELIVERYLINE_HOME` | Base directory for runtime artifact state. | All flows (Epic 1+). | Resolves to `./deliveryline-data` under the repo root. | Pick any absolute or relative path with write permission. |
 | `POSTGRES_PASSWORD` | Local Postgres user password. | All flows — `docker-compose.yml` requires it via `${POSTGRES_PASSWORD:?...}` (no compose-side default). | Compose-up **fails** if the variable is unset or empty; `.env.example` ships the value `deliveryline` so the `cp .env.example .env` step alone is sufficient. | Pick any non-empty string for local; never reuse a real production password here. |
 | `POSTGRES_HOST_PORT` | Host port the Postgres container binds to. | Only when the default `5432` collides with another local Postgres. | `5432`. | Pick any free TCP port — e.g. `5433`. |
+| `ELASTIC_HOST_PORT` | Host port Elasticsearch binds to (observability stack, story 3.7). | Only when running the `observability` profile AND the default `9200` collides. | `9200`. | Pick any free TCP port. |
+| `LOGSTASH_HOST_PORT` | Host port the Logstash TCP/JSON ingest binds to (story 3.7). | Only when running the `observability` profile AND the default `5044` collides. | `5044`. | Pick any free TCP port. |
+| `LOGSTASH_HOST` / `LOGSTASH_PORT` | Destination the **backend's** Logstash appender dials (`logback-spring.xml`, observability profile). Distinct from `LOGSTASH_HOST_PORT` (the published container port). | Only when you remap `LOGSTASH_HOST_PORT` or run the backend off-host from Logstash. | `localhost` / `5044` (matches the `LOGSTASH_HOST_PORT` default). | Set both to the host/port where the backend can reach Logstash; keep `LOGSTASH_PORT` in sync with any `LOGSTASH_HOST_PORT` remap. |
+| `KIBANA_HOST_PORT` | Host port Kibana binds to (story 3.7). | Only when running the `observability` profile AND the default `5601` collides. | `5601`. | Pick any free TCP port. |
+| `ES_JAVA_OPTS` | Elasticsearch JVM heap sizing for the observability stack (story 3.7). | Tune when the default heap is too small/large for your host. | `-Xms512m -Xmx512m`. | Set matching `-Xms`/`-Xmx` (e.g. `-Xms1g -Xmx1g`); keep them equal. |
 
-### Reserved keys (Epic 3+)
+The observability keys only matter under the `observability` Docker Compose profile (brought up by
+`scripts/start-all.{ps1,sh}`); the backend runs identically without them (AR25). `doctor` WARNs
+(never FAILs) when that profile is active on a host with under 8 GB of RAM.
 
-`.env.example` also reserves these keys; they are commented out today and are populated by Epic
-3 stories when observability and Docker port overrides land. **Do not** set them yet — they have
-no effect:
+### Linux: raise `vm.max_map_count` for Elasticsearch (story 3.7)
 
-- `ELASTIC_HOST_PORT`
-- `LOGSTASH_HOST_PORT`
-- `KIBANA_HOST_PORT`
+Elasticsearch requires the host kernel setting `vm.max_map_count` to be at least `262144`, or the
+`elasticsearch` container exits at startup with a bootstrap check failure. This applies to Linux and
+WSL2 hosts (Docker Desktop on Windows/macOS sets it inside its own VM automatically). Apply it
+before `scripts/start-all.sh`:
+
+```bash
+sudo sysctl -w vm.max_map_count=262144
+# Persist across reboots:
+echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-deliveryline-elasticsearch.conf
+```
+
+### Reserved keys (later metrics story)
+
+`.env.example` still reserves these keys for the later Prometheus + Grafana metrics story (3.19);
+they are commented out and have no effect today. **Do not** set them yet:
+
 - `PROMETHEUS_HOST_PORT`
 - `GRAFANA_HOST_PORT`
 

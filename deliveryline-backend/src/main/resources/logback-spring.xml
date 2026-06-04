@@ -69,4 +69,119 @@
 		</root>
 	</springProfile>
 
+	<!--
+		Story 3.7 (AC7 / Decision D4, Trap T4/T9) — ADDITIVE observability block.
+
+		This block is declared ONLY inside the `observability` springProfile, so the
+		LogstashTcpSocketAppender (which auto-reconnects) is NEVER instantiated when the
+		profile is off (Trap T9 — "zero connection attempts"). It does NOT redefine the
+		root <appender-ref> stacks above; logback MERGES appender-refs across springProfile
+		blocks, so when `observability` is active alongside `demo` (or local/test) the LOGSTASH
+		appender is ADDED to whatever STDOUT stack the other matching block declared — STDOUT
+		is preserved (AR25: backend identical with/without ELK).
+
+		The TCP encoder reuses the SAME story-1.19 Redacting* JSON providers as the `demo`
+		block, so shipped logs are source-redacted (defense-in-depth layer 1; the Logstash
+		grok is layer 2). A top-level `classification` field is emitted only when the event
+		carries one in MDC (omitEmptyFields) — runner-log shipping (D5) supplies it on the
+		file path; ordinary app logs omit it and are therefore never dropped by the pipeline's
+		`if [classification] == "local-only"` filter.
+	-->
+	<springProfile name="observability">
+		<appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+			<destination>${LOGSTASH_HOST:-localhost}:${LOGSTASH_PORT:-5044}</destination>
+			<encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+				<providers>
+					<timestamp>
+						<fieldName>timestamp</fieldName>
+						<timeZone>UTC</timeZone>
+						<pattern>yyyy-MM-dd'T'HH:mm:ss.SSS'Z'</pattern>
+					</timestamp>
+					<logLevel>
+						<fieldName>level</fieldName>
+					</logLevel>
+					<loggerName>
+						<fieldName>logger</fieldName>
+						<shortenedLoggerNameLength>64</shortenedLoggerNameLength>
+					</loggerName>
+					<threadName>
+						<fieldName>thread</fieldName>
+					</threadName>
+					<pattern>
+						<omitEmptyFields>true</omitEmptyFields>
+						<pattern>{"classification":"%mdc{classification}"}</pattern>
+					</pattern>
+					<provider class="org.dradgo.infrastructure.observability.RedactingJsonProvider">
+						<fieldName>message</fieldName>
+					</provider>
+					<provider class="org.dradgo.infrastructure.observability.RedactingMdcJsonProvider">
+						<fieldName>mdc</fieldName>
+					</provider>
+					<provider class="org.dradgo.infrastructure.observability.RedactingStackTraceJsonProvider">
+						<fieldName>stack_trace</fieldName>
+					</provider>
+				</providers>
+			</encoder>
+		</appender>
+		<root level="INFO">
+			<appender-ref ref="LOGSTASH"/>
+		</root>
+	</springProfile>
+
+	<!--
+		Story 3.7 review P4 (Decision D1) — console self-sufficiency for `observability` ALONE.
+
+		The block above only wires LOGSTASH. When `observability` is combined with a base profile
+		(`demo` / `local` / `test`) that base block already declares a STDOUT console root, and logback
+		MERGES the per-profile <root> appender-refs — so STDOUT (from the base block) + LOGSTASH (above)
+		are both attached. But `observability` activated ALONE has no base block, so without this block
+		it would ship to Logstash with NO console output at all (review finding D1).
+
+		This guard block adds a STDOUT console ONLY when `observability` is active AND none of
+		demo/local/test is — i.e. exactly the gap. The `!demo & !local & !test` predicate is what keeps
+		combined profiles from getting a SECOND, distinct STDOUT appender object (logback attaches
+		appenders by object identity, not name, so a same-named duplicate would double every console
+		line — Trap T4). The encoder mirrors the LOGSTASH/`demo` JSON shape (same Redacting* providers +
+		classification field) so a structured-shipping run still prints structured logs locally.
+	-->
+	<springProfile name="observability &amp; !demo &amp; !local &amp; !test">
+		<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+			<encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+				<providers>
+					<timestamp>
+						<fieldName>timestamp</fieldName>
+						<timeZone>UTC</timeZone>
+						<pattern>yyyy-MM-dd'T'HH:mm:ss.SSS'Z'</pattern>
+					</timestamp>
+					<logLevel>
+						<fieldName>level</fieldName>
+					</logLevel>
+					<loggerName>
+						<fieldName>logger</fieldName>
+						<shortenedLoggerNameLength>64</shortenedLoggerNameLength>
+					</loggerName>
+					<threadName>
+						<fieldName>thread</fieldName>
+					</threadName>
+					<pattern>
+						<omitEmptyFields>true</omitEmptyFields>
+						<pattern>{"classification":"%mdc{classification}"}</pattern>
+					</pattern>
+					<provider class="org.dradgo.infrastructure.observability.RedactingJsonProvider">
+						<fieldName>message</fieldName>
+					</provider>
+					<provider class="org.dradgo.infrastructure.observability.RedactingMdcJsonProvider">
+						<fieldName>mdc</fieldName>
+					</provider>
+					<provider class="org.dradgo.infrastructure.observability.RedactingStackTraceJsonProvider">
+						<fieldName>stack_trace</fieldName>
+					</provider>
+				</providers>
+			</encoder>
+		</appender>
+		<root level="INFO">
+			<appender-ref ref="STDOUT"/>
+		</root>
+	</springProfile>
+
 </configuration>

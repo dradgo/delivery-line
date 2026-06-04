@@ -49,4 +49,13 @@ public interface DoctorProbePort {
    * proceeds with the built-in default). Reports presence only — never logs a token.
    */
   ProbeResult probeGitBotIdentity();
+
+  /**
+   * Story 3.7 AC10 / Decision D7 — host-memory advisory for the profile-gated ELK observability
+   * stack. SKIP (not-applicable) when the {@code observability} profile is inactive — symmetric
+   * with the github-real-gated probes. When active: WARN {@code DOCTOR_OBSERVABILITY_LOW_MEMORY}
+   * (never FAIL — AR25 keeps observability optional) if total host physical memory is under the
+   * recommended 8 GB; otherwise PASS. Reports memory metrics only — never logs payloads or secrets.
+   */
+  ProbeResult probeObservabilityMemory();
 }

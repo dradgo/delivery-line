@@ -352,6 +352,14 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_GATEWAY,
         "Runner artifact type mismatch",
         false);
+    // Story 3.7 (AC10) — observability low-memory is a doctor WARN, mirroring the other doctor
+    // advisories' SERVICE_UNAVAILABLE mapping (it never blocks normal operation).
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_OBSERVABILITY_LOW_MEMORY,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Observability host memory low",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

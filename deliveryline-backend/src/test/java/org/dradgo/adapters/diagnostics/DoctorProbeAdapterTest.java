@@ -607,7 +607,8 @@ class DoctorProbeAdapterTest {
         org.dradgo.application.runner.RunnerProperties.defaults(),
         null,
         null,
-        org.dradgo.application.workflow.WorkflowProperties.defaults());
+        org.dradgo.application.workflow.WorkflowProperties.defaults(),
+        () -> -1L);
   }
 
   private static ProcessLauncher failingFactory() {

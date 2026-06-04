@@ -1,6 +1,7 @@
 package org.dradgo.adapters.diagnostics;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -20,6 +21,7 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -58,6 +60,10 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   private static final Set<String> BLOCKED_PROFILES = Set.of("prod", "production", "prd");
   private static final Set<String> ALLOWED_PROFILES = Set.of("local", "test", "demo");
   private static final String GITHUB_REAL_PROFILE = "github-real";
+  // Story 3.7 AC10 — the profile that activates the ELK observability stack, and the recommended
+  // minimum host RAM below which that stack may be unstable (8 GiB).
+  private static final String OBSERVABILITY_PROFILE = "observability";
+  private static final long OBSERVABILITY_MIN_RECOMMENDED_MEMORY_BYTES = 8L * 1024L * 1024L * 1024L;
   private static final int JAVA_VERSION_MIN = 21;
   private static final int POSTGRES_TIMEOUT_SECONDS = 5;
   private static final int DOCKER_TIMEOUT_SECONDS = 3;
@@ -94,6 +100,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   // Story 3.9 AC15 — the configured deliveryline-bot identity for the git-bot-identity probe.
   // ObjectProvider-injected; absent → defaults() (empty bot → the probe WARNs as unconfigured).
   private final WorkflowProperties workflowProperties;
+  // Story 3.7 AC10 — host total physical memory (bytes) for the observability-memory probe. Seam-
+  // injected so tests can simulate a low/high-memory host; defaults to the OS MX bean.
+  private final LongSupplier totalPhysicalMemoryBytesSupplier;
 
   @Autowired
   public DoctorProbeAdapter(
@@ -142,7 +151,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         runnerPropertiesProvider.getIfAvailable(),
         gitHubRestClientProvider.getIfAvailable(),
         gitHubPropertiesProvider.getIfAvailable(),
-        workflowPropertiesProvider.getIfAvailable());
+        workflowPropertiesProvider.getIfAvailable(),
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
   }
 
   // Public so tests in other packages can construct an adapter without the
@@ -178,7 +188,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         RunnerProperties.defaults(),
         null,
         null,
-        WorkflowProperties.defaults());
+        WorkflowProperties.defaults(),
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
   }
 
   /**
@@ -211,7 +222,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         RunnerProperties.defaults(),
         gitHubRestClient,
         gitHubProperties,
-        WorkflowProperties.defaults());
+        WorkflowProperties.defaults(),
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
   }
 
   /**
@@ -244,7 +256,39 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         RunnerProperties.defaults(),
         null,
         null,
-        workflowProperties);
+        workflowProperties,
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
+  }
+
+  /**
+   * Test seam for the observability-memory probe (story 3.7 AC10): {@code environment}
+   * (observability profile check) and the injected {@code totalPhysicalMemoryBytesSupplier} (to
+   * simulate a low/high memory host) are the load-bearing deps; everything else is a safe default
+   * the probe never touches.
+   */
+  DoctorProbeAdapter(Environment environment, LongSupplier totalPhysicalMemoryBytesSupplier) {
+    this(
+        environment,
+        null,
+        null,
+        new UuidV7Generator(),
+        Path.of("."),
+        "localhost",
+        8080,
+        Path.of("."),
+        ProcessBuilder::start,
+        () -> System.getProperty("os.name", "unknown"),
+        () -> System.getProperty("os.version", "unknown"),
+        () -> System.getProperty("os.arch", "unknown"),
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultPowerShellVersion,
+        DoctorProbeAdapter::defaultShellValue,
+        RunnerProperties.defaults(),
+        null,
+        null,
+        WorkflowProperties.defaults(),
+        totalPhysicalMemoryBytesSupplier);
   }
 
   DoctorProbeAdapter(
@@ -267,7 +311,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       RunnerProperties runnerProperties,
       @Nullable RestClient gitHubRestClient,
       @Nullable GitHubProperties gitHubProperties,
-      @Nullable WorkflowProperties workflowProperties) {
+      @Nullable WorkflowProperties workflowProperties,
+      LongSupplier totalPhysicalMemoryBytesSupplier) {
     this.environment = environment;
     this.dataSource = dataSource;
     this.flyway = flyway;
@@ -290,6 +335,28 @@ public class DoctorProbeAdapter implements DoctorProbePort {
     this.gitHubProperties = gitHubProperties;
     this.workflowProperties =
         workflowProperties == null ? WorkflowProperties.defaults() : workflowProperties;
+    this.totalPhysicalMemoryBytesSupplier =
+        totalPhysicalMemoryBytesSupplier == null
+            ? DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes
+            : totalPhysicalMemoryBytesSupplier;
+  }
+
+  /**
+   * Story 3.7 AC10 — total host physical memory in bytes via {@code
+   * com.sun.management.OperatingSystemMXBean#getTotalMemorySize()}. Returns {@code -1} (treated as
+   * "could not determine" → PASS, never a false WARN) if the platform MX bean is unavailable.
+   */
+  private static long defaultTotalPhysicalMemoryBytes() {
+    try {
+      java.lang.management.OperatingSystemMXBean osBean =
+          ManagementFactory.getOperatingSystemMXBean();
+      if (osBean instanceof com.sun.management.OperatingSystemMXBean sunBean) {
+        return sunBean.getTotalMemorySize();
+      }
+      return -1L;
+    } catch (RuntimeException | LinkageError unavailable) {
+      return -1L;
+    }
   }
 
   private static Optional<String> defaultFileRead(Path path) {
@@ -793,6 +860,70 @@ public class DoctorProbeAdapter implements DoctorProbePort {
             + " (set DELIVERYLINE_BOT_NAME / DELIVERYLINE_BOT_EMAIL)",
         DomainErrorCode.DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED.value(),
         details);
+  }
+
+  /**
+   * Story 3.7 AC10 / Decision D7 — host-memory advisory for the ELK observability stack. SKIP when
+   * the {@code observability} profile is inactive (the default — the stack is profile-gated, AR25).
+   * When active: WARN {@link DomainErrorCode#DOCTOR_OBSERVABILITY_LOW_MEMORY} (never FAIL) if total
+   * host physical memory is under the recommended 8 GB; PASS otherwise. Memory metrics only — never
+   * a payload, secret, or PII.
+   */
+  @Override
+  public ProbeResult probeObservabilityMemory() {
+    Map<String, String> details = new LinkedHashMap<>();
+    if (!isProfileActive(OBSERVABILITY_PROFILE)) {
+      details.put("observabilityProfile", "inactive");
+      return new ProbeResult(
+          DiagnosticsStatus.SKIP,
+          "observability profile inactive; ELK host-memory check not applicable",
+          null,
+          details);
+    }
+    details.put("observabilityProfile", "active");
+    long totalBytes = safeTotalPhysicalMemoryBytes();
+    details.put(
+        "recommendedMinimumBytes", String.valueOf(OBSERVABILITY_MIN_RECOMMENDED_MEMORY_BYTES));
+    if (totalBytes <= 0L) {
+      // Platform MX bean did not report a value — do not raise a false low-memory WARN.
+      details.put("totalPhysicalMemoryBytes", "unavailable");
+      log.info("doctor observability_memory probe resolution=memory_unavailable");
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "observability profile active; host memory could not be determined (no advisory raised)",
+          null,
+          details);
+    }
+    details.put("totalPhysicalMemoryBytes", String.valueOf(totalBytes));
+    if (totalBytes < OBSERVABILITY_MIN_RECOMMENDED_MEMORY_BYTES) {
+      log.warn(
+          "doctor observability_memory probe resolution=low_memory totalGib={} recommendedGib={}",
+          totalBytes / (1024L * 1024L * 1024L),
+          OBSERVABILITY_MIN_RECOMMENDED_MEMORY_BYTES / (1024L * 1024L * 1024L));
+      return new ProbeResult(
+          DiagnosticsStatus.WARN,
+          "observability profile active but host has < 8 GB RAM; the ELK stack may be unstable —"
+              + " lower ES_JAVA_OPTS or disable the observability profile",
+          DomainErrorCode.DOCTOR_OBSERVABILITY_LOW_MEMORY.value(),
+          details);
+    }
+    log.info("doctor observability_memory probe resolution=pass");
+    return new ProbeResult(
+        DiagnosticsStatus.PASS,
+        "Host memory sufficient for the observability (ELK) stack",
+        null,
+        details);
+  }
+
+  private long safeTotalPhysicalMemoryBytes() {
+    try {
+      return totalPhysicalMemoryBytesSupplier.getAsLong();
+    } catch (RuntimeException re) {
+      log.warn(
+          "doctor observability_memory probe host-memory read failed error={}",
+          re.getClass().getSimpleName());
+      return -1L;
+    }
   }
 
   @Override

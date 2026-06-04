@@ -45,6 +45,8 @@ public class DoctorService {
   public static final String CHECK_GITHUB_AUTH = "github-auth";
   public static final String CHECK_GIT_AVAILABLE = "git-available";
   public static final String CHECK_GIT_BOT_IDENTITY = "git-bot-identity";
+  // Story 3.7 (AC10) — host-memory advisory for the profile-gated ELK observability stack.
+  public static final String CHECK_OBSERVABILITY_MEMORY = "observability-memory";
 
   public static final List<String> STATIC_ORDER =
       List.of(
@@ -62,7 +64,8 @@ public class DoctorService {
           CHECK_SUPPORTED_ENVIRONMENT,
           CHECK_GITHUB_AUTH,
           CHECK_GIT_AVAILABLE,
-          CHECK_GIT_BOT_IDENTITY);
+          CHECK_GIT_BOT_IDENTITY,
+          CHECK_OBSERVABILITY_MEMORY);
 
   private static final Map<String, String> REMEDIATION =
       Map.ofEntries(
@@ -225,6 +228,7 @@ public class DoctorService {
         case CHECK_GITHUB_AUTH -> probes.probeGitHubAuth();
         case CHECK_GIT_AVAILABLE -> probes.probeGitAvailability();
         case CHECK_GIT_BOT_IDENTITY -> probes.probeGitBotIdentity();
+        case CHECK_OBSERVABILITY_MEMORY -> probes.probeObservabilityMemory();
         default -> ProbeResult.skip("Unknown check: " + name);
       };
     } catch (RuntimeException re) {

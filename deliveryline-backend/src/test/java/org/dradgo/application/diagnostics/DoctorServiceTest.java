@@ -129,6 +129,7 @@ class DoctorServiceTest {
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
+    when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -177,6 +178,7 @@ class DoctorServiceTest {
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
+    when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -284,6 +286,7 @@ class DoctorServiceTest {
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
+    when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -308,6 +311,7 @@ class DoctorServiceTest {
     when(probes.probeGitHubAuth()).thenReturn(ProbeResult.pass("github-real inactive"));
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
+    when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -353,6 +357,8 @@ class DoctorServiceTest {
         .thenReturn(
             ProbeResult.pass(
                 "github-real profile inactive; git bot identity check not applicable"));
+    when(probes.probeObservabilityMemory())
+        .thenReturn(ProbeResult.skip("observability profile inactive"));
   }
 
   private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

@@ -51,5 +51,73 @@ services:
       dockerfile: runners/claude/Dockerfile
     image: deliveryline/claude-runner:latest
 
+  # Story 3.7 — ELK observability stack (Elasticsearch + Logstash + Kibana),
+  # gated behind the "observability" profile so it stays out of the default
+  # `docker compose up -d` AND out of Spring Boot 4's docker-compose autoconfig
+  # `up --wait` (doctor-smoke / jar-smoke) — exactly the rationale documented on
+  # the codex-runner block above. AR25: the backend runs byte-for-byte
+  # identically with or without this profile; ELK is NEVER required for normal
+  # MVP operation, tests, or recovery. `scripts/start-all.{ps1,sh}` already pass
+  # `--profile observability up -d` (story 1.17), so they bring this up.
+  #
+  # See docs/adr/0023-elk-replaces-loki.md and infra/observability/README.md.
+  # Linux note: Elasticsearch needs `vm.max_map_count=262144` on the host
+  # (docs/setup-local.md). Image versions are pinned (AC12 / Trap T10).
+  elasticsearch:
+    profiles: ["observability"]
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      # Single-node dev cluster — no cluster discovery, security off (loopback-only
+      # local stack, mirrors the no-auth REST posture of story 6.9). NOT for prod.
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      # Heap is operator-tunable (AC10); default kept small so the stack fits an
+      # 8 GB dev host. The doctor memory check WARNs below 8 GB total RAM.
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+    ports:
+      - "${ELASTIC_HOST_PORT:-9200}:9200"
+    volumes:
+      - deliveryline-elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  logstash:
+    profiles: ["observability"]
+    image: docker.elastic.co/logstash/logstash:8.15.3
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      # Disable the X-Pack monitoring pipeline + node monitoring for the local stack.
+      XPACK_MONITORING_ENABLED: "false"
+      LS_JAVA_OPTS: ${LOGSTASH_JAVA_OPTS:--Xms256m -Xmx256m}
+    ports:
+      # TCP/JSON ingest for the backend's observability-gated LogstashTcpSocketAppender (AC7).
+      - "${LOGSTASH_HOST_PORT:-5044}:5044"
+    volumes:
+      # Pipeline definitions (deliveryline.conf). Logstash auto-loads *.conf here.
+      - ./infra/observability/logstash/pipelines:/usr/share/logstash/pipeline:ro
+      # D5 fail-closed runner-log ingest dir — read-only. The backend only ever
+      # writes shareable-redacted-and-above envelopes here (local-only never
+      # reaches it), so the file input cannot see an unshippable log.
+      - ${DELIVERYLINE_HOME:-./deliveryline-data}/runner-logs-ingest:/ingest/runner-logs:ro
+
+  kibana:
+    profiles: ["observability"]
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "${KIBANA_HOST_PORT:-5601}:5601"
+
 volumes:
   deliveryline-postgres-data:
+  deliveryline-elasticsearch-data:
