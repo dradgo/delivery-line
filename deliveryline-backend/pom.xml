@@ -651,6 +651,32 @@
 				</plugins>
 			</build>
 		</profile>
+
+		<!-- Story 3.7 — opt-in tier for Testcontainers-backed ITs tagged `docker-runner-it`
+		     (e.g. ElkPipelineRoundTripIT). The default Failsafe config excludes that tag so the
+		     no-Docker PR / foundation tiers skip image pulls; this profile clears the exclusion so
+		     the IT can be run locally / on a Docker-capable CI tier. Narrow to one IT with
+		     `-Dit.test=ElkPipelineRoundTripIT`. Each IT also carries @EnabledIfDockerAvailable, so it
+		     no-ops cleanly when no Docker engine is present. -->
+		<profile>
+			<id>docker-runner-it</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<excludedGroups>known-failure</excludedGroups>
+							<includes>
+								<include>**/*IT.java</include>
+								<include>**/IT*.java</include>
+								<include>**/*ITCase.java</include>
+							</includes>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
 	</profiles>
 
 </project>

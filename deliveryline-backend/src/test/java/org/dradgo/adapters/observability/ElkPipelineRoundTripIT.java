@@ -140,6 +140,50 @@ class ElkPipelineRoundTripIT {
     assertThat(body).doesNotContain("ghp_1234567890abcdef1234567890abcdef1234");
   }
 
+  /**
+   * Review pass 3 — the QUERY_SECRET gsub uses a Ruby {@code \1} backreference to preserve the
+   * {@code ?token=} prefix. The pre-review conf used a Java {@code $1}, which Logstash's JRuby/Joni
+   * engine emits LITERALLY (the secret is stripped but the line is corrupted to {@code $1...}).
+   * This asserts the secret is gone, the prefix survives, AND no literal {@code $1} leaked through
+   * — i.e. the backreference is honored by the real engine.
+   */
+  @Test
+  void secondPassRewritesQuerySecretWithRubyBackreference() throws Exception {
+    String marker = "querysecret-" + System.nanoTime();
+    sendJson(
+        "{\"message\":\""
+            + marker
+            + " GET /x?token=supersecretvalue123 200\",\"classification\":\"shareable-redacted\"}");
+
+    awaitHitCount("message:\"" + marker + "\"", 1);
+    String body = search("message:\"" + marker + "\"");
+    assertThat(body).contains("?token=[REDACTED_QUERY_SECRET]");
+    assertThat(body).doesNotContain("supersecretvalue123");
+    assertThat(body).doesNotContain("$1");
+  }
+
+  /**
+   * Review pass 3 — the PEM/SSH private-key patterns rely on Ruby's {@code (?m)}
+   * dot-matches-newline flag. The pre-review conf used Java's {@code (?s)}, which is a {@code
+   * RegexpError} in JRuby/Joni (it would prevent the whole pipeline from starting). A multi-line
+   * key proves the flag was translated correctly and the pattern spans newlines on the real engine.
+   * (The {@code \n} in the JSON string is decoded to a real newline by the TCP {@code json} codec.)
+   */
+  @Test
+  void secondPassStripsAMultilinePemPrivateKey() throws Exception {
+    String marker = "pemkey-" + System.nanoTime();
+    sendJson(
+        "{\"message\":\""
+            + marker
+            + " -----BEGIN RSA PRIVATE KEY-----\\nMIIEdeadbeefbody\\n-----END RSA PRIVATE"
+            + " KEY-----\",\"classification\":\"shareable-redacted\"}");
+
+    awaitHitCount("message:\"" + marker + "\"", 1);
+    String body = search("message:\"" + marker + "\"");
+    assertThat(body).contains("[REDACTED_PEM_PRIVATE_KEY]");
+    assertThat(body).doesNotContain("MIIEdeadbeefbody");
+  }
+
   // ---- helpers ----
 
   private void sendJson(String json) throws Exception {

@@ -1,14 +1,16 @@
 # Story 3.7: ELK Stack Integration — Centralized Log Capture (Profile-Gated)
 
-Status: in-progress
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 <!-- 2026-06-04 third code-review pass reopened the story: the Logstash gsub chain used Java/PCRE
      syntax (`$1` backreferences + `(?s)` flag) invalid in Logstash's JRuby/Joni engine, masked by a
      parity test that validated with java.util.regex. FIX APPLIED + fast-tier verified (conf → Ruby
      `\1`/`(?m)`/`(?i)`; LogstashRedactionParityTest now translates Ruby→Java and lints out Java-isms,
-     5/0/0; spotless+checkstyle clean). REMAINING: Docker-tier Logstash run (Trap T11) to confirm the
-     real engine accepts the corrected conf — the reason status is in-progress, not done. -->
+     5/0/0; spotless+checkstyle clean). DOCKER-TIER VERIFIED (Trap T11 closed): ElkPipelineRoundTripIT
+     extended with a query-secret backref test + a multiline-PEM test and run against real ELK 8.15.3
+     containers — Logstash pipeline compiled (`Pipeline started`) and all 5 tests passed (no literal
+     `$1`; PEM spans newlines; local-only dropped; round-trip + ghp_ redaction). Status → done. -->
 
 > **Resolution (third review pass, 2026-06-04 — Decision: "Full fix + Docker verify"):** the Logstash
 > `gsub` second-pass redaction was corrected from Java/PCRE syntax to JRuby/Joni (Ruby) syntax in
@@ -20,9 +22,17 @@ Status: in-progress
 > AND adds `gsubUsesLogstashRubyRegexSyntaxNotJava` — a lint that rejects Java `$n` backrefs and the
 > Java-only `(?s)` flag in the conf (the direct guard that would have caught this in the fast tier).
 > Verified: `LogstashRedactionParityTest` 5/0/0, `spotless:check`+`checkstyle:check` 0 violations
-> (PowerShell, [[rtk-hook-only-matches-bash]]). **Outstanding before `done`:** run the Docker-tier
-> `ElkPipelineRoundTripIT` + a real Logstash pipeline load on WSL2/Linux+Docker to confirm the engine
-> accepts the corrected conf and redacts end-to-end ([[wsl-linux-ci-reproduction]] / Trap T11).
+> (PowerShell, [[rtk-hook-only-matches-bash]]). **Docker-tier verified (Trap T11 CLOSED):**
+> `ElkPipelineRoundTripIT` was extended with `secondPassRewritesQuerySecretWithRubyBackreference`
+> (asserts `?token=[REDACTED_QUERY_SECRET]` and NO literal `$1`) + `secondPassStripsAMultilinePemPrivateKey`
+> (proves the `(?m)` dot-all flag spans newlines), and a new `docker-runner-it` Maven profile was
+> added (the one the pom comment promised but never defined) so the tagged IT can be selected. Run
+> against real Elasticsearch+Logstash `8.15.3` containers (Docker Desktop Linux VM): Logstash reached
+> `Pipeline started` — proving the corrected conf compiles in the real JRuby/Joni engine (the old
+> `(?s)` conf would hang here) — and **all 5 tests passed** (round-trip, local-only drop, ghp_/query-
+> secret/PEM redaction). `mvn -o verify -Pdocker-runner-it -Dit.test=ElkPipelineRoundTripIT` → Tests
+> run: 5, Failures: 0, Errors: 0. Residual environmental note (not blocking): native-Linux/WSL2
+> `vm.max_map_count` + CI-tier wiring for the `docker-runner-it` profile remain a future-hardening item.
 
 ## Story
 
