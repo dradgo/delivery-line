@@ -220,7 +220,10 @@ class RealRunnerContractIT {
       process.destroyForcibly();
       throw new IllegalStateException(
           String.format(
-              Locale.ROOT, "docker build %s did not finish within 10m; output=%n%s", tag, buildOutput));
+              Locale.ROOT,
+              "docker build %s did not finish within 10m; output=%n%s",
+              tag,
+              buildOutput));
     }
     int buildExit = process.exitValue();
     assertThat(buildExit).as("docker build %s exit code; output=%n%s", tag, buildOutput).isZero();
@@ -274,7 +277,9 @@ class RealRunnerContractIT {
         runRealRunner(
             kind, RunnerStage.INVESTIGATION, "Investigating", "spec-investigation", null, false);
     assertThat(adapter.recoverHandle(s.rex()))
-        .as(describe(s) + " — recoverHandle must prime the in-process handle from the container label")
+        .as(
+            describe(s)
+                + " — recoverHandle must prime the in-process handle from the container label")
         .isPresent();
     broker.pollActiveExecutions();
 
@@ -288,7 +293,9 @@ class RealRunnerContractIT {
     Scenario s =
         runRealRunner(kind, RunnerStage.EXECUTION, "Executing", "implementation-plan", null, false);
     assertThat(adapter.recoverHandle(s.rex()))
-        .as(describe(s) + " — recoverHandle must prime the in-process handle from the container label")
+        .as(
+            describe(s)
+                + " — recoverHandle must prime the in-process handle from the container label")
         .isPresent();
     broker.pollActiveExecutions();
 
@@ -301,7 +308,9 @@ class RealRunnerContractIT {
   void happyPathProducesValidPrOutputResult(RunnerKind kind) throws Exception {
     Scenario s = runRealRunner(kind, RunnerStage.EXECUTION, "Executing", "pr-output", null, false);
     assertThat(adapter.recoverHandle(s.rex()))
-        .as(describe(s) + " — recoverHandle must prime the in-process handle from the container label")
+        .as(
+            describe(s)
+                + " — recoverHandle must prime the in-process handle from the container label")
         .isPresent();
     broker.pollActiveExecutions();
 
@@ -318,7 +327,9 @@ class RealRunnerContractIT {
   void simulateCrashLandsRunnerCrash(RunnerKind kind) throws Exception {
     Scenario s = runRealRunner(kind, RunnerStage.EXECUTION, "Executing", null, "crash", false);
     assertThat(adapter.recoverHandle(s.rex()))
-        .as(describe(s) + " — recoverHandle must prime the in-process handle from the container label")
+        .as(
+            describe(s)
+                + " — recoverHandle must prime the in-process handle from the container label")
         .isPresent();
     broker.pollActiveExecutions();
 
@@ -334,7 +345,9 @@ class RealRunnerContractIT {
     Scenario s =
         runRealRunner(kind, RunnerStage.EXECUTION, "Executing", null, "contract_violation", false);
     assertThat(adapter.recoverHandle(s.rex()))
-        .as(describe(s) + " — recoverHandle must prime the in-process handle from the container label")
+        .as(
+            describe(s)
+                + " — recoverHandle must prime the in-process handle from the container label")
         .isPresent();
     broker.pollActiveExecutions();
 
@@ -386,12 +399,14 @@ class RealRunnerContractIT {
   // AC5 — mock-vs-real parity
   //
   // The terminal status / failure_category / lifecycle events asserted by the real scenarios above
-  // are produced by the SHARED broker + persistence pipeline — identical for either RunnerAdapter by
+  // are produced by the SHARED broker + persistence pipeline — identical for either RunnerAdapter
+  // by
   // construction. The only adapter-specific surface is the Behaviour→outcome mapping the adapter
   // declares. The MockRunnerAdapter stack is @Profile("!runners.docker") (absent from this docker
   // context) and driving its full dispatch→poll needs fixture/scratch wiring; but its source of
   // truth — the per-Behaviour FailureCategory declared by MockRunnerScenarioRegistry — is a plain
-  // bean with a public no-arg ctor and no Docker dependency. We construct it directly and assert the
+  // bean with a public no-arg ctor and no Docker dependency. We construct it directly and assert
+  // the
   // mapping against PRODUCTION declarations (not test literals): this guard reds if the mock's
   // declared Behaviour / FailureCategory drifts from what the real scenarios above assert, which is
   // the machine-checked half of parity. (The real half is assertTerminal on the live row.)
@@ -413,7 +428,8 @@ class RealRunnerContractIT {
       String eventType) {
     MockRunnerScenario scenario = new MockRunnerScenarioRegistry().require(scenarioName);
 
-    // The Behaviour declared by the production registry must match the one the real scenarios drive.
+    // The Behaviour declared by the production registry must match the one the real scenarios
+    // drive.
     assertThat(scenario.behaviour().name())
         .as("production registry scenario '%s' Behaviour", scenarioName)
         .isEqualTo(behaviour);
@@ -428,8 +444,10 @@ class RealRunnerContractIT {
     assertThat(eventType).as("%s lifecycle event", behaviour).startsWith("runner.");
 
     // The failure_category the real scenario asserts on the runner_executions row must equal the
-    // category the production MockRunnerScenarioRegistry DECLARES for the matched Behaviour. Drift on
-    // either side now reds this test — the parity guarantee the previous self-referential check lacked.
+    // category the production MockRunnerScenarioRegistry DECLARES for the matched Behaviour. Drift
+    // on
+    // either side now reds this test — the parity guarantee the previous self-referential check
+    // lacked.
     FailureCategory declared = scenario.expectedFailureCategory();
     if ("HAPPY".equals(behaviour)) {
       assertThat(declared).as("HAPPY declares no failure_category in the registry").isNull();
@@ -463,7 +481,9 @@ class RealRunnerContractIT {
             null,
             /* injectCodexSecret= */ true);
     assertThat(adapter.recoverHandle(s.rex()))
-        .as(describe(s) + " — recoverHandle must prime the in-process handle from the container label")
+        .as(
+            describe(s)
+                + " — recoverHandle must prime the in-process handle from the container label")
         .isPresent();
     broker.pollActiveExecutions();
 
@@ -483,9 +503,12 @@ class RealRunnerContractIT {
 
   @Test
   void runnerLogsAreCapturedAndAuthHeaderLeakIsRedactedBeforePersistence() throws Exception {
-    // The genuinely-secret value is this unique random token; the surrounding "Authorization: Bearer"
-    // is a generic keyword the redactor may legitimately preserve. Assert the TOKEN is gone (below),
-    // not the keyword-prefixed string, so a partial-redaction that leaves the token can't slip past.
+    // The genuinely-secret value is this unique random token; the surrounding "Authorization:
+    // Bearer"
+    // is a generic keyword the redactor may legitimately preserve. Assert the TOKEN is gone
+    // (below),
+    // not the keyword-prefixed string, so a partial-redaction that leaves the token can't slip
+    // past.
     String secretToken = "redaction-sentinel-" + System.nanoTime();
     String authHeaderLine = "Authorization: Bearer " + secretToken;
     Scenario s =
@@ -853,7 +876,8 @@ class RealRunnerContractIT {
     } catch (UnsupportedOperationException ignored) {
       // Non-POSIX filesystem (Windows): Docker Desktop bind-mount uid mapping is permissive there.
       // A real IOException on a POSIX host (e.g. a chmod failure on Linux CI) is NOT swallowed — it
-      // surfaces so a broken bind-mount setup fails loudly instead of as an opaque container failure.
+      // surfaces so a broken bind-mount setup fails loudly instead of as an opaque container
+      // failure.
     }
   }
 
@@ -863,7 +887,8 @@ class RealRunnerContractIT {
     } catch (UnsupportedOperationException ignored) {
       // Non-POSIX filesystem (Windows): Docker Desktop bind-mount uid mapping is permissive there.
       // A real IOException on a POSIX host (e.g. a chmod failure on Linux CI) is NOT swallowed — it
-      // surfaces so a broken bind-mount setup fails loudly instead of as an opaque container failure.
+      // surfaces so a broken bind-mount setup fails loudly instead of as an opaque container
+      // failure.
     }
   }
 
