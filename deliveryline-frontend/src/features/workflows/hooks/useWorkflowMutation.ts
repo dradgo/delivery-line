@@ -13,9 +13,11 @@
  *       (AC6) `onSuccess` invalidation of every query a state change can stale —
  *             `detail(id)` (a PREFIX of `events`/`allowedActions`, so one call covers
  *             all three) plus the run-queue `lists()`.
- *   • `useApproveSpec` — ONE concrete scaffold bound to the existing `approveSpec`
- *     operationId, proving the pattern compiles + invalidates. SEAM (story 2.13/2.19):
- *     its UI wiring (decision bar) lands later.
+ *
+ * Story 2.19 (OQ-2) RELOCATED the `useApproveSpec` scaffold out of this file into its
+ * own `hooks/useApproveSpec.ts` (the live hook the decision bar calls), alongside the
+ * new `hooks/useRejectSpec.ts`. This file now holds ONLY the generic factory — concrete
+ * command hooks live beside their siblings (`useSubmitClarification`).
  */
 import {
   useMutation,
@@ -25,9 +27,7 @@ import {
   type UseMutationResult,
 } from '@tanstack/react-query';
 
-import { apiClient, unwrap } from '@/lib/api/client';
-import { IDEMPOTENCY_KEY_HEADER, newIdempotencyKey } from '@/lib/api/idempotency';
-import type { components } from '@/lib/api/schema';
+import { newIdempotencyKey } from '@/lib/api/idempotency';
 import { workflowKeys } from '@/lib/queryKeys/workflowKeys';
 
 /** Context returned by `onMutate` — carries the attempt's idempotency key. */
@@ -133,28 +133,4 @@ export function useWorkflowMutation<TVariables, TData>(
     mutateAsync,
     variables: mutation.variables?.variables,
   };
-}
-
-type ApproveSpecRequest = components['schemas']['ApproveSpecRequest'];
-type WorkflowStateChangeResponse = components['schemas']['WorkflowStateChangeResponse'];
-
-/**
- * Concrete scaffold proving the pattern (AC6/AC7). Bound to the existing
- * `approveSpec` operationId so it compiles against 6.9's snapshot today.
- * SEAM (story 2.13/2.19): the approval decision-bar UI calls this; not built here.
- */
-export function useApproveSpec(workflowRunId: string) {
-  return useWorkflowMutation<ApproveSpecRequest, WorkflowStateChangeResponse>({
-    workflowRunId,
-    mutationFn: async ({ variables, idempotencyKey }) =>
-      unwrap(
-        await apiClient.POST('/api/v1/workflows/{workflowRunId}/approve-spec', {
-          params: {
-            path: { workflowRunId },
-            header: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
-          },
-          body: variables,
-        }),
-      ),
-  });
 }

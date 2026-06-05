@@ -12,6 +12,7 @@ import { useWorkflowDetail } from '@/features/workflows/hooks/useWorkflowDetail'
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
 import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
 import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
+import { ApprovalDecisionBarContainer } from '@/features/workflows/components/ApprovalDecisionBarContainer';
 import {
   GenericErrorState,
   InvalidLinkState,
@@ -162,6 +163,11 @@ function WorkflowDetailRoute() {
       >
         Open a sample artifact &rarr;
       </Link>
+      {/* Story 2.19 (AC4) — the sticky-footer Approval Decision Bar, fixed to the bottom
+          of the main pane. Live today it renders `blocked` ("specification not yet
+          available for a decision") until an artifactId read-seam ships (T-ARTIFACTID);
+          it reads the LIVE allowed-actions for gating/staleness. */}
+      <ApprovalDecisionBarContainer workflowRunId={workflowRunId} layout="sticky_footer" />
     </Stack>
   );
 }

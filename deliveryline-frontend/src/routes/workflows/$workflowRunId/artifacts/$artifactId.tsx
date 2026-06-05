@@ -2,6 +2,7 @@ import { Link, createFileRoute } from '@tanstack/react-router';
 
 import { Stack } from '@/components/layout';
 import { ArtifactReviewPanelContainer } from '@/features/workflows/components/ArtifactReviewPanel';
+import { ApprovalDecisionBarContainer } from '@/features/workflows/components/ApprovalDecisionBarContainer';
 import {
   InvalidRouteParamError,
   assertValidArtifactRouteParams,
@@ -94,6 +95,11 @@ function ArtifactViewerRoute() {
           state today; it flips to the rendered artifact with no route change when the
           artifact-read story enables the hook + endpoint. */}
       <ArtifactReviewPanelContainer workflowRunId={workflowRunId} artifactId={artifactId} />
+      {/* Story 2.19 (AC4) — the inline-section Approval Decision Bar, rendered in-flow
+          beneath the Artifact Review Panel for the spec artifact. Same container, the
+          `inline_section` layout; live it renders `blocked` until an artifactId source
+          ships (T-ARTIFACTID). */}
+      <ApprovalDecisionBarContainer workflowRunId={workflowRunId} layout="inline_section" />
     </Stack>
   );
 }

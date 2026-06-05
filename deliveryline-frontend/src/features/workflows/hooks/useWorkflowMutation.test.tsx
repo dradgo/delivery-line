@@ -11,7 +11,9 @@ import { PROBLEM_JSON_CONTENT_TYPE } from '@/lib/api/problemDetails';
 import { retryUnlessNonRetryable } from '@/lib/api/queryOptions';
 import { workflowKeys } from '@/lib/queryKeys/workflowKeys';
 import { server } from '@/test/server';
-import { useApproveSpec } from './useWorkflowMutation';
+// Story 2.19 (OQ-2): `useApproveSpec` relocated to its own file; this suite still
+// exercises the `useWorkflowMutation` factory invariants THROUGH the concrete hook.
+import { useApproveSpec } from './useApproveSpec';
 
 function createWrapper(client: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {

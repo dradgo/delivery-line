@@ -2,6 +2,14 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-2.19 (2026-06-05)
+
+- **(was decision-needed) Full UI-side stale-detection wiring** — `isStaleAgainst` + the `localUi.stale` field exist and are tested, but the container never computes `stale` from a refetch-compare source and the mutation handlers don't short-circuit against a known-stale stamp. **Deferred (Alex, Option 2):** the contextBundle-comparison correctness fix in `isStaleAgainst` is patched now; the proactive wiring (poll/focus refetch of the version stamp + mutation short-circuit) is a follow-up, since the 409 `APPROVAL_VERSION_MISMATCH` path already covers stale live and no refetch-compare source exists in the container yet. [`deliveryline-frontend/src/features/workflows/components/ApprovalDecisionBarContainer.tsx:109-111,113-164`]
+- **Rejection dialog has no focus trap despite `aria-modal="true"`** — Tab can leave the region-local rejection dialog (no trap). Escape-inert is INTENTIONAL (AC8 — non-dismissible except explicit Cancel), and focus-in-on-open + focus-restore-on-close are implemented. Deferred to story 2.25 (no axe harness; full WCAG AA/focus-containment is 2.25 scope, OQ-4). [`deliveryline-frontend/src/features/workflows/components/ApprovalDecisionBar.tsx:141-150`]
+- **Decision timestamp is a raw client-clock ISO string** — `decidedAt = new Date().toISOString()` rendered verbatim in the summary. `WorkflowStateChangeResponse` carries no server timestamp, so the client clock is the only source; relative/locale formatting (the 2.16 pattern) is polish. Deferred. [`ApprovalDecisionBarContainer.tsx:126`, `ApprovalDecisionBar.tsx:88`]
+- **Untrusted actor identity rendered as markdown source, not plain text** — `buildDecisionContextLabel` concatenates `by ${actor}` into the string fed to `SafeMarkdownRenderer`, so a markdown-control-char actor (`[x](javascript:…)`, `*`, backticks) is interpreted as markdown within a trusted-looking line. The story explicitly sanctioned the sanitization barrel for this text; the real link/HTML policy lives in `SafeMarkdownRenderer` (out of this diff). Deferred to a 2.25 security pass — verify the renderer's link policy or render the actor as a plain text node. [`approvalDecisionView.ts:369-378`, `ApprovalDecisionBar.tsx:94,411`]
+- **`currentState` empty-string fallback flows downstream** — `detail?.currentState ?? versionStamp?.workflowState ?? ''`; when both are absent `''` flows into the decision label/summary rather than being treated as not-ready. Low impact. Deferred. [`ApprovalDecisionBarContainer.tsx:81`]
+
 ## Deferred from: code review of story-2.18 (2026-06-04)
 
 _All four are on the DORMANT path (no clarification-read endpoint yet); the live state today is only `no open questions`._
