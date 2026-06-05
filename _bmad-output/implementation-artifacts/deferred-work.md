@@ -2,6 +2,11 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3a-4 (2026-06-05)
+
+- **No live-schema verification of the `project.id.eq` poll filter** — `team.key.eq` is byte-identical to the already-working `fetch-ticket-by-reference.graphql`, but `project.id.eq` is a net-new `IssueFilter` shape exercised only by `MockRestServiceServer`, which returns canned JSON and never validates the request against the real Linear GraphQL schema. The spec deliberately scoped out the Docker/integration tier (T-GATES, AC8). Smoke-test project scoping against a real Linear workspace before relying on it in production. [`deliveryline-backend/src/main/resources/graphql/linear/poll-tickets-since.graphql`, `LinearRealAdapter.buildPollFilter`]
+- **Unit tests don't assert the loaded `.graphql` document matches the `$filter` variable** — `MockRestServiceServer` asserts the outbound `variables.filter.*` JSON but never parses the GraphQL query string, so a future drift between `poll-tickets-since.graphql` (`$filter: IssueFilter!`) and the variable map sent by the adapter would stay green locally and fail only at the Linear server. Optional hardening: add a body matcher asserting the request `query` contains `$filter: IssueFilter!`. [`deliveryline-backend/src/test/java/org/dradgo/adapters/integration/linear/LinearRealAdapterUnitTest.java`]
+
 ## Deferred from: code review of story-2.19 (2026-06-05)
 
 - **(was decision-needed) Full UI-side stale-detection wiring** — `isStaleAgainst` + the `localUi.stale` field exist and are tested, but the container never computes `stale` from a refetch-compare source and the mutation handlers don't short-circuit against a known-stale stamp. **Deferred (Alex, Option 2):** the contextBundle-comparison correctness fix in `isStaleAgainst` is patched now; the proactive wiring (poll/focus refetch of the version stamp + mutation short-circuit) is a follow-up, since the 409 `APPROVAL_VERSION_MISMATCH` path already covers stale live and no refetch-compare source exists in the container yet. [`deliveryline-frontend/src/features/workflows/components/ApprovalDecisionBarContainer.tsx:109-111,113-164`]

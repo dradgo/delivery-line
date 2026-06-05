@@ -84,6 +84,13 @@ deliveryline:
     poll-interval-ms: 60000
     poll-batch-size: 50
     stale-threshold-multiplier: 2.0
+    # Story 3a.4 — OPTIONAL intake poll-scoping. A Linear "workspace" is determined by the API
+    # token (LINEAR_API_TOKEN), NOT a filterable field — so these scope intake to a team/project
+    # *within* the token's workspace. Both absent ⇒ poll the whole token-scoped workspace
+    # (byte-identical to the original behavior). Poll-path only; the fetch-by-reference path is
+    # already scoped by the ticket reference's own team key.
+    # team-key:   # e.g. FIN — scope intake to one Linear team key
+    # project-id: # e.g. a Linear project UUID — scope intake to one project
     timeout:
       connect-ms: 5000
       read-ms: 30000

@@ -36,6 +36,11 @@ import org.springframework.stereotype.Component;
  * <p>Comment-posting: {@link #postGovernedRunComment(String, GovernedRunComment)} records the call
  * into an in-memory list keyed by {@code ticketRef}. Tests inspect via {@link #postedComments()} —
  * this accessor is NOT on the {@link LinearAdapter} port (Task 3 invariant).
+ *
+ * <p>Story 3a.4 — the Linear poll team/project scope ({@code deliveryline.linear.team-key} / {@code
+ * .project-id}) is a {@link LinearRealAdapter}-only concern: the mock intentionally does NOT read
+ * {@code LinearProperties} scope fields and returns its deterministic fixtures regardless of any
+ * configured scope.
  */
 @Component
 @Profile("linear-mock")

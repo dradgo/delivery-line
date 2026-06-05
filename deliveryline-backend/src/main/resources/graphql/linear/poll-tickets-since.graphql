@@ -1,10 +1,5 @@
-query PollTicketsSince($since: DateTime!, $first: Int!, $after: String) {
-  issues(
-    filter: { updatedAt: { gt: $since } }
-    orderBy: updatedAt
-    first: $first
-    after: $after
-  ) {
+query PollTicketsSince($filter: IssueFilter!, $first: Int!, $after: String) {
+  issues(filter: $filter, orderBy: updatedAt, first: $first, after: $after) {
     nodes {
       identifier
       title

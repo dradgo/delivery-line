@@ -19,6 +19,16 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>Polling defaults to a 60-second interval per AC9 ("default 60s"). The {@code polling.enabled}
  * flag (default true) lets ops keep the real adapter wired but mute the scheduler when no upstream
  * consumer requires intake — the scheduler bean is `@ConditionalOnProperty` against this flag.
+ *
+ * <p>Story 3a.4 adds two <strong>optional</strong> poll-scoping fields, {@code teamKey} and {@code
+ * projectId}, appended at the END of the component list to keep the constructor fan-out minimal
+ * (only {@link #defaults()} and the adapter unit test construct this record directly). Both default
+ * to {@code null}; when both are absent the poll behaves byte-identically to before (the whole
+ * token-scoped workspace is polled). They are deliberately <strong>unvalidated</strong> — absence
+ * is the valid default — so no {@code @SpringBootTest} context fails on a missing property, and the
+ * test {@code application.yml} needs no mirroring entry. A Linear "workspace" is determined by the
+ * API token and is NOT a filterable GraphQL field; the configurable lever is team/project scoping
+ * <em>within</em> the token's workspace (these are non-secret identifiers, safe to log).
  */
 @ConfigurationProperties("deliveryline.linear")
 public record LinearProperties(
@@ -28,7 +38,9 @@ public record LinearProperties(
     int pollBatchSize,
     Timeout timeout,
     double staleThresholdMultiplier,
-    Polling polling) {
+    Polling polling,
+    String teamKey,
+    String projectId) {
 
   public LinearProperties {
     baseUrl = baseUrl == null || baseUrl.isBlank() ? "https://api.linear.app/graphql" : baseUrl;
@@ -47,6 +59,11 @@ public record LinearProperties(
     }
     timeout = timeout == null ? Timeout.defaults() : timeout;
     polling = polling == null ? Polling.defaults() : polling;
+    // Story 3a.4 — normalize the optional scope identifiers: blank ⇒ null (absent scope), and strip
+    // surrounding whitespace so a stray `" FIN "` (env var / quoted YAML) is not emitted as an
+    // `eq:" FIN "` filter that Linear never matches → silent empty poll.
+    teamKey = teamKey == null || teamKey.isBlank() ? null : teamKey.strip();
+    projectId = projectId == null || projectId.isBlank() ? null : projectId.strip();
   }
 
   public static LinearProperties defaults() {
@@ -57,7 +74,9 @@ public record LinearProperties(
         50,
         Timeout.defaults(),
         2.0d,
-        Polling.defaults());
+        Polling.defaults(),
+        null,
+        null);
   }
 
   @JsonIgnore
@@ -80,6 +99,10 @@ public record LinearProperties(
         + staleThresholdMultiplier
         + ", polling="
         + polling
+        + ", teamKey="
+        + teamKey
+        + ", projectId="
+        + projectId
         + ", apiToken=<redacted>}";
   }
 

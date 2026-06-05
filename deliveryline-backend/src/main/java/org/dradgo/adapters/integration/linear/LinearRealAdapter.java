@@ -122,6 +122,9 @@ public class LinearRealAdapter implements LinearAdapter {
   @Override
   public Optional<LinearTicket> fetchTicketByReference(String ticketRef) {
     Objects.requireNonNull(ticketRef, "ticketRef");
+    // Story 3a.4 — single-ticket resolution is authoritatively scoped by the reference's OWN team
+    // key (parsed below into the fetch query's `team.key.eq`). Do NOT layer the poll-scope config
+    // (properties.teamKey()/projectId()) onto this path — that scope is a poll-only concern.
     ParsedTicketRef parsed = parseTicketRef(ticketRef);
     Map<String, Object> variables =
         Map.of(
@@ -143,13 +146,17 @@ public class LinearRealAdapter implements LinearAdapter {
     Objects.requireNonNull(since, "since");
     int batchSize = Math.max(1, properties.pollBatchSize());
     long startedAt = System.nanoTime();
+    // Story 3a.4 — assemble the IssueFilter in Java and pass it as a whole variable. Conditional
+    // team/project keys must be OMITTED when unconfigured (emitting `eq: null` would filter FOR
+    // null); building the map here keeps absent scope byte-identical to the original poll.
+    Map<String, Object> filter = buildPollFilter(since);
     List<LinearTicket> collected = new ArrayList<>();
     String afterCursor = null;
     int pages = 0;
     boolean hasNextPage = false;
     do {
       Map<String, Object> variables = new LinkedHashMap<>();
-      variables.put("since", since.toString());
+      variables.put("filter", filter);
       variables.put("first", batchSize);
       if (afterCursor != null) {
         variables.put("after", afterCursor);
@@ -187,12 +194,40 @@ public class LinearRealAdapter implements LinearAdapter {
     }
     collected.sort(Comparator.comparing(LinearTicket::updatedAt));
     log.info(
-        "linear_real poll since={} returned={} tickets pages={} durationMs={}",
+        "linear_real poll since={} teamKey={} projectId={} returned={} tickets pages={} durationMs={}",
         since,
+        scopeOrNone(properties.teamKey()),
+        scopeOrNone(properties.projectId()),
         collected.size(),
         pages,
         elapsedMs(startedAt));
     return collected;
+  }
+
+  /**
+   * Builds the poll {@code IssueFilter} map (story 3a.4). Always carries {@code updatedAt.gt}; adds
+   * {@code team.key.eq} and/or {@code project.id.eq} only when the corresponding {@link
+   * LinearProperties} scope field is non-blank. Conditional keys are OMITTED (never {@code eq:
+   * null}) so an unconfigured poll is byte-identical to the original whole-workspace behavior.
+   * Linear ANDs sibling {@code IssueFilter} keys, so team + project + updatedAt narrow together.
+   */
+  private Map<String, Object> buildPollFilter(Instant since) {
+    Map<String, Object> filter = new LinkedHashMap<>();
+    filter.put("updatedAt", Map.of("gt", since.toString()));
+    String teamKey = properties.teamKey();
+    if (teamKey != null && !teamKey.isBlank()) {
+      filter.put("team", Map.of("key", Map.of("eq", teamKey)));
+    }
+    String projectId = properties.projectId();
+    if (projectId != null && !projectId.isBlank()) {
+      filter.put("project", Map.of("id", Map.of("eq", projectId)));
+    }
+    return filter;
+  }
+
+  /** Non-secret scope identifier for logging; {@code "none"} when absent. */
+  private static String scopeOrNone(String value) {
+    return value == null || value.isBlank() ? "none" : value;
   }
 
   @Override
