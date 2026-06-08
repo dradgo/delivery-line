@@ -441,8 +441,28 @@ public class LinearRealAdapter implements LinearAdapter {
     Instant createdAt = parseInstant(requireText(issue, "createdAt"), "createdAt");
     Instant updatedAt = parseInstant(requireText(issue, "updatedAt"), "updatedAt");
     Map<String, String> labels = extractLabels(issue.path("labels").path("nodes"));
+    // Story 3a.5 — carry the issue workflow-state id (gating key) + name (logs). Both null when the
+    // response omits `state` (the gate then treats the ticket as ineligible — never NPE).
+    String statusName = textOrNull(issue.path("state").path("name"));
+    String statusId = textOrNull(issue.path("state").path("id"));
     return new LinearTicket(
-        identifier, title, summary, authorIdentity, createdAt, updatedAt, labels);
+        identifier,
+        title,
+        summary,
+        authorIdentity,
+        createdAt,
+        updatedAt,
+        labels,
+        statusName,
+        statusId);
+  }
+
+  private static String textOrNull(JsonNode node) {
+    if (node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    String value = node.asText("");
+    return value.isBlank() ? null : value;
   }
 
   private static String requireText(JsonNode node, String field) {

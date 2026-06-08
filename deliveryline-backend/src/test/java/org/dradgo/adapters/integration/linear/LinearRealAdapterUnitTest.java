@@ -2,6 +2,7 @@ package org.dradgo.adapters.integration.linear;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
@@ -89,7 +90,8 @@ class LinearRealAdapterUnitTest {
 				        "createdAt": "2026-05-01T10:00:00Z",
 				        "updatedAt": "2026-05-02T12:30:00Z",
 				        "creator": { "email": "dev@example.com", "displayName": "Dev" },
-				        "labels": { "nodes": [{ "name": "feature" }, { "name": "caching" }] }
+				        "labels": { "nodes": [{ "name": "feature" }, { "name": "caching" }] },
+				        "state": { "id": "state-ready-uuid", "name": "Ready for Planning" }
 				      }]
 				    }
 				  }
@@ -105,6 +107,9 @@ class LinearRealAdapterUnitTest {
     assertEquals("dev@example.com", ticket.get().authorIdentity());
     assertEquals(Instant.parse("2026-05-02T12:30:00Z"), ticket.get().updatedAt());
     assertTrue(ticket.get().labels().containsKey("feature"));
+    // Story 3a.5 — the issue workflow-state id (gating key) + name (logs) are parsed from `state`.
+    assertEquals("state-ready-uuid", ticket.get().statusId());
+    assertEquals("Ready for Planning", ticket.get().status());
     mockServer.verify();
   }
 
@@ -244,7 +249,8 @@ class LinearRealAdapterUnitTest {
 				        { "identifier":"LIN-301","title":"newer","description":"",
 				          "createdAt":"2026-05-02T10:00:00Z","updatedAt":"2026-05-02T10:00:00Z",
 				          "creator":{"email":"a@example.com","displayName":"A"},
-				          "labels":{"nodes":[]}}
+				          "labels":{"nodes":[]},
+				          "state":{"id":"state-ready-uuid","name":"Ready for Planning"}}
 				      ],
 				      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" }
 				    }
@@ -281,6 +287,11 @@ class LinearRealAdapterUnitTest {
     // Adapter sorts ASC by updatedAt — older item first, newer item last (the watermark).
     assertEquals("LIN-300", tickets.get(0).ticketRef());
     assertEquals("LIN-301", tickets.get(1).ticketRef());
+    // Story 3a.5 — LIN-301 carries `state`; LIN-300 omits it ⇒ null statusId/status (no NPE).
+    assertEquals("state-ready-uuid", tickets.get(1).statusId());
+    assertEquals("Ready for Planning", tickets.get(1).status());
+    assertNull(tickets.get(0).statusId());
+    assertNull(tickets.get(0).status());
     mockServer.verify();
   }
 

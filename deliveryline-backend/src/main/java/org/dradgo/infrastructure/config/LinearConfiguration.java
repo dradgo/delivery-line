@@ -2,6 +2,7 @@ package org.dradgo.infrastructure.config;
 
 import java.time.Duration;
 import java.util.Objects;
+import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
 import org.dradgo.application.integration.linear.LinearProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -27,7 +28,7 @@ import org.springframework.web.client.RestClient;
  * scheduling concern, not the wiring concern).
  */
 @Configuration
-@EnableConfigurationProperties(LinearProperties.class)
+@EnableConfigurationProperties({LinearProperties.class, LinearAutoIngestProperties.class})
 public class LinearConfiguration {
 
   static final String MOCK_PROFILE = "linear-mock";

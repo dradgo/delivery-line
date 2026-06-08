@@ -7,7 +7,6 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -185,7 +184,7 @@ public class RepositoryWorkspaceService {
       Path repoDir = workspaceStore.prepareRepositoryDir(runnerExecutionId);
       String branch = branchName(linearTicketRef, workflowRunId);
 
-      WorkflowProperties.Repo repoConfig = workflowProperties.repoFor(repositoryRef);
+      WorkflowProperties.RepoConfig repoConfig = workflowProperties.repos();
       if (!isExistingGitRepository(repoDir)) {
         ensureCloneTargetEmpty(repoDir, runnerExecutionId);
         git.cloneRepository(
@@ -376,16 +375,13 @@ public class RepositoryWorkspaceService {
 
   /**
    * Story 3a-2 (AC7, Decision D2) — resolve the {@code repositoryRef} for the pilot from the single
-   * configured repo under {@code deliveryline.workflow.repos} (1:1 single-repo assumption). Returns
-   * empty when no — or more than one, which would be ambiguous without a real Linear↔GitHub mapping
-   * (deferred to 3.32/3.33) — repo is configured. The broker gates the repo-context seam on this.
+   * configured repo under {@code deliveryline.workflow.repos.url} (1:1 single-repo assumption).
+   * Returns empty when no repo is configured (no real Linear↔GitHub mapping yet; deferred to
+   * 3.32/3.33). {@code url} is normalized to {@code owner/repo}. The broker gates the repo-context
+   * seam on this.
    */
   public Optional<String> resolveConfiguredRepositoryRef() {
-    Map<String, WorkflowProperties.Repo> repos = workflowProperties.repos();
-    if (repos.size() != 1) {
-      return Optional.empty();
-    }
-    return Optional.of(repos.keySet().iterator().next());
+    return Optional.ofNullable(workflowProperties.repos().repositoryRef());
   }
 
   /**

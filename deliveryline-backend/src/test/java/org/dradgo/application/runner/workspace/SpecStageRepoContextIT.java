@@ -17,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.dradgo.adapters.files.LocalRunnerWorkspaceStore;
@@ -111,10 +110,10 @@ class SpecStageRepoContextIT {
     when(secrets.resolveHostSecret("GITHUB_TOKEN")).thenReturn(Optional.of(TOKEN));
     when(links.findActiveByWorkflowRun(anyString())).thenReturn(Optional.empty());
 
-    // Exactly one configured repo → the broker's config resolver returns REPO_REF (1:1 pilot, D2).
+    // Configured repo url → the broker's config resolver normalizes it to REPO_REF (1:1 pilot, D2).
     WorkflowProperties props =
         new WorkflowProperties(
-            WorkflowProperties.Bot.empty(), Map.of(REPO_REF, WorkflowProperties.Repo.defaults()));
+            WorkflowProperties.Bot.empty(), WorkflowProperties.RepoConfig.of(REPO_REF));
     service =
         new RepositoryWorkspaceService(
             git, gitHubAdapter, secrets, store, recordPort, links, props);

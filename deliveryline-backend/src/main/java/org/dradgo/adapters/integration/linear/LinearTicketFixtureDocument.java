@@ -23,6 +23,8 @@ final class LinearTicketFixtureDocument {
   private final String createdAt;
   private final String updatedAt;
   private final Map<String, String> labels;
+  private final String status;
+  private final String statusId;
 
   @JsonCreator
   LinearTicketFixtureDocument(
@@ -32,7 +34,9 @@ final class LinearTicketFixtureDocument {
       @JsonProperty("authorIdentity") String authorIdentity,
       @JsonProperty("createdAt") String createdAt,
       @JsonProperty("updatedAt") String updatedAt,
-      @JsonProperty("labels") Map<String, String> labels) {
+      @JsonProperty("labels") Map<String, String> labels,
+      @JsonProperty("status") String status,
+      @JsonProperty("statusId") String statusId) {
     this.ticketRef = ticketRef;
     this.title = title;
     this.summary = summary;
@@ -40,6 +44,9 @@ final class LinearTicketFixtureDocument {
     this.createdAt = createdAt;
     this.updatedAt = updatedAt;
     this.labels = labels == null ? Map.of() : new LinkedHashMap<>(labels);
+    // Story 3a.5 — optional issue workflow-state name/id; null when the fixture omits them.
+    this.status = status;
+    this.statusId = statusId;
   }
 
   LinearTicket toLinearTicket() {
@@ -50,7 +57,9 @@ final class LinearTicketFixtureDocument {
         authorIdentity,
         parseInstant("createdAt", createdAt),
         parseInstant("updatedAt", updatedAt),
-        labels);
+        labels,
+        status,
+        statusId);
   }
 
   Instant updatedAt() {

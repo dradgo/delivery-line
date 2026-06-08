@@ -82,3 +82,6 @@ spring-boot-run-local.err.log
 _tmp/
 _tmp-*.log
 *.log
+
+# Local-only Spring profile config (per-developer repo target; not committed)
+deliveryline-backend/src/main/resources/application-git-finance-monitor.yml

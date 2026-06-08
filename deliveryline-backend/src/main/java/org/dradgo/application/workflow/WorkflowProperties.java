@@ -1,8 +1,6 @@
 package org.dradgo.application.workflow;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -24,24 +22,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * the {@code repos} + {@code bot} sub-trees and ignores the threshold key (unknown-field-tolerant).
  */
 @ConfigurationProperties("deliveryline.workflow")
-public record WorkflowProperties(Bot bot, Map<String, Repo> repos) {
+public record WorkflowProperties(Bot bot, RepoConfig repos) {
 
   public WorkflowProperties {
     bot = bot == null ? Bot.empty() : bot;
-    repos = repos == null ? Map.of() : Map.copyOf(new LinkedHashMap<>(repos));
+    repos = repos == null ? RepoConfig.empty() : repos;
   }
 
   public static WorkflowProperties defaults() {
-    return new WorkflowProperties(Bot.empty(), Map.of());
-  }
-
-  /**
-   * Per-repository clone tuning for {@code repoKey}, falling back to {@link Repo#defaults()}
-   * (shallow {@code --depth 1}, no sparse paths) when no override is configured (AC5).
-   */
-  public Repo repoFor(String repoKey) {
-    Repo configured = repoKey == null ? null : repos.get(repoKey);
-    return configured == null ? Repo.defaults() : configured;
+    return new WorkflowProperties(Bot.empty(), RepoConfig.empty());
   }
 
   /**
@@ -79,22 +68,68 @@ public record WorkflowProperties(Bot bot, Map<String, Repo> repos) {
     }
   }
 
-  /** Per-repository shallow/sparse clone tuning (AC5). */
-  public record Repo(int cloneDepth, List<String> sparsePaths) {
+  /**
+   * Single configured pilot repository (1:1; a real Linear↔GitHub mapping is deferred to
+   * 3.32/3.33). Bound from {@code deliveryline.workflow.repos.*} for easy IDE override. {@code url}
+   * accepts an {@code owner/repo} slug, an HTTPS clone URL, or an SSH SCP URL — all normalized to
+   * the {@code owner/repo} reference the GitHub adapter resolves ({@link #repositoryRef()}). The
+   * clone itself always uses the API-derived HTTPS URL + the host PAT, so the SSH form is accepted
+   * as notation only (no SSH transport). {@code cloneDepth}/{@code sparsePaths} are the AC5 clone
+   * knobs.
+   */
+  public record RepoConfig(String url, int cloneDepth, List<String> sparsePaths) {
 
     public static final int DEFAULT_CLONE_DEPTH = 1;
 
-    public Repo {
+    public RepoConfig {
+      url = (url == null || url.isBlank()) ? null : url.trim();
       cloneDepth = cloneDepth <= 0 ? DEFAULT_CLONE_DEPTH : cloneDepth;
       sparsePaths = sparsePaths == null ? List.of() : List.copyOf(sparsePaths);
     }
 
-    public static Repo defaults() {
-      return new Repo(DEFAULT_CLONE_DEPTH, List.of());
+    public static RepoConfig empty() {
+      return new RepoConfig(null, DEFAULT_CLONE_DEPTH, List.of());
+    }
+
+    /** Single-repo config from just a {@code url} (owner/repo, HTTPS, or SSH form), depth 1. */
+    public static RepoConfig of(String url) {
+      return new RepoConfig(url, DEFAULT_CLONE_DEPTH, List.of());
     }
 
     public boolean sparseEnabled() {
       return !sparsePaths.isEmpty();
+    }
+
+    /**
+     * The {@code owner/repo} reference derived from {@link #url()}, or {@code null} when no repo is
+     * configured. Accepts {@code owner/repo}, {@code https://host/owner/repo(.git)}, and {@code
+     * git@host:owner/repo(.git)} forms; the actual clone transport stays HTTPS + PAT regardless.
+     */
+    public String repositoryRef() {
+      if (url == null) {
+        return null;
+      }
+      String ref = url;
+      if (ref.endsWith(".git")) {
+        ref = ref.substring(0, ref.length() - ".git".length());
+      }
+      int scheme = ref.indexOf("://");
+      if (scheme >= 0) {
+        // https://host/owner/repo or ssh://git@host/owner/repo — strip scheme + host.
+        String afterHost = ref.substring(scheme + 3);
+        int slash = afterHost.indexOf('/');
+        ref = slash >= 0 ? afterHost.substring(slash + 1) : afterHost;
+      } else {
+        int colon = ref.indexOf(':');
+        if (colon >= 0) {
+          // scp-like git@host:owner/repo — strip user@host.
+          ref = ref.substring(colon + 1);
+        }
+      }
+      while (ref.startsWith("/")) {
+        ref = ref.substring(1);
+      }
+      return ref.isBlank() ? null : ref;
     }
   }
 }

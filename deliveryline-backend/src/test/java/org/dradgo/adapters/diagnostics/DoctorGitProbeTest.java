@@ -5,7 +5,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
-import java.util.Map;
 import org.dradgo.application.diagnostics.DiagnosticsStatus;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.workflow.WorkflowProperties;
@@ -22,7 +21,8 @@ class DoctorGitProbeTest {
 
   private static final WorkflowProperties CONFIGURED_BOT =
       new WorkflowProperties(
-          new WorkflowProperties.Bot("DeliveryLine Bot", "bot@dradgo.org"), Map.of());
+          new WorkflowProperties.Bot("DeliveryLine Bot", "bot@dradgo.org"),
+          WorkflowProperties.RepoConfig.empty());
   private static final WorkflowProperties UNCONFIGURED_BOT = WorkflowProperties.defaults();
 
   private static Environment githubRealActive() {

@@ -1,5 +1,11 @@
 deliveryline:
   home: ${java.io.tmpdir}/deliveryline-test-home
+  frontend:
+    # The Vite SPA bundle is never built into the classpath during the test tier, so the
+    # EmbeddedFrontendGuard fail-fast MUST be disabled here (the test application.yml shadows — does
+    # not merge with — the main one; memory: validated-config-needs-test-yaml). Production defaults
+    # this to true.
+    fail-on-missing-bundle: false
   linear:
     base-url: https://api.linear.app/graphql
     poll-interval-ms: 60000

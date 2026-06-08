@@ -44,6 +44,15 @@ springdoc:
     path: /swagger-ui.html
 
 deliveryline:
+  frontend:
+    # When true (default), the app FAILS FAST at startup unless the Vite SPA bundle is embedded on
+    # the classpath (classpath:/static/index.html) — produced by `mvn package` (the frontend module
+    # builds target/dist, the backend copies it into BOOT-INF/classes/static). This guards against
+    # shipping/running an API-only jar that 404s the UI. Set to false for an API-only run that uses
+    # the Vite dev server on :5173 instead (the dev server proxies /api → :8080). EmbeddedFrontend
+    # deep-link routing (NoResourceFoundException → index.html) is unconditional and simply inert
+    # when no bundle is present.
+    fail-on-missing-bundle: true
   approval:
     # MVP fallback for the legacy WorkflowController.approveSpec REST surface that does not yet
     # accept an actor-identity / reviewer-role header (story 2.13 rebuilds that surface). When the
@@ -63,12 +72,15 @@ deliveryline:
     bot:
       name: ${DELIVERYLINE_BOT_NAME:}
       email: ${DELIVERYLINE_BOT_EMAIL:}
-    # Story 3.9 AC5 — optional per-repository clone tuning, keyed by repo-key:
+    # Story 3a-2 / 3.9 — single pilot repository (1:1). Uncomment + set `url` to enable the repo
+    # workspace seam on the spec/investigation stage. Also requires the `github-real` profile AND a
+    # GITHUB_TOKEN (repo scope — clones private repos over HTTPS via the x-access-token PAT helper).
+    # `url` accepts an owner/repo slug, an HTTPS clone URL, or an SSH SCP URL — all normalized to
+    # owner/repo; the clone itself always uses the API-derived HTTPS URL + the PAT (no SSH transport).
     #   repos:
-    #     <repo-key>:
-    #       clone-depth: 1          # shallow by default
-    #       sparse-paths: []        # empty ⇒ full-tree checkout
-    # Defaults (depth 1, no sparse) apply when a repo-key is absent; no entries are required.
+    #     url: dradgo/delivery-line   # or https://github.com/dradgo/delivery-line.git or git@github.com:dradgo/delivery-line.git
+    #     clone-depth: 1              # shallow by default; <=0 normalized to 1
+    #     sparse-paths: []            # empty ⇒ full-tree checkout
   rest:
     # Optional override for server.address. Leave unset to inherit the loopback default above.
     # bind-address: 0.0.0.0
@@ -80,6 +92,10 @@ deliveryline:
     # 256-257, audit-only RBAC). Production deployments MUST override.
     local-actor-identity: local-operator
   linear:
+    # Story 1.14 — the API token is supplied at runtime via the LINEAR_API_TOKEN env var (.env /
+    # process env) — NEVER committed here. Blank is allowed at bind time and is fatal only when the
+    # linear-real profile activates the linearRestClient bean. Mirrors the github.token pattern below.
+    api-token: ${LINEAR_API_TOKEN:}
     base-url: https://api.linear.app/graphql
     poll-interval-ms: 60000
     poll-batch-size: 50
@@ -91,6 +107,15 @@ deliveryline:
     # already scoped by the ticket reference's own team key.
     # team-key:   # e.g. FIN — scope intake to one Linear team key
     # project-id: # e.g. a Linear project UUID — scope intake to one project
+    # Story 3a.5 — OPTIONAL opt-in auto-ingest. When enabled, the poll auto-creates a governed run
+    # (via the same submit the CLI/REST use) for each ticket whose Linear ISSUE WORKFLOW-STATE ID
+    # (issue.state.id, configured under Team → Settings → Workflow) is in `status-ids` AND that has no
+    # existing active link. Get the ids via the `workflowStates` GraphQL query (UUIDs are per-team +
+    # stable across renames). Default OFF ⇒ the poll stays a watcher. An enabled flag with an EMPTY
+    # status-ids list ingests NOTHING (never the whole workspace).
+    # auto-ingest:
+    #   enabled: false
+    #   status-ids: []      # e.g. ["e7f3...-uuid"] — Linear issue workflow-state IDs to ingest (e.g. "Ready for Planning")
     timeout:
       connect-ms: 5000
       read-ms: 30000

@@ -280,7 +280,9 @@ class IntegrationLinkServiceUnitTest {
         "dev@example.com",
         Instant.parse("2026-04-20T08:00:00Z"),
         Instant.parse("2026-04-21T08:00:00Z"),
-        Map.of("type", "feature"));
+        Map.of("type", "feature"),
+        null,
+        null);
   }
 
   private static IntegrationLink sampleLink(String publicId, String workflowRunPublicId) {

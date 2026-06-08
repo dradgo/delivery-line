@@ -18,6 +18,10 @@ query FetchTicketByReference($teamKey: String!, $number: Float!) {
           name
         }
       }
+      state {
+        id
+        name
+      }
     }
   }
 }

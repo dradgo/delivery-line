@@ -26,11 +26,13 @@ import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAdapterException;
+import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
 import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
+import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
@@ -134,7 +136,12 @@ class IntegrationLoggingContractTest {
     Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
     LinearPollingHost host =
         new LinearPollingHost(
-            linearAdapter, port, new org.dradgo.application.idempotency.UuidV7Generator(), clock);
+            linearAdapter,
+            port,
+            new org.dradgo.application.idempotency.UuidV7Generator(),
+            mock(WorkflowCommandService.class),
+            LinearAutoIngestProperties.defaults(),
+            clock);
     when(linearAdapter.pollNewTickets(Instant.parse("2026-05-13T12:00:00Z")))
         .thenThrow(
             new LinearAdapterException(
@@ -167,7 +174,12 @@ class IntegrationLoggingContractTest {
     Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
     LinearPollingHost host =
         new LinearPollingHost(
-            linearAdapter, port, new org.dradgo.application.idempotency.UuidV7Generator(), clock);
+            linearAdapter,
+            port,
+            new org.dradgo.application.idempotency.UuidV7Generator(),
+            mock(WorkflowCommandService.class),
+            LinearAutoIngestProperties.defaults(),
+            clock);
     LinearTicket ticket =
         new LinearTicket(
             "LIN-102",
@@ -176,7 +188,9 @@ class IntegrationLoggingContractTest {
             "dev@example.com",
             Instant.parse("2026-05-12T08:00:00Z"),
             Instant.parse("2026-05-13T12:05:00Z"),
-            Map.of());
+            Map.of(),
+            null,
+            null);
     when(linearAdapter.pollNewTickets(Instant.parse("2026-05-13T12:00:00Z")))
         .thenReturn(List.of(ticket));
     when(port.touchLastSyncAtByTypeAndExternalRef("linear", "LIN-102", ticket.updatedAt()))
@@ -197,7 +211,12 @@ class IntegrationLoggingContractTest {
     Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
     LinearPollingHost host =
         new LinearPollingHost(
-            linearAdapter, port, new org.dradgo.application.idempotency.UuidV7Generator(), clock);
+            linearAdapter,
+            port,
+            new org.dradgo.application.idempotency.UuidV7Generator(),
+            mock(WorkflowCommandService.class),
+            LinearAutoIngestProperties.defaults(),
+            clock);
     when(port.findMaxLastSyncAtForType("linear"))
         .thenThrow(new IllegalStateException("db unavailable"));
 
@@ -224,7 +243,9 @@ class IntegrationLoggingContractTest {
         "dev@example.com",
         Instant.parse("2026-04-20T08:00:00Z"),
         Instant.parse("2026-04-21T08:00:00Z"),
-        Map.of("type", "feature"));
+        Map.of("type", "feature"),
+        null,
+        null);
   }
 
   private static IntegrationLink sampleLink(String publicId, String workflowRunPublicId) {

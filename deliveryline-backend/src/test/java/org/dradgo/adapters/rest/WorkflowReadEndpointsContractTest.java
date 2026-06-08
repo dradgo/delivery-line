@@ -81,20 +81,27 @@ class WorkflowReadEndpointsContractTest {
   private final ObjectMapper mapper = new ObjectMapper();
   private final HttpClient http = HttpClient.newHttpClient();
 
+  /**
+   * Order-independent reset of the shared singleton Testcontainers Postgres. Sibling contract-test
+   * classes commit {@code artifacts}/{@code artifact_operations} rows whose {@code linked_event_id}
+   * FK references {@code workflow_events} with {@code on delete restrict} and do not clean up, so a
+   * plain {@code delete from workflow_events} here is blocked by {@code
+   * fk_artifacts_workflow_events} ("Key (id)=… is still referenced from table artifacts"). Every
+   * domain table FK-references {@code workflow_runs}, so {@code TRUNCATE … CASCADE} clears them all
+   * in correct FK order and stays correct as new child tables are added.
+   */
+  private void wipeDomainTables() {
+    jdbcTemplate.update("truncate table workflow_runs restart identity cascade");
+  }
+
   @AfterEach
   void cleanUp() {
-    // Shared singleton Testcontainers Postgres — leftover integration_links rows would break other
-    // test classes' `delete from workflow_runs` (FK). Clean up after every test, FK order first.
-    jdbcTemplate.update("delete from workflow_events");
-    jdbcTemplate.update("delete from integration_links");
-    jdbcTemplate.update("delete from workflow_runs");
+    wipeDomainTables();
   }
 
   @BeforeEach
   void seed() {
-    jdbcTemplate.update("delete from workflow_events");
-    jdbcTemplate.update("delete from integration_links");
-    jdbcTemplate.update("delete from workflow_runs");
+    wipeDomainTables();
 
     long happy = insertRun(HAPPY_RUN, "WaitingForSpecApproval");
     // Real runs always have a linked ticket (submit links one in-transaction); seed it so the list

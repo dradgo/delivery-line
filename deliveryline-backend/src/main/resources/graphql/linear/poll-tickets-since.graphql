@@ -15,6 +15,10 @@ query PollTicketsSince($filter: IssueFilter!, $first: Int!, $after: String) {
           name
         }
       }
+      state {
+        id
+        name
+      }
     }
     pageInfo {
       hasNextPage

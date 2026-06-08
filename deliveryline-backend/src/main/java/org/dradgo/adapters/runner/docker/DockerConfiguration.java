@@ -12,6 +12,7 @@ import org.dradgo.application.runner.spi.DockerHostPort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 
 /**
@@ -60,8 +61,19 @@ class DockerConfiguration {
    * {@code RunnerWorkspaceCleanupJob} can stay in {@code application.runner} without crossing the
    * Adapters-mayNotBeAccessedByAnyLayer architectural boundary. {@link ConditionalOnMissingBean}
    * keeps slice tests that stub the port in control.
+   *
+   * <p>{@link Primary}: the {@code dockerEngineGateway} bean's instance ({@link
+   * DefaultDockerEngineGateway}) also implements {@link DockerHostPort}, so a by-type {@code
+   * DockerHostPort} injection would otherwise see two candidates ({@code dockerEngineGateway} +
+   * {@code dockerHostPort}) and fail with {@code NoUniqueBeanDefinitionException}. The
+   * {@code @ConditionalOnMissingBean(DockerHostPort.class)} guard above can't prevent this because
+   * it's evaluated against the gateway bean's declared return type ({@code DockerEngineGateway}),
+   * which does not expose {@code DockerHostPort}. Marking this canonical port bean primary resolves
+   * the ambiguity; a slice test supplying its own {@code DockerHostPort} suppresses this bean
+   * entirely (so the {@code @Primary} never competes there).
    */
   @Bean
+  @Primary
   @ConditionalOnMissingBean(DockerHostPort.class)
   DockerHostPort dockerHostPort(DockerEngineGateway gateway) {
     return (DockerHostPort) gateway;
