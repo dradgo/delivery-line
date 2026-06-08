@@ -1,5 +1,7 @@
 import { Toaster as Sonner, type ToasterProps } from 'sonner';
 
+import { FEEDBACK_TOAST_POSITION } from './sonnerConfig';
+
 // Story 2.2 — shadcn/ui Sonner toast host, adapted for the Vite SPA.
 //
 // The stock shadcn generator targets Next.js: it reads the active theme from
@@ -13,6 +15,12 @@ const Toaster = (props: ToasterProps) => {
   return (
     <Sonner
       theme="light"
+      // Story 2.21 (AC9 / OQ-5) — top-right keeps ancillary toasts away from the
+      // bottom-anchored primary action controls (e.g. the sticky-footer
+      // ApprovalDecisionBar) so a confirmation never covers the buttons the user
+      // is acting on. Documented as `FEEDBACK_TOAST_POSITION` in
+      // components/feedback/primitives/feedbackToast.ts. Overridable via props.
+      position={FEEDBACK_TOAST_POSITION}
       className="toaster group"
       toastOptions={{
         classNames: {

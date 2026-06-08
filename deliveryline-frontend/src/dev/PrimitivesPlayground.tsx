@@ -100,6 +100,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Container, Divider, Grid, Inline, Stack } from '@/components/layout';
+import {
+  ActionLifecycleIndicator,
+  InlineFeedback,
+  PersistentStateBadge,
+  feedbackToast,
+} from '@/components/feedback';
+import {
+  INLINE_FEEDBACK_FIXTURES,
+  LIFECYCLE_FIXTURES,
+  PERSISTENT_BADGE_FIXTURES,
+} from '@/test/fixtures/feedback/feedbackFixtures';
 import { densityGap } from '@/lib/density';
 import { cn } from '@/lib/utils';
 
@@ -694,6 +705,94 @@ export default function PrimitivesPlayground() {
                 ))}
               </ul>
             </ScrollArea>
+          </div>
+        </Section>
+
+        <Section title="Feedback Primitives (story 2.21) — inline / persistent / lifecycle (UX-DR15)">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Inline feedback — placed in the region where the user acted; warning/blocker/error
+              read as visually dominant
+            </p>
+            <div className="space-y-2">
+              {INLINE_FEEDBACK_FIXTURES.map((fixture) => (
+                <div key={fixture.id} className="space-y-1">
+                  <p className="text-xs text-text-tertiary">{fixture.label}</p>
+                  {fixture.persistsUntil === 'dismiss' ? (
+                    <InlineFeedback
+                      variant={fixture.variant}
+                      persistsUntil="dismiss"
+                      title={fixture.title}
+                      staleStateExplanation={fixture.staleStateExplanation}
+                      onDismiss={() => undefined}
+                    >
+                      {fixture.body}
+                    </InlineFeedback>
+                  ) : (
+                    <InlineFeedback
+                      variant={fixture.variant}
+                      persistsUntil={fixture.persistsUntil}
+                      title={fixture.title}
+                      staleStateExplanation={fixture.staleStateExplanation}
+                    >
+                      {fixture.body}
+                    </InlineFeedback>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Persistent state badges — a non-dismissing record of a workflow outcome
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {PERSISTENT_BADGE_FIXTURES.map((fixture) => (
+                <PersistentStateBadge
+                  key={fixture.id}
+                  state={fixture.state}
+                  label={fixture.badgeLabel}
+                  title={fixture.title}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              Action lifecycle — submitted → accepted → incorporated (received ≠ incorporated); an
+              off-chain terminal is marked distinctly
+            </p>
+            <div className="space-y-2">
+              {LIFECYCLE_FIXTURES.map((fixture) => (
+                <div key={fixture.id} className="space-y-1">
+                  <p className="text-xs text-text-tertiary">{fixture.label}</p>
+                  <ActionLifecycleIndicator
+                    stages={fixture.stages}
+                    currentStage={fixture.currentStage}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text-secondary">
+              feedbackToast — ancillary lightweight confirmation ONLY (never workflow truth)
+            </p>
+            <Row>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  feedbackToast.info('Link copied', {
+                    description: 'Ancillary confirmation — not a workflow outcome.',
+                  })
+                }
+              >
+                Fire feedbackToast.info
+              </Button>
+            </Row>
           </div>
         </Section>
 

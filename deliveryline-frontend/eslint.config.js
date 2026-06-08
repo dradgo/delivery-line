@@ -100,6 +100,12 @@ export default tseslint.config(
       // Story 2.22 AC7 — <LoadingState> needs an explicit variant; no raw
       // spinners outside src/components/feedback/states + src/components/ui.
       'local-rules/no-untyped-loading-state': 'error',
+
+      // Story 2.21 AC2 — a workflow-significant outcome must never be signalled
+      // by toast alone (UX-DR15): in a file importing a workflow-mutation hook,
+      // toast.success/error/warning (sonner or feedbackToast) is forbidden;
+      // toast.info/feedbackToast.info (ancillary) stays allowed.
+      'local-rules/no-workflow-toast-success': 'error',
     },
   },
 

@@ -7,6 +7,7 @@ import noWorkflowDomainInUiPrimitives from './no-workflow-domain-in-ui-primitive
 import noInlineQueryKeys from './no-inline-query-keys.js';
 import noUnsanitizedHtml from './no-unsanitized-html.js';
 import noUntypedLoadingState from './no-untyped-loading-state.js';
+import noWorkflowToastSuccess from './no-workflow-toast-success.js';
 
 /** @type {import('eslint').ESLint.Plugin} */
 const plugin = {
@@ -16,6 +17,7 @@ const plugin = {
     'no-inline-query-keys': noInlineQueryKeys,
     'no-unsanitized-html': noUnsanitizedHtml,
     'no-untyped-loading-state': noUntypedLoadingState,
+    'no-workflow-toast-success': noWorkflowToastSuccess,
   },
 };
 
