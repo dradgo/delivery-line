@@ -4,6 +4,8 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication.Type;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
@@ -19,8 +21,14 @@ import org.springframework.stereotype.Component;
  * gated by {@code deliveryline.frontend.fail-on-missing-bundle} (default {@code true}); the test
  * tier sets it {@code false} (the SPA bundle is never built into the test classpath), and an
  * API-only dev run that uses the Vite dev server on {@code :5173} can disable it too.
+ *
+ * <p>The guard only applies to a servlet web application: the embedded bundle is what a web server
+ * serves at {@code /}, so a missing bundle is only a defect when there is a web server. Non-web
+ * runs (the CLI {@code submit}/{@code doctor} commands boot with {@code
+ * spring.main.web-application-type=none}) never serve the SPA, so the guard is absent there.
  */
 @Component
+@ConditionalOnWebApplication(type = Type.SERVLET)
 @ConditionalOnProperty(
     name = "deliveryline.frontend.fail-on-missing-bundle",
     havingValue = "true",
