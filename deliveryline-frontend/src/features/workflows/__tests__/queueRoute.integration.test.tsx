@@ -72,4 +72,25 @@ describe('/workflows route — real RunReviewQueueItem rows (AC8)', () => {
     expect(hrefs).toContain('/workflows/run_fix_rej_001');
     expect(hrefs).toContain('/workflows/run_exec_fail_001');
   });
+
+  // Story 2a.1 (AC1/AC2) — the persistent header entry point and the empty-state CTA
+  // both resolve to the real `/submit` route, and the empty copy drops "via the CLI".
+  it('exposes a persistent "Submit a run" entry point linking to /submit', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+
+    renderRoute();
+
+    const headerLink = await screen.findByTestId('queue-submit-run-link');
+    expect(headerLink).toHaveAttribute('href', '/submit');
+  });
+
+  it('updates the empty-state CTA to link to /submit and no longer says "via the CLI"', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+
+    renderRoute();
+
+    const emptyCta = await screen.findByTestId('empty-state-submit-link');
+    expect(emptyCta).toHaveAttribute('href', '/submit');
+    expect(screen.queryByText(/via the CLI/i)).not.toBeInTheDocument();
+  });
 });

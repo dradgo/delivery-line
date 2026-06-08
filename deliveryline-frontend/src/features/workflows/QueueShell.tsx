@@ -176,7 +176,16 @@ export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueSh
 
   return (
     <div className="flex flex-col gap-4" data-queue-state={state}>
-      <h1 className="text-page-title">Run review queue</h1>
+      {/* AC1 (story 2a.1) — a persistent entry point to the submit form, reachable
+          regardless of queue state (not only from the empty state). */}
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-page-title">Run review queue</h1>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/submit" data-testid="queue-submit-run-link">
+            Submit a run
+          </Link>
+        </Button>
+      </div>
 
       {/* AC8 — single visually-hidden polite announcer for the active state. */}
       <div role="status" aria-live="polite" className="sr-only" data-testid="queue-announcer">
@@ -208,8 +217,17 @@ export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueSh
       {state === 'empty' ? (
         <EmptyState
           variant="queue"
-          message="No specifications awaiting review. New runs from Linear appear here once submitted via the CLI."
-          action={<GettingStartedAction />}
+          message="No specifications awaiting review. New runs from Linear appear here once submitted — or submit a run from a Linear ticket."
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <Button asChild variant="default" size="sm">
+                <Link to="/submit" data-testid="empty-state-submit-link">
+                  Submit a run
+                </Link>
+              </Button>
+              <GettingStartedAction />
+            </div>
+          }
         />
       ) : null}
 
