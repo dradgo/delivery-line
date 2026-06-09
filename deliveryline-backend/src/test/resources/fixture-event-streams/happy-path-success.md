@@ -19,6 +19,12 @@ appears as a draft, then `available`, then is approved or linked into the outcom
   `ticketRepositoryMappingVersion` (`config:GH-101@1`), and the field-only
   `repositoryTreeEntryCount` / `packageManifestCount`. Realistic data for story 2.17's
   spec-variant repo-context rendering.
+- Story 3.10 full implementation-stage bundle (`details` on the `implementationPlan`
+  `evt_fix_happy_011` and `prOutput` `evt_fix_happy_013` `artifact.draftCreated` events): the same
+  spec-stage repo-context fields PLUS `repositoryBranchRef`
+  (`deliveryline/DEL-9001/stage-happy001`, the expected deterministic feature branch — a git ref,
+  never a host path). Realistic data for the `--include-context-bundle` inspection path and the
+  Epic-3 dev-review UI (story 3.31 PR/branch anchor).
 
 ## What it does NOT cover
 

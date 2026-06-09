@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_implstage0001",
+  "runnerExecutionId": "rex_implstage0001",
+  "ticketSummary": {
+    "ticketRef": "DL-310",
+    "title": "Governed export pipeline",
+    "summary": "PR-output sub-stage bundle (story 3.10 AC2/AC10)."
+  },
+  "approvedSpecificationReference": {
+    "artifactId": "art_spec0310",
+    "artifactType": "spec",
+    "artifactStatus": "available",
+    "referenceAvailable": true,
+    "referencePath": "spec/v2.json",
+    "unavailableReason": null
+  },
+  "priorFeedbackReferences": [
+    { "referenceId": "apr_specapprove01", "kind": "spec.approval" },
+    { "referenceId": "apr_planreject001", "kind": "implementationPlan.rejection" },
+    { "referenceId": "clr_incorporated1", "kind": "clarification.incorporated" }
+  ],
+  "artifactReferences": [
+    {
+      "artifactId": "art_plan0310",
+      "artifactType": "implementationPlan",
+      "artifactStatus": "available",
+      "referenceAvailable": true,
+      "referencePath": "plan/v1.json",
+      "unavailableReason": null
+    }
+  ],
+  "executionConstraints": {
+    "timeoutSeconds": 1800,
+    "allowRawOutput": false
+  },
+  "classification": "shareable-redacted",
+  "repositoryWorkspaceRef": "/workspace/repo",
+  "repositoryTreeSummary": [
+    { "path": "README.md", "type": "file" },
+    { "path": "src", "type": "dir" }
+  ],
+  "repositoryReadmeRef": "README.md",
+  "packageManifestRefs": [{ "path": "pom.xml", "kind": "pom.xml" }],
+  "ticketRepositoryMappingVersion": "config:GH-101@1",
+  "approvedImplementationPlanReference": {
+    "artifactId": "art_plan0310",
+    "artifactType": "implementationPlan",
+    "artifactStatus": "available",
+    "referenceAvailable": true,
+    "referencePath": "plan/v1.json",
+    "unavailableReason": null
+  },
+  "repositoryBranchRef": "deliveryline/DL-310/stage-implstag"
+}

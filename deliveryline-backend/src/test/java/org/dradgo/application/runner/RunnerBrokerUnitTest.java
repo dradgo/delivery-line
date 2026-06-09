@@ -3,9 +3,11 @@ package org.dradgo.application.runner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -13,6 +15,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.time.Clock;
@@ -37,6 +43,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
+import org.dradgo.application.runner.spi.TicketSummaryProvider;
 import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.application.runner.workspace.spi.GitCommandException;
 import org.dradgo.application.workflow.WorkflowTransitionService;
@@ -54,6 +61,7 @@ import org.dradgo.runnercontracts.RunnerContractValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -198,6 +206,272 @@ class RunnerBrokerUnitTest {
     verify(idempotencyService).complete(eq("idem-bad"), any(), eq(IdempotencyRecordStatus.FAILED));
     verify(runnerAdapter, never()).dispatch(any());
     verify(recordPort, never()).insertPending(any(), any(), any(), anyInt(), any());
+  }
+
+  @Test
+  void dispatchExecutionResolvesRepoContextDerivesSubStageAndThreadsRepoRefIntoRequest() {
+    // Story 3.10 (Task 4) — a broker WITH the profile-gated repo-workspace seam present,
+    // dispatching
+    // the EXECUTION stage: resolve the repo, prepare+summarize the workspace, derive the sub-stage,
+    // and compose the repo-aware bundle + thread the repositoryRef onto the dispatch request.
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    RunnerBroker repoBroker =
+        new RunnerBroker(
+            recordPort,
+            eventPort,
+            executionService,
+            contextBundleService,
+            idempotencyService,
+            workflowTransitionService,
+            artifactOperationService,
+            runnerAdapter,
+            scratchStore,
+            new RunnerContractValidator(),
+            runnerProperties,
+            secretScanService,
+            callthroughTemplate(),
+            callthroughTemplate(),
+            CLOCK,
+            repoService);
+
+    String branch = "deliveryline/DL-310/stage-12345678";
+    RepositoryWorkspaceService.RepositoryMount mount =
+        new RepositoryWorkspaceService.RepositoryMount(
+            Paths.get("/tmp/repo"), "/workspace/repo", "main", branch);
+    org.dradgo.application.runner.workspace.RepositoryContextSummary summary =
+        new org.dradgo.application.runner.workspace.RepositoryContextSummary(
+            "/workspace/repo", List.of(), "README.md", List.of(), "config:GH-101@1");
+
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(1);
+    when(idempotencyService.checkAndReserve(eq("idem-exec"), any(), any(), any()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(repoService.resolveConfiguredRepositoryRef()).thenReturn(Optional.of("GH-101"));
+    when(repoService.prepareWorkspace(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), any(), eq("GH-101")))
+        .thenReturn(mount);
+    when(repoService.summarize(eq(mount), any())).thenReturn(summary);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    ContextBundle bundle =
+        new ContextBundle(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            REX_ID,
+            1,
+            org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+            "{}".getBytes(StandardCharsets.UTF_8));
+    when(contextBundleService.create(
+            eq(RUN_ID),
+            eq(RunnerStage.EXECUTION),
+            any(),
+            eq(1),
+            any(),
+            any(),
+            eq(ACTOR),
+            eq(ExecutionSubStage.PR_OUTPUT),
+            eq(summary),
+            eq(branch)))
+        .thenReturn(bundle);
+    when(recordPort.insertPending(any(), eq(RUN_ID), eq(RunnerStage.EXECUTION), eq(1), any()))
+        .thenAnswer(
+            invocation -> snapshot(invocation.getArgument(0), RunnerExecutionStatus.PENDING));
+    when(scratchStore.writeContextBundle(any(), any()))
+        .thenReturn(Paths.get("/tmp/context-bundle.v1.json"));
+    when(runnerAdapter.dispatch(any())).thenReturn(new RunnerDispatchAck("mock:exec"));
+
+    RunnerDispatchResult result =
+        repoBroker.dispatch(RUN_ID, RunnerStage.EXECUTION, "idem-exec", ACTOR);
+
+    assertInstanceOf(RunnerDispatchResult.Dispatched.class, result);
+    verify(repoService)
+        .prepareWorkspace(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), any(), eq("GH-101"));
+    verify(contextBundleService)
+        .create(
+            eq(RUN_ID),
+            eq(RunnerStage.EXECUTION),
+            any(),
+            eq(1),
+            any(),
+            any(),
+            eq(ACTOR),
+            eq(ExecutionSubStage.PR_OUTPUT),
+            eq(summary),
+            eq(branch));
+    // The dispatch request carries the resolved repositoryRef so the adapter mounts
+    // /workspace/repo.
+    ArgumentCaptor<RunnerDispatchRequest> requestCaptor =
+        ArgumentCaptor.forClass(RunnerDispatchRequest.class);
+    verify(runnerAdapter).dispatch(requestCaptor.capture());
+    assertEquals("GH-101", requestCaptor.getValue().repositoryRef());
+  }
+
+  @Test
+  void dispatchExecutionWithProvider_threadsResolvedTicketRefIntoWorkspacePreparation() {
+    // Story 3.10 (OQ-1) — the production path: a non-null TicketSummaryProvider resolves the run's
+    // ticketRef, which drives the deterministic branch (story 3.9 AC2) and is threaded into
+    // prepareWorkspace. The existing EXECUTION test constructs the broker with a NULL provider, so
+    // this is the only coverage of resolveExecutionTicketRef's resolved-ticketRef branch.
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("DL-310", "Export pipeline", "Open the PR."));
+    RunnerBroker execBroker = executionBrokerWith(repoService, ticketProvider);
+
+    RunnerDispatchResult result =
+        execBroker.dispatch(RUN_ID, RunnerStage.EXECUTION, "idem-exec", ACTOR);
+
+    assertInstanceOf(RunnerDispatchResult.Dispatched.class, result);
+    // The resolved ticketRef is passed as the 4th arg of prepareWorkspace (drives the branch).
+    verify(repoService)
+        .prepareWorkspace(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), eq("DL-310"), any(), eq("GH-101"));
+  }
+
+  @Test
+  void dispatchExecutionWithProvider_nullTicket_logsNoTicketRefAndPreparesWithNull() {
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    // The provider returns no ticket (TicketSummary itself forbids a blank ref, so a null ticket is
+    // the only reachable no_ticket_ref path) → resolveExecutionTicketRef WARNs and returns null.
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID)).thenReturn(null);
+    RunnerBroker execBroker = executionBrokerWith(repoService, ticketProvider);
+
+    Logger logger = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      RunnerDispatchResult result =
+          execBroker.dispatch(RUN_ID, RunnerStage.EXECUTION, "idem-exec", ACTOR);
+
+      assertInstanceOf(RunnerDispatchResult.Dispatched.class, result);
+      verify(repoService)
+          .prepareWorkspace(
+              eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), isNull(), any(), eq("GH-101"));
+      assertTrue(
+          appender.list.stream()
+              .anyMatch(
+                  e ->
+                      e.getLevel() == Level.WARN
+                          && e.getFormattedMessage().contains("ticketRef unresolved")
+                          && e.getFormattedMessage().contains("reason=no_ticket_ref")),
+          "expected a no_ticket_ref WARN");
+    } finally {
+      logger.detachAppender(appender);
+    }
+  }
+
+  @Test
+  void dispatchExecutionWithProvider_resolutionThrows_logsFailureAndPreparesWithNull() {
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    // The provider throws → resolveExecutionTicketRef catches, WARNs with the cause class, returns
+    // null, and dispatch proceeds (best-effort, no-ticket branch).
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenThrow(new IllegalStateException("linear down"));
+    RunnerBroker execBroker = executionBrokerWith(repoService, ticketProvider);
+
+    Logger logger = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      RunnerDispatchResult result =
+          execBroker.dispatch(RUN_ID, RunnerStage.EXECUTION, "idem-exec", ACTOR);
+
+      assertInstanceOf(RunnerDispatchResult.Dispatched.class, result);
+      verify(repoService)
+          .prepareWorkspace(
+              eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), isNull(), any(), eq("GH-101"));
+      assertTrue(
+          appender.list.stream()
+              .anyMatch(
+                  e ->
+                      e.getLevel() == Level.WARN
+                          && e.getFormattedMessage().contains("ticketRef resolution failed")
+                          && e.getFormattedMessage().contains("cause=IllegalStateException")),
+          "expected a resolution-failed WARN naming the cause class");
+    } finally {
+      logger.detachAppender(appender);
+    }
+  }
+
+  /**
+   * Builds an EXECUTION-stage broker wired with a repo-workspace seam and the given {@link
+   * TicketSummaryProvider}, with every collaborator on the dispatch path stubbed (repo resolved,
+   * workspace prepared+summarized, sub-stage derived, bundle composed, row inserted, adapter
+   * acked). The {@code prepareWorkspace} ticketRef arg is left as {@code any()} so callers verify
+   * the actual resolved value.
+   */
+  private RunnerBroker executionBrokerWith(
+      RepositoryWorkspaceService repoService, TicketSummaryProvider ticketProvider) {
+    RunnerBroker execBroker =
+        new RunnerBroker(
+            recordPort,
+            eventPort,
+            executionService,
+            contextBundleService,
+            idempotencyService,
+            workflowTransitionService,
+            artifactOperationService,
+            runnerAdapter,
+            scratchStore,
+            new RunnerContractValidator(),
+            runnerProperties,
+            secretScanService,
+            callthroughTemplate(),
+            callthroughTemplate(),
+            CLOCK,
+            repoService,
+            () -> null,
+            ticketProvider);
+
+    RepositoryWorkspaceService.RepositoryMount mount =
+        new RepositoryWorkspaceService.RepositoryMount(
+            Paths.get("/tmp/repo"),
+            "/workspace/repo",
+            "main",
+            "deliveryline/DL-310/stage-12345678");
+    org.dradgo.application.runner.workspace.RepositoryContextSummary summary =
+        new org.dradgo.application.runner.workspace.RepositoryContextSummary(
+            "/workspace/repo", List.of(), "README.md", List.of(), "config:GH-101@1");
+
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(1);
+    when(idempotencyService.checkAndReserve(eq("idem-exec"), any(), any(), any()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(repoService.resolveConfiguredRepositoryRef()).thenReturn(Optional.of("GH-101"));
+    when(repoService.prepareWorkspace(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), any(), eq("GH-101")))
+        .thenReturn(mount);
+    when(repoService.summarize(eq(mount), any())).thenReturn(summary);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(contextBundleService.create(
+            eq(RUN_ID),
+            eq(RunnerStage.EXECUTION),
+            any(),
+            eq(1),
+            any(),
+            any(),
+            eq(ACTOR),
+            any(),
+            any(),
+            any()))
+        .thenReturn(
+            new ContextBundle(
+                RUN_ID,
+                RunnerStage.EXECUTION,
+                REX_ID,
+                1,
+                org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                "{}".getBytes(StandardCharsets.UTF_8)));
+    when(recordPort.insertPending(any(), eq(RUN_ID), eq(RunnerStage.EXECUTION), eq(1), any()))
+        .thenAnswer(
+            invocation -> snapshot(invocation.getArgument(0), RunnerExecutionStatus.PENDING));
+    when(scratchStore.writeContextBundle(any(), any()))
+        .thenReturn(Paths.get("/tmp/context-bundle.v1.json"));
+    when(runnerAdapter.dispatch(any())).thenReturn(new RunnerDispatchAck("mock:exec"));
+    return execBroker;
   }
 
   @Test

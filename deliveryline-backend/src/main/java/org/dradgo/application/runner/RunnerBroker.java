@@ -30,6 +30,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
+import org.dradgo.application.runner.spi.TicketSummaryProvider;
 import org.dradgo.application.runner.workspace.RepositoryContextSummary;
 import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.application.runner.workspace.spi.GitCommandException;
@@ -109,6 +110,15 @@ public class RunnerBroker {
   private final java.util.function.Supplier<
           org.dradgo.application.workflow.WorkflowOrchestrationService>
       workflowOrchestrationServiceSupplier;
+  // Story 3.10 (OQ-1) — resolves the run's Linear ticketRef for the EXECUTION-stage deterministic
+  // branch (story 3.9 AC2) so prepareWorkspace checks out the right branch and captureAndPush
+  // pushes
+  // it. Always present in production (unconditional bean shared with ContextBundleService); null in
+  // the package-private test ctors, where the repo seam is also null so the EXECUTION repo branch
+  // is
+  // never entered. Resolution is best-effort: a null/failed lookup falls back to a no-ticket branch
+  // (WARN) rather than failing the dormant seam.
+  private final TicketSummaryProvider ticketSummaryProvider;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate dispatchTransactionTemplate;
   private final TransactionTemplate perItemTransactionTemplate;
@@ -136,7 +146,10 @@ public class RunnerBroker {
       // Story 3a-1 Trap T2 — ObjectProvider breaks the broker↔orchestration constructor cycle.
       org.springframework.beans.factory.ObjectProvider<
               org.dradgo.application.workflow.WorkflowOrchestrationService>
-          workflowOrchestrationServiceProvider) {
+          workflowOrchestrationServiceProvider,
+      // Story 3.10 (OQ-1) — unconditional bean (no ObjectProvider needed); resolves the EXECUTION
+      // ticketRef for the deterministic branch.
+      TicketSummaryProvider ticketSummaryProvider) {
     this(
         recordPort,
         eventPort,
@@ -157,7 +170,8 @@ public class RunnerBroker {
         // Lazy: resolved at handleSuccess time, never during construction (Trap T2 — avoids the
         // BeanCurrentlyInCreation cycle since orchestration depends on this broker).
         (java.util.function.Supplier<org.dradgo.application.workflow.WorkflowOrchestrationService>)
-            workflowOrchestrationServiceProvider::getIfAvailable);
+            workflowOrchestrationServiceProvider::getIfAvailable,
+        ticketSummaryProvider);
   }
 
   RunnerBroker(
@@ -193,7 +207,8 @@ public class RunnerBroker {
         perItemTransactionTemplate,
         clock,
         null,
-        () -> null);
+        () -> null,
+        null);
   }
 
   // Story 3.9 test ctor (repo seam, no orchestration) — delegates to the full ctor below.
@@ -231,7 +246,8 @@ public class RunnerBroker {
         perItemTransactionTemplate,
         clock,
         repositoryWorkspaceService,
-        () -> null);
+        () -> null,
+        null);
   }
 
   RunnerBroker(
@@ -252,7 +268,8 @@ public class RunnerBroker {
       Clock clock,
       RepositoryWorkspaceService repositoryWorkspaceService,
       java.util.function.Supplier<org.dradgo.application.workflow.WorkflowOrchestrationService>
-          workflowOrchestrationServiceSupplier) {
+          workflowOrchestrationServiceSupplier,
+      TicketSummaryProvider ticketSummaryProvider) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -279,6 +296,7 @@ public class RunnerBroker {
         workflowOrchestrationServiceSupplier == null
             ? () -> null
             : workflowOrchestrationServiceSupplier;
+    this.ticketSummaryProvider = ticketSummaryProvider;
     this.objectMapper = new ObjectMapper();
   }
 
@@ -320,7 +338,8 @@ public class RunnerBroker {
         perItemTransactionTemplate,
         clock,
         repositoryWorkspaceService,
-        () -> workflowOrchestrationService);
+        () -> workflowOrchestrationService,
+        null);
   }
 
   private static TransactionTemplate requiredTemplate(
@@ -379,48 +398,70 @@ public class RunnerBroker {
       ExecutionConstraints constraints =
           new ExecutionConstraints(runnerProperties.timeoutFor(stage), false);
 
-      // Story 3a-2 (AC7, Decision D2) — for the INVESTIGATION stage only, when the profile-gated
-      // repository-workspace seam is present AND a single repo is configured, resolve the
-      // repositoryRef now (cheap, no I/O). The clone + summarize below happen inside the try so a
-      // git failure routes through the same FAILED idempotency + dispatch-failure path (OQ-5). When
-      // the service is absent or no repo resolves, the summary stays null and the dispatch path is
-      // byte-for-byte unchanged (no clone, no extra bundle fields, dormant seam).
+      // Story 3a-2 (AC7, Decision D2) + story 3.10 (AC2/AC5, Task 4) — for the INVESTIGATION AND
+      // EXECUTION stages, when the profile-gated repository-workspace seam is present AND a single
+      // repo is configured, resolve the repositoryRef now (cheap, no I/O). The clone + summarize
+      // below happen inside the try so a git failure routes through the same FAILED idempotency +
+      // dispatch-failure path (OQ-5). When the service is absent or no repo resolves, the summary
+      // stays null and the dispatch path is byte-for-byte unchanged (no clone, no extra bundle
+      // fields, dormant seam).
+      boolean repoContextStage =
+          stage == RunnerStage.INVESTIGATION || stage == RunnerStage.EXECUTION;
       String resolvedRepositoryRef =
-          (stage == RunnerStage.INVESTIGATION && repositoryWorkspaceService != null)
+          (repoContextStage && repositoryWorkspaceService != null)
               ? repositoryWorkspaceService.resolveConfiguredRepositoryRef().orElse(null)
               : null;
 
       ContextBundle bundle;
       RepositoryContextSummary repositoryContextSummary = null;
+      // Story 3.10 — carried out of the try so the dispatch request (below) can mount
+      // /workspace/repo
+      // + push the deterministic branch for the EXECUTION (pr-output) path. Null for INVESTIGATION
+      // and no-repo dispatches, keeping those requests byte-identical to today.
+      String resolvedTicketRef = null;
+      String repositoryBranchRef = null;
       try {
         if (resolvedRepositoryRef != null) {
           // Materialize-then-compose (Decision D1): clone the workspace (idempotent — the later
-          // DockerRunnerAdapter clone reuses this {rex}/repo, Trap T14) and summarize it BEFORE
-          // composing the bundle so real repo content can be embedded. ticketRef/ticketSummary are
-          // left null here — the spec stage neither pushes nor opens a PR, and the repo is resolved
-          // by config, not by branch slug.
+          // DockerRunnerAdapter clone reuses this {rex}/repo, Trap T8/T14) and summarize it BEFORE
+          // composing the bundle so real repo content can be embedded. For EXECUTION the run's
+          // ticketRef drives the deterministic branch (story 3.9 AC2) so captureAndPush pushes it;
+          // the spec stage neither pushes nor opens a PR (null ticketRef -> no-ticket branch).
+          if (stage == RunnerStage.EXECUTION) {
+            resolvedTicketRef = resolveExecutionTicketRef(workflowRunId);
+          }
           RepositoryWorkspaceService.RepositoryMount mount =
               repositoryWorkspaceService.prepareWorkspace(
-                  workflowRunId, stage, reservedRexId, null, null, resolvedRepositoryRef);
+                  workflowRunId,
+                  stage,
+                  reservedRexId,
+                  resolvedTicketRef,
+                  null,
+                  resolvedRepositoryRef);
           repositoryContextSummary =
               repositoryWorkspaceService.summarize(
                   mount, RepositoryWorkspaceService.configMappingVersion(resolvedRepositoryRef));
+          repositoryBranchRef = mount.branch();
           log.info(
-              "dispatch repo-context resolved workflowRunId={} repositoryRef={} contextBundleVersion={}",
+              "dispatch repo-context resolved workflowRunId={} stage={} repositoryRef={} branchRef={} contextBundleVersion={}",
               workflowRunId,
+              stage.value(),
               resolvedRepositoryRef,
+              repositoryBranchRef,
               nextContextBundleVersion);
-        } else if (stage == RunnerStage.INVESTIGATION) {
+        } else if (repoContextStage) {
           log.info(
-              "dispatch repo-context skipped workflowRunId={} reason={}",
+              "dispatch repo-context skipped workflowRunId={} stage={} reason={}",
               workflowRunId,
+              stage.value(),
               repositoryWorkspaceService == null ? "no_workspace_service" : "no_repo_resolved");
         }
 
         // Story 3a-1 (AC1c) — the spec-investigation stage assembles its bundle via the dedicated
         // createForSpecInvestigation composition (null approved-spec, prior spec-rejection
         // feedback, prior spec versions — story 2.8 baseline; story 3a-2 additionally embeds the
-        // nullable repo-context summary). Every other stage uses the generic create(...).
+        // nullable repo-context summary). The EXECUTION stage (story 3.10) derives the sub-stage
+        // from run state (Decision D4) and composes the sub-stage-aware + repo-aware bundle.
         if (stage == RunnerStage.INVESTIGATION) {
           bundle =
               contextBundleService.createForSpecInvestigation(
@@ -432,6 +473,13 @@ public class RunnerBroker {
                   actor,
                   repositoryContextSummary);
         } else {
+          ExecutionSubStage executionSubStage =
+              contextBundleService.deriveExecutionSubStage(workflowRunId);
+          log.info(
+              "dispatch execution sub-stage derived workflowRunId={} subStage={} repoContextPresent={}",
+              workflowRunId,
+              executionSubStage,
+              repositoryContextSummary != null);
           bundle =
               contextBundleService.create(
                   workflowRunId,
@@ -440,7 +488,10 @@ public class RunnerBroker {
                   nextContextBundleVersion,
                   constraints,
                   DataClassification.SHAREABLE_REDACTED,
-                  actor);
+                  actor,
+                  executionSubStage,
+                  repositoryContextSummary,
+                  repositoryBranchRef);
         }
       } catch (GitCommandException gitError) {
         // OQ-5 — clone/summarize failure during composition fails the dispatch (never degrades to a
@@ -463,7 +514,7 @@ public class RunnerBroker {
         details.put("gitFailureCategory", gitError.failureCategory().value());
         throw new DomainException(
             DomainErrorCode.INTERNAL_ERROR,
-            "Repository workspace preparation failed during spec-investigation dispatch",
+            "Repository workspace preparation failed during dispatch",
             details);
       } catch (DomainException error) {
         idempotencyService.complete(idempotencyKey, reservedRexId, IdempotencyRecordStatus.FAILED);
@@ -536,11 +587,11 @@ public class RunnerBroker {
 
       // Story 3a-1 (AC10) — resolve the runner-image kind per stage (spec-investigation honors
       // deliveryline.runner.spec-stage.kind; every other stage keeps docker().defaultKind()).
-      // Story 3a-2 (AC7, Trap T14) — thread the resolved repositoryRef so DockerRunnerAdapter
-      // mounts
-      // /workspace/repo and idempotently reuses the broker's clone. Null for every
-      // non-INVESTIGATION
-      // + no-repo dispatch, making the request byte-identical to the prior 7-arg construction.
+      // Story 3a-2 (AC7, Trap T14) + story 3.10 (Task 4) — thread the resolved repositoryRef so
+      // DockerRunnerAdapter mounts /workspace/repo and idempotently reuses the broker's clone, plus
+      // the EXECUTION ticketRef so the adapter checks out the same deterministic branch the broker
+      // prepared and captureAndPush pushes it. Both null for every no-repo dispatch (and ticketRef
+      // null for INVESTIGATION), keeping those requests byte-identical to today.
       RunnerDispatchRequest request =
           new RunnerDispatchRequest(
               reservedRexId,
@@ -551,7 +602,7 @@ public class RunnerBroker {
               constraints,
               bundle.effectiveClassification(),
               resolvedRepositoryRef,
-              null);
+              resolvedTicketRef);
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
 
       // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy
@@ -574,6 +625,36 @@ public class RunnerBroker {
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 3.10 (OQ-1) — best-effort resolution of the run's Linear ticketRef for the
+   * EXECUTION-stage deterministic branch. Returns null when no provider is wired (the
+   * package-private test ctors) or when the lookup yields nothing / throws — the caller then
+   * prepares a no-ticket branch (logged WARN) rather than failing the dormant seam. Never logs the
+   * ticket payload.
+   */
+  private String resolveExecutionTicketRef(String workflowRunId) {
+    if (ticketSummaryProvider == null) {
+      return null;
+    }
+    try {
+      TicketSummary ticket = ticketSummaryProvider.fetchByWorkflowRun(workflowRunId);
+      String ticketRef = ticket == null ? null : ticket.ticketRef();
+      if (ticketRef == null || ticketRef.isBlank()) {
+        log.warn(
+            "dispatch execution ticketRef unresolved workflowRunId={} reason=no_ticket_ref",
+            workflowRunId);
+        return null;
+      }
+      return ticketRef;
+    } catch (RuntimeException resolutionFailure) {
+      log.warn(
+          "dispatch execution ticketRef resolution failed workflowRunId={} cause={}",
+          workflowRunId,
+          resolutionFailure.getClass().getSimpleName());
+      return null;
     }
   }
 

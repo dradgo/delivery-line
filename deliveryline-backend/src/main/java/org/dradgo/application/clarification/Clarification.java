@@ -102,6 +102,16 @@ public record Clarification(
     return STATUS_ANSWERED.equals(status);
   }
 
+  /**
+   * Story 3.10 (AC1) — true when this clarification reached the {@code incorporated} terminal state
+   * (its answer was folded into a spec/plan rebuild, story 2.12). Execution-stage context-bundle
+   * composition contributes one {@code priorFeedbackReferences} entry per incorporated
+   * clarification (reference-by-id only; the answer text is never embedded inline).
+   */
+  public boolean isIncorporated() {
+    return STATUS_INCORPORATED.equals(status);
+  }
+
   public boolean isTerminal() {
     return STATUS_INCORPORATED.equals(status)
         || STATUS_SUPERSEDED.equals(status)

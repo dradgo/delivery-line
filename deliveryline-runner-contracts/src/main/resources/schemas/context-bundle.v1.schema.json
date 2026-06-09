@@ -146,6 +146,25 @@
       "type": "string",
       "minLength": 1,
       "description": "Story 3a-2 (AC1, Decision D2) — OPTIONAL. Marker for which Linear<->GitHub mapping resolved to this repo. Config-derived for the pilot (e.g. config:<repoKey>@1); a real mapping version is deferred to stories 3.32/3.33."
+    },
+    "approvedImplementationPlanReference": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/artifactReference"
+        }
+      ],
+      "description": "Story 3.10 (AC2) — OPTIONAL. Reference to the approved implementation-plan artifact carried into the pr-output sub-stage bundle (mirrors approvedSpecificationReference). Null/absent for the implementation-plan sub-stage, spec-investigation, and legacy bundles. Additive backward-compatible v1 patch (NOT in required; mirrors the 3a-2 repo-field precedent + the minItems 1->0 precedent above); schemaVersion stays const:1. The referenced payload is read from the mounted input dir, never embedded inline (AC7)."
+    },
+    "repositoryBranchRef": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Story 3.10 (AC2) — OPTIONAL. The expected deterministic feature-branch name (story 3.9 AC2 convention, e.g. deliveryline/{ticketSlug}/stage-{runIdShort}) the runner pushes to. A git ref, NEVER a host absolute path (Trap T5). Emitted only when a repository workspace was prepared; absent on no-repo dispatches."
     }
   },
   "$defs": {

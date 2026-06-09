@@ -271,6 +271,11 @@
               "minLength": 1,
               "description": "Story 3a-2 — the Linear↔GitHub mapping marker (config-derived for the pilot, e.g. config:<repoKey>@1)."
             },
+            "repositoryBranchRef": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Story 3.10 — execution-stage repo-context indicator: the expected deterministic feature-branch name (story 3.9 AC2, e.g. deliveryline/{ticketSlug}/stage-{runIdShort}) the implementation/pr-output runner pushes to. A git ref, never a host absolute path. Lets Epic 3 dev-review UI (story 3.31) render the PR/branch anchor for an implementation-stage bundle."
+            },
             "repositoryTreeEntryCount": {
               "type": "integer",
               "minimum": 0,

@@ -56,6 +56,7 @@ class WorkflowInspectionServiceSpecTest {
   private static final String SPEC_ART_V3 = "art_spec00000003";
   private static final String APPROVAL_V1 = "apr_v1_rejected1";
   private static final String APPROVAL_V2 = "apr_v2_approved1";
+  private static final String PLAN_ART = "art_plan00000001";
   private static final String REX_ID = "rex_specinsp1234";
   private static final OffsetDateTime T0 =
       OffsetDateTime.of(2026, 5, 1, 10, 0, 0, 0, ZoneOffset.UTC);
@@ -262,6 +263,50 @@ class WorkflowInspectionServiceSpecTest {
   }
 
   @Test
+  void getContextBundleForArtifactReturnsImplementationStageBundleForExecutionArtifact() {
+    // AC9(f)/AC6 — FR55 inspection resolves an implementation-stage (EXECUTION) artifact through
+    // the artifact→runner-execution link and returns the persisted implementation-stage bundle
+    // VERBATIM, including the story-3.10 fields (approvedImplementationPlanReference +
+    // repositoryBranchRef). Resolution is by the runner-execution link, independent of the new
+    // fields — the service code is unchanged (Decision D7), so they surface automatically.
+    when(artifacts.findByPublicId(PLAN_ART)).thenReturn(Optional.of(planSnapshot(PLAN_ART, 1)));
+    when(artifacts.findRunnerExecutionIdForArtifact(PLAN_ART)).thenReturn(Optional.of(REX_ID));
+    when(runnerExecutions.findByPublicId(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RunnerExecutionSnapshot(
+                    REX_ID,
+                    RUN_ID,
+                    RunnerStage.EXECUTION,
+                    RunnerExecutionStatus.COMPLETED,
+                    4,
+                    T0,
+                    T0.plusHours(1),
+                    null,
+                    T0.plusMinutes(10),
+                    T0,
+                    null)));
+    String implementationStageBundle =
+        "{\"schemaVersion\":1,\"approvedImplementationPlanReference\":{\"artifactId\":\""
+            + PLAN_ART
+            + "\"},\"repositoryBranchRef\":\"deliveryline/DL-310/stage-exec1234\"}";
+    byte[] scratchBytes = implementationStageBundle.getBytes(StandardCharsets.UTF_8);
+    when(scratch.tryReadContextBundle(REX_ID)).thenReturn(Optional.of(scratchBytes));
+
+    Optional<ContextBundle> result = service.getContextBundleForArtifact(PLAN_ART);
+
+    assertTrue(result.isPresent());
+    assertEquals(REX_ID, result.get().runnerExecutionId());
+    assertEquals(RunnerStage.EXECUTION, result.get().stage());
+    assertEquals(4, result.get().contextBundleVersion());
+    // Verbatim scratch bytes — the new implementation-stage fields surface with no service change.
+    String returned = new String(result.get().redactedPayload(), StandardCharsets.UTF_8);
+    assertEquals(implementationStageBundle, returned);
+    assertTrue(returned.contains("approvedImplementationPlanReference"));
+    assertTrue(returned.contains("repositoryBranchRef"));
+  }
+
+  @Test
   void getContextBundleForArtifactReturnsEmptyWhenScratchEvicted() {
     when(artifacts.findByPublicId(SPEC_ART_V2))
         .thenReturn(Optional.of(specSnapshot(SPEC_ART_V2, 2, SPEC_ART_V1)));
@@ -388,6 +433,25 @@ class WorkflowInspectionServiceSpecTest {
         parentArtifactId,
         DataClassification.SHAREABLE_REDACTED,
         "spec.md",
+        null,
+        null,
+        null,
+        null,
+        ArtifactStatus.AVAILABLE,
+        null,
+        false,
+        T0.plusMinutes(version));
+  }
+
+  private static ArtifactRecordSnapshot planSnapshot(String publicId, int version) {
+    return new ArtifactRecordSnapshot(
+        publicId,
+        RUN_ID,
+        ArtifactType.IMPLEMENTATION_PLAN,
+        version,
+        null,
+        DataClassification.SHAREABLE_REDACTED,
+        "implementation-plan.md",
         null,
         null,
         null,

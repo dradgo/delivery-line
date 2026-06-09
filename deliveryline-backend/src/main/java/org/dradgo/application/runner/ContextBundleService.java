@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,9 @@ import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.clarification.Clarification;
+import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.runner.spi.TicketSummaryProvider;
 import org.dradgo.application.runner.workspace.RepoManifestRef;
 import org.dradgo.application.runner.workspace.RepositoryContextSummary;
@@ -56,21 +60,31 @@ public class ContextBundleService {
   private final TicketSummaryProvider ticketSummaryProvider;
   private final ArtifactRecordPort artifactRecordPort;
   private final ApprovalReadPort approvalReadPort;
+  private final ClarificationReadPort clarificationReadPort;
   private final RedactionPolicyService redactionPolicyService;
   private final RunnerContractValidator contractValidator;
   private final ObjectMapper objectMapper;
 
+  /**
+   * Canonical constructor (story 3.10 — gains {@link ClarificationReadPort}). Production wiring
+   * (Spring DI) always uses this 6-arg form with the real port implementations. The {@link
+   * ClarificationReadPort} sources the incorporated-clarification {@code priorFeedbackReferences}
+   * entries on the execution-stage composition path (AC1).
+   */
   @Autowired
   public ContextBundleService(
       TicketSummaryProvider ticketSummaryProvider,
       ArtifactRecordPort artifactRecordPort,
       ApprovalReadPort approvalReadPort,
+      ClarificationReadPort clarificationReadPort,
       RedactionPolicyService redactionPolicyService,
       RunnerContractValidator contractValidator) {
     this.ticketSummaryProvider =
         Objects.requireNonNull(ticketSummaryProvider, "ticketSummaryProvider");
     this.artifactRecordPort = Objects.requireNonNull(artifactRecordPort, "artifactRecordPort");
     this.approvalReadPort = Objects.requireNonNull(approvalReadPort, "approvalReadPort");
+    this.clarificationReadPort =
+        Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
     this.redactionPolicyService =
         Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
     this.contractValidator = Objects.requireNonNull(contractValidator, "contractValidator");
@@ -78,13 +92,36 @@ public class ContextBundleService {
   }
 
   /**
+   * Legacy 5-arg overload (story 2.8 shape) kept compilable for tests that exercise {@link #create
+   * create(...)} / {@link #createForSpecInvestigation} but NOT the story-3.10 incorporated
+   * -clarification source. Chains through {@link UnwiredClarificationReadPort} so such sites
+   * compile but cannot silently read empty clarifications on the execution sub-stage path.
+   */
+  public ContextBundleService(
+      TicketSummaryProvider ticketSummaryProvider,
+      ArtifactRecordPort artifactRecordPort,
+      ApprovalReadPort approvalReadPort,
+      RedactionPolicyService redactionPolicyService,
+      RunnerContractValidator contractValidator) {
+    this(
+        ticketSummaryProvider,
+        artifactRecordPort,
+        approvalReadPort,
+        UnwiredClarificationReadPort.INSTANCE,
+        redactionPolicyService,
+        contractValidator);
+  }
+
+  /**
    * Legacy 4-arg overload kept compilable for unit tests that only exercise the original {@link
    * #create create(...)} path (introduced before story 2.8 added the approvals read source). The
-   * {@link #createForSpecInvestigation} sibling method is unusable when the service is constructed
-   * via this overload — it will throw {@link IllegalStateException} on use.
+   * {@link #createForSpecInvestigation} sibling method and the story-3.10 execution sub-stage path
+   * are unusable when the service is constructed via this overload — they will throw {@link
+   * IllegalStateException} on use.
    *
    * <p>Production wiring (Spring DI in {@code DeliverylineApplication}) always uses the canonical
-   * 5-arg constructor above and passes the real {@link ApprovalReadPort} implementation.
+   * 6-arg constructor above and passes the real {@link ApprovalReadPort} + {@link
+   * ClarificationReadPort} implementations.
    *
    * @deprecated Tests added or modified for story 2.8+ should construct with an explicit {@link
    *     ApprovalReadPort} (mocked when not exercising approval-sourced paths).
@@ -99,6 +136,7 @@ public class ContextBundleService {
         ticketSummaryProvider,
         artifactRecordPort,
         UnwiredApprovalReadPort.INSTANCE,
+        UnwiredClarificationReadPort.INSTANCE,
         redactionPolicyService,
         contractValidator);
   }
@@ -132,11 +170,66 @@ public class ContextBundleService {
     private static IllegalStateException unwired() {
       return new IllegalStateException(
           "ContextBundleService was constructed via the legacy 4-arg overload; "
-              + "approvals-sourced paths (createForSpecInvestigation) require the 5-arg "
+              + "approvals-sourced paths (createForSpecInvestigation) require the 6-arg "
               + "constructor with a real ApprovalReadPort");
     }
   }
 
+  /**
+   * Marker {@link ClarificationReadPort} that fails fast when invoked. Used by the legacy 4-arg and
+   * 5-arg constructors so test sites that don't exercise the story-3.10 execution sub-stage path
+   * continue to compile but cannot silently produce empty incorporated-clarification reads.
+   */
+  private enum UnwiredClarificationReadPort implements ClarificationReadPort {
+    INSTANCE;
+
+    @Override
+    public Optional<Clarification> findByPublicId(String clarificationPublicId) {
+      throw unwired();
+    }
+
+    @Override
+    public Optional<Clarification> findByPublicIdForUpdate(
+        String workflowRunPublicId, String clarificationPublicId) {
+      throw unwired();
+    }
+
+    @Override
+    public List<Clarification> listByWorkflowRunId(String workflowRunPublicId) {
+      throw unwired();
+    }
+
+    @Override
+    public List<Clarification> listByArtifactId(String artifactPublicId) {
+      throw unwired();
+    }
+
+    @Override
+    public int countPendingByWorkflowRun(String workflowRunPublicId) {
+      throw unwired();
+    }
+
+    @Override
+    public Optional<ClarificationLifecycleSnapshot> findLifecycleSnapshotByPublicId(
+        String clarificationPublicId) {
+      throw unwired();
+    }
+
+    private static IllegalStateException unwired() {
+      return new IllegalStateException(
+          "ContextBundleService was constructed via the legacy 4-arg/5-arg overload; "
+              + "the story-3.10 execution sub-stage path requires the 6-arg constructor with a "
+              + "real ClarificationReadPort");
+    }
+  }
+
+  /**
+   * Legacy 7-arg overload — the generic execution-stage composition (latest-available union). Kept
+   * byte-identical for the {@code RecoveryService} retry path and all pre-3.10 tests by delegating
+   * to {@link #create(String, RunnerStage, String, int, ExecutionConstraints, DataClassification,
+   * ActorContext, ExecutionSubStage, RepositoryContextSummary, String)} with a {@code null}
+   * sub-stage + no repo context (Decision D1).
+   */
   public ContextBundle create(
       String workflowRunPublicId,
       RunnerStage stage,
@@ -145,6 +238,53 @@ public class ContextBundleService {
       ExecutionConstraints executionConstraints,
       DataClassification claimedClassification,
       ActorContext actor) {
+    return create(
+        workflowRunPublicId,
+        stage,
+        reservedRunnerExecutionId,
+        contextBundleVersion,
+        executionConstraints,
+        claimedClassification,
+        actor,
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * Story 3.10 — the execution-stage composer, made <em>sub-stage-aware</em> and
+   * <em>repo-aware</em> for the two implementation sub-stages (AC1/AC2/AC4/AC7).
+   *
+   * <ul>
+   *   <li>{@code subStage == null} preserves today's exact generic composition (the
+   *       latest-available union + parent-walk feedback) so the {@code RecoveryService} retry path
+   *       and all pre-3.10 tests are byte-identical (Decision D1, OQ-4).
+   *   <li>{@code subStage != null} sources {@code priorFeedbackReferences} from the approvals +
+   *       incorporated-clarifications read ports (distinct {@code kind}s, Decision D3) instead of
+   *       the parent-walk, and — for {@link ExecutionSubStage#PR_OUTPUT} — additionally carries the
+   *       {@code approvedImplementationPlanReference} + the {@code implementationPlan.rejection}
+   *       feedback.
+   *   <li>{@code repositoryContextSummary != null} embeds the five 3a-2 repo fields via the reused
+   *       {@code writeRepositoryContext} helper; {@code repositoryBranchRef} adds the expected
+   *       deterministic branch name (story 3.9 AC2) — a ref, never a host path (Trap T5). Both are
+   *       absent on no-repo dispatches, keeping those byte-identical to today (AC2).
+   * </ul>
+   *
+   * <p>The single {@code redact(root, classification)} pass (AC4/Decision D6) covers every new text
+   * leaf, including the embedded {@code repositoryTreeSummary} entries; no second redaction call is
+   * added.
+   */
+  public ContextBundle create(
+      String workflowRunPublicId,
+      RunnerStage stage,
+      String reservedRunnerExecutionId,
+      int contextBundleVersion,
+      ExecutionConstraints executionConstraints,
+      DataClassification claimedClassification,
+      ActorContext actor,
+      ExecutionSubStage subStage,
+      RepositoryContextSummary repositoryContextSummary,
+      String repositoryBranchRef) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     PublicIdPrefixes.require(reservedRunnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
     Objects.requireNonNull(stage, "stage");
@@ -156,21 +296,71 @@ public class ContextBundleService {
     }
 
     TicketSummary ticket = ticketSummaryProvider.fetchByWorkflowRun(workflowRunPublicId);
+    if (ticket == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("workflowRunId", workflowRunPublicId);
+      details.put("runnerExecutionId", reservedRunnerExecutionId);
+      details.put("stage", RunnerStage.EXECUTION.value());
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "Ticket summary unavailable for execution-stage bundle composition",
+          details);
+    }
 
     Optional<ArtifactRecordSnapshot> approvedSpec =
         latestAvailable(workflowRunPublicId, ArtifactType.SPEC);
     List<ArtifactRecordSnapshot> artifactReferences =
         collectAvailableArtifacts(workflowRunPublicId);
 
-    ObjectNode root =
-        assemble(
-            workflowRunPublicId,
-            reservedRunnerExecutionId,
-            ticket,
-            approvedSpec,
-            artifactReferences,
-            executionConstraints,
-            claimedClassification);
+    ObjectNode root;
+    boolean approvedPlanPresent = false;
+    int priorFeedbackCount;
+    if (subStage == null) {
+      // Legacy generic path — byte-identical to the pre-3.10 composition (Decision D1 / OQ-4).
+      root =
+          assemble(
+              workflowRunPublicId,
+              reservedRunnerExecutionId,
+              ticket,
+              approvedSpec,
+              artifactReferences,
+              executionConstraints,
+              claimedClassification);
+      priorFeedbackCount = root.get("priorFeedbackReferences").size();
+    } else {
+      // Source the approved-plan reference from the SAME approval lineage deriveExecutionSubStage
+      // keys PR_OUTPUT on (resolve the exact approved artifact by its lineage id), NOT from
+      // latestAvailable — an approved plan that has not (yet) reached `available` status must still
+      // be referenced so a PR-output bundle never silently omits the plan it was selected on.
+      // writeArtifactReference encodes a non-available artifact gracefully
+      // (referenceAvailable=false
+      // + unavailableReason), so the reference is always emitted when an approval exists.
+      Optional<ArtifactRecordSnapshot> approvedPlan =
+          subStage == ExecutionSubStage.PR_OUTPUT
+              ? approvalReadPort
+                  .findLatestApprovedForArtifactLineage(
+                      workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value())
+                  .flatMap(approval -> artifactRecordPort.findByPublicId(approval.artifactId()))
+              : Optional.empty();
+      approvedPlanPresent = approvedPlan.isPresent();
+      List<PriorFeedbackReference> feedback =
+          collectExecutionFeedbackReferences(workflowRunPublicId, subStage);
+      priorFeedbackCount = feedback.size();
+      root =
+          assembleExecutionStage(
+              workflowRunPublicId,
+              reservedRunnerExecutionId,
+              ticket,
+              subStage,
+              approvedSpec,
+              approvedPlan,
+              feedback,
+              artifactReferences,
+              executionConstraints,
+              claimedClassification,
+              repositoryContextSummary,
+              repositoryBranchRef);
+    }
 
     RedactionResult redaction = redactionPolicyService.redact(root, claimedClassification.value());
     JsonNode redactedJson =
@@ -185,9 +375,10 @@ public class ContextBundleService {
             ValidationTarget.CONTEXT_BUNDLE, redactedBytes, validationContext);
     if (!result.valid()) {
       log.warn(
-          "create context-bundle rejected workflowRunId={} runnerExecutionId={} errorCount={}",
+          "create context-bundle rejected workflowRunId={} runnerExecutionId={} subStage={} errorCount={}",
           workflowRunPublicId,
           reservedRunnerExecutionId,
+          subStage,
           result.errors().size());
       Map<String, Object> details = new LinkedHashMap<>();
       details.put("workflowRunId", workflowRunPublicId);
@@ -200,12 +391,17 @@ public class ContextBundleService {
           details);
     }
     log.info(
-        "create context-bundle ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={}",
+        "create context-bundle ok workflowRunId={} runnerExecutionId={} stage={} subStage={} version={} "
+            + "classification={} repoContextPresent={} approvedPlanPresent={} priorFeedbackCount={}",
         workflowRunPublicId,
         reservedRunnerExecutionId,
         stage.value(),
+        subStage,
         contextBundleVersion,
-        redaction.effectiveClassification().value());
+        redaction.effectiveClassification().value(),
+        repositoryContextSummary != null,
+        approvedPlanPresent,
+        priorFeedbackCount);
     return new ContextBundle(
         workflowRunPublicId,
         stage,
@@ -213,6 +409,23 @@ public class ContextBundleService {
         contextBundleVersion,
         redaction.effectiveClassification(),
         redactedBytes);
+  }
+
+  /**
+   * Story 3.10 (Decision D4) — derive the {@link ExecutionSubStage} from run state for a dispatch
+   * that does not pass one explicitly (no live caller does today — 3.11/3.12 deferred). Returns
+   * {@link ExecutionSubStage#PR_OUTPUT} when an approved implementation-plan artifact already
+   * exists for the run (the plan-approved → implementation flow), else {@link
+   * ExecutionSubStage#IMPLEMENTATION_PLAN}. Reuses the already-injected {@link ApprovalReadPort}.
+   */
+  public ExecutionSubStage deriveExecutionSubStage(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    boolean planApproved =
+        approvalReadPort
+            .findLatestApprovedForArtifactLineage(
+                workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value())
+            .isPresent();
+    return planApproved ? ExecutionSubStage.PR_OUTPUT : ExecutionSubStage.IMPLEMENTATION_PLAN;
   }
 
   /**
@@ -493,6 +706,132 @@ public class ContextBundleService {
     return root;
   }
 
+  /**
+   * Story 3.10 (AC1/AC2/AC7) — assemble the execution-stage bundle for a known sub-stage. Shares
+   * the envelope + {@code writeArtifactReference} + {@code writeRepositoryContext} helpers with
+   * {@link #assemble} / {@link #assembleForSpecInvestigation}; only the feedback source (approvals
+   * + incorporated clarifications, not the parent-walk) and the two pr-output-specific slots
+   * diverge.
+   */
+  private ObjectNode assembleExecutionStage(
+      String workflowRunPublicId,
+      String runnerExecutionId,
+      TicketSummary ticket,
+      ExecutionSubStage subStage,
+      Optional<ArtifactRecordSnapshot> approvedSpec,
+      Optional<ArtifactRecordSnapshot> approvedPlan,
+      List<PriorFeedbackReference> feedback,
+      List<ArtifactRecordSnapshot> artifactReferences,
+      ExecutionConstraints executionConstraints,
+      DataClassification classification,
+      RepositoryContextSummary repositoryContextSummary,
+      String repositoryBranchRef) {
+    ObjectNode root = objectMapper.createObjectNode();
+    root.put("schemaVersion", CONTEXT_BUNDLE_SCHEMA_VERSION);
+    root.put("workflowRunId", workflowRunPublicId);
+    root.put("runnerExecutionId", runnerExecutionId);
+
+    ObjectNode ticketNode = root.putObject("ticketSummary");
+    ticketNode.put("ticketRef", ticket.ticketRef());
+    ticketNode.put("title", ticket.title());
+    ticketNode.put("summary", ticket.summary());
+
+    // The approved spec is the input contract for BOTH implementation sub-stages (AC1/AC2).
+    if (approvedSpec.isPresent()) {
+      writeArtifactReference(root.putObject("approvedSpecificationReference"), approvedSpec.get());
+    } else {
+      root.putNull("approvedSpecificationReference");
+    }
+
+    ArrayNode priorFeedbackRefsNode = root.putArray("priorFeedbackReferences");
+    for (PriorFeedbackReference reference : feedback) {
+      ObjectNode feedbackNode = priorFeedbackRefsNode.addObject();
+      feedbackNode.put("referenceId", reference.referenceId());
+      feedbackNode.put("kind", reference.kind());
+    }
+
+    ArrayNode artifactRefsNode = root.putArray("artifactReferences");
+    for (ArtifactRecordSnapshot ref : artifactReferences) {
+      writeArtifactReference(artifactRefsNode.addObject(), ref);
+    }
+
+    ObjectNode constraintsNode = root.putObject("executionConstraints");
+    constraintsNode.put("timeoutSeconds", executionConstraints.timeoutSeconds());
+    constraintsNode.put("allowRawOutput", executionConstraints.allowRawOutput());
+
+    root.put("classification", classification.value());
+
+    // PR-output sub-stage carries the approved implementation-plan reference (AC2). The plan
+    // sub-stage omits the field entirely (AC1 — no approved-plan ref).
+    if (subStage == ExecutionSubStage.PR_OUTPUT) {
+      if (approvedPlan.isPresent()) {
+        writeArtifactReference(
+            root.putObject("approvedImplementationPlanReference"), approvedPlan.get());
+      } else {
+        root.putNull("approvedImplementationPlanReference");
+      }
+    }
+
+    // Repo context is workspace-gated, NOT sub-stage-gated (OQ-3): embedded for either sub-stage
+    // whenever a workspace was prepared; entirely absent (with repositoryBranchRef) on no-repo
+    // dispatches so those stay byte-identical to today (AC2). The single downstream redact pass
+    // covers every text leaf written here, including each tree-summary entry (AC4/Decision D6).
+    if (repositoryContextSummary != null) {
+      writeRepositoryContext(root, repositoryContextSummary);
+      if (repositoryBranchRef != null && !repositoryBranchRef.isBlank()) {
+        // A git ref (story 3.9 AC2), never a host absolute path (Trap T5).
+        root.put("repositoryBranchRef", repositoryBranchRef);
+      } else {
+        // A prepared workspace with no deterministic branch ref violates story 3.9 AC2; surface it
+        // rather than silently omitting the field (a runner has no branch anchor for push).
+        log.warn(
+            "Execution context bundle has a prepared repository workspace but no deterministic "
+                + "branch ref (story 3.9 AC2); repositoryBranchRef omitted. "
+                + "workflowRunId={} subStage={}",
+            workflowRunPublicId,
+            subStage);
+      }
+    }
+
+    return root;
+  }
+
+  /**
+   * Story 3.10 (AC1/AC2, Decision D3) — the execution-stage {@code priorFeedbackReferences} source:
+   * prior spec PM decisions (approvals + rejections), then — for {@link
+   * ExecutionSubStage#PR_OUTPUT} — prior implementation-plan rejections (technical feedback), then
+   * incorporated clarifications. Each contributes a reference-by-id entry with a distinct {@code
+   * kind}; no answer/feedback body text is ever embedded (the runner reads detail from the
+   * referenced rows / inspection path).
+   */
+  private List<PriorFeedbackReference> collectExecutionFeedbackReferences(
+      String workflowRunPublicId, ExecutionSubStage subStage) {
+    List<PriorFeedbackReference> references = new ArrayList<>();
+    for (ApprovalSnapshot decision :
+        approvalReadPort.listByWorkflowRunAndArtifactType(
+            workflowRunPublicId, ArtifactType.SPEC.value())) {
+      references.add(
+          new PriorFeedbackReference(
+              decision.publicId(), decision.isApproved() ? "spec.approval" : "spec.rejection"));
+    }
+    if (subStage == ExecutionSubStage.PR_OUTPUT) {
+      for (ApprovalSnapshot rejection :
+          approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(
+              workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value())) {
+        references.add(
+            new PriorFeedbackReference(rejection.publicId(), "implementationPlan.rejection"));
+      }
+    }
+    for (Clarification clarification :
+        clarificationReadPort.listByWorkflowRunId(workflowRunPublicId)) {
+      if (clarification.isIncorporated()) {
+        references.add(
+            new PriorFeedbackReference(clarification.publicId(), "clarification.incorporated"));
+      }
+    }
+    return List.copyOf(references);
+  }
+
   private void writeArtifactReference(ObjectNode target, ArtifactRecordSnapshot snapshot) {
     target.put("artifactId", snapshot.publicId());
     target.put("artifactType", snapshot.artifactType().value());
@@ -529,7 +868,7 @@ public class ContextBundleService {
   }
 
   private List<ArtifactRecordSnapshot> collectAvailableArtifacts(String workflowRunPublicId) {
-    List<ArtifactRecordSnapshot> collected = new java.util.ArrayList<>();
+    List<ArtifactRecordSnapshot> collected = new ArrayList<>();
     for (ArtifactType type : ArtifactType.values()) {
       latestAvailable(workflowRunPublicId, type).ifPresent(collected::add);
     }

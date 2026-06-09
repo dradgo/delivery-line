@@ -201,7 +201,13 @@
         "correlationId": "corr_fix_happy_001",
         "artifactId": "art_plan_happy_001",
         "artifactVariant": "implementationPlan",
-        "artifactVersion": 1
+        "artifactVersion": 1,
+        "repositoryWorkspaceRef": "/workspace/repo",
+        "repositoryReadmeRef": "README.md",
+        "ticketRepositoryMappingVersion": "config:GH-101@1",
+        "repositoryTreeEntryCount": 8,
+        "packageManifestCount": 2,
+        "repositoryBranchRef": "deliveryline/DEL-9001/stage-happy001"
       }
     },
     {
@@ -239,7 +245,13 @@
         "correlationId": "corr_fix_happy_001",
         "artifactId": "art_pr_happy_001",
         "artifactVariant": "prOutput",
-        "artifactVersion": 1
+        "artifactVersion": 1,
+        "repositoryWorkspaceRef": "/workspace/repo",
+        "repositoryReadmeRef": "README.md",
+        "ticketRepositoryMappingVersion": "config:GH-101@1",
+        "repositoryTreeEntryCount": 8,
+        "packageManifestCount": 2,
+        "repositoryBranchRef": "deliveryline/DEL-9001/stage-happy001"
       }
     },
     {
