@@ -111,6 +111,22 @@ import {
   LIFECYCLE_FIXTURES,
   PERSISTENT_BADGE_FIXTURES,
 } from '@/test/fixtures/feedback/feedbackFixtures';
+import {
+  BoundedDetailSheet,
+  ConfirmationDialog,
+  NonDismissibleCriticalWarning,
+  RationaleCaptureDialog,
+} from '@/components/overlays';
+import { ButtonGroup, DecisionArea, GovernedButton } from '@/components/actions';
+import {
+  BOUNDED_DETAIL_SHEET_FIXTURES,
+  CONFIRMATION_DIALOG_FIXTURES,
+  CRITICAL_WARNING_FIXTURE,
+  DECISION_AREA_FIXTURE,
+  GOVERNED_BUTTON_FIXTURES,
+  RATIONALE_CAPTURE_FIXTURE,
+  type GovernedButtonFixture,
+} from '@/test/fixtures/overlays/overlayFixtures';
 import { densityGap } from '@/lib/density';
 import { cn } from '@/lib/utils';
 
@@ -303,6 +319,190 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Row({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center gap-3">{children}</div>;
+}
+
+// Story 2.23 (AC12) — render a governed-button fixture, threading the blocked
+// discriminated union so `blockedExplanation` is always supplied when blocked.
+function renderGovernedButton(fixture: GovernedButtonFixture) {
+  const { priority, workflowState, blockedExplanation, children } = fixture;
+  if (priority === 'blocked') {
+    return (
+      <GovernedButton
+        priority="blocked"
+        workflowState={workflowState}
+        blockedExplanation={blockedExplanation ?? 'Action unavailable'}
+      >
+        {children}
+      </GovernedButton>
+    );
+  }
+  if (workflowState === 'blocked') {
+    return (
+      <GovernedButton
+        priority={priority}
+        workflowState="blocked"
+        blockedExplanation={blockedExplanation ?? 'Action unavailable'}
+      >
+        {children}
+      </GovernedButton>
+    );
+  }
+  return (
+    <GovernedButton priority={priority} workflowState={workflowState}>
+      {children}
+    </GovernedButton>
+  );
+}
+
+// Story 2.23 (AC12) — the overlays + button-hierarchy showcase. Only one overlay
+// is open at a time (T-NO-STACK — never stack overlays).
+function OverlaysButtonHierarchySection() {
+  const [openOverlay, setOpenOverlay] = useState<string | null>(null);
+  const close = () => setOpenOverlay(null);
+
+  return (
+    <Section title="Overlays + Button Hierarchy (story 2.23) — overlays for high-consequence only; one primary per decision area">
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-secondary">
+          Confirmation dialogs — intent danger / warning / info (consequence stated; focus restores
+          to the trigger on close)
+        </p>
+        <Row>
+          {CONFIRMATION_DIALOG_FIXTURES.map((f) => (
+            <GovernedButton
+              key={f.id}
+              priority={f.intent === 'danger' ? 'destructive' : 'secondary'}
+              onClick={() => setOpenOverlay(f.id)}
+            >
+              {f.label}
+            </GovernedButton>
+          ))}
+        </Row>
+        {CONFIRMATION_DIALOG_FIXTURES.map((f) => (
+          <ConfirmationDialog
+            key={f.id}
+            open={openOverlay === f.id}
+            onOpenChange={(next) => (next ? setOpenOverlay(f.id) : close())}
+            title={f.title}
+            intent={f.intent}
+            consequence={f.consequence}
+            confirmLabel={f.confirmLabel}
+            cancelLabel={f.cancelLabel}
+            onConfirm={close}
+          />
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-secondary">
+          Rationale capture — reject with reason (required fields gate confirm)
+        </p>
+        <Row>
+          <GovernedButton
+            priority="destructive"
+            onClick={() => setOpenOverlay(RATIONALE_CAPTURE_FIXTURE.id)}
+          >
+            {RATIONALE_CAPTURE_FIXTURE.label}
+          </GovernedButton>
+        </Row>
+        <RationaleCaptureDialog
+          open={openOverlay === RATIONALE_CAPTURE_FIXTURE.id}
+          onOpenChange={(next) => (next ? setOpenOverlay(RATIONALE_CAPTURE_FIXTURE.id) : close())}
+          title={RATIONALE_CAPTURE_FIXTURE.title}
+          intent={RATIONALE_CAPTURE_FIXTURE.intent}
+          consequence={RATIONALE_CAPTURE_FIXTURE.consequence}
+          fields={RATIONALE_CAPTURE_FIXTURE.fields}
+          confirmLabel={RATIONALE_CAPTURE_FIXTURE.confirmLabel}
+          onConfirm={close}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-secondary">
+          Bounded detail sheets — right slide-over + full-height bottom sheet (UX-DR18)
+        </p>
+        <Row>
+          {BOUNDED_DETAIL_SHEET_FIXTURES.map((f) => (
+            <GovernedButton key={f.id} priority="secondary" onClick={() => setOpenOverlay(f.id)}>
+              {f.label}
+            </GovernedButton>
+          ))}
+        </Row>
+        {BOUNDED_DETAIL_SHEET_FIXTURES.map((f) => (
+          <BoundedDetailSheet
+            key={f.id}
+            open={openOverlay === f.id}
+            onOpenChange={(next) => (next ? setOpenOverlay(f.id) : close())}
+            title={f.title}
+            description={f.description}
+            side={f.side}
+            fullHeightOnMobile={f.fullHeightOnMobile}
+          >
+            <p>{f.body}</p>
+          </BoundedDetailSheet>
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-secondary">
+          Non-dismissible critical warning — blocks Escape + outside-click; only exit is the
+          acknowledgment
+        </p>
+        <Row>
+          <GovernedButton
+            priority="destructive"
+            onClick={() => setOpenOverlay(CRITICAL_WARNING_FIXTURE.id)}
+          >
+            {CRITICAL_WARNING_FIXTURE.label}
+          </GovernedButton>
+        </Row>
+        <NonDismissibleCriticalWarning
+          open={openOverlay === CRITICAL_WARNING_FIXTURE.id}
+          title={CRITICAL_WARNING_FIXTURE.title}
+          body={CRITICAL_WARNING_FIXTURE.body}
+          acknowledgmentLabel={CRITICAL_WARNING_FIXTURE.acknowledgmentLabel}
+          onAcknowledge={close}
+          intent={CRITICAL_WARNING_FIXTURE.intent}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-secondary">
+          Governed buttons — 5 priorities × workflow states; blocked carries an adjacent explanation
+        </p>
+        <div className="flex flex-wrap items-start gap-4">
+          {GOVERNED_BUTTON_FIXTURES.map((f) => (
+            <div key={f.id} className="space-y-1">
+              <p className="text-xs text-text-tertiary">{f.label}</p>
+              {renderGovernedButton(f)}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-secondary">
+          Decision area — one primary (never collapses) + overflow-eligible secondary / tertiary
+        </p>
+        <DecisionArea
+          ariaLabel="Specification decision"
+          primary={
+            <GovernedButton priority="primary">{DECISION_AREA_FIXTURE.primaryLabel}</GovernedButton>
+          }
+          secondary={
+            <ButtonGroup>
+              <GovernedButton priority="secondary">
+                {DECISION_AREA_FIXTURE.secondaryLabel}
+              </GovernedButton>
+              <GovernedButton priority="tertiary">
+                {DECISION_AREA_FIXTURE.tertiaryLabel}
+              </GovernedButton>
+            </ButtonGroup>
+          }
+        />
+      </div>
+    </Section>
+  );
 }
 
 export default function PrimitivesPlayground() {
@@ -926,6 +1126,8 @@ export default function PrimitivesPlayground() {
             <p className="text-sm text-muted-foreground">Below</p>
           </div>
         </Section>
+
+        <OverlaysButtonHierarchySection />
       </main>
     </TooltipProvider>
   );

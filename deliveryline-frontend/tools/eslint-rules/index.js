@@ -8,6 +8,8 @@ import noInlineQueryKeys from './no-inline-query-keys.js';
 import noUnsanitizedHtml from './no-unsanitized-html.js';
 import noUntypedLoadingState from './no-untyped-loading-state.js';
 import noWorkflowToastSuccess from './no-workflow-toast-success.js';
+import singlePrimaryAction from './single-primary-action.js';
+import noConfirmationForNavigation from './no-confirmation-for-navigation.js';
 
 /** @type {import('eslint').ESLint.Plugin} */
 const plugin = {
@@ -18,6 +20,8 @@ const plugin = {
     'no-unsanitized-html': noUnsanitizedHtml,
     'no-untyped-loading-state': noUntypedLoadingState,
     'no-workflow-toast-success': noWorkflowToastSuccess,
+    'single-primary-action': singlePrimaryAction,
+    'no-confirmation-for-navigation': noConfirmationForNavigation,
   },
 };
 

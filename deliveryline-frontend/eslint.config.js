@@ -106,6 +106,15 @@ export default tseslint.config(
       // toast.success/error/warning (sonner or feedbackToast) is forbidden;
       // toast.info/feedbackToast.info (ancillary) stays allowed.
       'local-rules/no-workflow-toast-success': 'error',
+
+      // Story 2.23 AC7 — at most one literal priority="primary" within a single
+      // <ButtonGroup>/<DecisionArea> (UX-DR19 one primary per decision area).
+      'local-rules/single-primary-action': 'error',
+
+      // Story 2.23 AC3 — a <ConfirmationDialog> whose confirm handler ONLY
+      // navigates / enters compare is forbidden (UX-DR18 no modal confirmation
+      // for low-risk navigation; confirmationCatalog.ts is authoritative).
+      'local-rules/no-confirmation-for-navigation': 'error',
     },
   },
 
