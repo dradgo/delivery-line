@@ -1009,6 +1009,33 @@ public class RunnerBroker {
       if (orchestration != null) {
         orchestration.onSpecStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
       }
+    } else if (row.stage() == RunnerStage.EXECUTION) {
+      // Story 3.11 (AC2/AC3 — the central gap): the EXECUTION twin of the INVESTIGATION branch.
+      // Once the implementation-plan artifact is ingested + the execution is COMPLETED (and any
+      // captureAndPush above succeeded — anchored AFTER it so a push failure routes to Failed
+      // instead of advancing), delegate the plan-ready auto-advance (Executing ->
+      // WaitingForReview) to WorkflowOrchestrationService via the SAME lazy supplier (the
+      // broker↔orchestration cycle is already broken, Trap T2 — no new wiring). Only the
+      // IMPLEMENTATION_PLAN sub-stage advances to WaitingForReview; the pr-output sub-stage
+      // (story 3.12) has no production originator yet and its terminal transition differs (OQ-3),
+      // so it is deliberately not auto-advanced here. The artifact stays `pending` — markAvailable
+      // is unwired system-wide ([[markavailable-has-no-production-caller]]); the transition fires
+      // on successful INGEST per Decision D1, exactly as the spec stage does.
+      ExecutionSubStage subStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
+      if (subStage == ExecutionSubStage.IMPLEMENTATION_PLAN) {
+        org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+            workflowOrchestrationServiceSupplier.get();
+        if (orchestration != null) {
+          orchestration.onPlanStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
+        }
+      } else {
+        log.info(
+            "onResult execution success not auto-advanced runnerExecutionId={} workflowRunId={} "
+                + "subStage={} reason=non_plan_substage_deferred_to_3_12",
+            runnerExecutionId,
+            workflowRunId,
+            subStage);
+      }
     }
   }
 

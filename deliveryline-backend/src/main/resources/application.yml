@@ -154,6 +154,13 @@ deliveryline:
     spec-stage:
       kind: codex
       auto-dispatch: true
+    # Story 3.11 — plan-stage (EXECUTION) orchestration. `kind` (AC10) selects the runner image for
+    # the implementation-plan stage (codex | claude; also serves pr-output until story 3.12).
+    # `auto-dispatch` gates the approveSpec→dispatchPlanGeneration trigger; ON in production, OFF in
+    # the test profile so the existing suite stays deterministic (Trap T11).
+    plan-stage:
+      kind: codex
+      auto-dispatch: true
     recovery:
       batch-size: 100
     mock:

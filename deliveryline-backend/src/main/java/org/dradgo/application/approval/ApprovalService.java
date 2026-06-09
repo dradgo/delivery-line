@@ -242,6 +242,16 @@ public class ApprovalService {
             command.idempotencyKey(),
             transitionEventDetails(command, persisted));
 
+        // Story 3.11 (AC1 / Task 3 / Trap T3) — dispatch the implementation-plan runner AFTER the
+        // WaitingForSpecApproval->Executing transition, symmetric to rejectSpec's
+        // retrySpecGeneration call. This runs inside approveSpec's MANDATORY transaction (the outer
+        // WorkflowCommandService.approveSpec tx), so a dispatch failure rolls back the approval row
+        // + event + transition (all-or-nothing). dispatchPlanGeneration NEVER re-transitions (T1):
+        // the run is already Executing. No-op when plan-stage.auto-dispatch=false (the shared test
+        // profile), so the fast tier's approveSpec tests stay byte-identical to today.
+        workflowOrchestrationService.dispatchPlanGeneration(
+            command.workflowRunId(), normalizeOptional(command.correlationId()));
+
         log.info(
             "approveSpec success approvalId={} workflowRunId={} artifactId={} artifactVersion={} contextBundleVersion={} reviewerRole={} resultingState={}",
             persisted.publicId(),

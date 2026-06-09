@@ -106,6 +106,11 @@ class ArchitectureBoundaryTest {
   static final ArchRule only_orchestration_auto_advances_on_spec_runner_success =
       ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS;
 
+  // Story 3.11 (AC9) — only WorkflowOrchestrationService auto-advances on a plan runner success.
+  @ArchTest
+  static final ArchRule only_orchestration_auto_advances_on_plan_runner_success =
+      ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_PLAN_RUNNER_SUCCESS;
+
   @ArchTest
   static final ArchRule credential_detection_must_stay_in_application_security =
       ArchitectureRuleCatalog.CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY;

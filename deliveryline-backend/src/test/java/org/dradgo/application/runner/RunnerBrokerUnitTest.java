@@ -1768,7 +1768,8 @@ class RunnerBrokerUnitTest {
             dockerConfig,
             RunnerProperties.defaultSecretEnvNames(),
             false,
-            RunnerProperties.SpecStage.defaults());
+            RunnerProperties.SpecStage.defaults(),
+            RunnerProperties.PlanStage.defaults());
     broker =
         new RunnerBroker(
             recordPort,
@@ -1875,6 +1876,108 @@ class RunnerBrokerUnitTest {
             any(),
             eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
             any());
+  }
+
+  // ===== Story 3.11 — EXECUTION (plan) success auto-advance delegation =====
+
+  @Test
+  void planSuccessDelegatesPlanReadyToOrchestrationForExecutionPlanSubStage() {
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, implementationPlanResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    // AC2/AC3: the broker delegates the plan-ready auto-advance to orchestration after completion.
+    verify(orchestration)
+        .onPlanStageSucceeded(eq(RUN_ID), eq(REX_ID), org.mockito.ArgumentMatchers.anyString());
+    verify(orchestration, never()).onSpecStageSucceeded(any(), any(), any());
+  }
+
+  @Test
+  void executionSuccessForPrOutputSubStageDoesNotAutoAdvance() {
+    // OQ-3 — a prOutput artifact at the EXECUTION stage is a valid wire type (no mismatch) but its
+    // terminal transition belongs to story 3.12; the broker ingests + completes but does NOT
+    // auto-advance to WaitingForReview.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    verify(orchestration, never()).onPlanStageSucceeded(any(), any(), any());
+  }
+
+  private static String implementationPlanResultPayload() {
+    // Mirrors runner-result.v1.implementation-plan.valid.json (steps + contextReferences, NOT
+    // contentReference — the broker's artifactPayload serializes the ref JSON in that case).
+    return """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "implementationPlan",
+             "steps": ["Review approved spec", "Implement changes"],
+             "contextReferences": ["spec/v1.json"]}
+          ],
+          "normalizedOutput": {"summary": "ok", "outcome": "success"},
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000002"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+        .formatted(RUN_ID, REX_ID);
+  }
+
+  private static String prOutputResultPayload() {
+    // Mirrors runner-result.v1.pr-output.valid.json (branch/commitSha/prReference/diffReference).
+    return """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "prOutput",
+             "branch": "feature/x", "commitSha": "abcdef1234567890abcdef1234567890abcdef12",
+             "prReference": "PR-1", "diffReference": "diffs/%s/pr-1.diff"}
+          ],
+          "normalizedOutput": {"summary": "ok", "outcome": "success"},
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000003"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+        .formatted(RUN_ID, REX_ID, RUN_ID);
+  }
+
+  private static RunnerExecutionSnapshot executionSnapshot(
+      String publicId, RunnerExecutionStatus status) {
+    OffsetDateTime now = OffsetDateTime.now(CLOCK);
+    return new RunnerExecutionSnapshot(
+        publicId,
+        RUN_ID,
+        RunnerStage.EXECUTION,
+        status,
+        1,
+        now,
+        now.plusSeconds(600),
+        null,
+        RunnerExecutionStateMachine.isTerminal(status) ? now : null,
+        now,
+        null);
   }
 
   private RunnerBroker brokerWithOrchestration(

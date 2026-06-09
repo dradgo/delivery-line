@@ -52,6 +52,13 @@ deliveryline:
     spec-stage:
       kind: codex
       auto-dispatch: false
+    # Story 3.11 (AC10 / Trap T4/T11) — the validated plan-stage group must be present here too (test
+    # application.yml shadows, does not merge with, main). auto-dispatch is OFF in the shared test
+    # profile so every approveSpec test stays a no-op dispatch; ImplementationPlanOrchestrationIT
+    # opts in via @TestPropertySource.
+    plan-stage:
+      kind: codex
+      auto-dispatch: false
     recovery:
       batch-size: 100
     mock:

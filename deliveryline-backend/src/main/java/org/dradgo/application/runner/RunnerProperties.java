@@ -41,7 +41,16 @@ public record RunnerProperties(
     // deliveryline.runner.spec-stage.kind (codex | claude), defaulting to codex. Resolved into the
     // dispatch path via kindForStage(stage); a null group falls back to the codex default so the
     // @SpringBootTest tiers that omit the key still bind (test yaml carries it too — Trap T4).
-    SpecStage specStage) {
+    SpecStage specStage,
+    // Story 3.11 (AC10) — plan-stage (EXECUTION) twin of specStage. Binds
+    // deliveryline.runner.plan-stage.kind (codex | claude) + .auto-dispatch.
+    // kindForStage(EXECUTION)
+    // resolves to planStage.kind() (OQ-4: pr-output falls back here until story 3.12);
+    // auto-dispatch
+    // gates the approveSpec -> dispatchPlanGeneration trigger (ON in prod, OFF in the shared test
+    // yaml — Trap T4/T11). A null group falls back to the codex default so contexts that omit the
+    // key still bind.
+    PlanStage planStage) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -80,6 +89,7 @@ public record RunnerProperties(
             ? defaultSecretEnvNames()
             : deepCopySecretEnvNames(secretEnvNames);
     specStage = specStage == null ? SpecStage.defaults() : specStage;
+    planStage = planStage == null ? PlanStage.defaults() : planStage;
   }
 
   public static RunnerProperties defaults() {
@@ -99,22 +109,39 @@ public record RunnerProperties(
         Docker.defaults(),
         defaultSecretEnvNames(),
         false,
-        SpecStage.defaults());
+        SpecStage.defaults(),
+        PlanStage.defaults());
   }
 
   /**
-   * Story 3a-1 (AC10) — resolve the runner-image {@link RunnerKind} for a dispatch stage. The
-   * spec-investigation stage ({@link RunnerStage#INVESTIGATION}) honors the configurable {@code
-   * deliveryline.runner.spec-stage.kind}; every other stage falls back to {@link
-   * Docker#defaultKind()} (the historical single-source dispatch kind). Centralizing the lookup
-   * keeps the broker's secret-scan and dispatch paths comparing against the SAME injected key.
+   * Story 3a-1 (AC10) + story 3.11 (AC10 / Decision D3 / OQ-4) — resolve the runner-image {@link
+   * RunnerKind} for a dispatch stage. The spec-investigation stage ({@link
+   * RunnerStage#INVESTIGATION}) honors {@code deliveryline.runner.spec-stage.kind}; the EXECUTION
+   * stage honors {@code deliveryline.runner.plan-stage.kind}. Because {@link RunnerStage#EXECUTION}
+   * is shared by the implementation-plan AND pr-output sub-stages and the wire stage cannot
+   * distinguish them, the plan-stage kind covers both for now — pr-output deliberately falls back
+   * to {@code plan-stage.kind} until story 3.12 adds a dedicated implementation-stage kind (OQ-4).
+   * A stage-keyed (not sub-stage-keyed) resolver is intentional: the broker's secret-scan path
+   * (post-execution, story 3.5) only has {@code row.stage()} and MUST compare against the SAME key
+   * the dispatch path injected — keying on the sub-stage would desync the two.
    */
   public RunnerKind kindForStage(RunnerStage stage) {
     Objects.requireNonNull(stage, "stage");
-    if (stage == RunnerStage.INVESTIGATION) {
-      return specStage.kind();
-    }
-    return docker.defaultKind();
+    return switch (stage) {
+      case INVESTIGATION -> specStage.kind();
+      case EXECUTION -> planStage.kind();
+    };
+  }
+
+  /**
+   * Story 3.11 (AC10 / Task 4) — plan-stage auto-dispatch master switch ({@code
+   * deliveryline.runner.plan-stage.auto-dispatch}). The EXECUTION twin of {@link
+   * SpecStage#autoDispatch()}: when {@code false} (the shared test profile) the {@code approveSpec
+   * -> dispatchPlanGeneration} trigger is a no-op so the fast tier stays deterministic; production
+   * enables it.
+   */
+  public boolean planAutoDispatchEnabled() {
+    return planStage.autoDispatch();
   }
 
   /**
@@ -258,6 +285,35 @@ public record RunnerProperties(
 
     public static SpecStage defaults() {
       return new SpecStage(RunnerKind.CODEX, true);
+    }
+  }
+
+  /**
+   * Story 3.11 (AC10) — plan-stage orchestration config, the EXECUTION twin of {@link SpecStage}.
+   *
+   * <ul>
+   *   <li>{@code kind} — runner-image flavor for the implementation-plan (EXECUTION) stage ({@code
+   *       codex} | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX}.
+   *       Resolved into the dispatch path via {@link #kindForStage(RunnerStage)} (it also serves
+   *       the pr-output sub-stage until story 3.12 — OQ-4).
+   *   <li>{@code autoDispatch} — master switch for the {@code approveSpec ->
+   *       dispatchPlanGeneration} trigger. Production ({@code application.yml}) sets it {@code
+   *       true}; the shared test profile sets it {@code false} (mirroring {@code
+   *       spec-stage.auto-dispatch}) so the existing suite's approveSpec tests stay deterministic
+   *       and the full approve→plan→{@code WaitingForReview} loop runs only in the dedicated
+   *       integration test that opts in. Spring binds a missing key to {@code false} (primitive
+   *       default); {@link #defaults()} (non-Spring construction) is {@code true} to match the
+   *       production default.
+   * </ul>
+   */
+  public record PlanStage(RunnerKind kind, boolean autoDispatch) {
+
+    public PlanStage {
+      kind = kind == null ? RunnerKind.CODEX : kind;
+    }
+
+    public static PlanStage defaults() {
+      return new PlanStage(RunnerKind.CODEX, true);
     }
   }
 

@@ -101,6 +101,11 @@ class WorkflowOrchestrationServiceTest {
             RunnerProperties.defaultSecretEnvNames(),
             false,
             new RunnerProperties.SpecStage(
+                org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch),
+            // Story 3.11 — the plan-stage switch tracks the same flag so this helper drives both
+            // the
+            // spec and plan auto-dispatch paths.
+            new RunnerProperties.PlanStage(
                 org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch));
     return new WorkflowOrchestrationService(
         runnerBroker, transitionService, readPort, recordPort, props);
@@ -295,6 +300,172 @@ class WorkflowOrchestrationServiceTest {
 
     // No exception escapes even though the re-read threw.
     service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    assertLoggedAt(Level.WARN, "could not re-read run state");
+  }
+
+  // ===== Story 3.11 — plan-stage orchestration (AC1/AC3/AC5/AC6/AC10) =====
+
+  private RunnerDispatchResult executionDispatched() {
+    return new RunnerDispatchResult.Dispatched(
+        new RunnerExecutionHandle(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            RunnerExecutionStatus.PENDING,
+            OffsetDateTime.parse("2026-06-09T12:00:00Z")),
+        new RunnerDispatchAck("mock:happy-implementation-plan"));
+  }
+
+  private org.dradgo.application.runner.spi.RunnerExecutionSnapshot executionSnapshot(
+      RunnerExecutionStatus status) {
+    OffsetDateTime now = OffsetDateTime.parse("2026-06-09T12:00:00Z");
+    return new org.dradgo.application.runner.spi.RunnerExecutionSnapshot(
+        REX_ID,
+        RUN_ID,
+        RunnerStage.EXECUTION,
+        status,
+        1,
+        now,
+        now.plusSeconds(600),
+        null,
+        null,
+        now,
+        null);
+  }
+
+  @Test
+  void dispatchPlanGenerationDispatchesWithBundleVersionKeyAndNeverTransitions() {
+    // AC1 (Trap T1): the run is already Executing (approveSpec transitioned it) — dispatchPlan must
+    // NOT transition. The key derives from the next EXECUTION context-bundle version (Decision D2).
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(1);
+    when(runnerBroker.dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any()))
+        .thenReturn(executionDispatched());
+
+    RunnerDispatchResult result = service(true).dispatchPlanGeneration(RUN_ID, "corr-p");
+
+    assertSame(RunnerExecutionStatus.PENDING, result.handle().status());
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<ActorContext> actor = ArgumentCaptor.forClass(ActorContext.class);
+    verify(runnerBroker)
+        .dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), actor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals("plan-dispatch:" + RUN_ID + ":1", key.getValue());
+    org.junit.jupiter.api.Assertions.assertEquals("corr-p", actor.getValue().correlationId());
+    // Logging contract: entry + dispatch-outcome INFO surfaces are observable.
+    assertLoggedAt(Level.INFO, "dispatchPlanGeneration entry");
+    assertLoggedAt(Level.INFO, "dispatchPlanGeneration dispatched");
+  }
+
+  @Test
+  void retryPlanGenerationReDispatchesWithFreshBundleVersionKeyAndNeverTransitions() {
+    // AC5 — a recovery retry advances the monotonic EXECUTION bundle version so the broker mints a
+    // fresh runnerExecutionId; re-dispatch ONLY, never re-transition (T1/T8).
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(2);
+    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(executionDispatched());
+
+    service(true).retryPlanGeneration(RUN_ID, "corr-r");
+
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any());
+    org.junit.jupiter.api.Assertions.assertEquals("plan-dispatch:" + RUN_ID + ":2", key.getValue());
+  }
+
+  @Test
+  void dispatchPlanGenerationIsNoOpWhenAnExecutionIsAlreadyInFlight() {
+    // AC6 — a pending/running EXECUTION execution is a no-op returning the existing handle; never
+    // double-dispatch.
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.PENDING)));
+
+    RunnerDispatchResult result = service(true).dispatchPlanGeneration(RUN_ID, "corr-p");
+
+    assertTrue(result.isReplay());
+    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    assertLoggedAt(Level.WARN, "in-flight no-op");
+  }
+
+  @Test
+  void dispatchAndRetryPlanAreNoOpsWhenPlanAutoDispatchDisabled() {
+    WorkflowOrchestrationService disabled = service(false);
+
+    assertNull(disabled.dispatchPlanGeneration(RUN_ID, "c"));
+    assertNull(disabled.retryPlanGeneration(RUN_ID, "c"));
+
+    verifyNoInteractions(runnerBroker);
+    verifyNoInteractions(transitionService);
+    verifyNoInteractions(readPort);
+  }
+
+  @Test
+  void onPlanStageSucceededTransitionsToWaitingForReview() {
+    service(true).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    verify(transitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.WAITING_FOR_REVIEW),
+            any(),
+            eq("implementation_plan_ready"),
+            eq("plan-ready:" + REX_ID),
+            any(java.util.Map.class));
+    assertLoggedAt(Level.INFO, "to=WaitingForReview");
+  }
+
+  @Test
+  void onPlanStageSucceededSwallowsIllegalTransitionAsBenignReplayWhenAlreadyAtReview() {
+    // AC3 — a duplicate/replayed result whose run already reached WaitingForReview is a benign
+    // idempotent replay: swallowed, logged INFO (not the WARN anomaly line).
+    org.mockito.Mockito.doThrow(
+            new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "already advanced"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN_ID, WorkflowState.WAITING_FOR_REVIEW, null, 1L, 0, false)));
+
+    service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    verify(readPort).findByPublicId(RUN_ID);
+    assertLoggedAt(Level.INFO, "idempotent replay");
+  }
+
+  @Test
+  void onPlanStageSucceededSwallowsIllegalTransitionAsAnomalyWhenRunDiverged() {
+    // AC3 — when the run is in an unexpected state (e.g. TAKEN_OVER) the ILLEGAL_TRANSITION is
+    // logged WARN as a probable anomaly; still swallowed (shared poller tx — rethrow would
+    // re-harvest forever).
+    org.mockito.Mockito.doThrow(
+            new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "illegal from TAKEN_OVER"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(RUN_ID, WorkflowState.TAKEN_OVER, null, 1L, 0, false)));
+
+    service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    verify(readPort).findByPublicId(RUN_ID);
+    assertLoggedAt(Level.WARN, "probable anomaly");
+  }
+
+  @Test
+  void onPlanStageSucceededSwallowsDiagnosticReadFailureWithoutRethrowing() {
+    // AC3 re-read guard — a diagnostic re-read failure must NOT propagate (shared poller tx).
+    org.mockito.Mockito.doThrow(new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "illegal"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenThrow(new DomainException(DomainErrorCode.INTERNAL_ERROR, "db down"));
+
+    service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
     assertLoggedAt(Level.WARN, "could not re-read run state");
   }

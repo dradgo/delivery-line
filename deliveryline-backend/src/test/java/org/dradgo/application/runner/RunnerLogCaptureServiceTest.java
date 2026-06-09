@@ -76,7 +76,8 @@ class RunnerLogCaptureServiceTest {
         d.docker(),
         d.secretEnvNames(),
         /* allowShareableLogs= */ true,
-        d.specStage());
+        d.specStage(),
+        d.planStage());
   }
 
   private final CapturingLogStore store = new CapturingLogStore();

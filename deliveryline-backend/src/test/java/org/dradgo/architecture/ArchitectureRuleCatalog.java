@@ -402,6 +402,33 @@ final class ArchitectureRuleCatalog {
                   String.class,
                   String.class));
 
+  /**
+   * Story 3.11 (AC9) — the plan-stage twin of {@link
+   * #ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS}. The plan-stage success auto-advance
+   * ({@code Executing -> WaitingForReview}) is owned solely by {@link
+   * WorkflowOrchestrationService}; its {@code onPlanStageSucceeded} callback may be invoked only by
+   * the {@link RunnerBroker} result-harvest seam, so no other service can react to a runner success
+   * outcome by driving workflow state. The broker's pre-existing FAILURE drive remains the
+   * documented OQ-2 exception (this rule, like its spec twin, is scoped to the SUCCESS
+   * auto-advance).
+   */
+  static final ArchRule ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_PLAN_RUNNER_SUCCESS =
+      namedRule(
+          "only WorkflowOrchestrationService may auto-advance workflow state on a plan runner success",
+          "Remediation: route the plan-stage success auto-advance through WorkflowOrchestrationService.onPlanStageSucceeded, invoked only by the RunnerBroker result-harvest seam (story 3.11 AC9). The broker failure-drive is the documented OQ-2 exception.",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(WorkflowOrchestrationService.class.getName())
+              .and()
+              .doNotHaveFullyQualifiedName(RunnerBroker.class.getName())
+              .should()
+              .callMethod(
+                  WorkflowOrchestrationService.class,
+                  "onPlanStageSucceeded",
+                  String.class,
+                  String.class,
+                  String.class));
+
   static final ArchRule ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE =
       namedRule(
           "artifact writes must go through ArtifactOperationService once artifact storage lands",
