@@ -11,3 +11,4 @@
  */
 export * from './states';
 export * from './primitives';
+export * from './AuditRoleLabel';

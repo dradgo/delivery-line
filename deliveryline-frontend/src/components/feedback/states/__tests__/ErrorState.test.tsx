@@ -8,7 +8,10 @@
  * nav-hook test's router mock.
  */
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 const { backSpy } = vi.hoisted(() => ({ backSpy: vi.fn() }));
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
@@ -137,5 +140,62 @@ describe('ErrorState', () => {
     );
     expect(document.activeElement).toBe(screen.getByRole('button'));
     warn.mockRestore();
+  });
+
+  // Story 2.25 (Task 3, AC5) — resolve the role/aria-live contradiction: passive
+  // is a non-interrupting status (role=status + polite); active interrupts
+  // (role=alert + assertive). No role=alert+aria-live=polite mismatch remains.
+  it('AC5 — passive urgency is role=status/polite, active is role=alert/assertive', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { rerender } = render(
+      <ErrorState
+        variant="failedRetrieval"
+        urgency="passive"
+        nextAction={{ kind: 'NavigateBack' }}
+      />,
+    );
+    const passive = screen.getByTestId('error-state');
+    expect(passive).toHaveAttribute('role', 'status');
+    expect(passive).toHaveAttribute('aria-live', 'polite');
+
+    rerender(
+      <ErrorState
+        variant="failedRetrieval"
+        urgency="active"
+        nextAction={{ kind: 'NavigateBack' }}
+      />,
+    );
+    const active = screen.getByTestId('error-state');
+    expect(active).toHaveAttribute('role', 'alert');
+    expect(active).toHaveAttribute('aria-live', 'assertive');
+    warn.mockRestore();
+  });
+
+  // Story 2.25 (Task 2, AC2) — axe scan of every variant in its passive rendered
+  // state (passive avoids the active-urgency focus move + log side effect).
+  it.each(VARIANTS)('AC2 — variant "%s" has no axe violations', async (variant) => {
+    const { container } = render(
+      <ErrorState variant={variant} urgency="passive" nextAction={{ kind: 'NavigateBack' }} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  // Story 2.25 (Task 2, AC1) — the required next action is reachable by Tab and
+  // activatable from the keyboard (Enter / Space) without a mouse.
+  it('AC1 — the next action is Tab-reachable and activates on Enter and Space', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <ErrorState
+        variant="failedRetrieval"
+        urgency="passive"
+        nextAction={{ kind: 'Retry', onRetry }}
+      />,
+    );
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('button'));
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    expect(onRetry).toHaveBeenCalledTimes(2);
   });
 });

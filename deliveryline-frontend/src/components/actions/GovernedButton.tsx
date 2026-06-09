@@ -174,7 +174,8 @@ export function GovernedButton(props: GovernedButtonProps) {
       data-priority={priority}
       data-workflow-state={workflowState}
       data-testid={testId}
-      className={cn(workflowState === 'stale' && STALE_TONE_CLASS, className)}
+      // Story 2.25 (AC10) — 44px touch-target floor on the interactive button.
+      className={cn('min-h-touch', workflowState === 'stale' && STALE_TONE_CLASS, className)}
       {...rest}
     >
       {content}

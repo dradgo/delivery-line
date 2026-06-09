@@ -115,6 +115,14 @@ export default tseslint.config(
       // navigates / enters compare is forbidden (UX-DR18 no modal confirmation
       // for low-risk navigation; confirmationCatalog.ts is authoritative).
       'local-rules/no-confirmation-for-navigation': 'error',
+
+      // Story 2.25 AC8 — actor-role text must render via <AuditRoleLabel> (a
+      // recorded audit label, not enforced authorization), never bare.
+      'local-rules/no-bare-actor-role-text': 'error',
+
+      // Story 2.25 AC9 (hard invariant) — never gate actions on an audit role;
+      // all gating routes through useAllowedActions (story 2.14).
+      'local-rules/no-role-based-action-gating': 'error',
     },
   },
 

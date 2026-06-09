@@ -10,9 +10,11 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { PROBLEM_JSON_CONTENT_TYPE } from '@/lib/api/problemDetails';
 import { retryUnlessNonRetryable } from '@/lib/api/queryOptions';
 import { server } from '@/test/server';
@@ -252,5 +254,79 @@ describe('ApprovalDecisionBarContainer — firing path + logging (field-only, T-
     );
     expect(screen.getByTestId('approval-load-error')).toBeInTheDocument();
     expect(screen.queryByTestId('approval-blocked-reason')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Story 2.25 (Task 2 — AC1/AC2) — a11y over the LIVE-mapped container states. Drives
+ * the same MSW-served reads as above, waits for each documented `data-approval-bar-state`
+ * to settle, then runs an axe scan + asserts keyboard operability of the live controls.
+ */
+describe('ApprovalDecisionBarContainer a11y (story 2.25)', () => {
+  it('AC2 — the live "ready" bar has no axe violations', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () => allowedActions()),
+      http.get(DETAIL_URL, () => detailWithArtifact()),
+    );
+    const { container } = renderContainer();
+    await waitFor(() =>
+      expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
+        'data-approval-bar-state',
+        'ready',
+      ),
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the live "blocked" (dormancy boundary) bar has no axe violations', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () => allowedActions()),
+      http.get(DETAIL_URL, () => detailWithArtifact(undefined)),
+    );
+    const { container } = renderContainer();
+    await waitFor(() =>
+      expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
+        'data-approval-bar-state',
+        'blocked',
+      ),
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the live allowed-actions load-error bar has no axe violations', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () => problem('RUN_NOT_FOUND', 404, false)),
+      http.get(DETAIL_URL, () => detailWithArtifact()),
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { container } = renderContainer();
+    await waitFor(() =>
+      expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
+        'data-approval-bar-state',
+        'error',
+      ),
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC1 — the live ready bar exposes a Tab-reachable Approve that fires the wired mutation', async () => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get(ALLOWED_URL, () => allowedActions()),
+      http.get(DETAIL_URL, () => detailWithArtifact()),
+      http.post(APPROVE_URL, async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ workflowRunId: RUN_ID, currentState: 'Executing' });
+      }),
+    );
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    renderContainer();
+    const approve = await screen.findByRole('button', { name: 'Approve specification' });
+
+    await user.tab();
+    expect(document.activeElement).toBe(approve);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(body).toBeDefined());
   });
 });

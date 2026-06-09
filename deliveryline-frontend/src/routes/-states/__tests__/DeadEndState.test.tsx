@@ -135,7 +135,10 @@ describe('DeadEndState migration (AC11.u)', () => {
       if (kind === 'error') {
         // Assert the EXACT aria-live value (Trap T13) — a flip to assertive on a
         // passive page-load state (or vice-versa) is a regression, not just presence.
-        expect(screen.getByRole('alert')).toHaveAttribute('aria-live', ariaLive);
+        // Story 2.25 (AC5): role tracks urgency — passive=status/polite,
+        // active=alert/assertive (the role/aria-live contradiction fix).
+        const liveRole = ariaLive === 'assertive' ? 'alert' : 'status';
+        expect(screen.getByRole(liveRole)).toHaveAttribute('aria-live', ariaLive);
       } else {
         expect(screen.getByTestId('empty-state')).toBeInTheDocument();
         expect(screen.queryByTestId('empty-state')?.querySelector('[aria-live]')).toBeNull();

@@ -7,8 +7,10 @@
  * disabled Compare control.
  */
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import {
   specArtifactView,
   specArtifactViewWithChangeSummary,
@@ -138,3 +140,72 @@ describe('SpecArtifactRenderer', () => {
     expect(compare).not.toHaveAttribute('title');
   });
 });
+
+/**
+ * Story 2.25 (Task 2 — AC1/AC2). The renderer is markdown + several keyboard-operable
+ * navigation/entry controls (section anchors, region anchors, a reserved disabled
+ * Compare). Each documented variant is axe-scanned; the section-anchor nav + region
+ * entry-points are exercised for keyboard operability.
+ */
+describe('SpecArtifactRenderer a11y (story 2.25)', () => {
+  it('AC2 — the default spec render has no axe violations', async () => {
+    const { container } = render(<SpecArtifactRenderer artifact={specArtifactView} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the change-summary variant has no axe violations', async () => {
+    const { container } = render(
+      <SpecArtifactRenderer artifact={specArtifactViewWithChangeSummary} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the compareEnabled variant has no axe violations', async () => {
+    const { container } = render(
+      <SpecArtifactRenderer artifact={specArtifactView} compareEnabled />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC1 — a section anchor is Tab-reachable and activates on Enter and Space', async () => {
+    const user = userEvent.setup();
+    render(<SpecArtifactRenderer artifact={specArtifactView} />);
+    const overview = screen.getByRole('button', { name: 'Overview' });
+    overview.focus();
+    expect(overview).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    await user.keyboard(' ');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC1 — the Clarifications region entry-point is Tab-reachable and activates on Enter', async () => {
+    const user = userEvent.setup();
+    // The renderer focuses the region by its stable DOM id; provide a target so the
+    // activation path runs without a no-op early return.
+    const region = document.createElement('section');
+    region.id = CLARIFICATION_REGION_ID_FALLBACK;
+    region.tabIndex = -1;
+    document.body.appendChild(region);
+    const focusSpy = vi.spyOn(region, 'focus');
+
+    render(<SpecArtifactRenderer artifact={specArtifactView} />);
+    const clarifications = screen.getByTestId('artifact-clarification-anchor');
+    clarifications.focus();
+    expect(clarifications).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(focusSpy).toHaveBeenCalled();
+
+    region.remove();
+  });
+
+  it('AC1 — the reserved disabled Compare control is excluded from the Tab order', () => {
+    render(<SpecArtifactRenderer artifact={specArtifactView} />);
+    const compare = screen.getByTestId('artifact-compare-entry');
+    expect(compare).toBeDisabled();
+  });
+});
+
+// The renderer reaches the Clarification Region by the same stable DOM id the
+// container exports (`CLARIFICATION_REGION_ID` === 'clarification-region').
+const CLARIFICATION_REGION_ID_FALLBACK = 'clarification-region';

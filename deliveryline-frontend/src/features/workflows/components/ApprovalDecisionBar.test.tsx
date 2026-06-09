@@ -8,8 +8,11 @@
  * mocked at its own module (the 2.18 pattern).
  */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
+import { tabbableElements } from '@/test/a11y/keyboard';
 import {
   blockedNoArtifactView,
   blockedPendingClarificationsView,
@@ -276,5 +279,131 @@ describe('ApprovalDecisionBar — accessibility (AC10)', () => {
   it('announces the stale transition through the ARIA live region', () => {
     renderBar(staleView, { status: 'error', errorCode: 'APPROVAL_VERSION_MISMATCH' });
     expect(screen.getByTestId('approval-live-region')).toHaveTextContent(/out of date/i);
+  });
+
+  it('AC5/AC7 — announces the recorded decision outcome on success (story 2.25)', () => {
+    renderBar(successView, { status: 'success' });
+    // The decision-outcome announcement gap (2.19): success now speaks the
+    // recorded outcome, not only the visual summary. specApproved/specRejected
+    // both end with "Decision recorded."
+    expect(screen.getByTestId('approval-live-region')).toHaveTextContent(/Decision recorded/i);
+  });
+});
+
+/**
+ * Story 2.25 (Task 2 — AC1 keyboard operability, AC2 axe scan of every documented
+ * state, AC4 region/list semantics). Each documented `data-approval-bar-state` (plus
+ * the layout/mode variants and the rejection-dialog open state) is scanned for WCAG
+ * 2.1 AA violations; the interactive controls are asserted Tab-reachable and
+ * Enter/Space-activatable. The rejection dialog (T-MODAL) has NO Escape close handler
+ * by design (AC8) — we assert focus-on-open + containment, not Escape dismissal.
+ */
+describe('ApprovalDecisionBar a11y (story 2.25)', () => {
+  // AC2 — every prop-driven documented state renders without axe violations.
+  const A11Y_STATES: ReadonlyArray<
+    [
+      name: string,
+      view: ApprovalDecisionView,
+      mutation: ApprovalMutationState,
+      localUi: ApprovalLocalUi,
+    ]
+  > = [
+    ['ready', readyView, IDLE, {}],
+    ['submitting', submittingView, { status: 'pending' }, {}],
+    ['success', successView, { status: 'success' }, {}],
+    ['stale', staleView, { status: 'error', errorCode: 'APPROVAL_VERSION_MISMATCH' }, {}],
+    ['error', readyView, { status: 'error', errorCode: 'ILLEGAL_TRANSITION' }, {}],
+    ['blocked-no-artifact', blockedNoArtifactView, IDLE, {}],
+    ['blocked-pending-clarifications', blockedPendingClarificationsView, IDLE, {}],
+    ['locked', lockedView, IDLE, { locked: true }],
+    ['reason-coded (disabled secondary)', reasonCodedView, IDLE, {}],
+    ['multi-candidate', multiCandidateView, IDLE, {}],
+    ['inline layout', inlineLayoutView, IDLE, {}],
+    ['implementation_review stub', implementationReviewView, IDLE, {}],
+    ['recovery_operator stub', recoveryOperatorView, IDLE, {}],
+  ];
+
+  it.each(A11Y_STATES)(
+    'AC2 — state "%s" has no axe violations',
+    async (_name, view, mutation, localUi) => {
+      const { container } = renderBar(view, mutation, localUi);
+      await expectNoA11yViolations(container);
+    },
+  );
+
+  it('AC2 — the load-error state has no axe violations', async () => {
+    const { container } = render(
+      <ApprovalDecisionBar
+        view={readyView}
+        mutation={IDLE}
+        loadError
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the open rejection dialog has no axe violations (region-local, not portaled)', async () => {
+    const user = userEvent.setup();
+    const { container } = renderBar(readyView);
+    await user.click(screen.getByRole('button', { name: /reject with feedback/i }));
+    expect(screen.getByTestId('approval-rejection-dialog')).toBeInTheDocument();
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC1 — Approve and Reject are Tab-reachable and Approve activates on Enter and Space', async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    renderBar(readyView, IDLE, {}, { onApprove });
+
+    const approve = screen.getByRole('button', { name: 'Approve specification' });
+    const reject = screen.getByRole('button', { name: 'Reject with feedback' });
+    await user.tab();
+    expect(document.activeElement).toBe(approve);
+    await user.tab();
+    expect(document.activeElement).toBe(reject);
+
+    approve.focus();
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    expect(onApprove).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC1 — the stale Refresh CTA is Tab-reachable and activates on Enter', async () => {
+    const user = userEvent.setup();
+    const onRefresh = vi.fn();
+    renderBar(
+      staleView,
+      { status: 'error', errorCode: 'APPROVAL_VERSION_MISMATCH' },
+      {},
+      { onRefresh },
+    );
+    const refresh = screen.getByRole('button', { name: /refresh and review/i });
+    await user.tab();
+    expect(document.activeElement).toBe(refresh);
+    await user.keyboard('{Enter}');
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC8/AC10 — opening the rejection dialog focuses the first field and keeps focus contained', async () => {
+    const user = userEvent.setup();
+    renderBar(readyView);
+    await user.click(screen.getByRole('button', { name: /reject with feedback/i }));
+
+    // Focus moves to the first field on open (AC10).
+    const reason = screen.getByTestId('approval-rejection-reason');
+    expect(reason).toHaveFocus();
+
+    // Every dialog control is reachable by Tab without a mouse (AC1). NOTE: this is a
+    // region-local modal with NO Escape close handler by design (T-MODAL / AC8); it is
+    // dismissed only via explicit Cancel, asserted in the rejection-flow suite above.
+    const dialog = screen.getByTestId('approval-rejection-dialog');
+    const tabbables = tabbableElements(dialog);
+    // textarea + 3 radios + Confirm + Cancel.
+    expect(tabbables.length).toBeGreaterThanOrEqual(6);
+    expect(within(dialog).getByRole('button', { name: /confirm rejection/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeInTheDocument();
   });
 });

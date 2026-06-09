@@ -19,6 +19,7 @@ import { server } from '@/test/server';
 import type { WorkflowDetail } from '@/lib/api/queryOptions';
 import { specRejectAndResubmitDetail } from '@/test/fixtures/runContext/specRejectAndResubmit';
 import { RUN_STALE_THRESHOLD_MS } from '../runContextView';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 const { backSpy } = vi.hoisted(() => ({ backSpy: vi.fn() }));
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
@@ -300,5 +301,83 @@ describe('RunContextStrip', () => {
       'title',
       `${longActor} (human)`,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 2.25 a11y — axe scans of every documented RunContextStrip state.
+// Non-interactive widget — axe-only (no keyboard tests; no buttons/links in
+// the default/stale/partial-context states; the error sub-state's button is
+// covered by ErrorState's own 2.25 tests).
+// ---------------------------------------------------------------------------
+describe('RunContextStrip a11y (story 2.25)', () => {
+  it('AC2 — loading state has no axe violations', async () => {
+    server.use(
+      http.get(DETAIL_URL, async () => {
+        await delay(100);
+        return HttpResponse.json(specRejectAndResubmitDetail);
+      }),
+    );
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    // Scan the synchronous first paint (loading skeletons).
+    expect(region()).toHaveAttribute('data-run-context-state', 'loading');
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — default (populated) state has no axe violations', async () => {
+    server.use(detailResponse(specRejectAndResubmitDetail));
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'default'));
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — partial-context state has no axe violations', async () => {
+    server.use(
+      detailResponse({
+        workflowRunId: RUN_ID,
+        currentState: 'Executing',
+        currentActorIdentity: 'Codex Runner',
+        currentActorType: 'agent',
+        escalationMarker: false,
+        lastEventAt: '2026-05-30T12:00:00Z',
+        lastActivityTimestamp: '2026-05-30T12:00:00Z',
+      }),
+    );
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() =>
+      expect(region()).toHaveAttribute('data-run-context-state', 'partial-context'),
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — stale state has no axe violations', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-05-30T13:00:00Z'));
+    server.use(detailResponse(specRejectAndResubmitDetail));
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'stale'));
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — error state has no axe violations', async () => {
+    server.use(
+      http.get(
+        DETAIL_URL,
+        () =>
+          new HttpResponse(
+            JSON.stringify({ status: 500, code: 'INTERNAL_ERROR', retryable: true, title: 'x' }),
+            { status: 500, headers: { 'content-type': 'application/problem+json' } },
+          ),
+      ),
+    );
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'error'));
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — escalation marker renders without axe violations', async () => {
+    server.use(detailResponse({ ...specRejectAndResubmitDetail, escalationMarker: true }));
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'default'));
+    await expectNoA11yViolations(container);
   });
 });

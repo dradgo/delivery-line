@@ -28,6 +28,15 @@ import { ErrorState } from '@/components/feedback';
 import { SafeMarkdownRenderer } from '@/lib/sanitization';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import {
+  decisionOptionsLoadFailed,
+  decisionRecorded,
+  decisionStale,
+  decisionSubmitFailed,
+  specApproved,
+  specRejected,
+} from '@/lib/a11y/announcements';
+import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
 
 import {
   ARTIFACT_UNAVAILABLE_REASON,
@@ -235,14 +244,31 @@ export function ApprovalDecisionBar({
     rejectTriggerRef.current?.focus();
   };
 
-  // AC10 — announce stale/error transitions through a single ARIA live region.
-  const announcement = showLoadError
-    ? 'The decision options could not be loaded. Refresh to try again.'
+  // AC10 / story 2.25 AC5+AC7 — announce decision-lifecycle transitions through a
+  // single polite live region, sourcing every string from the shared vocabulary.
+  // Success now announces the recorded outcome (the 2.19 decision-outcome gap),
+  // not only the visual summary.
+  const announcementText = showLoadError
+    ? decisionOptionsLoadFailed
     : state === 'stale'
-      ? 'This view is out of date. Refresh to review the latest version before deciding.'
+      ? decisionStale(
+          'This view is out of date.',
+          'Refresh to review the latest version before deciding.',
+        )
       : state === 'error'
-        ? 'The decision could not be submitted.'
-        : '';
+        ? decisionSubmitFailed
+        : state === 'success'
+          ? view.lastDecision !== undefined
+            ? view.lastDecision.decision === 'approved'
+              ? specApproved
+              : specRejected
+            : // Decision settled but the resolved outcome isn't repopulated yet —
+              // announce the generic recorded message rather than going silent.
+              decisionRecorded
+          : '';
+  // Deferred so a mount-time error/success (present at first render) is still
+  // announced as a change, not swallowed as the region's initial content (AC5).
+  const announcement = useLiveAnnouncement(announcementText);
 
   function renderSpecApproval() {
     switch (state) {

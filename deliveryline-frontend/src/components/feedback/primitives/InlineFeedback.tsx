@@ -154,7 +154,8 @@ export function InlineFeedback({
           onClick={onDismiss}
           aria-label="Dismiss"
           data-inline-feedback-dismiss
-          className="-mr-1 -mt-1 shrink-0 rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          // Story 2.25 (AC10) — 44px touch-target floor on this icon-only control.
+          className="-mr-1 -mt-1 inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
         >
           <X className="size-4" aria-hidden />
         </button>

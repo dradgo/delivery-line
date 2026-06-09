@@ -31,6 +31,14 @@ import type { WorkflowListFilters } from '@/lib/queryKeys/workflowKeys';
 import { isValidRunId } from '@/lib/routing/publicId';
 import { validateUrlScheme } from '@/lib/sanitization';
 
+import {
+  queueEmpty,
+  queueFilteredEmpty,
+  queueLoaded,
+  queueLoading,
+} from '@/lib/a11y/announcements';
+import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
+
 import { useWorkflowsList } from './hooks/useWorkflowsList';
 import { queueErrorMessage } from './queueErrorMessage';
 import {
@@ -57,21 +65,26 @@ function hasActiveFilters(filters: WorkflowListFilters): boolean {
 }
 
 /**
- * The documented per-state live-region announcement (AC8). Worded to NOT repeat
- * `<ErrorState>`'s own polite message verbatim (Trap T10 / OQ-3).
+ * The documented per-state live-region announcement (AC8). Text is sourced from
+ * the shared announcement vocabulary (story 2.25 AC7), never inlined.
+ *
+ * Story 2.25 (AC5) live-region duplication reconciliation: the `error` state
+ * returns `''` — the composed `<ErrorState>` carries its own polite region, so
+ * the shell announcer stays silent on error to avoid two regions speaking the
+ * same failure (the 2.20 shell↔ErrorState double-announcement gap).
  */
 function announcementFor(state: QueueState, count: number): string {
   switch (state) {
     case 'loading':
-      return 'Loading the review queue';
+      return queueLoading;
     case 'empty':
-      return 'Review queue is empty';
+      return queueEmpty;
     case 'filtered-empty':
-      return 'No runs match the current filters';
+      return queueFilteredEmpty;
     case 'error':
-      return 'Failed to load the review queue — retry available';
+      return '';
     case 'populated':
-      return `Review queue loaded: ${count} ${count === 1 ? 'run' : 'runs'} available`;
+      return queueLoaded(count);
     default:
       return '';
   }
@@ -174,6 +187,11 @@ export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueSh
     onClearFilters?.();
   };
 
+  // AC5 — defer the announcement by one commit so even the cold-load "Loading…"
+  // message (present at mount) is announced as a change, not swallowed as the
+  // region's initial content (the 2.20 cold-load skeleton silence gap).
+  const announcement = useLiveAnnouncement(announcementFor(state, items.length));
+
   return (
     <div className="flex flex-col gap-4" data-queue-state={state}>
       {/* AC1 (story 2a.1) — a persistent entry point to the submit form, reachable
@@ -189,7 +207,7 @@ export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueSh
 
       {/* AC8 — single visually-hidden polite announcer for the active state. */}
       <div role="status" aria-live="polite" className="sr-only" data-testid="queue-announcer">
-        {announcementFor(state, items.length)}
+        {announcement}
       </div>
 
       {state === 'loading' ? (

@@ -8,6 +8,7 @@
 import { render, screen, cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import {
   implementationPlanArtifactView,
   prOutputArtifactView,
@@ -39,5 +40,41 @@ describe('PrOutputArtifactRenderer (stub)', () => {
     );
     expect(container.querySelector('[data-component="metadata-chrome"]')).not.toBeNull();
     expect(container.querySelector('[data-component="safe-markdown"]')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 2.25 a11y — axe scans for both stub renderers.
+// Non-interactive widgets — axe-only (no keyboard tests required).
+// ---------------------------------------------------------------------------
+describe('ImplementationPlanArtifactRenderer a11y (story 2.25)', () => {
+  it('AC2 — with body content has no axe violations', async () => {
+    const { container } = render(
+      <ImplementationPlanArtifactRenderer artifact={implementationPlanArtifactView} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — with empty body has no axe violations', async () => {
+    const { container } = render(
+      <ImplementationPlanArtifactRenderer
+        artifact={{ ...implementationPlanArtifactView, body: '' }}
+      />,
+    );
+    await expectNoA11yViolations(container);
+  });
+});
+
+describe('PrOutputArtifactRenderer a11y (story 2.25)', () => {
+  it('AC2 — with body content has no axe violations', async () => {
+    const { container } = render(<PrOutputArtifactRenderer artifact={prOutputArtifactView} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — with empty body has no axe violations', async () => {
+    const { container } = render(
+      <PrOutputArtifactRenderer artifact={{ ...prOutputArtifactView, body: '' }} />,
+    );
+    await expectNoA11yViolations(container);
   });
 });

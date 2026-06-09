@@ -14,6 +14,9 @@ import type * as ReactRouter from '@tanstack/react-router';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import userEvent from '@testing-library/user-event';
+
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import type { RunQueueRow } from '../../runQueueRow';
 import { toRunQueueRow } from '../../runQueueRow';
 import { specRejectAndResubmitSummary } from '@/test/fixtures/runQueue/specRejectAndResubmit';
@@ -234,6 +237,92 @@ describe('RunReviewQueueItem — variants (AC4/OQ-4)', () => {
       'Operator view — available in Epic 4',
     );
     expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 2.25 a11y — axe scans of every documented queue-item state + keyboard.
+// ---------------------------------------------------------------------------
+describe('RunReviewQueueItem a11y (story 2.25)', () => {
+  it('AC2 — default (navigable) state has no axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={BASE_ROW} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — selected state has no axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={BASE_ROW} selected />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — unread state has no axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={BASE_ROW} unread />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — blocked state has no axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={{ ...BASE_ROW, blockerCount: 2 }} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — stale state has no axe violations', async () => {
+    const { container } = render(
+      <RunReviewQueueItem run={{ ...BASE_ROW, staleIndicator: true }} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — disabled (inert) state has no axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={BASE_ROW} disabled />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — operator variant has no axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={BASE_ROW} variant="operator" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — multiple attention signals (primary + secondary cluster) has no axe violations', async () => {
+    const { container } = render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, blockerCount: 1, escalationMarker: true, openQuestionCount: 2 }}
+      />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  // AC1 — keyboard: the navigable row is a real <a> (via Link mock), Tab-reachable,
+  // and activates on Enter (native anchor) and Space (Trap T8 handler).
+  it('AC1 — navigable row is Tab-reachable', async () => {
+    const user = userEvent.setup();
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    await user.tab();
+    expect(document.activeElement).toBe(row());
+  });
+
+  it('AC1 — navigable row activates on Enter (logs queueItem.open)', async () => {
+    const user = userEvent.setup();
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    await user.tab();
+    expect(document.activeElement).toBe(row());
+    await user.keyboard('{Enter}');
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'queueItem.open' }));
+  });
+
+  it('AC1 — navigable row activates on Space (logs queueItem.open)', async () => {
+    const user = userEvent.setup();
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    await user.tab();
+    expect(document.activeElement).toBe(row());
+    await user.keyboard(' ');
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'queueItem.open' }));
+  });
+
+  it('AC1 — disabled row is NOT in the tab order', async () => {
+    const user = userEvent.setup();
+    render(<RunReviewQueueItem run={BASE_ROW} disabled />);
+    await user.tab();
+    // Nothing focusable — focus stays on body / wraps outside the row.
+    expect(document.activeElement).not.toBe(row());
   });
 });
 

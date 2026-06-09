@@ -1,8 +1,11 @@
 /**
  * Story 2.21 (AC3, AC8) — `<ActionLifecycleIndicator>` + `resolveLifecyclePosition`.
+ * Story 2.25 (Task 2, AC2) — axe WCAG-2.1-AA scans across all lifecycle positions.
  */
 import { render, screen, cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 import { ActionLifecycleIndicator } from '../ActionLifecycleIndicator';
 import {
@@ -128,5 +131,46 @@ describe('ActionLifecycleIndicator', () => {
     expect(() => resolveLifecyclePosition(['queued', 'running', 'running'], 'running')).toThrow(
       'Lifecycle stages must be unique: running',
     );
+  });
+});
+
+// Story 2.25 (Task 2, AC2) — axe WCAG-2.1-AA scan of every documented lifecycle
+// position (not-started, each on-chain stage, and an off-chain terminal).
+// ActionLifecycleIndicator is purely presentational (a labelled ordered list with
+// no interactive controls), so there is no keyboard test — the indicator exposes
+// no activatable affordance and cannot receive Tab focus.
+describe('ActionLifecycleIndicator a11y (story 2.25)', () => {
+  it('AC2 — not-started (empty currentStage) has no axe violations', async () => {
+    const { container } = render(<ActionLifecycleIndicator currentStage="" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it.each(DEFAULT_LIFECYCLE_STAGES)(
+    'AC2 — on-chain stage "%s" has no axe violations',
+    async (stage) => {
+      const { container } = render(<ActionLifecycleIndicator currentStage={stage} />);
+      await expectNoA11yViolations(container);
+    },
+  );
+
+  it('AC2 — off-chain terminal "failed" has no axe violations', async () => {
+    const { container } = render(<ActionLifecycleIndicator currentStage="failed" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — off-chain terminal "superseded" has no axe violations', async () => {
+    const { container } = render(<ActionLifecycleIndicator currentStage="superseded" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — custom stage chain with ariaLabel override has no axe violations', async () => {
+    const { container } = render(
+      <ActionLifecycleIndicator
+        stages={['queued', 'running', 'done']}
+        currentStage="running"
+        ariaLabel="Pipeline progress: running"
+      />,
+    );
+    await expectNoA11yViolations(container);
   });
 });

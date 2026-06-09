@@ -6,8 +6,10 @@
  */
 import { useState } from 'react';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { ConfirmationDialog, type ConfirmationDialogProps } from '../ConfirmationDialog';
 import type { OverlayIntent } from '../overlayPresentation';
 
@@ -128,5 +130,60 @@ describe('ConfirmationDialog', () => {
       onConfirm: () => undefined,
     };
     expect(props).toBeDefined();
+  });
+});
+
+describe('ConfirmationDialog a11y (story 2.25)', () => {
+  // axe scans of the portaled OPEN content (scan document.body, not container).
+  it('AC2 — danger (destructive) open state has no axe violations', async () => {
+    render(<Harness intent="danger" />);
+    fireEvent.click(screen.getByTestId('trigger'));
+    await screen.findByRole('dialog');
+    await expectNoA11yViolations(document.body);
+  });
+
+  it('AC2 — info open state has no axe violations', async () => {
+    render(<Harness intent="info" />);
+    fireEvent.click(screen.getByTestId('trigger'));
+    await screen.findByRole('dialog');
+    await expectNoA11yViolations(document.body);
+  });
+
+  it('AC1 — focus moves into the dialog on open', async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('trigger'));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+  });
+
+  it('AC1 — confirm and cancel are Tab-reachable and activate via keyboard', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<Harness onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByTestId('trigger'));
+    await screen.findByRole('dialog');
+
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const confirm = screen.getByRole('button', { name: 'Reject' });
+
+    // Both actions are focusable controls (Radix traps Tab within the dialog).
+    cancel.focus();
+    expect(cancel).toHaveFocus();
+    await user.tab();
+    expect(confirm).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC1 — Escape closes the dismissible dialog and returns focus to the trigger', async () => {
+    render(<Harness />);
+    const trigger = screen.getByTestId('trigger');
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole('dialog');
+
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });

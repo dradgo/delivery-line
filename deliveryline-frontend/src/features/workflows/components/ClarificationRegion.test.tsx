@@ -7,8 +7,10 @@
  * `<ErrorState>` only when `loadState='error'`) is mocked at its own module (T7).
  */
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import {
   acceptedClarification,
   answeredClarification,
@@ -309,6 +311,36 @@ describe('ClarificationRegion — accessibility (AC7)', () => {
     expect(live).toHaveTextContent(/Accepted/i);
     expect(onLifecycleAdvance).toHaveBeenCalledWith(base.clarificationId, 'accepted');
   });
+
+  it('AC5/AC7 — announces the COUNT when multiple clarifications advance at once (story 2.25)', () => {
+    const onLifecycleAdvance = vi.fn();
+    const a = { ...answeredClarification, clarificationId: 'c-a', status: 'answered' as const };
+    const b = { ...answeredClarification, clarificationId: 'c-b', status: 'answered' as const };
+    const { rerender } = render(
+      <ClarificationRegion
+        view={{ clarifications: [a, b] }}
+        onLifecycleAdvance={onLifecycleAdvance}
+      />,
+    );
+    const live = screen.getByTestId('clarification-live-region');
+
+    // Both advance in the SAME update — the old code announced only the last-in-array.
+    rerender(
+      <ClarificationRegion
+        view={{
+          clarifications: [
+            { ...a, status: 'accepted' },
+            { ...b, status: 'accepted' },
+          ],
+        }}
+        onLifecycleAdvance={onLifecycleAdvance}
+      />,
+    );
+    expect(live).toHaveTextContent('2 clarifications updated');
+    // Each advance is reported (field-only logging), not just the last one.
+    expect(onLifecycleAdvance).toHaveBeenCalledWith('c-a', 'accepted');
+    expect(onLifecycleAdvance).toHaveBeenCalledWith('c-b', 'accepted');
+  });
 });
 
 describe('ClarificationRegion — compact variant (AC4)', () => {
@@ -326,5 +358,101 @@ describe('ClarificationRegion — accepted state chip', () => {
     render(<ClarificationRegion view={{ clarifications: [acceptedClarification] }} />);
     expect(singleRowState()).toBe('accepted');
     expect(screen.getByText('Accepted')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Story 2.25 (Task 2 — AC1/AC2). The region is a labeled `<section>` with a `listbox`
+ * of question `option`s (roving focus via arrow keys) and a detail panel with an answer
+ * control. Every documented state is axe-scanned; the question list + answer flow are
+ * exercised for keyboard operability.
+ */
+describe('ClarificationRegion a11y (story 2.25)', () => {
+  // AC2 — every documented region state. Terminal-only views are scanned with the
+  // disclosure expanded so the collapsed rows are also in the scanned subtree.
+  it('AC2 — the empty state has no axe violations', async () => {
+    const { container } = render(<ClarificationRegion view={emptyView} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the loading state has no axe violations', async () => {
+    const { container } = render(<ClarificationRegion view={emptyView} loadState="loading" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the error state has no axe violations', async () => {
+    const { container } = render(
+      <ClarificationRegion view={emptyView} loadState="error" onRetry={vi.fn()} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it.each([
+    ['open', openView] as const,
+    ['answered (detail + separated answers)', answeredView] as const,
+    ['incorporated', incorporatedView] as const,
+    ['multi-question (grouped + disclosure + gate)', multiQuestionView] as const,
+  ])('AC2 — populated state "%s" has no axe violations', async (_name, view) => {
+    const { container } = render(<ClarificationRegion view={view as ClarificationsView} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — a terminal (superseded) state with the disclosure expanded + detail open has no axe violations', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ClarificationRegion view={supersededView} />);
+    await user.click(screen.getByTestId('clarification-terminal-toggle'));
+    await user.click(screen.getByRole('option'));
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the selected-question detail with the answer input open has no axe violations', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ClarificationRegion view={openView} />);
+    await user.click(screen.getByRole('option'));
+    expect(screen.getByTestId('clarification-answer-input')).toBeInTheDocument();
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the compact variant has no axe violations', async () => {
+    const { container } = render(
+      <ClarificationRegion view={multiQuestionView} variant="compact" />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC1 — a question option is reachable by Tab/arrow keys and selects on Enter, revealing the answer input', async () => {
+    const user = userEvent.setup();
+    render(<ClarificationRegion view={openView} />);
+    const option = screen.getByRole('option');
+    // The single open question row is in the natural Tab order.
+    await user.tab();
+    expect(document.activeElement).toBe(option);
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('clarification-answer-input')).toBeInTheDocument();
+  });
+
+  it('AC1 — the answer flow is fully keyboard-operable (type + Tab to submit + Enter)', async () => {
+    const user = userEvent.setup();
+    const onSubmitAnswer = vi.fn();
+    render(<ClarificationRegion view={openView} onSubmitAnswer={onSubmitAnswer} />);
+    await user.click(screen.getByRole('option'));
+
+    const input = screen.getByTestId('clarification-answer-input');
+    input.focus();
+    await user.keyboard('Paginate the export.');
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByTestId('clarification-submit'));
+    await user.keyboard('{Enter}');
+    expect(onSubmitAnswer).toHaveBeenCalledWith('cla_open0001', 'Paginate the export.');
+  });
+
+  it('AC1 — the terminal disclosure toggle is keyboard-operable (Enter expands)', async () => {
+    const user = userEvent.setup();
+    render(<ClarificationRegion view={multiQuestionView} />);
+    const toggle = screen.getByTestId('clarification-terminal-toggle');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    toggle.focus();
+    await user.keyboard('{Enter}');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 });

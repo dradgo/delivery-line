@@ -236,6 +236,11 @@ export function ErrorState({
       ref={containerRef}
       tabIndex={-1}
       variant="default"
+      // Story 2.25 (AC5) — resolve the role/aria-live contradiction (2.22 defer):
+      // `passive` is a non-interrupting status (role="status" + polite); `active`
+      // is a user-triggered failure that may interrupt (role="alert" + assertive).
+      // The shadcn <Alert> hardcodes role="alert"; this prop override wins.
+      role={urgency === 'active' ? 'alert' : 'status'}
       aria-live={urgency === 'active' ? 'assertive' : 'polite'}
       className={cn('max-w-prose', toneClass, className)}
       data-testid="error-state"

@@ -121,6 +121,20 @@
 							<arguments>run check:contrast</arguments>
 						</configuration>
 					</execution>
+					<!-- Story 2.25 (AC7/AC12) — announcement-vocabulary discipline gate:
+					     every aria-live region sources its text from the shared
+					     vocabulary. Runs on the enforced Maven/CI path alongside the
+					     other check:* gates. -->
+					<execution>
+						<id>npm-run-check-a11y</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run check:a11y</arguments>
+						</configuration>
+					</execution>
 					<!-- Story 2.4 (Q2) — typography/spacing/focus token-presence gate
 					     (required tokens exist + well-shaped + .prose readability),
 					     on the enforced Maven/CI path alongside check:contrast. -->

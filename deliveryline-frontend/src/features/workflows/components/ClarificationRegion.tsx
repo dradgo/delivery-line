@@ -31,6 +31,7 @@ import {
 } from '@/lib/sanitization';
 import { cn } from '@/lib/utils';
 import { densityGap, type Density } from '@/lib/density';
+import { clarificationAdvanced, clarificationsAdvanced } from '@/lib/a11y/announcements';
 
 import {
   LIFECYCLE_STAGES,
@@ -459,9 +460,16 @@ function CompactSummary({
 
 /**
  * Announce status transitions through an ARIA live region (AC7). Diffs each
- * clarification's status across renders and announces the latest advance; also calls
- * `onLifecycleAdvance` so the container can log it (field-only). Returns the live
- * message to render into a polite live region.
+ * clarification's status across renders and announces EVERY advance in the update,
+ * not only the last-in-array (story 2.25 — closes the 2.18 "single latest slot"
+ * multiple-simultaneous-advance gap); also calls `onLifecycleAdvance` for each so
+ * the container can log it (field-only). Announcement text is sourced from the
+ * shared vocabulary (AC7). Returns the live message for a polite live region.
+ *
+ * The `setAnnouncement`-in-effect pattern is inherently first-render-safe: the
+ * region mounts holding `''` and only changes once a real transition is observed,
+ * so the change is announced (AC5) and pre-existing clarifications are not
+ * re-announced on mount.
  */
 function useLifecycleAnnouncements(
   view: ClarificationsView,
@@ -472,19 +480,25 @@ function useLifecycleAnnouncements(
 
   useEffect(() => {
     const next = new Map<string, ClarificationLifecycleStatus>();
-    let latest: ClarificationView | null = null;
+    const advanced: ClarificationView[] = [];
     for (const clarification of view.clarifications) {
       next.set(clarification.clarificationId, clarification.status);
       const prior = previousStatuses.current.get(clarification.clarificationId);
       if (prior !== undefined && prior !== clarification.status) {
-        latest = clarification;
+        advanced.push(clarification);
       }
     }
     previousStatuses.current = next;
-    if (latest !== null) {
-      const label = clarificationItemSignifier(resolveClarificationItemState(latest)).label;
-      setAnnouncement(`Clarification ${label}`);
-      onLifecycleAdvance?.(latest.clarificationId, latest.status);
+    if (advanced.length === 1) {
+      const only = advanced[0]!;
+      const label = clarificationItemSignifier(resolveClarificationItemState(only)).label;
+      setAnnouncement(clarificationAdvanced(label));
+      onLifecycleAdvance?.(only.clarificationId, only.status);
+    } else if (advanced.length > 1) {
+      setAnnouncement(clarificationsAdvanced(advanced.length));
+      for (const clarification of advanced) {
+        onLifecycleAdvance?.(clarification.clarificationId, clarification.status);
+      }
     }
   }, [view, onLifecycleAdvance]);
 
@@ -629,7 +643,11 @@ export function ClarificationRegion({
           </p>
         ) : null}
 
-        {/* Question list — open first, then pending; terminal collapsed by default (AC2). */}
+        {/* Question list — open first, then pending; terminal collapsed by default (AC2).
+            The `listbox` role admits ONLY `option` children (story 2.25 AC4 /
+            aria-required-children), so the disclosure TOGGLE lives OUTSIDE the listbox —
+            the collapsed `option` rows still render inside it when expanded so arrow-key
+            roving navigation reaches them. */}
         <div
           role="listbox"
           aria-label="Clarification questions"
@@ -646,30 +664,29 @@ export function ClarificationRegion({
             />
           ))}
 
-          {collapsed.length > 0 ? (
-            <>
-              <button
-                type="button"
-                data-testid="clarification-terminal-toggle"
-                aria-expanded={showTerminal}
-                onClick={() => setShowTerminal((open) => !open)}
-                className="self-start rounded-md px-1 py-0.5 text-xs text-text-tertiary hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
-              >
-                {showTerminal ? 'Hide' : 'Show'} resolved ({collapsed.length})
-              </button>
-              {showTerminal
-                ? collapsed.map((clarification) => (
-                    <QuestionRow
-                      key={clarification.clarificationId}
-                      view={clarification}
-                      selected={clarification.clarificationId === selectedId}
-                      onSelect={() => select(clarification.clarificationId)}
-                    />
-                  ))
-                : null}
-            </>
-          ) : null}
+          {collapsed.length > 0 && showTerminal
+            ? collapsed.map((clarification) => (
+                <QuestionRow
+                  key={clarification.clarificationId}
+                  view={clarification}
+                  selected={clarification.clarificationId === selectedId}
+                  onSelect={() => select(clarification.clarificationId)}
+                />
+              ))
+            : null}
         </div>
+
+        {collapsed.length > 0 ? (
+          <button
+            type="button"
+            data-testid="clarification-terminal-toggle"
+            aria-expanded={showTerminal}
+            onClick={() => setShowTerminal((open) => !open)}
+            className="self-start rounded-md px-1 py-0.5 text-xs text-text-tertiary hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          >
+            {showTerminal ? 'Hide' : 'Show'} resolved ({collapsed.length})
+          </button>
+        ) : null}
 
         {/* Selected-question detail dominates the detail area (AC8). */}
         {selected !== undefined ? (

@@ -16,12 +16,14 @@ import {
   createRouter,
 } from '@tanstack/react-router';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PROBLEM_JSON_CONTENT_TYPE } from '@/lib/api/problemDetails';
 import { NavigationBreadcrumbProvider } from '@/lib/navigation/NavigationBreadcrumbProvider';
 import { server } from '@/test/server';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { SubmitRunForm } from './SubmitRunForm';
 
 const SUBMIT_URL = 'http://localhost/api/v1/workflows/submit-workflow';
@@ -250,6 +252,92 @@ describe('SubmitRunForm — failure surface via ProblemDetails (AC7/AC8c)', () =
     const errorSurface = await screen.findByTestId('submit-error');
     expect(errorSurface).toHaveAttribute('data-error-code', 'IDEMPOTENCY_KEY_CONFLICT');
     expect(errorSurface).toHaveTextContent(/already submitted/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 2.25 a11y — axe scans of every documented form state + keyboard.
+// ---------------------------------------------------------------------------
+describe('SubmitRunForm a11y (story 2.25)', () => {
+  it('AC2 — pristine (idle) form has no axe violations', async () => {
+    const { container } = renderForm();
+    await screen.findByLabelText('Linear ticket reference');
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — invalid (blocked, per-field errors shown) state has no axe violations', async () => {
+    const { container } = renderForm();
+    await screen.findByTestId('submit-run-button');
+    // Trigger validation display by clicking submit with blank fields.
+    fireEvent.click(screen.getByTestId('submit-run-button'));
+    await screen.findByText(/Linear ticket reference is required/i);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — success state has no axe violations', async () => {
+    server.use(
+      http.post(SUBMIT_URL, () =>
+        HttpResponse.json({ workflowRunId: 'run_a11y_001', currentState: 'Inbox' }),
+      ),
+    );
+    const { container } = renderForm();
+    await screen.findByLabelText('Linear ticket reference');
+    fillRequired();
+    fireEvent.click(screen.getByTestId('submit-run-button'));
+    await screen.findByTestId('submit-success');
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — error (failed submission) state has no axe violations', async () => {
+    server.use(http.post(SUBMIT_URL, () => problem('LINEAR_TICKET_NOT_FOUND', 404)));
+    const { container } = renderForm();
+    await screen.findByLabelText('Linear ticket reference');
+    fillRequired();
+    fireEvent.click(screen.getByTestId('submit-run-button'));
+    await screen.findByTestId('submit-error');
+    await expectNoA11yViolations(container);
+  });
+
+  // AC1 — keyboard: all fields Tab-reachable in DOM order; submit button reachable
+  // and activatable. The Radix Select also renders a hidden <select aria-hidden="true">
+  // as a native fallback — expectTabReachesAll would pick it up erroneously, so we
+  // drive Tab manually through the visible controls instead.
+  it('AC1 — visible form controls are Tab-reachable in order', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await screen.findByLabelText('Linear ticket reference');
+
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByLabelText('Linear ticket reference'));
+
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByLabelText('Actor identity'));
+
+    // The Radix SelectTrigger receives focus (the aria-hidden native <select> is skipped by userEvent).
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Actor type' }));
+
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByLabelText('Correlation id (optional)'));
+
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByTestId('submit-run-button'));
+  });
+
+  it('AC1 — submit button is keyboard-activatable and triggers validation', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await screen.findByTestId('submit-run-button');
+    // Tab to submit button (last tabbable element).
+    await user.tab(); // linearTicketReference
+    await user.tab(); // actorIdentity
+    await user.tab(); // actorType trigger
+    await user.tab(); // correlationId
+    await user.tab(); // submit button
+    expect(document.activeElement).toBe(screen.getByTestId('submit-run-button'));
+    await user.keyboard('{Enter}');
+    // Blank fields → validation fires (no network call needed).
+    expect(await screen.findByText(/Linear ticket reference is required/i)).toBeInTheDocument();
   });
 });
 

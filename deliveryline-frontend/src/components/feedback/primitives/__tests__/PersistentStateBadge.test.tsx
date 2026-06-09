@@ -1,8 +1,12 @@
 /**
  * Story 2.21 (AC1, AC4, AC6) — `<PersistentStateBadge>`.
+ * Story 2.25 (Task 2, AC2) — axe WCAG-2.1-AA scans across all StateName values.
  */
 import { render, screen, cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+
+import { expectNoA11yViolations } from '@/test/a11y/axe';
+import { STATE_NAMES } from '@/lib/state-signifiers';
 
 import { PersistentStateBadge } from '../PersistentStateBadge';
 import { PERSISTENT_BADGE_FIXTURES } from '@/test/fixtures/feedback/feedbackFixtures';
@@ -79,5 +83,33 @@ describe('PersistentStateBadge', () => {
     expect(badge).toHaveAttribute('title', 'Decision recorded');
     // It is a static element — present immediately and not portaled to <body>.
     expect(document.body.querySelector(':scope > [data-persistent-state-badge]')).toBeNull();
+  });
+});
+
+// Story 2.25 (Task 2, AC2) — axe WCAG-2.1-AA scan of every documented StateName.
+// PersistentStateBadge is purely presentational (a status/alert live region with
+// no interactive controls), so there is no keyboard test — the badge cannot
+// receive Tab focus and exposes no activatable affordance.
+describe('PersistentStateBadge a11y (story 2.25)', () => {
+  it.each(STATE_NAMES)('AC2 — state "%s" (default label) has no axe violations', async (state) => {
+    const { container } = render(<PersistentStateBadge state={state} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — state "success" with label override has no axe violations', async () => {
+    const { container } = render(<PersistentStateBadge state="success" label="Approved" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — state "error" with empty label (fallback to canonical) has no axe violations', async () => {
+    const { container } = render(<PersistentStateBadge state="error" label="" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — with tooltip title attribute has no axe violations', async () => {
+    const { container } = render(
+      <PersistentStateBadge state="stale" title="Superseded by a newer run" />,
+    );
+    await expectNoA11yViolations(container);
   });
 });

@@ -7,8 +7,10 @@
  * structured logging with an exact-key-set negative assertion (never answer text).
  */
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { ProblemDetailsError, toProblemDetails } from '@/lib/api/problemDetails';
 import { openView } from '@/test/fixtures/clarification/clarificationViewFixtures';
 
@@ -196,5 +198,61 @@ describe('ClarificationRegionContainer', () => {
       expect(region).not.toBeNull();
       expect(document.activeElement).toBe(region);
     });
+  });
+});
+
+/**
+ * Story 2.25 (Task 2 — AC1/AC2) — a11y over the container's mapped states (disabled
+ * read stub → empty; mocked populated data; mocked error). Scans the rendered region
+ * for WCAG 2.1 AA violations and asserts the live submit flow stays keyboard-operable.
+ */
+describe('ClarificationRegionContainer a11y (story 2.25)', () => {
+  it('AC2 — the mapped empty state (disabled stub) has no axe violations', async () => {
+    mockUseClarifications.mockReturnValue(fakeReadQuery());
+    mockUseSubmitClarification.mockReturnValue(fakeSubmit());
+    const { container } = render(<ClarificationRegionContainer workflowRunId="run_clr_demo_001" />);
+    expect(screen.getByTestId('clarification-region')).toHaveAttribute(
+      'data-clarification-region-state',
+      'empty',
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the populated state (mocked read) has no axe violations', async () => {
+    mockUseClarifications.mockReturnValue(fakeReadQuery({ data: openView }));
+    mockUseSubmitClarification.mockReturnValue(fakeSubmit());
+    const { container } = render(<ClarificationRegionContainer workflowRunId="run_clr_demo_001" />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the error state (mocked read failure) has no axe violations', async () => {
+    const problem = new ProblemDetailsError(
+      toProblemDetails({ code: 'INTERNAL_ERROR', status: 500 }, 500),
+    );
+    mockUseClarifications.mockReturnValue(fakeReadQuery({ isError: true, error: problem }));
+    mockUseSubmitClarification.mockReturnValue(fakeSubmit());
+    const { container } = render(<ClarificationRegionContainer workflowRunId="run_clr_demo_001" />);
+    expect(screen.getByTestId('clarification-region')).toHaveAttribute(
+      'data-clarification-region-state',
+      'error',
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC1 — the wired submit flow is keyboard-operable end to end', async () => {
+    const mutate = vi.fn();
+    mockUseClarifications.mockReturnValue(fakeReadQuery({ data: openView }));
+    mockUseSubmitClarification.mockReturnValue(fakeSubmit({ mutate }));
+    const user = userEvent.setup();
+    render(<ClarificationRegionContainer workflowRunId="run_clr_demo_001" />);
+
+    await user.click(screen.getByRole('option'));
+    const input = screen.getByTestId('clarification-answer-input');
+    input.focus();
+    await user.keyboard('Paginate the export.');
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByTestId('clarification-submit'));
+    await user.keyboard('{Enter}');
+    expect(mutate).toHaveBeenCalledTimes(1);
   });
 });

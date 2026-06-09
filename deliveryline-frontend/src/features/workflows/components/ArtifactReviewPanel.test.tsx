@@ -14,8 +14,10 @@
  */
 import type { ReactNode } from 'react';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { ProblemDetailsError, toProblemDetails } from '@/lib/api/problemDetails';
 import {
   implementationPlanArtifactView,
@@ -311,5 +313,67 @@ describe('ArtifactReviewPanel — fixture-stream dispatch (AC12)', () => {
 
     rerender(<ArtifactReviewPanel state="default" artifact={prOutputArtifactView} />);
     expect(screen.getByTestId('pr-output-artifact-renderer')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Story 2.25 (Task 2 — AC1/AC2). The panel is a labeled `<section>` ("Artifact
+ * review") that dispatches one of its documented states. Every state is scanned for
+ * WCAG 2.1 AA violations; the interactive states (error Retry, default spec content)
+ * are exercised for keyboard operability.
+ */
+describe('ArtifactReviewPanel a11y (story 2.25)', () => {
+  // AC2 — non-content states (no resolved artifact needed).
+  it.each(['loading', 'empty'] as const)(
+    'AC2 — state "%s" has no axe violations',
+    async (state) => {
+      const { container } = render(<ArtifactReviewPanel state={state} />);
+      await expectNoA11yViolations(container);
+    },
+  );
+
+  it('AC2 — the error state has no axe violations', async () => {
+    const { container } = render(<ArtifactReviewPanel state="error" onRetry={vi.fn()} />);
+    await expectNoA11yViolations(container);
+  });
+
+  // AC2 — content + banner states render a resolved spec artifact.
+  it.each([
+    ['default', specArtifactView] as const,
+    ['stale', { ...specArtifactView, stale: true }] as const,
+    ['superseded', { ...specArtifactView, superseded: true }] as const,
+    ['incomplete', { ...specArtifactView, truncated: true }] as const,
+  ])('AC2 — content state "%s" has no axe violations', async (state, artifact) => {
+    const { container } = render(
+      <ArtifactReviewPanel state={state} artifact={artifact as ArtifactView} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — the unsupported-artifact fallback has no axe violations', async () => {
+    const unknown = { ...specArtifactView, artifactType: 'mysteryType' } as unknown as ArtifactView;
+    const { container } = render(<ArtifactReviewPanel state="default" artifact={unknown} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC1 — the error-state Retry is Tab-reachable and activates on Enter', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(<ArtifactReviewPanel state="error" onRetry={onRetry} />);
+    const retry = screen.getByRole('button', { name: 'Try again' });
+    await user.tab();
+    expect(document.activeElement).toBe(retry);
+    await user.keyboard('{Enter}');
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC1 — the disabled "View latest" affordance on a stale banner is NOT in the Tab order', async () => {
+    const user = userEvent.setup();
+    render(<ArtifactReviewPanel state="stale" artifact={{ ...specArtifactView, stale: true }} />);
+    // First Tab lands on the first enabled control (a spec section anchor / region
+    // entry-point), never the disabled "View latest" button (which is excluded).
+    await user.tab();
+    expect(document.activeElement).not.toBe(screen.getByTestId('artifact-view-latest'));
+    expect(screen.getByTestId('artifact-view-latest')).toBeDisabled();
   });
 });

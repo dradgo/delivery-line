@@ -10,6 +10,8 @@ import noUntypedLoadingState from './no-untyped-loading-state.js';
 import noWorkflowToastSuccess from './no-workflow-toast-success.js';
 import singlePrimaryAction from './single-primary-action.js';
 import noConfirmationForNavigation from './no-confirmation-for-navigation.js';
+import noBareActorRoleText from './no-bare-actor-role-text.js';
+import noRoleBasedActionGating from './no-role-based-action-gating.js';
 
 /** @type {import('eslint').ESLint.Plugin} */
 const plugin = {
@@ -22,6 +24,8 @@ const plugin = {
     'no-workflow-toast-success': noWorkflowToastSuccess,
     'single-primary-action': singlePrimaryAction,
     'no-confirmation-for-navigation': noConfirmationForNavigation,
+    'no-bare-actor-role-text': noBareActorRoleText,
+    'no-role-based-action-gating': noRoleBasedActionGating,
   },
 };
 

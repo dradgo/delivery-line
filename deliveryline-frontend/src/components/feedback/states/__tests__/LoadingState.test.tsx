@@ -5,6 +5,8 @@
 import { render, screen, cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { expectNoA11yViolations } from '@/test/a11y/axe';
+
 import { LoadingState, type LoadingVariant } from '../LoadingState';
 
 afterEach(cleanup);
@@ -31,5 +33,12 @@ describe('LoadingState', () => {
   it('overrides the default label when message is supplied', () => {
     render(<LoadingState variant="fetchingData" message="Hang tight…" />);
     expect(screen.getByText('Hang tight…')).toBeInTheDocument();
+  });
+
+  // Story 2.25 (Task 2, AC2) — axe scan of every documented state. LoadingState
+  // is non-interactive (a status region only), so there is no keyboard test.
+  it.each(VARIANTS)('AC2 — variant "%s" has no axe violations', async (variant) => {
+    const { container } = render(<LoadingState variant={variant} />);
+    await expectNoA11yViolations(container);
   });
 });

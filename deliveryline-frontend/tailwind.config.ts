@@ -31,6 +31,16 @@ export default {
       fontFamily: {
         sans: ['var(--font-sans)'],
       },
+      // Story 2.25 (AC10, D3) — touch-target floor. `min-h-touch` / `min-w-touch`
+      // = 44px, the committed higher bar over WCAG 2.5.5 AA's 24px. Applied to
+      // interactive primitives (GovernedButton, queue row, icon-only controls).
+      // Live mobile-viewport px verification is deferred to story 2.26.
+      minHeight: {
+        touch: '2.75rem',
+      },
+      minWidth: {
+        touch: '2.75rem',
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

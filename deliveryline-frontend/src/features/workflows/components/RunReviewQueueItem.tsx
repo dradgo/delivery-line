@@ -331,7 +331,9 @@ export function RunReviewQueueItem({
   const ariaLabel = composeAriaLabel(run, primaryIndicator, relative);
 
   const containerClass = cn(
-    'flex items-center gap-3 rounded-md border px-4',
+    // Story 2.25 (AC10) — 44px touch-target floor (the row's 4.5rem inline
+    // minHeight already exceeds it; the class documents + guarantees the floor).
+    'flex min-h-touch items-center gap-3 rounded-md border px-4',
     STATE_CONTAINER_CLASSES[state],
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus',
     navigable && 'hover:bg-surface-elevated',

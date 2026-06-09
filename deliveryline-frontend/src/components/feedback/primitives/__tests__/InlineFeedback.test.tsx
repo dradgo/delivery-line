@@ -1,9 +1,13 @@
 /**
  * Story 2.21 (AC4, AC5, AC6, AC7) — `<InlineFeedback>`.
+ * Story 2.25 (Task 2, AC2 + AC1) — axe WCAG-2.1-AA scans + keyboard-operability.
  */
 import type { ComponentProps } from 'react';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 import { InlineFeedback, type InlineFeedbackVariant } from '../InlineFeedback';
 import { INLINE_VARIANT_TO_STATE, stateLabel } from '../feedbackStatePresentation';
@@ -174,5 +178,102 @@ describe('InlineFeedback', () => {
     expect(host.querySelector('[data-testid="inline-feedback"]')).not.toBeNull();
     // The primitive is a direct descendant of its host, not portaled to <body>.
     expect(document.body.querySelector(':scope > [data-testid="inline-feedback"]')).toBeNull();
+  });
+});
+
+// Story 2.25 (Task 2, AC2 + AC1) — axe WCAG-2.1-AA scan of every documented
+// state and keyboard-operability test for the dismiss control.
+describe('InlineFeedback a11y (story 2.25)', () => {
+  // --- axe scans across all persistence × variant combinations ---------------
+
+  it.each(ALL_VARIANTS)(
+    'AC2 — variant "%s" persistsUntil="infinite" has no axe violations',
+    async (variant) => {
+      const { container } = render(
+        <InlineFeedback variant={variant} persistsUntil="infinite">
+          Body copy
+        </InlineFeedback>,
+      );
+      await expectNoA11yViolations(container);
+    },
+  );
+
+  it.each(ALL_VARIANTS)(
+    'AC2 — variant "%s" persistsUntil="workflowChange" has no axe violations',
+    async (variant) => {
+      const { container } = render(
+        <InlineFeedback variant={variant} persistsUntil="workflowChange">
+          Body copy
+        </InlineFeedback>,
+      );
+      await expectNoA11yViolations(container);
+    },
+  );
+
+  it.each(ALL_VARIANTS)(
+    'AC2 — variant "%s" persistsUntil="dismiss" has no axe violations',
+    async (variant) => {
+      const { container } = render(
+        <InlineFeedback variant={variant} persistsUntil="dismiss" onDismiss={() => undefined}>
+          Body copy
+        </InlineFeedback>,
+      );
+      await expectNoA11yViolations(container);
+    },
+  );
+
+  it('AC2 — warning with staleStateExplanation has no axe violations', async () => {
+    const { container } = render(
+      <InlineFeedback
+        variant="warning"
+        persistsUntil="workflowChange"
+        staleStateExplanation={{
+          whatChanged: 'A newer version was published.',
+          whatToDoNext: 'Refresh and re-submit.',
+        }}
+      >
+        Stale state body.
+      </InlineFeedback>,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — with optional title has no axe violations', async () => {
+    const { container } = render(
+      <InlineFeedback variant="info" persistsUntil="infinite" title="Additional context">
+        Body copy
+      </InlineFeedback>,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  // --- keyboard-operability: dismiss button -----------------------------------
+
+  it('AC1 — dismiss button is Tab-reachable and fires onDismiss on Enter', async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      <InlineFeedback variant="info" persistsUntil="dismiss" onDismiss={onDismiss}>
+        Dismissible feedback
+      </InlineFeedback>,
+    );
+    const btn = screen.getByRole('button', { name: 'Dismiss' });
+    await user.tab();
+    expect(document.activeElement).toBe(btn);
+    await user.keyboard('{Enter}');
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC1 — dismiss button also activates on Space', async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      <InlineFeedback variant="warning" persistsUntil="dismiss" onDismiss={onDismiss}>
+        Warning dismissible
+      </InlineFeedback>,
+    );
+    await user.tab();
+    await user.keyboard(' ');
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 });

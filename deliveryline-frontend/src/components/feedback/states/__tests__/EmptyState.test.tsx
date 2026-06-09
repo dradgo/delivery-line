@@ -2,7 +2,10 @@
  * Story 2.22 AC11.j (exhaustiveness) + AC11.k (5 variants render).
  */
 import { render, screen, cleanup } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 import {
   EmptyState,
@@ -57,5 +60,40 @@ describe('EmptyState', () => {
       variant: 'bogus',
     };
     expect(props.variant).toBe('bogus');
+  });
+
+  // Story 2.25 (Task 2, AC2) — axe scan of every documented state, both bare and
+  // with an optional action affordance.
+  it.each(VARIANTS)('AC2 — variant "%s" has no axe violations', async (variant) => {
+    const { container } = render(<EmptyState variant={variant} />);
+    await expectNoA11yViolations(container);
+  });
+
+  it('AC2 — renders cleanly with an action affordance', async () => {
+    const { container } = render(
+      <EmptyState variant="queue" action={<button type="button">View all runs</button>} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  // Story 2.25 (Task 2, AC1) — the optional action is keyboard-reachable and
+  // activatable without a mouse.
+  it('AC1 — the action affordance is reachable by Tab and activates on Enter', async () => {
+    const user = userEvent.setup();
+    const onAct = vi.fn();
+    render(
+      <EmptyState
+        variant="queue"
+        action={
+          <button type="button" onClick={onAct}>
+            View all runs
+          </button>
+        }
+      />,
+    );
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'View all runs' }));
+    await user.keyboard('{Enter}');
+    expect(onAct).toHaveBeenCalledTimes(1);
   });
 });

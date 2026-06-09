@@ -3,16 +3,22 @@
  *
  * A bounded secondary-detail sheet wrapping the shadcn `Sheet` (radix). Closing
  * returns the user to the same review context WITHOUT reset (presentational —
- * holds no state). Radix handles focus-move-in + focus-restoration (AC5).
+ * holds no state). Radix moves focus IN on open; focus restoration on close is
+ * handled explicitly below for the controlled (trigger-less) case.
  *
  * AC6 — `side="bottom"` (or `fullHeightOnMobile`) renders the full-height
  * slide-up sheet pattern for narrow breakpoints. The actual breakpoint switch is
  * deferred to story 2.26 (OQ-5); this ships the variant + the documented prop.
  *
+ * Story 2.25 (Task 2, AC1 / WCAG 2.4.3) — like `<ConfirmationDialog>`, this sheet
+ * is opened in a CONTROLLED way (no `<SheetTrigger>`), so Radix's default
+ * `onCloseAutoFocus` would target an absent trigger and drop focus to `<body>`.
+ * We capture the element focused at open time and restore it on close.
+ *
  * T-UNTRUSTED: `children` are TRUSTED, composite-authored by default.
  * T-NO-STACK: do not nest a `<ConfirmationDialog>` inside the sheet (UX-DR18).
  */
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 import {
@@ -52,6 +58,21 @@ export function BoundedDetailSheet({
   const resolvedSide: 'right' | 'bottom' = side ?? (fullHeightOnMobile ? 'bottom' : 'right');
   const isFullHeight = resolvedSide === 'bottom' || fullHeightOnMobile;
 
+  // AC1 / WCAG 2.4.3 — restore focus to the element that opened the sheet (the
+  // controlled case has no <SheetTrigger> for radix to return focus to).
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (open) {
+      previouslyFocused.current = document.activeElement as HTMLElement | null;
+      return;
+    }
+    const target = previouslyFocused.current;
+    previouslyFocused.current = null;
+    if (target !== null && typeof target.focus === 'function') {
+      target.focus();
+    }
+  }, [open]);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -60,6 +81,9 @@ export function BoundedDetailSheet({
         data-side={resolvedSide}
         data-full-height={isFullHeight ? 'true' : 'false'}
         data-testid={testId}
+        // Let our explicit restoration effect own focus return (radix would
+        // otherwise target an absent trigger and drop focus to <body>).
+        onCloseAutoFocus={(event) => event.preventDefault()}
         className={cn(
           'flex flex-col gap-4',
           isFullHeight && 'h-[90dvh] max-sm:h-[100dvh]',
