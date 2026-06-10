@@ -182,6 +182,18 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
   }
 
   @Override
+  public Optional<IntegrationLink> findActiveByTypeAndWorkflowRunForUpdate(
+      String integrationType, String workflowRunPublicId) {
+    if (integrationType == null || integrationType.isBlank()) {
+      throw new IllegalArgumentException("integrationType must be non-blank");
+    }
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    return integrationLinkRepository
+        .findActiveByTypeAndWorkflowRunForUpdate(integrationType, workflowRunPublicId)
+        .map(mapper::toDomain);
+  }
+
+  @Override
   public Optional<TicketSummaryProjection> findActiveTicketSummaryByWorkflowRun(
       String workflowRunPublicId) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
@@ -231,6 +243,45 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
     IntegrationLinkEntity persisted = integrationLinkRepository.saveAndFlush(entity);
     log.info(
         "integration_link transitioned publicId={} from={} to={}",
+        publicId,
+        current.value(),
+        newStatus.value());
+    return mapper.toDomain(persisted);
+  }
+
+  @Override
+  public IntegrationLink updateExternalMetadataAndSync(
+      String publicId,
+      byte[] externalMetadata,
+      IntegrationSyncStatus newStatus,
+      Instant lastSyncAt) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.INTEGRATION_LINK);
+    Objects.requireNonNull(newStatus, "newStatus");
+    byte[] metadataBytes = externalMetadata == null ? new byte[0] : externalMetadata;
+    if (metadataBytes.length > EXTERNAL_METADATA_MAX_BYTES) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("integrationLinkId", publicId);
+      details.put("externalMetadataBytes", metadataBytes.length);
+      details.put("maxBytes", EXTERNAL_METADATA_MAX_BYTES);
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+          "integration_links.external_metadata exceeds the V1 64KB ceiling",
+          details);
+    }
+    IntegrationLinkEntity entity =
+        integrationLinkRepository
+            .findByPublicId(publicId)
+            .orElseThrow(() -> integrationLinkNotFound(publicId));
+    IntegrationSyncStatus current = entity.getSyncStatus();
+    IntegrationLinkStateMachine.assertCanTransition(publicId, current, newStatus);
+    entity.setExternalMetadata(decodeMetadata(metadataBytes));
+    entity.setSyncStatus(newStatus);
+    if (lastSyncAt != null) {
+      entity.setLastSyncAt(OffsetDateTime.ofInstant(lastSyncAt, ZoneOffset.UTC));
+    }
+    IntegrationLinkEntity persisted = integrationLinkRepository.saveAndFlush(entity);
+    log.info(
+        "integration_link metadata refreshed publicId={} from={} to={}",
         publicId,
         current.value(),
         newStatus.value());

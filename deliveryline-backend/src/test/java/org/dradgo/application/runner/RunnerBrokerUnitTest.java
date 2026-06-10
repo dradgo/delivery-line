@@ -424,7 +424,8 @@ class RunnerBrokerUnitTest {
             CLOCK,
             repoService,
             () -> null,
-            ticketProvider);
+            ticketProvider,
+            () -> null);
 
     RepositoryWorkspaceService.RepositoryMount mount =
         new RepositoryWorkspaceService.RepositoryMount(
@@ -1927,6 +1928,86 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
+  void prOutputSuccessWithPushOutcomeLinksGitHubPrFromAuthoritativeRefs() {
+    // Story 3.15 (Task 7) — when captureAndPush produced a PR, the broker writes the durable
+    // github_pr linkage from the AUTHORITATIVE refs. Reported refs equal the actual outcome here so
+    // AC9 format + AC3 drift both pass and the seam is reached.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    org.dradgo.application.integration.IntegrationLinkService linkService =
+        mock(org.dradgo.application.integration.IntegrationLinkService.class);
+    RunnerBroker broker = brokerWithRepoAndLink(orchestration, repoService, linkService);
+
+    String branch = "feature/x";
+    String commitSha = "abcdef1234567890abcdef1234567890abcdef12";
+    String prRef = "PR-1";
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    commitSha, branch, prRef, true)));
+
+    broker.onResult(
+        REX_ID, prOutputResultPayload(branch, commitSha, prRef).getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    verify(linkService)
+        .linkGitHubPr(
+            eq(RUN_ID),
+            eq(prRef),
+            org.mockito.ArgumentMatchers.isNull(),
+            eq(branch),
+            eq(commitSha),
+            any(org.dradgo.application.artifact.ActorContext.class),
+            org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void prOutputLinkageFailureIsSwallowedAndDoesNotBlockCompletion() {
+    // Story 3.15 (Task 7) — a linkage-only failure (e.g. cross-run conflict) must not unwind the
+    // committed runner outcome or block the WaitingForReview advance (best-effort + swallow).
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    org.dradgo.application.integration.IntegrationLinkService linkService =
+        mock(org.dradgo.application.integration.IntegrationLinkService.class);
+    RunnerBroker broker = brokerWithRepoAndLink(orchestration, repoService, linkService);
+
+    String branch = "feature/x";
+    String commitSha = "abcdef1234567890abcdef1234567890abcdef12";
+    String prRef = "PR-1";
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    commitSha, branch, prRef, true)));
+    org.mockito.Mockito.doThrow(
+            new org.dradgo.domain.DomainException(
+                org.dradgo.domain.registry.DomainErrorCode.INTEGRATION_LINK_CONFLICT, "conflict"))
+        .when(linkService)
+        .linkGitHubPr(any(), any(), any(), any(), any(), any(), any());
+
+    broker.onResult(
+        REX_ID, prOutputResultPayload(branch, commitSha, prRef).getBytes(StandardCharsets.UTF_8));
+
+    // Completion + auto-advance still happen despite the linkage failure.
+    verify(executionService).recordCompleted(REX_ID);
+    verify(orchestration)
+        .onPrOutputStageSucceeded(eq(RUN_ID), eq(REX_ID), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
   void prOutputMalformedReportedRefRoutesToFailedAndDoesNotDelegate() {
     // Story 3.12 (AC9) — an untrusted pr-output runner reporting a malformed prReference (here the
     // GitHub-shorthand "org/repo#n" form, which passes the wire schema but is NOT the documented
@@ -2150,6 +2231,34 @@ class RunnerBrokerUnitTest {
         CLOCK,
         repositoryWorkspaceService,
         orchestration);
+  }
+
+  // Story 3.15 (Task 7) — full ctor wiring a repo seam + an IntegrationLinkService supplier so the
+  // pr-output linkage seam (linkGitHubPrBestEffort) is reachable.
+  private RunnerBroker brokerWithRepoAndLink(
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration,
+      RepositoryWorkspaceService repositoryWorkspaceService,
+      org.dradgo.application.integration.IntegrationLinkService linkService) {
+    return new RunnerBroker(
+        recordPort,
+        eventPort,
+        executionService,
+        contextBundleService,
+        idempotencyService,
+        workflowTransitionService,
+        artifactOperationService,
+        runnerAdapter,
+        scratchStore,
+        new RunnerContractValidator(),
+        runnerProperties,
+        secretScanService,
+        callthroughTemplate(),
+        callthroughTemplate(),
+        CLOCK,
+        repositoryWorkspaceService,
+        () -> orchestration,
+        null,
+        () -> linkService);
   }
 
   private void stubArtifactRecordSuccess() {

@@ -51,6 +51,21 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
   Optional<IntegrationLinkEntity> findFirstActiveByWorkflowRunPublicId(
       @Param("workflowRunPublicId") String workflowRunPublicId);
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      """
+		select integrationLink
+		from IntegrationLinkEntity integrationLink
+		where integrationLink.integrationType = :integrationType
+		  and integrationLink.workflowRun.publicId = :workflowRunPublicId
+		  and integrationLink.archivedAt is null
+		  and integrationLink.syncStatus <> 'superseded'
+		order by integrationLink.createdAt asc
+		""")
+  Optional<IntegrationLinkEntity> findActiveByTypeAndWorkflowRunForUpdate(
+      @Param("integrationType") String integrationType,
+      @Param("workflowRunPublicId") String workflowRunPublicId);
+
   @Query(
       """
 		select max(integrationLink.lastSyncAt)

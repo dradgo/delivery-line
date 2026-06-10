@@ -24,6 +24,8 @@ import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.github.GitHubAdapter;
+import org.dradgo.application.integration.github.GitHubPullRequest;
 import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
@@ -33,6 +35,7 @@ import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewInteg
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
+import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
@@ -41,6 +44,7 @@ import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class IntegrationLoggingContractTest {
@@ -70,7 +74,13 @@ class IntegrationLoggingContractTest {
     RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
     IntegrationLinkService service =
         new IntegrationLinkService(
-            port, linearAdapter, idempotencyService, redactionService, callthroughTemplate());
+            port,
+            linearAdapter,
+            idempotencyService,
+            redactionService,
+            gitHubAdapterProvider(null),
+            mock(WorkflowEventWritePort.class),
+            callthroughTemplate());
 
     when(idempotencyService.checkAndReserve(
             eq(IDEMPOTENCY_KEY), anyString(), eq(ACTOR.actorIdentity()), anyString()))
@@ -107,7 +117,13 @@ class IntegrationLoggingContractTest {
     RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
     IntegrationLinkService service =
         new IntegrationLinkService(
-            port, linearAdapter, idempotencyService, redactionService, callthroughTemplate());
+            port,
+            linearAdapter,
+            idempotencyService,
+            redactionService,
+            gitHubAdapterProvider(null),
+            mock(WorkflowEventWritePort.class),
+            callthroughTemplate());
 
     when(idempotencyService.checkAndReserve(
             eq(IDEMPOTENCY_KEY), anyString(), eq(ACTOR.actorIdentity()), anyString()))
@@ -226,6 +242,116 @@ class IntegrationLoggingContractTest {
         host.lastPollAt().equals(Instant.EPOCH), "seed failure must fall back to the safe floor");
     assertContains(pollingAppender.list, Level.WARN, "linear_real polling_watermark seed_failed");
     verifyNoInteractions(linearAdapter);
+  }
+
+  @Test
+  void linkGitHubPrHappyPathEmitsEntryAndSuccessLogsWithContext() {
+    IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
+    GitHubAdapter gitHubAdapter = mock(GitHubAdapter.class);
+    IntegrationLinkService service = githubService(port, gitHubAdapter);
+
+    when(gitHubAdapter.getPullRequestByRef("octo/hello#42"))
+        .thenReturn(Optional.of(samplePullRequest("open")));
+    when(port.findActiveByTypeAndExternalRefForUpdate("github_pr", "octo/hello#42"))
+        .thenReturn(Optional.empty());
+    when(port.findActiveByTypeAndWorkflowRunForUpdate("github_pr", RUN_ID))
+        .thenReturn(Optional.empty());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleGithubLink("ilk_log000000001"));
+
+    service.linkGitHubPr(RUN_ID, "octo/hello#42", "octo/hello", "feature/x", "abc1234", ACTOR, "k");
+
+    assertContains(serviceAppender.list, Level.INFO, "linkGitHubPr entry");
+    assertContains(serviceAppender.list, Level.INFO, "linkGitHubPr success");
+    assertContains(serviceAppender.list, Level.INFO, "integrationLinkPublicId=ilk_log000000001");
+  }
+
+  @Test
+  void linkGitHubPrCrossRunConflictEmitsWarn() {
+    IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
+    GitHubAdapter gitHubAdapter = mock(GitHubAdapter.class);
+    IntegrationLinkService service = githubService(port, gitHubAdapter);
+
+    when(gitHubAdapter.getPullRequestByRef("octo/hello#42"))
+        .thenReturn(Optional.of(samplePullRequest("open")));
+    when(port.findActiveByTypeAndExternalRefForUpdate("github_pr", "octo/hello#42"))
+        .thenReturn(Optional.of(sampleGithubLink("ilk_other0000001", "run_otherRUN1234")));
+
+    try {
+      service.linkGitHubPr(
+          RUN_ID, "octo/hello#42", "octo/hello", "feature/x", "abc1234", ACTOR, "k");
+    } catch (DomainException expected) {
+      // log assertion below
+    }
+
+    assertContains(serviceAppender.list, Level.WARN, "linkGitHubPr cross_run_conflict");
+  }
+
+  @Test
+  void assertArtifactPrLinkMatchesDriftEmitsWarn() {
+    IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
+    IntegrationLinkService service = githubService(port, mock(GitHubAdapter.class));
+    when(port.findActiveByTypeAndWorkflowRunForUpdate("github_pr", RUN_ID))
+        .thenReturn(Optional.of(sampleGithubLink("ilk_drift0000001")));
+
+    try {
+      service.assertArtifactPrLinkMatches(RUN_ID, "PR-99");
+    } catch (DomainException expected) {
+      // log assertion below
+    }
+
+    assertContains(serviceAppender.list, Level.WARN, "assertArtifactPrLinkMatches mismatch");
+  }
+
+  private static IntegrationLinkService githubService(
+      IntegrationLinkRecordPort port, GitHubAdapter gitHubAdapter) {
+    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    IdempotencyService idempotencyService = mock(IdempotencyService.class);
+    RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
+    when(redactionService.redact(any(Map.class), any())).thenReturn(sampleRedactionResult());
+    return new IntegrationLinkService(
+        port,
+        linearAdapter,
+        idempotencyService,
+        redactionService,
+        gitHubAdapterProvider(gitHubAdapter),
+        mock(WorkflowEventWritePort.class),
+        callthroughTemplate());
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ObjectProvider<GitHubAdapter> gitHubAdapterProvider(GitHubAdapter adapter) {
+    ObjectProvider<GitHubAdapter> provider = mock(ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(adapter);
+    return provider;
+  }
+
+  private static GitHubPullRequest samplePullRequest(String state) {
+    return new GitHubPullRequest(
+        "octo/hello#42",
+        "octo/hello",
+        42,
+        "feature/x",
+        state,
+        "https://github.com/octo/hello/pull/42",
+        Instant.parse("2026-05-01T10:00:00Z"));
+  }
+
+  private static IntegrationLink sampleGithubLink(String publicId) {
+    return sampleGithubLink(publicId, RUN_ID);
+  }
+
+  private static IntegrationLink sampleGithubLink(String publicId, String runId) {
+    Instant now = Instant.parse("2026-04-25T10:00:00Z");
+    return new IntegrationLink(
+        publicId,
+        runId,
+        "github_pr",
+        "octo/hello#42",
+        IntegrationSyncStatus.LINKED,
+        now,
+        now,
+        null);
   }
 
   private static void assertContains(List<ILoggingEvent> events, Level level, String fragment) {

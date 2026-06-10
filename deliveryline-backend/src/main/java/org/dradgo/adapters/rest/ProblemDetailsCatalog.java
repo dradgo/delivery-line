@@ -377,6 +377,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_GATEWAY,
         "Runner output validation failed",
         false);
+    // Story 3.15 (AC5) — an artifact whose PR reference has drifted from the durable
+    // integration_links linkage is a non-retryable conflict; mirror INTEGRATION_LINK_CONFLICT's
+    // CONFLICT mapping.
+    register(
+        metadata,
+        DomainErrorCode.ARTIFACT_PR_LINK_MISMATCH,
+        HttpStatus.CONFLICT,
+        "Artifact PR link mismatch",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

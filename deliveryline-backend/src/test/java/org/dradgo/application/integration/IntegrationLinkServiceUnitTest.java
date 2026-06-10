@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,6 +20,8 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
+import org.dradgo.application.integration.github.GitHubAdapter;
+import org.dradgo.application.integration.github.GitHubPullRequest;
 import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearTicket;
@@ -26,6 +29,8 @@ import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
+import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
@@ -33,9 +38,12 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
+import org.dradgo.domain.registry.WorkflowEventType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class IntegrationLinkServiceUnitTest {
@@ -47,10 +55,21 @@ class IntegrationLinkServiceUnitTest {
   private static final ActorContext ACTOR =
       new ActorContext("amelia@local", ActorType.HUMAN, "corr-1");
 
+  // Story 3.15 — GitHub PR linkage fixtures (canonical owner/repo#n external_ref, Trap T1).
+  private static final String GITHUB_TYPE = "github_pr";
+  private static final String PR_REF = "octo/hello#42";
+  private static final String OTHER_PR_REF = "octo/hello#43";
+  private static final String REPO_REF = "octo/hello";
+  private static final String BRANCH = "feature/x";
+  private static final String COMMIT_SHA = "a1b2c3d4e5f6a7b8c9d0";
+  private static final String GH_KEY = "linkGitHubPr:run_unit12345678:octo/hello#42";
+
   private IntegrationLinkRecordPort port;
   private LinearAdapter linearAdapter;
   private IdempotencyService idempotencyService;
   private RedactionPolicyService redactionService;
+  private GitHubAdapter gitHubAdapter;
+  private WorkflowEventWritePort workflowEventWritePort;
   private IntegrationLinkService service;
 
   @BeforeEach
@@ -59,9 +78,24 @@ class IntegrationLinkServiceUnitTest {
     linearAdapter = org.mockito.Mockito.mock(LinearAdapter.class);
     idempotencyService = org.mockito.Mockito.mock(IdempotencyService.class);
     redactionService = org.mockito.Mockito.mock(RedactionPolicyService.class);
+    gitHubAdapter = org.mockito.Mockito.mock(GitHubAdapter.class);
+    workflowEventWritePort = org.mockito.Mockito.mock(WorkflowEventWritePort.class);
     service =
         new IntegrationLinkService(
-            port, linearAdapter, idempotencyService, redactionService, callthroughTemplate());
+            port,
+            linearAdapter,
+            idempotencyService,
+            redactionService,
+            gitHubAdapterProvider(gitHubAdapter),
+            workflowEventWritePort,
+            callthroughTemplate());
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ObjectProvider<GitHubAdapter> gitHubAdapterProvider(GitHubAdapter adapter) {
+    ObjectProvider<GitHubAdapter> provider = org.mockito.Mockito.mock(ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(adapter);
+    return provider;
   }
 
   @Test
@@ -270,6 +304,299 @@ class IntegrationLinkServiceUnitTest {
     assertEquals(64, a.length()); // SHA-256 hex string
     assertTrue(!a.equals(differentRun));
     assertTrue(!a.equals(differentType));
+  }
+
+  // ===================================================================================
+  // Story 3.15 — linkGitHubPr / syncGitHubPr / assertArtifactPrLinkMatches
+  // ===================================================================================
+
+  @Test
+  void linkGitHubPrHappyPathInsertsGithubRowAndAppendsIntegrationLinkedEvent() {
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
+        .thenReturn(Optional.empty());
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.empty());
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleGithubLink("ilk_gh00000000001", RUN_ID, IntegrationSyncStatus.LINKED));
+
+    IntegrationLink result =
+        service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+
+    assertEquals("ilk_gh00000000001", result.publicId());
+    ArgumentCaptor<NewIntegrationLink> captor = ArgumentCaptor.forClass(NewIntegrationLink.class);
+    verify(port).insert(captor.capture());
+    assertEquals(GITHUB_TYPE, captor.getValue().integrationType());
+    assertEquals(PR_REF, captor.getValue().externalRef());
+    assertEquals(RUN_ID, captor.getValue().workflowRunPublicId());
+
+    ArgumentCaptor<WorkflowEventRecord> event = ArgumentCaptor.forClass(WorkflowEventRecord.class);
+    verify(workflowEventWritePort).append(event.capture());
+    assertEquals(WorkflowEventType.INTEGRATION_LINKED, event.getValue().eventType());
+    assertEquals(RUN_ID, event.getValue().workflowRunPublicId());
+    assertEquals(PR_REF, event.getValue().details().get("githubPrReference"));
+    assertEquals("open", event.getValue().details().get("prState"));
+    assertEquals(42, event.getValue().details().get("prNumber"));
+  }
+
+  @Test
+  void linkGitHubPrPassesShareableRedactedMetadataWithAllReconstructionFields() {
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
+        .thenReturn(Optional.empty());
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.empty());
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleGithubLink("ilk_gh00000000001", RUN_ID, IntegrationSyncStatus.LINKED));
+
+    service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+
+    ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+    verify(redactionService)
+        .redact(captor.capture(), eq(DataClassification.SHAREABLE_REDACTED.value()));
+    Map<String, Object> sent = captor.getValue();
+    assertEquals(REPO_REF, sent.get("repositoryFullName"));
+    assertEquals(BRANCH, sent.get("branch"));
+    assertEquals(COMMIT_SHA, sent.get("commitSha"));
+    assertEquals(42, sent.get("prNumber"));
+    assertEquals("open", sent.get("prState"));
+    assertTrue(sent.containsKey("prUrl"));
+  }
+
+  @Test
+  void linkGitHubPrCrossRunDoubleLinkRaisesIntegrationLinkConflict() {
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
+        .thenReturn(
+            Optional.of(
+                sampleGithubLink("ilk_other00000001", OTHER_RUN_ID, IntegrationSyncStatus.LINKED)));
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
+
+    assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
+    assertEquals(OTHER_RUN_ID, error.details().get("existingRunPublicId"));
+    verify(port, never()).insert(any());
+    verify(workflowEventWritePort, never()).append(any());
+  }
+
+  @Test
+  void linkGitHubPrRepoMismatchRaisesLinearGithubRepoMismatch() {
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.linkGitHubPr(
+                    RUN_ID, PR_REF, "other/repo", BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
+
+    assertEquals(DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH, error.errorCode());
+    verify(port, never()).insert(any());
+  }
+
+  @Test
+  void linkGitHubPrSamePrSameRunIsIdempotentNoOp() {
+    IntegrationLink existing =
+        sampleGithubLink("ilk_existing00001", RUN_ID, IntegrationSyncStatus.LINKED);
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
+        .thenReturn(Optional.of(existing));
+
+    IntegrationLink result =
+        service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+
+    assertEquals("ilk_existing00001", result.publicId());
+    verify(port, never()).insert(any());
+    verify(workflowEventWritePort, never()).append(any());
+  }
+
+  @Test
+  void linkGitHubPrDifferentPrSameRunSupersedesPriorThenInserts() {
+    IntegrationLink prior =
+        sampleGithubLink("ilk_prior00000001", RUN_ID, OTHER_PR_REF, IntegrationSyncStatus.LINKED);
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
+        .thenReturn(Optional.empty());
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.of(prior));
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleGithubLink("ilk_new000000001", RUN_ID, IntegrationSyncStatus.LINKED));
+
+    IntegrationLink result =
+        service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+
+    assertEquals("ilk_new000000001", result.publicId());
+    verify(port).updateSyncStatus("ilk_prior00000001", IntegrationSyncStatus.SUPERSEDED, null);
+    verify(port).insert(any(NewIntegrationLink.class));
+  }
+
+  @Test
+  void linkGitHubPrPrNotFoundRaisesConflictCarryingCategory() {
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.empty());
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
+
+    assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
+    assertEquals(
+        IntegrationFailureCategory.GITHUB_PR_NOT_FOUND.value(),
+        error.details().get("failureCategory"));
+    verify(port, never()).insert(any());
+  }
+
+  @Test
+  void syncGitHubPrRefreshesPrStateAndLastSyncAt() {
+    IntegrationLink active =
+        sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.LINKED);
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.of(active));
+    when(gitHubAdapter.getPullRequestByRef(PR_REF))
+        .thenReturn(Optional.of(samplePullRequest("merged")));
+    when(gitHubAdapter.getBranchByRef(REPO_REF, BRANCH)).thenReturn(Optional.empty());
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.updateExternalMetadataAndSync(
+            eq("ilk_sync00000001"), any(byte[].class), eq(IntegrationSyncStatus.SYNCED), any()))
+        .thenReturn(sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.SYNCED));
+
+    IntegrationLink result = service.syncGitHubPr(RUN_ID);
+
+    assertEquals(IntegrationSyncStatus.SYNCED, result.syncStatus());
+    ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+    verify(redactionService)
+        .redact(captor.capture(), eq(DataClassification.SHAREABLE_REDACTED.value()));
+    assertEquals("merged", captor.getValue().get("prState"));
+  }
+
+  @Test
+  void syncGitHubPrPrNotFoundMarksLinkFailed() {
+    IntegrationLink active =
+        sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.LINKED);
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.of(active));
+    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.empty());
+    when(port.updateSyncStatus("ilk_sync00000001", IntegrationSyncStatus.FAILED, null))
+        .thenReturn(sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.FAILED));
+
+    IntegrationLink result = service.syncGitHubPr(RUN_ID);
+
+    assertEquals(IntegrationSyncStatus.FAILED, result.syncStatus());
+    verify(port).updateSyncStatus("ilk_sync00000001", IntegrationSyncStatus.FAILED, null);
+    verify(port, never()).updateExternalMetadataAndSync(anyString(), any(), any(), any());
+  }
+
+  @Test
+  void syncGitHubPrRecoversAFailedLinkBeforeSyncing() {
+    // A prior sync routed the link to FAILED on a transient adapter failure; the fetch now
+    // succeeds.
+    // syncGitHubPr must recover FAILED → LINKED before the → SYNCED write, otherwise
+    // updateExternalMetadataAndSync would throw ILLEGAL_TRANSITION (FAILED → SYNCED is illegal) and
+    // the link could never re-sync.
+    IntegrationLink active =
+        sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.FAILED);
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.of(active));
+    when(gitHubAdapter.getPullRequestByRef(PR_REF))
+        .thenReturn(Optional.of(samplePullRequest("open")));
+    when(gitHubAdapter.getBranchByRef(REPO_REF, BRANCH)).thenReturn(Optional.empty());
+    when(port.updateSyncStatus("ilk_sync00000001", IntegrationSyncStatus.LINKED, null))
+        .thenReturn(sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.LINKED));
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.updateExternalMetadataAndSync(
+            eq("ilk_sync00000001"), any(byte[].class), eq(IntegrationSyncStatus.SYNCED), any()))
+        .thenReturn(sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.SYNCED));
+
+    IntegrationLink result = service.syncGitHubPr(RUN_ID);
+
+    assertEquals(IntegrationSyncStatus.SYNCED, result.syncStatus());
+    InOrder inOrder = inOrder(port);
+    inOrder.verify(port).updateSyncStatus("ilk_sync00000001", IntegrationSyncStatus.LINKED, null);
+    inOrder
+        .verify(port)
+        .updateExternalMetadataAndSync(
+            eq("ilk_sync00000001"), any(byte[].class), eq(IntegrationSyncStatus.SYNCED), any());
+  }
+
+  @Test
+  void assertArtifactPrLinkMatchesPassesWhenArtifactRefMatchesLink() {
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(
+            Optional.of(
+                sampleGithubLink("ilk_match00000001", RUN_ID, IntegrationSyncStatus.LINKED)));
+
+    service.assertArtifactPrLinkMatches(RUN_ID, PR_REF);
+  }
+
+  @Test
+  void assertArtifactPrLinkMatchesRaisesArtifactPrLinkMismatchOnDrift() {
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(
+            Optional.of(
+                sampleGithubLink("ilk_match00000001", RUN_ID, IntegrationSyncStatus.LINKED)));
+
+    DomainException error =
+        assertThrows(
+            DomainException.class, () -> service.assertArtifactPrLinkMatches(RUN_ID, "PR-99"));
+
+    assertEquals(DomainErrorCode.ARTIFACT_PR_LINK_MISMATCH, error.errorCode());
+    assertEquals("artifact_pr_reference_drifted", error.details().get("reason"));
+  }
+
+  @Test
+  void assertArtifactPrLinkMatchesFailsClosedWhenNoActiveLink() {
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.empty());
+
+    DomainException error =
+        assertThrows(
+            DomainException.class, () -> service.assertArtifactPrLinkMatches(RUN_ID, PR_REF));
+
+    assertEquals(DomainErrorCode.ARTIFACT_PR_LINK_MISMATCH, error.errorCode());
+    assertEquals("no_active_github_pr_link", error.details().get("reason"));
+  }
+
+  private static GitHubPullRequest samplePullRequest() {
+    return samplePullRequest("open");
+  }
+
+  private static GitHubPullRequest samplePullRequest(String state) {
+    return new GitHubPullRequest(
+        PR_REF,
+        REPO_REF,
+        42,
+        BRANCH,
+        state,
+        "https://github.com/octo/hello/pull/42",
+        Instant.parse("2026-05-01T10:00:00Z"));
+  }
+
+  private static IntegrationLink sampleGithubLink(
+      String publicId, String workflowRunPublicId, IntegrationSyncStatus status) {
+    return sampleGithubLink(publicId, workflowRunPublicId, PR_REF, status);
+  }
+
+  private static IntegrationLink sampleGithubLink(
+      String publicId,
+      String workflowRunPublicId,
+      String externalRef,
+      IntegrationSyncStatus status) {
+    Instant now = Instant.parse("2026-04-25T10:00:00Z");
+    return new IntegrationLink(
+        publicId, workflowRunPublicId, "github_pr", externalRef, status, now, now, null);
   }
 
   private static LinearTicket sampleTicket() {

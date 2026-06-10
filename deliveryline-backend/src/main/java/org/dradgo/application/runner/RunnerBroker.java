@@ -119,6 +119,14 @@ public class RunnerBroker {
   // never entered. Resolution is best-effort: a null/failed lookup falls back to a no-ticket branch
   // (WARN) rather than failing the dormant seam.
   private final TicketSummaryProvider ticketSummaryProvider;
+  // Story 3.15 (Task 7) — the durable github_pr linkage writer, resolved LAZILY through a Supplier
+  // (same pattern as the orchestration callback): the @Autowired ctor wires an
+  // ObjectProvider::getIfAvailable supplier. Supplies null in the package-private test ctors and
+  // lean contexts, so the linkage seam stays a byte-identical no-op there. The broker is the sole
+  // caller of linkGitHubPr (Trap T12) — it never touches the SPI/adapter directly.
+  private final java.util.function.Supplier<
+          org.dradgo.application.integration.IntegrationLinkService>
+      integrationLinkServiceSupplier;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate dispatchTransactionTemplate;
   private final TransactionTemplate perItemTransactionTemplate;
@@ -149,7 +157,12 @@ public class RunnerBroker {
           workflowOrchestrationServiceProvider,
       // Story 3.10 (OQ-1) — unconditional bean (no ObjectProvider needed); resolves the EXECUTION
       // ticketRef for the deterministic branch.
-      TicketSummaryProvider ticketSummaryProvider) {
+      TicketSummaryProvider ticketSummaryProvider,
+      // Story 3.15 (Task 7) — the durable github_pr linkage writer, resolved lazily so the dormant
+      // seam stays a no-op where the bean is absent (lean/mock contexts).
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.integration.IntegrationLinkService>
+          integrationLinkServiceProvider) {
     this(
         recordPort,
         eventPort,
@@ -171,7 +184,9 @@ public class RunnerBroker {
         // BeanCurrentlyInCreation cycle since orchestration depends on this broker).
         (java.util.function.Supplier<org.dradgo.application.workflow.WorkflowOrchestrationService>)
             workflowOrchestrationServiceProvider::getIfAvailable,
-        ticketSummaryProvider);
+        ticketSummaryProvider,
+        (java.util.function.Supplier<org.dradgo.application.integration.IntegrationLinkService>)
+            integrationLinkServiceProvider::getIfAvailable);
   }
 
   RunnerBroker(
@@ -208,7 +223,8 @@ public class RunnerBroker {
         clock,
         null,
         () -> null,
-        null);
+        null,
+        () -> null);
   }
 
   // Story 3.9 test ctor (repo seam, no orchestration) — delegates to the full ctor below.
@@ -247,7 +263,8 @@ public class RunnerBroker {
         clock,
         repositoryWorkspaceService,
         () -> null,
-        null);
+        null,
+        () -> null);
   }
 
   RunnerBroker(
@@ -269,7 +286,9 @@ public class RunnerBroker {
       RepositoryWorkspaceService repositoryWorkspaceService,
       java.util.function.Supplier<org.dradgo.application.workflow.WorkflowOrchestrationService>
           workflowOrchestrationServiceSupplier,
-      TicketSummaryProvider ticketSummaryProvider) {
+      TicketSummaryProvider ticketSummaryProvider,
+      java.util.function.Supplier<org.dradgo.application.integration.IntegrationLinkService>
+          integrationLinkServiceSupplier) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -297,6 +316,8 @@ public class RunnerBroker {
             ? () -> null
             : workflowOrchestrationServiceSupplier;
     this.ticketSummaryProvider = ticketSummaryProvider;
+    this.integrationLinkServiceSupplier =
+        integrationLinkServiceSupplier == null ? () -> null : integrationLinkServiceSupplier;
     this.objectMapper = new ObjectMapper();
   }
 
@@ -339,7 +360,8 @@ public class RunnerBroker {
         clock,
         repositoryWorkspaceService,
         () -> workflowOrchestrationService,
-        null);
+        null,
+        () -> null);
   }
 
   private static TransactionTemplate requiredTemplate(
@@ -1268,6 +1290,11 @@ public class RunnerBroker {
       // UPDATE).
       enrichPrOutputArtifact(
           runnerExecutionId, workflowRunId, prOutputArtifactId, prRef, actual, correlationId);
+      // Story 3.15 (Task 7) — promote the dormant linkage seam: write the durable github_pr
+      // integration_links row + integration.linked event from the AUTHORITATIVE captureAndPush refs
+      // (never the untrusted runner-reported string — Trap T1). Best-effort: a linkage-only failure
+      // must not unwind the committed runner outcome or block WaitingForReview.
+      linkGitHubPrBestEffort(runnerExecutionId, workflowRunId, actual, correlationId);
     } else {
       log.debug(
           "onResult pr-output enrichment skipped runnerExecutionId={} workflowRunId={} "
@@ -1276,15 +1303,74 @@ public class RunnerBroker {
           workflowRunId);
     }
 
-    // TODO(story 3.15): IntegrationLinkService.linkGitHubPr(workflowRunId, prReference, ...) +
-    // PR_REF_CONTEXT_MISMATCH (AC4/AC6). The PR itself is already created/updated by captureAndPush
-    // (story 3.9); only the durable integration_links github_pr row + the wrong-repo conflict check
-    // are 3.15's deliverable. Deliberately NOT built here.
-    log.debug(
-        "onResult pr-output linkage deferred runnerExecutionId={} workflowRunId={} reason=story_3_15",
-        runnerExecutionId,
-        workflowRunId);
     return true;
+  }
+
+  /**
+   * Story 3.15 (Task 7) — write the durable {@code github_pr} integration_links row + the {@code
+   * integration.linked} event from the authoritative {@code captureAndPush} outcome. Best-effort: a
+   * linkage failure is logged and swallowed (it must not unwind the committed runner outcome or
+   * block the {@code WaitingForReview} advance — mirrors the enrichment block); cross-run conflict
+   * / repo-mismatch surface as {@code WARN} with the typed error code. No-op when no PR was created
+   * (a no-repo dispatch returns a null {@code prRef}) or the linkage bean is absent (lean/mock
+   * contexts). The broker is the sole caller of {@code linkGitHubPr} (Trap T12).
+   */
+  private void linkGitHubPrBestEffort(
+      String runnerExecutionId,
+      String workflowRunId,
+      RepositoryWorkspaceService.RepositoryPushOutcome actual,
+      String correlationId) {
+    if (actual.prRef() == null) {
+      log.debug(
+          "onResult pr-output linkage skipped runnerExecutionId={} workflowRunId={} reason=no_pr_ref",
+          runnerExecutionId,
+          workflowRunId);
+      return;
+    }
+    org.dradgo.application.integration.IntegrationLinkService linkService =
+        integrationLinkServiceSupplier.get();
+    if (linkService == null) {
+      log.debug(
+          "onResult pr-output linkage skipped runnerExecutionId={} workflowRunId={} "
+              + "reason=no_link_service",
+          runnerExecutionId,
+          workflowRunId);
+      return;
+    }
+    try {
+      // repoRef is not carried on RepositoryPushOutcome; linkGitHubPr resolves it via the GitHub
+      // adapter, and story 3.9 already enforced repo-compat at workspace prep (AC4 is
+      // defense-in-depth). The idempotency key is supplied for signature fidelity — idempotency
+      // comes from the same-run/same-ref no-op plus the V6 unique index.
+      String idempotencyKey = "linkGitHubPr:" + workflowRunId + ":" + actual.prRef();
+      linkService.linkGitHubPr(
+          workflowRunId,
+          actual.prRef(),
+          null,
+          actual.branchRef(),
+          actual.commitSha(),
+          new ActorContext("system", org.dradgo.domain.registry.ActorType.SYSTEM, correlationId),
+          idempotencyKey);
+      log.info(
+          "onResult pr-output linked runnerExecutionId={} workflowRunId={} prRef={}",
+          runnerExecutionId,
+          workflowRunId,
+          MdcKeys.sanitizeForLog(actual.prRef()));
+    } catch (DomainException error) {
+      log.warn(
+          "onResult pr-output linkage failed runnerExecutionId={} workflowRunId={} errorCode={} "
+              + "reason={}",
+          runnerExecutionId,
+          workflowRunId,
+          error.errorCode().value(),
+          error.getMessage());
+    } catch (RuntimeException error) {
+      log.warn(
+          "onResult pr-output linkage failed runnerExecutionId={} workflowRunId={} cause={}",
+          runnerExecutionId,
+          workflowRunId,
+          error.toString());
+    }
   }
 
   private static JsonNode prOutputArtifactReference(JsonNode parsed) {

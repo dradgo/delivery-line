@@ -85,7 +85,14 @@ public enum DomainErrorCode implements RegistryValue {
   // not match the documented format patterns (story 2.24). The artifact is rejected and the run is
   // routed to Failed via the existing runner-contract-violation failure path; this code is the
   // typed surface for the REST / inspection layer.
-  RUNNER_OUTPUT_VALIDATION_FAILED("RUNNER_OUTPUT_VALIDATION_FAILED");
+  RUNNER_OUTPUT_VALIDATION_FAILED("RUNNER_OUTPUT_VALIDATION_FAILED"),
+  // Story 3.15 (AC5 / Trap T9) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Raised when a prOutput artifact's PR reference has drifted from the canonical
+  // integration_links.external_ref established by IntegrationLinkService.linkGitHubPr — preventing
+  // approval of an artifact whose PR reference no longer matches the durable linkage (NFR19). The
+  // guard (IntegrationLinkService.assertArtifactPrLinkMatches) is built + tested here; its
+  // production approval call-site lands in story 3.20 (acceptImplementation does not yet exist).
+  ARTIFACT_PR_LINK_MISMATCH("ARTIFACT_PR_LINK_MISMATCH");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

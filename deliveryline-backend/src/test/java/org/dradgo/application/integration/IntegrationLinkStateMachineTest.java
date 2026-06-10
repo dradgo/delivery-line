@@ -18,7 +18,7 @@ class IntegrationLinkStateMachineTest {
   private static final String ILK = "ilk_unit12345678";
 
   @Test
-  void linkedAllowsSyncedStaleAndFailed() {
+  void linkedAllowsSyncedStaleFailedAndSuperseded() {
     assertDoesNotThrow(
         () ->
             IntegrationLinkStateMachine.assertCanTransition(
@@ -31,12 +31,15 @@ class IntegrationLinkStateMachineTest {
         () ->
             IntegrationLinkStateMachine.assertCanTransition(
                 ILK, IntegrationSyncStatus.LINKED, IntegrationSyncStatus.FAILED));
+    // Story 3.15 AC9 — supersede-on-retry-with-a-new-PR must be legal from a never-synced row.
+    assertDoesNotThrow(
+        () ->
+            IntegrationLinkStateMachine.assertCanTransition(
+                ILK, IntegrationSyncStatus.LINKED, IntegrationSyncStatus.SUPERSEDED));
   }
 
   @Test
-  void linkedRejectsDirectSupersededOrNoOp() {
-    assertIllegal(
-        IntegrationSyncStatus.LINKED, IntegrationSyncStatus.SUPERSEDED, "transition_not_allowed");
+  void linkedRejectsNoOp() {
     assertIllegal(IntegrationSyncStatus.LINKED, IntegrationSyncStatus.LINKED, "no_op_transition");
   }
 
@@ -130,16 +133,18 @@ class IntegrationLinkStateMachineTest {
 
   @Test
   void rejectionExceptionCarriesIntegrationLinkContext() {
+    // SYNCED → LINKED stays illegal after the story 3.15 LINKED → SUPERSEDED addition, so it still
+    // exercises the rejection-detail surface with a distinct from/to pair.
     DomainException error =
         assertThrows(
             DomainException.class,
             () ->
                 IntegrationLinkStateMachine.assertCanTransition(
-                    ILK, IntegrationSyncStatus.LINKED, IntegrationSyncStatus.SUPERSEDED));
+                    ILK, IntegrationSyncStatus.SYNCED, IntegrationSyncStatus.LINKED));
     assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
     assertEquals(ILK, error.details().get("integrationLinkId"));
-    assertEquals(IntegrationSyncStatus.LINKED.value(), error.details().get("fromStatus"));
-    assertEquals(IntegrationSyncStatus.SUPERSEDED.value(), error.details().get("toStatus"));
+    assertEquals(IntegrationSyncStatus.SYNCED.value(), error.details().get("fromStatus"));
+    assertEquals(IntegrationSyncStatus.LINKED.value(), error.details().get("toStatus"));
     assertEquals("transition_not_allowed", error.details().get("reason"));
   }
 

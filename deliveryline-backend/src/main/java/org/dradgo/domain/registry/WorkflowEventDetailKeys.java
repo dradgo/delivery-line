@@ -85,6 +85,17 @@ public final class WorkflowEventDetailKeys {
   public static final String RAW_OUTPUT_BYTE_SIZE = "rawOutputByteSize";
   public static final String RAW_OUTPUT_CLASSIFICATION = "rawOutputClassification";
 
+  // GitHub PR linkage keys (added story 3.15 AC2, emitted on INTEGRATION_LINKED). All allow-listed:
+  // the canonical PR reference (org/repo#n), repository full name, branch, commit SHA, PR number,
+  // and PR state are non-secret git/GitHub identifiers — the same shareable-redacted posture as the
+  // external_metadata they mirror. NEVER carries the GitHub token, PR body, or any redacted field.
+  public static final String GITHUB_PR_REFERENCE = "githubPrReference";
+  public static final String REPOSITORY_FULL_NAME = "repositoryFullName";
+  public static final String BRANCH = "branch";
+  public static final String COMMIT_SHA = "commitSha";
+  public static final String PR_NUMBER = "prNumber";
+  public static final String PR_STATE = "prState";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -127,7 +138,13 @@ public final class WorkflowEventDetailKeys {
           EXIT_CODE,
           REDACTION_COUNT,
           RAW_OUTPUT_BYTE_SIZE,
-          RAW_OUTPUT_CLASSIFICATION);
+          RAW_OUTPUT_CLASSIFICATION,
+          GITHUB_PR_REFERENCE,
+          REPOSITORY_FULL_NAME,
+          BRANCH,
+          COMMIT_SHA,
+          PR_NUMBER,
+          PR_STATE);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

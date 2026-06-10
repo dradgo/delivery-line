@@ -82,7 +82,13 @@
               "exitCode": { "type": "integer" },
               "redactionCount": { "type": "integer" },
               "rawOutputByteSize": { "type": "integer" },
-              "rawOutputClassification": { "type": "string" }
+              "rawOutputClassification": { "type": "string" },
+              "githubPrReference": { "type": "string" },
+              "repositoryFullName": { "type": "string" },
+              "branch": { "type": "string" },
+              "commitSha": { "type": "string" },
+              "prNumber": { "type": "integer" },
+              "prState": { "type": "string" }
             }
           }
         }

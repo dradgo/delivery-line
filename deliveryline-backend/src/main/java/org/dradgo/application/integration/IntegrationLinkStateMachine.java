@@ -18,12 +18,16 @@ import org.dradgo.domain.registry.IntegrationSyncStatus;
  * <p>Allowed transitions (story 1.14 Task 2):
  *
  * <pre>
- *   linked     → synced | stale  | failed
+ *   linked     → synced | stale  | failed | superseded
  *   synced     → stale  | failed | superseded
  *   stale      → synced | failed | superseded
  *   failed     → linked | superseded
  *   superseded → (terminal)
  * </pre>
+ *
+ * <p>{@code LINKED → SUPERSEDED} (story 3.15 AC9) supports the supersede-on-retry-with-a-new-PR
+ * path: a freshly-linked {@code github_pr} row that has never been synced must be supersedable when
+ * a retry produces a different PR reference for the same workflow run.
  *
  * <p>Reuses {@link DomainErrorCode#ILLEGAL_TRANSITION} — the registry already covers this shape;
  * the rejection details disambiguate the integration-link caller from the runner-execution caller.
@@ -42,7 +46,8 @@ public final class IntegrationLinkStateMachine {
         EnumSet.of(
             IntegrationSyncStatus.SYNCED,
             IntegrationSyncStatus.STALE,
-            IntegrationSyncStatus.FAILED));
+            IntegrationSyncStatus.FAILED,
+            IntegrationSyncStatus.SUPERSEDED));
     rules.put(
         IntegrationSyncStatus.SYNCED,
         EnumSet.of(

@@ -51,6 +51,17 @@ public interface IntegrationLinkRecordPort {
   Optional<IntegrationLink> findActiveByWorkflowRun(String workflowRunPublicId);
 
   /**
+   * Find the currently-active integration link for a given {@code (integrationType, workflowRun)},
+   * taking a {@code PESSIMISTIC_WRITE} lock for the duration of the transaction. Used by {@code
+   * IntegrationLinkService.linkGitHubPr}/{@code syncGitHubPr} (story 3.15) to locate the prior
+   * {@code github_pr} link for THIS run race-free — {@link #findActiveByWorkflowRun} returns the
+   * {@code linear} variant by convention and so cannot be used to find a {@code github_pr} row to
+   * supersede.
+   */
+  Optional<IntegrationLink> findActiveByTypeAndWorkflowRunForUpdate(
+      String integrationType, String workflowRunPublicId);
+
+  /**
    * Transition the sync status of an integration link, updating {@code last_sync_at} when the
    * caller passes a non-null timestamp. Returns the updated row. Throws {@code
    * DomainException(ILLEGAL_TRANSITION)} when the requested transition is not allowed by the state
@@ -58,6 +69,21 @@ public interface IntegrationLinkRecordPort {
    */
   IntegrationLink updateSyncStatus(
       String publicId, IntegrationSyncStatus newStatus, Instant lastSyncAt);
+
+  /**
+   * Replace {@code external_metadata} and transition {@code sync_status} in one write, refreshing
+   * {@code last_sync_at} when the caller passes a non-null timestamp. Re-validates the
+   * state-machine transition (see {@code IntegrationLinkStateMachine}) and the V1 64KB ceiling
+   * before persisting. Used by {@code IntegrationLinkService.syncGitHubPr} (story 3.15 AC6) to
+   * refresh the redacted PR metadata (notably {@code prState}) alongside the {@code → synced}
+   * transition. {@code externalMetadata} is opaque redacted JSON bytes — the adapter does not
+   * redact.
+   */
+  IntegrationLink updateExternalMetadataAndSync(
+      String publicId,
+      byte[] externalMetadata,
+      IntegrationSyncStatus newStatus,
+      Instant lastSyncAt);
 
   /** Mark the row as archived. Sets {@code archived_at = now}. */
   IntegrationLink markArchived(String publicId, Instant archivedAt);

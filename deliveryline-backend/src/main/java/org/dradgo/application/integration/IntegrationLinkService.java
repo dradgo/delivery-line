@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -15,6 +17,10 @@ import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
+import org.dradgo.application.integration.github.GitHubAdapter;
+import org.dradgo.application.integration.github.GitHubAdapterException;
+import org.dradgo.application.integration.github.GitHubBranch;
+import org.dradgo.application.integration.github.GitHubPullRequest;
 import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearTicket;
@@ -23,6 +29,8 @@ import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewInteg
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
+import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DataClassification;
@@ -30,8 +38,11 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
+import org.dradgo.domain.registry.WorkflowEventDetailKeys;
+import org.dradgo.domain.registry.WorkflowEventType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -59,12 +70,20 @@ public class IntegrationLinkService {
   private static final Logger log = LoggerFactory.getLogger(IntegrationLinkService.class);
 
   static final String LINEAR_INTEGRATION_TYPE = "linear";
+  static final String GITHUB_PR_INTEGRATION_TYPE = "github_pr";
   static final String COMMAND_TYPE = "IntegrationLinkService.linkTicket";
 
   private final IntegrationLinkRecordPort integrationLinkRecordPort;
   private final LinearAdapter linearAdapter;
   private final IdempotencyService idempotencyService;
   private final RedactionPolicyService redactionPolicyService;
+  // Story 3.15 (Decision D3) — GitHubAdapter is @Profile(github-mock|github-real)-gated while this
+  // service is an unconditional @Service; injecting it directly would red every @SpringBootTest
+  // lacking the profile ([[unconditional-service-needs-profile-gate]]). Resolve getIfAvailable()
+  // lazily at the github-only call site; absent at a real link attempt → a typed failure, never
+  // NPE.
+  private final ObjectProvider<GitHubAdapter> gitHubAdapterProvider;
+  private final WorkflowEventWritePort workflowEventWritePort;
   private final TransactionTemplate failureCompletionTemplate;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -74,12 +93,16 @@ public class IntegrationLinkService {
       LinearAdapter linearAdapter,
       IdempotencyService idempotencyService,
       RedactionPolicyService redactionPolicyService,
+      ObjectProvider<GitHubAdapter> gitHubAdapterProvider,
+      WorkflowEventWritePort workflowEventWritePort,
       PlatformTransactionManager transactionManager) {
     this(
         integrationLinkRecordPort,
         linearAdapter,
         idempotencyService,
         redactionPolicyService,
+        gitHubAdapterProvider,
+        workflowEventWritePort,
         requiresNewTemplate(transactionManager));
   }
 
@@ -88,6 +111,8 @@ public class IntegrationLinkService {
       LinearAdapter linearAdapter,
       IdempotencyService idempotencyService,
       RedactionPolicyService redactionPolicyService,
+      ObjectProvider<GitHubAdapter> gitHubAdapterProvider,
+      WorkflowEventWritePort workflowEventWritePort,
       TransactionTemplate failureCompletionTemplate) {
     this.integrationLinkRecordPort =
         Objects.requireNonNull(integrationLinkRecordPort, "integrationLinkRecordPort");
@@ -95,6 +120,10 @@ public class IntegrationLinkService {
     this.idempotencyService = Objects.requireNonNull(idempotencyService, "idempotencyService");
     this.redactionPolicyService =
         Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
+    this.gitHubAdapterProvider =
+        Objects.requireNonNull(gitHubAdapterProvider, "gitHubAdapterProvider");
+    this.workflowEventWritePort =
+        Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.failureCompletionTemplate =
         Objects.requireNonNull(failureCompletionTemplate, "failureCompletionTemplate");
   }
@@ -317,6 +346,274 @@ public class IntegrationLinkService {
   }
 
   /**
+   * Reserve + insert (or replay/supersede) an {@code integration_links} {@code github_pr} row for a
+   * GitHub pull request on a workflow run (story 3.15 Task 1). The GitHub twin of {@link
+   * #linkTicketWithinTransaction}: same lock → fetch → compat → conflict → redact → insert spine,
+   * plus the AC9 supersede branch and an AC2 {@code integration.linked} event.
+   *
+   * <p>{@code prReference} MUST be the canonical GitHubAdapter ref ({@code owner/repo#number}) —
+   * the authoritative {@code RepositoryPushOutcome.prRef()}, never the untrusted runner-reported
+   * {@code PR-<n>} (Trap T1 / [[proutput-prref-validator-rejects-real-adapter]]). PR metadata
+   * ({@code prNumber}/{@code prState}/{@code prUrl}/{@code repositoryFullName}) is resolved via
+   * {@link GitHubAdapter#getPullRequestByRef(String)} (Decision D2), which also verifies existence
+   * ({@code GITHUB_PR_NOT_FOUND}).
+   *
+   * <p>Transactional semantics (AC2): compat-check → cross-run conflict →
+   * supersede-prior-different- PR → insert → append {@code integration.linked} — all in the
+   * caller's/own transaction.
+   *
+   * @param idempotencyKey accepted for signature fidelity / a future direct caller (OQ-1); the
+   *     broker-originated path relies on the same-run/same-ref no-op plus the V6 unique index, not
+   *     {@link IdempotencyService}.
+   */
+  @Transactional
+  public IntegrationLink linkGitHubPr(
+      String workflowRunPublicId,
+      String prReference,
+      String repositoryRef,
+      String branchName,
+      String commitSha,
+      ActorContext actor,
+      String idempotencyKey) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    if (prReference == null || prReference.isBlank()) {
+      throw new IllegalArgumentException("prReference must be non-blank");
+    }
+    Objects.requireNonNull(actor, "actor");
+
+    String priorCorrelationMdc = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, actor.correlationId());
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info(
+          "linkGitHubPr entry workflowRunId={} actorIdentity={} externalRef={}",
+          workflowRunPublicId,
+          actor.actorIdentity(),
+          MdcKeys.sanitizeForLog(prReference));
+
+      GitHubPullRequest pr = resolvePullRequest(workflowRunPublicId, prReference, "linkGitHubPr");
+
+      // AC4 — defense-in-depth: the PR's repository must match the run's established repository
+      // linkage (story 3.9 verifyRepositoryIsConsistent already blocks the workspace from being
+      // prepared against a conflicting repo, so this can only fire on a code-path bug).
+      if (repositoryRef != null
+          && !repositoryRef.isBlank()
+          && !repositoryRef.equals(pr.repoRef())) {
+        log.warn(
+            "linkGitHubPr repo_mismatch workflowRunId={} runRepoRef={} prRepoRef={}",
+            workflowRunPublicId,
+            MdcKeys.sanitizeForLog(repositoryRef),
+            MdcKeys.sanitizeForLog(pr.repoRef()));
+        throw repoMismatch(workflowRunPublicId, repositoryRef, pr.repoRef());
+      }
+
+      // AC2 — cross-run conflict (pessimistic lock + the V6 DB backstop). Same ref + same run is an
+      // idempotent replay (AC9 same-PR no-op); same ref + different run is a hard conflict.
+      Optional<IntegrationLink> activeByRef =
+          integrationLinkRecordPort.findActiveByTypeAndExternalRefForUpdate(
+              GITHUB_PR_INTEGRATION_TYPE, prReference);
+      if (activeByRef.isPresent()) {
+        IntegrationLink existing = activeByRef.get();
+        if (!existing.workflowRunPublicId().equals(workflowRunPublicId)) {
+          log.warn(
+              "linkGitHubPr cross_run_conflict workflowRunId={} existingRunId={}",
+              workflowRunPublicId,
+              existing.workflowRunPublicId());
+          throw crossRunGitHubConflict(prReference, existing);
+        }
+        log.warn(
+            "linkGitHubPr idempotent_no_op workflowRunId={} existingPublicId={}",
+            workflowRunPublicId,
+            existing.publicId());
+        return existing;
+      }
+
+      // AC9 — supersede a prior github_pr link for THIS run that carries a DIFFERENT PR reference
+      // (the same-ref case already returned above). LINKED→SUPERSEDED is legal as of story 3.15
+      // (Trap T2).
+      Optional<IntegrationLink> priorForRun =
+          integrationLinkRecordPort.findActiveByTypeAndWorkflowRunForUpdate(
+              GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
+      if (priorForRun.isPresent() && !priorForRun.get().externalRef().equals(prReference)) {
+        IntegrationLink prior = priorForRun.get();
+        integrationLinkRecordPort.updateSyncStatus(
+            prior.publicId(), IntegrationSyncStatus.SUPERSEDED, null);
+        log.info(
+            "linkGitHubPr superseded_prior workflowRunId={} priorPublicId={}",
+            workflowRunPublicId,
+            prior.publicId());
+      }
+
+      String publicId = PublicIdPrefixes.INTEGRATION_LINK.next();
+      Map<String, Object> rawMetadata = buildGitHubExternalMetadata(pr, branchName, commitSha);
+      RedactionResult redacted =
+          redactionPolicyService.redact(rawMetadata, DataClassification.SHAREABLE_REDACTED.value());
+      byte[] metadataBytes = serializeRedactedMetadata(redacted.sanitizedJson());
+
+      Instant now = Instant.now();
+      IntegrationLink inserted =
+          integrationLinkRecordPort.insert(
+              new NewIntegrationLink(
+                  publicId,
+                  workflowRunPublicId,
+                  GITHUB_PR_INTEGRATION_TYPE,
+                  prReference,
+                  metadataBytes,
+                  now,
+                  now));
+
+      appendIntegrationLinkedEvent(
+          workflowRunPublicId, inserted, pr, branchName, commitSha, actor, now);
+
+      log.info(
+          "linkGitHubPr success workflowRunId={} integrationLinkPublicId={} externalRef={} "
+              + "prNumber={} prState={} effectiveClassification={}",
+          workflowRunPublicId,
+          inserted.publicId(),
+          MdcKeys.sanitizeForLog(prReference),
+          pr.number(),
+          MdcKeys.sanitizeForLog(pr.state()),
+          redacted.effectiveClassification().value());
+      return inserted;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
+    }
+  }
+
+  /**
+   * Refresh the active {@code github_pr} link for a run: re-query the PR via {@link
+   * GitHubAdapter#getPullRequestByRef(String)}, rebuild + re-redact {@code external_metadata} with
+   * the fresh {@code prState}, and persist alongside the {@code → synced} transition and a
+   * refreshed {@code last_sync_at} (story 3.15 AC6). A vanished PR or a classified adapter failure
+   * routes the link to {@code failed} via {@link #markFailed} (Trap T13) rather than throwing — the
+   * caller (orchestration verifying a PR is mergeable before {@code Completed}) treats {@code
+   * failed} as a non-mergeable signal.
+   */
+  @Transactional
+  public IntegrationLink syncGitHubPr(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      IntegrationLink active =
+          integrationLinkRecordPort
+              .findActiveByTypeAndWorkflowRunForUpdate(
+                  GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId)
+              .orElseThrow(() -> noActiveGitHubLink(workflowRunPublicId));
+      log.info(
+          "syncGitHubPr entry workflowRunId={} integrationLinkPublicId={} externalRef={}",
+          workflowRunPublicId,
+          active.publicId(),
+          MdcKeys.sanitizeForLog(active.externalRef()));
+
+      GitHubAdapter adapter = gitHubAdapterProvider.getIfAvailable();
+      if (adapter == null) {
+        throw gitHubAdapterUnavailable(active.externalRef());
+      }
+      GitHubPullRequest pr;
+      try {
+        Optional<GitHubPullRequest> fetched = adapter.getPullRequestByRef(active.externalRef());
+        if (fetched.isEmpty()) {
+          log.warn(
+              "syncGitHubPr pr_not_found workflowRunId={} integrationLinkPublicId={}",
+              workflowRunPublicId,
+              active.publicId());
+          return markFailed(active.publicId(), IntegrationFailureCategory.GITHUB_PR_NOT_FOUND);
+        }
+        pr = fetched.get();
+      } catch (GitHubAdapterException error) {
+        log.warn(
+            "syncGitHubPr adapter_failure workflowRunId={} integrationLinkPublicId={} category={}",
+            workflowRunPublicId,
+            active.publicId(),
+            error.failureCategory().value());
+        return markFailed(active.publicId(), error.failureCategory());
+      }
+
+      // A prior sync may have routed the link to FAILED on a transient adapter failure (rate-limit
+      // /
+      // 5xx). The fetch just succeeded, so recover FAILED → LINKED (the state machine's recovery
+      // edge) before the → SYNCED write — otherwise updateExternalMetadataAndSync would throw
+      // ILLEGAL_TRANSITION (FAILED → SYNCED is not allowed) and the link could never re-sync.
+      if (active.syncStatus() == IntegrationSyncStatus.FAILED) {
+        log.info(
+            "syncGitHubPr recover_from_failed workflowRunId={} integrationLinkPublicId={}",
+            workflowRunPublicId,
+            active.publicId());
+        integrationLinkRecordPort.updateSyncStatus(
+            active.publicId(), IntegrationSyncStatus.LINKED, null);
+      }
+
+      String refreshedCommitSha = resolveHeadSha(adapter, pr);
+      Map<String, Object> rawMetadata =
+          buildGitHubExternalMetadata(pr, pr.sourceBranch(), refreshedCommitSha);
+      RedactionResult redacted =
+          redactionPolicyService.redact(rawMetadata, DataClassification.SHAREABLE_REDACTED.value());
+      byte[] metadataBytes = serializeRedactedMetadata(redacted.sanitizedJson());
+
+      IntegrationLink updated =
+          integrationLinkRecordPort.updateExternalMetadataAndSync(
+              active.publicId(), metadataBytes, IntegrationSyncStatus.SYNCED, Instant.now());
+      log.info(
+          "syncGitHubPr success workflowRunId={} integrationLinkPublicId={} externalRef={} "
+              + "prState={}",
+          workflowRunPublicId,
+          updated.publicId(),
+          MdcKeys.sanitizeForLog(active.externalRef()),
+          MdcKeys.sanitizeForLog(pr.state()));
+      return updated;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Reusable guard (story 3.15 AC5): assert an artifact's PR reference matches the active {@code
+   * github_pr} link's canonical {@code external_ref} for the run — preventing approval of a {@code
+   * prOutput} artifact whose PR reference has drifted (NFR19). Raises {@code
+   * ARTIFACT_PR_LINK_MISMATCH} on mismatch. The comparison is <strong>format-exact</strong> against
+   * the canonical {@code owner/repo#number} (no normalization): when the artifact still carries a
+   * runner-reported {@code PR-<n>} or URL form (3.12 enrichment is best-effort and may have been
+   * swallowed) the guard cannot prove equivalence and <strong>fails closed</strong> (OQ-2). The
+   * production approval call-site is wired in story 3.20 ({@code acceptImplementation} does not yet
+   * exist).
+   */
+  public void assertArtifactPrLinkMatches(String workflowRunPublicId, String artifactPrReference) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    if (artifactPrReference == null || artifactPrReference.isBlank()) {
+      throw new IllegalArgumentException("artifactPrReference must be non-blank");
+    }
+    Optional<IntegrationLink> activeOpt =
+        integrationLinkRecordPort.findActiveByTypeAndWorkflowRunForUpdate(
+            GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
+    if (activeOpt.isEmpty()) {
+      // Fail closed (OQ-2): no durable linkage to prove the artifact's PR ref against.
+      log.warn(
+          "assertArtifactPrLinkMatches no_active_link workflowRunId={} artifactPrReference={}",
+          workflowRunPublicId,
+          MdcKeys.sanitizeForLog(artifactPrReference));
+      throw artifactPrLinkMismatch(workflowRunPublicId, null, artifactPrReference);
+    }
+    IntegrationLink active = activeOpt.get();
+    String canonicalLink = active.externalRef();
+    // artifactPrReference is already validated non-blank above; compare from it so a (defensively
+    // unexpected) null externalRef fails closed with the typed mismatch instead of an NPE.
+    boolean matches = artifactPrReference.equals(canonicalLink);
+    if (!matches) {
+      log.warn(
+          "assertArtifactPrLinkMatches mismatch workflowRunId={} linkExternalRef={} "
+              + "artifactPrReference={}",
+          workflowRunPublicId,
+          MdcKeys.sanitizeForLog(canonicalLink),
+          MdcKeys.sanitizeForLog(artifactPrReference));
+      throw artifactPrLinkMismatch(workflowRunPublicId, canonicalLink, artifactPrReference);
+    }
+    log.info(
+        "assertArtifactPrLinkMatches ok workflowRunId={} integrationLinkPublicId={}",
+        workflowRunPublicId,
+        active.publicId());
+  }
+
+  /**
    * Look up the currently-active integration link for an external reference. Active = {@code
    * archived_at IS NULL AND sync_status != 'superseded'}.
    */
@@ -447,6 +744,192 @@ public class IntegrationLinkService {
     return new DomainException(
         DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
         "Prior linkTicket attempt for this key failed terminally; submit with a fresh idempotency key",
+        details);
+  }
+
+  // =====================================================================
+  // GitHub PR linkage helpers (story 3.15)
+  // =====================================================================
+
+  private GitHubPullRequest resolvePullRequest(String runId, String prReference, String op) {
+    GitHubAdapter adapter = gitHubAdapterProvider.getIfAvailable();
+    if (adapter == null) {
+      throw gitHubAdapterUnavailable(prReference);
+    }
+    try {
+      Optional<GitHubPullRequest> fetched = adapter.getPullRequestByRef(prReference);
+      if (fetched.isEmpty()) {
+        log.warn("{} pr_not_found workflowRunId={}", op, runId);
+        throw gitHubPrNotFound(prReference);
+      }
+      return fetched.get();
+    } catch (GitHubAdapterException error) {
+      log.warn(
+          "{} adapter_failure workflowRunId={} category={}",
+          op,
+          runId,
+          error.failureCategory().value());
+      throw gitHubAdapterFailure(prReference, error);
+    }
+  }
+
+  private static String resolveHeadSha(GitHubAdapter adapter, GitHubPullRequest pr) {
+    try {
+      return adapter
+          .getBranchByRef(pr.repoRef(), pr.sourceBranch())
+          .map(GitHubBranch::headSha)
+          .orElse(null);
+    } catch (GitHubAdapterException error) {
+      // Best-effort commitSha refresh; the prState refresh is the AC6 contract, not the SHA.
+      return null;
+    }
+  }
+
+  private static Map<String, Object> buildGitHubExternalMetadata(
+      GitHubPullRequest pr, String branchName, String commitSha) {
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("repositoryFullName", pr.repoRef());
+    metadata.put(
+        "branch", (branchName == null || branchName.isBlank()) ? pr.sourceBranch() : branchName);
+    // Omit (rather than store JSON null) when absent — mirrors appendIntegrationLinkedEvent's
+    // guard.
+    // commitSha is the only nullable field: it rides RepositoryPushOutcome.commitSha at link time
+    // and resolveHeadSha (best-effort) at sync time, so a failed refresh must not overwrite a
+    // previously-good SHA with null in the persisted reconstruction metadata (NFR17).
+    if (commitSha != null && !commitSha.isBlank()) {
+      metadata.put("commitSha", commitSha);
+    }
+    metadata.put("prNumber", pr.number());
+    metadata.put("prState", pr.state());
+    metadata.put("prUrl", pr.url());
+    return metadata;
+  }
+
+  private void appendIntegrationLinkedEvent(
+      String runId,
+      IntegrationLink link,
+      GitHubPullRequest pr,
+      String branchName,
+      String commitSha,
+      ActorContext actor,
+      Instant at) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(WorkflowEventDetailKeys.GITHUB_PR_REFERENCE, link.externalRef());
+    details.put(WorkflowEventDetailKeys.REPOSITORY_FULL_NAME, pr.repoRef());
+    details.put(
+        WorkflowEventDetailKeys.BRANCH,
+        (branchName == null || branchName.isBlank()) ? pr.sourceBranch() : branchName);
+    if (commitSha != null && !commitSha.isBlank()) {
+      details.put(WorkflowEventDetailKeys.COMMIT_SHA, commitSha);
+    }
+    details.put(WorkflowEventDetailKeys.PR_NUMBER, pr.number());
+    details.put(WorkflowEventDetailKeys.PR_STATE, pr.state());
+    if (actor.correlationId() != null && !actor.correlationId().isBlank()) {
+      details.put(WorkflowEventDetailKeys.CORRELATION_ID, actor.correlationId());
+    }
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            PublicIdPrefixes.WORKFLOW_EVENT.next(),
+            runId,
+            WorkflowEventType.INTEGRATION_LINKED,
+            null,
+            null,
+            actor.actorIdentity(),
+            actor.actorType(),
+            "integration_linked",
+            null,
+            false,
+            OffsetDateTime.ofInstant(at, ZoneOffset.UTC),
+            details));
+  }
+
+  private static DomainException crossRunGitHubConflict(
+      String prReference, IntegrationLink existing) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("integrationType", GITHUB_PR_INTEGRATION_TYPE);
+    details.put("externalRef", prReference);
+    details.put("existingIntegrationLinkPublicId", existing.publicId());
+    details.put("existingRunPublicId", existing.workflowRunPublicId());
+    details.put("reason", "cross_run_active_github_pr_link_exists");
+    return new DomainException(
+        DomainErrorCode.INTEGRATION_LINK_CONFLICT,
+        "GitHub PR " + prReference + " is already linked to run " + existing.workflowRunPublicId(),
+        details);
+  }
+
+  private static DomainException repoMismatch(String runId, String runRepoRef, String prRepoRef) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("workflowRunId", runId);
+    details.put("runRepositoryRef", runRepoRef);
+    details.put("prRepositoryRef", prRepoRef);
+    details.put("reason", "github_pr_repo_does_not_match_run_repository");
+    return new DomainException(
+        DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH,
+        "GitHub PR repository " + prRepoRef + " does not match the run's repository " + runRepoRef,
+        details);
+  }
+
+  private static DomainException gitHubPrNotFound(String prReference) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("integrationType", GITHUB_PR_INTEGRATION_TYPE);
+    details.put("externalRef", prReference);
+    details.put("failureCategory", IntegrationFailureCategory.GITHUB_PR_NOT_FOUND.value());
+    details.put("reason", "github_pr_not_found");
+    return new DomainException(
+        DomainErrorCode.INTEGRATION_LINK_CONFLICT, "GitHub PR not found: " + prReference, details);
+  }
+
+  private static DomainException gitHubAdapterUnavailable(String prReference) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("integrationType", GITHUB_PR_INTEGRATION_TYPE);
+    details.put("externalRef", prReference);
+    details.put("reason", "github_adapter_unavailable");
+    return new DomainException(
+        DomainErrorCode.INTERNAL_ERROR,
+        "GitHub adapter is not available (no github profile active) for " + prReference,
+        details);
+  }
+
+  private static DomainException gitHubAdapterFailure(
+      String prReference, GitHubAdapterException cause) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("integrationType", GITHUB_PR_INTEGRATION_TYPE);
+    details.put("externalRef", prReference);
+    details.put("failureCategory", cause.failureCategory().value());
+    return new DomainException(
+        DomainErrorCode.INTEGRATION_LINK_CONFLICT,
+        "GitHub adapter failure during linkGitHubPr: " + cause.getMessage(),
+        details);
+  }
+
+  private static DomainException noActiveGitHubLink(String runId) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("workflowRunId", runId);
+    details.put("integrationType", GITHUB_PR_INTEGRATION_TYPE);
+    details.put("reason", "no_active_github_pr_link");
+    return new DomainException(
+        DomainErrorCode.INTERNAL_ERROR,
+        "No active github_pr integration link for run " + runId,
+        details);
+  }
+
+  private static DomainException artifactPrLinkMismatch(
+      String runId, String linkExternalRef, String artifactPrReference) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("workflowRunId", runId);
+    if (linkExternalRef != null) {
+      details.put("linkExternalRef", linkExternalRef);
+    }
+    details.put("artifactPrReference", artifactPrReference);
+    details.put(
+        "reason",
+        linkExternalRef == null ? "no_active_github_pr_link" : "artifact_pr_reference_drifted");
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_PR_LINK_MISMATCH,
+        "Artifact PR reference "
+            + artifactPrReference
+            + " does not match the linked PR for run "
+            + runId,
         details);
   }
 

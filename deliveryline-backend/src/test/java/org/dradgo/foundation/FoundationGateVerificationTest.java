@@ -265,4 +265,23 @@ class FoundationGateVerificationTest {
           "3.14", "org.dradgo.foundation.GitHubMockVsRealParityFoundationContract");
     }
   }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #12 — IntegrationLinkService.linkGitHubPr github-mock e2e (story 3.15)")
+  class Contract12IntegrationLinkGitHubPr {
+
+    /**
+     * Story 3.15 AC8 — widens the foundation gate to assert {@code linkGitHubPr} works end-to-end
+     * against the {@code github-mock} adapter: it resolves the PR, writes a {@code github_pr}
+     * {@code integration_links} row (with real redaction preserving the NFR17 reconstruction
+     * fields), and appends an {@code integration.linked} workflow event.
+     */
+    @Test
+    @DisplayName("linkGitHubPr writes a github_pr row + integration.linked event against the mock")
+    void linkGitHubPrEndToEndAgainstMockAdapter() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.15", "org.dradgo.foundation.IntegrationLinkGitHubPrFoundationContract");
+    }
+  }
 }
