@@ -95,7 +95,8 @@ class DockerRunnerAdapterContainerLifecycleIT {
             RunnerProperties.defaultSecretEnvNames(),
             false,
             RunnerProperties.SpecStage.defaults(),
-            RunnerProperties.PlanStage.defaults());
+            RunnerProperties.PlanStage.defaults(),
+            RunnerProperties.ImplementationStage.defaults());
 
     RunnerSecretsService secretsService =
         new RunnerSecretsService(

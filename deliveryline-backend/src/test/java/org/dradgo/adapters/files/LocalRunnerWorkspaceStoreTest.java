@@ -329,7 +329,8 @@ class LocalRunnerWorkspaceStoreTest {
         RunnerProperties.defaultSecretEnvNames(),
         false,
         RunnerProperties.SpecStage.defaults(),
-        RunnerProperties.PlanStage.defaults());
+        RunnerProperties.PlanStage.defaults(),
+        RunnerProperties.ImplementationStage.defaults());
   }
 
   private static Set<PosixFilePermission> allAccessDirPerms() {

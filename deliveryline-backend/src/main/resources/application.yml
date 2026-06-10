@@ -161,6 +161,15 @@ deliveryline:
     plan-stage:
       kind: codex
       auto-dispatch: true
+    # Story 3.12 — implementation-stage (pr-output) orchestration. `kind` (AC1) selects the runner
+    # image for the pr-output sub-stage (codex | claude). OQ-4: it MUST stay equal to plan-stage.kind
+    # until a runner_kind column lands, so the story-3.5 secret-scan (keyed on
+    # kindForStage(EXECUTION)=plan-stage.kind) stays consistent. `auto-dispatch` gates the
+    # dispatchImplementation/retryImplementation entry points; ON in production, OFF in the test
+    # profile so the existing suite stays deterministic (Trap T7).
+    implementation-stage:
+      kind: codex
+      auto-dispatch: true
     recovery:
       batch-size: 100
     mock:

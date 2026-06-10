@@ -360,6 +360,23 @@ public final class ProblemDetailsCatalog {
         HttpStatus.SERVICE_UNAVAILABLE,
         "Observability host memory low",
         false);
+    // Story 3.12 (AC3) — a pr-output runner whose reported refs disagree with the actual git/GitHub
+    // state is a runner-side contract violation; mirror RUNNER_CONTRACT_VIOLATION's BAD_GATEWAY.
+    register(
+        metadata,
+        DomainErrorCode.RUNNER_PR_REF_DRIFT,
+        HttpStatus.BAD_GATEWAY,
+        "Runner PR reference drift",
+        false);
+    // Story 3.12 (AC9) — a pr-output runner emitting malformed ref strings is a runner-side
+    // contract
+    // violation; mirror RUNNER_CONTRACT_VIOLATION's BAD_GATEWAY mapping.
+    register(
+        metadata,
+        DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED,
+        HttpStatus.BAD_GATEWAY,
+        "Runner output validation failed",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

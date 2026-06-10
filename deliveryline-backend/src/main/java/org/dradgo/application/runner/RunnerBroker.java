@@ -413,6 +413,10 @@ public class RunnerBroker {
               : null;
 
       ContextBundle bundle;
+      // Story 3.12 (AC1 / Task 5) — the EXECUTION dispatch derives its sub-stage during bundle
+      // composition (below) and reuses it to resolve the per-sub-stage runner kind for the dispatch
+      // request. Null for INVESTIGATION (the spec stage has no execution sub-stage).
+      ExecutionSubStage executionSubStage = null;
       RepositoryContextSummary repositoryContextSummary = null;
       // Story 3.10 — carried out of the try so the dispatch request (below) can mount
       // /workspace/repo
@@ -473,8 +477,7 @@ public class RunnerBroker {
                   actor,
                   repositoryContextSummary);
         } else {
-          ExecutionSubStage executionSubStage =
-              contextBundleService.deriveExecutionSubStage(workflowRunId);
+          executionSubStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
           log.info(
               "dispatch execution sub-stage derived workflowRunId={} subStage={} repoContextPresent={}",
               workflowRunId,
@@ -586,18 +589,28 @@ public class RunnerBroker {
           scratchStore.writeContextBundle(reservedRexId, bundle.redactedPayload());
 
       // Story 3a-1 (AC10) — resolve the runner-image kind per stage (spec-investigation honors
-      // deliveryline.runner.spec-stage.kind; every other stage keeps docker().defaultKind()).
+      // deliveryline.runner.spec-stage.kind). Story 3.12 (AC1 / Task 5, closes 3.11 OQ-4) — for the
+      // EXECUTION stage resolve the kind from the derived sub-stage so the pr-output sub-stage
+      // honors
+      // deliveryline.runner.implementation-stage.kind while implementation-plan honors
+      // plan-stage.kind
+      // (both default codex; they MUST stay equal so the story-3.5 secret-scan, keyed on
+      // kindForStage(EXECUTION)=plan-stage.kind, stays consistent — see kindForExecutionSubStage).
       // Story 3a-2 (AC7, Trap T14) + story 3.10 (Task 4) — thread the resolved repositoryRef so
       // DockerRunnerAdapter mounts /workspace/repo and idempotently reuses the broker's clone, plus
       // the EXECUTION ticketRef so the adapter checks out the same deterministic branch the broker
       // prepared and captureAndPush pushes it. Both null for every no-repo dispatch (and ticketRef
       // null for INVESTIGATION), keeping those requests byte-identical to today.
+      org.dradgo.domain.registry.RunnerKind dispatchKind =
+          stage == RunnerStage.EXECUTION
+              ? runnerProperties.kindForExecutionSubStage(executionSubStage)
+              : runnerProperties.kindForStage(stage);
       RunnerDispatchRequest request =
           new RunnerDispatchRequest(
               reservedRexId,
               workflowRunId,
               stage,
-              runnerProperties.kindForStage(stage),
+              dispatchKind,
               bundlePath,
               constraints,
               bundle.effectiveClassification(),
@@ -784,6 +797,12 @@ public class RunnerBroker {
     }
 
     boolean artifactIngestionFailed = false;
+    // Story 3.12 (AC3 / Decision D3) — capture the ingested prOutput artifact id so the pr-output
+    // enrichment below can update its payload with the actual captureAndPush refs (follow-on
+    // update,
+    // keyed by artifact id; does not reorder the shared spec/plan ingest path). Stays null on every
+    // non-pr-output result.
+    String prOutputArtifactId = null;
     for (JsonNode ref : artifactRefs) {
       String typeValue = ref.path("artifactType").asText();
       ArtifactType artifactType =
@@ -830,6 +849,9 @@ public class RunnerBroker {
             opResult.failure());
         artifactIngestionFailed = true;
         break;
+      }
+      if (artifactType == ArtifactType.PR_OUTPUT) {
+        prOutputArtifactId = opResult.artifact().publicId();
       }
     }
 
@@ -939,9 +961,14 @@ public class RunnerBroker {
     // are byte-for-byte unchanged. (Re-homing the failure transition to
     // WorkflowOrchestrationService
     // is story 3a-1, OQ-2.)
+    // Story 3.12 (AC2 / Trap T4): STOP discarding the captureAndPush return — its
+    // RepositoryPushOutcome (commitSha + branchRef + prRef) is the source of the ACTUAL git/GitHub
+    // state the pr-output enrichment + ref-validation below compare against. Empty for non-repo /
+    // clean-worktree runs (the no-repo dispatch is byte-identical to today).
+    Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome = Optional.empty();
     if (repositoryWorkspaceService != null) {
       try {
-        repositoryWorkspaceService.captureAndPush(runnerExecutionId);
+        pushOutcome = repositoryWorkspaceService.captureAndPush(runnerExecutionId);
       } catch (GitCommandException pushFailure) {
         log.warn(
             "onResult git push rejected runnerExecutionId={} workflowRunId={} category={}",
@@ -968,6 +995,36 @@ public class RunnerBroker {
             "git push rejected: " + pushFailure.failureCategory().value());
         return;
       }
+    }
+
+    // Story 3.12 (AC1 / Task 3) — derive the EXECUTION sub-stage ONCE here (reused by the pr-output
+    // validation/enrichment below AND by the success delegation at the bottom). Null for
+    // non-EXECUTION
+    // stages. The sub-stage is run-level (driven by "an approved plan exists") and stable
+    // mid-execution, so a single derivation is authoritative for both uses.
+    ExecutionSubStage executionSubStage =
+        row.stage() == RunnerStage.EXECUTION
+            ? contextBundleService.deriveExecutionSubStage(workflowRunId)
+            : null;
+
+    // Story 3.12 (AC3/AC9, Task 3) — for the pr-output sub-stage: validate the runner-reported
+    // branch/commitSha/prReference against the documented formats (AC9 — untrusted runner output,
+    // story 2.24), then against the actual captureAndPush state (AC3 drift), then enrich the
+    // ingested
+    // prOutput artifact with the actual refs. Anchored AFTER captureAndPush (a push failure already
+    // routed to Failed above) and BEFORE recordCompleted, so a validation/drift failure fails a
+    // still-RUNNING execution via the existing contract-violation drive — exactly like the git-push
+    // path — instead of advancing to WaitingForReview.
+    if (executionSubStage == ExecutionSubStage.PR_OUTPUT
+        && !validateAndEnrichPrOutput(
+            runnerExecutionId,
+            workflowRunId,
+            row,
+            parsed,
+            pushOutcome,
+            prOutputArtifactId,
+            correlationId)) {
+      return; // already drove the run to Failed via the contract-violation path
     }
 
     // Story 3.2a AC9: gate the RUNNER_COMPLETED append on the row ACTUALLY transitioning. A
@@ -1010,31 +1067,35 @@ public class RunnerBroker {
         orchestration.onSpecStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
       }
     } else if (row.stage() == RunnerStage.EXECUTION) {
-      // Story 3.11 (AC2/AC3 — the central gap): the EXECUTION twin of the INVESTIGATION branch.
-      // Once the implementation-plan artifact is ingested + the execution is COMPLETED (and any
-      // captureAndPush above succeeded — anchored AFTER it so a push failure routes to Failed
-      // instead of advancing), delegate the plan-ready auto-advance (Executing ->
-      // WaitingForReview) to WorkflowOrchestrationService via the SAME lazy supplier (the
-      // broker↔orchestration cycle is already broken, Trap T2 — no new wiring). Only the
-      // IMPLEMENTATION_PLAN sub-stage advances to WaitingForReview; the pr-output sub-stage
-      // (story 3.12) has no production originator yet and its terminal transition differs (OQ-3),
-      // so it is deliberately not auto-advanced here. The artifact stays `pending` — markAvailable
-      // is unwired system-wide ([[markavailable-has-no-production-caller]]); the transition fires
-      // on successful INGEST per Decision D1, exactly as the spec stage does.
-      ExecutionSubStage subStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
-      if (subStage == ExecutionSubStage.IMPLEMENTATION_PLAN) {
-        org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
-            workflowOrchestrationServiceSupplier.get();
+      // Story 3.11 / 3.12 (AC2/AC3/AC5 — the central gap): the EXECUTION twin of the INVESTIGATION
+      // branch. Once the implementation-plan OR pr-output artifact is ingested + the execution is
+      // COMPLETED (and any captureAndPush above succeeded + the pr-output refs validated — anchored
+      // AFTER both so a push/validation failure routes to Failed instead of advancing), delegate
+      // the
+      // ready auto-advance (Executing -> WaitingForReview) to WorkflowOrchestrationService via the
+      // SAME lazy supplier (the broker↔orchestration cycle is already broken, Trap T2 — no new
+      // wiring). The artifact stays `pending` — markAvailable is unwired system-wide
+      // ([[markavailable-has-no-production-caller]]); the transition fires on successful INGEST per
+      // Decision D1, exactly as the spec stage does. The sub-stage was derived once above.
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+          workflowOrchestrationServiceSupplier.get();
+      if (executionSubStage == ExecutionSubStage.IMPLEMENTATION_PLAN) {
         if (orchestration != null) {
           orchestration.onPlanStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
+        }
+      } else if (executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+        // Story 3.12 (AC5) — the pr-output twin: auto-advance Executing -> WaitingForReview with
+        // reason pr_output_ready. This closes the absorbing-state `else` branch story 3.11 left.
+        if (orchestration != null) {
+          orchestration.onPrOutputStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
         }
       } else {
         log.info(
             "onResult execution success not auto-advanced runnerExecutionId={} workflowRunId={} "
-                + "subStage={} reason=non_plan_substage_deferred_to_3_12",
+                + "subStage={} reason=unknown_substage",
             runnerExecutionId,
             workflowRunId,
-            subStage);
+            executionSubStage);
       }
     }
   }
@@ -1113,6 +1174,298 @@ public class RunnerBroker {
             + allowed.stream().map(ArtifactType::value).toList()
             + " got "
             + actualType.value());
+  }
+
+  // Story 3.12 (AC9) — documented format patterns for the UNTRUSTED runner-reported pr-output refs
+  // (story 2.24). diffReference is out of scope (no source on RepositoryPushOutcome). A canonical
+  // GitHub PR URL or the system's own PR-<n> shorthand are both accepted for prReference.
+  private static final java.util.regex.Pattern PR_OUTPUT_BRANCH_PATTERN =
+      java.util.regex.Pattern.compile("^[a-zA-Z0-9._/-]+$");
+  private static final java.util.regex.Pattern PR_OUTPUT_COMMIT_SHA_PATTERN =
+      java.util.regex.Pattern.compile("^[0-9a-f]{7,40}$");
+  private static final java.util.regex.Pattern PR_OUTPUT_PR_REF_SHORTHAND_PATTERN =
+      java.util.regex.Pattern.compile("^PR-\\d+$");
+  private static final java.util.regex.Pattern PR_OUTPUT_PR_REF_URL_PATTERN =
+      java.util.regex.Pattern.compile(
+          "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/\\d+$");
+
+  /**
+   * Story 3.12 (AC3/AC9, Task 3) — for the pr-output sub-stage: validate the runner-reported
+   * branch/commitSha/prReference against the documented formats (AC9 — untrusted runner output),
+   * then against the actual {@code captureAndPush} state (AC3 drift), then enrich the ingested
+   * prOutput artifact with the actual refs (Decision D3 — follow-on UPDATE keyed by artifact id).
+   * Returns {@code true} to continue the success path; {@code false} when it has already driven the
+   * run to {@code Failed} via the existing contract-violation path (the caller then returns without
+   * completing the execution).
+   *
+   * <p>Never logs payload bytes or diffs; branch / commitSha / PR ref are non-secret git/GitHub
+   * identifiers.
+   */
+  private boolean validateAndEnrichPrOutput(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerExecutionSnapshot row,
+      JsonNode parsed,
+      Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome,
+      String prOutputArtifactId,
+      String correlationId) {
+    JsonNode prRef = prOutputArtifactReference(parsed);
+    String reportedBranch = textOrNull(prRef, "branch");
+    String reportedCommitSha = textOrNull(prRef, "commitSha");
+    String reportedPrReference = textOrNull(prRef, "prReference");
+
+    // AC9 — reject malformed runner-reported refs before trusting them for drift/enrichment.
+    String formatError =
+        prOutputFormatError(reportedBranch, reportedCommitSha, reportedPrReference);
+    if (formatError != null) {
+      log.warn(
+          "onResult pr-output ref format invalid runnerExecutionId={} workflowRunId={} field={} "
+              + "errorCode={}",
+          runnerExecutionId,
+          workflowRunId,
+          formatError,
+          DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED.value());
+      handlePrOutputContractFailure(
+          runnerExecutionId,
+          workflowRunId,
+          row,
+          DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED,
+          "runner_output_validation_failed",
+          "malformed runner-reported pr-output ref: " + formatError);
+      return false;
+    }
+
+    if (pushOutcome.isPresent()) {
+      RepositoryWorkspaceService.RepositoryPushOutcome actual = pushOutcome.get();
+      // AC3 — the runner-reported values MUST match the actual git/GitHub state captureAndPush
+      // produced (only compared when an actual value is present; prRef may be null — no repo ref).
+      String driftField =
+          prOutputDriftField(
+              reportedBranch,
+              reportedCommitSha,
+              reportedPrReference,
+              actual.branchRef(),
+              actual.commitSha(),
+              actual.prRef());
+      if (driftField != null) {
+        log.warn(
+            "onResult pr-output ref drift runnerExecutionId={} workflowRunId={} field={} "
+                + "errorCode={}",
+            runnerExecutionId,
+            workflowRunId,
+            driftField,
+            DomainErrorCode.RUNNER_PR_REF_DRIFT.value());
+        handlePrOutputContractFailure(
+            runnerExecutionId,
+            workflowRunId,
+            row,
+            DomainErrorCode.RUNNER_PR_REF_DRIFT,
+            "runner_pr_ref_drift",
+            "runner-reported pr-output ref drifted from actual git/GitHub state: " + driftField);
+        return false;
+      }
+      // Decision D3 — enrich the ingested prOutput artifact with the ACTUAL refs (follow-on
+      // UPDATE).
+      enrichPrOutputArtifact(
+          runnerExecutionId, workflowRunId, prOutputArtifactId, prRef, actual, correlationId);
+    } else {
+      log.debug(
+          "onResult pr-output enrichment skipped runnerExecutionId={} workflowRunId={} "
+              + "reason=no_push_outcome",
+          runnerExecutionId,
+          workflowRunId);
+    }
+
+    // TODO(story 3.15): IntegrationLinkService.linkGitHubPr(workflowRunId, prReference, ...) +
+    // PR_REF_CONTEXT_MISMATCH (AC4/AC6). The PR itself is already created/updated by captureAndPush
+    // (story 3.9); only the durable integration_links github_pr row + the wrong-repo conflict check
+    // are 3.15's deliverable. Deliberately NOT built here.
+    log.debug(
+        "onResult pr-output linkage deferred runnerExecutionId={} workflowRunId={} reason=story_3_15",
+        runnerExecutionId,
+        workflowRunId);
+    return true;
+  }
+
+  private static JsonNode prOutputArtifactReference(JsonNode parsed) {
+    for (JsonNode ref : parsed.path("artifactReferences")) {
+      if (ArtifactType.PR_OUTPUT.value().equals(ref.path("artifactType").asText())) {
+        return ref;
+      }
+    }
+    return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+  }
+
+  private static String textOrNull(JsonNode node, String field) {
+    String value = node.path(field).asText(null);
+    return (value == null || value.isBlank()) ? null : value;
+  }
+
+  /**
+   * AC9 — returns the first malformed field name, or {@code null} when all present refs are valid.
+   */
+  private static String prOutputFormatError(String branch, String commitSha, String prReference) {
+    if (branch != null && !PR_OUTPUT_BRANCH_PATTERN.matcher(branch).matches()) {
+      return "branch";
+    }
+    if (commitSha != null && !PR_OUTPUT_COMMIT_SHA_PATTERN.matcher(commitSha).matches()) {
+      return "commitSha";
+    }
+    if (prReference != null
+        && !PR_OUTPUT_PR_REF_SHORTHAND_PATTERN.matcher(prReference).matches()
+        && !PR_OUTPUT_PR_REF_URL_PATTERN.matcher(prReference).matches()) {
+      return "prReference";
+    }
+    return null;
+  }
+
+  /** AC3 — returns the first drifted field name, or {@code null} when reported == actual. */
+  private static String prOutputDriftField(
+      String reportedBranch,
+      String reportedCommitSha,
+      String reportedPrReference,
+      String actualBranch,
+      String actualCommitSha,
+      String actualPrRef) {
+    if (actualBranch != null && reportedBranch != null && !actualBranch.equals(reportedBranch)) {
+      return "branch";
+    }
+    if (actualCommitSha != null
+        && reportedCommitSha != null
+        && !actualCommitSha.equals(reportedCommitSha)) {
+      return "commitSha";
+    }
+    if (actualPrRef != null
+        && reportedPrReference != null
+        && !actualPrRef.equals(reportedPrReference)) {
+      return "prReference";
+    }
+    return null;
+  }
+
+  /**
+   * Story 3.12 (AC3 / Decision D3) — enrich the already-ingested prOutput artifact with the actual
+   * branch/commitSha/prReference via a follow-on {@code UPDATE} keyed by the ingested artifact id.
+   * Best-effort: a failure is logged and swallowed (it must not unwind the committed runner outcome
+   * or block the {@code WaitingForReview} advance — the artifact simply keeps the runner-reported
+   * values; markAvailable is unwired [[markavailable-has-no-production-caller]]).
+   */
+  private void enrichPrOutputArtifact(
+      String runnerExecutionId,
+      String workflowRunId,
+      String prOutputArtifactId,
+      JsonNode prRef,
+      RepositoryWorkspaceService.RepositoryPushOutcome actual,
+      String correlationId) {
+    if (prOutputArtifactId == null || !prRef.isObject()) {
+      log.warn(
+          "onResult pr-output enrichment skipped runnerExecutionId={} workflowRunId={} "
+              + "reason=no_ingested_artifact",
+          runnerExecutionId,
+          workflowRunId);
+      return;
+    }
+    try {
+      com.fasterxml.jackson.databind.node.ObjectNode enriched = prRef.deepCopy();
+      // Story 3.12 review patch — only overwrite with a present actual ref; a null branch/commitSha
+      // (e.g. a clean-worktree push outcome) must not clobber the runner-reported value with JSON
+      // null (symmetric with the prReference guard below).
+      if (actual.branchRef() != null) {
+        enriched.put("branch", actual.branchRef());
+      }
+      if (actual.commitSha() != null) {
+        enriched.put("commitSha", actual.commitSha());
+      }
+      if (actual.prRef() != null) {
+        enriched.put("prReference", actual.prRef());
+      }
+      byte[] enrichedBytes = objectMapper.writeValueAsBytes(enriched);
+      String payloadRef = prRef.path("artifactId").asText("prOutput") + ".json";
+      RecordArtifactOperationCommand command =
+          new RecordArtifactOperationCommand(
+              workflowRunId,
+              ArtifactType.PR_OUTPUT,
+              ArtifactOperationType.UPDATE,
+              "runner-result-enrich:" + runnerExecutionId,
+              payloadRef,
+              enrichedBytes,
+              "system",
+              org.dradgo.domain.registry.ActorType.SYSTEM,
+              correlationId,
+              runnerExecutionId);
+      RecordArtifactOperationResult result = artifactOperationService.recordOperation(command);
+      if (result.isFailure()) {
+        log.warn(
+            "onResult pr-output enrichment record failed runnerExecutionId={} artifactId={}",
+            runnerExecutionId,
+            prOutputArtifactId);
+        return;
+      }
+      log.info(
+          "onResult pr-output artifact enriched runnerExecutionId={} workflowRunId={} artifactId={} "
+              + "branch={} commitSha={} prReference={}",
+          runnerExecutionId,
+          workflowRunId,
+          result.artifact().publicId(),
+          actual.branchRef(),
+          actual.commitSha(),
+          actual.prRef());
+    } catch (RuntimeException | java.io.IOException error) {
+      // Story 3.12 review patch — enrichment is best-effort and runs BEFORE recordCompleted; an
+      // uncaught RuntimeException (Jackson / artifact-service) would escape onResult and strand the
+      // execution RUNNING (re-harvested). Swallow ALL failures so the committed runner outcome and
+      // the WaitingForReview advance are never unwound by an enrichment-only error. DomainException
+      // extends RuntimeException, so it is covered here.
+      log.warn(
+          "onResult pr-output enrichment failed runnerExecutionId={} artifactId={} cause={}",
+          runnerExecutionId,
+          prOutputArtifactId,
+          error.toString());
+    }
+  }
+
+  /**
+   * Story 3.12 (AC3/AC9 / Decision D5) — record the execution failed, emit a precise {@code
+   * RUNNER_FAILED} carrying the typed pr-output error code, and drive the run to {@code Failed} via
+   * the existing runner-contract-violation path (the broker stays the failure-drive owner — the new
+   * ArchUnit success-advance rule is scoped to {@code onPrOutputStageSucceeded} only).
+   * At-most-once: a duplicate/late result for an already-terminal execution is a no-op. Never logs
+   * the payload.
+   */
+  private void handlePrOutputContractFailure(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerExecutionSnapshot row,
+      DomainErrorCode errorCode,
+      String reasonCode,
+      String reason) {
+    if (isTerminal(row.status())) {
+      log.debug(
+          "onResult pr-output contract failure ignored for already-terminal execution "
+              + "runnerExecutionId={} status={}",
+          runnerExecutionId,
+          row.status());
+      return;
+    }
+    executionService.recordFailed(runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("failureCategory", FailureCategory.RUNNER_CONTRACT_VIOLATION.value());
+    details.put("errorCode", errorCode.value());
+    details.put("stage", row.stage().value());
+    details.put("subStage", ExecutionSubStage.PR_OUTPUT.name());
+    details.put("reason", reasonCode);
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.RUNNER_FAILED,
+        ActorContext.SYSTEM,
+        reasonCode,
+        FailureCategory.RUNNER_CONTRACT_VIOLATION,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+    driveWorkflowFailed(
+        workflowRunId, runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION, reason);
   }
 
   /**

@@ -8,7 +8,7 @@
       "artifactType": "prOutput",
       "branch": "feature/mock-pr",
       "commitSha": "abcdef0123456789abcdef0123456789abcdef01",
-      "prReference": "mock-org/mock-repo#1",
+      "prReference": "PR-1",
       "diffReference": "pr/v1.diff"
     }
   ],

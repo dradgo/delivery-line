@@ -59,6 +59,13 @@ deliveryline:
     plan-stage:
       kind: codex
       auto-dispatch: false
+    # Story 3.12 (AC1 / Trap T7) — the validated implementation-stage group must be present here too
+    # (test application.yml shadows, does not merge with, main). auto-dispatch is OFF in the shared
+    # test profile so dispatchImplementation stays a no-op; PrOutputOrchestrationIT opts in via
+    # @TestPropertySource.
+    implementation-stage:
+      kind: codex
+      auto-dispatch: false
     recovery:
       batch-size: 100
     mock:

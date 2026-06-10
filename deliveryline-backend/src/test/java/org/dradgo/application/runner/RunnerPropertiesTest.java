@@ -47,7 +47,8 @@ class RunnerPropertiesTest {
             RunnerProperties.defaultSecretEnvNames(),
             true,
             RunnerProperties.SpecStage.defaults(),
-            RunnerProperties.PlanStage.defaults());
+            RunnerProperties.PlanStage.defaults(),
+            RunnerProperties.ImplementationStage.defaults());
     assertEquals(true, enabled.allowShareableLogs());
   }
 
@@ -107,7 +108,8 @@ class RunnerPropertiesTest {
             RunnerProperties.defaultSecretEnvNames(),
             false,
             new RunnerProperties.SpecStage(RunnerKind.CLAUDE, true),
-            new RunnerProperties.PlanStage(RunnerKind.CODEX, true));
+            new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
+            RunnerProperties.ImplementationStage.defaults());
     assertEquals(
         RunnerKind.CLAUDE,
         claudeSpecCodexPlan.kindForStage(org.dradgo.domain.registry.RunnerStage.INVESTIGATION));
@@ -131,11 +133,53 @@ class RunnerPropertiesTest {
             RunnerProperties.defaultSecretEnvNames(),
             false,
             RunnerProperties.SpecStage.defaults(),
-            new RunnerProperties.PlanStage(RunnerKind.CLAUDE, false));
+            new RunnerProperties.PlanStage(RunnerKind.CLAUDE, false),
+            RunnerProperties.ImplementationStage.defaults());
     assertEquals(
         RunnerKind.CLAUDE,
         claudePlan.kindForStage(org.dradgo.domain.registry.RunnerStage.EXECUTION));
     assertEquals(false, claudePlan.planAutoDispatchEnabled());
+  }
+
+  @Test
+  void implementationStageDefaultsToCodexWithAutoDispatchOn() {
+    // Story 3.12 (AC1) — non-Spring construction defaults mirror plan-stage: codex + auto-dispatch
+    // ON. implementationAutoDispatchEnabled() reads the same switch.
+    RunnerProperties defaults = RunnerProperties.defaults();
+    assertEquals(RunnerKind.CODEX, defaults.implementationStage().kind());
+    assertEquals(true, defaults.implementationStage().autoDispatch());
+    assertEquals(true, defaults.implementationAutoDispatchEnabled());
+  }
+
+  @Test
+  void kindForExecutionSubStageHonorsPlanStageForPlanAndImplementationStageForPrOutput() {
+    // Story 3.12 (AC1 / Task 5, closes 3.11 OQ-4) — IMPLEMENTATION_PLAN resolves to
+    // plan-stage.kind,
+    // PR_OUTPUT resolves to implementation-stage.kind; a null sub-stage falls back to
+    // plan-stage.kind
+    // (legacy/recovery composition byte-identical). Distinct kinds prove the resolver is
+    // sub-stage-keyed.
+    RunnerProperties props =
+        new RunnerProperties(
+            2.0d,
+            java.util.Map.of(),
+            10_000L,
+            50,
+            60_000L,
+            5_000L,
+            RunnerProperties.Recovery.defaults(),
+            RunnerProperties.Mock.defaults(),
+            RunnerProperties.Scheduling.defaults(),
+            RunnerProperties.Docker.defaults(),
+            RunnerProperties.defaultSecretEnvNames(),
+            false,
+            RunnerProperties.SpecStage.defaults(),
+            new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
+            new RunnerProperties.ImplementationStage(RunnerKind.CLAUDE, true));
+    assertEquals(
+        RunnerKind.CODEX, props.kindForExecutionSubStage(ExecutionSubStage.IMPLEMENTATION_PLAN));
+    assertEquals(RunnerKind.CLAUDE, props.kindForExecutionSubStage(ExecutionSubStage.PR_OUTPUT));
+    assertEquals(RunnerKind.CODEX, props.kindForExecutionSubStage(null));
   }
 
   @Test
@@ -157,7 +201,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.defaultSecretEnvNames(),
                 false,
                 RunnerProperties.SpecStage.defaults(),
-                RunnerProperties.PlanStage.defaults()));
+                RunnerProperties.PlanStage.defaults(),
+                RunnerProperties.ImplementationStage.defaults()));
   }
 
   @Test
@@ -179,7 +224,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.defaultSecretEnvNames(),
                 false,
                 RunnerProperties.SpecStage.defaults(),
-                RunnerProperties.PlanStage.defaults()));
+                RunnerProperties.PlanStage.defaults(),
+                RunnerProperties.ImplementationStage.defaults()));
   }
 
   @Test

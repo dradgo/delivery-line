@@ -429,6 +429,33 @@ final class ArchitectureRuleCatalog {
                   String.class,
                   String.class));
 
+  /**
+   * Story 3.12 (AC5) — the pr-output twin of {@link
+   * #ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_PLAN_RUNNER_SUCCESS}. The pr-output-stage success
+   * auto-advance ({@code Executing -> WaitingForReview}, reason {@code pr_output_ready}) is owned
+   * solely by {@link WorkflowOrchestrationService}; its {@code onPrOutputStageSucceeded} callback
+   * may be invoked only by the {@link RunnerBroker} result-harvest seam. The broker's pre-existing
+   * FAILURE drive (including the new ref-drift / ref-validation -> Failed path, Decision D5)
+   * remains the documented OQ-2 exception — this rule, like its spec/plan twins, is scoped to the
+   * SUCCESS auto-advance.
+   */
+  static final ArchRule ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_PR_OUTPUT_RUNNER_SUCCESS =
+      namedRule(
+          "only WorkflowOrchestrationService may auto-advance workflow state on a pr-output runner success",
+          "Remediation: route the pr-output-stage success auto-advance through WorkflowOrchestrationService.onPrOutputStageSucceeded, invoked only by the RunnerBroker result-harvest seam (story 3.12 AC5). The broker failure-drive is the documented OQ-2 exception.",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(WorkflowOrchestrationService.class.getName())
+              .and()
+              .doNotHaveFullyQualifiedName(RunnerBroker.class.getName())
+              .should()
+              .callMethod(
+                  WorkflowOrchestrationService.class,
+                  "onPrOutputStageSucceeded",
+                  String.class,
+                  String.class,
+                  String.class));
+
   static final ArchRule ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE =
       namedRule(
           "artifact writes must go through ArtifactOperationService once artifact storage lands",

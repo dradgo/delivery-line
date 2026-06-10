@@ -73,7 +73,19 @@ public enum DomainErrorCode implements RegistryValue {
   // Backs the doctor observability-memory probe: WARN (never FAIL) when the observability profile
   // is
   // active on a host with less than 8 GB total physical RAM, where the ELK stack may be unstable.
-  DOCTOR_OBSERVABILITY_LOW_MEMORY("DOCTOR_OBSERVABILITY_LOW_MEMORY");
+  DOCTOR_OBSERVABILITY_LOW_MEMORY("DOCTOR_OBSERVABILITY_LOW_MEMORY"),
+  // Story 3.12 (AC3 / Trap T9) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Raised when a pr-output runner reports branch/commitSha/prReference values that disagree with
+  // the actual git/GitHub state captured by RepositoryWorkspaceService.captureAndPush. The run is
+  // routed to Failed via the existing runner-contract-violation failure path; this code is the
+  // typed surface for the REST / inspection layer.
+  RUNNER_PR_REF_DRIFT("RUNNER_PR_REF_DRIFT"),
+  // Story 3.12 (AC9 / Trap T9) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Raised when an untrusted pr-output runner reports branch/commitSha/prReference strings that do
+  // not match the documented format patterns (story 2.24). The artifact is rejected and the run is
+  // routed to Failed via the existing runner-contract-violation failure path; this code is the
+  // typed surface for the REST / inspection layer.
+  RUNNER_OUTPUT_VALIDATION_FAILED("RUNNER_OUTPUT_VALIDATION_FAILED");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

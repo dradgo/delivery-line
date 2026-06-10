@@ -50,7 +50,14 @@ public record RunnerProperties(
     // gates the approveSpec -> dispatchPlanGeneration trigger (ON in prod, OFF in the shared test
     // yaml — Trap T4/T11). A null group falls back to the codex default so contexts that omit the
     // key still bind.
-    PlanStage planStage) {
+    PlanStage planStage,
+    // Story 3.12 (AC1 / Task 5) — implementation-stage (pr-output sub-stage) twin of planStage.
+    // Binds deliveryline.runner.implementation-stage.kind (codex | claude) + .auto-dispatch.
+    // kindForExecutionSubStage(PR_OUTPUT) resolves to implementationStage.kind(); auto-dispatch
+    // gates the dispatchImplementation / retryImplementation trigger (ON in prod, OFF in the shared
+    // test yaml — Trap T7). A null group falls back to the codex default so contexts that omit the
+    // key still bind.
+    ImplementationStage implementationStage) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -90,6 +97,8 @@ public record RunnerProperties(
             : deepCopySecretEnvNames(secretEnvNames);
     specStage = specStage == null ? SpecStage.defaults() : specStage;
     planStage = planStage == null ? PlanStage.defaults() : planStage;
+    implementationStage =
+        implementationStage == null ? ImplementationStage.defaults() : implementationStage;
   }
 
   public static RunnerProperties defaults() {
@@ -110,7 +119,8 @@ public record RunnerProperties(
         defaultSecretEnvNames(),
         false,
         SpecStage.defaults(),
-        PlanStage.defaults());
+        PlanStage.defaults(),
+        ImplementationStage.defaults());
   }
 
   /**
@@ -131,6 +141,39 @@ public record RunnerProperties(
       case INVESTIGATION -> specStage.kind();
       case EXECUTION -> planStage.kind();
     };
+  }
+
+  /**
+   * Story 3.12 (AC1 / Task 5, closes 3.11 OQ-4) — resolve the runner-image {@link RunnerKind} for
+   * an EXECUTION dispatch by its derived {@link ExecutionSubStage}: {@link
+   * ExecutionSubStage#IMPLEMENTATION_PLAN} honors {@code deliveryline.runner.plan-stage.kind};
+   * {@link ExecutionSubStage#PR_OUTPUT} honors {@code
+   * deliveryline.runner.implementation-stage.kind}. A {@code null} sub-stage (legacy/recovery
+   * composition) falls back to the plan-stage kind so the pre-3.12 dispatch behavior is
+   * byte-identical.
+   *
+   * <p><b>OQ-4 coupling (load-bearing).</b> The broker's post-execution secret-scan path (story
+   * 3.5, {@code RunnerBroker.onResult}) only has {@code row.stage()} (EXECUTION) and resolves the
+   * scanned key via {@link #kindForStage(RunnerStage)} = {@code plan-stage.kind}. So the
+   * sub-stage-aware dispatch kind here MUST equal {@code plan-stage.kind} for BOTH sub-stages (i.e.
+   * {@code implementation-stage.kind} == {@code plan-stage.kind}, both {@code codex} by default) or
+   * the scan would compare the runner workspace against the wrong provider key. Genuinely splitting
+   * the kinds requires persisting the resolved kind on the {@code runner_executions} row (a {@code
+   * runner_kind} column deferred per 3.1 OQ-7) so the scan can re-read it rather than re-derive it.
+   */
+  public RunnerKind kindForExecutionSubStage(ExecutionSubStage subStage) {
+    return subStage == ExecutionSubStage.PR_OUTPUT ? implementationStage.kind() : planStage.kind();
+  }
+
+  /**
+   * Story 3.12 (AC1 / Task 5) — implementation-stage (pr-output) auto-dispatch master switch
+   * ({@code deliveryline.runner.implementation-stage.auto-dispatch}). The pr-output twin of {@link
+   * #planAutoDispatchEnabled()}: when {@code false} (the shared test profile) the {@code
+   * dispatchImplementation} / {@code retryImplementation} entry points are no-ops so the fast tier
+   * stays deterministic; production enables it.
+   */
+  public boolean implementationAutoDispatchEnabled() {
+    return implementationStage.autoDispatch();
   }
 
   /**
@@ -314,6 +357,38 @@ public record RunnerProperties(
 
     public static PlanStage defaults() {
       return new PlanStage(RunnerKind.CODEX, true);
+    }
+  }
+
+  /**
+   * Story 3.12 (AC1) — implementation-stage orchestration config, the pr-output (EXECUTION) twin of
+   * {@link PlanStage}.
+   *
+   * <ul>
+   *   <li>{@code kind} — runner-image flavor for the pr-output sub-stage ({@code codex} | {@code
+   *       claude}); a null/absent value defaults to {@link RunnerKind#CODEX}. Resolved into the
+   *       dispatch path via {@link #kindForExecutionSubStage(ExecutionSubStage)}. <b>OQ-4:</b> it
+   *       MUST stay equal to {@code plan-stage.kind} until a {@code runner_kind} column lands, so
+   *       the story-3.5 secret-scan (keyed on {@code kindForStage(EXECUTION)} = {@code
+   *       plan-stage.kind}) stays consistent.
+   *   <li>{@code autoDispatch} — master switch for the {@code dispatchImplementation} /{@code
+   *       retryImplementation} entry points. Production ({@code application.yml}) sets it {@code
+   *       true}; the shared test profile sets it {@code false} (mirroring {@code
+   *       plan-stage.auto-dispatch}) so the existing suite stays deterministic and the full
+   *       approved-plan→pr-output→{@code WaitingForReview} loop runs only in {@code
+   *       PrOutputOrchestrationIT} (which opts in via {@code @TestPropertySource}). Spring binds a
+   *       missing key to {@code false} (primitive default); {@link #defaults()} (non-Spring
+   *       construction) is {@code true} to match the production default.
+   * </ul>
+   */
+  public record ImplementationStage(RunnerKind kind, boolean autoDispatch) {
+
+    public ImplementationStage {
+      kind = kind == null ? RunnerKind.CODEX : kind;
+    }
+
+    public static ImplementationStage defaults() {
+      return new ImplementationStage(RunnerKind.CODEX, true);
     }
   }
 

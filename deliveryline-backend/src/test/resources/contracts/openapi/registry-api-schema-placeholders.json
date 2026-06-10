@@ -131,6 +131,8 @@
     "DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED": "https://deliveryline.local/problems/doctor-git-bot-identity-unconfigured",
     "RETRY_NOT_APPLICABLE": "https://deliveryline.local/problems/retry-not-applicable",
     "RUNNER_ARTIFACT_TYPE_MISMATCH": "https://deliveryline.local/problems/runner-artifact-type-mismatch",
-    "DOCTOR_OBSERVABILITY_LOW_MEMORY": "https://deliveryline.local/problems/doctor-observability-low-memory"
+    "DOCTOR_OBSERVABILITY_LOW_MEMORY": "https://deliveryline.local/problems/doctor-observability-low-memory",
+    "RUNNER_PR_REF_DRIFT": "https://deliveryline.local/problems/runner-pr-ref-drift",
+    "RUNNER_OUTPUT_VALIDATION_FAILED": "https://deliveryline.local/problems/runner-output-validation-failed"
   }
 }

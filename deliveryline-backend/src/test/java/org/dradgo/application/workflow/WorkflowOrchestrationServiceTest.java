@@ -18,6 +18,8 @@ import ch.qos.logback.core.read.ListAppender;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.runner.ContextBundleService;
+import org.dradgo.application.runner.ExecutionSubStage;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchResult;
@@ -46,6 +48,7 @@ class WorkflowOrchestrationServiceTest {
   private WorkflowTransitionService transitionService;
   private WorkflowRunReadPort readPort;
   private org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort;
+  private ContextBundleService contextBundleService;
   private ListAppender<ILoggingEvent> logAppender;
 
   @BeforeEach
@@ -54,6 +57,7 @@ class WorkflowOrchestrationServiceTest {
     transitionService = mock(WorkflowTransitionService.class);
     readPort = mock(WorkflowRunReadPort.class);
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
+    contextBundleService = mock(ContextBundleService.class);
     Logger logger = (Logger) LoggerFactory.getLogger(WorkflowOrchestrationService.class);
     logAppender = new ListAppender<>();
     logAppender.start();
@@ -106,9 +110,14 @@ class WorkflowOrchestrationServiceTest {
             // the
             // spec and plan auto-dispatch paths.
             new RunnerProperties.PlanStage(
+                org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch),
+            // Story 3.12 — the implementation-stage switch tracks the same flag so this helper also
+            // drives the pr-output (dispatchImplementation / retryImplementation) auto-dispatch
+            // path.
+            new RunnerProperties.ImplementationStage(
                 org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch));
     return new WorkflowOrchestrationService(
-        runnerBroker, transitionService, readPort, recordPort, props);
+        runnerBroker, transitionService, readPort, recordPort, props, contextBundleService);
   }
 
   private void stubRun(WorkflowState state, int rejectionLoopCount) {
@@ -376,9 +385,12 @@ class WorkflowOrchestrationServiceTest {
 
   @Test
   void dispatchPlanGenerationIsNoOpWhenAnExecutionIsAlreadyInFlight() {
-    // AC6 — a pending/running EXECUTION execution is a no-op returning the existing handle; never
-    // double-dispatch.
+    // AC6 — a pending/running EXECUTION execution in the SAME sub-stage is a no-op returning the
+    // existing handle; never double-dispatch. The sub-stage-aware guard re-derives the run's
+    // sub-stage (Task 2): a plan dispatch only no-ops against an in-flight IMPLEMENTATION_PLAN.
     stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
     when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
         .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.PENDING)));
 
@@ -468,5 +480,184 @@ class WorkflowOrchestrationServiceTest {
     service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
     assertLoggedAt(Level.WARN, "could not re-read run state");
+  }
+
+  // ===== Story 3.12 — pr-output orchestration (AC1/AC5/AC8 + Task 2 sub-stage guard) =====
+
+  private RunnerDispatchResult prOutputDispatched() {
+    return new RunnerDispatchResult.Dispatched(
+        new RunnerExecutionHandle(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            RunnerExecutionStatus.PENDING,
+            OffsetDateTime.parse("2026-06-10T12:00:00Z")),
+        new RunnerDispatchAck("mock:happy-pr-output"));
+  }
+
+  @Test
+  void dispatchImplementationDispatchesWithPrOutputKeyAndNeverTransitions() {
+    // AC1 (Trap T1): the run is already Executing with an approved plan (deriveExecutionSubStage ->
+    // PR_OUTPUT) — dispatchImplementation must NOT transition. The key uses the pr-output prefix +
+    // the next EXECUTION bundle version (Decision D2).
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(2);
+    when(runnerBroker.dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any()))
+        .thenReturn(prOutputDispatched());
+
+    RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
+
+    assertSame(RunnerExecutionStatus.PENDING, result.handle().status());
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<ActorContext> actor = ArgumentCaptor.forClass(ActorContext.class);
+    verify(runnerBroker)
+        .dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), actor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "pr-output-dispatch:" + RUN_ID + ":2", key.getValue());
+    org.junit.jupiter.api.Assertions.assertEquals("corr-i", actor.getValue().correlationId());
+    assertLoggedAt(Level.INFO, "dispatchImplementation entry");
+    assertLoggedAt(Level.INFO, "dispatchImplementation dispatched");
+  }
+
+  @Test
+  void retryImplementationReDispatchesWithFreshBundleVersionKeyAndNeverTransitions() {
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(3);
+    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(prOutputDispatched());
+
+    service(true).retryImplementation(RUN_ID, "corr-ir");
+
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "pr-output-dispatch:" + RUN_ID + ":3", key.getValue());
+  }
+
+  @Test
+  void dispatchImplementationIsNoOpWhenAPrOutputExecutionIsInFlight() {
+    // AC6 / Task 2 — a pending/running pr-output execution (same sub-stage) is a no-op.
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.RUNNING)));
+
+    RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
+
+    assertTrue(result.isReplay());
+    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    assertLoggedAt(Level.WARN, "in-flight no-op");
+  }
+
+  @Test
+  void subStageAwareGuardDoesNotLetAnInFlightPlanBlockPrOutput() {
+    // Task 2 — an in-flight execution whose run currently derives IMPLEMENTATION_PLAN must NOT make
+    // a pr-output dispatch a no-op: the sub-stage discriminator differs, so the guard does not
+    // treat
+    // the active row as in-flight for PR_OUTPUT.
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(5);
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.PENDING)));
+    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(prOutputDispatched());
+
+    RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
+
+    assertTrue(!result.isReplay());
+    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any());
+  }
+
+  @Test
+  void subStageAwareGuardDoesNotLetAnInFlightPrOutputBlockPlan() {
+    // Task 2 — the converse: an in-flight execution whose run currently derives PR_OUTPUT must NOT
+    // make a plan dispatch a no-op.
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(6);
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.PENDING)));
+    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(executionDispatched());
+
+    RunnerDispatchResult result = service(true).dispatchPlanGeneration(RUN_ID, "corr-p");
+
+    assertTrue(!result.isReplay());
+    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any());
+  }
+
+  @Test
+  void dispatchAndRetryImplementationAreNoOpsWhenImplementationAutoDispatchDisabled() {
+    WorkflowOrchestrationService disabled = service(false);
+
+    assertNull(disabled.dispatchImplementation(RUN_ID, "c"));
+    assertNull(disabled.retryImplementation(RUN_ID, "c"));
+
+    verifyNoInteractions(runnerBroker);
+    verifyNoInteractions(transitionService);
+    verifyNoInteractions(readPort);
+    verifyNoInteractions(contextBundleService);
+  }
+
+  @Test
+  void onPrOutputStageSucceededTransitionsToWaitingForReviewWithPrOutputReadyReason() {
+    service(true).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
+
+    verify(transitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.WAITING_FOR_REVIEW),
+            any(),
+            eq("pr_output_ready"),
+            eq("pr-output-ready:" + REX_ID),
+            any(java.util.Map.class));
+    assertLoggedAt(Level.INFO, "reason=pr_output_ready");
+  }
+
+  @Test
+  void onPrOutputStageSucceededSwallowsIllegalTransitionAsBenignReplayWhenAlreadyAtReview() {
+    // AC5 — a duplicate/late pr-output result whose run already reached WaitingForReview is a
+    // benign
+    // idempotent replay: swallowed, logged INFO (not the WARN anomaly line).
+    org.mockito.Mockito.doThrow(
+            new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "already advanced"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN_ID, WorkflowState.WAITING_FOR_REVIEW, null, 1L, 0, false)));
+
+    service(false).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
+
+    verify(readPort).findByPublicId(RUN_ID);
+    assertLoggedAt(Level.INFO, "idempotent replay");
+  }
+
+  @Test
+  void onPrOutputStageSucceededSwallowsIllegalTransitionAsAnomalyWhenRunDiverged() {
+    // AC5 — an unexpected state (e.g. TAKEN_OVER) is logged WARN as a probable anomaly; still
+    // swallowed (shared poller tx — rethrow would re-harvest forever).
+    org.mockito.Mockito.doThrow(
+            new DomainException(DomainErrorCode.ILLEGAL_TRANSITION, "illegal from TAKEN_OVER"))
+        .when(transitionService)
+        .transition(any(), any(), any(), any(), any(), any(java.util.Map.class));
+    when(readPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(RUN_ID, WorkflowState.TAKEN_OVER, null, 1L, 0, false)));
+
+    service(false).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
+
+    verify(readPort).findByPublicId(RUN_ID);
+    assertLoggedAt(Level.WARN, "probable anomaly");
   }
 }

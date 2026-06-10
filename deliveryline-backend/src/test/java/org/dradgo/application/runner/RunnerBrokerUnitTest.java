@@ -1769,7 +1769,8 @@ class RunnerBrokerUnitTest {
             RunnerProperties.defaultSecretEnvNames(),
             false,
             RunnerProperties.SpecStage.defaults(),
-            RunnerProperties.PlanStage.defaults());
+            RunnerProperties.PlanStage.defaults(),
+            RunnerProperties.ImplementationStage.defaults());
     broker =
         new RunnerBroker(
             recordPort,
@@ -1900,11 +1901,14 @@ class RunnerBrokerUnitTest {
     verify(orchestration, never()).onSpecStageSucceeded(any(), any(), any());
   }
 
+  // ===== Story 3.12 — EXECUTION (pr-output) success auto-advance + ref validation/enrichment =====
+
   @Test
-  void executionSuccessForPrOutputSubStageDoesNotAutoAdvance() {
-    // OQ-3 — a prOutput artifact at the EXECUTION stage is a valid wire type (no mismatch) but its
-    // terminal transition belongs to story 3.12; the broker ingests + completes but does NOT
-    // auto-advance to WaitingForReview.
+  void prOutputSuccessDelegatesPrOutputReadyToOrchestrationForExecutionPrOutputSubStage() {
+    // Story 3.12 (AC5) — the pr-output twin of the plan delegation: the broker ingests + completes
+    // then delegates the pr-output-ready auto-advance (Executing -> WaitingForReview). No repo
+    // workspace here (captureAndPush returns empty), so AC9 format validation passes on the valid
+    // reported refs and there is nothing to drift-check or enrich.
     org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
         mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
     RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
@@ -1917,7 +1921,142 @@ class RunnerBrokerUnitTest {
     orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
 
     verify(executionService).recordCompleted(REX_ID);
+    verify(orchestration)
+        .onPrOutputStageSucceeded(eq(RUN_ID), eq(REX_ID), org.mockito.ArgumentMatchers.anyString());
     verify(orchestration, never()).onPlanStageSucceeded(any(), any(), any());
+  }
+
+  @Test
+  void prOutputMalformedReportedRefRoutesToFailedAndDoesNotDelegate() {
+    // Story 3.12 (AC9) — an untrusted pr-output runner reporting a malformed prReference (here the
+    // GitHub-shorthand "org/repo#n" form, which passes the wire schema but is NOT the documented
+    // PR-<n> / canonical-URL format) raises RUNNER_OUTPUT_VALIDATION_FAILED and routes to Failed
+    // via
+    // the contract-violation path — never completing or delegating the success advance.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(
+        REX_ID,
+        prOutputResultPayload(
+                "feature/x", "abcdef1234567890abcdef1234567890abcdef12", "mock-org/mock-repo#1")
+            .getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(executionService, never()).recordCompleted(any());
+    verify(orchestration, never()).onPrOutputStageSucceeded(any(), any(), any());
+    ArgumentCaptor<java.util.Map<String, Object>> details =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(eventPort)
+        .append(
+            eq(RUN_ID),
+            eq(WorkflowEventType.RUNNER_FAILED),
+            any(),
+            eq("runner_output_validation_failed"),
+            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
+            any(),
+            details.capture());
+    assertEquals(
+        DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED.value(),
+        details.getValue().get("errorCode"));
+    verify(workflowTransitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.FAILED),
+            any(),
+            any(),
+            any(),
+            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
+            any());
+  }
+
+  @Test
+  void prOutputRefDriftFromActualGitStateRoutesToFailedAndDoesNotDelegate() {
+    // Story 3.12 (AC3) — the runner-reported branch disagrees with the actual captureAndPush
+    // branch:
+    // RUNNER_PR_REF_DRIFT routes to Failed and never delegates the success advance.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    "abcdef1234567890abcdef1234567890abcdef12", "actual-branch", "PR-1", true)));
+    RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+
+    // Reported branch "feature/x" drifts from the actual "actual-branch".
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(executionService, never()).recordCompleted(any());
+    verify(orchestration, never()).onPrOutputStageSucceeded(any(), any(), any());
+    ArgumentCaptor<java.util.Map<String, Object>> details =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(eventPort)
+        .append(
+            eq(RUN_ID),
+            eq(WorkflowEventType.RUNNER_FAILED),
+            any(),
+            eq("runner_pr_ref_drift"),
+            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
+            any(),
+            details.capture());
+    assertEquals(DomainErrorCode.RUNNER_PR_REF_DRIFT.value(), details.getValue().get("errorCode"));
+  }
+
+  @Test
+  void prOutputSuccessWithMatchingPushOutcomeEnrichesArtifactAndDelegates() {
+    // Story 3.12 (AC3 / Decision D3) — captureAndPush returns an outcome that matches the reported
+    // refs (no drift): the broker enriches the ingested prOutput artifact via a follow-on UPDATE
+    // carrying the actual refs, then delegates the pr-output-ready advance.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true)));
+    RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    verify(orchestration)
+        .onPrOutputStageSucceeded(eq(RUN_ID), eq(REX_ID), org.mockito.ArgumentMatchers.anyString());
+    // Two recordOperation calls: the CREATE ingest + the enrichment UPDATE carrying the actual
+    // refs.
+    ArgumentCaptor<RecordArtifactOperationCommand> commands =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService, times(2)).recordOperation(commands.capture());
+    RecordArtifactOperationCommand update =
+        commands.getAllValues().stream()
+            .filter(
+                c -> c.operationType() == org.dradgo.domain.registry.ArtifactOperationType.UPDATE)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected an enrichment UPDATE operation"));
+    String enriched = new String(update.payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(
+        enriched.contains("feature/x"), () -> "enriched payload missing branch: " + enriched);
+    assertTrue(
+        enriched.contains("PR-1"), () -> "enriched payload missing prReference: " + enriched);
   }
 
   private static String implementationPlanResultPayload() {
@@ -1944,6 +2083,11 @@ class RunnerBrokerUnitTest {
 
   private static String prOutputResultPayload() {
     // Mirrors runner-result.v1.pr-output.valid.json (branch/commitSha/prReference/diffReference).
+    return prOutputResultPayload("feature/x", "abcdef1234567890abcdef1234567890abcdef12", "PR-1");
+  }
+
+  /** Story 3.12 — a pr-output result with caller-chosen reported refs (AC9/AC3 unit coverage). */
+  private static String prOutputResultPayload(String branch, String commitSha, String prReference) {
     return """
         {
           "schemaVersion": 1,
@@ -1951,8 +2095,8 @@ class RunnerBrokerUnitTest {
           "runnerExecutionId": "%s",
           "artifactReferences": [
             {"artifactId": "art_test01234567", "artifactType": "prOutput",
-             "branch": "feature/x", "commitSha": "abcdef1234567890abcdef1234567890abcdef12",
-             "prReference": "PR-1", "diffReference": "diffs/%s/pr-1.diff"}
+             "branch": "%s", "commitSha": "%s",
+             "prReference": "%s", "diffReference": "diffs/%s/pr-1.diff"}
           ],
           "normalizedOutput": {"summary": "ok", "outcome": "success"},
           "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000003"},
@@ -1960,7 +2104,7 @@ class RunnerBrokerUnitTest {
           "failureCategory": null
         }
         """
-        .formatted(RUN_ID, REX_ID, RUN_ID);
+        .formatted(RUN_ID, REX_ID, branch, commitSha, prReference, RUN_ID);
   }
 
   private static RunnerExecutionSnapshot executionSnapshot(
@@ -1982,6 +2126,12 @@ class RunnerBrokerUnitTest {
 
   private RunnerBroker brokerWithOrchestration(
       org.dradgo.application.workflow.WorkflowOrchestrationService orchestration) {
+    return brokerWithOrchestrationAndRepo(orchestration, null);
+  }
+
+  private RunnerBroker brokerWithOrchestrationAndRepo(
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration,
+      RepositoryWorkspaceService repositoryWorkspaceService) {
     return new RunnerBroker(
         recordPort,
         eventPort,
@@ -1998,7 +2148,7 @@ class RunnerBrokerUnitTest {
         callthroughTemplate(),
         callthroughTemplate(),
         CLOCK,
-        null,
+        repositoryWorkspaceService,
         orchestration);
   }
 
