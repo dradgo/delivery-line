@@ -24,6 +24,27 @@ export default {
       },
     },
     extend: {
+      // Story 2.26 (AC1, D3) — the named responsive breakpoint scale (UX-DR22 /
+      // ux-design-specification.md "Breakpoint Strategy", lines 2092-2106):
+      //
+      //   mobile   320-767px   — the UNPREFIXED base (Tailwind is mobile-first, so
+      //                          every unprefixed utility already targets this range;
+      //                          there is intentionally NO `mobile:` screen alias).
+      //   tablet   768-1023px  — alias for the default `md` (768px) boundary.
+      //   desktop  1024px+     — alias for the default `lg` (1024px) boundary.
+      //
+      // These boundaries are the SINGLE documented source of the matrix and align
+      // EXACTLY with `useResponsiveLayout.ts` (`TABLET_MIN_PX=768` / `DESKTOP_MIN_PX=1024`)
+      // and Tailwind's own `md`/`lg` defaults. The aliases below are ADDITIVE — declared
+      // under `theme.extend.screens` so they MERGE into (never replace) the stock
+      // `sm`/`md`/`lg`/`xl`/`2xl` scale. `tablet` and `desktop` resolve to the same px as
+      // `md`/`lg`, so adding them shifts NO existing `sm:`/`md:`/`lg:` utility (D3 — a
+      // boundary move would silently re-flow every responsive class and is a regression,
+      // not an AC). See `src/features/workflows/RESPONSIVE.md` for the collapse contract.
+      screens: {
+        tablet: '768px',
+        desktop: '1024px',
+      },
       // Story 2.4 — document font stack (AC1). Points `font-sans` (and the
       // default text utilities, since `sans` is Tailwind's default family) at
       // the `--font-sans` token in globals.css. The `theme.fontSize` keys are

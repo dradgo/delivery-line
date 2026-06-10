@@ -1,8 +1,11 @@
 /**
- * Story 2.7 (Task 6, AC5) — tests for the responsive layout-mode hook.
+ * Tests for the responsive layout-mode hook (story 2.7, AC5; boundary matrix added
+ * by story 2.26, AC12).
  *
- * Story 2.26 hardens this hook and adds the full breakpoint matrix; this suite is
- * the minimal coverage proving the shell can switch modes (TRAP 3).
+ * The mode-switch coverage proves the shell can react to breakpoint crossings; the
+ * boundary-width matrix (story 2.26) pins the EXACT px at which each mode begins —
+ * 767/768/1023/1024 — so the documented matrix in `RESPONSIVE.md` and the hook can
+ * never silently drift apart (D3).
  */
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -52,6 +55,20 @@ describe('useResponsiveLayout', () => {
       setViewportWidth(375);
     });
     expect(result.current).toBe('mobile');
+  });
+
+  // Story 2.26 (AC12) — the exact boundary widths the documented matrix pins:
+  // mobile 320-767 · tablet 768-1023 · desktop ≥1024. The pairs straddle each
+  // boundary so an off-by-one in the hook's `min-width` queries fails here.
+  it.each([
+    [767, 'mobile'],
+    [768, 'tablet'],
+    [1023, 'tablet'],
+    [1024, 'desktop'],
+  ] as const)('reports %s as %s at the breakpoint boundary', (width, expected) => {
+    installMatchMedia(width);
+    const { result } = renderHook(() => useResponsiveLayout());
+    expect(result.current).toBe(expected);
   });
 
   it('stops responding to viewport changes after unmount', () => {

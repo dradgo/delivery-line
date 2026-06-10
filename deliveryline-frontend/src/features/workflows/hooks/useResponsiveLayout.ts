@@ -1,22 +1,25 @@
 /**
- * Story 2.7 (Task 6, AC5) — responsive layout-mode hook for the tri-pane shell.
+ * Responsive layout-mode hook for the tri-pane shell (story 2.7, AC5; hardened by
+ * story 2.26, AC8).
  *
  * Returns the coarse layout mode the `AppShell` switches on: `desktop` keeps the
  * full inline tri-pane; `tablet` moves the right context panel into a drawer;
  * `mobile` collapses to a single artifact-first column with both side panels in
  * drawers.
  *
- * SCOPE (story 2.7 ↔ 2.26 split — see `src/features/workflows/LAYOUT.md`): this is
- * the MINIMAL hook the shell needs to function across breakpoints. Story 2.26
- * ("Responsive Design") OWNS the full breakpoint matrix, the `RESPONSIVE.md` ADR,
- * the named Tailwind breakpoint aliases, and the exhaustive test matrix — it
- * HARDENS this hook in place. Do not pre-empt that here. (Same posture story 2.6
- * took standing up the minimal Vitest runner that 2.27 extends.)
+ * THIS IS THE CANONICAL breakpoint hook — the single source of breakpoint logic
+ * for the whole frontend (AC8). Breakpoint-conditional rendering routes through it
+ * (or Tailwind responsive utilities backed by the same `md`/`lg` boundaries); no
+ * composite scatters its own ad-hoc `window.matchMedia` / CSS media query. The
+ * collapse contract it drives is documented in
+ * `src/features/workflows/RESPONSIVE.md` (the responsive ADR) — its structural-shell
+ * sibling is `LAYOUT.md`.
  *
  * Breakpoints — UX "Breakpoint Strategy" (ux-design-specification.md:2092-2106):
  *   mobile 320-767px · tablet 768-1023px · desktop ≥1024px.
- * These deliberately align with Tailwind's default `md` (768px) / `lg` (1024px)
- * so story 2.26 can formalize the aliases without moving the boundaries.
+ * These align EXACTLY with Tailwind's default `md` (768px) / `lg` (1024px) and the
+ * named `tablet`/`desktop` aliases in `tailwind.config.ts`; the boundaries are fixed
+ * (story 2.26 D3 — moving them silently re-flows every responsive utility).
  */
 import { useEffect, useState } from 'react';
 

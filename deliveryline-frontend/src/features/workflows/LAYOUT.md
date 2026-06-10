@@ -100,7 +100,7 @@ Story 2.7 reserved a placement inside `AppShell.tsx` for the global catastrophic
 
 ## 5. Responsive split with story 2.26
 
-Story 2.7 owns the **structure** of responsive collapse. Story 2.26 owns the **full breakpoint matrix and the public design contract**. This split mirrors how story 2.6 stood up the minimal Vitest runner and story 2.27 extends it.
+Story 2.7 owns the **structure** of responsive collapse. Story 2.26 owns the **full breakpoint matrix and the public design contract** — now authored in its sibling ADR [`RESPONSIVE.md`](./RESPONSIVE.md) (the breakpoint matrix, the collapse ORDER, the non-collapsible set, the Compare-Mode mobile reservation, and the browser-support policy). Read the two ADRs together: `LAYOUT.md` is the structural shell; `RESPONSIVE.md` is how it collapses under viewport pressure. This split mirrors how story 2.6 stood up the minimal Vitest runner and story 2.27 extends it.
 
 | Concern                                                                                                                                  | Story                | Notes                                                                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

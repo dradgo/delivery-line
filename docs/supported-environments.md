@@ -28,6 +28,32 @@ present in the report, but `overall` does not flip to `FAIL` on `WARN`:
 Combinations outside the matrix and the near-miss list (e.g., Solaris, AIX, Alpine, BSDs) fail with
 `DOCTOR_UNSUPPORTED_ENVIRONMENT` and exit code `401`.
 
+## Browser & device support (web UI — Epic 2 onward)
+
+The bundled web UI (the Vite SPA served by the jar) is supported on the evergreen browsers below;
+the smallest mobile target the responsive layout is designed and validated against is a Samsung
+Galaxy S23+ class device. The breakpoint matrix and structural-collapse contract are documented in
+[`deliveryline-frontend/src/features/workflows/RESPONSIVE.md`](../deliveryline-frontend/src/features/workflows/RESPONSIVE.md);
+real-device critical-flow validation runs from
+[`docs/testing/responsive-real-device-checklist.md`](testing/responsive-real-device-checklist.md)
+before Epic 2 closes.
+
+| Browser | Versions | Notes |
+|---|---|---|
+| Chrome | current + n-1 (evergreen) | Desktop + Chrome for Android. |
+| Firefox | current + n-1 (evergreen) | |
+| Safari | current + n-1 (evergreen) | macOS + iOS-class hardware. |
+| Edge | current + n-1 (evergreen) | Chromium-based. |
+| Internet Explorer / legacy engines | — | **Not supported** — excluded. |
+
+| Device class | Target | Notes |
+|---|---|---|
+| Smallest supported mobile | Samsung Galaxy S23+ class (≈ 384–393 CSS px wide) | Reference device for the responsive real-device checklist (UX-DR24). Documented equivalents accepted. |
+
+> Executable cross-browser / mobile-viewport verification (Playwright) is owned by **story 2.27**;
+> story 2.26 documents this policy and ships the manual real-device checklist (the automated
+> enforcement is deferred with rationale — see `RESPONSIVE.md` §4).
+
 ## Known-good quickstart (≤ 10 minutes)
 
 > Prerequisites that are not listed here but are required: `git`, the Docker runtime listed in the
