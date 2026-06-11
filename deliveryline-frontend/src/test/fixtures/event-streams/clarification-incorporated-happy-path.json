@@ -1,0 +1,231 @@
+{
+  "workflowRun": {
+    "publicId": "run_fix_clr_incorp_001",
+    "ticketRef": "DEL-9101",
+    "createdAt": "2026-02-01T00:00:00Z",
+    "terminalState": "WaitingForSpecApproval"
+  },
+  "events": [
+    {
+      "publicId": "evt_fix_clr_incorp_001",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": null,
+      "resultingState": "Inbox",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "submitted",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:00:00Z",
+      "details": {
+        "linearTicketReference": "DEL-9101",
+        "correlationId": "corr_fix_clr_incorp_001"
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_001b",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Inbox",
+      "resultingState": "Planned",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "planned",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:00:30Z",
+      "details": { "correlationId": "corr_fix_clr_incorp_001" }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_002",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Planned",
+      "resultingState": "Investigating",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "spec_runner_dispatched",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:01:00Z",
+      "details": { "correlationId": "corr_fix_clr_incorp_001" }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_003",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "artifact.versionCreated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-codex-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:02:00Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVariant": "spec",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_004",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "workflow.stateChanged",
+      "priorState": "Investigating",
+      "resultingState": "WaitingForSpecApproval",
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "spec_drafted",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:02:30Z",
+      "details": { "correlationId": "corr_fix_clr_incorp_001" }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_005",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "clarification.answered",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "alex@example.com",
+      "actorType": "human",
+      "reason": "clarification answered",
+      "failureCategory": null,
+      "interventionMarker": true,
+      "createdAt": "2026-02-01T00:03:00Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "clarificationId": "clr_fix_incorp_001",
+        "questionId": "Q-AUTH-001",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_006",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "clarification.answered",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "alex@example.com",
+      "actorType": "human",
+      "reason": "clarification answered",
+      "failureCategory": null,
+      "interventionMarker": true,
+      "createdAt": "2026-02-01T00:03:10Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "clarificationId": "clr_fix_incorp_002",
+        "questionId": "Q-AUTH-002",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_007",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "clarification.accepted",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "clarification accepted",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:03:30Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "clarificationId": "clr_fix_incorp_001",
+        "questionId": "Q-AUTH-001",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_008",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "clarification.accepted",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "clarification accepted",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:03:40Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "clarificationId": "clr_fix_incorp_002",
+        "questionId": "Q-AUTH-002",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVersion": 1
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_009",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "artifact.versionCreated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "runner-codex-mock",
+      "actorType": "agent",
+      "reason": null,
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:04:00Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "artifactId": "art_spec_clr_incorp_v2",
+        "artifactVariant": "spec",
+        "artifactVersion": 2
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_010",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "clarification.incorporated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "clarification incorporated",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:04:10Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "clarificationId": "clr_fix_incorp_001",
+        "questionId": "Q-AUTH-001",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVersion": 1,
+        "incorporatedIntoArtifactId": "art_spec_clr_incorp_v2",
+        "incorporationEventId": "evt_fix_clr_incorp_010"
+      }
+    },
+    {
+      "publicId": "evt_fix_clr_incorp_011",
+      "workflowRunPublicId": "run_fix_clr_incorp_001",
+      "eventType": "clarification.incorporated",
+      "priorState": null,
+      "resultingState": null,
+      "actorIdentity": "system",
+      "actorType": "system",
+      "reason": "clarification incorporated",
+      "failureCategory": null,
+      "interventionMarker": false,
+      "createdAt": "2026-02-01T00:04:20Z",
+      "details": {
+        "correlationId": "corr_fix_clr_incorp_001",
+        "clarificationId": "clr_fix_incorp_002",
+        "questionId": "Q-AUTH-002",
+        "artifactId": "art_spec_clr_incorp_v1",
+        "artifactVersion": 1,
+        "incorporatedIntoArtifactId": "art_spec_clr_incorp_v2",
+        "incorporationEventId": "evt_fix_clr_incorp_011"
+      }
+    }
+  ]
+}

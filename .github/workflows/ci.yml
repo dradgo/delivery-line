@@ -309,6 +309,81 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
+  # frontend-e2e (story 2.27 — Playwright cross-browser + mobile E2E)
+  #
+  # AC8/AC9/AC12/S3: a SEPARATE job gated on frontend-build-tests (which runs the
+  # Vitest unit/component/a11y/sanitization suite), so a fast Vitest failure
+  # short-circuits BEFORE the slower browser job burns CI minutes. Each matrix leg
+  # installs ONLY its own browser binaries (`npx playwright install --with-deps`),
+  # kept OUT of the Maven clean-package path. The Galaxy S23+ mobile project runs as
+  # its OWN matrix leg (review P5) — independent of the desktop chromium leg's
+  # result — installing the chromium engine its device profile uses.
+  #
+  # AC11 flake control: `retries: 0` in playwright.config.ts — no blanket retry;
+  # quarantined specs are `test.fixme` + justified, surfacing flakes, not masking.
+  #
+  # AC8 / OQ-3: the matrix uses the real `msedge` channel. If the Edge channel is
+  # flaky on Linux, fall back to treating chromium as the Edge-engine proxy and
+  # document the substitution here (Edge is Chromium-based).
+  # ---------------------------------------------------------------------------
+  frontend-e2e:
+    name: frontend-e2e (${{ matrix.browser }})
+    needs: [frontend-build-tests]
+    # Review P5 — each leg is an independent matrix entry (browser engine to install
+    # + Playwright project to run). The Galaxy S23+ mobile leg is its OWN entry (no
+    # longer a conditional step on the chromium leg), so it runs even if desktop
+    # chromium fails, and the gate keys on every leg's success separately.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { browser: chromium, project: chromium, install: chromium }
+          - { browser: firefox, project: firefox, install: firefox }
+          - { browser: webkit, project: webkit, install: webkit }
+          - { browser: msedge, project: msedge, install: msedge }
+          - { browser: mobile-galaxy-s23, project: mobile-galaxy-s23, install: chromium }
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: deliveryline-frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: deliveryline-frontend/package-lock.json
+
+      # `npm ci` honours the committed .npmrc (legacy-peer-deps=true) so it matches
+      # the frontend-maven-plugin install (memory: frontend-ts6-legacy-peer-deps).
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser (${{ matrix.install }})
+        run: npx playwright install --with-deps ${{ matrix.install }}
+
+      - name: Build the SPA (E2E runs against the production bundle)
+        run: npm run build
+
+      - name: Run Playwright (${{ matrix.browser }})
+        env:
+          CI: 'true'
+        run: npm run test:e2e -- --project=${{ matrix.project }}
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: deliveryline-frontend/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
   # Tier 4: backend-unit-tests
   # Surefire only — pure unit tests. Excludes @Tag(architecture|integration|
   # contract|known-failure). OS matrix: Linux + Windows.
@@ -891,6 +966,11 @@ jobs:
       - docs-link-check
       - runner-contract-fixtures
       - frontend-build-tests
+      # Story 2.27 (AC13/S5) — widen the foundation gate to "frontend test suite
+      # green on the branch": frontend-build-tests already enforces the Vitest half;
+      # frontend-e2e adds the Playwright cross-browser + keyboard-only + mobile
+      # regressions, so they block on PRs at the same gate as backend regressions.
+      - frontend-e2e
       - backend-unit-tests
       - backend-contract-tests
       - runner-image-compat

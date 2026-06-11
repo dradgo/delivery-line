@@ -87,14 +87,67 @@ correctly.
 | `npm run lint:fix`        | ESLint with `--fix`                                                    |
 | `npm run lint:rules-test` | Run the custom-ESLint-rule fixture tests (`node --test`)               |
 | `npm run check:routes`    | Route-param validation gate (`node --test`)                            |
+| `npm run check:fixtures`  | Fixture event-stream drift gate (vendored 1.23 streams, `node --test`) |
 | `npm run generate-api`    | Regenerate the typed API client from the backend OpenAPI snapshot      |
 | `npm run check:api`       | Generated-client drift gate — fails if `schema.d.ts` is stale          |
-| `npm test`                | Run the Vitest data-layer suite (`vitest run`)                         |
+| `npm test`                | Run the Vitest suite (`vitest run`)                                    |
+| `npm run test:coverage`   | Vitest with v8 coverage + thresholds (the enforced Maven/CI run)       |
+| `npm run test:e2e`        | Playwright cross-browser + mobile + keyboard E2E (`playwright test`)   |
+| `npm run test:e2e:ui`     | Playwright headed/debug UI runner                                      |
 | `npm run format`          | Prettier `--write` (apply formatting)                                  |
 | `npm run format:check`    | Prettier `--check` (CI gate)                                           |
 
-A MINIMAL Vitest + Testing Library + MSW runner ships with story 2.6 (data-layer
-hooks/mutations only); story 2.27 extends it to the full component/route/a11y suite.
+The full test suite (story 2.27) is described below.
+
+## Test suite & coverage (story 2.27)
+
+The frontend test stack is **fixed** — do not introduce a second runner or mock/a11y
+library:
+
+- **Vitest + React Testing Library + `@testing-library/jest-dom`** — unit, component,
+  route, and query-hook tests (jsdom). Assertions check roles / text / `data-*` /
+  classes, never `toMatchSnapshot` (visual regression is out of scope for jsdom).
+- **MSW (`msw@2`)** — backend mocking typed by the generated OpenAPI schema
+  (`src/lib/api/schema.d.ts`), so a mock can't drift from the real contract. The
+  shared default handlers (`src/test/handlers.ts`) are seeded from the **story-1.23
+  fixture event streams** (happy path, spec-rejection-and-resubmit,
+  execution-failure-with-retry, full clarification lifecycle), vendored under
+  `src/test/fixtures/event-streams/` and kept in lockstep with the backend originals
+  by the `check:fixtures` drift gate. Per-test `server.use(...)` overrides still work.
+- **`vitest-axe` + `axe-core`** — every composite/primitive renders its documented
+  states and runs a `wcag2aa` axe scan (`src/test/a11y/axe.ts`).
+- **Adversarial XSS sanitization** — `src/lib/sanitization/__tests__/SafeMarkdownRenderer.test.tsx`
+  (story 2.24) loops ≥11 attack-class fixtures; a single passing-XSS fixture is
+  build-blocking. It runs inside the enforced `npm run test:coverage` gate.
+- **Playwright** — cross-browser end-to-end + mobile-viewport + keyboard-only journeys
+  (`e2e/`). Runs against the **production bundle** (`vite preview`), backed by the same
+  1.23 fixtures via `e2e/support/mockApi.ts` (no live backend).
+
+### Coverage thresholds (AC10)
+
+`npm run test:coverage` (the Maven `npm-run-test` execution, hence
+`frontend-build-tests` + `foundation-gate`) fails when a path falls below its line
+floor. The floors sit just under measured coverage so they guard against regression
+without redding the build on day one (never above measured — OQ-4):
+
+| Path                        | Line floor | Rationale                                                                                                                                       |
+| --------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/sanitization/**`   | 86%        | The XSS / redaction security surface; the epic's 90% example was capped to 86% here (measured 88.1% at 2.27 — never floor above measured, OQ-4) |
+| `src/lib/queryKeys/**`      | 90%        | The query-key factory invariants must stay covered                                                                                              |
+| `src/features/workflows/**` | 85%        | Composites, containers, and query hooks                                                                                                         |
+
+### Cross-browser / mobile E2E + flake control (AC8/AC9/AC11)
+
+`npm run test:e2e` runs the Playwright matrix: **chromium, firefox, webkit (Safari),
+msedge** + a **Galaxy S23+ mobile** project (~360×780). In CI it is a separate
+`frontend-e2e` job gated on `frontend-build-tests`, so a fast Vitest failure
+short-circuits before browsers run; it is also a `foundation-gate` need, so
+cross-browser / keyboard regressions block PRs (AC13). Install browsers once with
+`npx playwright install --with-deps`.
+
+**Flake-control policy (AC11 / story 1.21 AC5):** `retries: 0` on CI and locally — NO
+blanket retry. A known-flaky (or dormant) spec is quarantined with `test.fixme(...)`
+plus a one-line justification, surfacing the flake rather than masking it.
 
 ## Lint & Format (story 2.31)
 

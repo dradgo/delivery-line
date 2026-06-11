@@ -5,6 +5,10 @@ node_modules/
 .frontend-node/
 coverage/
 
+# Story 2.27 — Playwright run output (HTML report + traces/screenshots).
+playwright-report/
+test-results/
+
 # Generated / managed files
 package-lock.json
 *.tsbuildinfo

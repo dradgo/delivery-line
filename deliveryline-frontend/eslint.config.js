@@ -24,6 +24,9 @@ export default tseslint.config(
       '.frontend-node/**',
       'coverage/**',
       'src/routeTree.gen.ts',
+      // Story 2.27 — Playwright run output (reports + traces), never linted.
+      'playwright-report/**',
+      'test-results/**',
     ],
   },
 
@@ -158,12 +161,30 @@ export default tseslint.config(
   },
 
   // ---- Config + tooling files: TS parser (no type-aware project), Node globals ----
+  // Story 2.27 — `playwright.config.ts` (root, matched by `*.{js,ts}`) and the
+  // Playwright E2E specs (`e2e/**`) lint here, NOT under the type-aware `src/**`
+  // block: they live outside tsconfig.app's `include`, so a typed `projectService`
+  // pass would error "file not found in project". Playwright transpiles them with
+  // its own loader at run time; eslint just needs syntax + base hygiene here.
   {
     files: ['*.{js,ts}', 'tools/**/*.js'],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: { project: false, projectService: false },
       globals: { ...globals.node },
+    },
+  },
+
+  // Playwright E2E specs (story 2.27) — TS parser, no type-aware project (they live
+  // outside tsconfig.app's `include`). Both Node globals (specs run in Node) AND
+  // browser globals (the `page.evaluate(() => document...)` callbacks run in the
+  // page) are in scope.
+  {
+    files: ['e2e/**/*.{ts,tsx}'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { project: false, projectService: false },
+      globals: { ...globals.node, ...globals.browser },
     },
   },
 

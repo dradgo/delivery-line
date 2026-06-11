@@ -24,6 +24,12 @@ coverage
 target
 .frontend-node
 
+# Playwright (story 2.27) — HTML report + per-test traces/screenshots/videos.
+# Browser binaries install to the user cache (npx playwright install), not here.
+playwright-report
+test-results
+.playwright
+
 # Env files
 .env.local
 .env.development.local

@@ -17,6 +17,7 @@ import { http, HttpResponse, delay } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/test/server';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 const { backSpy } = vi.hoisted(() => ({ backSpy: vi.fn() }));
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
@@ -268,6 +269,44 @@ describe('QueueShell', () => {
     // Forbidden-field contract — no `message`/payload/PII, only the documented fields.
     expect(payload).not.toHaveProperty('message');
     expect(Object.keys(payload).sort()).toEqual(['code', 'event', 'filtersActive', 'state']);
+  });
+
+  // Story 2.27 (Task 2, AC4) — every documented non-row state must pass a
+  // WCAG-2.1-AA axe scan (the audit found QueueShell had no a11y scan at all).
+  it('AC4 — empty / populated / error states each pass a wcag2aa axe scan', async () => {
+    // Empty.
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+    const empty = renderShell(<QueueShell />);
+    await waitFor(() =>
+      expect(empty.container.querySelector('[data-queue-state="empty"]')).not.toBeNull(),
+    );
+    await expectNoA11yViolations(empty.container);
+    cleanup();
+
+    // Populated (through the renderItem seam).
+    server.use(
+      http.get(LIST_URL, () =>
+        HttpResponse.json([{ workflowRunId: 'run_abcd0001', currentState: 'Executing' }]),
+      ),
+    );
+    const populated = renderShell(
+      <QueueShell
+        renderItem={(item) => <div data-testid="custom-row">{item.workflowRunId}</div>}
+      />,
+    );
+    await waitFor(() =>
+      expect(populated.container.querySelector('[data-queue-state="populated"]')).not.toBeNull(),
+    );
+    await expectNoA11yViolations(populated.container);
+    cleanup();
+
+    // Error.
+    server.use(http.get(LIST_URL, () => problemResponse()));
+    const errored = renderShell(<QueueShell />);
+    await waitFor(() =>
+      expect(errored.container.querySelector('[data-queue-state="error"]')).not.toBeNull(),
+    );
+    await expectNoA11yViolations(errored.container);
   });
 
   it('M2/verified — a Retry click shows the loading skeleton (feedback) before settling', async () => {

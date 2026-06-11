@@ -176,9 +176,26 @@
 							<arguments>run check:api</arguments>
 						</configuration>
 					</execution>
-					<!-- Story 2.6 (Task 7) — data-layer Vitest suite (query-key factory,
-					     problem-details parser, query/mutation hooks, dedup, correlation
-					     header). Minimal runner stood up here; story 2.27 extends it. -->
+					<!-- Story 2.27 (Task 1, AC3 / S6) — fixture event-stream drift gate.
+					     Fails if the vendored story-1.23 streams the MSW handlers seed
+					     from (src/test/fixtures/event-streams) drift from the backend
+					     originals. Mirrors the check:api schema-drift gate. -->
+					<execution>
+						<id>npm-run-check-fixtures</id>
+						<goals>
+							<goal>npm</goal>
+						</goals>
+						<phase>process-resources</phase>
+						<configuration>
+							<arguments>run check:fixtures</arguments>
+						</configuration>
+					</execution>
+					<!-- Story 2.6 (Task 7) — data-layer Vitest suite, extended by story
+					     2.27 to the full component/route/a11y/sanitization suite WITH
+					     coverage thresholds enforced (AC10): `test:coverage` runs
+					     `vitest run --coverage`, so a sub-threshold regression fails
+					     `mvn -pl deliveryline-frontend clean package` (and thus
+					     frontend-build-tests + foundation-gate). -->
 					<execution>
 						<id>npm-run-test</id>
 						<goals>
@@ -186,7 +203,7 @@
 						</goals>
 						<phase>process-resources</phase>
 						<configuration>
-							<arguments>test</arguments>
+							<arguments>run test:coverage</arguments>
 						</configuration>
 					</execution>
 					<execution>

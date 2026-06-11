@@ -22,6 +22,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installMatchMedia, uninstallMatchMedia } from '@/test/matchMedia';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { server } from '@/test/server';
 import { AppShell } from './AppShell';
 import { ContextPanelSlot } from './ContextPanelSlot';
@@ -127,6 +128,15 @@ describe('AppShell — landmarks & structure', () => {
     const skipLink = await screen.findByRole('link', { name: 'Skip to main content' });
     expect(skipLink).toHaveAttribute('href', '#main-content');
     expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+  });
+
+  // Story 2.27 (Task 2, AC4) — the shell itself must pass a WCAG-2.1-AA scan, not
+  // only the composites it hosts (the audit found the main AppShell test had none).
+  it('passes a wcag2aa axe scan in its desktop tri-pane layout (AC4)', async () => {
+    installMatchMedia(1280);
+    const { container } = renderShell({ path: '/workflows' });
+    await screen.findByRole('navigation', { name: 'Workflow navigation' });
+    await expectNoA11yViolations(container);
   });
 });
 

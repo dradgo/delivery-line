@@ -15,6 +15,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Story 2.27 — the shared MSW handlers (src/test/handlers.ts) import the
+       vendored story-1.23 fixture event streams as JSON modules (AC2/AC3 / S6).
+       These live under src/test so they are typechecked here but tree-shaken out
+       of the production bundle (test-only import graph). */
+    "resolveJsonModule": true,
+
     /* Path alias (story 2.2 — shadcn/ui requires `@/*`). This SUPERSEDES story
        2.1's note deferring aliases to 2.5/2.6: shadcn mandates `@/*`, so it is
        introduced here. Mirror this in vite.config.ts `resolve.alias`.
