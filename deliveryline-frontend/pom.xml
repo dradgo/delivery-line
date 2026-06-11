@@ -193,7 +193,7 @@
 					<!-- Story 2.6 (Task 7) — data-layer Vitest suite, extended by story
 					     2.27 to the full component/route/a11y/sanitization suite WITH
 					     coverage thresholds enforced (AC10): `test:coverage` runs
-					     `vitest run --coverage`, so a sub-threshold regression fails
+					     `vitest run` with the coverage flag, so a sub-threshold regression fails
 					     `mvn -pl deliveryline-frontend clean package` (and thus
 					     frontend-build-tests + foundation-gate). -->
 					<execution>
