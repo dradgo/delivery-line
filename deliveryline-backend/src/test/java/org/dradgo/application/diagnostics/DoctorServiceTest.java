@@ -130,6 +130,8 @@ class DoctorServiceTest {
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
+    when(probes.probeLinearCompletionSync())
+        .thenReturn(ProbeResult.pass("completion-sync enabled"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -179,6 +181,8 @@ class DoctorServiceTest {
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
+    when(probes.probeLinearCompletionSync())
+        .thenReturn(ProbeResult.pass("completion-sync enabled"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -287,6 +291,8 @@ class DoctorServiceTest {
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
+    when(probes.probeLinearCompletionSync())
+        .thenReturn(ProbeResult.pass("completion-sync enabled"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -312,6 +318,8 @@ class DoctorServiceTest {
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git n/a"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity n/a"));
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
+    when(probes.probeLinearCompletionSync())
+        .thenReturn(ProbeResult.pass("completion-sync enabled"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -359,6 +367,8 @@ class DoctorServiceTest {
                 "github-real profile inactive; git bot identity check not applicable"));
     when(probes.probeObservabilityMemory())
         .thenReturn(ProbeResult.skip("observability profile inactive"));
+    when(probes.probeLinearCompletionSync())
+        .thenReturn(ProbeResult.pass("completion-sync enabled"));
   }
 
   private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

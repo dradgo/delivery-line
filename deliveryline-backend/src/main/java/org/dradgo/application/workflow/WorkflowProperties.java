@@ -22,15 +22,59 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * the {@code repos} + {@code bot} sub-trees and ignores the threshold key (unknown-field-tolerant).
  */
 @ConfigurationProperties("deliveryline.workflow")
-public record WorkflowProperties(Bot bot, RepoConfig repos) {
+public record WorkflowProperties(
+    Bot bot, RepoConfig repos, LinearCompletionSync linearCompletionSync) {
 
   public WorkflowProperties {
     bot = bot == null ? Bot.empty() : bot;
     repos = repos == null ? RepoConfig.empty() : repos;
+    linearCompletionSync =
+        linearCompletionSync == null ? LinearCompletionSync.defaults() : linearCompletionSync;
   }
 
   public static WorkflowProperties defaults() {
-    return new WorkflowProperties(Bot.empty(), RepoConfig.empty());
+    return new WorkflowProperties(Bot.empty(), RepoConfig.empty(), LinearCompletionSync.defaults());
+  }
+
+  /**
+   * Story 3.16 (AC7/AC8) — Linear completion-sync opt-out + summary-template config bound from
+   * {@code deliveryline.workflow.linear-completion-sync.*}. The post-commit hook on a {@code
+   * COMPLETED} transition (story 3.16 Task 2) checks {@link #enabled()} before firing, and the
+   * service renders {@link #template()} into the comment body.
+   *
+   * <p>Like {@link Bot}/{@link RepoConfig}, the compact constructor
+   * <strong>normalizes-with-defaults and never throws</strong> (house rule, story 3.9 D8): a {@code
+   * null}/blank template falls back to {@link #DEFAULT_TEMPLATE} so the bean binds
+   * profile-neutrally even when no keys are present (memory: {@code
+   * validated-config-needs-test-yaml}). Template <em>validity</em> (required/known placeholders) is
+   * NOT enforced here — a dedicated startup validator bean ({@code
+   * LinearCompletionSyncConfiguration}) throws {@code INVALID_COMPLETION_TEMPLATE} when {@code
+   * enabled} and the template is malformed (story 3.16 D4); enforcing it in the compact ctor would
+   * break the normalize-never-throw contract every {@code @SpringBootTest} tier relies on.
+   */
+  public record LinearCompletionSync(boolean enabled, String template) {
+
+    /**
+     * Default merge-ready summary template (story 3.16 AC3c). All placeholders are members of the
+     * known set ({@link
+     * org.dradgo.application.workflow.LinearCompletionTemplate#KNOWN_PLACEHOLDERS}) and it carries
+     * every required placeholder, so the default profile + every {@code @SpringBootTest} tier boots
+     * without tripping the startup validator.
+     */
+    public static final String DEFAULT_TEMPLATE =
+        "DeliveryLine governed run `{runId}` completed: PR `{prUrl}` ready for merge. "
+            + "Spec: `{specSummary}` (v{specVersion}). "
+            + "Reviewers: PM `{pmReviewer}`, Dev `{devReviewer}`. "
+            + "Cycle time: `{durationFormatted}`.";
+
+    public LinearCompletionSync {
+      template = (template == null || template.isBlank()) ? DEFAULT_TEMPLATE : template.trim();
+    }
+
+    /** Enabled-by-default (AC7) with the documented default template. */
+    public static LinearCompletionSync defaults() {
+      return new LinearCompletionSync(true, DEFAULT_TEMPLATE);
+    }
   }
 
   /**

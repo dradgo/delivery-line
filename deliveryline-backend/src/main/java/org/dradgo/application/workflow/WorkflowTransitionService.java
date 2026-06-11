@@ -16,14 +16,20 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class WorkflowTransitionService {
+
+  private static final Logger log = LoggerFactory.getLogger(WorkflowTransitionService.class);
 
   private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
@@ -33,13 +39,22 @@ public class WorkflowTransitionService {
   private final WorkflowTransitionTable transitionTable;
   private final TransactionTemplate transactionTemplate;
   private final WorkflowTransitionConcurrencyProbe concurrencyProbe;
+  // Story 3.16 (Task 2) — the completion-sync collaborators. WorkflowOrchestrationService depends
+  // on
+  // THIS service, so it must be injected lazily (ObjectProvider, resolved at afterCommit time,
+  // never
+  // eagerly in the ctor) to break the cycle ([[broker-orchestration-lazy-supplier]], Fact 6).
+  private final ObjectProvider<WorkflowOrchestrationService> orchestrationProvider;
+  private final WorkflowProperties workflowProperties;
 
   public WorkflowTransitionService(
       WorkflowRunReadPort workflowRunReadPort,
       WorkflowRunStatePort workflowRunStatePort,
       WorkflowEventWritePort workflowEventWritePort,
       PlatformTransactionManager transactionManager,
-      ObjectProvider<WorkflowTransitionConcurrencyProbe> concurrencyProbeProvider) {
+      ObjectProvider<WorkflowTransitionConcurrencyProbe> concurrencyProbeProvider,
+      ObjectProvider<WorkflowOrchestrationService> orchestrationProvider,
+      WorkflowProperties workflowProperties) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunStatePort = workflowRunStatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -47,6 +62,8 @@ public class WorkflowTransitionService {
     this.transactionTemplate = new TransactionTemplate(transactionManager);
     this.concurrencyProbe =
         concurrencyProbeProvider.getIfAvailable(WorkflowTransitionConcurrencyProbe::noop);
+    this.orchestrationProvider = orchestrationProvider;
+    this.workflowProperties = workflowProperties;
   }
 
   public void transition(
@@ -101,18 +118,70 @@ public class WorkflowTransitionService {
 
     try {
       transactionTemplate.executeWithoutResult(
-          status ->
-              doTransition(
-                  runId,
-                  targetState,
-                  actor,
-                  reason,
-                  idempotencyKey,
-                  failureCategory,
-                  eventDetails));
+          status -> {
+            doTransition(
+                runId, targetState, actor, reason, idempotencyKey, failureCategory, eventDetails);
+            registerCompletionSyncHookIfApplicable(runId, targetState);
+          });
     } catch (OptimisticLockingFailureException exception) {
       throw concurrentConflict(runId, targetState, idempotencyKey, exception);
     }
+  }
+
+  /**
+   * Story 3.16 (AC3/AC4, Task 2) — when this transition commits a run into {@code Completed} and
+   * completion-sync is enabled, register a post-commit {@link TransactionSynchronization} whose
+   * {@code afterCommit} resolves {@link WorkflowOrchestrationService} lazily (Fact 6) and posts the
+   * merge-ready summary back to the source Linear ticket. Registered inside the transition's
+   * transaction (so it fires only on a genuine commit); the hook runs AFTER commit, so the {@code
+   * Completed} transition is already durable and a post failure cannot roll it back (AC4 is
+   * structural, not just try/catch). Fires for ANY committed {@code Completed} transition — the
+   * production driver ({@code TechnicalApprovalService.acceptImplementation}) lands in story 3.20;
+   * until then tests drive a {@code WaitingForReview → Completed} transition directly.
+   */
+  private void registerCompletionSyncHookIfApplicable(String runId, WorkflowState targetState) {
+    if (targetState != WorkflowState.COMPLETED) {
+      return;
+    }
+    if (!workflowProperties.linearCompletionSync().enabled()) {
+      log.debug(
+          "completion-sync hook not registered (linear-completion-sync.enabled=false) workflowRunId={}",
+          runId);
+      return;
+    }
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      // No active synchronization (e.g. a direct non-transactional call path) — nothing to hook.
+      log.warn(
+          "completion-sync hook not registered (no active transaction synchronization) workflowRunId={}",
+          runId);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            WorkflowOrchestrationService orchestration = orchestrationProvider.getIfAvailable();
+            if (orchestration == null) {
+              log.warn(
+                  "completion-sync hook fired but WorkflowOrchestrationService is unavailable; "
+                      + "skipping workflowRunId={}",
+                  runId);
+              return;
+            }
+            log.info("completion-sync hook fired workflowRunId={} (post-commit)", runId);
+            try {
+              orchestration.syncCompletionToLinear(runId);
+            } catch (RuntimeException error) {
+              // afterCommit cannot roll back the (already committed) Completed transition; the sync
+              // is best-effort (AC4) so any escape is swallowed with a WARN.
+              log.warn(
+                  "completion-sync hook swallowed an error (completion intact) workflowRunId={} "
+                      + "cause={}",
+                  runId,
+                  error.getClass().getSimpleName());
+            }
+          }
+        });
   }
 
   private void doTransition(

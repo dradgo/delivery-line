@@ -117,6 +117,12 @@ class ArchitectureBoundaryTest {
   static final ArchRule only_orchestration_auto_advances_on_pr_output_runner_success =
       ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_PR_OUTPUT_RUNNER_SUCCESS;
 
+  // Story 3.16 (AC9) — only WorkflowOrchestrationService + the sync-completion CLI may post a
+  // Linear comment (Linear stays intake + completion-sync only).
+  @ArchTest
+  static final ArchRule only_orchestration_and_cli_may_post_linear_comment =
+      ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AND_CLI_MAY_POST_LINEAR_COMMENT;
+
   @ArchTest
   static final ArchRule credential_detection_must_stay_in_application_security =
       ArchitectureRuleCatalog.CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY;

@@ -44,7 +44,8 @@ class WorkflowCliCommandRegistrationIT {
                       new IdempotencyKeyValidator(),
                       mock(RecoveryService.class),
                       null,
-                      new LocalActorIdentityResolver("local-operator")));
+                      new LocalActorIdentityResolver("local-operator"),
+                      null));
 
   @Test
   void deliverylinePrefixedWorkflowCommandsAreRegisteredInTheRuntimeShellRegistry() {

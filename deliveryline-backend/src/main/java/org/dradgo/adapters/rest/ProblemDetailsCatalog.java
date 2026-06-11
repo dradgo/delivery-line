@@ -386,6 +386,14 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Artifact PR link mismatch",
         false);
+    // Story 3.16 (AC8) — a malformed Linear completion-sync template is a configuration defect that
+    // fails context boot; mirror INVALID_COMMAND_PAYLOAD's BAD_REQUEST + non-retryable mapping.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_COMPLETION_TEMPLATE,
+        HttpStatus.BAD_REQUEST,
+        "Invalid completion-sync template",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

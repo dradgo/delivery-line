@@ -88,7 +88,8 @@ class WorkflowCommandsContextBundleFlagTest {
           new IdempotencyKeyValidator(),
           recovery,
           null,
-          new LocalActorIdentityResolver("local-operator"));
+          new LocalActorIdentityResolver("local-operator"),
+          null);
 
   @Test
   void textModeAppendsPrettyPrintedBundleBlock() throws Exception {

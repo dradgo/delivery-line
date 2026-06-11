@@ -45,7 +45,8 @@ class WorkflowCommandsRunnerLogsFlagTest {
           new IdempotencyKeyValidator(),
           mock(RecoveryService.class),
           null,
-          new LocalActorIdentityResolver("local-operator"));
+          new LocalActorIdentityResolver("local-operator"),
+          null);
 
   private void stubStatus() {
     WorkflowStatusView view =

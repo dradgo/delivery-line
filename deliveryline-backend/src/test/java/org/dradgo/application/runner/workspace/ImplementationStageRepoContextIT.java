@@ -116,7 +116,9 @@ class ImplementationStageRepoContextIT {
 
     WorkflowProperties props =
         new WorkflowProperties(
-            WorkflowProperties.Bot.empty(), WorkflowProperties.RepoConfig.of(REPO_REF));
+            WorkflowProperties.Bot.empty(),
+            WorkflowProperties.RepoConfig.of(REPO_REF),
+            WorkflowProperties.LinearCompletionSync.defaults());
     service =
         new RepositoryWorkspaceService(
             git, gitHubAdapter, secrets, store, recordPort, links, props);

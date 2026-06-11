@@ -49,15 +49,39 @@ class WorkflowOrchestrationServiceTest {
   private WorkflowRunReadPort readPort;
   private org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort;
   private ContextBundleService contextBundleService;
+  // Story 3.16 — completion-sync collaborators.
+  private org.springframework.beans.factory.ObjectProvider<
+          org.dradgo.application.integration.linear.LinearAdapter>
+      linearAdapterProvider;
+  private org.dradgo.application.integration.linear.LinearAdapter linearAdapter;
+  private org.dradgo.application.security.RedactionPolicyService redactionPolicyService;
+  private org.dradgo.application.integration.IntegrationLinkService integrationLinkService;
+  private org.dradgo.application.artifact.spi.ArtifactRecordPort artifactRecordPort;
+  private org.dradgo.application.approval.spi.ApprovalReadPort approvalReadPort;
+  private org.dradgo.application.workflow.spi.WorkflowEventReadPort workflowEventReadPort;
+  private org.dradgo.application.workflow.spi.WorkflowEventWritePort workflowEventWritePort;
+  private WorkflowProperties workflowProperties;
   private ListAppender<ILoggingEvent> logAppender;
 
   @BeforeEach
+  @SuppressWarnings("unchecked")
   void setUp() {
     runnerBroker = mock(RunnerBroker.class);
     transitionService = mock(WorkflowTransitionService.class);
     readPort = mock(WorkflowRunReadPort.class);
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
     contextBundleService = mock(ContextBundleService.class);
+    linearAdapterProvider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    linearAdapter = mock(org.dradgo.application.integration.linear.LinearAdapter.class);
+    when(linearAdapterProvider.getIfAvailable()).thenReturn(linearAdapter);
+    redactionPolicyService = mock(org.dradgo.application.security.RedactionPolicyService.class);
+    integrationLinkService = mock(org.dradgo.application.integration.IntegrationLinkService.class);
+    artifactRecordPort = mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class);
+    approvalReadPort = mock(org.dradgo.application.approval.spi.ApprovalReadPort.class);
+    workflowEventReadPort = mock(org.dradgo.application.workflow.spi.WorkflowEventReadPort.class);
+    workflowEventWritePort = mock(org.dradgo.application.workflow.spi.WorkflowEventWritePort.class);
+    workflowProperties =
+        WorkflowProperties.defaults(); // completion-sync enabled + default template
     Logger logger = (Logger) LoggerFactory.getLogger(WorkflowOrchestrationService.class);
     logAppender = new ListAppender<>();
     logAppender.start();
@@ -117,7 +141,20 @@ class WorkflowOrchestrationServiceTest {
             new RunnerProperties.ImplementationStage(
                 org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch));
     return new WorkflowOrchestrationService(
-        runnerBroker, transitionService, readPort, recordPort, props, contextBundleService);
+        runnerBroker,
+        transitionService,
+        readPort,
+        recordPort,
+        props,
+        contextBundleService,
+        linearAdapterProvider,
+        redactionPolicyService,
+        workflowProperties,
+        integrationLinkService,
+        artifactRecordPort,
+        approvalReadPort,
+        workflowEventReadPort,
+        workflowEventWritePort);
   }
 
   private void stubRun(WorkflowState state, int rejectionLoopCount) {
@@ -659,5 +696,239 @@ class WorkflowOrchestrationServiceTest {
 
     verify(readPort).findByPublicId(RUN_ID);
     assertLoggedAt(Level.WARN, "probable anomaly");
+  }
+
+  // ===============================================================================================
+  // Story 3.16 — syncCompletionToLinear (AC2/AC3/AC4/AC5/AC6/AC7).
+  // ===============================================================================================
+
+  private static final String TICKET = "LIN-77";
+
+  private org.dradgo.application.integration.IntegrationLink linearLink() {
+    return new org.dradgo.application.integration.IntegrationLink(
+        "ilk_aaaaaaaaaaaa",
+        RUN_ID,
+        "linear",
+        TICKET,
+        org.dradgo.domain.registry.IntegrationSyncStatus.LINKED,
+        java.time.Instant.parse("2026-06-02T10:00:00Z"),
+        null,
+        null);
+  }
+
+  private org.dradgo.application.integration.IntegrationLink githubPrLink() {
+    return new org.dradgo.application.integration.IntegrationLink(
+        "ilk_bbbbbbbbbbbb",
+        RUN_ID,
+        "github_pr",
+        "octo/repo#42",
+        org.dradgo.domain.registry.IntegrationSyncStatus.LINKED,
+        java.time.Instant.parse("2026-06-02T11:00:00Z"),
+        null,
+        null);
+  }
+
+  private void stubLinks(boolean withPr) {
+    when(integrationLinkService.findActiveLinearTicketLink(RUN_ID))
+        .thenReturn(Optional.of(linearLink()));
+    when(integrationLinkService.findActiveGitHubPrLink(RUN_ID))
+        .thenReturn(withPr ? Optional.of(githubPrLink()) : Optional.empty());
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(eq(RUN_ID), any()))
+        .thenReturn(Optional.empty());
+    when(approvalReadPort.findLatestApprovedForArtifactLineage(eq(RUN_ID), any()))
+        .thenReturn(Optional.empty());
+    when(workflowEventReadPort.findLatestCorrelationId(RUN_ID)).thenReturn(Optional.empty());
+    when(workflowEventReadPort.findLatestByWorkflowRunPublicId(RUN_ID))
+        .thenReturn(Optional.empty());
+    when(workflowEventReadPort.listByWorkflowRunPublicId(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of());
+  }
+
+  private void stubRedactionPassthrough() {
+    when(redactionPolicyService.redact(
+            any(String.class),
+            eq(org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL.value())))
+        .thenAnswer(
+            inv ->
+                new org.dradgo.application.security.RedactionResult(
+                    inv.getArgument(0),
+                    null,
+                    org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL,
+                    org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL,
+                    false,
+                    java.util.Set.of()));
+  }
+
+  private org.dradgo.application.workflow.spi.WorkflowEventRecord eventAt(
+      java.time.OffsetDateTime createdAt) {
+    return new org.dradgo.application.workflow.spi.WorkflowEventRecord(
+        "evt_000000000000",
+        RUN_ID,
+        org.dradgo.domain.registry.WorkflowEventType.LINEAR_COMPLETION_SYNC_FAILED,
+        null,
+        null,
+        "system",
+        org.dradgo.domain.registry.ActorType.SYSTEM,
+        "synthetic",
+        null,
+        false,
+        createdAt,
+        java.util.Map.of());
+  }
+
+  @Test
+  void syncCompletionPostsRedactedShareableFullSummaryWithReconstructedPrUrl() {
+    stubLinks(true);
+    stubRedactionPassthrough();
+
+    service(false).syncCompletionToLinear(RUN_ID);
+
+    ArgumentCaptor<org.dradgo.application.integration.linear.GovernedRunComment> captor =
+        ArgumentCaptor.forClass(org.dradgo.application.integration.linear.GovernedRunComment.class);
+    verify(linearAdapter).postGovernedRunComment(eq(TICKET), captor.capture());
+    org.dradgo.application.integration.linear.GovernedRunComment posted = captor.getValue();
+    org.junit.jupiter.api.Assertions.assertEquals(RUN_ID, posted.runPublicId());
+    assertSame(
+        org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL, posted.classification());
+    assertTrue(
+        posted.body().contains("github.com/octo/repo/pull/42"),
+        () -> "expected reconstructed PR url in body but was: " + posted.body());
+    assertTrue(posted.fingerprint() != null && !posted.fingerprint().isBlank());
+    verify(workflowEventWritePort, never()).append(any());
+  }
+
+  @Test
+  void syncCompletionSendsTheRedactedBodyAndKeepsItShareableOnDirtySource() {
+    stubLinks(true);
+    // AC2/AC6 — source datum was dirty: redaction scrubbed it AND kept the body shareable-full.
+    when(redactionPolicyService.redact(
+            any(String.class),
+            eq(org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL.value())))
+        .thenReturn(
+            new org.dradgo.application.security.RedactionResult(
+                "DeliveryLine governed run scrubbed completed.",
+                null,
+                org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL,
+                org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL,
+                true,
+                java.util.Set.of()));
+
+    service(false).syncCompletionToLinear(RUN_ID);
+
+    ArgumentCaptor<org.dradgo.application.integration.linear.GovernedRunComment> captor =
+        ArgumentCaptor.forClass(org.dradgo.application.integration.linear.GovernedRunComment.class);
+    verify(linearAdapter).postGovernedRunComment(eq(TICKET), captor.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "DeliveryLine governed run scrubbed completed.", captor.getValue().body());
+    assertSame(
+        org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL,
+        captor.getValue().classification());
+    assertLoggedAt(Level.WARN, "summary_redacted");
+  }
+
+  @Test
+  void syncCompletionNoOpsWhenNoLinearTicketLinked() {
+    when(integrationLinkService.findActiveLinearTicketLink(RUN_ID)).thenReturn(Optional.empty());
+
+    service(false).syncCompletionToLinear(RUN_ID);
+
+    verify(linearAdapter, never()).postGovernedRunComment(any(), any());
+    verify(workflowEventWritePort, never()).append(any());
+    assertLoggedAt(Level.WARN, "no_linear_ticket_link");
+  }
+
+  @Test
+  void syncCompletionRecordsFailureEventWithoutThrowingWhenLinearPostFails() {
+    stubLinks(true);
+    stubRedactionPassthrough();
+    org.mockito.Mockito.doThrow(
+            new org.dradgo.application.integration.linear.LinearAdapterException(
+                org.dradgo.domain.registry.IntegrationFailureCategory.NETWORK_API_FAILURE, "boom"))
+        .when(linearAdapter)
+        .postGovernedRunComment(eq(TICKET), any());
+
+    service(false).syncCompletionToLinear(RUN_ID); // best-effort: must not throw
+
+    ArgumentCaptor<org.dradgo.application.workflow.spi.WorkflowEventRecord> captor =
+        ArgumentCaptor.forClass(org.dradgo.application.workflow.spi.WorkflowEventRecord.class);
+    verify(workflowEventWritePort).append(captor.capture());
+    org.dradgo.application.workflow.spi.WorkflowEventRecord event = captor.getValue();
+    assertSame(
+        org.dradgo.domain.registry.WorkflowEventType.LINEAR_COMPLETION_SYNC_FAILED,
+        event.eventType());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "network_api_failure",
+        event.details().get(org.dradgo.domain.registry.WorkflowEventDetailKeys.FAILURE_CATEGORY));
+    assertLoggedAt(Level.WARN, "post_failed");
+  }
+
+  @Test
+  void syncCompletionFingerprintIsStableEvenWhenTheEventTimelineAdvances() {
+    // The idempotency basis must EXCLUDE the volatile cycle-time so a re-sync after the run's event
+    // timeline advances stays a no-op at the adapter (review 2026-06-11). A prior version of this
+    // test stubbed both event reads to empty, so durationFormatted was constantly "n/a" and the
+    // equality assertion was vacuous (a pure hash of fixed input is trivially stable).
+    stubLinks(true);
+    stubRedactionPassthrough();
+    WorkflowOrchestrationService svc = service(false);
+
+    java.time.OffsetDateTime first = java.time.OffsetDateTime.parse("2026-06-02T10:00:00Z");
+
+    // First invocation — short timeline (latest = first + 5m → cycle time "5m 0s").
+    when(workflowEventReadPort.findLatestByWorkflowRunPublicId(RUN_ID))
+        .thenReturn(Optional.of(eventAt(first.plusMinutes(5))));
+    when(workflowEventReadPort.listByWorkflowRunPublicId(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(eventAt(first), eventAt(first.plusMinutes(5))));
+    svc.syncCompletionToLinear(RUN_ID);
+
+    // Second invocation — timeline advanced (latest = first + 3h → cycle time "3h 0m 0s").
+    when(workflowEventReadPort.findLatestByWorkflowRunPublicId(RUN_ID))
+        .thenReturn(Optional.of(eventAt(first.plusHours(3))));
+    when(workflowEventReadPort.listByWorkflowRunPublicId(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(eventAt(first), eventAt(first.plusHours(3))));
+    svc.syncCompletionToLinear(RUN_ID);
+
+    ArgumentCaptor<org.dradgo.application.integration.linear.GovernedRunComment> captor =
+        ArgumentCaptor.forClass(org.dradgo.application.integration.linear.GovernedRunComment.class);
+    verify(linearAdapter, org.mockito.Mockito.times(2))
+        .postGovernedRunComment(eq(TICKET), captor.capture());
+    java.util.List<org.dradgo.application.integration.linear.GovernedRunComment> posts =
+        captor.getAllValues();
+    // Precondition (guards against re-vacuum): the advanced timeline really changed the rendered
+    // body's cycle time.
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        posts.get(0).body(),
+        posts.get(1).body(),
+        "expected the advanced event timeline to change the rendered cycle time");
+    // The idempotency fingerprint stays identical across the advanced timeline (duration excluded).
+    org.junit.jupiter.api.Assertions.assertEquals(
+        posts.get(0).fingerprint(), posts.get(1).fingerprint());
+  }
+
+  @Test
+  void syncCompletionSkippedWhenDisabled() {
+    workflowProperties =
+        new WorkflowProperties(
+            WorkflowProperties.Bot.empty(),
+            WorkflowProperties.RepoConfig.empty(),
+            new WorkflowProperties.LinearCompletionSync(
+                false, WorkflowProperties.LinearCompletionSync.DEFAULT_TEMPLATE));
+
+    service(false).syncCompletionToLinear(RUN_ID);
+
+    verifyNoInteractions(integrationLinkService);
+    verify(linearAdapter, never()).postGovernedRunComment(any(), any());
+  }
+
+  @Test
+  void syncCompletionNoOpsWhenLinearAdapterUnavailable() {
+    when(linearAdapterProvider.getIfAvailable()).thenReturn(null);
+    stubLinks(true);
+    stubRedactionPassthrough();
+
+    service(false).syncCompletionToLinear(RUN_ID);
+
+    verify(workflowEventWritePort, never()).append(any());
+    assertLoggedAt(Level.WARN, "linear_adapter_unavailable");
   }
 }

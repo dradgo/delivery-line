@@ -113,7 +113,9 @@ class SpecStageRepoContextIT {
     // Configured repo url → the broker's config resolver normalizes it to REPO_REF (1:1 pilot, D2).
     WorkflowProperties props =
         new WorkflowProperties(
-            WorkflowProperties.Bot.empty(), WorkflowProperties.RepoConfig.of(REPO_REF));
+            WorkflowProperties.Bot.empty(),
+            WorkflowProperties.RepoConfig.of(REPO_REF),
+            WorkflowProperties.LinearCompletionSync.defaults());
     service =
         new RepositoryWorkspaceService(
             git, gitHubAdapter, secrets, store, recordPort, links, props);

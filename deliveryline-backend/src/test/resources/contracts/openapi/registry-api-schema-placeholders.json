@@ -134,6 +134,7 @@
     "DOCTOR_OBSERVABILITY_LOW_MEMORY": "https://deliveryline.local/problems/doctor-observability-low-memory",
     "RUNNER_PR_REF_DRIFT": "https://deliveryline.local/problems/runner-pr-ref-drift",
     "RUNNER_OUTPUT_VALIDATION_FAILED": "https://deliveryline.local/problems/runner-output-validation-failed",
-    "ARTIFACT_PR_LINK_MISMATCH": "https://deliveryline.local/problems/artifact-pr-link-mismatch"
+    "ARTIFACT_PR_LINK_MISMATCH": "https://deliveryline.local/problems/artifact-pr-link-mismatch",
+    "INVALID_COMPLETION_TEMPLATE": "https://deliveryline.local/problems/invalid-completion-template"
   }
 }

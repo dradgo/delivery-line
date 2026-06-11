@@ -31,6 +31,7 @@ import org.dradgo.application.workflow.WorkflowInspectionService.RunnerLogRefere
 import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
+import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -72,6 +73,9 @@ public class WorkflowCommands {
   private final RecoveryService recoveryService;
   private final ApprovalReviewerRoleResolver approvalReviewerRoleResolver;
   private final LocalActorIdentityResolver localActorIdentityResolver;
+  // Story 3.16 (AC5) — manual completion-sync retry path. Nullable in the legacy/inspection-less
+  // test constructors; the sync-completion command guards via requireOrchestrationWired().
+  private final WorkflowOrchestrationService workflowOrchestrationService;
 
   @Autowired
   public WorkflowCommands(
@@ -83,7 +87,8 @@ public class WorkflowCommands {
       IdempotencyKeyValidator idempotencyKeyValidator,
       RecoveryService recoveryService,
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
-      LocalActorIdentityResolver localActorIdentityResolver) {
+      LocalActorIdentityResolver localActorIdentityResolver,
+      WorkflowOrchestrationService workflowOrchestrationService) {
     this(
         workflowCommandService,
         workflowInspectionService,
@@ -94,14 +99,15 @@ public class WorkflowCommands {
         idempotencyKeyValidator,
         recoveryService,
         approvalReviewerRoleResolver,
-        localActorIdentityResolver);
+        localActorIdentityResolver,
+        workflowOrchestrationService);
   }
 
   /**
    * Three-arg constructor kept for backward compatibility with the existing {@link
    * org.dradgo.adapters.cli.WorkflowCommandsTest} unit tests. The {@code submit}-only path does not
-   * need the inspection, recovery, or actor-identity-resolver services, so callers can pass nulls
-   * as long as they only invoke {@link #submit}.
+   * need the inspection, recovery, actor-identity-resolver, or orchestration services, so callers
+   * can pass nulls as long as they only invoke {@link #submit}.
    */
   public WorkflowCommands(
       WorkflowCommandService workflowCommandService,
@@ -117,6 +123,7 @@ public class WorkflowCommands {
         new IdempotencyKeyValidator(),
         null,
         null,
+        null,
         null);
   }
 
@@ -130,7 +137,8 @@ public class WorkflowCommands {
       IdempotencyKeyValidator idempotencyKeyValidator,
       RecoveryService recoveryService,
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
-      LocalActorIdentityResolver localActorIdentityResolver) {
+      LocalActorIdentityResolver localActorIdentityResolver,
+      WorkflowOrchestrationService workflowOrchestrationService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.outputs = outputs;
@@ -141,6 +149,7 @@ public class WorkflowCommands {
     this.recoveryService = recoveryService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
+    this.workflowOrchestrationService = workflowOrchestrationService;
   }
 
   @Command(
@@ -194,6 +203,62 @@ public class WorkflowCommands {
       throw de;
     } catch (RuntimeException re) {
       emitFailure("workflow submit", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "sync-completion",
+      description =
+          "Re-post the merge-ready completion summary back to a governed run's source Linear ticket"
+              + " (story 3.16). Idempotent — re-running posts at most once per canonical summary"
+              + " (Linear comment-deduplication). Best-effort: a post failure is recorded as an"
+              + " event and never fails the run.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String syncCompletion(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    requireOrchestrationWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      WorkflowOrchestrationService.SyncCompletionOutcome outcome =
+          workflowOrchestrationService.syncCompletionToLinear(runId);
+      if (outcome == WorkflowOrchestrationService.SyncCompletionOutcome.POST_FAILED) {
+        // The post failure is already recorded as a linear.completionSyncFailed event; surface a
+        // non-zero CLI exit so a manual-retry operator sees it failed. Best-effort applies to the
+        // governed run (never rolled back) — not to the manual command's exit code (story 3.16
+        // review 2026-06-11). Rethrown below → emitFailure + exit-status mapper.
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "linear_completion_sync_post_failed");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR,
+            "completion-sync post to Linear failed; recorded as a linear.completionSyncFailed event"
+                + " — inspect the run history and retry",
+            details);
+      }
+      StringBuilder output =
+          new StringBuilder().append(runId).append(' ').append(describeSyncOutcome(outcome));
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow sync-completion", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow sync-completion", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow sync-completion", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
       throw re;
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
@@ -1042,6 +1107,29 @@ public class WorkflowCommands {
       throw new DomainException(
           DomainErrorCode.INTERNAL_ERROR,
           "WorkflowCommands was constructed without RecoveryService; inject RecoveryService to use retry",
+          details);
+    }
+  }
+
+  private static String describeSyncOutcome(
+      WorkflowOrchestrationService.SyncCompletionOutcome outcome) {
+    return switch (outcome) {
+      case POSTED -> "completion summary posted to Linear";
+      case SKIPPED_DISABLED -> "completion-sync skipped (linear-completion-sync disabled)";
+      case SKIPPED_NO_TICKET_LINK -> "completion-sync skipped (no linked Linear ticket)";
+      case SKIPPED_NO_LINEAR_PROFILE -> "completion-sync skipped (no Linear profile active)";
+      case POST_FAILED -> "completion-sync failed (recorded as an event)";
+    };
+  }
+
+  private void requireOrchestrationWired() {
+    if (workflowOrchestrationService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_sync_completion_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without WorkflowOrchestrationService; inject it to use"
+              + " sync-completion",
           details);
     }
   }

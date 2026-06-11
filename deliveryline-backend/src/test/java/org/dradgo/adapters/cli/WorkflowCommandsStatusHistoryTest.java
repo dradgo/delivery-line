@@ -87,7 +87,8 @@ class WorkflowCommandsStatusHistoryTest {
           new IdempotencyKeyValidator(),
           recovery,
           null,
-          new LocalActorIdentityResolver("local-operator"));
+          new LocalActorIdentityResolver("local-operator"),
+          null);
 
   @Test
   void statusInvokesInspectionServiceOnceAndRendersText() {

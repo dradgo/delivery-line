@@ -1,8 +1,26 @@
 package org.dradgo.application.workflow;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import org.dradgo.application.approval.ApprovalSnapshot;
+import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.artifact.ArtifactRecordSnapshot;
+import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.integration.IntegrationLink;
+import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.linear.GovernedRunComment;
+import org.dradgo.application.integration.linear.LinearAdapter;
+import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.ContextBundleService;
 import org.dradgo.application.runner.ExecutionSubStage;
@@ -12,18 +30,30 @@ import org.dradgo.application.runner.RunnerExecutionHandle;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
+import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
+import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
+import org.dradgo.domain.registry.ArtifactType;
+import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.WorkflowEventDetailKeys;
+import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Story 3a-1 — the single application service that auto-advances workflow state on a spec-stage
@@ -105,6 +135,18 @@ public class WorkflowOrchestrationService {
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final RunnerProperties runnerProperties;
   private final ContextBundleService contextBundleService;
+  // Story 3.16 — completion-sync collaborators. LinearAdapter is @Profile(linear-mock|linear-real)-
+  // gated while this service is an unconditional @Service; injecting it directly would red every
+  // @SpringBootTest lacking the profile ([[unconditional-service-needs-profile-gate]]). Resolve
+  // getIfAvailable() lazily at the post site; absent ⇒ a WARN no-op, never an NPE (T11).
+  private final ObjectProvider<LinearAdapter> linearAdapterProvider;
+  private final RedactionPolicyService redactionPolicyService;
+  private final WorkflowProperties workflowProperties;
+  private final IntegrationLinkService integrationLinkService;
+  private final ArtifactRecordPort artifactRecordPort;
+  private final ApprovalReadPort approvalReadPort;
+  private final WorkflowEventReadPort workflowEventReadPort;
+  private final WorkflowEventWritePort workflowEventWritePort;
 
   public WorkflowOrchestrationService(
       RunnerBroker runnerBroker,
@@ -112,7 +154,15 @@ public class WorkflowOrchestrationService {
       WorkflowRunReadPort workflowRunReadPort,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       RunnerProperties runnerProperties,
-      ContextBundleService contextBundleService) {
+      ContextBundleService contextBundleService,
+      ObjectProvider<LinearAdapter> linearAdapterProvider,
+      RedactionPolicyService redactionPolicyService,
+      WorkflowProperties workflowProperties,
+      IntegrationLinkService integrationLinkService,
+      ArtifactRecordPort artifactRecordPort,
+      ApprovalReadPort approvalReadPort,
+      WorkflowEventReadPort workflowEventReadPort,
+      WorkflowEventWritePort workflowEventWritePort) {
     this.runnerBroker = Objects.requireNonNull(runnerBroker, "runnerBroker");
     this.workflowTransitionService =
         Objects.requireNonNull(workflowTransitionService, "workflowTransitionService");
@@ -122,6 +172,19 @@ public class WorkflowOrchestrationService {
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
     this.contextBundleService =
         Objects.requireNonNull(contextBundleService, "contextBundleService");
+    this.linearAdapterProvider =
+        Objects.requireNonNull(linearAdapterProvider, "linearAdapterProvider");
+    this.redactionPolicyService =
+        Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
+    this.workflowProperties = Objects.requireNonNull(workflowProperties, "workflowProperties");
+    this.integrationLinkService =
+        Objects.requireNonNull(integrationLinkService, "integrationLinkService");
+    this.artifactRecordPort = Objects.requireNonNull(artifactRecordPort, "artifactRecordPort");
+    this.approvalReadPort = Objects.requireNonNull(approvalReadPort, "approvalReadPort");
+    this.workflowEventReadPort =
+        Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
+    this.workflowEventWritePort =
+        Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
   }
 
   /**
@@ -928,6 +991,344 @@ public class WorkflowOrchestrationService {
    */
   private static String specDispatchKey(String workflowRunId, int specRejectionLoopCount) {
     return "spec-dispatch:" + workflowRunId + ":" + specRejectionLoopCount;
+  }
+
+  // ===============================================================================================
+  // Story 3.16 — Linear completion-sync: write a merge-ready summary back to the source ticket.
+  // ===============================================================================================
+
+  /** Outcome of {@link #syncCompletionToLinear} (review 2026-06-11 — for the manual CLI). */
+  public enum SyncCompletionOutcome {
+    /** The summary was composed and handed to the Linear adapter. */
+    POSTED,
+    /** {@code linear-completion-sync.enabled=false} — nothing attempted. */
+    SKIPPED_DISABLED,
+    /** The run has no active {@code linear_ticket} link — nothing to post to. */
+    SKIPPED_NO_TICKET_LINK,
+    /** No {@code linear-mock|linear-real} profile active — no adapter to post with. */
+    SKIPPED_NO_LINEAR_PROFILE,
+    /** The Linear post threw; recorded as a {@code linear.completionSyncFailed} event. */
+    POST_FAILED
+  }
+
+  /**
+   * Story 3.16 (AC2/AC3/AC5/AC6) — compose a merge-ready completion summary and post it back to the
+   * run's source Linear ticket. Invoked (a) automatically by the {@link WorkflowTransitionService}
+   * post-commit hook when a run transitions to {@code Completed} (Task 2), and (b) manually via the
+   * {@code deliveryline sync-completion} CLI command (Task 7).
+   *
+   * <p>Best-effort and after-the-fact (AC4): a missing optional datum degrades to a documented
+   * fallback (Decision D5); a missing {@code linear_ticket} link short-circuits with a WARN
+   * (nothing to post to); any post failure is recorded as a {@code linear.completionSyncFailed}
+   * event and swallowed — this method NEVER throws, so it can never roll back the (already
+   * committed, since it runs post-commit) {@code Completed} transition. Idempotent via the
+   * adapter's fingerprint-marker dedup (Decision D3): the {@code fingerprint} is a stable SHA-256
+   * of a run-identity basis that EXCLUDES volatile fields (cycle time, PR URL), so a re-sync after
+   * the run's event timeline advances is still a no-op at the adapter (review 2026-06-11).
+   *
+   * <p>The summary body is composed, then passed through {@link RedactionPolicyService} claiming
+   * {@code shareable-full} (AC2/AC6): redaction scrubs any secret/local-path that leaked from a
+   * dirty source datum, keeping the effective classification shareable rather than leaking it.
+   *
+   * @return the outcome (posted / skipped-with-reason / post-failed) so the manual {@code
+   *     sync-completion} CLI can report it; the post-commit hook ignores it (best-effort).
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public SyncCompletionOutcome syncCompletionToLinear(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    if (!workflowProperties.linearCompletionSync().enabled()) {
+      log.debug(
+          "syncCompletionToLinear skipped (linear-completion-sync.enabled=false) workflowRunId={}",
+          workflowRunId);
+      return SyncCompletionOutcome.SKIPPED_DISABLED;
+    }
+    String correlationId =
+        workflowEventReadPort.findLatestCorrelationId(workflowRunId).orElse(null);
+    String priorCorrelationMdc = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, correlationId);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      Optional<IntegrationLink> ticketLink =
+          integrationLinkService.findActiveLinearTicketLink(workflowRunId);
+      if (ticketLink.isEmpty()) {
+        log.warn(
+            "syncCompletionToLinear no_linear_ticket_link workflowRunId={} (nothing to post to)",
+            workflowRunId);
+        return SyncCompletionOutcome.SKIPPED_NO_TICKET_LINK;
+      }
+      String ticketRef = ticketLink.get().externalRef();
+      log.info(
+          "syncCompletionToLinear entry workflowRunId={} ticketRef={}",
+          workflowRunId,
+          MdcKeys.sanitizeForLog(ticketRef));
+
+      String prUrl = resolvePrUrl(workflowRunId);
+      Map<String, String> values = templateValues(workflowRunId, prUrl);
+      String canonicalBody =
+          LinearCompletionTemplate.render(
+              workflowProperties.linearCompletionSync().template(), values);
+      String fingerprint = fingerprint(stableFingerprintBasis(values));
+
+      RedactionResult redaction =
+          redactionPolicyService.redact(canonicalBody, DataClassification.SHAREABLE_FULL.value());
+      if (redaction.redacted()) {
+        log.warn(
+            "syncCompletionToLinear summary_redacted workflowRunId={} effectiveClassification={} "
+                + "detectedCategories={}",
+            workflowRunId,
+            redaction.effectiveClassification().value(),
+            redaction.detectedCategories());
+      }
+      String body = redaction.sanitizedText();
+
+      LinearAdapter adapter = linearAdapterProvider.getIfAvailable();
+      if (adapter == null) {
+        log.warn(
+            "syncCompletionToLinear linear_adapter_unavailable workflowRunId={} (no linear profile "
+                + "active); skipping post",
+            workflowRunId);
+        return SyncCompletionOutcome.SKIPPED_NO_LINEAR_PROFILE;
+      }
+
+      try {
+        adapter.postGovernedRunComment(
+            ticketRef,
+            new GovernedRunComment(
+                workflowRunId, fingerprint, body, DataClassification.SHAREABLE_FULL));
+        log.info(
+            "syncCompletionToLinear posted workflowRunId={} ticketRef={} fingerprint={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef),
+            fingerprint);
+        return SyncCompletionOutcome.POSTED;
+      } catch (LinearAdapterException error) {
+        recordSyncFailure(
+            workflowRunId, ticketRef, correlationId, error.failureCategory().value(), error);
+        return SyncCompletionOutcome.POST_FAILED;
+      } catch (RuntimeException error) {
+        recordSyncFailure(workflowRunId, ticketRef, correlationId, "unknown", error);
+        return SyncCompletionOutcome.POST_FAILED;
+      }
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
+    }
+  }
+
+  /**
+   * Resolve template placeholder values defensively (Decision D5) — every optional datum that
+   * cannot be resolved renders as a documented fallback ({@code n/a} / {@code unknown}) rather than
+   * failing the sync.
+   */
+  private Map<String, String> templateValues(String workflowRunId, String prUrl) {
+    Map<String, String> values = new LinkedHashMap<>();
+    values.put("runId", workflowRunId);
+    values.put("prUrl", prUrl == null ? "n/a" : prUrl);
+    Optional<ArtifactRecordSnapshot> spec =
+        artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(
+            workflowRunId, ArtifactType.SPEC.value());
+    // OQ-2: the artifact read port exposes no human-readable spec summary; surface a short fixed
+    // pointer when a spec exists and a fallback otherwise. specVersion is the artifact version.
+    values.put("specSummary", spec.isPresent() ? "see DeliveryLine" : "n/a");
+    values.put("specVersion", spec.map(a -> String.valueOf(a.version())).orElse("n/a"));
+    values.put("pmReviewer", latestReviewer(workflowRunId, ArtifactType.SPEC.value()));
+    values.put("devReviewer", devReviewer(workflowRunId));
+    values.put("durationFormatted", resolveDurationFormatted(workflowRunId));
+    return values;
+  }
+
+  private String latestReviewer(String workflowRunId, String artifactType) {
+    return approvalReadPort
+        .findLatestApprovedForArtifactLineage(workflowRunId, artifactType)
+        .map(ApprovalSnapshot::actorIdentity)
+        .orElse("unknown");
+  }
+
+  /** Dev reviewer = the pr-output approval, falling back to the implementation-plan approval. */
+  private String devReviewer(String workflowRunId) {
+    Optional<ApprovalSnapshot> prApproval =
+        approvalReadPort.findLatestApprovedForArtifactLineage(
+            workflowRunId, ArtifactType.PR_OUTPUT.value());
+    if (prApproval.isPresent()) {
+      return prApproval.get().actorIdentity();
+    }
+    return latestReviewer(workflowRunId, ArtifactType.IMPLEMENTATION_PLAN.value());
+  }
+
+  /**
+   * Resolve {@code {prUrl}} from the active {@code github_pr} link's canonical {@code external_ref}
+   * ({@code owner/repo#number}), reconstructed to {@code
+   * https://github.com/owner/repo/pull/number}. Returns {@code null} (→ {@code n/a} fallback) when
+   * no PR link exists (3.15 linkage is best-effort) or the ref is unparseable. Reconstruction
+   * avoids a metadata round-trip; the single github.com pilot host (1:1 RepoConfig) makes it
+   * deterministic.
+   */
+  private String resolvePrUrl(String workflowRunId) {
+    Optional<IntegrationLink> prLink = integrationLinkService.findActiveGitHubPrLink(workflowRunId);
+    if (prLink.isEmpty()) {
+      log.warn(
+          "syncCompletionToLinear no_github_pr_link workflowRunId={} ({prUrl} renders as fallback)",
+          workflowRunId);
+      return null;
+    }
+    String externalRef = prLink.get().externalRef();
+    String url = githubPrUrl(externalRef);
+    if (url == null) {
+      log.warn(
+          "syncCompletionToLinear unparseable_github_pr_ref workflowRunId={} externalRef={}",
+          workflowRunId,
+          MdcKeys.sanitizeForLog(externalRef));
+    }
+    return url;
+  }
+
+  private static String githubPrUrl(String externalRef) {
+    if (externalRef == null) {
+      return null;
+    }
+    int hash = externalRef.lastIndexOf('#');
+    if (hash <= 0 || hash == externalRef.length() - 1) {
+      return null;
+    }
+    String repo = externalRef.substring(0, hash);
+    String number = externalRef.substring(hash + 1);
+    if (!number.chars().allMatch(Character::isDigit)) {
+      return null;
+    }
+    return "https://github.com/" + repo + "/pull/" + number;
+  }
+
+  /**
+   * Cycle time = the run's latest event timestamp − its first event timestamp, formatted as a human
+   * duration. Best-effort (Decision D5): any read failure (including {@code HISTORY_TOO_LARGE} on a
+   * very long run) degrades to {@code n/a} rather than failing the sync.
+   */
+  private String resolveDurationFormatted(String workflowRunId) {
+    try {
+      Optional<WorkflowEventRecord> latest =
+          workflowEventReadPort.findLatestByWorkflowRunPublicId(workflowRunId);
+      List<WorkflowEventRecord> all =
+          workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null);
+      if (latest.isEmpty() || all.isEmpty()) {
+        return "n/a";
+      }
+      OffsetDateTime first = all.get(0).createdAt();
+      OffsetDateTime last = latest.get().createdAt();
+      if (first == null || last == null || last.isBefore(first)) {
+        return "n/a";
+      }
+      return formatDuration(Duration.between(first, last));
+    } catch (RuntimeException error) {
+      log.warn(
+          "syncCompletionToLinear duration_resolution_failed workflowRunId={} cause={}",
+          workflowRunId,
+          error.getClass().getSimpleName());
+      return "n/a";
+    }
+  }
+
+  private static String formatDuration(Duration duration) {
+    long totalSeconds = Math.max(0L, duration.getSeconds());
+    long hours = totalSeconds / 3600L;
+    long minutes = (totalSeconds % 3600L) / 60L;
+    long seconds = totalSeconds % 60L;
+    StringBuilder out = new StringBuilder();
+    if (hours > 0L) {
+      out.append(hours).append("h ");
+    }
+    if (hours > 0L || minutes > 0L) {
+      out.append(minutes).append("m ");
+    }
+    out.append(seconds).append('s');
+    return out.toString();
+  }
+
+  /**
+   * Idempotency basis (review 2026-06-11): the stable subset of the template values, EXCLUDING the
+   * volatile {@code durationFormatted} (cycle time advances with every appended event) and {@code
+   * prUrl} (the {@code github_pr} link can arrive late via best-effort 3.15 linkage).
+   * Fingerprinting this basis instead of the full rendered body makes a re-sync robustly
+   * at-most-once per run, rather than re-posting a duplicate whenever a volatile field drifts.
+   * Order-stable via the {@link java.util.LinkedHashMap} insertion order in {@link
+   * #templateValues}.
+   */
+  private static String stableFingerprintBasis(Map<String, String> values) {
+    StringBuilder basis = new StringBuilder();
+    values.forEach(
+        (key, value) -> {
+          if (!"durationFormatted".equals(key) && !"prUrl".equals(key)) {
+            basis.append(key).append('=').append(value).append('\n');
+          }
+        });
+    return basis.toString();
+  }
+
+  /**
+   * Stable idempotency fingerprint (Decision D3): SHA-256 hex of {@link #stableFingerprintBasis}.
+   */
+  private static String fingerprint(String basis) {
+    try {
+      byte[] digest =
+          MessageDigest.getInstance("SHA-256").digest(basis.getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest);
+    } catch (NoSuchAlgorithmException error) {
+      // SHA-256 is mandatory in every Java distribution; defensive only.
+      throw new IllegalStateException("SHA-256 not available", error);
+    }
+  }
+
+  /**
+   * Record a {@code linear.completionSyncFailed} event (AC4). The integration-scoped {@code
+   * failureCategory} rides the {@code failureCategory} detail key (the event record's typed
+   * failureCategory field is runner-scoped {@code FailureCategory}, so it stays {@code null} here —
+   * mirroring {@code INTEGRATION_LINKED}). Reuses the existing allow-listed detail keys; no new
+   * key/schema is introduced. Written within this method's (post-commit) transaction — it cannot
+   * touch the already-committed {@code Completed} transition (AC4 / Trap T13).
+   */
+  private void recordSyncFailure(
+      String workflowRunId,
+      String ticketRef,
+      String correlationId,
+      String failureCategory,
+      RuntimeException error) {
+    log.warn(
+        "syncCompletionToLinear post_failed workflowRunId={} ticketRef={} failureCategory={} "
+            + "errorClass={}",
+        workflowRunId,
+        MdcKeys.sanitizeForLog(ticketRef),
+        failureCategory,
+        error.getClass().getSimpleName());
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(WorkflowEventDetailKeys.LINEAR_TICKET_REFERENCE, ticketRef);
+    details.put(WorkflowEventDetailKeys.FAILURE_CATEGORY, failureCategory);
+    details.put(WorkflowEventDetailKeys.ERROR_CLASS, error.getClass().getSimpleName());
+    if (correlationId != null && !correlationId.isBlank()) {
+      details.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    try {
+      workflowEventWritePort.append(
+          new WorkflowEventRecord(
+              PublicIdPrefixes.WORKFLOW_EVENT.next(),
+              workflowRunId,
+              WorkflowEventType.LINEAR_COMPLETION_SYNC_FAILED,
+              null,
+              null,
+              ActorContext.SYSTEM.actorIdentity(),
+              ActorType.SYSTEM,
+              "linear_completion_sync_failed",
+              null,
+              false,
+              OffsetDateTime.now(java.time.ZoneOffset.UTC),
+              details));
+    } catch (RuntimeException appendError) {
+      // A double-fault (the failure-event write itself fails) must not escape the best-effort sync
+      // (review 2026-06-11). The original post failure is already logged at WARN above; swallow the
+      // append error with its own WARN so the contract "syncCompletionToLinear never throws" holds
+      // end-to-end (the manual CLI path catches it too, but the auto-hook relies on it).
+      log.warn(
+          "syncCompletionToLinear failure_event_write_failed workflowRunId={} cause={}",
+          workflowRunId,
+          appendError.getClass().getSimpleName());
+    }
   }
 
   private static ActorContext systemActor(String correlationId) {

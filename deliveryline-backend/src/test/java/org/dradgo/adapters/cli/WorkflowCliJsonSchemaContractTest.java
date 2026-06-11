@@ -62,7 +62,8 @@ class WorkflowCliJsonSchemaContractTest {
           new IdempotencyKeyValidator(),
           mock(RecoveryService.class),
           null,
-          new LocalActorIdentityResolver("local-operator"));
+          new LocalActorIdentityResolver("local-operator"),
+          null);
   private final SchemaRegistry schemaRegistry =
       SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
 

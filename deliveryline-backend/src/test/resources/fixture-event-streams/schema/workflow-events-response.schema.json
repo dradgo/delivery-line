@@ -117,7 +117,8 @@
         "clarification.incorporated",
         "clarification.superseded",
         "clarification.rejectedInvalid",
-        "clarification.noEffectReason"
+        "clarification.noEffectReason",
+        "linear.completionSyncFailed"
       ]
     },
     "artifactVariant": {

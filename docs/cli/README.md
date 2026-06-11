@@ -10,6 +10,10 @@ For the failure-recovery walkthrough — when a run hits `Failed` and the operat
 The diagnostic `doctor` command is documented in
 [`doctor.md`](doctor.md).
 
+The `sync-completion` command — and the Linear completion-sync feature it re-triggers (write a
+merge-ready summary back to the source Linear ticket when a run completes) — is documented in
+[`../integrations/linear-completion-sync.md`](../integrations/linear-completion-sync.md).
+
 The supported-environment matrix (OS / shell / container-runtime / Java / Node) consumed by the
 `doctor` `supported-environment` check is documented in
 [`../supported-environments.md`](../supported-environments.md).

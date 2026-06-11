@@ -36,6 +36,16 @@ deliveryline:
     bot:
       name: ${DELIVERYLINE_BOT_NAME:}
       email: ${DELIVERYLINE_BOT_EMAIL:}
+    # Story 3.16 (AC7/AC8 / Trap T5) — mirror the validated linear-completion-sync keys (the test
+    # application.yml shadows, does not merge with, main). `enabled` is OFF in the shared test
+    # profile (mirroring spec-stage.auto-dispatch: false) so the COMPLETED-transition post-commit
+    # hook stays a no-op across the existing suite and no @SpringBootTest reaches the (mock) Linear
+    # adapter unexpectedly; WorkflowOrchestrationServiceTest / the hook test drive it directly or opt
+    # in via @TestPropertySource. A valid template is still supplied so the startup validator (which
+    # only runs when enabled) never trips, and the default-template fallback is exercised.
+    linear-completion-sync:
+      enabled: false
+      template: "DeliveryLine governed run `{runId}` completed: PR `{prUrl}` ready for merge. Spec: `{specSummary}` (v{specVersion}). Reviewers: PM `{pmReviewer}`, Dev `{devReviewer}`. Cycle time: `{durationFormatted}`."
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000

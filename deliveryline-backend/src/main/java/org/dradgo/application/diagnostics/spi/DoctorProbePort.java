@@ -58,4 +58,13 @@ public interface DoctorProbePort {
    * recommended 8 GB; otherwise PASS. Reports memory metrics only — never logs payloads or secrets.
    */
   ProbeResult probeObservabilityMemory();
+
+  /**
+   * Story 3.16 AC7 — reports the Linear completion-sync setting. PASS when disabled (the feature is
+   * opt-out, never a failure); when enabled, PASS with the validated template's placeholders, or
+   * FAIL {@code INVALID_COMPLETION_TEMPLATE} if the template is malformed (defensive — the startup
+   * validator would already have failed boot in that case). Reports the enabled flag + template
+   * placeholders only — never a token or payload.
+   */
+  ProbeResult probeLinearCompletionSync();
 }

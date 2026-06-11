@@ -22,7 +22,8 @@ class DoctorGitProbeTest {
   private static final WorkflowProperties CONFIGURED_BOT =
       new WorkflowProperties(
           new WorkflowProperties.Bot("DeliveryLine Bot", "bot@dradgo.org"),
-          WorkflowProperties.RepoConfig.empty());
+          WorkflowProperties.RepoConfig.empty(),
+          WorkflowProperties.LinearCompletionSync.defaults());
   private static final WorkflowProperties UNCONFIGURED_BOT = WorkflowProperties.defaults();
 
   private static Environment githubRealActive() {

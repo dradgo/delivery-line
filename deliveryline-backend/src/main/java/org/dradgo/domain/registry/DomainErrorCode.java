@@ -92,7 +92,14 @@ public enum DomainErrorCode implements RegistryValue {
   // approval of an artifact whose PR reference no longer matches the durable linkage (NFR19). The
   // guard (IntegrationLinkService.assertArtifactPrLinkMatches) is built + tested here; its
   // production approval call-site lands in story 3.20 (acceptImplementation does not yet exist).
-  ARTIFACT_PR_LINK_MISMATCH("ARTIFACT_PR_LINK_MISMATCH");
+  ARTIFACT_PR_LINK_MISMATCH("ARTIFACT_PR_LINK_MISMATCH"),
+  // Story 3.16 (AC8 / Trap T4) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Raised at startup by the Linear completion-sync template validator when, with completion-sync
+  // enabled, the configured `deliveryline.workflow.linear-completion-sync.template` references an
+  // unknown placeholder or omits a required one (Decision D4). Fails context boot so a malformed
+  // pilot template never silently posts a broken merge-ready summary; BAD_REQUEST + non-retryable
+  // (mirrors INVALID_COMMAND_PAYLOAD — it is a configuration defect, not a transient fault).
+  INVALID_COMPLETION_TEMPLATE("INVALID_COMPLETION_TEMPLATE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

@@ -25,6 +25,8 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.integration.linear.GovernedRunComment;
+import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.workflow.DomainResult;
@@ -455,6 +457,32 @@ final class ArchitectureRuleCatalog {
                   String.class,
                   String.class,
                   String.class));
+
+  /**
+   * Story 3.16 (AC9) — Linear is intake + completion-sync only: the merge-ready write-back is the
+   * sole path that posts to Linear. {@code LinearAdapter.postGovernedRunComment} may be called only
+   * from {@link WorkflowOrchestrationService} (its {@code syncCompletionToLinear} is the composer)
+   * and the {@code WorkflowCommands} CLI ({@code sync-completion} manual retry) — runner CLIs and
+   * every other component are forbidden, preserving the narrow boundary. (In practice the CLI calls
+   * {@code syncCompletionToLinear}, not {@code postGovernedRunComment} directly, so {@code
+   * WorkflowOrchestrationService} is the only actual caller; the CLI is allow-listed per AC9 so a
+   * future direct call from {@code sync-completion} would not trip the rule.)
+   */
+  static final ArchRule ONLY_ORCHESTRATION_AND_CLI_MAY_POST_LINEAR_COMMENT =
+      namedRule(
+          "only WorkflowOrchestrationService and the sync-completion CLI may post a Linear comment",
+          "Remediation: route any Linear write-back through WorkflowOrchestrationService.syncCompletionToLinear (story 3.16 AC9). Runner CLIs and other components must never call LinearAdapter.postGovernedRunComment — Linear stays intake + completion-sync only.",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(WorkflowOrchestrationService.class.getName())
+              .and()
+              .doNotHaveFullyQualifiedName("org.dradgo.adapters.cli.WorkflowCommands")
+              .should()
+              .callMethod(
+                  LinearAdapter.class,
+                  "postGovernedRunComment",
+                  String.class,
+                  GovernedRunComment.class));
 
   static final ArchRule ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE =
       namedRule(

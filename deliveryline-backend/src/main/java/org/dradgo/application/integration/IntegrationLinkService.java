@@ -626,6 +626,30 @@ public class IntegrationLinkService {
     return integrationLinkRecordPort.findActiveByWorkflowRun(workflowRunPublicId);
   }
 
+  /**
+   * Story 3.16 (AC3a) — the active {@code linear} ticket reference for a run, or empty when no
+   * Linear ticket is linked. Resolved by the typed {@code (linear, run)} lookup rather than {@link
+   * #findActiveLinkByWorkflowRun} (which returns whichever active link sorts first and so cannot
+   * disambiguate a run that carries BOTH a {@code linear} and a {@code github_pr} link). Used by
+   * completion-sync to find the ticket to post back to; absent ⇒ no Linear target ⇒ the sync
+   * no-ops.
+   */
+  public Optional<IntegrationLink> findActiveLinearTicketLink(String workflowRunPublicId) {
+    return integrationLinkRecordPort.findActiveByTypeAndWorkflowRunForUpdate(
+        LINEAR_INTEGRATION_TYPE, workflowRunPublicId);
+  }
+
+  /**
+   * Story 3.16 (AC3b) — the active {@code github_pr} link for a run, or empty when none (3.15's
+   * broker linkage is best-effort, so a run can reach completion without a {@code github_pr} row).
+   * Used by completion-sync to resolve the {@code {prUrl}} placeholder defensively. Typed by {@code
+   * (github_pr, run)} — never the Linear variant.
+   */
+  public Optional<IntegrationLink> findActiveGitHubPrLink(String workflowRunPublicId) {
+    return integrationLinkRecordPort.findActiveByTypeAndWorkflowRunForUpdate(
+        GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
+  }
+
   /** Transition {@code sync_status} {@code linked → synced} and refresh {@code last_sync_at}. */
   @Transactional
   public IntegrationLink markSynced(String integrationLinkPublicId, Instant syncedAt) {

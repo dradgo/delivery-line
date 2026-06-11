@@ -32,7 +32,9 @@ import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.integration.github.GitHubProperties;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.workflow.LinearCompletionTemplate;
 import org.dradgo.application.workflow.WorkflowProperties;
+import org.dradgo.domain.DomainException;
 import org.dradgo.domain.net.LoopbackAddressResolver;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.RunnerKind;
@@ -913,6 +915,42 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         "Host memory sufficient for the observability (ELK) stack",
         null,
         details);
+  }
+
+  /**
+   * Story 3.16 AC7 — report the Linear completion-sync setting (enabled flag + template validity).
+   * PASS when disabled (opt-out is not a failure); when enabled, PASS with the validated template's
+   * placeholders, else FAIL {@code INVALID_COMPLETION_TEMPLATE} (defensive — the startup validator
+   * would already have failed boot). Reports the flag + placeholders only — never a token.
+   */
+  @Override
+  public ProbeResult probeLinearCompletionSync() {
+    WorkflowProperties.LinearCompletionSync config = workflowProperties.linearCompletionSync();
+    Map<String, String> details = new LinkedHashMap<>();
+    details.put("enabled", String.valueOf(config.enabled()));
+    if (!config.enabled()) {
+      return new ProbeResult(
+          DiagnosticsStatus.PASS, "Linear completion-sync disabled (opt-out)", null, details);
+    }
+    try {
+      LinearCompletionTemplate.validate(config.template());
+      details.put("templateValid", "true");
+      details.put(
+          "templatePlaceholders",
+          LinearCompletionTemplate.placeholdersIn(config.template()).toString());
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "Linear completion-sync enabled; summary template valid",
+          null,
+          details);
+    } catch (DomainException invalid) {
+      details.put("templateValid", "false");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "Linear completion-sync enabled but the summary template is invalid",
+          DomainErrorCode.INVALID_COMPLETION_TEMPLATE.value(),
+          details);
+    }
   }
 
   private long safeTotalPhysicalMemoryBytes() {

@@ -81,6 +81,16 @@ deliveryline:
     #     url: dradgo/delivery-line   # or https://github.com/dradgo/delivery-line.git or git@github.com:dradgo/delivery-line.git
     #     clone-depth: 1              # shallow by default; <=0 normalized to 1
     #     sparse-paths: []            # empty ⇒ full-tree checkout
+    # Story 3.16 (AC7/AC8) — Linear completion-sync: write a merge-ready summary back to the source
+    # Linear ticket when a governed run reaches Completed. `enabled` (default true) is the pilot
+    # opt-out — doctor reports the current setting. `template` is the merge-ready summary; known
+    # placeholders: {runId} {prUrl} {specSummary} {specVersion} {pmReviewer} {devReviewer}
+    # {durationFormatted}; required: {runId}. An invalid template (unknown/missing placeholder) fails
+    # context startup with INVALID_COMPLETION_TEMPLATE. Posting is best-effort, after-the-fact, and
+    # redaction-enforced — it never blocks the governed flow.
+    linear-completion-sync:
+      enabled: true
+      template: "DeliveryLine governed run `{runId}` completed: PR `{prUrl}` ready for merge. Spec: `{specSummary}` (v{specVersion}). Reviewers: PM `{pmReviewer}`, Dev `{devReviewer}`. Cycle time: `{durationFormatted}`."
   rest:
     # Optional override for server.address. Leave unset to inherit the loopback default above.
     # bind-address: 0.0.0.0

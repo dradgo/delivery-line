@@ -30,7 +30,13 @@ public enum WorkflowEventType implements RegistryValue {
   CLARIFICATION_INCORPORATED("clarification.incorporated"),
   CLARIFICATION_SUPERSEDED("clarification.superseded"),
   CLARIFICATION_REJECTED_INVALID("clarification.rejectedInvalid"),
-  CLARIFICATION_NO_EFFECT_REASON("clarification.noEffectReason");
+  CLARIFICATION_NO_EFFECT_REASON("clarification.noEffectReason"),
+  // Story 3.16 (AC4) — emitted (best-effort, in its own post-commit transaction) when the Linear
+  // completion-sync write-back fails. NEVER rolls back the Completed transition; the integration
+  // failure category rides the `failureCategory` detail key (the event record's typed
+  // failureCategory field is runner-scoped FailureCategory, so the integration-scoped category is
+  // carried as a detail, mirroring INTEGRATION_LINKED).
+  LINEAR_COMPLETION_SYNC_FAILED("linear.completionSyncFailed");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

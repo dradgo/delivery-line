@@ -144,7 +144,8 @@ class CliRestEquivalenceContractTest {
             new IdempotencyKeyValidator(),
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
-            new LocalActorIdentityResolver("local-operator"));
+            new LocalActorIdentityResolver("local-operator"),
+            null);
     cli.approveSpec(
         RUN_ID,
         ARTIFACT_ID,
@@ -213,7 +214,8 @@ class CliRestEquivalenceContractTest {
             new IdempotencyKeyValidator(),
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
-            new LocalActorIdentityResolver("local-operator"));
+            new LocalActorIdentityResolver("local-operator"),
+            null);
     cli.rejectSpec(
         RUN_ID,
         ARTIFACT_ID,
@@ -288,7 +290,8 @@ class CliRestEquivalenceContractTest {
             new IdempotencyKeyValidator(),
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
-            new LocalActorIdentityResolver("local-operator"));
+            new LocalActorIdentityResolver("local-operator"),
+            null);
     cli.answerClarification(
         RUN_ID,
         clarificationId,
@@ -355,7 +358,8 @@ class CliRestEquivalenceContractTest {
             new IdempotencyKeyValidator(),
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
-            new LocalActorIdentityResolver("local-operator"));
+            new LocalActorIdentityResolver("local-operator"),
+            null);
     cli.approveSpec(
         RUN_ID,
         ARTIFACT_ID,

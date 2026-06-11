@@ -66,6 +66,8 @@ class DoctorLoggingContractTest {
     when(probes.probeGitAvailability()).thenReturn(ProbeResult.pass("git check not applicable"));
     when(probes.probeGitBotIdentity()).thenReturn(ProbeResult.pass("git identity not applicable"));
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
+    when(probes.probeLinearCompletionSync())
+        .thenReturn(ProbeResult.pass("completion-sync enabled"));
     DoctorService service =
         new DoctorService(
             probes,
@@ -84,7 +86,7 @@ class DoctorLoggingContractTest {
     assertThat(infoEvents.get(1).getFormattedMessage())
         .contains("doctor diagnostics finished")
         .contains("overallStatus=PASS")
-        .contains("checksRun=16");
+        .contains("checksRun=17");
   }
 
   @Test
