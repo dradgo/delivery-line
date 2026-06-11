@@ -21,7 +21,12 @@ import clarificationIncorporated from '../../src/test/fixtures/event-streams/cla
 import clarificationSuperseded from '../../src/test/fixtures/event-streams/clarification-superseded-and-rejected.json' with { type: 'json' };
 
 interface EventStream {
-  workflowRun: { publicId: string; ticketRef: string; createdAt: string; terminalState: string | null };
+  workflowRun: {
+    publicId: string;
+    ticketRef: string;
+    createdAt: string;
+    terminalState: string | null;
+  };
   events: { publicId: string; eventType: string; createdAt: string }[];
 }
 
