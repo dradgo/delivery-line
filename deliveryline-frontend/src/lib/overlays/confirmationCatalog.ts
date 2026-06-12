@@ -88,8 +88,11 @@ export const CONFIRMATION_CATALOG: Record<ConfirmationActionId, ConfirmationCata
     id: 'retryOrRecoverConsequential',
     requiresConfirmation: true,
     intent: 'warning',
+    // Story 3.30 (AC3) re-owns this entry: the exact consequence text the retry
+    // confirmation dialog renders, and the owning story flips from the Epic-4
+    // placeholder to 3.30 (the UI minimum-viable-recovery baseline).
     consequenceTemplate:
-      'Retrying re-runs the failed step. Any partial output from the previous attempt may be discarded or superseded.',
-    owningStory: 'Epic 4',
+      'Retry will re-execute the last failed step with a fresh runner. The previous failure will be preserved in the timeline.',
+    owningStory: '3.30',
   },
 };

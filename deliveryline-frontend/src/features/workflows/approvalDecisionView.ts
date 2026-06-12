@@ -50,8 +50,18 @@ export type ApprovalBarState =
  * The decision-action wire union. The backend reports raw strings in
  * `AllowedActions.actions[]`; unrecognized values coerce to `'unknown'` and are
  * dropped (forward-compat, UX-DR6 — mirrors 2.18's `unknown`-sentinel discipline).
+ *
+ * Story 3.30 adds `retry` — the recovery_operator mode gates its primary action on
+ * this being present in the live allowed-actions (the backend reports it for a
+ * `Failed` run that can re-execute; `AllowedAction.RETRY`). Scope discipline (AC5):
+ * NO deeper recovery actions (reconcile/resume/rerun) are recognized here in E3.
  */
-export type DecisionAction = 'approve_spec' | 'reject_spec' | 'answer_clarification' | 'unknown';
+export type DecisionAction =
+  | 'approve_spec'
+  | 'reject_spec'
+  | 'answer_clarification'
+  | 'retry'
+  | 'unknown';
 
 /** The rework taxonomy (story 2.10) — the schema's UPPERCASE wire enum (T-TAGGED-UPPERCASE). */
 export type TaggedFeedback = components['schemas']['RejectSpecRequest']['taggedFeedback'];
@@ -143,6 +153,7 @@ const KNOWN_ACTIONS: ReadonlySet<string> = new Set<DecisionAction>([
   'approve_spec',
   'reject_spec',
   'answer_clarification',
+  'retry',
   'unknown',
 ]);
 
@@ -297,7 +308,11 @@ const CONSEQUENCE_HINTS: Readonly<
     reject_spec: 'Rejection sends the specification back for rework.',
   },
   implementation_review: {},
-  recovery_operator: {},
+  // Story 3.30 (AC3) — the short inline hint; the FULL consequence text lives in the
+  // retry confirmation dialog (`CONFIRMATION_CATALOG.retryOrRecoverConsequential`).
+  recovery_operator: {
+    retry: 'Retry re-executes the last failed step with a fresh runner.',
+  },
 };
 
 /** Resolve the immediate-consequence hint for a mode + action (AC2), or undefined. */
@@ -339,9 +354,20 @@ export function resolveApprovalBarState(
   if (mutation.status === 'pending') {
     return 'submitting';
   }
-  // The stub modes have no live decision-firing path (AC1/AC3 `disabled`). Resolve
-  // them to `disabled` BEFORE blocked so a stub mode reads as a deliberate control
-  // restriction, not a missing-artifact block.
+  // Story 3.30 — the recovery_operator mode is a REAL decision path (no longer a
+  // stub): `ready` when the run is `Failed` AND the live allowed-actions include
+  // `retry`; `success` after a recorded retry; otherwise `disabled` (View only —
+  // retry is not a safe action). Resolved before the generic non-spec_approval
+  // `disabled` fallthrough.
+  if (view.mode === 'recovery_operator') {
+    if (mutation.status === 'success') {
+      return 'success';
+    }
+    return canRetry(view) ? 'ready' : 'disabled';
+  }
+  // The remaining stub modes have no live decision-firing path (AC1/AC3 `disabled`).
+  // Resolve them to `disabled` BEFORE blocked so a stub mode reads as a deliberate
+  // control restriction, not a missing-artifact block.
   if (view.mode !== 'spec_approval') {
     return 'disabled';
   }
@@ -355,6 +381,25 @@ export function resolveApprovalBarState(
     return 'success';
   }
   return 'ready';
+}
+
+/**
+ * Story 3.30 (AC3, AC5) — whether the recovery_operator mode can offer `Retry failed
+ * step`. Gated on TWO live signals: the run is `Failed` AND the backend-reported
+ * allowed-actions include `retry`. Both must hold — a `Failed` run whose allowed-
+ * actions omit `retry` (e.g. retry not safe) resolves to `View only`. The frontend
+ * NEVER infers retry-eligibility locally; it reads `useAllowedActions` (no permission-
+ * inference module — AC11 / OQ-5 of 2.19).
+ */
+export function canRetry(view: ApprovalDecisionView): boolean {
+  return view.currentState === 'Failed' && view.actions.includes('retry');
+}
+
+/** Compose the recovery decision-context line (AC3) from the live read model. */
+export function buildRecoveryContextLabel(detail: WorkflowDetail | undefined): string {
+  const stage = detail?.failedStage;
+  const stagePart = stage !== undefined && stage.trim() !== '' ? ` at the ${stage} stage` : '';
+  return `Recover the failed run${stagePart}`;
 }
 
 /** Exhaustiveness guard for the `mode` switch (AC1) — a new mode without a branch fails `tsc`. */

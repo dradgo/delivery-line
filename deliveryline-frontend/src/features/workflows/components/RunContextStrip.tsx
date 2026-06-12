@@ -33,6 +33,7 @@ import { isProblemDetailsError } from '@/lib/api/problemDetails';
 import { cn } from '@/lib/utils';
 
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
+import { humanizeFailureCategory, humanizeNextSafeAction } from '../failureCategoryView';
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
 import {
   RUN_STALE_THRESHOLD_MS,
@@ -184,6 +185,70 @@ function StripContent({ view, nowMs }: { view: RunContextView; nowMs: number }) 
   );
 }
 
+/**
+ * Story 3.30 (AC2) — the failed-run recovery baseline.
+ *
+ * Rendered ONLY when `currentState === 'Failed'`, as a SEPARATE labeled region BELOW
+ * the height-capped orientation strip (the strip stays a single lightweight row,
+ * AC4 of 2.16; this recovery row is the sanctioned secondary surface — Task 3). Every
+ * field is sourced from the already-present `useWorkflowDetail` read model; absent
+ * fields use the same `<NotReported />` placeholder. `nextSafeAction` is humanized
+ * VERBATIM from the wire (never the stale `await_operator_action` example label).
+ */
+function RecoveryBaseline({ view, nowMs }: { view: RunContextView; nowMs: number }) {
+  const category = humanizeFailureCategory(view.failureCategory);
+  const nextAction = humanizeNextSafeAction(view.nextSafeAction);
+  const relFailure = formatRelativeTime(view.failureTimestamp, nowMs);
+  const utcFailure = formatUtcTimestamp(view.failureTimestamp);
+  const relActivity = formatRelativeTime(view.lastActivityAt, nowMs);
+  const utcActivity = formatUtcTimestamp(view.lastActivityAt);
+  return (
+    <section
+      aria-label="Recovery baseline"
+      data-testid="run-recovery-baseline"
+      className="w-full rounded-md border border-state-error-border bg-surface px-4 py-2"
+    >
+      <Inline gap="4" wrap align="center">
+        <StateSignifierChip stateName="error" label="Failed" testId="run-recovery-failed-chip" />
+        <Item label="Failed stage" testId="run-recovery-failed-stage" title={view.failedStage}>
+          {view.failedStage ?? <NotReported />}
+        </Item>
+        <Item
+          label="Last successful"
+          testId="run-recovery-last-successful"
+          title={view.lastSuccessfulStage}
+        >
+          {view.lastSuccessfulStage ?? <NotReported />}
+        </Item>
+        <Item label="Failure category" testId="run-recovery-category" title={category}>
+          {category ?? <NotReported />}
+        </Item>
+        <Item label="Failed at" testId="run-recovery-failed-at">
+          {relFailure !== null ? (
+            <time dateTime={view.failureTimestamp} title={utcFailure ?? undefined}>
+              {relFailure}
+            </time>
+          ) : (
+            <NotReported />
+          )}
+        </Item>
+        <Item label="Last activity" testId="run-recovery-last-activity">
+          {relActivity !== null ? (
+            <time dateTime={view.lastActivityAt} title={utcActivity ?? undefined}>
+              {relActivity}
+            </time>
+          ) : (
+            <NotReported />
+          )}
+        </Item>
+        <Item label="Next safe action" testId="run-recovery-next-action" title={nextAction}>
+          {nextAction ?? <NotReported />}
+        </Item>
+      </Inline>
+    </section>
+  );
+}
+
 export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
   const query = useWorkflowDetail(workflowRunId);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -244,44 +309,55 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
     void query.refetch();
   };
 
+  // Story 3.30 (AC2) — surface the recovery baseline ONLY for a failed run, as a
+  // separate region below the (still-capped) orientation strip.
+  const showRecovery =
+    state !== 'loading' &&
+    state !== 'error' &&
+    view !== undefined &&
+    view.currentState === 'Failed';
+
   return (
-    <section
-      // AC6 / T8 — a single labeled landmark: a `<section>` WITH an accessible name
-      // is exposed as an implicit `region` role (so `getByRole('region')` resolves),
-      // and an explicit `role="region"` would be redundant (jsx-a11y/no-redundant-roles).
-      aria-label="Run context"
-      aria-busy={state === 'loading' ? true : undefined}
-      data-run-context-state={state}
-      style={{
-        maxHeight: RUN_CONTEXT_STRIP_MAX_HEIGHT,
-        overflow: state === 'error' ? 'auto' : undefined,
-      }}
-      // Cap height + clip overflow so the strip stays a single lightweight row
-      // (AC4). The error state composes a taller `<ErrorState>` card, so it does
-      // not clip — the cap still applies to the box, per the AC4 "across states" rule.
-      className={cn('w-full', state !== 'error' && 'overflow-hidden')}
-    >
-      {state === 'loading' ? (
-        <Inline gap="4" align="center" data-testid="run-context-loading">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-4 w-32" />
-        </Inline>
-      ) : null}
+    <>
+      <section
+        // AC6 / T8 — a single labeled landmark: a `<section>` WITH an accessible name
+        // is exposed as an implicit `region` role (so `getByRole('region')` resolves),
+        // and an explicit `role="region"` would be redundant (jsx-a11y/no-redundant-roles).
+        aria-label="Run context"
+        aria-busy={state === 'loading' ? true : undefined}
+        data-run-context-state={state}
+        style={{
+          maxHeight: RUN_CONTEXT_STRIP_MAX_HEIGHT,
+          overflow: state === 'error' ? 'auto' : undefined,
+        }}
+        // Cap height + clip overflow so the strip stays a single lightweight row
+        // (AC4). The error state composes a taller `<ErrorState>` card, so it does
+        // not clip — the cap still applies to the box, per the AC4 "across states" rule.
+        className={cn('w-full', state !== 'error' && 'overflow-hidden')}
+      >
+        {state === 'loading' ? (
+          <Inline gap="4" align="center" data-testid="run-context-loading">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-4 w-32" />
+          </Inline>
+        ) : null}
 
-      {state === 'error' ? (
-        <ErrorState
-          variant="failedRetrieval"
-          urgency="passive"
-          message="We couldn’t load this run’s context."
-          nextAction={{ kind: 'Retry', onRetry: handleRetry }}
-        />
-      ) : null}
+        {state === 'error' ? (
+          <ErrorState
+            variant="failedRetrieval"
+            urgency="passive"
+            message="We couldn’t load this run’s context."
+            nextAction={{ kind: 'Retry', onRetry: handleRetry }}
+          />
+        ) : null}
 
-      {state !== 'loading' && state !== 'error' && view !== undefined ? (
-        <StripContent view={view} nowMs={nowMs} />
-      ) : null}
-    </section>
+        {state !== 'loading' && state !== 'error' && view !== undefined ? (
+          <StripContent view={view} nowMs={nowMs} />
+        ) : null}
+      </section>
+      {view !== undefined && showRecovery ? <RecoveryBaseline view={view} nowMs={nowMs} /> : null}
+    </>
   );
 }

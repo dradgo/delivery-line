@@ -52,16 +52,30 @@ export interface RunQueueRow {
   specRejectionLoopCount?: number | undefined;
   /** Stale flag — DORMANT (not derivable from the live list; Trap T3). */
   staleIndicator?: boolean | undefined;
+  /**
+   * Story 3.30 (AC8) — failure category for a `Failed` run, compact form. DORMANT: the
+   * live `WorkflowSummary` carries no `failureCategory` (only `currentState`), so this
+   * is built/tested via constructed fixtures only, never fabricated from live data.
+   */
+  failureCategory?: string | undefined;
 }
 
 /**
  * The single typed union of primary-attention signals (AC5). Ordered by the
- * documented priority `blocker > escalation > openQuestion > stale`.
+ * documented priority `failed > blocker > escalation > openQuestion > stale` — story
+ * 3.30 (AC8) elevates `failed` to rank alongside/above `blocker` for visibility.
  */
-export type AttentionIndicator = 'blocker' | 'escalation' | 'openQuestion' | 'stale';
+export type AttentionIndicator = 'failed' | 'blocker' | 'escalation' | 'openQuestion' | 'stale';
 
 /** The mutually-exclusive dominant row state (AC3), surfaced as `data-queue-item-state`. */
-export type QueueItemState = 'default' | 'selected' | 'unread' | 'blocked' | 'stale' | 'disabled';
+export type QueueItemState =
+  | 'default'
+  | 'selected'
+  | 'unread'
+  | 'failed'
+  | 'blocked'
+  | 'stale'
+  | 'disabled';
 
 /**
  * The ONE `WorkflowSummary → RunQueueRow` seam (AC1). Maps the 7 live fields per
@@ -78,13 +92,16 @@ export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
     escalationMarker: summary.escalationMarker,
     specRejectionLoopCount: summary.specRejectionLoopCount,
     // DORMANT — no live source (reconciliation): summary, currentArtifactType,
-    // assigneeHint, blockerCount, openQuestionCount, staleIndicator.
+    // assigneeHint, blockerCount, openQuestionCount, staleIndicator, failureCategory.
+    // The `Failed` BADGE + attention indicator ARE live (from `currentState`); only the
+    // compact failure-category chip is dormant (the list summary has no category).
     summary: undefined,
     currentArtifactType: undefined,
     assigneeHint: undefined,
     blockerCount: undefined,
     openQuestionCount: undefined,
     staleIndicator: undefined,
+    failureCategory: undefined,
   };
 }
 
@@ -100,6 +117,11 @@ function isPositive(count: number | undefined): boolean {
  * slot). Today live data can only yield `escalation`; fixtures exercise the ladder.
  */
 export function resolvePrimaryAttentionIndicator(row: RunQueueRow): AttentionIndicator | null {
+  // Story 3.30 (AC8) — a failed run's `failed` indicator outranks every other signal
+  // (failure ranks at/above `blocker` for visibility). LIVE from `currentState`.
+  if (row.currentState === 'Failed') {
+    return 'failed';
+  }
   if (isPositive(row.blockerCount)) {
     return 'blocker';
   }
@@ -137,6 +159,11 @@ export function resolveQueueItemState({
 }: ResolveQueueItemStateInput): QueueItemState {
   if (disabled === true) {
     return 'disabled';
+  }
+  // Story 3.30 (AC8) — `failed` is the dominant row state for a failed run (LIVE from
+  // `currentState`), ranking just below `disabled` and above `blocked`.
+  if (row.currentState === 'Failed') {
+    return 'failed';
   }
   if (isPositive(row.blockerCount)) {
     return 'blocked';

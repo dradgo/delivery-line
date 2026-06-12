@@ -11,7 +11,7 @@
  */
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse, delay } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -378,6 +378,72 @@ describe('RunContextStrip a11y (story 2.25)', () => {
     server.use(detailResponse({ ...specRejectAndResubmitDetail, escalationMarker: true }));
     const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
     await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'default'));
+    await expectNoA11yViolations(container);
+  });
+});
+
+describe('RunContextStrip — recovery baseline (story 3.30, AC2)', () => {
+  const failedDetail: WorkflowDetail = {
+    workflowRunId: RUN_ID,
+    currentState: 'Failed',
+    failedStage: 'implementation',
+    lastSuccessfulStage: 'spec',
+    failureCategory: 'runner_crash',
+    failureTimestamp: '2026-05-30T12:00:00Z',
+    lastActivityTimestamp: '2026-05-30T12:00:00Z',
+    nextSafeAction: 'retry',
+    lastEventAt: '2026-05-30T12:00:00Z',
+    lastEventType: 'workflow.stateChanged',
+  };
+
+  it('surfaces the recovery baseline ONLY when the run is Failed', async () => {
+    server.use(detailResponse(failedDetail));
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    const baseline = await screen.findByTestId('run-recovery-baseline');
+    expect(within(baseline).getByTestId('run-recovery-failed-stage')).toHaveTextContent(
+      'implementation',
+    );
+    expect(within(baseline).getByTestId('run-recovery-last-successful')).toHaveTextContent('spec');
+    // Humanized category + verbatim-humanized nextSafeAction (NOT await_operator_action).
+    expect(within(baseline).getByTestId('run-recovery-category')).toHaveTextContent('Runner Crash');
+    expect(within(baseline).getByTestId('run-recovery-next-action')).toHaveTextContent('Retry');
+    // AC2/AC11 — the failure + last-activity timestamps surface as real <time> values
+    // (the absent→"Not reported" fallback is covered by a separate test below).
+    const failedAt = within(baseline).getByTestId('run-recovery-failed-at');
+    expect(failedAt.querySelector('time')).toHaveAttribute('datetime', '2026-05-30T12:00:00Z');
+    expect(failedAt).not.toHaveTextContent('Not reported');
+    const lastActivity = within(baseline).getByTestId('run-recovery-last-activity');
+    expect(lastActivity.querySelector('time')).toHaveAttribute('datetime', '2026-05-30T12:00:00Z');
+    expect(lastActivity).not.toHaveTextContent('Not reported');
+  });
+
+  it('does NOT render the recovery baseline for a non-failed run', async () => {
+    server.use(detailResponse(specRejectAndResubmitDetail));
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'default'));
+    expect(screen.queryByTestId('run-recovery-baseline')).toBeNull();
+  });
+
+  it('absent recovery fields fall back to Not reported', async () => {
+    server.use(
+      detailResponse({
+        workflowRunId: RUN_ID,
+        currentState: 'Failed',
+        lastEventAt: '2026-05-30T12:00:00Z',
+      }),
+    );
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    const baseline = await screen.findByTestId('run-recovery-baseline');
+    expect(within(baseline).getByTestId('run-recovery-failed-stage')).toHaveTextContent(
+      'Not reported',
+    );
+    expect(within(baseline).getByTestId('run-recovery-category')).toHaveTextContent('Not reported');
+  });
+
+  it('AC2 — failed run with the recovery baseline has no axe violations', async () => {
+    server.use(detailResponse(failedDetail));
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await screen.findByTestId('run-recovery-baseline');
     await expectNoA11yViolations(container);
   });
 });

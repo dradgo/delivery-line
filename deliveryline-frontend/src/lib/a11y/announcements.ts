@@ -74,3 +74,16 @@ export const decisionRecorded = 'Decision recorded.';
 export function decisionStale(what: string, next: string): string {
   return `${what} ${next}`;
 }
+
+// ---- Recovery / retry (story 3.30) ---------------------------------------------
+
+/**
+ * Announced when the run page is observed in the `Failed` state (AC7 — failure-
+ * state-entry announcement). Sourced from the Decision Bar's single live region so
+ * the failure entry is announced exactly once (no duplicate-region announcements).
+ */
+export const failureEntered = 'This run has failed. Review the failure and recovery options.';
+/** Announced while a retry submission is in flight. */
+export const retryInitiated = 'Retrying the failed step.';
+/** Announced once a retry is recorded (success), mirroring the inline outcome (never a toast). */
+export const retryRecorded = 'Retry recorded. The previous failure is preserved in the timeline.';

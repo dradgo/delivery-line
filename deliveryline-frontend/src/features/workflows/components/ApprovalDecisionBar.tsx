@@ -27,12 +27,18 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ErrorState } from '@/components/feedback';
 import { SafeMarkdownRenderer } from '@/lib/sanitization';
 import { Button } from '@/components/ui/button';
+import { DecisionArea, GovernedButton } from '@/components/actions';
+import { ConfirmationDialog } from '@/components/overlays/ConfirmationDialog';
+import { CONFIRMATION_CATALOG } from '@/lib/overlays/confirmationCatalog';
 import { cn } from '@/lib/utils';
 import {
   decisionOptionsLoadFailed,
   decisionRecorded,
   decisionStale,
   decisionSubmitFailed,
+  failureEntered,
+  retryInitiated,
+  retryRecorded,
   specApproved,
   specRejected,
 } from '@/lib/a11y/announcements';
@@ -76,6 +82,12 @@ export interface ApprovalDecisionBarProps {
   onReject: (draft: RejectionDraft) => void;
   /** Refresh allowed-actions after a stale/version-mismatch (the refetch CTA). */
   onRefresh: () => void;
+  /**
+   * Story 3.30 — fire the retry mutation (the recovery container wires this to
+   * `useRetryWorkflow`). Only the `recovery_operator` mode invokes it; `spec_approval`
+   * passes none.
+   */
+  onRetry?: (() => void) | undefined;
 }
 
 /** Layout classes per AC4 — sticky footer vs in-flow inline section. */
@@ -218,11 +230,15 @@ export function ApprovalDecisionBar({
   onApprove,
   onReject,
   onRefresh,
+  onRetry,
 }: ApprovalDecisionBarProps) {
   // A failed allowed-actions read is a distinct error from a missing artifact (blocked)
   // or a mutation failure — surface it as `error` with a load-specific message + retry,
-  // never the benign "not yet available" blocked text.
-  const showLoadError = loadError === true && view.mode === 'spec_approval';
+  // never the benign "not yet available" blocked text. Story 3.30 (P3) extends this to
+  // `recovery_operator`: a failed read must not masquerade as "View only / no recovery
+  // action available".
+  const showLoadError =
+    loadError === true && (view.mode === 'spec_approval' || view.mode === 'recovery_operator');
   const state = showLoadError ? 'error' : resolveApprovalBarState(view, mutation, localUi);
   const idBase = useId();
   const consequenceId = `${idBase}-approve-consequence`;
@@ -231,6 +247,9 @@ export function ApprovalDecisionBar({
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const rejectTriggerRef = useRef<HTMLButtonElement>(null);
+  // Story 3.30 — the retry confirm-before overlay (the shared 2.23 `ConfirmationDialog`,
+  // NOT the region-local rejection dialog). `ConfirmationDialog` owns focus restoration.
+  const [retryConfirmOpen, setRetryConfirmOpen] = useState(false);
 
   const closeDialog = () => {
     setDialogOpen(false);
@@ -248,24 +267,37 @@ export function ApprovalDecisionBar({
   // single polite live region, sourcing every string from the shared vocabulary.
   // Success now announces the recorded outcome (the 2.19 decision-outcome gap),
   // not only the visual summary.
-  const announcementText = showLoadError
-    ? decisionOptionsLoadFailed
-    : state === 'stale'
-      ? decisionStale(
-          'This view is out of date.',
-          'Refresh to review the latest version before deciding.',
-        )
-      : state === 'error'
-        ? decisionSubmitFailed
+  const announcementText =
+    view.mode === 'recovery_operator'
+      ? // Story 3.30 (AC7) — the recovery lifecycle is announced through this SAME
+        // single live region (no duplicate failure-entry announcement elsewhere).
+        state === 'submitting'
+        ? retryInitiated
         : state === 'success'
-          ? view.lastDecision !== undefined
-            ? view.lastDecision.decision === 'approved'
-              ? specApproved
-              : specRejected
-            : // Decision settled but the resolved outcome isn't repopulated yet —
-              // announce the generic recorded message rather than going silent.
-              decisionRecorded
-          : '';
+          ? retryRecorded
+          : state === 'error'
+            ? decisionSubmitFailed
+            : view.currentState === 'Failed'
+              ? failureEntered
+              : ''
+      : showLoadError
+        ? decisionOptionsLoadFailed
+        : state === 'stale'
+          ? decisionStale(
+              'This view is out of date.',
+              'Refresh to review the latest version before deciding.',
+            )
+          : state === 'error'
+            ? decisionSubmitFailed
+            : state === 'success'
+              ? view.lastDecision !== undefined
+                ? view.lastDecision.decision === 'approved'
+                  ? specApproved
+                  : specRejected
+                : // Decision settled but the resolved outcome isn't repopulated yet —
+                  // announce the generic recorded message rather than going silent.
+                  decisionRecorded
+              : '';
   // Deferred so a mount-time error/success (present at first render) is still
   // announced as a change, not swallowed as the region's initial content (AC5).
   const announcement = useLiveAnnouncement(announcementText);
@@ -429,6 +461,108 @@ export function ApprovalDecisionBar({
     );
   }
 
+  /**
+   * Story 3.30 (AC3, AC5) — the REAL `recovery_operator` render (replaces the E4
+   * stub). Scope discipline: the ONLY affirmative action is `Retry failed step`; there
+   * is NO reconcile / resume / rerun-from-step control. When retry is not safe the bar
+   * renders `View only` — explicitly NOT a primary CTA (single-primary-action rule).
+   */
+  function renderRecoveryOperator() {
+    const consequence = resolveConsequenceHint('recovery_operator', 'retry');
+    switch (state) {
+      case 'success':
+        return (
+          <div className="flex flex-col gap-1" data-testid="recovery-retry-success">
+            <StateSignifierChip
+              stateName="recovery"
+              label="Retry submitted"
+              testId="recovery-retry-chip"
+            />
+            <p className="text-meta text-text-secondary">
+              Retry recorded. The previous failure is preserved in the timeline.
+            </p>
+          </div>
+        );
+      case 'submitting':
+        return (
+          <DecisionArea
+            ariaLabel="Recovery actions"
+            primary={
+              <GovernedButton priority="primary" workflowState="submitting" testId="recovery-retry">
+                Retry failed step
+              </GovernedButton>
+            }
+          />
+        );
+      case 'error':
+        return (
+          <ErrorState
+            variant="failedRetrieval"
+            urgency="active"
+            title="Your retry wasn't submitted"
+            message={`The retry could not be submitted${
+              mutation.errorCode !== undefined ? ` (${mutation.errorCode})` : ''
+            }. Refresh and try again.`}
+            nextAction={{ kind: 'Refresh', onRefresh }}
+          />
+        );
+      case 'ready':
+        return (
+          <div className="flex flex-col gap-2" data-testid="recovery-action-area">
+            <DecisionArea
+              ariaLabel="Recovery actions"
+              primary={
+                <GovernedButton
+                  priority="primary"
+                  type="button"
+                  testId="recovery-retry"
+                  aria-describedby={consequence !== undefined ? consequenceId : undefined}
+                  onClick={() => setRetryConfirmOpen(true)}
+                >
+                  Retry failed step
+                </GovernedButton>
+              }
+            />
+            {consequence !== undefined ? (
+              <p id={consequenceId} className="text-meta text-text-tertiary">
+                {consequence}
+              </p>
+            ) : null}
+            <ConfirmationDialog
+              open={retryConfirmOpen}
+              onOpenChange={setRetryConfirmOpen}
+              intent={CONFIRMATION_CATALOG.retryOrRecoverConsequential.intent}
+              title="Retry failed step"
+              consequence={CONFIRMATION_CATALOG.retryOrRecoverConsequential.consequenceTemplate}
+              confirmLabel="Confirm retry"
+              cancelLabel="Cancel"
+              isConfirming={mutation.status === 'pending'}
+              onConfirm={() => {
+                setRetryConfirmOpen(false);
+                onRetry?.();
+              }}
+            />
+          </div>
+        );
+      case 'disabled':
+      default:
+        // `View only` — retry is not a safe action in the current state (AC5). NOT a
+        // primary CTA; a plain explained, non-interactive marker.
+        return (
+          <div className="flex flex-col gap-1" data-testid="recovery-view-only">
+            <StateSignifierChip
+              stateName="informational"
+              label="View only"
+              testId="recovery-view-only-chip"
+            />
+            <p className="text-meta text-text-secondary">
+              No recovery action is available for this run right now.
+            </p>
+          </div>
+        );
+    }
+  }
+
   function renderBody() {
     if (showLoadError) {
       return (
@@ -449,7 +583,7 @@ export function ApprovalDecisionBar({
       case 'implementation_review':
         return <StubPlaceholder label="Implementation review" epic="Epic 3" />;
       case 'recovery_operator':
-        return <StubPlaceholder label="Operator recovery" epic="Epic 4" />;
+        return renderRecoveryOperator();
       default:
         return assertNeverMode(view.mode);
     }

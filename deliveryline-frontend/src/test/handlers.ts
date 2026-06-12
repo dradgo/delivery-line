@@ -75,6 +75,8 @@ export function detailFromStream(stream: WorkflowEventsResponse): WorkflowDetail
 const ACTIONS_BY_STATE: Record<string, string[]> = {
   WaitingForSpecApproval: ['approve_spec', 'reject_spec', 'answer_clarification'],
   WaitingForReview: ['answer_clarification'],
+  // Story 3.30 — a `Failed` run can retry (`AllowedAction.RETRY`) + view diagnostics.
+  Failed: ['retry', 'view_diagnostics'],
 };
 
 /** Derive the allowed-actions + version stamp the `GET .../allowed-actions` endpoint serves. */

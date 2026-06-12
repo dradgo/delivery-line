@@ -12,7 +12,8 @@ import { useWorkflowDetail } from '@/features/workflows/hooks/useWorkflowDetail'
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
 import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
 import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
-import { ApprovalDecisionBarContainer } from '@/features/workflows/components/ApprovalDecisionBarContainer';
+import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
+import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
 import {
   GenericErrorState,
   InvalidLinkState,
@@ -125,6 +126,10 @@ function WorkflowDetailRoute() {
       {/* Story 2.16 — persistent run-context orientation strip, above the (future
           2.17) artifact body. Reads the same warmed `useWorkflowDetail` cache. */}
       <RunContextStrip workflowRunId={workflowRunId} />
+      {/* Story 3.30 (AC1/AC6) — the minimal failure-event surface + diagnostics panel.
+          Renders nothing unless the run's event stream carries failure / recovery
+          events (scope discipline — Epic 4 owns the full timeline). */}
+      <FailureEventSurface workflowRunId={workflowRunId} />
       {/* Story 2.18 — the Clarification Region, projected into the right context
           panel via the AppShell slot (sidebar subregion, AC4). The main pane stays
           artifact-primary; today the region renders the calm `no open questions`
@@ -163,11 +168,12 @@ function WorkflowDetailRoute() {
       >
         Open a sample artifact &rarr;
       </Link>
-      {/* Story 2.19 (AC4) — the sticky-footer Approval Decision Bar, fixed to the bottom
-          of the main pane. Live today it renders `blocked` ("specification not yet
-          available for a decision") until an artifactId read-seam ships (T-ARTIFACTID);
-          it reads the LIVE allowed-actions for gating/staleness. */}
-      <ApprovalDecisionBarContainer workflowRunId={workflowRunId} layout="sticky_footer" />
+      {/* Decision Bar (AC4 sticky footer). Story 3.30 makes the mode state-driven: a
+          `Failed` run gets the `recovery_operator` bar (the "Retry failed step" action);
+          every other state gets the story-2.19 `spec_approval` bar. The selector owns the
+          retry mutation so the recovery bar survives the post-retry Failed→Executing flip
+          (success panel + AC7 announcement) — see `WorkflowDecisionBar`. */}
+      <WorkflowDecisionBar workflowRunId={workflowRunId} />
     </Stack>
   );
 }

@@ -142,6 +142,11 @@ describe('resolveRunContextState', () => {
     escalationMarker: false,
     staleIndicator: false,
     lastActivityAt: ACTIVITY,
+    failedStage: undefined,
+    lastSuccessfulStage: undefined,
+    failureTimestamp: undefined,
+    failureCategory: undefined,
+    nextSafeAction: undefined,
     ...overrides,
   });
 

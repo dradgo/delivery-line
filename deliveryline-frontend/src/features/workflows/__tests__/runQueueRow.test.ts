@@ -133,4 +133,34 @@ describe('resolveQueueItemState', () => {
   it('treats a zero blocker count as not blocked', () => {
     expect(resolveQueueItemState({ row: { blockerCount: 0 } })).toBe('default');
   });
+
+  it('story 3.30 (AC8) — a Failed run resolves to the failed state (above blocked)', () => {
+    expect(resolveQueueItemState({ row: { currentState: 'Failed', blockerCount: 5 } })).toBe(
+      'failed',
+    );
+    // disabled still beats failed.
+    expect(resolveQueueItemState({ row: { currentState: 'Failed' }, disabled: true })).toBe(
+      'disabled',
+    );
+  });
+});
+
+describe('story 3.30 (AC8) — failed attention indicator', () => {
+  it('a Failed run yields the failed primary indicator, outranking every other signal', () => {
+    expect(
+      resolvePrimaryAttentionIndicator({
+        currentState: 'Failed',
+        blockerCount: 3,
+        escalationMarker: true,
+      }),
+    ).toBe('failed');
+  });
+
+  it('a non-Failed run is unaffected (failed never fabricated)', () => {
+    expect(resolvePrimaryAttentionIndicator({ currentState: 'Executing' })).toBeNull();
+  });
+
+  it('toRunQueueRow leaves the compact failureCategory dormant (no live source)', () => {
+    expect(toRunQueueRow(LIVE_SUMMARY).failureCategory).toBeUndefined();
+  });
 });

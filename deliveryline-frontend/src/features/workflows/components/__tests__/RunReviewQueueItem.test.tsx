@@ -108,6 +108,33 @@ describe('RunReviewQueueItem — states (AC3)', () => {
     expect(screen.queryByRole('link')).toBeNull();
     expect(row().tagName).toBe('DIV');
   });
+
+  it('story 3.30 (AC8) — a Failed run renders the failed state + Failed primary indicator (LIVE)', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, currentState: 'Failed' }} />);
+    expect(row()).toHaveAttribute('data-queue-item-state', 'failed');
+    const primary = screen.getByTestId('queue-item-primary-attention');
+    expect(primary).toHaveTextContent('Failed');
+    // Still navigable (the failure is not disabled).
+    expect(screen.getByRole('link')).toBeInTheDocument();
+  });
+
+  it('story 3.30 (AC8) — the compact failure category is DORMANT (renders from a constructed fixture only)', () => {
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'Failed', failureCategory: 'runner_crash' }}
+      />,
+    );
+    expect(screen.getByTestId('queue-item-primary-attention')).toHaveTextContent(
+      'Failed · Runner Crash',
+    );
+  });
+
+  it('story 3.30 (AC8) — failed run has zero axe violations', async () => {
+    const { container } = render(
+      <RunReviewQueueItem run={{ ...BASE_ROW, currentState: 'Failed' }} />,
+    );
+    await expectNoA11yViolations(container);
+  });
 });
 
 describe('RunReviewQueueItem — one primary attention signal (AC5/T7)', () => {
@@ -371,12 +398,16 @@ describe('RunReviewQueueItem — fixture-driven rendering (AC12)', () => {
     expect(screen.getByTestId('queue-item-age')).toBeInTheDocument();
   });
 
-  it('renders the execution-failure terminal row (Failed + escalation primary)', () => {
+  it('renders the execution-failure terminal row (story 3.30 AC8 — Failed primary, escalation demoted)', () => {
     render(<RunReviewQueueItem run={toRunQueueRow(executionFailureSummary)} />);
     expect(row()).toHaveTextContent('run_exec_fail_001');
+    expect(row()).toHaveAttribute('data-queue-item-state', 'failed');
     const badge = screen.getByTestId('workflow-state-badge');
     expect(badge).toHaveTextContent('Failed');
     expect(badge).toHaveAttribute('data-state-name', 'error');
-    expect(screen.getByTestId('queue-item-primary-attention')).toHaveTextContent('Escalated');
+    // Story 3.30 (AC8): failure now outranks escalation for the primary indicator;
+    // the escalation marker demotes to the secondary trust cluster.
+    expect(screen.getByTestId('queue-item-primary-attention')).toHaveTextContent('Failed');
+    expect(screen.getByTestId('queue-item-secondary')).toHaveTextContent('Escalated');
   });
 });

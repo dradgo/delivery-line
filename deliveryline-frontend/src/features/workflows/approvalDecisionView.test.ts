@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ARTIFACT_UNAVAILABLE_REASON,
   GENERIC_DISABLED_REASON,
+  buildRecoveryContextLabel,
+  canRetry,
   coerceAction,
   deriveExpectedVersions,
   isStaleAgainst,
@@ -30,6 +32,8 @@ import {
   implementationReviewView,
   lockedView,
   readyView,
+  recoveryOperatorView,
+  recoveryReadyView,
   versionStampAdvanced,
   versionStampFull,
 } from '@/test/fixtures/approval/approvalDecisionFixtures';
@@ -252,5 +256,37 @@ describe('resolveApprovalBarState (AC3/AC6 — precedence locked > error > stale
   it('blocked wins over success when the action set no longer permits a decision', () => {
     const view: ApprovalDecisionView = { ...readyView, actions: [] };
     expect(resolveApprovalBarState(view, { status: 'success' })).toBe('blocked');
+  });
+});
+
+describe('story 3.30 — recovery_operator resolution + retry recognition', () => {
+  it('recognizes the `retry` wire action (no longer coerced to unknown)', () => {
+    expect(coerceAction('retry')).toBe('retry');
+    expect(normalizeActions(['retry', 'reconcile'])).toEqual(['retry']);
+  });
+
+  it('canRetry requires BOTH Failed state AND a live `retry` action', () => {
+    expect(canRetry(recoveryReadyView)).toBe(true);
+    // Failed but no retry action → not eligible (View only).
+    expect(canRetry(recoveryOperatorView)).toBe(false);
+    // retry action but not Failed → not eligible.
+    expect(canRetry({ ...recoveryReadyView, currentState: 'Executing' })).toBe(false);
+  });
+
+  it('resolves recovery_operator to ready / disabled / submitting / success', () => {
+    expect(resolveApprovalBarState(recoveryReadyView, { status: 'idle' })).toBe('ready');
+    expect(resolveApprovalBarState(recoveryOperatorView, { status: 'idle' })).toBe('disabled');
+    expect(resolveApprovalBarState(recoveryReadyView, { status: 'pending' })).toBe('submitting');
+    expect(resolveApprovalBarState(recoveryReadyView, { status: 'success' })).toBe('success');
+    expect(resolveApprovalBarState(recoveryReadyView, { status: 'error', errorCode: 'X' })).toBe(
+      'error',
+    );
+  });
+
+  it('buildRecoveryContextLabel names the failed stage when present', () => {
+    expect(buildRecoveryContextLabel({ failedStage: 'implementation' })).toMatch(
+      /implementation stage/,
+    );
+    expect(buildRecoveryContextLabel(undefined)).toBe('Recover the failed run');
   });
 });

@@ -58,6 +58,19 @@ export interface RunContextView {
   readonly staleIndicator: boolean;
   /** `lastActivityTimestamp` — drives the stale tooltip + `staleForMs` log. */
   readonly lastActivityAt: string | undefined;
+  // ---- Story 3.30 (AC2) — recovery baseline. All already on the live wire
+  // (`WorkflowDetail`), rendered ONLY when `currentState === 'Failed'` (additive,
+  // no contract change). ----
+  /** The stage prior to `Failed` (`WorkflowDetail.failedStage`). */
+  readonly failedStage: string | undefined;
+  /** The last stage that completed successfully (`WorkflowDetail.lastSuccessfulStage`). */
+  readonly lastSuccessfulStage: string | undefined;
+  /** When the failure was recorded (`WorkflowDetail.failureTimestamp`). */
+  readonly failureTimestamp: string | undefined;
+  /** Raw `FailureCategory` wire value — humanized on render (`WorkflowDetail.failureCategory`). */
+  readonly failureCategory: string | undefined;
+  /** Raw `nextSafeAction` wire value — humanized verbatim on render (NOT hardcoded). */
+  readonly nextSafeAction: string | undefined;
 }
 
 /** Coalesce an optional/blank backend string to a trimmed value or `undefined`. */
@@ -123,6 +136,12 @@ export function toRunContextView(detail: WorkflowDetail, now: number = Date.now(
     escalationMarker: detail.escalationMarker ?? false,
     staleIndicator: isStale(lastActivityAt, now),
     lastActivityAt,
+    // Story 3.30 (AC2) — recovery baseline fields, already on the live read model.
+    failedStage: presentOrUndefined(detail.failedStage),
+    lastSuccessfulStage: presentOrUndefined(detail.lastSuccessfulStage),
+    failureTimestamp: presentOrUndefined(detail.failureTimestamp),
+    failureCategory: presentOrUndefined(detail.failureCategory),
+    nextSafeAction: presentOrUndefined(detail.nextSafeAction),
   };
 }
 

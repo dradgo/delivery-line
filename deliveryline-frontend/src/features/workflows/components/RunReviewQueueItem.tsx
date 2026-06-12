@@ -35,6 +35,7 @@ import type { StateName } from '@/lib/state-signifiers';
 import { cn } from '@/lib/utils';
 
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
+import { humanizeFailureCategory } from '../failureCategoryView';
 import {
   resolvePrimaryAttentionIndicator,
   resolveQueueItemState,
@@ -67,6 +68,8 @@ const STATE_CONTAINER_CLASSES: Record<QueueItemState, string> = {
   default: 'border-border bg-surface',
   selected: 'border-state-selected-border bg-state-selected',
   unread: 'border-border bg-surface',
+  // Story 3.30 (AC8) — the `state-error` border for a failed run.
+  failed: 'border-state-error-border bg-surface',
   blocked: 'border-state-blocker-border bg-surface',
   stale: 'border-state-stale-border bg-surface',
   disabled: 'border-border bg-surface opacity-60',
@@ -81,6 +84,7 @@ interface SignalPresentation {
 
 /** The aria term for each primary attention signal (AC6; OQ-2 — raw state stays raw). */
 const ATTENTION_ARIA_TERM: Record<AttentionIndicator, string> = {
+  failed: 'failed',
   blocker: 'blocked',
   escalation: 'escalated',
   openQuestion: 'open question',
@@ -106,6 +110,17 @@ function artifactDisplayLabel(type: string): string {
  */
 function activeSignals(row: RunQueueRow): SignalPresentation[] {
   const out: SignalPresentation[] = [];
+  // Story 3.30 (AC8) — the `failed` signal leads (priority parity with the resolver).
+  // Its label carries the compact failure category when present (DORMANT — fixtures
+  // only), else just "Failed" (LIVE from `currentState`).
+  if (row.currentState === 'Failed') {
+    const category = humanizeFailureCategory(row.failureCategory);
+    out.push({
+      indicator: 'failed',
+      stateName: 'error',
+      label: category !== undefined ? `Failed · ${category}` : 'Failed',
+    });
+  }
   if (typeof row.blockerCount === 'number' && row.blockerCount > 0) {
     out.push({
       indicator: 'blocker',

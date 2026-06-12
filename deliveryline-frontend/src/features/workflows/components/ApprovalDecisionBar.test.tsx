@@ -23,6 +23,7 @@ import {
   reasonCodedView,
   readyView,
   recoveryOperatorView,
+  recoveryReadyView,
   staleView,
   submittingView,
   successView,
@@ -50,7 +51,12 @@ function renderBar(
   view: ApprovalDecisionView,
   mutation: ApprovalMutationState = IDLE,
   localUi: ApprovalLocalUi = {},
-  overrides: Partial<{ onApprove: () => void; onReject: () => void; onRefresh: () => void }> = {},
+  overrides: Partial<{
+    onApprove: () => void;
+    onReject: () => void;
+    onRefresh: () => void;
+    onRetry: () => void;
+  }> = {},
 ) {
   return render(
     <ApprovalDecisionBar
@@ -60,6 +66,7 @@ function renderBar(
       onApprove={overrides.onApprove ?? vi.fn()}
       onReject={overrides.onReject ?? vi.fn()}
       onRefresh={overrides.onRefresh ?? vi.fn()}
+      onRetry={overrides.onRetry ?? vi.fn()}
     />,
   );
 }
@@ -154,10 +161,92 @@ describe('ApprovalDecisionBar — mode dispatch (AC1)', () => {
     expect(screen.getByTestId('approval-mode-placeholder')).toHaveTextContent(/Epic 3/);
   });
 
-  it('recovery_operator renders the Epic 4 placeholder (disabled)', () => {
+  it('recovery_operator (View only) — Failed run with no retry action renders no primary CTA', () => {
     renderBar(recoveryOperatorView);
     expect(barState()).toBe('disabled');
-    expect(screen.getByTestId('approval-mode-placeholder')).toHaveTextContent(/Epic 4/);
+    expect(screen.getByTestId('recovery-view-only')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry failed step/i })).not.toBeInTheDocument();
+    // Scope discipline (AC5) — no deeper recovery controls.
+    expect(
+      screen.queryByRole('button', { name: /reconcile|resume|rerun/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('ApprovalDecisionBar — recovery_operator mode (story 3.30, AC3/AC5)', () => {
+  it('ready — renders exactly one primary "Retry failed step" and no deeper recovery actions', () => {
+    renderBar(recoveryReadyView);
+    expect(barState()).toBe('ready');
+    expect(screen.getByTestId('recovery-retry')).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-decision-primary] button')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Retry failed step' })).toBeInTheDocument();
+    // Scope discipline (AC5): reconcile / resume / rerun controls are absent in E3.
+    expect(
+      screen.queryByRole('button', { name: /reconcile|resume|rerun/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('opening the confirm dialog shows the exact AC3 consequence text + Confirm/Cancel', async () => {
+    const user = userEvent.setup();
+    renderBar(recoveryReadyView);
+    await user.click(screen.getByRole('button', { name: 'Retry failed step' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      within(dialog).getByText(
+        /Retry will re-execute the last failed step with a fresh runner\. The previous failure will be preserved in the timeline\./,
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm retry' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('Cancel preserves state — onRetry is NOT called', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    renderBar(recoveryReadyView, IDLE, {}, { onRetry });
+    await user.click(screen.getByRole('button', { name: 'Retry failed step' }));
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(barState()).toBe('ready');
+  });
+
+  it('Confirm retry fires onRetry once', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    renderBar(recoveryReadyView, IDLE, {}, { onRetry });
+    await user.click(screen.getByRole('button', { name: 'Retry failed step' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('submitting — the retry primary shows the busy state', () => {
+    renderBar(recoveryReadyView, { status: 'pending' });
+    expect(barState()).toBe('submitting');
+    expect(screen.getByTestId('recovery-retry')).toHaveAttribute('aria-busy', 'true');
+  });
+
+  it('success — renders the retry-recorded feedback (never a toast)', () => {
+    renderBar(recoveryReadyView, { status: 'success' });
+    expect(barState()).toBe('success');
+    expect(screen.getByTestId('recovery-retry-success')).toHaveTextContent(
+      /preserved in the timeline/i,
+    );
+  });
+
+  it('error — renders the retry failure with code + refresh', () => {
+    renderBar(recoveryReadyView, { status: 'error', errorCode: 'RETRY_NOT_APPLICABLE' });
+    expect(barState()).toBe('error');
+    expect(screen.getByText(/RETRY_NOT_APPLICABLE/)).toBeInTheDocument();
+  });
+
+  it('announces failure-state-entry via the live region (AC7)', () => {
+    renderBar(recoveryReadyView);
+    expect(screen.getByTestId('approval-live-region')).toHaveTextContent(/this run has failed/i);
+  });
+
+  it('a11y — recovery ready view has zero axe violations', async () => {
+    const { container } = renderBar(recoveryReadyView);
+    await expectNoA11yViolations(container);
   });
 });
 

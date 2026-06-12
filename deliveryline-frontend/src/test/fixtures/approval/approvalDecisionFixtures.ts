@@ -90,10 +90,26 @@ export const implementationReviewView = baseView({
   artifactId: undefined,
 });
 
-/** `disabled` — the E4 stub mode. */
+/**
+ * Story 3.30 — `recovery_operator` "View only": a Failed run whose allowed-actions do
+ * NOT include `retry` → `disabled` (no safe recovery action). Replaces the old E4 stub.
+ */
 export const recoveryOperatorView = baseView({
   mode: 'recovery_operator',
   actions: [],
+  currentState: 'Failed',
+  artifactId: undefined,
+});
+
+/**
+ * Story 3.30 — `recovery_operator` `ready`: a Failed run whose live allowed-actions
+ * include `retry` → the `Retry failed step` primary + confirm-before dialog.
+ */
+export const recoveryReadyView = baseView({
+  mode: 'recovery_operator',
+  actions: ['retry'],
+  currentState: 'Failed',
+  decisionContextLabel: 'Recover the failed run at the implementation stage',
   artifactId: undefined,
 });
 
