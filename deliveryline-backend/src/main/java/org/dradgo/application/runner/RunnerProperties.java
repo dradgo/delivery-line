@@ -410,7 +410,17 @@ public record RunnerProperties(
       long workspaceCleanupIntervalMs,
       Duration containerCreateTimeout,
       Duration containerStartTimeout,
-      long danglingContainerMinAgeSeconds) {
+      long danglingContainerMinAgeSeconds,
+      // Story 3.8 — Docker network mode applied at container create (DockerRunnerAdapter →
+      // CreateContainerSpec.networkMode). Defaults to "none" (the locked-down mock/contract
+      // posture:
+      // a runner needs no egress to read a bundle and write a result). Real agent runs
+      // (codex/claude
+      // CLIs calling their provider API) require egress — set
+      // deliveryline.runner.docker.network-mode
+      // to "bridge" (default NAT egress) or a pre-created egress-allowlisted network name. A
+      // null/blank value falls back to "none" so every existing context binds unchanged.
+      String networkMode) {
 
     /** Upper bound (1 day) for the dangling-container grace window; guards against overflow. */
     private static final long MAX_DANGLING_CONTAINER_MIN_AGE_SECONDS = 86_400L;
@@ -462,6 +472,7 @@ public record RunnerProperties(
                 + ": "
                 + danglingContainerMinAgeSeconds);
       }
+      networkMode = (networkMode == null || networkMode.isBlank()) ? "none" : networkMode;
     }
 
     public static Docker defaults() {
@@ -476,7 +487,8 @@ public record RunnerProperties(
           3_600_000L,
           Duration.ofSeconds(30L),
           Duration.ofSeconds(30L),
-          120L);
+          120L,
+          "none");
     }
 
     public String imageTagFor(RunnerKind kind) {

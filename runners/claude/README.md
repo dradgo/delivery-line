@@ -163,8 +163,15 @@ Codex-vs-Claude **parity** assertion are story 3.8.
   workspace dirs (`LocalRunnerWorkspaceStore` makes them `0700`, owned by the JVM user) must be
   writable by that uid in production (e.g. a matching `--user`, or group/world-writable output/logs).
   The conformance test creates its rw mounts world-writable to satisfy this on native Linux.
-* **Real invocation:** the precise real-Claude argument vector is fed via the documented
-  `CLAUDE_EXEC_ARGS` seam (default `-p`, prompt on stdin) and finalized in story 3.8.
+* **Real invocation (story 3.8):** the entrypoint invokes `claude <subcommand>
+  --dangerously-skip-permissions`, prompt on stdin, with `/workspace/repo` as the cwd when the repo
+  mount is present (Claude Code has no `-C` flag — the cwd is the project root). `-p` (print) is the
+  default headless subcommand (`CLAUDE_EXEC_ARGS` overrides it); `--dangerously-skip-permissions`
+  clears the tool-permission / folder-trust prompts a headless run cannot answer — sound here because
+  the *container* is the sandbox (non-root `claude` user, backend network policy, read-only input),
+  and Claude Code allows the flag for non-root users. The model comes from `ANTHROPIC_MODEL` (set
+  from `CLAUDE_MODEL`). Real runs require egress — see `deliveryline.runner.docker.network-mode`
+  (default `none`; set `bridge` for real Claude).
 * **CI obligation (AC10):** the "build both runner images + `--self-test` on every PR touching the
   runner-contracts schemas" CI check is owned by stories **3.28 / 3.34** (deferred). This story ships
   the documented obligation (`../RUNNER_CONTRACT.md`) + the conformance IT the CI tier will invoke.

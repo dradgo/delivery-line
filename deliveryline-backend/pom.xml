@@ -249,7 +249,7 @@
 									<files>
 										<file>${maven.multiModuleProjectDirectory}/deliveryline-frontend/target/dist/index.html</file>
 									</files>
-									<message>Frontend dist missing — run 'mvn -pl deliveryline-frontend package' first, or run 'mvn install' from the reactor root.</message>
+									<message>Frontend dist not found at expected path deliveryline-frontend/target/dist/index.html; ensure the frontend bundle is built before packaging the backend. Fix with one of: 'mvn -pl deliveryline-frontend package' (build just the bundle) or 'mvn clean install' from the reactor root (build everything).</message>
 								</requireFilesExist>
 							</rules>
 							<fail>true</fail>

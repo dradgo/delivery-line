@@ -22,7 +22,11 @@ Per-runner specifics (base image, CLI pin, provider auth, model config) live in
 ## Mounts (the only runner ↔ backend boundary)
 
 The contract is **file-based only** (story 3.1 AC8): three mounts, two contract files, no HTTP, no
-socket. The backend launches every runner with **`--network=none`** set at container-create time.
+socket between the backend and the runner. The container network mode is configurable via
+`deliveryline.runner.docker.network-mode` (story 3.8) and **defaults to `--network=none`** — the
+locked-down posture for the mock/contract/self-test tiers, which need no egress. Real agent runs
+(the codex/claude CLI calling its provider API) set it to `bridge` (or an egress-allowlisted
+network); this never adds a backend↔runner channel — the file mounts remain the only such boundary.
 
 | Mount | Mode | Contents |
 |-------|------|----------|

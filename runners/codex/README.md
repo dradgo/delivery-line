@@ -205,5 +205,12 @@ It is excluded from the no-Docker PR tier. Real Codex-API execution is story 3.8
   workspace dirs (`LocalRunnerWorkspaceStore` makes them `0700`, owned by the JVM user) must be
   writable by that uid in production (e.g. a matching `--user`, or group/world-writable output/logs).
   The conformance test creates its rw mounts world-writable to satisfy this on native Linux.
-* **Real invocation:** the precise real-Codex argument vector is fed via the documented
-  `CODEX_EXEC_ARGS` seam (default `exec`, prompt on stdin) and finalized in story 3.8.
+* **Real invocation (story 3.8):** the entrypoint invokes `codex <subcommand> --skip-git-repo-check
+  --dangerously-bypass-approvals-and-sandbox [-C /workspace/repo] [--model <m>]`, prompt on stdin.
+  `--skip-git-repo-check` clears Codex's "not inside a trusted directory" gate (a stage may have no
+  repo mount); `--dangerously-bypass-approvals-and-sandbox` is correct here because the *container*
+  is the sandbox (non-root, network policy set by the backend, read-only input) and a headless run
+  has no TTY for Codex's own prompts; `-C` is added only when the repo mount is present. The
+  `CODEX_EXEC_ARGS` seam overrides the subcommand token (default `exec`); `CODEX_MODEL` /
+  `DELIVERYLINE_CODEX_MODEL` pins the model. Real runs require egress — see
+  `deliveryline.runner.docker.network-mode` (default `none`; set `bridge` for real Codex).

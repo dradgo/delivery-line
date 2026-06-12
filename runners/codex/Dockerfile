@@ -57,6 +57,12 @@ COPY runners/codex/test/mock-codex.sh /opt/deliveryline/test/mock-codex.sh
 # — all in one layer to keep the image lean (AC7 non-root, AC9 layer budget).
 RUN set -eu; \
     if [ "${INSTALL_CODEX_CLI}" = "true" ]; then \
+      # The real Codex CLI (Rust) needs a system trust store for TLS to the OpenAI /
+      # ChatGPT endpoints; node:22-slim ships none ("no native root CA certificates
+      # found"). The mock build needs no egress, so it stays cert-free + offline.
+      apt-get update; \
+      apt-get install -y --no-install-recommends ca-certificates; \
+      update-ca-certificates; \
       npm install -g "@openai/codex@${CODEX_CLI_VERSION}"; \
       npm cache clean --force; \
     else \

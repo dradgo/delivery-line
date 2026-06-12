@@ -66,7 +66,6 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private static final String CONTAINER_INPUT_MOUNT = "/workspace/input";
   private static final String CONTAINER_OUTPUT_MOUNT = "/workspace/output";
   private static final String CONTAINER_LOGS_MOUNT = "/workspace/logs";
-  private static final String NETWORK_MODE_NONE = "none";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private final RunnerScratchStore scratchStore;
@@ -277,9 +276,13 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
           repoMount.branch());
     }
 
+    // Story 3.8 — network mode is config-driven (deliveryline.runner.docker.network-mode), default
+    // "none". Mock/contract runs stay isolated; real codex/claude runs need egress to their
+    // provider
+    // API and set "bridge" (or an egress-allowlisted network) in application.yml.
+    String networkMode = runnerProperties.docker().networkMode();
     CreateContainerSpec spec =
-        new CreateContainerSpec(
-            image, List.copyOf(mounts), NETWORK_MODE_NONE, labels, containerEnv);
+        new CreateContainerSpec(image, List.copyOf(mounts), networkMode, labels, containerEnv);
 
     String containerId = null;
     try {

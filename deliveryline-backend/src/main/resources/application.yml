@@ -44,6 +44,14 @@ springdoc:
     path: /swagger-ui.html
 
 deliveryline:
+  codex:
+    # Story 3.8 — optional host path to the Codex subscription auth.json (e.g. ~/.codex/auth.json).
+    # When set, the backend reads it LIVE on every dispatch and injects it as CODEX_AUTH_JSON, so the
+    # host `codex` CLI's CURRENT (rotated) token is always used. Subscription OAuth refresh tokens are
+    # single-use, so a frozen CODEX_AUTH_JSON env value goes stale ("refresh_token_reused" 401) once
+    # any run/host refreshes it; sourcing the live file avoids that. Blank → use the CODEX_AUTH_JSON
+    # env var. Also settable via the CODEX_AUTH_JSON_FILE env var (read directly when this is unset).
+    auth-json-file: ${CODEX_AUTH_JSON_FILE:}
   frontend:
     # When true (default), the app FAILS FAST at startup unless the Vite SPA bundle is embedded on
     # the classpath (classpath:/static/index.html) — produced by `mvn package` (the frontend module
@@ -225,6 +233,12 @@ deliveryline:
       workspace-cleanup-interval-ms: 3600000
       container-create-timeout: 30s
       container-start-timeout: 30s
+      # Story 3.8 — Docker network mode for runner containers. Default "none" (RunnerProperties.Docker)
+      # is the locked-down posture: a mock/contract runner needs no egress. Real agent runs invoke the
+      # codex/claude CLI, which MUST reach its provider API, so production allows egress. "bridge" =
+      # default NAT egress (simplest); for tighter control, pre-create an egress-allowlisted Docker
+      # network and name it here instead. Tests/contract tiers omit this key → bind the "none" default.
+      network-mode: bridge
       # Story 3.2a AC4 — grace window during which a labelled-but-rowless container is preserved by
       # the dangling-container sweep, so a container in the dispatch→row-insert window is never
       # destroyed. 0 disables the guard.

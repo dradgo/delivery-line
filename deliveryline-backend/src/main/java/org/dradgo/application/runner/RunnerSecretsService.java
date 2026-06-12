@@ -1,5 +1,8 @@
 package org.dradgo.application.runner;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -80,6 +83,28 @@ public class RunnerSecretsService {
         stage.value(),
         workflowRunId);
 
+    // Story 3.8 — Codex subscription auth.json sourced LIVE from a host file each dispatch
+    // (deliveryline.codex.auth-json-file / CODEX_AUTH_JSON_FILE, typically ~/.codex/auth.json),
+    // taking precedence over a frozen CODEX_AUTH_JSON env value. Subscription OAuth refresh tokens
+    // are
+    // single-use: a frozen env value goes stale once any run/host refreshes it
+    // ("refresh_token_reused"
+    // 401). Re-reading the host CLI's CURRENT auth.json every dispatch keeps the injected token
+    // fresh.
+    if (runnerKind == RunnerKind.CODEX) {
+      Optional<String> fromFile = resolveCodexAuthJsonFromFile();
+      if (fromFile.isPresent()) {
+        log.info(
+            "runner secrets resolve ok runnerKind={} stage={} workflowRunId={} source=auth-json-file"
+                + " resolvedVarCount=1 valueLength={}",
+            runnerKind.value(),
+            stage.value(),
+            workflowRunId,
+            fromFile.get().length());
+        return Map.of("CODEX_AUTH_JSON", fromFile.get());
+      }
+    }
+
     List<String> candidateNames = runnerProperties.secretEnvNamesFor(runnerKind);
     if (candidateNames.isEmpty()) {
       // Defaults guarantee a non-empty list for every RunnerKind; an empty list means an operator
@@ -113,6 +138,38 @@ public class RunnerSecretsService {
         workflowRunId,
         preferredName);
     throw secretMissing(runnerKind, preferredName);
+  }
+
+  /**
+   * Story 3.8 — read the Codex subscription credential from the host file configured at {@code
+   * deliveryline.codex.auth-json-file} (or the {@code CODEX_AUTH_JSON_FILE} env), e.g. {@code
+   * ~/.codex/auth.json}. Returns the file's current non-blank content so each dispatch injects the
+   * host CLI's latest token, or {@link Optional#empty()} when unconfigured, missing, unreadable, or
+   * empty (callers then fall back to the {@code CODEX_AUTH_JSON} env var). The value is a live
+   * credential and is NEVER logged.
+   */
+  private Optional<String> resolveCodexAuthJsonFromFile() {
+    String path = environment.getProperty("deliveryline.codex.auth-json-file");
+    if (path == null || path.isBlank()) {
+      path = environment.getProperty("CODEX_AUTH_JSON_FILE");
+    }
+    if (path == null || path.isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      String content = Files.readString(Path.of(path.strip())).strip();
+      if (content.isEmpty()) {
+        log.warn("configured codex auth-json-file is empty path={}", path);
+        return Optional.empty();
+      }
+      return Optional.of(content);
+    } catch (IOException | RuntimeException error) {
+      log.warn(
+          "could not read codex auth-json-file path={} cause={}; falling back to CODEX_AUTH_JSON env",
+          path,
+          error.toString());
+      return Optional.empty();
+    }
   }
 
   /**

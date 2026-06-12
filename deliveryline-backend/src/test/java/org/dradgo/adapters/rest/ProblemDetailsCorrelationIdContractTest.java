@@ -38,7 +38,9 @@ class ProblemDetailsCorrelationIdContractTest {
     when(objectMapperProvider.getIfAvailable(
             org.mockito.ArgumentMatchers.<java.util.function.Supplier<ObjectMapper>>any()))
         .thenReturn(new ObjectMapper());
-    mapper = new ProblemDetailsMapper(redactionProvider, objectMapperProvider);
+    ObjectProvider<SpaFallbackController> spaFallbackProvider = mock(ObjectProvider.class);
+    when(spaFallbackProvider.getIfAvailable()).thenReturn(null);
+    mapper = new ProblemDetailsMapper(redactionProvider, objectMapperProvider, spaFallbackProvider);
     MDC.clear();
   }
 

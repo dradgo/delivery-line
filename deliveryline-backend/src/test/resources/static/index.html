@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+  Story 2.28 — test-only stub of the Vite SPA shell. The real index.html is produced by the
+  deliveryline-frontend build and copied onto the backend classpath at `mvn package` time; the
+  test classpath never carries that bundle, so this minimal stub lets the wired SPA-fallback and
+  cache-header tests exercise actual shell serving (SpaFallbackController.serveShell /
+  StaticResourceCacheConfig) without a frontend build. Keep it tiny — assertions only check for the
+  React root mount node and HTML-ness, not real app markup.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DeliveryLine</title>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

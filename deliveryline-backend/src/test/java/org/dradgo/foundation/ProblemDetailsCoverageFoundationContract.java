@@ -11,6 +11,7 @@ import java.util.List;
 import org.dradgo.adapters.rest.ProblemDetailsCatalog;
 import org.dradgo.adapters.rest.ProblemDetailsCatalog.ProblemDetailsMetadata;
 import org.dradgo.adapters.rest.ProblemDetailsMapper;
+import org.dradgo.adapters.rest.SpaFallbackController;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -101,7 +102,10 @@ class ProblemDetailsCoverageFoundationContract {
     when(redactionProvider.getIfAvailable()).thenReturn(null);
     ObjectProvider<ObjectMapper> objectMapperProvider = Mockito.mock(ObjectProvider.class);
     when(objectMapperProvider.getIfAvailable(any())).thenReturn(new ObjectMapper());
-    ProblemDetailsMapper mapper = new ProblemDetailsMapper(redactionProvider, objectMapperProvider);
+    ObjectProvider<SpaFallbackController> spaFallbackProvider = Mockito.mock(ObjectProvider.class);
+    when(spaFallbackProvider.getIfAvailable()).thenReturn(null);
+    ProblemDetailsMapper mapper =
+        new ProblemDetailsMapper(redactionProvider, objectMapperProvider, spaFallbackProvider);
 
     HttpServletRequest request = new MockHttpServletRequest("POST", "/test/foundation-gate/probe");
     List<String> violations = new ArrayList<>();

@@ -315,12 +315,22 @@ if [ -n "${CLAUDE_PROMPT_TEMPLATE:-}" ]; then
 fi
 
 # 5. invoke the Claude Code CLI; capture raw stdout/stderr to the logs mount.
-#    CLAUDE_EXEC_ARGS is the documented seam for the precise real-Claude argument
-#    vector (finalized in story 3.8); default `-p` is the CLI's non-interactive
-#    "print" mode. The prompt is fed on stdin. The seam is shell-safe-token
-#    guarded so it cannot be injected, and logged by COUNT only.
-CLAUDE_COMMAND="${CLAUDE_EXEC_ARGS:--p}"
-case "$CLAUDE_COMMAND" in
+#    Story 3.8 — the headless, non-interactive argument vector:
+#      - `-p` (print) subcommand: non-interactive mode, prompt on stdin (overridable
+#        via CLAUDE_EXEC_ARGS for forward-compat).
+#      - --dangerously-skip-permissions: a headless run has no TTY to answer Claude
+#        Code's tool-permission / folder-trust prompts; the CONTAINER is the sandbox
+#        (non-root `claude` user, backend-imposed network policy, read-only input).
+#        This is the Claude analog of the Codex --dangerously-bypass-* flag. Claude
+#        Code refuses this flag when running as root — the image runs as the
+#        unprivileged `claude` user (Dockerfile USER claude), so it is permitted.
+#      - working root: when the backend mounted the linked repository, Claude is run
+#        with /workspace/repo as its cwd (Claude Code has no -C flag; the cwd IS the
+#        project root) so it analyses the real tree. No mount → run in place.
+#    The model is passed via ANTHROPIC_MODEL (exported above from CLAUDE_MODEL), so no
+#    --model flag is needed. CLAUDE_EXEC_ARGS stays a single shell-safe token.
+CLAUDE_SUBCOMMAND="${CLAUDE_EXEC_ARGS:--p}"
+case "$CLAUDE_SUBCOMMAND" in
   *[!A-Za-z0-9_./:=,-]*)
     log ERROR "CLAUDE_EXEC_ARGS contains unsupported characters; configure a single safe command token"
     "$NODE_BIN" "$RUNNER_LIB" build-failure \
@@ -332,9 +342,20 @@ case "$CLAUDE_COMMAND" in
     exit 2
     ;;
 esac
-log INFO "claude invocation start bin=$CLAUDE_CLI_BIN argCount=1"
+# Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
+set -- "$CLAUDE_SUBCOMMAND" --dangerously-skip-permissions
+CLAUDE_REPO_DIR="${DELIVERYLINE_REPO_DIR:-/workspace/repo}"
+log INFO "claude invocation start bin=$CLAUDE_CLI_BIN subcommand=$CLAUDE_SUBCOMMAND repoDir=$CLAUDE_REPO_DIR argCount=$#"
 set +e
-"$CLAUDE_CLI_BIN" "$CLAUDE_COMMAND" <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+if [ -d "$CLAUDE_REPO_DIR" ]; then
+  # Run with the repo as cwd (Claude Code's project root). The subshell isolates the
+  # cd; every mount path used after this is absolute, so the rest of the script is
+  # unaffected. exec lets the redirections + cwd reach the CLI and $? be its exit.
+  ( cd "$CLAUDE_REPO_DIR" && exec "$CLAUDE_CLI_BIN" "$@" ) \
+    <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+else
+  "$CLAUDE_CLI_BIN" "$@" <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+fi
 CLAUDE_RC=$?
 set -e
 log INFO "claude invocation finished rc=$CLAUDE_RC stdoutBytes=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ' || echo 0)"

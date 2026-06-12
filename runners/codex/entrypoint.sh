@@ -333,10 +333,23 @@ if [ -n "${CODEX_BASE_URL:-}" ]; then
 fi
 
 # 5. invoke the Codex CLI; capture raw stdout/stderr to the logs mount.
-#    CODEX_EXEC_ARGS is the documented seam for the precise real-Codex argument
-#    vector (finalized in story 3.8); the prompt is fed on stdin.
-CODEX_COMMAND="${CODEX_EXEC_ARGS:-exec}"
-case "$CODEX_COMMAND" in
+#    Story 3.8 — headless, non-interactive, STAGE-AWARE invocation:
+#      - `exec` subcommand (overridable via CODEX_EXEC_ARGS for forward-compat). `codex
+#        exec` is non-interactive by design, so there is no approval TTY to satisfy —
+#        the --sandbox policy is the only lever over what the agent may do.
+#      - --skip-git-repo-check: a stage may run with NO repo mount, or against a
+#        freshly-cloned worktree the CLI does not recognize as trusted.
+#      - --sandbox <mode>: governs whether the agent may MUTATE the repo. The design /
+#        plan stages (spec, implementationPlan) run `read-only` — they ANALYSE the tree
+#        and emit a specification / plan to stdout for HUMAN APPROVAL, and must not
+#        change any files. Only the pr-output stage runs `danger-full-access` to
+#        actually implement the approved change. (The container is itself the outer
+#        sandbox: unprivileged user, backend network policy, read-only input mount.)
+#      - -C <repo>: run Codex with the mounted repo as its working root.
+#    A stage-specific INSTRUCTION is prepended to the ticket prompt on stdin so the
+#    agent knows whether to DESIGN (read-only) or IMPLEMENT.
+CODEX_SUBCOMMAND="${CODEX_EXEC_ARGS:-exec}"
+case "$CODEX_SUBCOMMAND" in
   *[!A-Za-z0-9_./:=,-]*)
     log ERROR "CODEX_EXEC_ARGS contains unsupported characters; configure a single safe command token"
     "$NODE_BIN" "$RUNNER_LIB" build-failure \
@@ -348,9 +361,39 @@ case "$CODEX_COMMAND" in
     exit 2
     ;;
 esac
-log INFO "codex invocation start bin=$CODEX_CLI_BIN argCount=1"
+CODEX_REPO_DIR="${DELIVERYLINE_REPO_DIR:-/workspace/repo}"
+# Stage-aware posture: design/plan stages are READ-ONLY (produce an artifact for human
+# approval); only pr-output mutates the repo. CODEX_SANDBOX overrides the default.
+case "$ARTIFACT_TYPE" in
+  prOutput)
+    CODEX_SANDBOX="${CODEX_SANDBOX:-danger-full-access}"
+    PROMPT_INSTRUCTION="OPERATING MODE: IMPLEMENTATION. You are the execution stage of a governed delivery pipeline. Implement the change described below in the repository at ${CODEX_REPO_DIR}, following the approved specification when provided. Make the necessary file changes, then summarise what you changed on standard output."
+    ;;
+  implementationPlan)
+    CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"
+    PROMPT_INSTRUCTION="OPERATING MODE: IMPLEMENTATION PLAN (read-only). You are a planning stage of a governed delivery pipeline. Analyse the repository at ${CODEX_REPO_DIR} and produce a concrete, ordered IMPLEMENTATION PLAN (the steps required) for the ticket below. Do NOT modify, create, or delete any files. Output the plan as Markdown on standard output only."
+    ;;
+  *)
+    CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"
+    PROMPT_INSTRUCTION="OPERATING MODE: SPECIFICATION (read-only). You are the investigation stage of a governed delivery pipeline. Analyse the repository at ${CODEX_REPO_DIR} and write a DESIGN SPECIFICATION for the ticket below: WHAT should change and WHY, the modules / files affected, and the implementation approach. Do NOT modify, create, or delete any files — a human reviews and approves this specification before any implementation happens. Output the specification as Markdown on standard output only."
+    ;;
+esac
+# Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
+set -- "$CODEX_SUBCOMMAND" --skip-git-repo-check --sandbox "$CODEX_SANDBOX"
+if [ -d "$CODEX_REPO_DIR" ]; then
+  set -- "$@" -C "$CODEX_REPO_DIR"
+fi
+# Optional model pin (deliveryline.runner via DELIVERYLINE_CODEX_MODEL / CODEX_MODEL); omit → CLI default.
+CODEX_MODEL="${CODEX_MODEL:-${DELIVERYLINE_CODEX_MODEL:-}}"
+if [ -n "$CODEX_MODEL" ]; then
+  set -- "$@" --model "$CODEX_MODEL"
+fi
+log INFO "codex invocation start bin=$CODEX_CLI_BIN subcommand=$CODEX_SUBCOMMAND stage=$ARTIFACT_TYPE sandbox=$CODEX_SANDBOX repoDir=$CODEX_REPO_DIR argCount=$#"
+# Prepend the stage instruction to the ticket prompt on stdin. $? after the pipeline is
+# the Codex exit status (the last command), which is what we capture.
 set +e
-"$CODEX_CLI_BIN" "$CODEX_COMMAND" <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+{ printf '%s\n\n' "$PROMPT_INSTRUCTION"; cat "$PROMPT_FILE"; } \
+  | "$CODEX_CLI_BIN" "$@" >"$STDOUT_LOG" 2>"$STDERR_LOG"
 CODEX_RC=$?
 set -e
 log INFO "codex invocation finished rc=$CODEX_RC stdoutBytes=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ' || echo 0)"

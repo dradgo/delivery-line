@@ -10,7 +10,6 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -23,9 +22,6 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.MessageSourceResolvable;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.core.io.Resource;
-import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -63,12 +59,18 @@ public class ProblemDetailsMapper {
 
   private final RedactionPolicyService redactionPolicyService;
   private final ObjectMapper objectMapper;
+  // Story 2.28 — SPA shell-serving moved to SpaFallbackController (AC1). Resolved lazily via an
+  // ObjectProvider so this advice keeps working in API-only / non-web slices where the controller
+  // bean may be absent; getIfAvailable() returns null and the JSON 404 path stands in.
+  private final ObjectProvider<SpaFallbackController> spaFallbackProvider;
 
   public ProblemDetailsMapper(
       ObjectProvider<RedactionPolicyService> redactionPolicyServiceProvider,
-      ObjectProvider<ObjectMapper> objectMapperProvider) {
+      ObjectProvider<ObjectMapper> objectMapperProvider,
+      ObjectProvider<SpaFallbackController> spaFallbackProvider) {
     this.redactionPolicyService = redactionPolicyServiceProvider.getIfAvailable();
     this.objectMapper = objectMapperProvider.getIfAvailable(ObjectMapper::new);
+    this.spaFallbackProvider = spaFallbackProvider;
   }
 
   @ExceptionHandler(DomainException.class)
@@ -252,71 +254,38 @@ public class ProblemDetailsMapper {
   public ResponseEntity<?> handleNoResourceFound(
       NoResourceFoundException exception, HttpServletRequest request) {
     // Embedded-frontend mode: a hard-load / refresh of a client-side route (e.g.
-    // /workflows/run_123)
-    // reaches the backend as a NoResourceFoundException. Serve the SPA shell so TanStack Router can
-    // resolve it client-side — but ONLY for genuine browser navigations to non-API routes, and only
-    // when the Vite bundle is actually embedded (classpath:/static/index.html). API/management
-    // paths,
-    // missing assets, non-GET, and JSON clients keep their JSON ProblemDetails unchanged. When the
-    // bundle is absent (e.g. the test tier, or an API-only dev run) this branch is inert.
-    if (shouldServeSpaShell(exception.getResourcePath(), request) && SPA_SHELL.exists()) {
-      return ResponseEntity.ok()
-          .contentType(MediaType.TEXT_HTML)
-          // index.html must not be cached — content-hashed assets cache, the shell must not, so a
-          // redeploy is picked up immediately.
-          .cacheControl(CacheControl.noStore())
-          .body(SPA_SHELL);
+    // /workflows/run_123) reaches the backend as a NoResourceFoundException.
+    // NoResourceFoundException
+    // is thrown by the DispatcherServlet's static-resource handling (not a controller method), so
+    // this @RestControllerAdvice is the only reliable interception point — it stays here. The act
+    // of
+    // serving the SPA shell is owned by SpaFallbackController (story 2.28 AC1); delegate to it for
+    // genuine browser navigations to non-API routes. API/management paths, missing assets, non-GET,
+    // and JSON clients keep their JSON ProblemDetails unchanged. When the bundle is absent (e.g.
+    // the
+    // test tier, or an API-only dev run) the shell-present guard makes this branch inert.
+    String resourcePath = exception.getResourcePath();
+    SpaFallbackController spaFallback = spaFallbackProvider.getIfAvailable();
+    if (spaFallback != null && SpaFallbackController.shouldServeSpaShell(resourcePath, request)) {
+      if (spaFallback.shellExists()) {
+        return spaFallback.serveShell(resourcePath);
+      }
+      // Inert dev/test case: a navigation matched the predicate but no bundle is embedded. The
+      // EmbeddedFrontendGuard already fails startup when the bundle is required-but-absent, so this
+      // is only the deliberately bundle-free path — log at DEBUG, not WARN, and fall through to
+      // 404.
+      LOG.debug(
+          "spa_fallback shell requested but bundle absent path={}", sanitizePath(resourcePath));
     }
     return requestShapeProblem(
         HttpStatus.NOT_FOUND,
         "Resource not found.",
         request.getRequestURI(),
-        List.of(fieldError("path", exception.getResourcePath(), "notFound")));
+        List.of(fieldError("path", resourcePath, "notFound")));
   }
 
-  /** The embedded Vite app shell; present only when the frontend bundle is on the classpath. */
-  private static final Resource SPA_SHELL = new ClassPathResource("static/index.html");
-
-  /**
-   * Path prefixes that must NEVER be diverted to the SPA shell — they have to keep their JSON 404s
-   * so API clients, the actuator, and the OpenAPI/Swagger tooling behave correctly.
-   */
-  private static final List<String> RESERVED_NON_SPA_PREFIXES =
-      List.of("api", "actuator", "v3/api-docs", "swagger-ui");
-
-  /**
-   * Decide whether an unresolved request should be served the SPA shell (embedded-frontend
-   * deep-link / refresh) instead of a JSON ProblemDetail 404. Package-private + static so the
-   * routing predicate can be unit-tested without a Spring context or a built bundle.
-   */
-  static boolean shouldServeSpaShell(String resourcePath, HttpServletRequest request) {
-    if (resourcePath == null || !"GET".equalsIgnoreCase(request.getMethod())) {
-      return false;
-    }
-    String path = resourcePath.startsWith("/") ? resourcePath.substring(1) : resourcePath;
-    for (String reserved : RESERVED_NON_SPA_PREFIXES) {
-      if (path.equalsIgnoreCase(reserved)
-          || path.regionMatches(true, 0, reserved + "/", 0, reserved.length() + 1)) {
-        return false;
-      }
-    }
-    // A trailing segment containing a dot looks like a (missing) static asset, not a route — let it
-    // 404 so a broken asset reference stays visible instead of silently returning HTML.
-    String lastSegment = path.substring(path.lastIndexOf('/') + 1);
-    if (lastSegment.contains(".")) {
-      return false;
-    }
-    // Only divert genuine browser navigations (which accept HTML); JSON/XHR clients keep the 404.
-    return acceptsHtml(request);
-  }
-
-  private static boolean acceptsHtml(HttpServletRequest request) {
-    String accept = request.getHeader("Accept");
-    if (accept == null || accept.isBlank()) {
-      return true; // no Accept header → treat as a navigation (browser default / curl)
-    }
-    String lower = accept.toLowerCase(Locale.ROOT);
-    return lower.contains("text/html") || lower.contains("*/*");
+  private static String sanitizePath(String path) {
+    return MdcKeys.sanitizeForLog(path);
   }
 
   @ExceptionHandler(HttpMediaTypeNotSupportedException.class)

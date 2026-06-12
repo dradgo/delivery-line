@@ -61,6 +61,12 @@ COPY runners/claude/test/mock-claude.sh /opt/deliveryline/test/mock-claude.sh
 # layer budget).
 RUN set -eu; \
     if [ "${INSTALL_CLAUDE_CLI}" = "true" ]; then \
+      # The real Claude Code CLI needs a system trust store for TLS to the Anthropic
+      # endpoints; node:22-slim ships none. The mock build needs no egress, so it
+      # stays cert-free + offline.
+      apt-get update; \
+      apt-get install -y --no-install-recommends ca-certificates; \
+      update-ca-certificates; \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"; \
       npm cache clean --force; \
     else \

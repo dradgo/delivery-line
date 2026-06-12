@@ -79,7 +79,8 @@ class DockerRunnerAdapterContainerLifecycleIT {
             3_600_000L,
             Duration.ofSeconds(30L),
             Duration.ofSeconds(30L),
-            120L);
+            120L,
+            "none");
     RunnerProperties properties =
         new RunnerProperties(
             2.0d,

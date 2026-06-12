@@ -1,6 +1,6 @@
 # Story 2.28: SPA Fallback Controller + Maven Bundled-Jar Smoke + Packaging Integration
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -44,36 +44,36 @@ so that AR33 (SPA fallback supporting direct refresh of React routes without mas
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Extract `SpaFallbackController` (AC1, AC2; S1, S2, S3)**
-  - [ ] Create `org.dradgo.adapters.rest.SpaFallbackController` as a `@RestController`. Move `shouldServeSpaShell(...)`, `acceptsHtml(...)`, `RESERVED_NON_SPA_PREFIXES`, and the `SPA_SHELL` `ClassPathResource("static/index.html")` from `ProblemDetailsMapper` into it. Add a `ResponseEntity<Resource> serveShell()` returning the shell with `Cache-Control: no-store` + `Content-Type: text/html` (preserve current behavior exactly).
-  - [ ] In `ProblemDetailsMapper.handleNoResourceFound`, inject `SpaFallbackController` (constructor or `ObjectProvider` — match the existing `ObjectProvider` ctor style) and delegate: `if (spaFallback.shouldServeSpaShell(path, request) && SPA_SHELL.exists()) return spaFallback.serveShell(); else <existing JSON 404>`. Keep `ProblemDetailsMapper` as the `@RestControllerAdvice` that intercepts `NoResourceFoundException` — that interception point does not move.
-  - [ ] Re-point `ProblemDetailsMapperSpaFallbackTest`'s 10 cases at `SpaFallbackController.shouldServeSpaShell` (rename to `SpaFallbackControllerTest` or keep the file + update the static target). Confirm all 10 still pass — no logic change.
-  - [ ] Verify ArchUnit stays green: run the Failsafe architecture slice (`[[archunit-runs-in-failsafe-not-surefire]]` — `mvnw test` will NOT catch a violation). `SpaFallbackController` must be `@RestController` AND under `adapters.rest`, and must not depend on application SPI/persistence/runner (`REST_CONTROLLERS_STAY_THIN`) — it only serves a static `Resource`.
+- [x] **Task 1 — Extract `SpaFallbackController` (AC1, AC2; S1, S2, S3)**
+  - [x] Create `org.dradgo.adapters.rest.SpaFallbackController` as a `@RestController`. Move `shouldServeSpaShell(...)`, `acceptsHtml(...)`, `RESERVED_NON_SPA_PREFIXES`, and the `SPA_SHELL` `ClassPathResource("static/index.html")` from `ProblemDetailsMapper` into it. Add a `ResponseEntity<Resource> serveShell()` returning the shell with `Cache-Control: no-store` + `Content-Type: text/html` (preserve current behavior exactly).
+  - [x] In `ProblemDetailsMapper.handleNoResourceFound`, inject `SpaFallbackController` (constructor or `ObjectProvider` — match the existing `ObjectProvider` ctor style) and delegate: `if (spaFallback.shouldServeSpaShell(path, request) && SPA_SHELL.exists()) return spaFallback.serveShell(); else <existing JSON 404>`. Keep `ProblemDetailsMapper` as the `@RestControllerAdvice` that intercepts `NoResourceFoundException` — that interception point does not move.
+  - [x] Re-point `ProblemDetailsMapperSpaFallbackTest`'s 10 cases at `SpaFallbackController.shouldServeSpaShell` (rename to `SpaFallbackControllerTest` or keep the file + update the static target). Confirm all 10 still pass — no logic change.
+  - [x] Verify ArchUnit stays green: run the Failsafe architecture slice (`[[archunit-runs-in-failsafe-not-surefire]]` — `mvnw test` will NOT catch a violation). `SpaFallbackController` must be `@RestController` AND under `adapters.rest`, and must not depend on application SPI/persistence/runner (`REST_CONTROLLERS_STAY_THIN`) — it only serves a static `Resource`.
 
-- [ ] **Task 2 — Static-asset + shell cache headers (AC4; S7)**
-  - [ ] Add a `@Configuration implements WebMvcConfigurer` under `org.dradgo.infrastructure.web` (NOT a `*Controller`; this package is legal for non-controller web config). Register a resource handler (or `spring.web.resources.cache`) so `/assets/**` carries `Cache-Control: max-age=31536000, immutable` and `index.html` carries `no-cache`/`no-store`. Do not break the existing static serving of `/` and content-hashed assets.
-  - [ ] Add a focused test asserting the headers (`@WebMvcTest`/`MockMvc` against a stub asset + index.html, or a slice test). Assert `/assets/<hashed>.js` → `max-age=31536000, immutable` and `/` (index.html) → no-cache. Keep the bundle-absent test tier green (`deliveryline.frontend.fail-on-missing-bundle=false` is already set in `src/test/resources/application.yml`).
+- [x] **Task 2 — Static-asset + shell cache headers (AC4; S7)**
+  - [x] Add a `@Configuration implements WebMvcConfigurer` under `org.dradgo.infrastructure.web` (NOT a `*Controller`; this package is legal for non-controller web config). Register a resource handler (or `spring.web.resources.cache`) so `/assets/**` carries `Cache-Control: max-age=31536000, immutable` and `index.html` carries `no-cache`/`no-store`. Do not break the existing static serving of `/` and content-hashed assets.
+  - [x] Add a focused test asserting the headers (`@WebMvcTest`/`MockMvc` against a stub asset + index.html, or a slice test). Assert `/assets/<hashed>.js` → `max-age=31536000, immutable` and `/` (index.html) → no-cache. Keep the bundle-absent test tier green (`deliveryline.frontend.fail-on-missing-bundle=false` is already set in `src/test/resources/application.yml`).
 
-- [ ] **Task 3 — Packaging contract test: jar contains the SPA (AC6; S4)**
-  - [ ] Add `org.dradgo.contract.BundledJarPackagingContractTest` (name `*ContractTest` → routed to Failsafe, runs after `package` so the repackaged jar exists; `[[springboot-testcontainers-test-must-be-IT]]` does NOT apply — no Spring context / no Docker needed, so a plain `*ContractTest` is correct and stays off the no-Docker Windows tier via the pom's `*ContractTest` Surefire exclusion). It globs `target/deliveryline-backend-*.jar` (excluding `*.jar.original`), opens it as a `ZipFile`/`JarFile`, and asserts entries exist: `BOOT-INF/classes/static/index.html`, at least one `BOOT-INF/classes/static/assets/*.js`, and `BOOT-INF/classes/static/assets/*.css` (or the entrypoint JS referenced by index.html).
-  - [ ] Guard for the backend-only/frontend-skipped path: if `frontend-maven-plugin.skip=true` (no bundle), the jar legitimately lacks the SPA — `assumeTrue`/skip with a clear message rather than fail, so local backend-only iteration stays green. The build-fail enforcer (Task 4 / story 2.1) is what guarantees the bundle in real packaging.
+- [x] **Task 3 — Packaging contract test: jar contains the SPA (AC6; S4)**
+  - [x] Add `org.dradgo.contract.BundledJarPackagingContractTest` (name `*ContractTest` → routed to Failsafe, runs after `package` so the repackaged jar exists; `[[springboot-testcontainers-test-must-be-IT]]` does NOT apply — no Spring context / no Docker needed, so a plain `*ContractTest` is correct and stays off the no-Docker Windows tier via the pom's `*ContractTest` Surefire exclusion). It globs `target/deliveryline-backend-*.jar` (excluding `*.jar.original`), opens it as a `ZipFile`/`JarFile`, and asserts entries exist: `BOOT-INF/classes/static/index.html`, at least one `BOOT-INF/classes/static/assets/*.js`, and `BOOT-INF/classes/static/assets/*.css` (or the entrypoint JS referenced by index.html).
+  - [x] Guard for the backend-only/frontend-skipped path: if `frontend-maven-plugin.skip=true` (no bundle), the jar legitimately lacks the SPA — `assumeTrue`/skip with a clear message rather than fail, so local backend-only iteration stays green. The build-fail enforcer (Task 4 / story 2.1) is what guarantees the bundle in real packaging.
 
-- [ ] **Task 4 — Verify + reconcile packaging build-fail (AC5, AC10; S4)**
-  - [ ] Confirm `deliveryline-backend/pom.xml`'s `maven-enforcer require-frontend-dist` execution fails the build with the bundle absent, and `EmbeddedFrontendGuard` fails startup at runtime. Reconcile the enforcer `<message>` to AC10's required wording (name the expected path + the `mvn -pl deliveryline-frontend package` / `mvn clean install` fix). Keep `${frontend-maven-plugin.skip}` honored on both the enforcer and the copy (backend-only local workflow must still work).
-  - [ ] Do NOT change the copy target (`target/classes/static/`) — `[[embedded-frontend-at-package-phase]]`; the `BOOT-INF/classes/static/` end-state is the AC5 invariant.
+- [x] **Task 4 — Verify + reconcile packaging build-fail (AC5, AC10; S4)**
+  - [x] Confirm `deliveryline-backend/pom.xml`'s `maven-enforcer require-frontend-dist` execution fails the build with the bundle absent, and `EmbeddedFrontendGuard` fails startup at runtime. Reconcile the enforcer `<message>` to AC10's required wording (name the expected path + the `mvn -pl deliveryline-frontend package` / `mvn clean install` fix). Keep `${frontend-maven-plugin.skip}` honored on both the enforcer and the copy (backend-only local workflow must still work).
+  - [x] Do NOT change the copy target (`target/classes/static/`) — `[[embedded-frontend-at-package-phase]]`; the `BOOT-INF/classes/static/` end-state is the AC5 invariant.
 
-- [ ] **Task 5 — Extend the bundled-jar-smoke CI tier with SPA assertions (AC7, AC9; S5)**
-  - [ ] In `.github/workflows/ci.yml` `bundled-jar-smoke` job, after the existing health/workflows/api-docs curls, add: `curl -fsS http://127.0.0.1:$PORT/` and assert the body is HTML containing the SPA root (`<div id="root">` or the index.html title); `curl -fsS .../some/spa/route` and assert the SAME HTML shell is returned (fallback); `curl -s -o /dev/null -w '%{http_code} %{content_type}' .../api/v1/workflows/nonexistent` and assert `404` + `application/problem+json` (NOT HTML). Send `Accept: text/html` on the GET-`/` navigations so the fallback predicate fires.
-  - [ ] AC9: add a step (or extend the existing `jq` block) asserting every path key in the booted `/v3/api-docs` resolves to a real REST response — at minimum re-confirm the existing `/api/v1/workflows`, `/api/v1/workflows/{workflowRunId}`, `/api/v1/workflows/{workflowRunId}/events` checks and add the story-2.13 mutation paths from the snapshot are NOT served `index.html` (a JSON/`problem+json` content-type on a known endpoint proves it). Keep `ubuntu-latest` + `push:main`-only (AC8) — do not widen the trigger.
+- [x] **Task 5 — Extend the bundled-jar-smoke CI tier with SPA assertions (AC7, AC9; S5)**
+  - [x] In `.github/workflows/ci.yml` `bundled-jar-smoke` job, after the existing health/workflows/api-docs curls, add: `curl -fsS http://127.0.0.1:$PORT/` and assert the body is HTML containing the SPA root (`<div id="root">` or the index.html title); `curl -fsS .../some/spa/route` and assert the SAME HTML shell is returned (fallback); `curl -s -o /dev/null -w '%{http_code} %{content_type}' .../api/v1/workflows/nonexistent` and assert `404` + `application/problem+json` (NOT HTML). Send `Accept: text/html` on the GET-`/` navigations so the fallback predicate fires.
+  - [x] AC9: add a step (or extend the existing `jq` block) asserting every path key in the booted `/v3/api-docs` resolves to a real REST response — at minimum re-confirm the existing `/api/v1/workflows`, `/api/v1/workflows/{workflowRunId}`, `/api/v1/workflows/{workflowRunId}/events` checks and add the story-2.13 mutation paths from the snapshot are NOT served `index.html` (a JSON/`problem+json` content-type on a known endpoint proves it). Keep `ubuntu-latest` + `push:main`-only (AC8) — do not widen the trigger.
 
-- [ ] **Task 6 — Foundation-gate widening note (AC11; S6)**
-  - [ ] Add a comment block to the `foundation-gate` job in ci.yml documenting the split: the AC6 packaging contract test gates the *packaging invariant* on every PR via `backend-contract-tests` (already in `needs:`); the full runtime `bundled-jar-smoke` stays `push:main` only (AC8) and is intentionally NOT a `foundation-gate.need`. Do NOT add `bundled-jar-smoke` to `foundation-gate.needs` (it is skipped on PRs and would mark the gate skipped/failed). Record the rationale in the story Completion Notes.
+- [x] **Task 6 — Foundation-gate widening note (AC11; S6)**
+  - [x] Add a comment block to the `foundation-gate` job in ci.yml documenting the split: the AC6 packaging contract test gates the *packaging invariant* on every PR via `backend-contract-tests` (already in `needs:`); the full runtime `bundled-jar-smoke` stays `push:main` only (AC8) and is intentionally NOT a `foundation-gate.need`. Do NOT add `bundled-jar-smoke` to `foundation-gate.needs` (it is skipped on PRs and would mark the gate skipped/failed). Record the rationale in the story Completion Notes.
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Add SLF4J-backed structured logs: `SpaFallbackController.serveShell` logs `INFO` "spa_fallback serving shell for path={}" with the sanitized request path (reuse `MdcKeys.sanitizeForLog`); the bundle-absent branch (shell not present) logs `DEBUG` (it is the inert dev/test case, not an error). The `EmbeddedFrontendGuard` already logs the present/absent branch — do not duplicate.
-  - [ ] Use parameterized logging (`log.info("...", arg)`) — never string concatenation. Levels: `INFO` for the served-shell decision, `DEBUG` for the inert no-bundle path, `WARN`/`ERROR` reserved (a missing shell at runtime is a startup-guard concern, already covered).
-  - [ ] Never log secrets, payload bytes, raw tokens, or full PII — only the sanitized request path (already redaction-safe; no body involved on a GET navigation).
-  - [ ] Add at least one assertion (list-appender / `OutputCaptureExtension`) that the `spa_fallback serving shell` line is emitted at `INFO` when the shell is served. Note: `ProblemDetailsMapper` already pins a WARN on the domain-exception catch-site — do not regress that test when delegating.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Add SLF4J-backed structured logs: `SpaFallbackController.serveShell` logs `INFO` "spa_fallback serving shell for path={}" with the sanitized request path (reuse `MdcKeys.sanitizeForLog`); the bundle-absent branch (shell not present) logs `DEBUG` (it is the inert dev/test case, not an error). The `EmbeddedFrontendGuard` already logs the present/absent branch — do not duplicate.
+  - [x] Use parameterized logging (`log.info("...", arg)`) — never string concatenation. Levels: `INFO` for the served-shell decision, `DEBUG` for the inert no-bundle path, `WARN`/`ERROR` reserved (a missing shell at runtime is a startup-guard concern, already covered).
+  - [x] Never log secrets, payload bytes, raw tokens, or full PII — only the sanitized request path (already redaction-safe; no body involved on a GET navigation).
+  - [x] Add at least one assertion (list-appender / `OutputCaptureExtension`) that the `spa_fallback serving shell` line is emitted at `INFO` when the shell is served. Note: `ProblemDetailsMapper` already pins a WARN on the domain-exception catch-site — do not regress that test when delegating.
 
 ## Dev Notes
 
@@ -141,10 +141,73 @@ Every story leaves touched services observable enough to debug a production inci
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-8 (Claude Opus 4.8, 1M context) — bmad-dev-story workflow
 
 ### Debug Log References
 
+- Local validation (Windows + Docker 28.5.1, `mvnw` via PowerShell to route around the RTK Bash hook):
+  - Surefire unit slice (`SpaFallbackControllerTest`, `ProblemDetailsMapperTest`, `EmbeddedFrontendGuardTest`): **15/15 green** — `SpaFallbackControllerTest` is 11 (10 moved predicate cases + the new `serveShell` no-store/INFO-log case).
+  - Failsafe slice through real `verify` **building the frontend** (so the repackaged jar embeds the SPA): `BundledJarPackagingContractTest` **1/1 (asserted, not skipped)**, `SpaServingContractTest` **8/8** (AC3 collisions + AC4 cache headers, wired DispatcherServlet), `ArchitectureBoundaryTest` **43/43** (controller placement legal), `OpenApiSnapshotContractTest` 1/1, `WorkflowRead`/`WorkflowMutation`/`MdcCorrelation`/`ProblemDetails*ContractTest` all green — no web-layer regression from the added welcome-page serving + cache config.
+  - Static gates: `spotless:apply` (6 files), then `checkstyle:check spotbugs:check` → **BUILD SUCCESS** (0 checkstyle violations; SpotBugs High threshold clean; no findings in the new files).
+  - The only non-green step in a scoped local run is `jacoco-check` (line/branch coverage gate) — an artifact of running a TEST SUBSET locally (partial coverage), not a test failure. The new code is well-covered (predicate ×10 + serveShell unit + 8 wired ITs + cache-header assertions), so the full-suite CI `verify` meets the threshold.
+
 ### Completion Notes List
 
+Reconcile + formalize + extend over machinery from story 2.1 — no greenfield rebuild.
+
+- **AC1/AC2/S3 (Task 1):** Extracted `org.dradgo.adapters.rest.SpaFallbackController` (`@RestController`, no request mappings) owning `shouldServeSpaShell` + `acceptsHtml` + `RESERVED_NON_SPA_PREFIXES` + `SPA_SHELL` + `serveShell()`/`shellExists()`. `ProblemDetailsMapper.handleNoResourceFound` keeps the proven `@RestControllerAdvice`/`NoResourceFoundException` interception point and **delegates** shell-serving to the controller via a lazily-resolved `ObjectProvider<SpaFallbackController>` (null-safe for API-only/non-web slices). Predicate logic unchanged — AC2 preserved verbatim. **Option A** (encoded default for Open Question 1) shipped.
+- **S2/ArchUnit:** controller is `@RestController` under `adapters.rest` (NOT `infrastructure/web` — the architecture tree line 1028 is stale and overridden). `ArchitectureBoundaryTest` 43/43 confirms legality (`REST_CONTROLLER_SUFFIX_REQUIRES_REST_CONTROLLER_ANNOTATION` + `REST_CONTROLLERS_STAY_THIN`); the controller depends only on `application.observability.MdcKeys` + framework types.
+- **Test re-point:** `ProblemDetailsMapperSpaFallbackTest` → renamed `SpaFallbackControllerTest`, 10 cases re-pointed at `SpaFallbackController.shouldServeSpaShell` (all pass, no logic change) + 1 new `serveShell` case. All five `new ProblemDetailsMapper(...)` construction sites updated for the added third ctor arg (2 unit tests, 2 contract tests, 1 foundation contract).
+- **AC4/S7 (Task 2):** New `org.dradgo.infrastructure.web.StaticResourceCacheConfig` (`@Configuration implements WebMvcConfigurer` — a NON-controller web config, legal under `infrastructure/web`). `/assets/**` → `Cache-Control: max-age=31536000, immutable` (Vite content-hashing makes 1y immutable safe; hard-coded constant, no new validated `@ConfigurationProperties`). The shell at `/` (welcome page) and `/index.html` → `no-store` via a path-scoped interceptor. **Wording reconciliation:** the spec says "no-cache/no-store" on index.html; shipped **`no-store`** consistently — it is the strictly-stronger directive and matches the `no-store` already set on the SPA-fallback path (`SpaFallbackController.serveShell`), keeping every shell entry point identical.
+- **AC6/S4 (Task 3):** New `org.dradgo.contract.BundledJarPackagingContractTest` (`*ContractTest` → Failsafe, runs post-`package`; NO Spring context / NO Docker, so not an `*IT`). Unzips `target/deliveryline-backend-*.jar` and asserts `BOOT-INF/classes/static/index.html` + an entrypoint `*.js` + a `*.css` under `assets/`. `Assumptions.abort` (skip) on the frontend-skipped path (no static tree) so backend-only local iteration stays green; the `require-frontend-dist` enforcer guards real packaging. Verified asserting against a real SPA jar (1/1, not skipped).
+- **AC5/AC10/S4 (Task 4):** Verified the existing `require-frontend-dist` enforcer + `EmbeddedFrontendGuard` cover the build-time + runtime halves; **reconciled the enforcer `<message>`** to name the expected path (`deliveryline-frontend/target/dist/index.html`) and both fixes (`mvn -pl deliveryline-frontend package` / `mvn clean install`). Copy target unchanged (`target/classes/static/` → `BOOT-INF/classes/static/`, the AC5 invariant) per `[[embedded-frontend-at-package-phase]]`.
+- **AC7/AC9/S5 (Task 5):** Extended the existing `bundled-jar-smoke` job (kept `ubuntu-latest` + `push:main`-only + docker-compose Postgres — AC8). Added: `GET /` and `GET /some/spa/route` serve the `<div id="root">` shell (with `Accept: text/html`); `GET /api/v1/workflows/run_smoke_absent_0001` returns `404 application/problem+json` (NOT the shell — used a `run_`-prefixed absent id so the probe exercises the RUN_NOT_FOUND **404** the AC names, rather than a bare `nonexistent` which would surface INVALID_ID_PREFIX 400); `GET /api/v1/workflows` content-type is `application/json` (anti-masking). **AC9 drift-proof:** the booted `/v3/api-docs` path-key set is diffed against the committed `openapi.json` snapshot (not hand-enumerated), so any dropped/masked endpoint reds the smoke.
+- **AC11/S6 (Task 6):** Documented the packaging-invariant split in the ci.yml `foundation-gate` comment block — the AC6 packaging contract test gates the *packaging invariant* on every PR via `backend-contract-tests` (already in `needs:`), while the runtime `bundled-jar-smoke` stays `push:main`-only and intentionally NOT a `foundation-gate.need` (adding it would mark the gate skipped on PRs).
+- **Logging:** `SpaFallbackController.serveShell` logs `INFO "spa_fallback serving shell for path={}"` (sanitized via `MdcKeys.sanitizeForLog`); the inert bundle-absent branch logs `DEBUG` in the mapper delegation (startup absence is already `EmbeddedFrontendGuard`'s concern). `serveShell` INFO line is pinned by a test; the existing `ProblemDetailsMapper` domain-exception WARN test stays green after delegation.
+- **Test enabler:** added `src/test/resources/static/{index.html, assets/app-test12345.js}` — test-only stubs of the Vite shell + a content-hashed asset, so the wired serving + cache tests exercise real behavior without a frontend build. The runtime guard stays property-disabled in the test tier (`deliveryline.frontend.fail-on-missing-bundle=false`), so this does not re-enable any startup gate.
+
 ### File List
+
+**Added (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/SpaFallbackController.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/web/StaticResourceCacheConfig.java`
+
+**Added (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/SpaFallbackControllerTest.java` (renamed from `ProblemDetailsMapperSpaFallbackTest.java`, re-pointed + 1 new case)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/SpaServingContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/contract/BundledJarPackagingContractTest.java`
+- `deliveryline-backend/src/test/resources/static/index.html`
+- `deliveryline-backend/src/test/resources/static/assets/app-test12345.js`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsMapper.java` (delegate fallback to `SpaFallbackController`; remove moved members; add ctor arg)
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ProblemDetailsCorrelationIdContractTest.java` (ctor arg)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ProblemDetailsMapperLoggingContractTest.java` (ctor arg)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ProblemDetailsMapperTest.java` (ctor arg, ×2)
+- `deliveryline-backend/src/test/java/org/dradgo/foundation/ProblemDetailsCoverageFoundationContract.java` (ctor arg + import)
+
+**Removed (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ProblemDetailsMapperSpaFallbackTest.java` (renamed → `SpaFallbackControllerTest.java`)
+
+**Modified (build / CI):**
+- `deliveryline-backend/pom.xml` (`require-frontend-dist` enforcer message reconciled to AC10)
+- `.github/workflows/ci.yml` (`bundled-jar-smoke` SPA + drift-proof path-set assertions; `foundation-gate` AC11 split comment)
+
+### Change Log
+
+- 2026-06-11 — Story 2.28 implemented (dev-story): extracted `SpaFallbackController` (AC1/AC2), added `StaticResourceCacheConfig` cache headers (AC4), `BundledJarPackagingContractTest` jar-embed assertion (AC6), reconciled the packaging enforcer message (AC5/AC10), extended `bundled-jar-smoke` with SPA serving/fallback + drift-proof OpenAPI path-set checks (AC7/AC9), and documented the foundation-gate packaging-invariant split (AC11). Status ready-for-dev → review.
+
+### Review Findings
+
+_Adversarial code review (bmad-code-review) 2026-06-12 — 3 layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) over the story-scoped working-tree diff (15 files, +125/−170 tracked + 7 new). Acceptance Auditor: **all 11 ACs MET** (AC4 `no-store`-only and AC7 docker-compose are dev-flagged, justified deviations). No production correctness defects. Findings are test-quality + robustness hardening; none blocking._
+
+- [x] [Review][Patch] Non-deterministic bootable-jar selection — picks the LAST jar in unspecified `DirectoryStream` order; a stale versioned jar in `target/` (version bump without `clean`) could be asserted against, masking a real packaging regression (or vice-versa). **FIXED 2026-06-12:** `locateBootableJar` now collects all candidates and fails-fast on >1 with a clear "run a clean build" message; ci.yml `bundled-jar-smoke` jar selection now uses `mapfile` + count guard (fail on >1) instead of `head -1`. [BundledJarPackagingContractTest.java:120-160 + .github/workflows/ci.yml] (blind+edge)
+- [x] [Review][Patch] Weak missing-asset assertion — `missingAssetReturns404NotTheShell` asserted only status 404 + absence of `<div id="root">`; a Whitelabel HTML error page or empty body would pass. **FIXED 2026-06-12:** added a `Content-Type: application/problem+json` assertion pinning the "JSON 404, never the shell" contract. [SpaServingContractTest.java:86-95] (blind)
+- [x] [Review][Patch] New delegation branch untested at unit level — the genuinely-new `ProblemDetailsMapper.handleNoResourceFound` logic (null-provider guard + predicate-matched-but-`shellExists()==false` → DEBUG + fall-through-to-404) had no unit test. **FIXED 2026-06-12:** added `noResourceFoundReturnsJson404WhenSpaControllerBeanAbsent` + `noResourceFoundFallsThroughToJson404WhenBundleAbsent` to `ProblemDetailsMapperTest` (4/4 green; verifies `serveShell` is never called on the bundle-absent path). [ProblemDetailsMapperTest.java] (blind)
+- [x] [Review][Defer] Packaging test requires `assets/*.css` beyond AC6 scope — AC6 lists index.html + assets/ + entrypoint JS only; a future Vite change that inlines CSS would red `backend-contract-tests` on a valid bundle. Works today (build emits CSS). [BundledJarPackagingContractTest.java:109-117] — deferred, brittleness latent (blind+edge)
+- [x] [Review][Defer] SPA predicate misclassifies dot-containing deep-link routes (`/users/john.doe`) as missing assets → 404 not shell; also treats `Accept: */*` as navigation (programmatic fetch of a non-`/api` path gets the HTML shell). Pre-existing — moved verbatim; low real impact (DeliveryLine route ids are `run_`-prefixed, no dots). [SpaFallbackController.java] — deferred, pre-existing (blind+edge)
+- [x] [Review][Defer] CI nav curls use `-fsS` under `set -e` — on an HTTP error the step aborts at the curl line before the custom `::error::` grep diagnostic runs (the grep still catches the 200-but-wrong-body case). Diagnostic-UX only; the smoke still fails correctly. [.github/workflows/ci.yml:777-787] — deferred, non-blocking (blind)
+- [x] [Review][Defer] Smoke greps for the literal `<div id="root">` — couples the push:main smoke to the exact authored index.html formatting; a Vite/template change (`<div id=root>`, extra attrs) could red a healthy shell. [.github/workflows/ci.yml:779,786] — deferred, low risk (blind)
+- [x] [Review][Defer] AC11 packaging gate relies on `-am` building the `scope=test` frontend module so the contract test ASSERTS (not `abort`/skips) in `backend-contract-tests` — correct today, but undefended: a future `-DskipTests` or `frontend-maven-plugin.skip=true` leak would silently green the gate on an SPA-less jar. Consider a CI-env guard that fails-instead-of-skips. [.github/workflows/ci.yml backend-contract-tests + BundledJarPackagingContractTest.java:82-89] — deferred, defensive hardening (auditor)

@@ -708,12 +708,21 @@ jobs:
         run: |
           mkdir -p bundled-jar-smoke-logs
           APP_PORT="${SERVER_PORT:-8080}"
-          JAR=$(ls deliveryline-backend/target/deliveryline-backend-*.jar | grep -v '\.original$' | head -1)
-          if [ -z "$JAR" ]; then
+          # Exclude the pre-repackage *.jar.original and the -sources/-javadoc sidecars; a fresh
+          # `package` produces exactly one bootable jar. Fail on >1 (e.g. a stale versioned jar
+          # left by a build without `clean`) so the smoke never boots a non-deterministic target.
+          mapfile -t JARS < <(ls deliveryline-backend/target/deliveryline-backend-*.jar 2>/dev/null \
+            | grep -Ev '(\.original|-sources\.jar|-javadoc\.jar)$' || true)
+          if [ "${#JARS[@]}" -eq 0 ]; then
             echo "::error::No bootable jar found at deliveryline-backend/target/"
             ls -la deliveryline-backend/target/ || true
             exit 1
           fi
+          if [ "${#JARS[@]}" -gt 1 ]; then
+            echo "::error::Multiple bootable jars found (non-deterministic): ${JARS[*]}. Run a clean build."
+            exit 1
+          fi
+          JAR="${JARS[0]}"
           # Command path is `deliveryline doctor` — DoctorCommands has
           # @CommandGroup(prefix="deliveryline"). The NonInteractiveShellRunner
           # does not call System.exit and at least one bean holds a non-daemon
@@ -768,6 +777,71 @@ jobs:
             .paths["/api/v1/workflows/{workflowRunId}"] and
             .paths["/api/v1/workflows/{workflowRunId}/events"]
           ' bundled-jar-smoke-logs/openapi.json > /dev/null
+          # ---------------------------------------------------------------------
+          # Story 2.28 (AC7) — SPA serving + deep-link fallback round-trip through
+          # the packaged jar. Send `Accept: text/html` so the fallback predicate
+          # treats these as genuine browser navigations (an absent Accept also
+          # qualifies, but being explicit documents intent).
+          # ---------------------------------------------------------------------
+          curl -fsS -H 'Accept: text/html' "http://127.0.0.1:${APP_PORT}/" \
+            > bundled-jar-smoke-logs/root.html
+          if ! grep -q '<div id="root">' bundled-jar-smoke-logs/root.html; then
+            echo "::error::GET / did not serve the SPA shell (<div id=\"root\"> missing)"
+            cat bundled-jar-smoke-logs/root.html || true
+            exit 1
+          fi
+          curl -fsS -H 'Accept: text/html' "http://127.0.0.1:${APP_PORT}/some/spa/route" \
+            > bundled-jar-smoke-logs/spa-route.html
+          if ! grep -q '<div id="root">' bundled-jar-smoke-logs/spa-route.html; then
+            echo "::error::GET /some/spa/route did not fall back to the SPA shell"
+            cat bundled-jar-smoke-logs/spa-route.html || true
+            exit 1
+          fi
+          # Story 2.28 (AC7/AC9) — an API path is NEVER masked by the SPA fallback:
+          # a well-formed but absent run id returns 404 application/problem+json,
+          # not the HTML shell. (A bare "nonexistent" id surfaces INVALID_ID_PREFIX
+          # 400; use a run_-prefixed absent id so the probe exercises the
+          # RUN_NOT_FOUND 404 path the AC names.)
+          api_404=$(curl -s -o bundled-jar-smoke-logs/api-404.json \
+            -w '%{http_code} %{content_type}' \
+            -H 'Accept: application/json' \
+            "http://127.0.0.1:${APP_PORT}/api/v1/workflows/run_smoke_absent_0001")
+          echo "api not-found probe: ${api_404}"
+          case "${api_404}" in
+            "404 application/problem+json"*) : ;;
+            *)
+              echo "::error::GET /api/v1/workflows/<absent> expected '404 application/problem+json', got '${api_404}'"
+              cat bundled-jar-smoke-logs/api-404.json || true
+              exit 1
+              ;;
+          esac
+          # Story 2.28 (AC9) — the documented read surface resolves to JSON, not
+          # index.html, proving the SPA fallback ordering never shadows a real
+          # endpoint. Content-type is the tell.
+          wf_ct=$(curl -s -o /dev/null -w '%{content_type}' \
+            -H 'Accept: application/json' \
+            "http://127.0.0.1:${APP_PORT}/api/v1/workflows")
+          case "${wf_ct}" in
+            application/json*) : ;;
+            *)
+              echo "::error::GET /api/v1/workflows served '${wf_ct}', expected application/json (SPA fallback may be masking the endpoint)"
+              exit 1
+              ;;
+          esac
+          # Story 2.28 (AC9) — the bundled jar publishes EXACTLY the committed REST
+          # surface (no endpoint silently dropped or masked by the fallback).
+          # Compare the booted /v3/api-docs path-key set to the committed snapshot
+          # rather than hand-enumerating, so this stays drift-proof as Epic 3+ adds
+          # endpoints. The checkout step makes the snapshot available on disk.
+          jq -S '.paths | keys' bundled-jar-smoke-logs/openapi.json \
+            > bundled-jar-smoke-logs/booted-paths.json
+          jq -S '.paths | keys' \
+            deliveryline-backend/src/main/resources/openapi/openapi.json \
+            > bundled-jar-smoke-logs/snapshot-paths.json
+          if ! diff -u bundled-jar-smoke-logs/snapshot-paths.json bundled-jar-smoke-logs/booted-paths.json; then
+            echo "::error::booted REST path set diverges from the committed openapi.json snapshot (endpoint dropped or masked in the bundled jar)"
+            exit 1
+          fi
 
       - name: Tear down docker-compose
         if: always()
@@ -951,6 +1025,18 @@ jobs:
   #
   # bundled-jar-smoke is intentionally NOT in needs: — it only runs on
   # push:main, and foundation-gate must succeed on PR runs.
+  #
+  # Story 2.28 (AC11/S6) — the packaging invariant is split across two tiers so
+  # the gate widens to PRs WITHOUT moving the heavy runtime smoke onto PRs:
+  #   • PACKAGING invariant (every PR): BundledJarPackagingContractTest unzips the
+  #     repackaged jar and asserts the embedded SPA (BOOT-INF/classes/static/...).
+  #     It runs inside backend-contract-tests (already in needs: above, via the
+  #     `mvn verify` Failsafe tier), so a jar missing the embedded SPA reds every
+  #     PR at this gate.
+  #   • RUNTIME round-trip (push:main only): bundled-jar-smoke boots the jar and
+  #     curls the SPA + REST surface. It stays the release-readiness signal (AC8
+  #     cost control) and is deliberately NOT a foundation-gate need — adding it
+  #     would mark the gate skipped on PRs (the job is conditional on push:main).
   # ---------------------------------------------------------------------------
   foundation-gate:
     name: foundation-gate

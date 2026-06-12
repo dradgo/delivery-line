@@ -279,6 +279,7 @@ class RunnerPropertiesTest {
         workspaceCleanupIntervalMs,
         Duration.ofSeconds(30L),
         Duration.ofSeconds(30L),
-        danglingContainerMinAgeSeconds);
+        danglingContainerMinAgeSeconds,
+        "none");
   }
 }

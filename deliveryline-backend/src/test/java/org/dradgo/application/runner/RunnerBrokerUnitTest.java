@@ -1754,7 +1754,8 @@ class RunnerBrokerUnitTest {
             3_600_000L,
             java.time.Duration.ofSeconds(30L),
             java.time.Duration.ofSeconds(30L),
-            120L);
+            120L,
+            "none");
     runnerProperties =
         new RunnerProperties(
             2.0d,
