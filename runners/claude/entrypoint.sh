@@ -39,6 +39,11 @@ EXPECTED_CLAUDE_VERSION="${CLAUDE_CLI_VERSION:-<unset>}"
 # build). --self-test asserts its presence + version pin (read from OPENSPEC_VERSION).
 OPENSPEC_CLI_BIN="${OPENSPEC_CLI_BIN:-openspec}"
 EXPECTED_OPENSPEC_VERSION="${OPENSPEC_VERSION:-<unset>}"
+# Story 3a-7 — vendored obra/superpowers skills on Claude Code's personal-skills discovery dir.
+# The image symlinks ~/.claude/skills/superpowers -> the vendored skills/ dir (mirrors codex,
+# only the discovery path differs). --self-test asserts the dir resolves + reports the pin.
+SUPERPOWERS_SKILLS_DIR="${SUPERPOWERS_SKILLS_DIR:-${HOME:-/home/claude}/.claude/skills/superpowers}"
+EXPECTED_SUPERPOWERS_PIN="${SUPERPOWERS_PIN:-<unset>}"
 
 PROMPT_FILE=""
 cleanup() {
@@ -156,6 +161,21 @@ run_self_test() {
     echo "SELF-TEST FAIL: openspec version '${_openspec_version:-<unknown>}' does not match expected pin $EXPECTED_OPENSPEC_VERSION"
     exit 1
   fi
+  # Story 3a-7 — the vendored obra/superpowers skills must resolve on Claude's discovery dir.
+  # `[ -d ]` follows the symlink, so it is false for BOTH a missing dir AND a dangling symlink;
+  # then require a FLOOR of SKILL.md files. The pinned tree ships 14 skills; the floor (10) catches
+  # a gross truncation without pinning the exact count, which a legitimate re-vendor may change.
+  # Vendored via COPY (offline-safe), so this passes in the offline build the conformance IT
+  # exercises — no mock (mirrors the codex entrypoint).
+  if [ ! -d "$SUPERPOWERS_SKILLS_DIR" ]; then
+    echo "SELF-TEST FAIL: superpowers skills not found / symlink unresolved at $SUPERPOWERS_SKILLS_DIR"
+    exit 1
+  fi
+  _superpowers_count="$(find -L "$SUPERPOWERS_SKILLS_DIR" -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${_superpowers_count:-0}" -lt 10 ]; then
+    echo "SELF-TEST FAIL: only ${_superpowers_count:-0} SKILL.md under superpowers skills dir $SUPERPOWERS_SKILLS_DIR (expected >= 10; pinned tree ships 14)"
+    exit 1
+  fi
   echo "deliveryline/claude-runner self-test: OK"
   echo "  entrypoint:     reachable"
   echo "  node:           $("$NODE_BIN" --version)"
@@ -164,6 +184,7 @@ run_self_test() {
   echo "  claude version: ${_claude_version:-<unknown>} (expected pin: $EXPECTED_CLAUDE_VERSION)"
   echo "  openspec bin:   $(command -v "$OPENSPEC_CLI_BIN")"
   echo "  openspec version: ${_openspec_version:-<unknown>} (expected pin: $EXPECTED_OPENSPEC_VERSION)"
+  echo "  superpowers:    $_superpowers_count skills at $SUPERPOWERS_SKILLS_DIR (pin $EXPECTED_SUPERPOWERS_PIN)"
   echo "  mounts:         input=$INPUT_DIR output=$OUTPUT_DIR logs=$LOGS_DIR"
   echo "  mount status:   input=$([ -d "$INPUT_DIR" ] && echo present || echo absent) output=$([ -d "$OUTPUT_DIR" ] && echo present || echo absent) logs=$([ -d "$LOGS_DIR" ] && echo present || echo absent)"
   echo "  network:        none (file-based contract; no API call in self-test)"

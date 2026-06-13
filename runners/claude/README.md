@@ -85,6 +85,16 @@ limits. Keep `default-kind`/worker concurrency aligned with the active plan's li
   change**. It installs in the **same npm-global layer** as the Claude Code CLI (real in production;
   a deterministic mock in the offline/`INSTALL_CLAUDE_CLI=false` build). Because OpenSpec manages
   spec files **on disk**, it needs no network/login once installed.
+* **Agent-side tooling — superpowers skills (story 3a-7):** the [obra/superpowers](https://github.com/obra/superpowers)
+  skills collection (14 skills) is **vendored** into the repo at a pinned commit
+  (`runners/vendor/superpowers`, see `runners/vendor/VENDOR.md`) and `COPY`'d into the image — **not**
+  `git clone`d — mirroring the Codex runner (same PR). Vendoring keeps it offline-safe (no `git` apt
+  layer, no build-time network) in **both** the production and the `INSTALL_CLAUDE_CLI=false` build, so
+  the self-test skills assertion is green without a mock. The tree lands at
+  `/home/claude/.claude/superpowers`; its `skills/` dir is exposed on **Claude Code's personal-skills
+  discovery dir** via the symlink `~/.claude/skills/superpowers → …/superpowers/skills` (owned
+  `claude:1001`). **Per-runner placement differs from Codex only in the discovery path** (`~/.claude/skills/`
+  here vs `~/.agents/skills/` there); see "superpowers skills pin" + "activation" below.
 * **Non-root (AC2):** runs as `claude:1001`. uid/gid **1001** is used because `node:22-slim` already
   occupies uid/gid `1000` with its own `node` user.
 
@@ -145,15 +155,62 @@ docs, auto-firing cannot be confirmed in single-prompt headless mode, so this im
 **minimum** (present + invokable) and the entrypoint prompt is left unchanged. Wiring a minimal,
 non-mutating prompt nudge is deferred to a future story once headless activation is confirmed.
 
+### superpowers skills pin + update procedure (story 3a-7)
+
+The agent-side [obra/superpowers](https://github.com/obra/superpowers) skills are **vendored** (the pin
+is a **commit SHA**, not a CLI version) into `runners/vendor/superpowers` and surfaced as
+`ARG`/`ENV SUPERPOWERS_PIN` (currently **`f2cbfbef…`** = tag `v5.1.0`, MIT — **no** floating `main`) so
+`--self-test` reports it. To re-vendor / bump (full steps + a script in
+[`runners/vendor/VENDOR.md`](../vendor/VENDOR.md)):
+
+```bash
+git ls-remote https://github.com/obra/superpowers.git refs/tags/<tag>   # resolve tag -> commit
+# re-vendor runners/vendor/superpowers @ the new COMMIT sha (see VENDOR.md), then:
+# bump ARG SUPERPOWERS_PIN in runners/claude/Dockerfile (mirror runners/codex/Dockerfile — same PR!)
+docker compose build claude-runner
+docker run --rm deliveryline/claude-runner:latest --self-test    # confirm the new pin + skill count report
+```
+
+> Per the RUNNER_CONTRACT mirror rule, a superpowers re-vendor edits **both** runner Dockerfiles in the
+> same PR. Keep the pin a **commit SHA**, never a branch.
+
+**Claude discovery path (confirmed in dev — story 3a-7 Task 0):** the marketplace/plugin install route
+(`/plugin install`) is interactive + online — unusable in the offline image. The offline filesystem
+target is Claude Code's **personal-skills dir** `~/.claude/skills/<skill>/SKILL.md` (confirmed against
+CLI `2.1.149`), **not** the plugin dir. The image symlinks `~/.claude/skills/superpowers → the vendored
+skills/ dir` (mirroring the Codex collection symlink); full plugin machinery (hooks / SessionStart
+injection) is **out of scope**.
+
+**Offline/mock build:** superpowers needs **no** mock — the skills are static files vendored via `COPY`,
+present in **both** the production and the `INSTALL_CLAUDE_CLI=false` build. The self-test's skills
+assertion (`~/.claude/skills/superpowers` resolves + ≥1 `SKILL.md`) is green offline with no network,
+exactly as the conformance IT + CI `runner-image-compat` line exercise it.
+
+> **Rebuild `:latest` after merge.** The hand-built `:latest` images do **not** auto-rebuild on merge
+> (`[[runner-image-stale-causes-exit-20]]`); a stale `:latest` won't carry the vendored skills — rebuild
+> (`docker compose build claude-runner`) and re-run `--self-test` after this change lands.
+
+### superpowers activation during runs — finding (story 3a-7 AC5)
+
+The skills are **present + discoverable** on the personal-skills dir above. Whether a skill **fires** in
+a **single-prompt headless** run (`claude -p`, no human typing, no slash command) is the same open
+question as 3a-6's OpenSpec: superpowers skills activate by **name-mention / task-description match**,
+and confirming auto-firing (and that Claude's scanner descends into the symlinked collection) needs a
+live run (egress + a credential) the offline tier does not have. So this image ships the **minimum**
+(present + discoverable) and leaves the entrypoint `PROMPT_INSTRUCTION` **unchanged** — **no runtime
+mutation of `/workspace/repo`, no interactive install** (Trap T-NO-RUNTIME-MUTATION). A minimal,
+non-mutating prompt nudge is deferred to a future story once headless activation is confirmed under
+real execution (story 3.8).
+
 ### Image size / layer count (AC9)
 
-Production image (`INSTALL_CLAUDE_CLI=true`, real CLIs): **≈ 166 MB, 11 layers** (≈ 147 MB before
-story 3a-6, + ~19 MB for the pure-JS OpenSpec npm-global package + one `COPY mock-openspec.sh` layer;
-baseline measured on WSL2 Ubuntu, `docker` 28.5.1, `node:22-slim`). This is **well under** the ~1 GB
-budget and still *smaller* than the Codex runner (≈ 671 MB) — the `@anthropic-ai/claude-code` npm
-package is lighter than the Codex CLI's bundled native binary, and OpenSpec adds the same modest
-pure-JS delta to both. No size justification required. The conformance-test image (both mocks,
-`INSTALL_CLAUDE_CLI=false`) is smaller still.
+Production image (`INSTALL_CLAUDE_CLI=true`, real CLIs): **≈ 167 MB, 12 layers** (≈ 166 MB before
+story 3a-7, + ~1.3 MB for the vendored superpowers tree — markdown + scripts — + one `COPY` layer,
+11 → 12; baseline measured on WSL2 Ubuntu, `docker` 28.5.1, `node:22-slim`). This is **well under** the
+~1 GB budget and still *smaller* than the Codex runner (≈ 671 MB) — the `@anthropic-ai/claude-code` npm
+package is lighter than the Codex CLI's bundled native binary, and superpowers adds the same negligible
+markdown delta to both. No size justification required. The conformance-test image (both mocks + the
+same vendored skills, `INSTALL_CLAUDE_CLI=false`) is ~80 MB.
 
 ```bash
 docker build -f runners/claude/Dockerfile -t deliveryline/claude-runner:latest .

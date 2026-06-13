@@ -681,3 +681,9 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 - `<unset>` entrypoint default vs `0.0.0-mock` mock default mismatch [both entrypoints + both mock-openspec.sh] — latent (Dockerfiles always set `ENV OPENSPEC_VERSION=1.4.1`), fails-safe.
 - Conformance ITs assert openspec summary labels, not the pinned version value [Codex/ClaudeRunnerImageConformanceIT.java] — optional hardening; exit-0 self-test gate already enforces the pin.
 - Legacy "AC9"/"AC4 mock" AC numbering carried into 3a-6 docs from stories 3.3/3.4 [both READMEs, codex Dockerfile comment] — cosmetic.
+
+## Deferred from: code review of story-3a-7 (2026-06-13)
+
+- Production-CLI image's skills layer never built by conformance ITs [ClaudeRunnerImageConformanceIT.java / CodexRunnerImageConformanceIT.java] — ITs always build the offline (`INSTALL_*_CLI=false`) variant; the real-CLI image is never assembled in CI. Low risk: the `COPY`+`mv`+`ln` skills block sits after the CLI `if/else` and is branch-independent.
+- `SUPERPOWERS_PIN` is a reported label, not verified against vendored bytes [runners/codex/entrypoint.sh, runners/claude/entrypoint.sh] — `--self-test` echoes the ENV pin; nothing ties that SHA to the COPY'd tree (no checksum/commit file). Same class as the 3a-6 OpenSpec "IT asserts label not pin value" deferral.
+- No build-time guard that the vendored `skills/` dir exists [runners/claude/Dockerfile, runners/codex/Dockerfile] — a botched re-vendor with no `skills/` yields a dangling symlink; failure surfaces at runtime `--self-test` rather than at `docker build`. A `RUN test -d .../superpowers/skills` would shift it left.

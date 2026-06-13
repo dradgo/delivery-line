@@ -66,6 +66,7 @@ Accepted tokens (the three story-named artifact stages plus the `RunnerStage` en
 | `DELIVERYLINE_RUNNER_SKIP_AUTH` | no | `true` lets a non-real run proceed without a key (mock/test only). |
 | `CODEX_CLI_VERSION` | baked | The pinned Codex CLI version, reported by `--self-test`. |
 | `OPENSPEC_VERSION` | baked | The pinned OpenSpec CLI version (story 3a-6), asserted + reported by `--self-test`. |
+| `SUPERPOWERS_PIN` | baked | The vendored obra/superpowers commit SHA (story 3a-7), reported by `--self-test`. |
 
 Secrets arrive **as container env** (already injected by the backend `RunnerSecretsService` →
 `CreateContainerSpec.environment`). In **API mode** the entrypoint reads the variable, exports
@@ -139,6 +140,15 @@ injected secret:
   layer** as the Codex CLI (real in production; a deterministic mock in the offline/`INSTALL_CODEX_CLI=false`
   build — see below). Because OpenSpec manages spec files **on disk**, it needs no network/login to
   run once installed (unlike Codex's subscription token refresh).
+* **Agent-side tooling — superpowers skills (story 3a-7):** the [obra/superpowers](https://github.com/obra/superpowers)
+  skills collection (TDD, debugging, brainstorming, … — 14 skills) is **vendored** into the repo at a
+  pinned commit (`runners/vendor/superpowers`, see `runners/vendor/VENDOR.md`) and `COPY`'d into the
+  image — **not** `git clone`d. Vendoring keeps the install offline-safe (no `git` apt layer, no
+  build-time network) in **both** the production and the `INSTALL_CODEX_CLI=false` build, so the
+  self-test skills assertion is green without a mock (skill files are static content). The tree lands
+  at `/home/codex/.codex/superpowers` and its `skills/` dir is exposed on Codex's auto-discovery path
+  via the symlink `~/.agents/skills/superpowers → …/superpowers/skills` (owned `codex:1001`). Codex
+  scans `~/.agents/skills/` at startup. See "superpowers skills pin" + "superpowers activation" below.
 * **Non-root (AC7):** runs as `codex:1001`. uid/gid **1001** is used because `node:22-slim` already
   occupies uid/gid `1000` with its own `node` user.
 
@@ -198,14 +208,56 @@ docs, auto-firing cannot be confirmed in single-prompt headless mode, so this im
 **minimum** (present + invokable) and the entrypoint prompt is left unchanged. Wiring a minimal,
 non-mutating prompt nudge is deferred to a future story once headless activation is confirmed.
 
+### superpowers skills pin + update procedure (story 3a-7)
+
+The agent-side [obra/superpowers](https://github.com/obra/superpowers) skills are **vendored** (not a
+CLI — there is no `--version`; the pin is a **commit SHA**) into `runners/vendor/superpowers` and
+surfaced as `ARG`/`ENV SUPERPOWERS_PIN` (currently **`f2cbfbef…`** = tag `v5.1.0`, MIT — **no**
+floating `main`) so `--self-test` reports it. To re-vendor / bump (full steps + a copy-paste script in
+[`runners/vendor/VENDOR.md`](../vendor/VENDOR.md)):
+
+```bash
+git ls-remote https://github.com/obra/superpowers.git refs/tags/<tag>   # resolve tag -> commit
+# re-vendor runners/vendor/superpowers @ the new COMMIT sha (see VENDOR.md), then:
+# bump ARG SUPERPOWERS_PIN in runners/codex/Dockerfile (mirror runners/claude/Dockerfile — same PR!)
+docker compose build codex-runner
+docker run --rm deliveryline/codex-runner:latest --self-test    # confirm the new pin + skill count report
+```
+
+> Per the RUNNER_CONTRACT mirror rule, a superpowers re-vendor (like a CLI bump) edits **both** runner
+> Dockerfiles in the same PR. Keep the pin a **commit SHA**, never a branch.
+
+**Offline/mock build:** unlike OpenSpec, superpowers needs **no** mock — the skills are static files
+vendored via `COPY`, present in **both** the production and the `INSTALL_CODEX_CLI=false` build. The
+self-test's skills assertion (`~/.agents/skills/superpowers` resolves + ≥1 `SKILL.md`) is therefore
+green offline with no network, exactly as the conformance IT + CI `runner-image-compat` line exercise it.
+
+> **Rebuild `:latest` after merge.** The hand-built `:latest` images do **not** auto-rebuild on merge
+> (`[[runner-image-stale-causes-exit-20]]`); a stale `:latest` won't carry the vendored skills — rebuild
+> (`docker compose build codex-runner`) and re-run `--self-test` after this change lands.
+
+### superpowers activation during runs — finding (story 3a-7 AC5)
+
+The skills are **present + discoverable**: Codex auto-scans `~/.agents/skills/` at startup and parses
+each `SKILL.md` (the 14 vendored skills are loadable). Whether a skill **fires** in a **single-prompt
+headless** run (`codex exec`, no human typing, no slash command) is the same open question as 3a-6's
+OpenSpec: superpowers skills activate by **name-mention / task-description match**, and confirming
+auto-firing needs a live run (egress + a credential), which the offline self-test/conformance tier does
+not have. So this image ships the **minimum** (present + discoverable) and leaves the entrypoint
+`PROMPT_INSTRUCTION` **unchanged** — **no runtime mutation of `/workspace/repo`, no interactive
+install** (Trap T-NO-RUNTIME-MUTATION). Wiring a minimal, non-mutating prompt nudge that names the
+available skills is deferred to a future story once headless activation is confirmed under real
+execution (story 3.8).
+
 ### Image size / layer count (AC9)
 
-Production image (`INSTALL_CODEX_CLI=true`, real CLIs): **≈ 671 MB, 11 layers** (≈ 652 MB before
-story 3a-6, + ~19 MB for the pure-JS OpenSpec npm-global package + one `COPY mock-openspec.sh` layer).
-The bulk is still the Codex CLI's bundled native binary on top of the ~200 MB `node:22-slim` base;
-OpenSpec's pure-JS footprint is modest (the `@fission-ai/openspec` package measures ~19 MB installed).
-This remains **well under** the ~1 GB budget, so no additional justification is required. (The
-conformance-test image, built with both mocks, is far smaller.)
+Production image (`INSTALL_CODEX_CLI=true`, real CLIs): **≈ 671 MB, 12 layers** (≈ 671 MB before
+story 3a-7, + ~1.3 MB for the vendored superpowers tree — markdown + scripts — + one `COPY` layer,
+11 → 12). The bulk is still the Codex CLI's bundled native binary on top of the ~200 MB `node:22-slim`
+base; superpowers' markdown footprint is negligible (the vendored tree measures ~1.3 MB; the staging
+`COPY`-then-`mv` roughly doubles that on disk to ~3 MB — still negligible). This remains **well under**
+the ~1 GB budget, so no additional justification is required. (The conformance-test image, built with
+both mocks + the same vendored skills, is far smaller — ~80 MB.)
 
 > The ~19 MB OpenSpec delta was measured via `npm install -g @fission-ai/openspec@1.4.1` on
 > `node:22-slim`; the ~652 MB Codex baseline was measured on WSL2 — re-measure the full production

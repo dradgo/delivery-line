@@ -37,6 +37,12 @@ ARG CLAUDE_CLI_VERSION=2.1.149
 # by node:22-slim, no base-image change), installed in the SAME npm layer as the
 # Claude CLI (real install in production; a deterministic mock in the offline build).
 ARG OPENSPEC_VERSION=1.4.1
+# obra/superpowers skills pin (story 3a-7) — a vendored COMMIT SHA, NO floating "main".
+# The skills are vendored into runners/vendor/superpowers (tag v5.1.0 → this commit; see
+# runners/vendor/VENDOR.md) and COPY'd into BOTH builds (no git, no network — unlike a
+# clone). --self-test reports this pin; re-vendor + bump per the README "superpowers pin"
+# section (mirror runners/codex/Dockerfile — same PR).
+ARG SUPERPOWERS_PIN=f2cbfbefebbfef77321e4c9abc9e949826bea9d7
 # Image version label for CI (override: --build-arg IMAGE_VERSION=<ci-tag>).
 ARG IMAGE_VERSION=latest
 # When false, skip the real npm install and bake the deterministic mock CLI used
@@ -52,6 +58,7 @@ LABEL org.opencontainers.image.title="deliveryline-claude-runner" \
 # fix the helper/bin locations the entrypoint resolves by default.
 ENV CLAUDE_CLI_VERSION=${CLAUDE_CLI_VERSION} \
     OPENSPEC_VERSION=${OPENSPEC_VERSION} \
+    SUPERPOWERS_PIN=${SUPERPOWERS_PIN} \
     CLAUDE_CLI_BIN=claude \
     NODE_BIN=node \
     DELIVERYLINE_RUNNER_LIB=/opt/deliveryline/lib/runner.mjs
@@ -63,6 +70,13 @@ COPY runners/claude/entrypoint.sh /opt/deliveryline/entrypoint.sh
 COPY runners/claude/lib/runner.mjs /opt/deliveryline/lib/runner.mjs
 COPY runners/claude/test/mock-claude.sh /opt/deliveryline/test/mock-claude.sh
 COPY runners/claude/test/mock-openspec.sh /opt/deliveryline/test/mock-openspec.sh
+
+# Story 3a-7 — vendored obra/superpowers skills (pinned commit; see runners/vendor/VENDOR.md).
+# Mirror of the codex runner — COPY (not git clone): present in BOTH the production and the
+# offline/mock build, no `git` apt layer, no build-time network, so --self-test's skills
+# assertion is green offline. Staged under /opt; the RUN below moves it into the claude HOME +
+# exposes it on Claude's skills-discovery dir. --chown=1001:1001 = the claude uid/gid below.
+COPY --chown=1001:1001 runners/vendor/superpowers /opt/deliveryline/vendor/superpowers
 
 # Install the Claude Code CLI + the agent-side OpenSpec CLI (production) OR bake
 # their deterministic mocks (test build), make the contract scripts executable,
@@ -87,6 +101,14 @@ RUN set -eu; \
     chmod +x /opt/deliveryline/entrypoint.sh /opt/deliveryline/lib/runner.mjs; \
     groupadd --gid 1001 claude; \
     useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin claude; \
+    # Story 3a-7 — place the vendored superpowers tree in the claude HOME and expose its
+    # skills/ dir on Claude Code's personal-skills discovery dir (~/.claude/skills/; the
+    # offline filesystem target — the marketplace/plugin route needs network, out of scope).
+    # `superpowers -> .../skills` mirrors the codex symlink. Owned claude:1001. BOTH branches.
+    mkdir -p /home/claude/.claude /home/claude/.claude/skills; \
+    mv /opt/deliveryline/vendor/superpowers /home/claude/.claude/superpowers; \
+    ln -s /home/claude/.claude/superpowers/skills /home/claude/.claude/skills/superpowers; \
+    chown -R claude:claude /home/claude/.claude; \
     rm -rf /var/lib/apt/lists/*
 
 # Least privilege (AC2): unprivileged user, no network by default (set by the

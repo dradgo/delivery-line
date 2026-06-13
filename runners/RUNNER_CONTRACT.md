@@ -147,13 +147,24 @@ Non-root user (`codex:1001` / `claude:1001` — uid/gid `1000` is taken by the `
 own `node` user), `--network=none` by default, secret from env never echoed, single-stage image, the
 prompt temp file written under `/workspace/logs` (never outside the rw mounts).
 
-## Agent-side tooling (story 3a-6)
+## Agent-side tooling (stories 3a-6, 3a-7)
 
 Beyond the agent CLI, both images now also carry the pinned **`openspec` CLI** (`@fission-ai/openspec`,
 `ARG OPENSPEC_VERSION`) as agent-usable tooling — **present in production**, a deterministic mock in
 the offline `INSTALL_*_CLI=false` build. `--self-test` asserts it is on PATH at the expected pin on
-**both** runners. This is **visibility only**: it adds **no** new file, mount, exit-code, or
-bundle/result-schema obligation — the runner ↔ backend contract above is byte-identical. Per the
-change rule, adding/bumping agent-side tooling edits **both** Dockerfiles + entrypoints + READMEs in
-the same PR. (Slash-command auto-activation is not wired in headless single-prompt runs — see each
-runner README's "OpenSpec activation during runs" finding.)
+**both** runners.
+
+Both images also carry the **obra/superpowers skills** collection (story 3a-7) — **vendored** into the
+repo at a pinned commit (`ARG SUPERPOWERS_PIN`, `runners/vendor/superpowers`, see
+`runners/vendor/VENDOR.md`) and `COPY`'d into the image (**no** `git clone`, **no** build-time network,
+so it is present in **both** the production and the offline build with **no** mock needed — skill files
+are static content). Each runner exposes the vendored `skills/` dir on its own agent skills-discovery
+path — Codex `~/.agents/skills/superpowers`, Claude `~/.claude/skills/superpowers` (both symlinks owned
+uid `1001`). `--self-test` asserts the skills dir resolves on **both** runners.
+
+This is **visibility only**: agent-side tooling adds **no** new file, mount, exit-code, or
+bundle/result-schema obligation — the runner ↔ backend contract above is byte-identical. Per the change
+rule, adding/bumping agent-side tooling (an OpenSpec bump or a superpowers re-vendor) edits **both**
+Dockerfiles + entrypoints + READMEs in the same PR. (Headless single-prompt **activation** is not
+wired for either tool — see each runner README's "OpenSpec activation" / "superpowers activation"
+findings; both ship the present-and-discoverable minimum and never mutate `/workspace/repo` at runtime.)

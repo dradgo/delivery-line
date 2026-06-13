@@ -141,6 +141,15 @@ class ClaudeRunnerImageConformanceIT {
         .as("self-test summary must report the openspec CLI bin + version")
         .contains("openspec bin:")
         .contains("openspec version:");
+
+    // Story 3a-7 (AC4) — the self-test must report the vendored obra/superpowers skills. The skills
+    // are COPY'd in (offline-safe, no mock), so a missing dir / dangling symlink / empty tree would
+    // already have failed the self-test (exit != 0); this pins the summary line + a non-zero skill
+    // count in CI.
+    assertThat(selfTestOutput)
+        .as("self-test summary must report the vendored superpowers skills")
+        .contains("superpowers:")
+        .contains("skills at");
   }
 
   @ParameterizedTest(name = "stage {0} -> artifactType {1}")

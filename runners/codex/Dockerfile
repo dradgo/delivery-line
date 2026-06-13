@@ -34,6 +34,12 @@ ARG CODEX_CLI_VERSION=0.135.0
 # by node:22-slim, no base-image change), installed in the SAME npm layer as the
 # Codex CLI (real install in production; a deterministic mock in the offline build).
 ARG OPENSPEC_VERSION=1.4.1
+# obra/superpowers skills pin (story 3a-7) — a vendored COMMIT SHA, NO floating "main".
+# The skills are vendored into runners/vendor/superpowers (tag v5.1.0 → this commit; see
+# runners/vendor/VENDOR.md) and COPY'd into BOTH builds (no git, no network — unlike a
+# clone). --self-test reports this pin; re-vendor + bump per the README "superpowers pin"
+# section (mirror runners/claude/Dockerfile — same PR).
+ARG SUPERPOWERS_PIN=f2cbfbefebbfef77321e4c9abc9e949826bea9d7
 # Image version label for CI (override: --build-arg IMAGE_VERSION=<ci-tag>).
 ARG IMAGE_VERSION=latest
 # When false, skip the real npm install and bake the deterministic mock CLI used
@@ -49,6 +55,7 @@ LABEL org.opencontainers.image.title="deliveryline-codex-runner" \
 # fix the helper/bin locations the entrypoint resolves by default.
 ENV CODEX_CLI_VERSION=${CODEX_CLI_VERSION} \
     OPENSPEC_VERSION=${OPENSPEC_VERSION} \
+    SUPERPOWERS_PIN=${SUPERPOWERS_PIN} \
     CODEX_CLI_BIN=codex \
     NODE_BIN=node \
     DELIVERYLINE_RUNNER_LIB=/opt/deliveryline/lib/runner.mjs
@@ -60,6 +67,13 @@ COPY runners/codex/entrypoint.sh /opt/deliveryline/entrypoint.sh
 COPY runners/codex/lib/runner.mjs /opt/deliveryline/lib/runner.mjs
 COPY runners/codex/test/mock-codex.sh /opt/deliveryline/test/mock-codex.sh
 COPY runners/codex/test/mock-openspec.sh /opt/deliveryline/test/mock-openspec.sh
+
+# Story 3a-7 — vendored obra/superpowers skills (pinned commit; see runners/vendor/VENDOR.md).
+# COPY (not git clone): present in BOTH the production and the offline/mock build, no `git`
+# apt layer, no build-time network — so --self-test's skills assertion is green offline. Staged
+# under /opt; the RUN below moves it into the codex HOME + wires the ~/.agents/skills symlink
+# (after useradd creates /home/codex). --chown=1001:1001 = the codex uid/gid created below.
+COPY --chown=1001:1001 runners/vendor/superpowers /opt/deliveryline/vendor/superpowers
 
 # Install the Codex CLI + the agent-side OpenSpec CLI (production) OR bake their
 # deterministic mocks (test build), make the contract scripts executable, and
@@ -84,6 +98,14 @@ RUN set -eu; \
     chmod +x /opt/deliveryline/entrypoint.sh /opt/deliveryline/lib/runner.mjs; \
     groupadd --gid 1001 codex; \
     useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin codex; \
+    # Story 3a-7 — place the vendored superpowers tree in the codex HOME and expose its
+    # skills/ dir on Codex's auto-discovery path (~/.agents/skills/). Codex scans
+    # ~/.agents/skills/ at startup, so `superpowers -> .../skills` makes the 14 skills
+    # discoverable. Owned codex:1001 (least privilege). Runs in BOTH build branches.
+    mkdir -p /home/codex/.codex /home/codex/.agents/skills; \
+    mv /opt/deliveryline/vendor/superpowers /home/codex/.codex/superpowers; \
+    ln -s /home/codex/.codex/superpowers/skills /home/codex/.agents/skills/superpowers; \
+    chown -R codex:codex /home/codex/.codex /home/codex/.agents; \
     rm -rf /var/lib/apt/lists/*
 
 # Least privilege (AC7): unprivileged user, no network by default (set by the
