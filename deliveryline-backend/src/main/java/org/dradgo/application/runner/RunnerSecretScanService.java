@@ -48,6 +48,29 @@ public class RunnerSecretScanService {
    */
   static final String INJECTED_PROVIDER_KEY_CATEGORY = "injected_provider_key";
 
+  /**
+   * The fuzzy / context-dependent redaction categories that are suppressed when scanning a cloned
+   * {@code repo/} working-tree file (the EXECUTION stage). Unlike the runner's own
+   * input/output/logs, the repo working tree is real source &amp; config: these heuristic shapes
+   * (loose {@code KEY=value} / high-entropy values, {@code "password": …} fields, {@code ?token=…}
+   * query params, file paths, env-var blocks) match ordinary code and produced a stream of bogus
+   * {@code runner_secret_leak} failures (FIN-14 / FIN-16) that froze the run. The precise detectors
+   * still run over repo files: the mandatory injected-provider-key substring check (the secret WE
+   * inject) plus the strongly-structured credential SHAPES (GitHub / Linear tokens, SSH &amp; PEM
+   * private keys, Authorization headers) — those are unambiguous secrets in any context and stay
+   * leak-worthy even in committed code.
+   */
+  private static final java.util.Set<RedactionCategory> REPO_SUPPRESSED_FUZZY_CATEGORIES =
+      java.util.EnumSet.of(
+          RedactionCategory.ENV_VALUE,
+          RedactionCategory.ENVIRONMENT_BLOCK,
+          RedactionCategory.SECRET_FIELD,
+          RedactionCategory.QUERY_SECRET,
+          RedactionCategory.LOCAL_PATH);
+
+  /** Workspace-relative prefix of cloned-repo working-tree files (see {@code REPO_SUBDIR}). */
+  private static final String REPO_RELATIVE_PREFIX = "repo/";
+
   private final RunnerWorkspaceStore workspaceStore;
   private final RedactionPolicyService redactionPolicyService;
   private final RunnerSecretsService runnerSecretsService;
@@ -90,7 +113,15 @@ public class RunnerSecretScanService {
     Objects.requireNonNull(runnerKind, "runnerKind");
     Objects.requireNonNull(stage, "stage");
 
-    List<WorkspaceScanFile> files = workspaceStore.readFilesForSecretScan(runnerExecutionId);
+    // The cloned repo/ working tree is scanned only for a read-write (EXECUTION) stage, where the
+    // runner authors changes that are later pushed. A read-only INVESTIGATION stage cannot modify
+    // the pristine clone, so scanning third-party upstream content would only false-positive the
+    // fuzzy redaction heuristics (e.g. ENV_VALUE on innocuous key=value config) — the precise
+    // detectors that matter (injected-key substring, known credential shapes) still run over the
+    // runner's own input/output/logs.
+    boolean includeRepoWorkingTree = stage == RunnerStage.EXECUTION;
+    List<WorkspaceScanFile> files =
+        workspaceStore.readFilesForSecretScan(runnerExecutionId, includeRepoWorkingTree);
     Set<String> injectedValues =
         resolveInjectedValues(runnerExecutionId, runnerKind, stage, workflowRunId);
 
@@ -104,11 +135,19 @@ public class RunnerSecretScanService {
 
     for (WorkspaceScanFile file : files) {
       Set<String> categories = new LinkedHashSet<>();
+      // Cloned-repo working-tree files are real source/config — the fuzzy heuristic categories
+      // (ENV_VALUE etc.) false-positive on them, so suppress those and keep only the precise
+      // detectors (structured credential shapes below + the injected-key substring (ii)). The
+      // runner's own input/output/logs keep the full strict scan.
+      boolean repoWorkingTreeFile = file.relativePath().startsWith(REPO_RELATIVE_PREFIX);
 
       // (i) known-shape detection via the sanctioned engine.
       RedactionResult result =
           redactionPolicyService.redact(file.text(), DataClassification.LOCAL_ONLY.value());
       for (RedactionCategory category : result.detectedCategories()) {
+        if (repoWorkingTreeFile && REPO_SUPPRESSED_FUZZY_CATEGORIES.contains(category)) {
+          continue;
+        }
         categories.add(category.name());
       }
 

@@ -1,6 +1,7 @@
 package org.dradgo.application.runner;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -55,7 +56,7 @@ class RunnerSecretScanServiceTest {
 
   @Test
   void cleanWorkspaceReturnsNoLeak() {
-    when(workspaceStore.readFilesForSecretScan(REX_ID))
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
         .thenReturn(List.of(new WorkspaceScanFile("output/result.json", "{\"ok\":true}")));
 
     RunnerSecretScanService.ScanOutcome outcome = scan();
@@ -66,7 +67,7 @@ class RunnerSecretScanServiceTest {
 
   @Test
   void detectsKnownPatternSecretInOutput() {
-    when(workspaceStore.readFilesForSecretScan(REX_ID))
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
         .thenReturn(
             List.of(
                 new WorkspaceScanFile("output/result.json", "{\"token\": \"" + GH_TOKEN + "\"}")));
@@ -80,7 +81,7 @@ class RunnerSecretScanServiceTest {
 
   @Test
   void detectsInjectedProviderKeyValueInOutputViaSubstring() {
-    when(workspaceStore.readFilesForSecretScan(REX_ID))
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
         .thenReturn(
             List.of(
                 new WorkspaceScanFile(
@@ -112,7 +113,7 @@ class RunnerSecretScanServiceTest {
             new RunnerSecretsService(
                 new MockEnvironment().withProperty("CODEX_AUTH_JSON", authJson),
                 RunnerProperties.defaults()));
-    when(workspaceStore.readFilesForSecretScan(REX_ID))
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
         .thenReturn(
             List.of(
                 new WorkspaceScanFile(
@@ -130,7 +131,7 @@ class RunnerSecretScanServiceTest {
 
   @Test
   void detectsInjectedProviderKeyValueInLogs() {
-    when(workspaceStore.readFilesForSecretScan(REX_ID))
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
         .thenReturn(
             List.of(
                 new WorkspaceScanFile(
@@ -146,7 +147,7 @@ class RunnerSecretScanServiceTest {
 
   @Test
   void scanLogsNeverContainTheSecretValue() {
-    when(workspaceStore.readFilesForSecretScan(REX_ID))
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
         .thenReturn(List.of(new WorkspaceScanFile("logs/runner.stdout", "leaked " + CODEX_VALUE)));
 
     Logger scanLogger = (Logger) LoggerFactory.getLogger(RunnerSecretScanService.class);
@@ -169,6 +170,96 @@ class RunnerSecretScanServiceTest {
     assertThat(allLogs).contains("injected_provider_key");
     assertThat(allLogs).doesNotContain(CODEX_VALUE);
     assertThat(appender.list.stream().anyMatch(e -> e.getLevel() == Level.WARN)).isTrue();
+  }
+
+  @Test
+  void readOnlyInvestigationStageDoesNotScanRepoWorkingTree() {
+    // The read-only INVESTIGATION stage cannot author repo content, so the pristine clone must NOT
+    // be scanned — scanning third-party upstream files only false-positives the fuzzy ENV_VALUE
+    // heuristic (this is what bricked the FIN-14/FIN-16 spec-stage runs). The runner's own
+    // input/output/logs are still scanned.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(List.of(new WorkspaceScanFile("output/result.json", "{\"ok\":true}")));
+
+    scanService.scanWorkspace(REX_ID, RunnerKind.CODEX, RunnerStage.INVESTIGATION, RUN_ID);
+
+    verify(workspaceStore).readFilesForSecretScan(REX_ID, false);
+  }
+
+  @Test
+  void readWriteExecutionStageScansRepoWorkingTree() {
+    // The EXECUTION stage authors repo changes that get pushed, so the working tree IS scanned
+    // (still minus .git/) to catch a key leaked into committed code before captureAndPush.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(List.of(new WorkspaceScanFile("output/result.json", "{\"ok\":true}")));
+
+    scanService.scanWorkspace(REX_ID, RunnerKind.CODEX, RunnerStage.EXECUTION, RUN_ID);
+
+    verify(workspaceStore).readFilesForSecretScan(REX_ID, true);
+  }
+
+  @Test
+  void repoWorkingTreeFileSuppressesFuzzyHeuristicCategories() {
+    // A normal config line in a committed repo file trips the fuzzy ENV_VALUE heuristic — this is
+    // the exact false positive that froze FIN-14/FIN-16. For repo/ files it must NOT count as a
+    // leak (the runner did not author the injected secret here; it is ordinary source/config).
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(
+                new WorkspaceScanFile(
+                    "repo/src/main/resources/application.properties",
+                    "DB_PASSWORD=correcthorsebatterystaple")));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isFalse();
+  }
+
+  @Test
+  void fuzzyHeuristicCategoryStillFlaggedInRunnerOutput() {
+    // Control: the SAME content in the runner's own output/ IS still a leak — suppression is scoped
+    // to the cloned repo working tree only, never the runner's produced artifacts/logs.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(
+                new WorkspaceScanFile(
+                    "output/result.json", "DB_PASSWORD=correcthorsebatterystaple")));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories()).contains("ENV_VALUE");
+  }
+
+  @Test
+  void repoWorkingTreeFileStillCatchesInjectedProviderKey() {
+    // The precise injected-provider-key substring detector still runs over repo files — a runner
+    // that wrote the secret WE injected into committed code is a real leak.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(new WorkspaceScanFile("repo/src/Main.java", "// leaked " + CODEX_VALUE)));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories())
+        .containsExactly(RunnerSecretScanService.INJECTED_PROVIDER_KEY_CATEGORY);
+  }
+
+  @Test
+  void repoWorkingTreeFileStillCatchesStructuredCredentialShape() {
+    // Strongly-structured credential SHAPES (a ghp_ GitHub token here) are unambiguous secrets in
+    // any context and stay leak-worthy even in committed code — only the fuzzy categories are
+    // suppressed for repo files.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(
+                new WorkspaceScanFile("repo/src/Config.java", "String t = \"" + GH_TOKEN + "\";")));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories()).contains("GITHUB_TOKEN");
   }
 
   @Test
@@ -204,7 +295,7 @@ class RunnerSecretScanServiceTest {
             workspaceStore,
             redaction,
             new RunnerSecretsService(new MockEnvironment(), RunnerProperties.defaults()));
-    when(workspaceStore.readFilesForSecretScan(anyString()))
+    when(workspaceStore.readFilesForSecretScan(anyString(), anyBoolean()))
         .thenReturn(List.of(new WorkspaceScanFile("output/result.json", GH_TOKEN)));
 
     RunnerSecretScanService.ScanOutcome outcome =

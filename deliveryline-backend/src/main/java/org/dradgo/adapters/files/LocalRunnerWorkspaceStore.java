@@ -81,8 +81,11 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   private static final int TRUNCATED_TRAILING_GUARD_BYTES = 4096;
   private static final String TEMP_SUFFIX = ".tmp";
   private static final String QUARANTINE_MARKER_FILENAME = ".quarantine";
-  private static final List<String> SECRET_SCAN_SUBDIRS =
-      List.of(INPUT_SUBDIR, OUTPUT_SUBDIR, LOGS_SUBDIR, REPO_SUBDIR);
+  // The runner's own inputs/outputs/logs — always scanned. The cloned repo/ working tree is added
+  // only for a read-write (EXECUTION) stage via the includeRepoWorkingTree flag, never for a
+  // read-only stage where the runner cannot author repo content (see readFilesForSecretScan).
+  private static final List<String> SECRET_SCAN_RUNNER_SUBDIRS =
+      List.of(INPUT_SUBDIR, OUTPUT_SUBDIR, LOGS_SUBDIR);
 
   private static final Set<PosixFilePermission> OWNER_ONLY_DIR_PERMS =
       EnumSet.of(
@@ -574,15 +577,24 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
 
   /**
    * Story 3.5 AC4 — enumerate regular files under {@code input/}, {@code output/}, {@code logs/}
-   * and return relative path + UTF-8 text. Binary files (strict-decode failure) are skipped with a
-   * WARN (OQ-6); symlinks and escaping paths are skipped. Trap T7: bytes-only — no detection here.
+   * (and the cloned {@code repo/} working tree, minus {@code .git/}, when {@code
+   * includeRepoWorkingTree} is true) and return relative path + UTF-8 text. Binary files
+   * (strict-decode failure) are skipped with a WARN (OQ-6); symlinks and escaping paths are
+   * skipped. Trap T7: bytes-only — no detection here.
    */
   @Override
-  public List<WorkspaceScanFile> readFilesForSecretScan(String runnerExecutionId) {
+  public List<WorkspaceScanFile> readFilesForSecretScan(
+      String runnerExecutionId, boolean includeRepoWorkingTree) {
     PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
     Path root = resolveWorkspaceRoot(runnerExecutionId);
     List<WorkspaceScanFile> out = new ArrayList<>();
-    for (String subdir : SECRET_SCAN_SUBDIRS) {
+    List<String> scanSubdirs =
+        includeRepoWorkingTree
+            ? java.util.stream.Stream.concat(
+                    SECRET_SCAN_RUNNER_SUBDIRS.stream(), java.util.stream.Stream.of(REPO_SUBDIR))
+                .toList()
+            : SECRET_SCAN_RUNNER_SUBDIRS;
+    for (String subdir : scanSubdirs) {
       Path dir = subdirPath(runnerExecutionId, subdir);
       if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
         continue;

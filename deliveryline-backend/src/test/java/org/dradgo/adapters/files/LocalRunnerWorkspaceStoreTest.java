@@ -225,7 +225,7 @@ class LocalRunnerWorkspaceStoreTest {
     Path repo = store.prepareRepositoryDir(REX_ID);
     Files.writeString(repo.resolve("runner-change.txt"), "repo secret text");
 
-    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID, true);
 
     assertThat(files)
         .extracting(WorkspaceScanFile::relativePath)
@@ -255,12 +255,31 @@ class LocalRunnerWorkspaceStoreTest {
     Files.writeString(repo.resolve(".git").resolve("config"), "[core]\n\tbare = false\n");
     Files.writeString(repo.resolve("runner-change.txt"), "working tree change");
 
-    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID, true);
 
     assertThat(files)
         .extracting(WorkspaceScanFile::relativePath)
         .containsExactly("repo/runner-change.txt")
         .doesNotContain("repo/.git/hooks/fsmonitor-watchman.sample", "repo/.git/config");
+  }
+
+  @Test
+  void readFilesForSecretScanExcludesRepoWorkingTreeWhenNotRequested() throws IOException {
+    // A read-only (INVESTIGATION) stage passes includeRepoWorkingTree=false: the runner cannot
+    // modify the pristine clone, so the repo/ working tree is third-party upstream content that
+    // only false-positives the fuzzy heuristics. Only the runner's own input/output/logs are
+    // scanned.
+    WorkspaceLayout layout = store.prepare(REX_ID);
+    Files.writeString(layout.output().resolve("result.json"), "{\"ok\":true}");
+    Path repo = store.prepareRepositoryDir(REX_ID);
+    Files.writeString(repo.resolve("application.properties"), "db.password=hunter2highentropy");
+
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID, false);
+
+    assertThat(files)
+        .extracting(WorkspaceScanFile::relativePath)
+        .containsExactly("output/result.json")
+        .doesNotContain("repo/application.properties");
   }
 
   @Test
@@ -272,7 +291,7 @@ class LocalRunnerWorkspaceStoreTest {
         layout.output().resolve("artifact.bin"),
         new byte[] {(byte) 0xC3, (byte) 0x28, (byte) 0xFF});
 
-    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID, true);
 
     assertThat(files)
         .extracting(WorkspaceScanFile::relativePath)
@@ -281,7 +300,7 @@ class LocalRunnerWorkspaceStoreTest {
 
   @Test
   void readFilesForSecretScanReturnsEmptyForMissingWorkspace() {
-    assertThat(store.readFilesForSecretScan(REX_ID)).isEmpty();
+    assertThat(store.readFilesForSecretScan(REX_ID, true)).isEmpty();
   }
 
   @Test
