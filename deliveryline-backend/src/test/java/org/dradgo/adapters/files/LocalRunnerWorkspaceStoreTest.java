@@ -241,6 +241,29 @@ class LocalRunnerWorkspaceStoreTest {
   }
 
   @Test
+  void readFilesForSecretScanExcludesClonedRepoGitInternals() throws IOException {
+    // A real cloned repo carries a .git/ directory full of VCS internals the runner never
+    // authored — stock sample hooks, pack objects, config. Scanning them for "did the runner
+    // leak the injected provider key" is out of scope and false-positives (a stock
+    // .git/hooks/fsmonitor-watchman.sample trips the ENV_VALUE redaction heuristic, bricking the
+    // run with a bogus runner_secret_leak). Only runner-authored working-tree files are in scope.
+    Path repo = store.prepareRepositoryDir(REX_ID);
+    Path gitHooks = repo.resolve(".git").resolve("hooks");
+    Files.createDirectories(gitHooks);
+    Files.writeString(gitHooks.resolve("fsmonitor-watchman.sample"), "#!/usr/bin/perl\nmy $x = 1;\n");
+    Files.writeString(repo.resolve(".git").resolve("config"), "[core]\n\tbare = false\n");
+    Files.writeString(repo.resolve("runner-change.txt"), "working tree change");
+
+    List<WorkspaceScanFile> files = store.readFilesForSecretScan(REX_ID);
+
+    assertThat(files)
+        .extracting(WorkspaceScanFile::relativePath)
+        .containsExactly("repo/runner-change.txt")
+        .doesNotContain(
+            "repo/.git/hooks/fsmonitor-watchman.sample", "repo/.git/config");
+  }
+
+  @Test
   void readFilesForSecretScanSkipsBinaryFiles() throws IOException {
     WorkspaceLayout layout = store.prepare(REX_ID);
     Files.writeString(layout.output().resolve("result.json"), "{\"ok\":true}");

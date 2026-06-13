@@ -40,6 +40,10 @@ NODE_BIN="${NODE_BIN:-node}"
 RUNNER_LIB="${DELIVERYLINE_RUNNER_LIB:-/opt/deliveryline/lib/runner.mjs}"
 CODEX_CLI_BIN="${CODEX_CLI_BIN:-codex}"
 EXPECTED_CODEX_VERSION="${CODEX_CLI_VERSION:-<unset>}"
+# Story 3a-6 — agent-side OpenSpec CLI (present in production; mocked in the offline
+# build). --self-test asserts its presence + version pin (read from OPENSPEC_VERSION).
+OPENSPEC_CLI_BIN="${OPENSPEC_CLI_BIN:-openspec}"
+EXPECTED_OPENSPEC_VERSION="${OPENSPEC_VERSION:-<unset>}"
 
 PROMPT_FILE=""
 # Story 3a-3 (AC4) — path of the materialized subscription auth.json (set only when
@@ -146,12 +150,29 @@ run_self_test() {
       exit 1
       ;;
   esac
+  # Story 3a-6 — agent-side OpenSpec CLI must be present + match the pin (substring
+  # match, mirroring the codex version compare above). In production this is the real
+  # `openspec`; in the offline build it is the baked mock-openspec.sh reporting the pin.
+  if ! command -v "$OPENSPEC_CLI_BIN" >/dev/null 2>&1; then
+    echo "SELF-TEST FAIL: openspec CLI '$OPENSPEC_CLI_BIN' not found on PATH"
+    exit 1
+  fi
+  _openspec_version="$("$OPENSPEC_CLI_BIN" --version 2>/dev/null || echo '')"
+  case "$_openspec_version" in
+    *"$EXPECTED_OPENSPEC_VERSION"*) ;;
+    *)
+      echo "SELF-TEST FAIL: openspec version '${_openspec_version:-<unknown>}' does not match expected pin $EXPECTED_OPENSPEC_VERSION"
+      exit 1
+      ;;
+  esac
   echo "deliveryline/codex-runner self-test: OK"
   echo "  entrypoint:     reachable"
   echo "  node:           $("$NODE_BIN" --version)"
   echo "  runner helper:  $RUNNER_LIB"
   echo "  codex bin:      $(command -v "$CODEX_CLI_BIN")"
   echo "  codex version:  ${_codex_version:-<unknown>} (expected pin: $EXPECTED_CODEX_VERSION)"
+  echo "  openspec bin:   $(command -v "$OPENSPEC_CLI_BIN")"
+  echo "  openspec version: ${_openspec_version:-<unknown>} (expected pin: $EXPECTED_OPENSPEC_VERSION)"
   echo "  mounts:         input=$INPUT_DIR output=$OUTPUT_DIR logs=$LOGS_DIR"
   echo "  mount status:   input=$([ -d "$INPUT_DIR" ] && echo present || echo absent) output=$([ -d "$OUTPUT_DIR" ] && echo present || echo absent) logs=$([ -d "$LOGS_DIR" ] && echo present || echo absent)"
   echo "  network:        none (file-based contract; no API call in self-test)"

@@ -672,3 +672,12 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 - `useRetryWorkflow` spreads optionals on `!== undefined`, not blank — an empty-string `reasonText`/`correlationId` would be sent on the wire as present-but-blank; latent because no caller passes blank today (`retry.mutate({})`). [useRetryWorkflow.ts]
 - AC11 retry-mutation query-invalidation asserted only at the `useWorkflowMutation` factory level — inherited+tested via `useWorkflowMutation.test.tsx` (mirrors `useApproveSpec`); no retry-hook-specific `detail`/`lists` invalidation assertion. [useRetryWorkflow.test.tsx]
 - Run Context Strip tooltips show raw snake_case stage values vs humanized category/next-action — `failedStage`/`lastSuccessfulStage` `title=` carry raw tokens while category/next-action are humanized; minor SR/tooltip inconsistency. [RunContextStrip.tsx]
+
+## Deferred from: code review of 3a-6-openspec-cli-in-runner-images (2026-06-13)
+
+- Codex self-test loose substring version match [runners/codex/entrypoint.sh:161-162] — `*"$EXPECTED_OPENSPEC_VERSION"*` accepts substring-supersets (e.g. `1.4.10` for pin `1.4.1`). Pre-existing codex compare style (spec-mandated mirror); practically unreachable (install + expected pin share one ARG). Future hardening: align codex to claude's exact-token compare if/when the mirror rule is revisited.
+- No `set -f` glob guard around `set -- $_openspec_version` [runners/claude/entrypoint.sh:153] — a version token with a glob metachar would pathname-expand. Mirrors the existing claude CLI version line.
+- No timeout on `openspec --version` capture [runners/codex/entrypoint.sh:160, runners/claude/entrypoint.sh:152] — a hung CLI stalls `--self-test`. Pre-existing across both entrypoints' version probes.
+- `<unset>` entrypoint default vs `0.0.0-mock` mock default mismatch [both entrypoints + both mock-openspec.sh] — latent (Dockerfiles always set `ENV OPENSPEC_VERSION=1.4.1`), fails-safe.
+- Conformance ITs assert openspec summary labels, not the pinned version value [Codex/ClaudeRunnerImageConformanceIT.java] — optional hardening; exit-0 self-test gate already enforces the pin.
+- Legacy "AC9"/"AC4 mock" AC numbering carried into 3a-6 docs from stories 3.3/3.4 [both READMEs, codex Dockerfile comment] — cosmetic.

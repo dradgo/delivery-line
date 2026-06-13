@@ -109,7 +109,11 @@ describe('QueueShell', () => {
     );
     const empty = screen.getByTestId('empty-state');
     expect(empty).toHaveAttribute('data-variant', 'queue');
-    expect(screen.getByTestId('queue-announcer')).toHaveTextContent('Review queue is empty');
+    // The announcer (useLiveAnnouncement) lags `data-queue-state` by one commit by
+    // design, so poll for it rather than reading it on the same tick as the state flip.
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-announcer')).toHaveTextContent('Review queue is empty'),
+    );
   });
 
   it('AC4 — filtered-empty is distinct from empty and Clear filters fires + logs', async () => {
@@ -124,8 +128,11 @@ describe('QueueShell', () => {
       expect(container.querySelector('[data-queue-state="filtered-empty"]')).not.toBeNull(),
     );
     expect(screen.getByTestId('empty-state')).toHaveAttribute('data-variant', 'filtered');
-    expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
-      'No runs match the current filters',
+    // Announcer lags the state flip by one commit (useLiveAnnouncement) — poll for it.
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
+        'No runs match the current filters',
+      ),
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
@@ -180,8 +187,11 @@ describe('QueueShell', () => {
       expect(container.querySelector('[data-queue-state="populated"]')).not.toBeNull(),
     );
     expect(screen.getByTestId('custom-row')).toHaveTextContent('run_abcd0001');
-    expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
-      'Review queue loaded: 1 run available',
+    // Announcer lags the state flip by one commit (useLiveAnnouncement) — poll for it.
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
+        'Review queue loaded: 1 run available',
+      ),
     );
   });
 
@@ -220,8 +230,11 @@ describe('QueueShell', () => {
     await waitFor(() =>
       expect(container.querySelector('[data-queue-state="populated"]')).not.toBeNull(),
     );
-    expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
-      'Review queue loaded: 1 run available',
+    // Announcer lags the state flip by one commit (useLiveAnnouncement) — poll for it.
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
+        'Review queue loaded: 1 run available',
+      ),
     );
   });
 
@@ -341,7 +354,10 @@ describe('QueueShell', () => {
     await waitFor(() =>
       expect(container.querySelector('[data-queue-state="loading"]')).not.toBeNull(),
     );
-    expect(screen.getByTestId('queue-announcer')).toHaveTextContent('Loading the review queue');
+    // Announcer lags the state flip by one commit (useLiveAnnouncement) — poll for it.
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-announcer')).toHaveTextContent('Loading the review queue'),
+    );
 
     // Release the gate; it settles back to error (still no data).
     releaseRetry();

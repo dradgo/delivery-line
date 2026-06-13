@@ -21,10 +21,13 @@ describe('humanizeFailureCategory', () => {
     expect(humanizeFailureCategory('runner_future_mode')).toBe('Runner Future Mode');
   });
 
-  it('returns undefined for blank/undefined', () => {
+  it('returns undefined for blank/undefined/null', () => {
     expect(humanizeFailureCategory(undefined)).toBeUndefined();
     expect(humanizeFailureCategory('')).toBeUndefined();
     expect(humanizeFailureCategory('   ')).toBeUndefined();
+    // The wire sends `null` (not absent) for an uncategorized failure; treat it
+    // like a missing value rather than calling `.trim()` on it.
+    expect(humanizeFailureCategory(null as unknown as undefined)).toBeUndefined();
   });
 });
 
@@ -42,5 +45,6 @@ describe('humanizeNextSafeAction', () => {
     expect(humanizeNextSafeAction('do_something_new')).toBe('Do Something New');
     expect(humanizeNextSafeAction(undefined)).toBeUndefined();
     expect(humanizeNextSafeAction('')).toBeUndefined();
+    expect(humanizeNextSafeAction(null as unknown as undefined)).toBeUndefined();
   });
 });

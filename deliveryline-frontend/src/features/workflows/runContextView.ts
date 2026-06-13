@@ -73,9 +73,15 @@ export interface RunContextView {
   readonly nextSafeAction: string | undefined;
 }
 
-/** Coalesce an optional/blank backend string to a trimmed value or `undefined`. */
-function presentOrUndefined(value: string | undefined): string | undefined {
-  return value !== undefined && value.trim() !== '' ? value : undefined;
+/**
+ * Coalesce an optional/blank backend string to a present value or `undefined`.
+ * Nullable wire fields arrive as JSON `null` (not absent) — the generated
+ * `WorkflowDetail` type understates this — so guard `null` as well as `undefined`
+ * (`!= null` covers both) before calling `.trim()`, or an Investigating run's
+ * null `failureCategory`/`nextSafeAction` throws and tanks the whole strip.
+ */
+function presentOrUndefined(value: string | null | undefined): string | undefined {
+  return value != null && value.trim() !== '' ? value : undefined;
 }
 
 /**

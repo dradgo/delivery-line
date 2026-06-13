@@ -65,6 +65,7 @@ Accepted tokens (the three story-named artifact stages plus the `RunnerStage` en
 | `DELIVERYLINE_RUNNER_ALLOW_SIMULATE_FAILURE` | no | Must equal `true` to enable `--simulate-failure` (off in production). |
 | `DELIVERYLINE_RUNNER_SKIP_AUTH` | no | `true` lets a non-real run proceed without a key (mock/test only). |
 | `CODEX_CLI_VERSION` | baked | The pinned Codex CLI version, reported by `--self-test`. |
+| `OPENSPEC_VERSION` | baked | The pinned OpenSpec CLI version (story 3a-6), asserted + reported by `--self-test`. |
 
 Secrets arrive **as container env** (already injected by the backend `RunnerSecretsService` →
 `CreateContainerSpec.environment`). In **API mode** the entrypoint reads the variable, exports
@@ -131,6 +132,13 @@ injected secret:
   We keep the install lean instead (`npm cache clean --force`, `apt` lists removed).
 * **Helper:** the slim base ships `node` but not `jq`, so JSON read/build is delegated to the
   dependency-free `lib/runner.mjs` (Node ESM).
+* **Agent-side tooling — OpenSpec (story 3a-6):** the [`openspec`](https://www.npmjs.com/package/@fission-ai/openspec)
+  CLI is installed alongside Codex as a second agent-usable tool. It is a **pure-JS npm-global**
+  (`@fission-ai/openspec`, binary `openspec`) requiring **Node ≥ 20.19** — already satisfied by the
+  `node:22-slim` base, so there is **no base-image change**. It installs in the **same npm-global
+  layer** as the Codex CLI (real in production; a deterministic mock in the offline/`INSTALL_CODEX_CLI=false`
+  build — see below). Because OpenSpec manages spec files **on disk**, it needs no network/login to
+  run once installed (unlike Codex's subscription token refresh).
 * **Non-root (AC7):** runs as `codex:1001`. uid/gid **1001** is used because `node:22-slim` already
   occupies uid/gid `1000` with its own `node` user.
 
@@ -149,12 +157,59 @@ docker run --rm deliveryline/codex-runner:latest --self-test   # confirm the new
 > The Codex CLI distribution name/version can change — confirm with `npm view` at build time rather
 > than trusting this doc.
 
+### OpenSpec version pinning + upgrade procedure (story 3a-6)
+
+The agent-side [OpenSpec CLI](https://www.npmjs.com/package/@fission-ai/openspec) is pinned via
+`ARG OPENSPEC_VERSION` (currently **`1.4.1`** — **no** floating `latest`/`main`), surfaced as an
+`ENV` so `--self-test` can assert it. To upgrade:
+
+```bash
+npm view @fission-ai/openspec version          # confirm the current published version + package name
+# bump ARG OPENSPEC_VERSION in runners/codex/Dockerfile (mirror runners/claude/Dockerfile — same PR!)
+docker compose build codex-runner
+docker run --rm deliveryline/codex-runner:latest --self-test   # confirm the new openspec version reports
+```
+
+> Per the RUNNER_CONTRACT mirror rule, an OpenSpec bump (like a CLI bump) edits **both** runner
+> Dockerfiles in the same PR. The scoped package name `@fission-ai/openspec` is easy to typo — confirm
+> with `npm view` rather than trusting this doc.
+
+**Offline/mock build:** the conformance-test build (`--build-arg INSTALL_CODEX_CLI=false`, used by
+`CodexRunnerImageConformanceIT` and the CI `runner-image-compat` line) bakes a deterministic
+`test/mock-openspec.sh` to `/usr/local/bin/openspec` (mirroring `mock-codex.sh`). It answers
+`openspec --version` with the pin and reads no env other than `OPENSPEC_VERSION`, so the self-test's
+openspec assertion is green offline with **no** network `npm install`.
+
+> **Rebuild `:latest` after merge (done-criteria caveat).** The hand-built `:latest` runner images do
+> **not** auto-rebuild on merge. A run on a stale `:latest` won't have `openspec` and would surface as
+> missing tooling — rebuild (`docker compose build codex-runner`) and re-run `--self-test` after this
+> change lands.
+
+### OpenSpec activation during runs — finding (story 3a-6 AC4)
+
+OpenSpec is **present + CLI-invokable**: the agent inside the container can shell out to `openspec …`
+during a stage. **Slash-command auto-activation (`/opsx:*`) is NOT wired** in the single-prompt
+headless invocations (`codex exec`). OpenSpec's interactive UX is driven by slash commands plus an
+`AGENTS.md` written by `openspec init`; a single hardcoded prompt types no slash command, and the
+entrypoint deliberately does **not** run `openspec init` at runtime (it is interactive and would
+mutate the read-only spec/plan working tree, polluting pr-output diffs). A live headless-activation
+spike needs egress + a credential (out of scope for the offline tier); reasoning from the OpenSpec
+docs, auto-firing cannot be confirmed in single-prompt headless mode, so this image ships the
+**minimum** (present + invokable) and the entrypoint prompt is left unchanged. Wiring a minimal,
+non-mutating prompt nudge is deferred to a future story once headless activation is confirmed.
+
 ### Image size / layer count (AC9)
 
-Production image (`INSTALL_CODEX_CLI=true`, real CLI): **~652 MB, 10 layers**. The bulk is the Codex
-CLI's bundled native binary on top of the ~200 MB `node:22-slim` base. This is **under** the ~1 GB
-budget, so no additional justification is required. (The conformance-test image, built with the mock
-CLI, is ~327 MB.)
+Production image (`INSTALL_CODEX_CLI=true`, real CLIs): **≈ 671 MB, 11 layers** (≈ 652 MB before
+story 3a-6, + ~19 MB for the pure-JS OpenSpec npm-global package + one `COPY mock-openspec.sh` layer).
+The bulk is still the Codex CLI's bundled native binary on top of the ~200 MB `node:22-slim` base;
+OpenSpec's pure-JS footprint is modest (the `@fission-ai/openspec` package measures ~19 MB installed).
+This remains **well under** the ~1 GB budget, so no additional justification is required. (The
+conformance-test image, built with both mocks, is far smaller.)
+
+> The ~19 MB OpenSpec delta was measured via `npm install -g @fission-ai/openspec@1.4.1` on
+> `node:22-slim`; the ~652 MB Codex baseline was measured on WSL2 — re-measure the full production
+> image on WSL2 Ubuntu (Docker builds differ Windows vs the Linux CI runner).
 
 ## Testing the image locally
 

@@ -50,8 +50,8 @@ function titleCaseToken(raw: string): string {
  * non-blank token is title-cased, and `undefined`/blank yields `undefined` so the
  * caller can render a "Not reported" placeholder rather than empty text.
  */
-export function humanizeFailureCategory(category: string | undefined): string | undefined {
-  if (category === undefined || category.trim() === '') {
+export function humanizeFailureCategory(category: string | null | undefined): string | undefined {
+  if (category == null || category.trim() === '') {
     return undefined;
   }
   return FAILURE_CATEGORY_LABELS[category] ?? titleCaseToken(category);
@@ -63,8 +63,8 @@ export function humanizeFailureCategory(category: string | undefined): string | 
  * `undefined`. Render the result VERBATIM — never hardcode `await_operator_action`
  * (AC2's example label predates the live enum).
  */
-export function humanizeNextSafeAction(action: string | undefined): string | undefined {
-  if (action === undefined || action.trim() === '') {
+export function humanizeNextSafeAction(action: string | null | undefined): string | undefined {
+  if (action == null || action.trim() === '') {
     return undefined;
   }
   return NEXT_SAFE_ACTION_LABELS[action] ?? titleCaseToken(action);

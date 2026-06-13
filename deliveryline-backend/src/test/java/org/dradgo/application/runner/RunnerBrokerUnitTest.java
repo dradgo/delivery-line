@@ -815,6 +815,12 @@ class RunnerBrokerUnitTest {
             detailsCaptor.capture());
     assertEquals("runner_secret_leak", detailsCaptor.getValue().get("failureCategory"));
     assertEquals("output/result.json", detailsCaptor.getValue().get("leakedFile"));
+    // Regression lock: the detected categories must reach the event detail as the actual
+    // (non-empty) list, never collapsed to a scalar/empty string — the audit trail has to name
+    // WHICH detector fired (e.g. [ENV_VALUE]) so a leak can be triaged from the event stream alone.
+    assertEquals(
+        java.util.List.of("injected_provider_key"),
+        detailsCaptor.getValue().get("detectedCategories"));
   }
 
   @Test

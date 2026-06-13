@@ -3,8 +3,10 @@ package org.dradgo.adapters.runner;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
+import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.command.WaitContainerResultCallback;
@@ -129,6 +131,15 @@ class ClaudeRunnerImageConformanceIT {
             .exec(new WaitContainerResultCallback())
             .awaitStatusCode();
     assertThat(exit).as("--self-test exit code").isZero();
+
+    // Story 3a-6 (AC3) — the self-test must report the agent-side OpenSpec CLI. The summary goes to
+    // the container's stdout; capture it and assert the openspec line is present. A missing/mismatched
+    // openspec would have already failed the self-test (exit != 0), so this pins the line in CI.
+    String selfTestOutput = captureContainerLogs(created.getId());
+    assertThat(selfTestOutput)
+        .as("self-test summary must report the openspec CLI bin + version")
+        .contains("openspec bin:")
+        .contains("openspec version:");
   }
 
   @ParameterizedTest(name = "stage {0} -> artifactType {1}")
@@ -315,6 +326,24 @@ class ClaudeRunnerImageConformanceIT {
     String resultJson =
         Files.readString(output.resolve("runner-result.v1.json"), StandardCharsets.UTF_8);
     assertThat(resultJson).contains("TEMPLATE-MARKER").doesNotContain(OAUTH_SENTINEL);
+  }
+
+  private static String captureContainerLogs(String containerId) throws Exception {
+    StringBuilder sb = new StringBuilder();
+    docker
+        .logContainerCmd(containerId)
+        .withStdOut(true)
+        .withStdErr(true)
+        .withTailAll()
+        .exec(
+            new ResultCallback.Adapter<Frame>() {
+              @Override
+              public void onNext(Frame frame) {
+                sb.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+              }
+            })
+        .awaitCompletion();
+    return sb.toString();
   }
 
   private static String readIfExists(Path path) throws Exception {

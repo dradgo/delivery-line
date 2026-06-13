@@ -35,6 +35,10 @@ NODE_BIN="${NODE_BIN:-node}"
 RUNNER_LIB="${DELIVERYLINE_RUNNER_LIB:-/opt/deliveryline/lib/runner.mjs}"
 CLAUDE_CLI_BIN="${CLAUDE_CLI_BIN:-claude}"
 EXPECTED_CLAUDE_VERSION="${CLAUDE_CLI_VERSION:-<unset>}"
+# Story 3a-6 — agent-side OpenSpec CLI (present in production; mocked in the offline
+# build). --self-test asserts its presence + version pin (read from OPENSPEC_VERSION).
+OPENSPEC_CLI_BIN="${OPENSPEC_CLI_BIN:-openspec}"
+EXPECTED_OPENSPEC_VERSION="${OPENSPEC_VERSION:-<unset>}"
 
 PROMPT_FILE=""
 cleanup() {
@@ -138,12 +142,28 @@ run_self_test() {
     echo "SELF-TEST FAIL: claude version '${_claude_version:-<unknown>}' does not match expected pin $EXPECTED_CLAUDE_VERSION"
     exit 1
   fi
+  # Story 3a-6 — agent-side OpenSpec CLI must be present + match the pin (exact-token
+  # compare, mirroring this entrypoint's claude version check above). In production this
+  # is the real `openspec`; in the offline build it is the baked mock reporting the pin.
+  if ! command -v "$OPENSPEC_CLI_BIN" >/dev/null 2>&1; then
+    echo "SELF-TEST FAIL: openspec CLI '$OPENSPEC_CLI_BIN' not found on PATH"
+    exit 1
+  fi
+  _openspec_version="$("$OPENSPEC_CLI_BIN" --version 2>/dev/null || echo '')"
+  set -- $_openspec_version
+  _openspec_version_token="${1:-}"
+  if [ "$_openspec_version_token" != "$EXPECTED_OPENSPEC_VERSION" ]; then
+    echo "SELF-TEST FAIL: openspec version '${_openspec_version:-<unknown>}' does not match expected pin $EXPECTED_OPENSPEC_VERSION"
+    exit 1
+  fi
   echo "deliveryline/claude-runner self-test: OK"
   echo "  entrypoint:     reachable"
   echo "  node:           $("$NODE_BIN" --version)"
   echo "  runner helper:  $RUNNER_LIB"
   echo "  claude bin:     $(command -v "$CLAUDE_CLI_BIN")"
   echo "  claude version: ${_claude_version:-<unknown>} (expected pin: $EXPECTED_CLAUDE_VERSION)"
+  echo "  openspec bin:   $(command -v "$OPENSPEC_CLI_BIN")"
+  echo "  openspec version: ${_openspec_version:-<unknown>} (expected pin: $EXPECTED_OPENSPEC_VERSION)"
   echo "  mounts:         input=$INPUT_DIR output=$OUTPUT_DIR logs=$LOGS_DIR"
   echo "  mount status:   input=$([ -d "$INPUT_DIR" ] && echo present || echo absent) output=$([ -d "$OUTPUT_DIR" ] && echo present || echo absent) logs=$([ -d "$LOGS_DIR" ] && echo present || echo absent)"
   echo "  network:        none (file-based contract; no API call in self-test)"

@@ -61,6 +61,10 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   // Story 3.9 AC4 / Decision D3 — the cloned-repo working tree, sibling of input/output/logs under
   // the same {rex}/ root so the existing recursive deleteWorkspace reaps it for free (AC11).
   private static final String REPO_SUBDIR = "repo";
+  // Story 3.9 — the VCS metadata directory inside the cloned `repo/` working tree. Excluded from the
+  // secret scan (see readFilesForSecretScan): its stock sample hooks / pack objects are not
+  // runner-authored and the sample hooks false-positive the ENV_VALUE redaction heuristic.
+  private static final String GIT_METADATA_DIRNAME = ".git";
   private static final String CONTEXT_BUNDLE_FILENAME = "context-bundle.v1.json";
   private static final String RUNNER_RESULT_FILENAME = "runner-result.v1.json";
   private static final String HEARTBEAT_TOUCH_FILENAME = "heartbeat.touch";
@@ -587,6 +591,22 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
         Files.walkFileTree(
             dir,
             new SimpleFileVisitor<>() {
+              @Override
+              public FileVisitResult preVisitDirectory(Path subdir, BasicFileAttributes attrs) {
+                // Story 3.9 added the cloned `repo/` working tree to the secret scan, but a real
+                // clone carries a `.git/` directory of VCS internals the runner never authored —
+                // stock sample hooks, pack objects, config. Scanning those for "did the runner leak
+                // the injected provider key" is out of scope AND false-positives: a pristine
+                // `.git/hooks/fsmonitor-watchman.sample` trips the ENV_VALUE redaction heuristic,
+                // recording a bogus runner_secret_leak that freezes the run forever (the leak path
+                // never advances workflow state). Prune `.git/` so only runner-authored working-tree
+                // files are scanned. (Cheap win too: skips the entire pack/object tree.)
+                if (GIT_METADATA_DIRNAME.equals(subdir.getFileName().toString())) {
+                  return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+              }
+
               @Override
               public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 collectScanFile(runnerExecutionId, root, realDir, file, out);

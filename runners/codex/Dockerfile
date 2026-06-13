@@ -27,6 +27,13 @@ FROM ${BASE_IMAGE}
 # version with `npm view @openai/codex version` before bumping (see README
 # "Codex CLI version pinning + upgrade procedure").
 ARG CODEX_CLI_VERSION=0.135.0
+# OpenSpec CLI version pin (story 3a-6) — NO floating "latest". Confirm the
+# current published version with `npm view @fission-ai/openspec version` before
+# bumping (see README "OpenSpec version pinning + upgrade procedure"). OpenSpec
+# is a pure-JS npm-global (binary `openspec`, requires Node >=20.19 — satisfied
+# by node:22-slim, no base-image change), installed in the SAME npm layer as the
+# Codex CLI (real install in production; a deterministic mock in the offline build).
+ARG OPENSPEC_VERSION=1.4.1
 # Image version label for CI (override: --build-arg IMAGE_VERSION=<ci-tag>).
 ARG IMAGE_VERSION=latest
 # When false, skip the real npm install and bake the deterministic mock CLI used
@@ -41,6 +48,7 @@ LABEL org.opencontainers.image.title="deliveryline-codex-runner" \
 # Surface the pin to the entrypoint (used by --self-test version reporting) and
 # fix the helper/bin locations the entrypoint resolves by default.
 ENV CODEX_CLI_VERSION=${CODEX_CLI_VERSION} \
+    OPENSPEC_VERSION=${OPENSPEC_VERSION} \
     CODEX_CLI_BIN=codex \
     NODE_BIN=node \
     DELIVERYLINE_RUNNER_LIB=/opt/deliveryline/lib/runner.mjs
@@ -51,10 +59,12 @@ WORKDIR /opt/deliveryline
 COPY runners/codex/entrypoint.sh /opt/deliveryline/entrypoint.sh
 COPY runners/codex/lib/runner.mjs /opt/deliveryline/lib/runner.mjs
 COPY runners/codex/test/mock-codex.sh /opt/deliveryline/test/mock-codex.sh
+COPY runners/codex/test/mock-openspec.sh /opt/deliveryline/test/mock-openspec.sh
 
-# Install the Codex CLI (production) OR bake the deterministic mock (test build),
-# make the contract scripts executable, and create the unprivileged runtime user
-# — all in one layer to keep the image lean (AC7 non-root, AC9 layer budget).
+# Install the Codex CLI + the agent-side OpenSpec CLI (production) OR bake their
+# deterministic mocks (test build), make the contract scripts executable, and
+# create the unprivileged runtime user — all in one layer to keep the image lean
+# (AC7 non-root, AC9 layer budget; story 3a-6 adds openspec to this same layer).
 RUN set -eu; \
     if [ "${INSTALL_CODEX_CLI}" = "true" ]; then \
       # The real Codex CLI (Rust) needs a system trust store for TLS to the OpenAI /
@@ -64,9 +74,12 @@ RUN set -eu; \
       apt-get install -y --no-install-recommends ca-certificates; \
       update-ca-certificates; \
       npm install -g "@openai/codex@${CODEX_CLI_VERSION}"; \
+      # Story 3a-6 — agent-side tooling: pure-JS OpenSpec CLI, pinned, same layer.
+      npm install -g "@fission-ai/openspec@${OPENSPEC_VERSION}"; \
       npm cache clean --force; \
     else \
       install -m 0755 /opt/deliveryline/test/mock-codex.sh /usr/local/bin/codex; \
+      install -m 0755 /opt/deliveryline/test/mock-openspec.sh /usr/local/bin/openspec; \
     fi; \
     chmod +x /opt/deliveryline/entrypoint.sh /opt/deliveryline/lib/runner.mjs; \
     groupadd --gid 1001 codex; \

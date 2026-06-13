@@ -78,6 +78,13 @@ limits. Keep `default-kind`/worker concurrency aligned with the active plan's li
 * **Helper:** the slim base ships `node` but not `jq`, so JSON read/build is delegated to the
   dependency-free `lib/runner.mjs` (Node ESM). Its schema shape is byte-identical to the Codex
   helper — that IS the shared contract.
+* **Agent-side tooling — OpenSpec (story 3a-6):** the [`openspec`](https://www.npmjs.com/package/@fission-ai/openspec)
+  CLI is installed alongside Claude Code as a second agent-usable tool (mirroring the Codex runner —
+  same PR). It is a **pure-JS npm-global** (`@fission-ai/openspec`, binary `openspec`) requiring
+  **Node ≥ 20.19** — already satisfied by the `node:22-slim` base, so there is **no base-image
+  change**. It installs in the **same npm-global layer** as the Claude Code CLI (real in production;
+  a deterministic mock in the offline/`INSTALL_CLAUDE_CLI=false` build). Because OpenSpec manages
+  spec files **on disk**, it needs no network/login once installed.
 * **Non-root (AC2):** runs as `claude:1001`. uid/gid **1001** is used because `node:22-slim` already
   occupies uid/gid `1000` with its own `node` user.
 
@@ -97,21 +104,65 @@ docker run --rm deliveryline/claude-runner:latest --self-test   # confirm the ne
 > The Claude Code CLI distribution name/version can change — confirm with `npm view` at build time
 > rather than trusting this doc.
 
+### OpenSpec version pinning + upgrade procedure (story 3a-6)
+
+The agent-side [OpenSpec CLI](https://www.npmjs.com/package/@fission-ai/openspec) is pinned via
+`ARG OPENSPEC_VERSION` (currently **`1.4.1`** — **no** floating `latest`/`main`), surfaced as an
+`ENV` so `--self-test` can assert it. To upgrade:
+
+```bash
+npm view @fission-ai/openspec version          # confirm the current published version + package name
+# bump ARG OPENSPEC_VERSION in runners/claude/Dockerfile (mirror runners/codex/Dockerfile — same PR!)
+docker compose build claude-runner
+docker run --rm deliveryline/claude-runner:latest --self-test   # confirm the new openspec version reports
+```
+
+> Per the RUNNER_CONTRACT mirror rule, an OpenSpec bump (like a CLI bump) edits **both** runner
+> Dockerfiles in the same PR. The scoped package name `@fission-ai/openspec` is easy to typo — confirm
+> with `npm view` rather than trusting this doc.
+
+**Offline/mock build:** the conformance-test build (`--build-arg INSTALL_CLAUDE_CLI=false`, used by
+`ClaudeRunnerImageConformanceIT` and the CI `runner-image-compat` line) bakes a deterministic
+`test/mock-openspec.sh` to `/usr/local/bin/openspec` (mirroring `mock-claude.sh`). It answers
+`openspec --version` with the pin and reads no env other than `OPENSPEC_VERSION`, so the self-test's
+openspec assertion is green offline with **no** network `npm install`.
+
+> **Rebuild `:latest` after merge (done-criteria caveat).** The hand-built `:latest` runner images do
+> **not** auto-rebuild on merge. A run on a stale `:latest` won't have `openspec` and would surface as
+> missing tooling — rebuild (`docker compose build claude-runner`) and re-run `--self-test` after this
+> change lands.
+
+### OpenSpec activation during runs — finding (story 3a-6 AC4)
+
+OpenSpec is **present + CLI-invokable**: the agent inside the container can shell out to `openspec …`
+during a stage. **Slash-command auto-activation (`/opsx:*`) is NOT wired** in the single-prompt
+headless invocations (`claude -p`). OpenSpec's interactive UX is driven by slash commands plus an
+`AGENTS.md` written by `openspec init`; a single hardcoded prompt types no slash command, and the
+entrypoint deliberately does **not** run `openspec init` at runtime (it is interactive and would
+mutate the read-only spec/plan working tree, polluting pr-output diffs). A live headless-activation
+spike needs egress + a credential (out of scope for the offline tier); reasoning from the OpenSpec
+docs, auto-firing cannot be confirmed in single-prompt headless mode, so this image ships the
+**minimum** (present + invokable) and the entrypoint prompt is left unchanged. Wiring a minimal,
+non-mutating prompt nudge is deferred to a future story once headless activation is confirmed.
+
 ### Image size / layer count (AC9)
 
-Production image (`INSTALL_CLAUDE_CLI=true`, real CLI): **~147 MB, 10 layers** (measured on WSL2
-Ubuntu, `docker` 28.5.1, `node:22-slim`). This is **well under** the ~1 GB budget and actually
-*smaller* than the Codex runner (~652 MB) — the `@anthropic-ai/claude-code` npm package is lighter
-than the Codex CLI's bundled native binary. No size justification required. The conformance-test image
-(mock CLI, `INSTALL_CLAUDE_CLI=false`) is smaller still.
+Production image (`INSTALL_CLAUDE_CLI=true`, real CLIs): **≈ 166 MB, 11 layers** (≈ 147 MB before
+story 3a-6, + ~19 MB for the pure-JS OpenSpec npm-global package + one `COPY mock-openspec.sh` layer;
+baseline measured on WSL2 Ubuntu, `docker` 28.5.1, `node:22-slim`). This is **well under** the ~1 GB
+budget and still *smaller* than the Codex runner (≈ 671 MB) — the `@anthropic-ai/claude-code` npm
+package is lighter than the Codex CLI's bundled native binary, and OpenSpec adds the same modest
+pure-JS delta to both. No size justification required. The conformance-test image (both mocks,
+`INSTALL_CLAUDE_CLI=false`) is smaller still.
 
 ```bash
 docker build -f runners/claude/Dockerfile -t deliveryline/claude-runner:latest .
 docker image inspect deliveryline/claude-runner:latest --format 'size={{.Size}} layers={{len .RootFS.Layers}}'
 ```
 
-> Docker builds differ Windows vs the Linux CI runner — measure on WSL2 Ubuntu (the figures above
-> were measured there). See "CI parity" in the story Dev Notes.
+> Docker builds differ Windows vs the Linux CI runner — measure on WSL2 Ubuntu (the baseline figures
+> were measured there). The ~19 MB OpenSpec delta was measured via `npm install -g
+> @fission-ai/openspec@1.4.1` on `node:22-slim`. See "CI parity" in the story Dev Notes.
 
 ## Testing the image locally
 

@@ -106,6 +106,34 @@ describe('toRunContextView', () => {
     });
   });
 
+  it('coalesces null wire fields to undefined without throwing (Investigating run)', () => {
+    // The live wire serializes nullable fields as JSON `null`, not as absent
+    // (the generated `WorkflowDetail` TS type understates this). An Investigating
+    // run records `failedStage`/`runner.failed` but leaves `failureCategory` /
+    // `nextSafeAction` null until it reaches `Failed` — the mapper must treat
+    // `null` exactly like a missing field (`null.trim()` would otherwise throw).
+    const wireDetail = {
+      workflowRunId: 'run_a85a',
+      currentState: 'Investigating',
+      currentActorIdentity: 'system',
+      currentActorType: 'system',
+      lastEventType: 'runner.failed',
+      failedStage: 'runner',
+      failureCategory: null,
+      nextSafeAction: null,
+      lastSuccessfulStage: null,
+      failureTimestamp: null,
+    } as unknown as WorkflowDetail;
+
+    const view = toRunContextView(wireDetail, ACTIVITY_MS);
+    expect(view.currentState).toBe('Investigating');
+    expect(view.failedStage).toBe('runner');
+    expect(view.failureCategory).toBeUndefined();
+    expect(view.nextSafeAction).toBeUndefined();
+    expect(view.lastSuccessfulStage).toBeUndefined();
+    expect(view.failureTimestamp).toBeUndefined();
+  });
+
   describe('AC9 — staleIndicator boundary', () => {
     it('is false at exactly the threshold age', () => {
       const view = toRunContextView(detail(), ACTIVITY_MS + RUN_STALE_THRESHOLD_MS);

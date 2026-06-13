@@ -146,3 +146,14 @@ first-present-wins resolution prefers it over the API key.
 Non-root user (`codex:1001` / `claude:1001` — uid/gid `1000` is taken by the `node:22-slim` base's
 own `node` user), `--network=none` by default, secret from env never echoed, single-stage image, the
 prompt temp file written under `/workspace/logs` (never outside the rw mounts).
+
+## Agent-side tooling (story 3a-6)
+
+Beyond the agent CLI, both images now also carry the pinned **`openspec` CLI** (`@fission-ai/openspec`,
+`ARG OPENSPEC_VERSION`) as agent-usable tooling — **present in production**, a deterministic mock in
+the offline `INSTALL_*_CLI=false` build. `--self-test` asserts it is on PATH at the expected pin on
+**both** runners. This is **visibility only**: it adds **no** new file, mount, exit-code, or
+bundle/result-schema obligation — the runner ↔ backend contract above is byte-identical. Per the
+change rule, adding/bumping agent-side tooling edits **both** Dockerfiles + entrypoints + READMEs in
+the same PR. (Slash-command auto-activation is not wired in headless single-prompt runs — see each
+runner README's "OpenSpec activation during runs" finding.)
