@@ -129,8 +129,16 @@ public interface RunnerWorkspaceStore {
    * list when the workspace is missing. Trap T7: this method only reads bytes — it performs NO
    * credential detection; detection is the caller's responsibility (RedactionPolicyService + the
    * broker's literal-value substring check).
+   *
+   * <p>When {@code includeRepoWorkingTree} is true, the cloned {@code repo/} working tree is ALSO
+   * enumerated (excluding its {@code .git/} VCS internals — stock sample hooks / pack objects that
+   * are not runner-authored and false-positive the fuzzy heuristics). Callers pass true only for a
+   * read-write stage where the runner can author repo content that is later pushed (EXECUTION);
+   * a read-only stage (INVESTIGATION) passes false, because the runner cannot modify the pristine
+   * clone and scanning third-party upstream content only produces false positives.
    */
-  List<WorkspaceScanFile> readFilesForSecretScan(String runnerExecutionId);
+  List<WorkspaceScanFile> readFilesForSecretScan(
+      String runnerExecutionId, boolean includeRepoWorkingTree);
 
   /**
    * Story 3.5 AC4 / Trap T10 — write a {@code .quarantine} marker file in the workspace root so the
