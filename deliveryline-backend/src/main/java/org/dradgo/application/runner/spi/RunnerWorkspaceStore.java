@@ -133,8 +133,8 @@ public interface RunnerWorkspaceStore {
    * <p>When {@code includeRepoWorkingTree} is true, the cloned {@code repo/} working tree is ALSO
    * enumerated (excluding its {@code .git/} VCS internals — stock sample hooks / pack objects that
    * are not runner-authored and false-positive the fuzzy heuristics). Callers pass true only for a
-   * read-write stage where the runner can author repo content that is later pushed (EXECUTION);
-   * a read-only stage (INVESTIGATION) passes false, because the runner cannot modify the pristine
+   * read-write stage where the runner can author repo content that is later pushed (EXECUTION); a
+   * read-only stage (INVESTIGATION) passes false, because the runner cannot modify the pristine
    * clone and scanning third-party upstream content only produces false positives.
    */
   List<WorkspaceScanFile> readFilesForSecretScan(
