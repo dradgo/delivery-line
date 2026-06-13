@@ -57,6 +57,19 @@ in Epic 2 stories `2-8` through `2-19`.
 
 **See also:** Epic 2 backend stories.
 
+### clarification
+
+A question a run raises before its spec can be finalised, and the answer a reviewer gives back.
+Each clarification moves through an **incorporation lifecycle**: `open` (awaiting an answer) →
+`answered` (answered, but the spec is not yet rebuilt — shown as "Answered · pending
+incorporation") → `accepted` → `incorporated` (the spec has been rebuilt with the answer). Two
+off-path outcomes exist: `superseded` (a newer answer/version set it aside) and `rejected_invalid`
+(the answer was judged invalid). The make-or-break distinction the PM loop hinges on is
+**answered ≠ incorporated** — approval should wait until a clarification reads `incorporated`.
+
+**See also:** [`pm-loop-walkthrough.md`](pm-loop-walkthrough.md) (Step 3), Epic 2 stories `2-11`
+(clarification model) and `2-12` (incorporation lifecycle).
+
 ### failure
 
 A run state where execution cannot make forward progress without operator intervention. A
@@ -85,6 +98,7 @@ distinguishes operator-driven recovery from runner-driven progress.
 This glossary is referenced from:
 
 - [`quickstart.md`](quickstart.md) — "Concepts you just used" footer.
+- [`pm-loop-walkthrough.md`](pm-loop-walkthrough.md) — "Concepts you just used" footer.
 - [`setup-local.md`](setup-local.md) — "See also" footer.
 
 Epic 6 stories (6.1 / 6.2) will wire cross-links from `failure-recovery-walkthrough.md`

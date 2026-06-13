@@ -2,6 +2,13 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-2-29 (2026-06-13)
+
+- **Dual lifecycle representation never bridged** — the headline 3-pill indicator (`submitted › accepted › incorporated`, the literal `LIFECYCLE_STAGES`) and the per-item/Mermaid set (`Open → Answered → Accepted → Incorporated`) are both faithful to the live UI but a first-run PM must reconcile "Answered = first dot (submitted)" unaided; one bridging sentence would help. Clarity polish only. [`docs/pm-loop-walkthrough.md:135,154-163`]
+- **Superseded "Safe to approve?" cell is a non-answer** — reads "See the note shown" while every other row gives Yes/No; could be strengthened to "No — check for a follow-up first". Wording, not incorrect. [`docs/pm-loop-walkthrough.md:148`]
+- **ASCII mockup borders ragged** — right-edge `│` characters don't align in the tri-pane and queue `text` blocks; cosmetic. [`docs/pm-loop-walkthrough.md:51-61,77-83`]
+- **Role note "anyone can perform any action" vs the two state gates** — the unqualified RBAC-disclaimer sits next to two documented state-machine refusals (blocked-approve, out-of-date); a clause distinguishing permission-gating from state-gating would prevent a double-take. [`docs/pm-loop-walkthrough.md:283-287`]
+
 ## Deferred from: re-review of story-2-27 (2026-06-11)
 
 - **terminalState→currentState mapping makes the happy-path run report `Completed`** — `summary`/`detail` map `workflowRun.terminalState` straight to `currentState`; the happy-path fixture is `Completed`, so `allowedActions` returns `[]` and the approval bar renders structurally `blocked`. Reactivating the quarantined J1/J2 approve/reject steps (AC8) will require driving a NON-terminal run/fixture, not just shipping the 2.18/2.19 read-seams the quarantine rationale cites. [`deliveryline-frontend/e2e/support/mockApi.ts:54`, `src/test/handlers.ts:53`]
