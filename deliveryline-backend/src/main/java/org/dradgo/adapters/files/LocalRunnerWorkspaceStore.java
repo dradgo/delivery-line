@@ -61,7 +61,8 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   // Story 3.9 AC4 / Decision D3 — the cloned-repo working tree, sibling of input/output/logs under
   // the same {rex}/ root so the existing recursive deleteWorkspace reaps it for free (AC11).
   private static final String REPO_SUBDIR = "repo";
-  // Story 3.9 — the VCS metadata directory inside the cloned `repo/` working tree. Excluded from the
+  // Story 3.9 — the VCS metadata directory inside the cloned `repo/` working tree. Excluded from
+  // the
   // secret scan (see readFilesForSecretScan): its stock sample hooks / pack objects are not
   // runner-authored and the sample hooks false-positive the ENV_VALUE redaction heuristic.
   private static final String GIT_METADATA_DIRNAME = ".git";
@@ -599,7 +600,8 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
                 // the injected provider key" is out of scope AND false-positives: a pristine
                 // `.git/hooks/fsmonitor-watchman.sample` trips the ENV_VALUE redaction heuristic,
                 // recording a bogus runner_secret_leak that freezes the run forever (the leak path
-                // never advances workflow state). Prune `.git/` so only runner-authored working-tree
+                // never advances workflow state). Prune `.git/` so only runner-authored
+                // working-tree
                 // files are scanned. (Cheap win too: skips the entire pack/object tree.)
                 if (GIT_METADATA_DIRNAME.equals(subdir.getFileName().toString())) {
                   return FileVisitResult.SKIP_SUBTREE;

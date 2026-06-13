@@ -250,7 +250,8 @@ class LocalRunnerWorkspaceStoreTest {
     Path repo = store.prepareRepositoryDir(REX_ID);
     Path gitHooks = repo.resolve(".git").resolve("hooks");
     Files.createDirectories(gitHooks);
-    Files.writeString(gitHooks.resolve("fsmonitor-watchman.sample"), "#!/usr/bin/perl\nmy $x = 1;\n");
+    Files.writeString(
+        gitHooks.resolve("fsmonitor-watchman.sample"), "#!/usr/bin/perl\nmy $x = 1;\n");
     Files.writeString(repo.resolve(".git").resolve("config"), "[core]\n\tbare = false\n");
     Files.writeString(repo.resolve("runner-change.txt"), "working tree change");
 
@@ -259,8 +260,7 @@ class LocalRunnerWorkspaceStoreTest {
     assertThat(files)
         .extracting(WorkspaceScanFile::relativePath)
         .containsExactly("repo/runner-change.txt")
-        .doesNotContain(
-            "repo/.git/hooks/fsmonitor-watchman.sample", "repo/.git/config");
+        .doesNotContain("repo/.git/hooks/fsmonitor-watchman.sample", "repo/.git/config");
   }
 
   @Test

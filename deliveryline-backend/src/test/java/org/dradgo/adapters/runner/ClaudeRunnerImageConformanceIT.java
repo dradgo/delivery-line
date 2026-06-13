@@ -133,7 +133,8 @@ class ClaudeRunnerImageConformanceIT {
     assertThat(exit).as("--self-test exit code").isZero();
 
     // Story 3a-6 (AC3) — the self-test must report the agent-side OpenSpec CLI. The summary goes to
-    // the container's stdout; capture it and assert the openspec line is present. A missing/mismatched
+    // the container's stdout; capture it and assert the openspec line is present. A
+    // missing/mismatched
     // openspec would have already failed the self-test (exit != 0), so this pins the line in CI.
     String selfTestOutput = captureContainerLogs(created.getId());
     assertThat(selfTestOutput)
