@@ -51,6 +51,12 @@ export interface ArtifactReviewPanelProps {
   artifact?: ArtifactView | undefined;
   /** AC9 — whether the Compare-Mode entry is enabled (always the safe default `false` live). */
   compareEnabled?: boolean;
+  /**
+   * Story 3.27 AC7 — the backend-reported allowed actions, forwarded to the prOutput
+   * variant renderer so its variant-specific controls enable/disable strictly from backend
+   * truth (UX-DR12). `undefined` (the disabled-stub default) keeps gated controls reserved.
+   */
+  actions?: readonly string[] | undefined;
   /** AC4 — the error-state Retry handler. */
   onRetry?: (() => void) | undefined;
 }
@@ -68,7 +74,11 @@ function UnsupportedArtifact({ artifactType }: { artifactType: string }) {
 }
 
 /** Dispatch a resolved artifact to its per-variant renderer (AC1, AC3). */
-function renderVariant(artifact: ArtifactView, compareEnabled: boolean): ReactNode {
+function renderVariant(
+  artifact: ArtifactView,
+  compareEnabled: boolean,
+  actions: readonly string[] | undefined,
+): ReactNode {
   switch (artifact.artifactType) {
     case 'spec':
       return <SpecArtifactRenderer artifact={artifact} compareEnabled={compareEnabled} />;
@@ -77,7 +87,10 @@ function renderVariant(artifact: ArtifactView, compareEnabled: boolean): ReactNo
         <ImplementationPlanArtifactRenderer artifact={artifact} compareEnabled={compareEnabled} />
       );
     case 'prOutput':
-      return <PrOutputArtifactRenderer artifact={artifact} />;
+      // Story 3.27 AC7 — thread the backend-reported allowed actions to the prOutput
+      // renderer (parallel to how `spec` gets `compareEnabled`); the renderer gates its
+      // variant-specific controls strictly on them, never on frontend inference.
+      return <PrOutputArtifactRenderer artifact={artifact} actions={actions} />;
     default:
       // A discriminant value this build doesn't know (a future type). The union is
       // closed in TS, but the runtime guard is the artifact-level twin of the route's
@@ -147,6 +160,7 @@ export function ArtifactReviewPanel({
   state,
   artifact,
   compareEnabled = false,
+  actions,
   onRetry,
 }: ArtifactReviewPanelProps) {
   return (
@@ -215,7 +229,7 @@ export function ArtifactReviewPanel({
               message="This artifact’s content is partial (truncated). Some sections may be missing."
             />
           ) : null}
-          {renderVariant(artifact, compareEnabled)}
+          {renderVariant(artifact, compareEnabled, actions)}
         </>
       ) : null}
     </section>
@@ -295,6 +309,7 @@ export function ArtifactReviewPanelContainer({
       state={state}
       artifact={artifact}
       compareEnabled={compareEnabled}
+      actions={actions}
       onRetry={handleRetry}
     />
   );

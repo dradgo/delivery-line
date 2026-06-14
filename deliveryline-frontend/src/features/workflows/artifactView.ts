@@ -125,9 +125,50 @@ export interface ImplementationPlanArtifactView extends ArtifactViewBase {
   readonly truncated?: boolean;
 }
 
-/** The PR-output variant (Epic 3 scope) — stub-rendered in E2. */
+/** The PR lifecycle state (story 3.15 AC1 — sourced from `integration_links.external_metadata.prState`). */
+export type PrState = 'draft' | 'open' | 'merged' | 'closed';
+
+/**
+ * BACKEND-TRUTH PR linkage (story 3.27 AC3 — the metadata-spoofing boundary). Sourced
+ * from `integration_links` (NOT runner-emitted): the displayed PR reference + state come
+ * from HERE, never from the runner-emitted artifact. `null` when the run has no linked PR
+ * (the renderer then shows only the runner-emitted branch/commit). The reconciliation
+ * pattern: a live read model omits unlinked fields → `prLinkage` is `null` (the
+ * `WorkflowDetail` wire serializes nullable fields as JSON null — guard `!= null`).
+ */
+export interface PrLinkage {
+  /** Authoritative PR reference `org/repo#42` (TRUSTED). */
+  readonly prReference: string;
+  /** Authoritative PR lifecycle state (TRUSTED). */
+  readonly prState: PrState;
+  /** Optional canonical PR URL from `integration_links` (preferred over a derived URL). */
+  readonly prUrl?: string;
+  /** Optional last-sync instant for the AC6 "(last synced X ago)" affordance. */
+  readonly lastSyncedAt?: string;
+  /** AC6 — `false` when GitHub was unreachable on the last reconcile (cached-state path). */
+  readonly githubReachable?: boolean;
+}
+
+/**
+ * The PR-output variant (Epic 3 scope, story 3.27) — fully rendered by
+ * {@link PrOutputArtifactRenderer}. Carries the runner-emitted (UNTRUSTED) branch /
+ * commit / diff on top of the shared base, plus the backend-truth `prLinkage` slot
+ * (story 3.15 / AC3). `body` (inherited) is the UNTRUSTED markdown PR description.
+ *
+ * `diffReference` on the runner-result wire is a STORAGE REF, not the diff bytes — this
+ * frontend-owned view carries the RESOLVED `diff` text because there is no live
+ * artifact-read endpoint (Dev Notes "Central reconciliation"); do NOT invent a fetch.
+ */
 export interface PrOutputArtifactView extends ArtifactViewBase {
   readonly artifactType: 'prOutput';
+  /** UNTRUSTED runner-emitted source branch (story 1.6 AC4). */
+  readonly branch: string;
+  /** UNTRUSTED runner-emitted commit SHA (7–40 hex on the wire; rendered short-form). */
+  readonly commitSha: string;
+  /** UNTRUSTED runner-emitted unified diff (the resolved `diffReference` content). */
+  readonly diff: string;
+  /** BACKEND-TRUTH PR linkage; `null`/absent when the run has no linked PR (AC3). */
+  readonly prLinkage?: PrLinkage | null;
 }
 
 /**
@@ -177,6 +218,31 @@ function isImplementationPlanContextRef(value: unknown): boolean {
   );
 }
 
+/**
+ * Whether `value` is a valid backend-truth {@link PrLinkage} slot. Accepts `undefined`
+ * or `null` (an unlinked run — the wire sends JSON null), else requires a string
+ * `prReference` + a `prState` from the four lifecycle values, with the optional
+ * `prUrl`/`lastSyncedAt` typed as strings and `githubReachable` as a boolean when present.
+ */
+function isValidPrLinkage(value: unknown): boolean {
+  if (value === undefined || value === null) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.prReference === 'string' &&
+    (value.prState === 'draft' ||
+      value.prState === 'open' ||
+      value.prState === 'merged' ||
+      value.prState === 'closed') &&
+    (value.prUrl === undefined || typeof value.prUrl === 'string') &&
+    (value.lastSyncedAt === undefined || typeof value.lastSyncedAt === 'string') &&
+    (value.githubReachable === undefined || typeof value.githubReachable === 'boolean')
+  );
+}
+
 /** Whether the optional spec/impl-plan dormant flags on `value` are each a boolean when present. */
 function hasValidDormantFlags(value: Record<string, unknown>): boolean {
   return (
@@ -211,7 +277,15 @@ export function isArtifactView(value: unknown): value is ArtifactView {
   }
 
   if (value.artifactType === 'prOutput') {
-    return true;
+    // Story 3.27 — the prOutput branch now validates the runner-emitted string fields
+    // (branch/commitSha/diff) + the backend-truth prLinkage shape, so a partial summary
+    // can no longer be cast into the renderer props and crash on a missing diff/ref.
+    return (
+      typeof value.branch === 'string' &&
+      typeof value.commitSha === 'string' &&
+      typeof value.diff === 'string' &&
+      isValidPrLinkage(value.prLinkage)
+    );
   }
 
   if (value.artifactType !== 'spec') {

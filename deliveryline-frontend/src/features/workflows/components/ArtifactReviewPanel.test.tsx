@@ -91,7 +91,7 @@ describe('ArtifactReviewPanel — presentational dispatch (AC1, AC3)', () => {
     expect(screen.getByTestId('implementation-plan-artifact-renderer')).toBeInTheDocument();
   });
 
-  it('routes prOutput → stub renderer', () => {
+  it('routes prOutput → PrOutputArtifactRenderer (story 3.27)', () => {
     renderDefault(prOutputArtifactView);
     expect(screen.getByTestId('pr-output-artifact-renderer')).toBeInTheDocument();
   });
@@ -326,7 +326,7 @@ describe('ArtifactReviewPanelContainer — data seam (AC4, AC9, logging)', () =>
 });
 
 describe('ArtifactReviewPanel — fixture-stream dispatch (AC12)', () => {
-  it('renders the spec variant fully and the stub variants gracefully from fixtures', () => {
+  it('renders every artifact variant from fixtures (spec, implementation-plan, prOutput)', () => {
     const { rerender } = render(
       <ArtifactReviewPanel state="default" artifact={specArtifactView} />,
     );

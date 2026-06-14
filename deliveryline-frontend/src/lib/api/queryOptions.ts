@@ -151,7 +151,19 @@ export function toArtifactView(dto: ArtifactDetail, artifactId: string): Artifac
     return { ...base, artifactType: 'implementationPlan' };
   }
   if (artifactType === 'prOutput') {
-    return { ...base, artifactType: 'prOutput' };
+    // Story 3.27 — the prOutput view requires the runner-emitted branch/commit/diff + the
+    // backend-truth prLinkage. The live 3a-9 `ArtifactDetail` wire carries NONE of these
+    // yet (no live prOutput read model — the renderer is fixture-driven), so map empty
+    // defaults; the renderer degrades gracefully (empty diff → "No diff content",
+    // null prLinkage → "No linked pull request"). A future read-model story populates them.
+    return {
+      ...base,
+      artifactType: 'prOutput',
+      branch: '',
+      commitSha: '',
+      diff: '',
+      prLinkage: null,
+    };
   }
   // Default to the spec variant (the only fully-rendered type and this story's scope); an
   // unknown wire type still carries through so `isArtifactView` can reject it loudly.

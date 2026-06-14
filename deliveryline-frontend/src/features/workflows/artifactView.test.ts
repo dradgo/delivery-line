@@ -16,6 +16,7 @@ import {
 } from './artifactView';
 import {
   implementationPlanArtifactView,
+  prOutputArtifactView,
   specArtifactView,
 } from '@/test/fixtures/artifact/artifactViewFixtures';
 
@@ -142,6 +143,28 @@ describe('isArtifactView', () => {
 
     // The enriched fixture (typed steps + refs) passes.
     expect(isArtifactView(implementationPlanArtifactView)).toBe(true);
+  });
+
+  it('story 3.27 — prOutput requires branch/commitSha/diff + a valid prLinkage shape', () => {
+    // The enriched fixture (runner-emitted fields + backend-truth prLinkage) passes.
+    expect(isArtifactView(prOutputArtifactView)).toBe(true);
+    // prLinkage is optional — absent / null is valid (an unlinked run).
+    expect(isArtifactView({ ...prOutputArtifactView, prLinkage: null })).toBe(true);
+    expect(isArtifactView({ ...prOutputArtifactView, prLinkage: undefined })).toBe(true);
+
+    // A partial summary-like cast (missing diff/branch) is rejected before the renderer.
+    expect(isArtifactView({ ...prOutputArtifactView, diff: undefined })).toBe(false);
+    expect(isArtifactView({ ...prOutputArtifactView, branch: undefined })).toBe(false);
+    expect(isArtifactView({ ...prOutputArtifactView, commitSha: undefined })).toBe(false);
+
+    // A malformed prLinkage (bad prState / missing prReference) is rejected.
+    expect(
+      isArtifactView({
+        ...prOutputArtifactView,
+        prLinkage: { prReference: 'a/b#1', prState: 'bogus' },
+      }),
+    ).toBe(false);
+    expect(isArtifactView({ ...prOutputArtifactView, prLinkage: { prState: 'open' } })).toBe(false);
   });
 });
 
