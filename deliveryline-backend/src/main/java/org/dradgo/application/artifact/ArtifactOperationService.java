@@ -641,13 +641,15 @@ public class ArtifactOperationService {
                 artifact.publicId(),
                 operationTypeValue,
                 operation.idempotencyKey());
+        String storageRef = null;
         if (operation.payloadContent() != null) {
-          artifactPayloadStore.write(
-              operation.workflowRunId(),
-              artifact.publicId(),
-              artifact.version(),
-              canonicalPayloadRef,
-              operation.payloadContent());
+          storageRef =
+              artifactPayloadStore.write(
+                  operation.workflowRunId(),
+                  artifact.publicId(),
+                  artifact.version(),
+                  canonicalPayloadRef,
+                  operation.payloadContent());
         }
         log.info(
             "recordOperation success workflowRunId={} artifactId={} operationId={} operationType={} idempotencyKey={}",
@@ -656,7 +658,7 @@ public class ArtifactOperationService {
             pending.publicId(),
             operationTypeValue,
             operation.idempotencyKey());
-        return new RecordArtifactOperationResult(artifact, pending);
+        return new RecordArtifactOperationResult(artifact, pending, storageRef);
       } finally {
         MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
       }

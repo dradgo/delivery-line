@@ -48,7 +48,8 @@ class RunnerPropertiesTest {
             true,
             RunnerProperties.SpecStage.defaults(),
             RunnerProperties.PlanStage.defaults(),
-            RunnerProperties.ImplementationStage.defaults());
+            RunnerProperties.ImplementationStage.defaults(),
+            RunnerProperties.OpenSpec.defaults());
     assertEquals(true, enabled.allowShareableLogs());
   }
 
@@ -109,7 +110,8 @@ class RunnerPropertiesTest {
             false,
             new RunnerProperties.SpecStage(RunnerKind.CLAUDE, true),
             new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
-            RunnerProperties.ImplementationStage.defaults());
+            RunnerProperties.ImplementationStage.defaults(),
+            RunnerProperties.OpenSpec.defaults());
     assertEquals(
         RunnerKind.CLAUDE,
         claudeSpecCodexPlan.kindForStage(org.dradgo.domain.registry.RunnerStage.INVESTIGATION));
@@ -134,7 +136,8 @@ class RunnerPropertiesTest {
             false,
             RunnerProperties.SpecStage.defaults(),
             new RunnerProperties.PlanStage(RunnerKind.CLAUDE, false),
-            RunnerProperties.ImplementationStage.defaults());
+            RunnerProperties.ImplementationStage.defaults(),
+            RunnerProperties.OpenSpec.defaults());
     assertEquals(
         RunnerKind.CLAUDE,
         claudePlan.kindForStage(org.dradgo.domain.registry.RunnerStage.EXECUTION));
@@ -175,7 +178,8 @@ class RunnerPropertiesTest {
             false,
             RunnerProperties.SpecStage.defaults(),
             new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
-            new RunnerProperties.ImplementationStage(RunnerKind.CLAUDE, true));
+            new RunnerProperties.ImplementationStage(RunnerKind.CLAUDE, true),
+            RunnerProperties.OpenSpec.defaults());
     assertEquals(
         RunnerKind.CODEX, props.kindForExecutionSubStage(ExecutionSubStage.IMPLEMENTATION_PLAN));
     assertEquals(RunnerKind.CLAUDE, props.kindForExecutionSubStage(ExecutionSubStage.PR_OUTPUT));
@@ -202,7 +206,8 @@ class RunnerPropertiesTest {
                 false,
                 RunnerProperties.SpecStage.defaults(),
                 RunnerProperties.PlanStage.defaults(),
-                RunnerProperties.ImplementationStage.defaults()));
+                RunnerProperties.ImplementationStage.defaults(),
+                RunnerProperties.OpenSpec.defaults()));
   }
 
   @Test
@@ -225,7 +230,8 @@ class RunnerPropertiesTest {
                 false,
                 RunnerProperties.SpecStage.defaults(),
                 RunnerProperties.PlanStage.defaults(),
-                RunnerProperties.ImplementationStage.defaults()));
+                RunnerProperties.ImplementationStage.defaults(),
+                RunnerProperties.OpenSpec.defaults()));
   }
 
   @Test

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.adapters.runner.MockRunnerAdapter;
 import org.dradgo.application.runner.RunnerBroker;
+import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.registry.ActorType;
@@ -104,13 +105,10 @@ class SpecStageOrchestrationIT {
                 + " (select id from workflow_runs where public_id = ?)",
             String.class,
             runId));
-    // A spec artifact lineage was ingested by the broker's recordOperation path. NOTE: it remains
-    // `pending` — marking it `available` requires ArtifactOperationService.markAvailable, which has
-    // NO production caller today (a pre-existing ingestion-completion gap; AC2's "markAvailable"
-    // step is unwired). Completing it needs checksum/storageRef plumbing + artifact code this story
-    // scopes out ("unchanged ingestion; no new artifact code"). 3a-1 delivers the orchestration
-    // auto-advance on successful spec ingest; full artifact availability is a follow-up (see
-    // notes).
+    // A spec artifact lineage was ingested by the broker's recordOperation path AND promoted to
+    // `available` (checksum + storageRef stamped) so the human spec-approval gate accepts it. See
+    // specArtifactIsMarkedAvailableAndApprovableAfterPoll for the full approve-eligibility
+    // assertion.
     assertEquals(
         1,
         jdbcTemplate.queryForObject(
@@ -118,6 +116,56 @@ class SpecStageOrchestrationIT {
                 + " (select id from workflow_runs where public_id = ?) and artifact_type = 'spec'",
             Integer.class,
             runId));
+  }
+
+  @Test
+  void specArtifactIsMarkedAvailableAndApprovableAfterPoll() {
+    // The user-facing bug: a real spec run reaches WaitingForSpecApproval but the ingested spec
+    // artifact stays `pending`, so the human approval gate (ArtifactService.isApprovalEligible,
+    // which requires status=AVAILABLE + checksum + storageRef) rejects approval with
+    // ARTIFACT_PAYLOAD_UNAVAILABLE. Wiring markAvailable into the spec-stage ingest must make the
+    // artifact available and the approval succeed.
+    String runId =
+        commandService
+            .submit(
+                new SubmitWorkflowCommand(
+                    "alex", ActorType.HUMAN, "idem-e2e-avail-12345", "corr-e2e-avail", "LIN-101"))
+            .workflowRunId();
+
+    runnerBroker.pollActiveExecutions();
+
+    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), currentState(runId));
+
+    String specArtifactId =
+        jdbcTemplate.queryForObject(
+            "select public_id from artifacts where workflow_run_id ="
+                + " (select id from workflow_runs where public_id = ?) and artifact_type = 'spec'",
+            String.class,
+            runId);
+
+    // The freshly ingested spec artifact must be AVAILABLE so the approval-eligibility gate accepts
+    // it.
+    assertEquals(
+        "available",
+        jdbcTemplate.queryForObject(
+            "select status from artifacts where public_id = ?", String.class, specArtifactId));
+
+    // Approving the spec must succeed and advance the run to Executing (plan-stage auto-dispatch is
+    // off in this profile, so the run simply lands in Executing).
+    commandService.approveSpec(
+        new ApproveSpecCommand(
+            runId,
+            specArtifactId,
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            "idem-e2e-approve-123",
+            "corr-e2e-avail",
+            "product_reviewer",
+            "looks good"));
+
+    assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
   }
 
   @Test

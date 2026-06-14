@@ -78,7 +78,8 @@ class RunnerLogCaptureServiceTest {
         /* allowShareableLogs= */ true,
         d.specStage(),
         d.planStage(),
-        d.implementationStage());
+        d.implementationStage(),
+        d.openspec());
   }
 
   private final CapturingLogStore store = new CapturingLogStore();

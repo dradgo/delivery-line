@@ -167,6 +167,15 @@ function commandPrepare(args) {
     );
     writeAtomically(promptOut, `${lines.join('\n')}\n`);
   }
+  // Story 3a-8 — additionally surface the ticketRef (for the deterministic OpenSpec
+  // change-id) and the two carry-forward referencePaths (read by the pr-output OpenSpec
+  // assembly). These are emitted UNCONDITIONALLY but only consumed when the entrypoint's
+  // DELIVERYLINE_RUNNER_OPENSPEC flag is on — they are internal eval'd shell vars (never
+  // logged / never an artifact), so the flag-off path stays byte-identical.
+  const ticketForId =
+    doc.ticketSummary && typeof doc.ticketSummary === 'object' ? doc.ticketSummary : {};
+  const specRefOut = doc.approvedSpecificationReference;
+  const planRefOut = doc.approvedImplementationPlanReference;
   process.stdout.write(
     [
       `DL_SCHEMA_VERSION=${shellQuote(doc.schemaVersion ?? '')}`,
@@ -174,10 +183,22 @@ function commandPrepare(args) {
       `DL_RUNNER_EXECUTION_ID=${shellQuote(doc.runnerExecutionId ?? '')}`,
       `DL_CLASSIFICATION=${shellQuote(doc.classification ?? '')}`,
       `DL_BUNDLE_STAGE=${shellQuote(sanitizeStageToken(doc.stage))}`,
+      `DL_TICKET_REF=${shellQuote(ticketForId.ticketRef ?? '')}`,
+      `DL_SPEC_REF_PATH=${shellQuote(referencePathOf(specRefOut))}`,
+      `DL_PLAN_REF_PATH=${shellQuote(referencePathOf(planRefOut))}`,
       '',
     ].join('\n'),
   );
   process.exit(0);
+}
+
+// Story 3a-8 — pull the non-secret referencePath out of an artifactReference-shaped
+// object (or '' when absent / not carried). The referenced payload is read from the
+// mounted input dir at pr-output; the bundle never embeds it inline.
+function referencePathOf(ref) {
+  return ref && typeof ref === 'object' && typeof ref.referencePath === 'string'
+    ? ref.referencePath
+    : '';
 }
 
 function commandBuild(args) {
@@ -196,7 +217,13 @@ function commandBuild(args) {
     }
   }
   const nonEmptyLines = rawOutput.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-  const summary = (nonEmptyLines[0] ?? `Codex ${stage} runner produced output`).slice(0, 2000);
+  const summaryBase = (nonEmptyLines[0] ?? `Codex ${stage} runner produced output`).slice(0, 2000);
+  // Story 3a-8 (AC5/D4): surface the OpenSpec validate outcome in the result summary. Passed
+  // only on flag-on pr-output by the entrypoint; absent (flag-off) => summary byte-identical.
+  const openspecNote = args['openspec-note'];
+  const summary = openspecNote
+    ? `${summaryBase} [openspec: ${String(openspecNote).slice(0, 200)}]`
+    : summaryBase;
 
   const workflowRunId = doc.workflowRunId;
   const runnerExecutionId = doc.runnerExecutionId;
@@ -371,6 +398,74 @@ function commandMaterializeAuth(args) {
   process.exit(0);
 }
 
+// ===== Story 3a-8 — OpenSpec fence split (BYTE-IDENTICAL in both runner.mjs files) =====
+// The read-only stages emit OpenSpec change files to STDOUT (their normal artifact
+// channel) using a documented fence convention:
+//   === FILE: <relpath> ===
+//   <file content...>
+// At pr-output the entrypoint reconstructs the OpenSpec change folder from the two
+// carried artifacts by running this helper once per artifact. It is deliberately
+// dependency-free + atomic (reuses writeAtomically). Path traversal (absolute paths,
+// drive letters, `..` segments) is rejected so a malformed/hostile fence can never
+// escape the change dir. Empty / fence-less input exits non-zero with a clear message;
+// the entrypoint treats that as a best-effort WARN and STILL ships the code (Trap
+// T-ADDITIVE-NEVER-BLOCKS — an OpenSpec problem never fails code delivery).
+function isSafeRelPath(rel) {
+  if (typeof rel !== 'string' || rel.trim() === '') return false;
+  if (rel.startsWith('/') || rel.startsWith('\\')) return false; // absolute (posix / win)
+  if (/^[A-Za-z]:[\\/]/.test(rel)) return false; // windows drive (C:\ , C:/)
+  const parts = rel.split(/[\\/]/);
+  return !parts.some((p) => p === '..' || p === '.' || p === '');
+}
+
+function commandSplitFenced(args) {
+  const inPath = args.in;
+  const changeDir = args['change-dir'];
+  if (!inPath || inPath === 'true') fail(2, 'split-fenced: missing --in <fenced-file>');
+  if (!changeDir || changeDir === 'true') fail(2, 'split-fenced: missing --change-dir <dir>');
+
+  let raw;
+  try {
+    raw = readFileSync(inPath, 'utf8');
+  } catch {
+    fail(41, `split-fenced: cannot read ${inPath}`);
+  }
+
+  const FENCE = /^=== FILE: (.+?) ===\s*$/;
+  const sections = [];
+  let current = null;
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(FENCE);
+    if (match) {
+      current = { relpath: match[1].trim(), body: [] };
+      sections.push(current);
+    } else if (current) {
+      current.body.push(line);
+    }
+  }
+  if (sections.length === 0) {
+    fail(41, 'split-fenced: no "=== FILE: <relpath> ===" fence found (malformed/empty input)');
+  }
+
+  let written = 0;
+  for (const section of sections) {
+    if (!isSafeRelPath(section.relpath)) {
+      fail(42, `split-fenced: unsafe relpath rejected: ${section.relpath}`);
+    }
+    // Normalize the trailing fence-boundary blank line, then end with exactly one newline.
+    const body = section.body.join('\n').replace(/\n+$/, '');
+    try {
+      writeAtomically(join(changeDir, section.relpath), body.length > 0 ? `${body}\n` : '');
+    } catch {
+      fail(41, `split-fenced: cannot write ${section.relpath}`);
+    }
+    written++;
+  }
+  process.stdout.write(`split-fenced: wrote ${written} file(s) to ${changeDir}\n`);
+  process.exit(0);
+}
+// ===== end OpenSpec fence split =====
+
 const [command, ...rest] = process.argv.slice(2);
 const parsed = parseArgs(rest);
 
@@ -389,6 +484,9 @@ switch (command) {
     break;
   case 'materialize-auth':
     commandMaterializeAuth(parsed);
+    break;
+  case 'split-fenced':
+    commandSplitFenced(parsed);
     break;
   default:
     fail(2, `unknown command: ${command ?? '(none)'}`);

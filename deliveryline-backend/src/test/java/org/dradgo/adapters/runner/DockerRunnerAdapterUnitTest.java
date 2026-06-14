@@ -360,7 +360,8 @@ class DockerRunnerAdapterUnitTest {
             false,
             RunnerProperties.SpecStage.defaults(),
             RunnerProperties.PlanStage.defaults(),
-            RunnerProperties.ImplementationStage.defaults());
+            RunnerProperties.ImplementationStage.defaults(),
+            RunnerProperties.OpenSpec.defaults());
     adapter =
         new DockerRunnerAdapter(
             scratchStore,

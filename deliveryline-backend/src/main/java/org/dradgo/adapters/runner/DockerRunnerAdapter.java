@@ -241,6 +241,14 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
 
     Map<String, String> containerEnv = new LinkedHashMap<>(secretEnv);
     containerEnv.put("DELIVERYLINE_RUNNER_STAGE", request.stage().value());
+    // Story 3a-8 (AC1) — surface the opt-in OpenSpec authoring flag to the entrypoint the same way
+    // as the stage. Emitted ONLY when enabled, so a flag-off dispatch is byte-identical at the
+    // container interior (no new env var at all). Reuses the already-injected runnerProperties — no
+    // new ctor dep (Trap [[docker-adapter-ctor-dep-fans-out]]). The mock adapter never reaches
+    // here.
+    if (runnerProperties.openSpecEnabled()) {
+      containerEnv.put("DELIVERYLINE_RUNNER_OPENSPEC", "true");
+    }
 
     List<CreateContainerSpec.BindMount> mounts = new ArrayList<>();
     mounts.add(new CreateContainerSpec.BindMount(layout.input(), CONTAINER_INPUT_MOUNT, true));

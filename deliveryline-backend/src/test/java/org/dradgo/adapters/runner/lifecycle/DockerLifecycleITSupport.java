@@ -84,7 +84,8 @@ abstract class DockerLifecycleITSupport {
             false,
             RunnerProperties.SpecStage.defaults(),
             RunnerProperties.PlanStage.defaults(),
-            RunnerProperties.ImplementationStage.defaults());
+            RunnerProperties.ImplementationStage.defaults(),
+            RunnerProperties.OpenSpec.defaults());
     // Story 3.5: real RunnerSecretsService backed by a MockEnvironment carrying both provider keys
     // so dispatch resolution succeeds for either kind under the lifecycle ITs.
     RunnerSecretsService secretsService =

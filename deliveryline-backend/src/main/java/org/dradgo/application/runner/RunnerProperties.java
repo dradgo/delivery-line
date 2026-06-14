@@ -57,7 +57,12 @@ public record RunnerProperties(
     // gates the dispatchImplementation / retryImplementation trigger (ON in prod, OFF in the shared
     // test yaml — Trap T7). A null group falls back to the codex default so contexts that omit the
     // key still bind.
-    ImplementationStage implementationStage) {
+    ImplementationStage implementationStage,
+    // Story 3a-8 (AC1) — opt-in OpenSpec authoring flag, surfaced to the container as
+    // DELIVERYLINE_RUNNER_OPENSPEC. OPTIONAL + UNVALIDATED nested record (mirrors the docker()
+    // nesting precedent); a null/absent group falls back to disabled (default OFF) so the shared
+    // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
+    OpenSpec openspec) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -99,6 +104,7 @@ public record RunnerProperties(
     planStage = planStage == null ? PlanStage.defaults() : planStage;
     implementationStage =
         implementationStage == null ? ImplementationStage.defaults() : implementationStage;
+    openspec = openspec == null ? OpenSpec.defaults() : openspec;
   }
 
   public static RunnerProperties defaults() {
@@ -120,7 +126,8 @@ public record RunnerProperties(
         false,
         SpecStage.defaults(),
         PlanStage.defaults(),
-        ImplementationStage.defaults());
+        ImplementationStage.defaults(),
+        OpenSpec.defaults());
   }
 
   /**
@@ -197,6 +204,17 @@ public record RunnerProperties(
    */
   public boolean allowShareableLogs() {
     return allowShareableLogs;
+  }
+
+  /**
+   * Story 3a-8 (AC1) — whether the runner entrypoints' opt-in OpenSpec authoring layer is enabled
+   * ({@code deliveryline.runner.openspec.enabled}). When {@code true} it is surfaced to the
+   * container as env {@code DELIVERYLINE_RUNNER_OPENSPEC=true} (threaded by {@code
+   * DockerRunnerAdapter} exactly like {@code DELIVERYLINE_RUNNER_STAGE}); the entrypoints gate the
+   * whole authoring layer on it. Default {@code false} ⇒ byte-identical legacy path.
+   */
+  public boolean openSpecEnabled() {
+    return openspec.enabled();
   }
 
   /**
@@ -389,6 +407,25 @@ public record RunnerProperties(
 
     public static ImplementationStage defaults() {
       return new ImplementationStage(RunnerKind.CODEX, true);
+    }
+  }
+
+  /**
+   * Story 3a-8 (AC1) — opt-in OpenSpec authoring switch ({@code
+   * deliveryline.runner.openspec.enabled}). When {@code true}, the runner entrypoints author
+   * OpenSpec change artifacts (proposal/specs/design/tasks) and assemble {@code
+   * openspec/changes/<id>/} into the delivered PR at pr-output; when {@code false} (the default)
+   * the runners behave byte-identically to today.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard): the shared test
+   * {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing key to {@code false} (primitive
+   * default); {@link #defaults()} (non-Spring construction) matches the production default OFF.
+   */
+  public record OpenSpec(boolean enabled) {
+
+    public static OpenSpec defaults() {
+      return new OpenSpec(false);
     }
   }
 

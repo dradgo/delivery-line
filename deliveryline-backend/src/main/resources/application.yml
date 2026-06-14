@@ -188,6 +188,13 @@ deliveryline:
     implementation-stage:
       kind: codex
       auto-dispatch: true
+    # Story 3a-8 — opt-in OpenSpec authoring. When enabled, the runner entrypoints author OpenSpec
+    # change artifacts (proposal/specs/design/tasks) and assemble openspec/changes/<id>/ into the
+    # delivered PR at pr-output; surfaced to the container as env DELIVERYLINE_RUNNER_OPENSPEC=true.
+    # Default OFF (commented out) ⇒ runners are byte-identical to today. OPTIONAL + UNVALIDATED, so
+    # the shared test application.yml needs no mirror entry. Uncomment + set true to opt in.
+    # openspec:
+    #   enabled: true
     recovery:
       batch-size: 100
     mock:

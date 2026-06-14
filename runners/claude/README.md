@@ -155,6 +155,34 @@ docs, auto-firing cannot be confirmed in single-prompt headless mode, so this im
 **minimum** (present + invokable) and the entrypoint prompt is left unchanged. Wiring a minimal,
 non-mutating prompt nudge is deferred to a future story once headless activation is confirmed.
 
+> **Superseded under the 3a-8 opt-in flag.** When `DELIVERYLINE_RUNNER_OPENSPEC=true` (default OFF),
+> the entrypoint *does* augment the prompt with a fence-emit delta and assembles a change folder at
+> pr-output — see the next section. The "prompt left unchanged" stance above remains the **flag-off
+> default**.
+
+### OpenSpec spec-driven authoring during runs (story 3a-8)
+
+Gated entirely on `DELIVERYLINE_RUNNER_OPENSPEC=true` (the backend injects it only when
+`deliveryline.runner.openspec.enabled=true`, default OFF). The shared behavior, stage→artifact mapping,
+the `=== FILE: <relpath> ===` fence convention, additive-never-blocks discipline, and the
+no-schema-change guarantee are documented once in
+[`../RUNNER_CONTRACT.md`](../RUNNER_CONTRACT.md#openspec-spec-driven-authoring-story-3a-8--opt-in-default-off).
+Claude-specific notes:
+
+- Claude reads its prompt from the generated prompt file (the `CLAUDE_PROMPT_TEMPLATE` seam still
+  applies); the OpenSpec delta is **appended to that prompt file** (`>>`) rather than to a
+  `PROMPT_INSTRUCTION` var (Claude has no Codex-style sandbox/instruction flag — read-only is enforced
+  by the prompt). The read-only stages emit their change files **to stdout only** and never touch
+  `/workspace/repo`.
+- At pr-output the entrypoint lays down `openspec/AGENTS.md` + `openspec/changes/<id>/` itself (no
+  interactive `openspec init`, per the 3a-6 finding), splits the carried fenced files via
+  `runner.mjs split-fenced`, runs best-effort `openspec validate`, and appends the tasks.md authoring
+  instruction to the prompt; the Claude pr-output commit picks the folder up.
+- The change-id is derived from the ticket ref + a short workspace-run-id slug; `runner.mjs prepare`
+  surfaces `DL_TICKET_REF` and the per-stage reference paths for this.
+- **Flag OFF ⇒ byte-identical**: no prompt delta, no files, no `openspec` call. The conformance IT
+  pins both the flag-on assembly and the flag-off byte-identity.
+
 ### superpowers skills pin + update procedure (story 3a-7)
 
 The agent-side [obra/superpowers](https://github.com/obra/superpowers) skills are **vendored** (the pin

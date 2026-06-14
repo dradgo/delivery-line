@@ -17,6 +17,21 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 
+# Story 3a-8 — recognize the pr-output assembly subcommands so the offline conformance
+# build (INSTALL_*_CLI=false) can exercise the flag-on pr-output path. Both are env-blind
+# no-ops that exit 0: `init` (the entrypoint lays the pre-baked skeleton itself, so this is
+# a no-op) and `validate <change-id>` (a structural guard the entrypoint runs best-effort).
+case "${1:-}" in
+  init)
+    echo "openspec mock: init (no-op; entrypoint scaffolds the skeleton)"
+    exit 0
+    ;;
+  validate)
+    echo "openspec mock: validate ${2:-} OK"
+    exit 0
+    ;;
+esac
+
 # Deterministic, env-blind output for any other invocation.
 echo "openspec mock: deterministic conformance output"
 exit 0

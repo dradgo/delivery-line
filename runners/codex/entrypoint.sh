@@ -78,6 +78,133 @@ log() {
   fi
 }
 
+# ---- Story 3a-8 — opt-in OpenSpec authoring layer (gated on DELIVERYLINE_RUNNER_OPENSPEC) ----
+# Default OFF. When off, NONE of these functions are called, so the legacy path is
+# byte-identical (no scaffold, no prompt delta, no openspec/ folder, no new log lines).
+# Every step is ADDITIVE + best-effort: an OpenSpec failure NEVER fails the stage, changes
+# an exit code, or adds a failure category (Trap T-ADDITIVE-NEVER-BLOCKS). The read-only
+# stages still write ONLY to stdout (Trap T-READONLY-NO-REPO-WRITE); only pr-output mutates
+# the repo. Raw helper output is sent to the container stderr (captured by the conformance
+# IT) so it never collides with the agent's truncating runner.stdout/.stderr redirects.
+openspec_enabled() {
+  [ "${DELIVERYLINE_RUNNER_OPENSPEC:-}" = "true" ]
+}
+
+# Slug-sanitize a token to a filesystem-safe [a-z0-9_-] form (lowercase; collapse runs of
+# other chars to '-'; trim leading/trailing '-'). GNU sed on the debian base (\{1,\} == +).
+openspec_slug() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -e 's/[^a-z0-9_-]\{1,\}/-/g' -e 's/^-\{1,\}//' -e 's/-\{1,\}$//'
+}
+
+# Deterministic change-id (AC3): <slug(ticketRef)>-<short slug(workflowRunId)>, identical
+# across all three stages of a run. Falls back to "change" when ticketRef is absent.
+openspec_change_id() {
+  _ticket_slug="$(openspec_slug "${DL_TICKET_REF:-}")"
+  [ -n "$_ticket_slug" ] || _ticket_slug="change"
+  _run_slug="$(openspec_slug "${DL_WORKFLOW_RUN_ID:-}" | cut -c1-16)"
+  # cut can re-introduce a trailing '-', and an absent runId leaves "<ticket>-"; trim it so
+  # the change-id is always a clean token (e.g. "change" rather than "change-").
+  printf '%s-%s' "$_ticket_slug" "$_run_slug" | sed -e 's/-\{1,\}$//'
+}
+
+# Authoring instructions appended to a READ-ONLY stage's PROMPT_INSTRUCTION (the agent still
+# writes only to stdout; its fenced stdout becomes the existing per-stage artifact — no new
+# artifact channel, D6). Emitted via command substitution (trailing newline stripped).
+openspec_prompt_delta() {
+  _stage="$1"
+  _change_id="$2"
+  case "$_stage" in
+    spec)
+      cat <<EOF
+
+OPENSPEC AUTHORING (OpenSpec change-id: ${_change_id}). In ADDITION to the specification above, append OpenSpec change artifacts to standard output using this EXACT fence convention — a line "=== FILE: <relpath> ===" immediately before each file's content:
+=== FILE: proposal.md ===
+<why this change is needed and WHAT changes, in OpenSpec proposal form>
+=== FILE: specs/<capability>/spec.md ===
+<requirement deltas in OpenSpec ADDED/MODIFIED/REMOVED format>
+Replace <capability> with a short kebab-case capability name. Do NOT modify, create, or delete any files on disk — emit everything to standard output only.
+EOF
+      ;;
+    implementationPlan)
+      cat <<EOF
+
+OPENSPEC AUTHORING (OpenSpec change-id: ${_change_id}). In ADDITION to the plan above, append OpenSpec change artifacts to standard output using this EXACT fence convention — a line "=== FILE: <relpath> ===" immediately before each file's content:
+=== FILE: design.md ===
+<the technical design / HOW, extending the approved proposal>
+=== FILE: tasks.md ===
+<an ordered, checkbox task list to implement the change>
+Do NOT modify, create, or delete any files on disk — emit everything to standard output only.
+EOF
+      ;;
+  esac
+}
+
+# Split one carried artifact (read by referencePath from the read-only input mount) into the
+# change folder. A missing/empty carried artifact -> WARN + assemble what is present (AC5).
+openspec_split_carried() {
+  _ref_path="$1"
+  _change_dir="$2"
+  _label="$3"
+  if [ -z "$_ref_path" ]; then
+    log WARN "openspec: no $_label artifact carried forward (referencePath empty) — assembling without it"
+    return 0
+  fi
+  _artifact_file="$INPUT_DIR/$_ref_path"
+  if [ ! -f "$_artifact_file" ]; then
+    log WARN "openspec: $_label artifact not present at the carried referencePath — assembling without it"
+    return 0
+  fi
+  if "$NODE_BIN" "$RUNNER_LIB" split-fenced --in "$_artifact_file" --change-dir "$_change_dir" >&2; then
+    log INFO "openspec: $_label artifact split into change folder"
+  else
+    log WARN "openspec: $_label artifact did not split cleanly (best-effort; shipping code)"
+  fi
+}
+
+# pr-output ONLY: scaffold the idiomatic openspec/ skeleton, reconstruct
+# openspec/changes/<id>/ from the two carried artifacts, then structurally validate. Every
+# step is best-effort; the agent (invoked afterwards) implements tasks.md and the openspec/
+# folder is committed alongside the code by the existing PR machinery.
+openspec_assemble_proutput() {
+  _repo="$1"
+  _change_id="$2"
+  _change_dir="$_repo/openspec/changes/$_change_id"
+  log INFO "openspec assemble start changeId=$_change_id repoDir=$_repo"
+  # Pre-baked skeleton fallback (AC4b). `openspec init` selects a tool INTERACTIVELY with no
+  # verified non-interactive flag (Task 0 spike — Trap T-INIT-NONINTERACTIVE), so we lay the
+  # idiomatic openspec/ + AGENTS.md down ourselves rather than risk a headless hang.
+  mkdir -p "$_change_dir" 2>/dev/null \
+    || log WARN "openspec: could not create $_change_dir (best-effort)"
+  if [ ! -f "$_repo/openspec/AGENTS.md" ]; then
+    {
+      printf '# OpenSpec\n\n'
+      printf 'OpenSpec change proposals authored by the DeliveryLine delivery pipeline.\n'
+      printf 'Each changes/<id>/ folder carries proposal.md, specs/, design.md, tasks.md.\n'
+      printf 'See https://openspec.pro for the conventions.\n'
+    } >"$_repo/openspec/AGENTS.md" 2>/dev/null \
+      || log WARN "openspec: could not write AGENTS.md (best-effort)"
+  fi
+  openspec_split_carried "${DL_SPEC_REF_PATH:-}" "$_change_dir" "spec"
+  openspec_split_carried "${DL_PLAN_REF_PATH:-}" "$_change_dir" "implementation-plan"
+  # Structural guard (best-effort). Real `openspec validate` needs cwd=repo; the offline mock
+  # ignores args+cwd and exits 0. A non-zero result is logged WARN, never fatal (AC5).
+  if command -v "$OPENSPEC_CLI_BIN" >/dev/null 2>&1; then
+    if (cd "$_repo" && "$OPENSPEC_CLI_BIN" validate "$_change_id") >&2; then
+      log INFO "openspec validate ok changeId=$_change_id"
+      OPENSPEC_VALIDATE_NOTE="validate ok"
+    else
+      log WARN "openspec validate reported issues (best-effort; shipping code) changeId=$_change_id"
+      OPENSPEC_VALIDATE_NOTE="validate reported issues"
+    fi
+  else
+    log WARN "openspec CLI not on PATH; skipping validate (best-effort) changeId=$_change_id"
+    OPENSPEC_VALIDATE_NOTE="validate skipped (CLI absent)"
+  fi
+  log INFO "openspec assemble complete changeId=$_change_id"
+}
+
 print_help() {
   cat <<'EOF'
 deliveryline/codex-runner — runner-contracts v1 entrypoint
@@ -420,6 +547,27 @@ case "$ARTIFACT_TYPE" in
     PROMPT_INSTRUCTION="OPERATING MODE: SPECIFICATION (read-only). You are the investigation stage of a governed delivery pipeline. Analyse the repository at ${CODEX_REPO_DIR} and write a DESIGN SPECIFICATION for the ticket below: WHAT should change and WHY, the modules / files affected, and the implementation approach. Do NOT modify, create, or delete any files — a human reviews and approves this specification before any implementation happens. Output the specification as Markdown on standard output only."
     ;;
 esac
+# Story 3a-8 — opt-in OpenSpec authoring layer (default OFF). Flag off => none of this runs
+# (byte-identical legacy path). Flag on => augment the read-only stage prompts with the fence
+# convention, and at pr-output assemble + validate the change folder BEFORE the agent runs so
+# the agent can implement its tasks.md.
+if openspec_enabled; then
+  OPENSPEC_CHANGE_ID="$(openspec_change_id)"
+  log INFO "openspec enabled changeId=$OPENSPEC_CHANGE_ID stage=$ARTIFACT_TYPE"
+  case "$ARTIFACT_TYPE" in
+    spec | implementationPlan)
+      PROMPT_INSTRUCTION="${PROMPT_INSTRUCTION}$(openspec_prompt_delta "$ARTIFACT_TYPE" "$OPENSPEC_CHANGE_ID")"
+      ;;
+    prOutput)
+      if [ -d "$CODEX_REPO_DIR" ]; then
+        openspec_assemble_proutput "$CODEX_REPO_DIR" "$OPENSPEC_CHANGE_ID"
+        PROMPT_INSTRUCTION="${PROMPT_INSTRUCTION} Additionally, an OpenSpec change folder has been prepared at openspec/changes/${OPENSPEC_CHANGE_ID}/ — implement its tasks.md against the repository and leave the openspec/ folder in place so it is committed alongside your code changes."
+      else
+        log WARN "openspec: pr-output has no repo mount at $CODEX_REPO_DIR — skipping assembly (best-effort)"
+      fi
+      ;;
+  esac
+fi
 # Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
 set -- "$CODEX_SUBCOMMAND" --skip-git-repo-check --sandbox "$CODEX_SANDBOX"
 if [ -d "$CODEX_REPO_DIR" ]; then
@@ -452,11 +600,17 @@ fi
 
 # 6. build the schema-conformant runner-result.v1 document.
 log INFO "building runner-result.v1 artifactType=$ARTIFACT_TYPE result=$RESULT_FILE"
-if ! "$NODE_BIN" "$RUNNER_LIB" build \
+set -- "$NODE_BIN" "$RUNNER_LIB" build \
   --bundle "$BUNDLE_FILE" \
   --stage "$ARTIFACT_TYPE" \
   --summary-file "$STDOUT_LOG" \
-  --out "$RESULT_FILE" >/dev/null; then
+  --out "$RESULT_FILE"
+# Story 3a-8 (AC5/D4): surface the OpenSpec validate outcome in the result summary, ONLY on
+# flag-on pr-output (flag-off => no extra arg => byte-identical build invocation).
+if openspec_enabled && [ "$ARTIFACT_TYPE" = prOutput ] && [ -n "${OPENSPEC_VALIDATE_NOTE:-}" ]; then
+  set -- "$@" --openspec-note "$OPENSPEC_VALIDATE_NOTE"
+fi
+if ! "$@" >/dev/null; then
   log ERROR "failed to build/write runner-result.v1.json"
   exit 40
 fi

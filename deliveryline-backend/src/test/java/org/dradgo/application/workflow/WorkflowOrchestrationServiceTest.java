@@ -139,7 +139,8 @@ class WorkflowOrchestrationServiceTest {
             // drives the pr-output (dispatchImplementation / retryImplementation) auto-dispatch
             // path.
             new RunnerProperties.ImplementationStage(
-                org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch));
+                org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch),
+            RunnerProperties.OpenSpec.defaults());
     return new WorkflowOrchestrationService(
         runnerBroker,
         transitionService,

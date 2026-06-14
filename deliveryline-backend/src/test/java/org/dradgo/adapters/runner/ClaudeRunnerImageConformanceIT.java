@@ -338,6 +338,121 @@ class ClaudeRunnerImageConformanceIT {
     assertThat(resultJson).contains("TEMPLATE-MARKER").doesNotContain(OAUTH_SENTINEL);
   }
 
+  // ---- Story 3a-8 — opt-in OpenSpec authoring layer (mirror of CodexRunnerImageConformanceIT)
+  // ----
+
+  /** Outcome of a stage run with a writable {@code /workspace/repo} mount. */
+  private record OpenSpecRun(Path repo, Path output, String containerLogs, int exit) {}
+
+  /**
+   * Runs one stage against the valid fixture with a writable {@code /workspace/repo} mount (so the
+   * pr-output authoring layer has somewhere to assemble the change folder), optionally opting into
+   * the OpenSpec layer via {@code DELIVERYLINE_RUNNER_OPENSPEC=true}. Returns the repo dir (for
+   * post-run inspection), the output dir, the captured container logs, and the exit code.
+   */
+  private OpenSpecRun runWithRepoMount(String stage, boolean openspecOn) throws Exception {
+    Path work = Files.createTempDirectory("claude-openspec-");
+    Path input = Files.createDirectories(work.resolve("input"));
+    Path output = Files.createDirectories(work.resolve("output"));
+    Path logs = Files.createDirectories(work.resolve("logs"));
+    Path repo = Files.createDirectories(work.resolve("repo"));
+    makeRunnerReadable(input);
+    makeWorldWritable(output);
+    makeWorldWritable(logs);
+    makeWorldWritable(repo);
+    Files.copy(bundleFixture, input.resolve("context-bundle.v1.json"));
+
+    var cmd =
+        docker
+            .createContainerCmd(IMAGE_TAG)
+            .withHostConfig(
+                HostConfig.newHostConfig()
+                    .withBinds(
+                        new Bind(
+                            dockerHostPath(input), new Volume("/workspace/input"), AccessMode.ro),
+                        new Bind(
+                            dockerHostPath(output), new Volume("/workspace/output"), AccessMode.rw),
+                        new Bind(
+                            dockerHostPath(logs), new Volume("/workspace/logs"), AccessMode.rw),
+                        new Bind(
+                            dockerHostPath(repo), new Volume("/workspace/repo"), AccessMode.rw))
+                    .withNetworkMode("none"));
+    if (openspecOn) {
+      cmd.withEnv(
+          "CLAUDE_CODE_OAUTH_TOKEN=" + OAUTH_SENTINEL,
+          "DELIVERYLINE_RUNNER_STAGE=" + stage,
+          "DELIVERYLINE_RUNNER_OPENSPEC=true");
+    } else {
+      cmd.withEnv(
+          "CLAUDE_CODE_OAUTH_TOKEN=" + OAUTH_SENTINEL, "DELIVERYLINE_RUNNER_STAGE=" + stage);
+    }
+    var created = cmd.exec();
+    containerIdToCleanup = created.getId();
+    docker.startContainerCmd(created.getId()).exec();
+    int exit =
+        docker
+            .waitContainerCmd(created.getId())
+            .exec(new WaitContainerResultCallback())
+            .awaitStatusCode();
+    return new OpenSpecRun(repo, output, captureContainerLogs(created.getId()), exit);
+  }
+
+  @Test
+  void openSpecFlagOnAssemblesChangeFolderAtPrOutput() throws Exception {
+    // AC2/AC4: flag on + pr-output assembles openspec/changes/<id>/ into the delivered repo, runs
+    // the (mock) validate, and STILL exits 0 with a schema-valid result (additive-never-blocks).
+    OpenSpecRun run = runWithRepoMount("pr-output", true);
+    assertThat(run.exit()).as("flag-on pr-output still exits 0 (additive never blocks)").isZero();
+    assertThat(Files.exists(run.output().resolve("runner-result.v1.json")))
+        .as("result still produced")
+        .isTrue();
+    assertThat(Files.exists(run.repo().resolve("openspec/AGENTS.md")))
+        .as("openspec AGENTS.md skeleton authored into the repo")
+        .isTrue();
+    Path changes = run.repo().resolve("openspec/changes");
+    assertThat(Files.isDirectory(changes)).as("openspec/changes/ created").isTrue();
+    try (var stream = Files.list(changes)) {
+      assertThat(stream.filter(Files::isDirectory).count())
+          .as("exactly one change-id folder authored")
+          .isEqualTo(1L);
+    }
+    assertThat(run.containerLogs())
+        .as("assembly + (mock) validate were invoked")
+        .contains("openspec assemble start")
+        .contains("openspec validate ok");
+  }
+
+  @Test
+  void openSpecFlagOffLeavesRepoUntouchedAtPrOutput() throws Exception {
+    // AC1/T-FLAG-OFF-BYTE-IDENTICAL: without the flag, pr-output authors NO openspec/ folder and
+    // never enters the authoring layer — the legacy path is byte-identical.
+    OpenSpecRun run = runWithRepoMount("pr-output", false);
+    assertThat(run.exit()).as("flag-off pr-output exits 0").isZero();
+    assertThat(Files.exists(run.output().resolve("runner-result.v1.json")))
+        .as("result still produced")
+        .isTrue();
+    assertThat(Files.exists(run.repo().resolve("openspec")))
+        .as("flag OFF authors NO openspec/ folder (byte-identical legacy path)")
+        .isFalse();
+    assertThat(run.containerLogs())
+        .as("flag OFF never enters the authoring layer")
+        .doesNotContain("openspec enabled");
+  }
+
+  @Test
+  void openSpecReadOnlyStageNeverWritesRepo() throws Exception {
+    // AC3/T-READONLY-NO-REPO-WRITE: on a read-only stage the authoring layer is active (prompt
+    // augmented) but the change artifacts go to STDOUT only — the repo must stay untouched.
+    OpenSpecRun run = runWithRepoMount("spec-investigation", true);
+    assertThat(run.exit()).as("flag-on read-only stage exits 0").isZero();
+    assertThat(run.containerLogs())
+        .as("authoring layer is active on the read-only stage")
+        .contains("openspec enabled");
+    assertThat(Files.exists(run.repo().resolve("openspec")))
+        .as("read-only stage emits to stdout only — repo must stay untouched")
+        .isFalse();
+  }
+
   private static String captureContainerLogs(String containerId) throws Exception {
     StringBuilder sb = new StringBuilder();
     docker

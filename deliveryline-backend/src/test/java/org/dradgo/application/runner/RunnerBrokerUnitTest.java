@@ -1778,7 +1778,8 @@ class RunnerBrokerUnitTest {
             false,
             RunnerProperties.SpecStage.defaults(),
             RunnerProperties.PlanStage.defaults(),
-            RunnerProperties.ImplementationStage.defaults());
+            RunnerProperties.ImplementationStage.defaults(),
+            RunnerProperties.OpenSpec.defaults());
     broker =
         new RunnerBroker(
             recordPort,

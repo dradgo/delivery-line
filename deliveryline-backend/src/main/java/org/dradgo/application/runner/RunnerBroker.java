@@ -17,6 +17,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.artifact.ArtifactChecksum;
 import org.dradgo.application.artifact.ArtifactOperationService;
 import org.dradgo.application.artifact.RecordArtifactOperationCommand;
 import org.dradgo.application.artifact.RecordArtifactOperationResult;
@@ -74,6 +75,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class RunnerBroker {
 
   private static final Logger log = LoggerFactory.getLogger(RunnerBroker.class);
+
+  // Strong digest used when promoting an ingested SPEC artifact to `available` (must be one of
+  // ArtifactChecksum.ALLOWED_ALGORITHMS).
+  private static final String SPEC_CHECKSUM_ALGORITHM = "SHA-256";
 
   private static final List<RunnerExecutionStatus> ACTIVE_STATUSES =
       List.of(RunnerExecutionStatus.PENDING, RunnerExecutionStatus.RUNNING);
@@ -875,6 +880,21 @@ public class RunnerBroker {
       if (artifactType == ArtifactType.PR_OUTPUT) {
         prOutputArtifactId = opResult.artifact().publicId();
       }
+      // Spec-stage availability wiring — promote the freshly-ingested SPEC artifact to `available`
+      // (checksum + storageRef stamped) so the human spec-approval gate accepts it. Without this
+      // the
+      // artifact stays `pending` and ArtifactService.isApprovalEligible (which requires
+      // status=AVAILABLE) rejects approval with ARTIFACT_PAYLOAD_UNAVAILABLE — the reviewer can see
+      // the spec but never approve it. The auto-advance to WaitingForSpecApproval (Decision D1)
+      // still
+      // fires on ingest regardless; this only makes the resulting artifact approval-eligible.
+      // Scoped
+      // to SPEC: the plan/pr-output stages auto-advance with no human approval gate, so they keep
+      // the
+      // deliberate `pending` ingest behaviour.
+      if (artifactType == ArtifactType.SPEC) {
+        markSpecArtifactAvailable(opResult, payload.bytes(), correlationId);
+      }
     }
 
     if (artifactIngestionFailed) {
@@ -1427,6 +1447,40 @@ public class RunnerBroker {
       return "prReference";
     }
     return null;
+  }
+
+  /**
+   * Promote a freshly-ingested SPEC artifact to {@code available} so the human spec-approval gate
+   * ({@code ArtifactService.isApprovalEligible}, which requires {@code status=AVAILABLE} plus a
+   * populated checksum + storageRef) accepts it. The checksum is computed over the SAME payload
+   * bytes the broker handed to {@code recordOperation}, and the storageRef is the canonical
+   * location the payload store reported writing them to — so {@code markAvailable}'s
+   * payload-vs-checksum verification is guaranteed to match. Runs inside the poller's per-item
+   * transaction alongside the ingest, so the artifact is available before the spec-ready transition
+   * is observable.
+   *
+   * <p>{@code storageRef} is {@code null} on an idempotent replay (a duplicate {@code onResult}
+   * that did not re-write the payload); in that case the artifact was already made available by the
+   * original ingest and there is nothing to re-stamp ({@code markAvailable} is itself idempotent).
+   */
+  private void markSpecArtifactAvailable(
+      RecordArtifactOperationResult opResult, byte[] payloadBytes, String correlationId) {
+    String storageRef = opResult.storageRef();
+    if (storageRef == null) {
+      return;
+    }
+    String checksumHex =
+        ArtifactChecksum.digestHex(SPEC_CHECKSUM_ALGORITHM, payloadBytes)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "JVM does not provide required digest algorithm: "
+                            + SPEC_CHECKSUM_ALGORITHM));
+    artifactOperationService.markAvailable(
+        opResult.artifact().publicId(),
+        new ArtifactChecksum(SPEC_CHECKSUM_ALGORITHM, checksumHex),
+        storageRef,
+        new ActorContext("system", org.dradgo.domain.registry.ActorType.SYSTEM, correlationId));
   }
 
   /**

@@ -107,6 +107,7 @@ These are **identical** across runners (per-runner provider keys + model config 
 | `DELIVERYLINE_CORRELATION_ID` | Optional correlation id prepended to every log line (story 3.11 traceability). |
 | `DELIVERYLINE_RUNNER_ALLOW_SIMULATE_FAILURE` | Must equal `true` to enable `--simulate-failure` (off in production). |
 | `DELIVERYLINE_RUNNER_SKIP_AUTH` | `true` lets a non-real run proceed without a credential (mock/test only). |
+| `DELIVERYLINE_RUNNER_OPENSPEC` | `true` opts the run into the OpenSpec spec-driven authoring layer (story 3a-8). Absent/anything-else ⇒ the legacy path runs **byte-identically**. Injected by the backend `DockerRunnerAdapter` **only when** `deliveryline.runner.openspec.enabled=true` (default OFF). |
 
 Mount-path overrides (`DELIVERYLINE_INPUT_DIR` / `_OUTPUT_DIR` / `_LOGS_DIR`) exist purely so the
 entrypoint is unit-testable without a container; production uses the `/workspace/*` constants.
@@ -168,3 +169,41 @@ rule, adding/bumping agent-side tooling (an OpenSpec bump or a superpowers re-ve
 Dockerfiles + entrypoints + READMEs in the same PR. (Headless single-prompt **activation** is not
 wired for either tool — see each runner README's "OpenSpec activation" / "superpowers activation"
 findings; both ship the present-and-discoverable minimum and never mutate `/workspace/repo` at runtime.)
+
+## OpenSpec spec-driven authoring (story 3a-8 — opt-in, default OFF)
+
+Story 3a-6 left OpenSpec **present but inert** (CLI on PATH, prompt unchanged). Story 3a-8 adds an
+**opt-in authoring layer**, gated entirely on the `DELIVERYLINE_RUNNER_OPENSPEC=true` env flag
+(injected by the backend only when `deliveryline.runner.openspec.enabled=true`, default OFF):
+
+- **Flag absent/false ⇒ byte-identical legacy path.** No prompt augmentation, no extra files, no
+  `openspec` invocation. This is the only posture the offline contract/conformance tier asserts by
+  default; the flag-off byte-identity is itself pinned by a conformance assertion.
+- **Flag true, read-only stages (spec-investigation, implementation-plan).** The entrypoint appends an
+  OpenSpec **prompt delta** instructing the agent to additionally emit its change artifact(s) to
+  **stdout** using the file-fence convention `=== FILE: <relpath> ===` (one fence per file). The
+  read-only stages **never write `/workspace/repo`** (Trap T-READONLY-NO-REPO-WRITE) — the authored
+  content travels back in the captured stdout only, to be assembled later. Stage→artifact mapping
+  (Decision D3): spec-investigation authors `proposal.md` + `specs/`; implementation-plan authors
+  `design.md` + `tasks.md`.
+- **Flag true, pr-output stage.** The entrypoint lays down a pre-baked `openspec/changes/<id>/`
+  skeleton (`openspec/AGENTS.md` + the change dir — it does **not** run interactive `openspec init`,
+  see the activation finding), splits the carried fenced files from the prior stages into that dir via
+  `runner.mjs split-fenced` (path-traversal-guarded), runs best-effort `openspec validate`, and the
+  change folder is committed into the delivered PR by the normal pr-output flow.
+
+**Additive-never-blocks (Trap T-ADDITIVE-NEVER-BLOCKS).** Every authoring step is best-effort: its raw
+output goes to the **container stderr stream** (not the `runner.stderr` mount file, which the agent
+invocation owns) and a failure **never** changes the run's exit code or fails the stage. A malformed
+fence, a traversal attempt (`runner.mjs split-fenced` exits non-zero internally — `41` read/parse,
+`42` traversal), or a missing `openspec` binary degrades to "no change folder authored", not a failed
+run.
+
+**No schema/contract change (Decision D6, Trap T-NO-SCHEMA-CHANGE).** The authoring layer adds **no**
+new mount, **no** bundle/result-schema field, and **no** new process exit code — the runner ↔ backend
+contract above is unchanged. Per the change rule the flag + layer is mirrored across **both** runner
+entrypoints + READMEs in this same PR. Live headless **activation** (does the agent reliably honor the
+fence prompt under a real `codex exec` / `claude -p`?) needs egress + a credential and is a documented
+**spike deferred to real execution (story 3.8)** — the offline tier proves the plumbing (prompt
+augmented, repo untouched read-only, skeleton + split + validate invoked at pr-output, flag-off
+byte-identical), not model behavior.

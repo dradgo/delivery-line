@@ -64,6 +64,7 @@ Accepted tokens (the three story-named artifact stages plus the `RunnerStage` en
 | `DELIVERYLINE_CORRELATION_ID` | no | Correlation id prepended to log lines (story 3.11 traceability). |
 | `DELIVERYLINE_RUNNER_ALLOW_SIMULATE_FAILURE` | no | Must equal `true` to enable `--simulate-failure` (off in production). |
 | `DELIVERYLINE_RUNNER_SKIP_AUTH` | no | `true` lets a non-real run proceed without a key (mock/test only). |
+| `DELIVERYLINE_RUNNER_OPENSPEC` | no | `true` opts into the OpenSpec spec-driven authoring layer (story 3a-8; see "OpenSpec spec-driven authoring during runs" below). Absent/false ⇒ byte-identical legacy path. Injected by the backend only when `deliveryline.runner.openspec.enabled=true` (default OFF). |
 | `CODEX_CLI_VERSION` | baked | The pinned Codex CLI version, reported by `--self-test`. |
 | `OPENSPEC_VERSION` | baked | The pinned OpenSpec CLI version (story 3a-6), asserted + reported by `--self-test`. |
 | `SUPERPOWERS_PIN` | baked | The vendored obra/superpowers commit SHA (story 3a-7), reported by `--self-test`. |
@@ -207,6 +208,32 @@ spike needs egress + a credential (out of scope for the offline tier); reasoning
 docs, auto-firing cannot be confirmed in single-prompt headless mode, so this image ships the
 **minimum** (present + invokable) and the entrypoint prompt is left unchanged. Wiring a minimal,
 non-mutating prompt nudge is deferred to a future story once headless activation is confirmed.
+
+> **Superseded under the 3a-8 opt-in flag.** When `DELIVERYLINE_RUNNER_OPENSPEC=true` (default OFF),
+> the entrypoint *does* augment the prompt with a fence-emit delta and assembles a change folder at
+> pr-output — see the next section. The "prompt left unchanged" stance above remains the **flag-off
+> default**.
+
+### OpenSpec spec-driven authoring during runs (story 3a-8)
+
+Gated entirely on `DELIVERYLINE_RUNNER_OPENSPEC=true` (the backend injects it only when
+`deliveryline.runner.openspec.enabled=true`, default OFF). The shared behavior, stage→artifact mapping,
+the `=== FILE: <relpath> ===` fence convention, additive-never-blocks discipline, and the
+no-schema-change guarantee are documented once in
+[`../RUNNER_CONTRACT.md`](../RUNNER_CONTRACT.md#openspec-spec-driven-authoring-story-3a-8--opt-in-default-off).
+Codex-specific notes:
+
+- The prompt delta is appended to `PROMPT_INSTRUCTION` (the same seam that drives the Codex `exec`
+  prompt); the read-only stages emit their change files **to stdout only** and never touch
+  `/workspace/repo`.
+- At pr-output the entrypoint lays down `openspec/AGENTS.md` + `openspec/changes/<id>/` itself (it does
+  **not** run interactive `openspec init`, for the reasons in the 3a-6 finding above), splits the
+  carried fenced files via `runner.mjs split-fenced`, runs best-effort `openspec validate`, and the
+  Codex pr-output commit picks the folder up.
+- The change-id is derived from the ticket ref + a short workspace-run-id slug; `runner.mjs prepare`
+  surfaces `DL_TICKET_REF` and the per-stage reference paths for this.
+- **Flag OFF ⇒ byte-identical**: no prompt delta, no files, no `openspec` call. The conformance IT
+  pins both the flag-on assembly and the flag-off byte-identity.
 
 ### superpowers skills pin + update procedure (story 3a-7)
 
