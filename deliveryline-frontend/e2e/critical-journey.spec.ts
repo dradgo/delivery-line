@@ -37,7 +37,7 @@ async function navigateToSpecArtifact(page: import('@playwright/test').Page) {
 
   // Read the spec artifact (the Artifact Review Panel route). The artifact id is the
   // unique on-page marker (the heading "Artifact" collides with the panel title).
-  await page.getByRole('link', { name: /Open a sample artifact/ }).click();
+  await page.getByRole('link', { name: /Open the specification/ }).click();
   await expect(page.getByText('art_sample0001')).toBeVisible();
   // The inline approval decision surface is present beside the artifact too.
   await expect(page.getByTestId('approval-decision-bar')).toBeVisible();

@@ -64,6 +64,15 @@ function summary(stream: EventStream) {
   };
 }
 
+/**
+ * The spec artifact id surfaced on every run detail. Story 3a-9 made the run-detail
+ * "Open the specification" link + the approval bar's `resolveSpecArtifactId` read this
+ * `latestArtifacts[].artifactId` field; without it the link never renders and the J1/J2
+ * journeys can never reach the artifact viewer. It is ALSO the id the artifact-read
+ * endpoint below is keyed on (the critical specs assert this id on the viewer page).
+ */
+const SPEC_ARTIFACT_ID = 'art_sample0001';
+
 function detail(stream: EventStream) {
   const event = lastEvent(stream);
   return {
@@ -73,6 +82,35 @@ function detail(stream: EventStream) {
     lastEventType: event.eventType,
     specRejectionLoopCount: specRejectionLoopCount(stream),
     escalationMarker: false,
+    // Story 3a-9 — the read-model spec artifact entry the detail page + approval bar
+    // resolve (`resolveSpecArtifactId`). Drives the "Open the specification" link.
+    latestArtifacts: [
+      {
+        artifactId: SPEC_ARTIFACT_ID,
+        artifactType: 'spec',
+        status: 'available',
+        version: 1,
+      },
+    ],
+  };
+}
+
+/**
+ * Story 3a-9 (Gate 3) — the now-live artifact-read endpoint
+ * (`GET /api/v1/workflows/{runId}/artifacts/{artifactId}`). Returns a redacted spec
+ * `ArtifactDetail` so the Artifact Review Panel renders its `default` (spec) view on
+ * the viewer route the J1/J2 journeys reach.
+ */
+function artifactDetail(runId: string, artifactId: string, stream: EventStream) {
+  return {
+    artifactId,
+    artifactType: 'spec',
+    status: 'available',
+    version: 1,
+    classification: 'shareable-redacted',
+    checksum: 'SHA-256:9f86d081884c',
+    createdAt: lastEvent(stream).createdAt,
+    body: `# Specification\n\nSample redacted spec body for run ${runId} (E2E journey).\n`,
   };
 }
 
@@ -191,6 +229,17 @@ export async function mockBackend(page: Page): Promise<void> {
     if (actionsMatch) {
       const stream = streamByRunId(actionsMatch[1]!);
       return stream ? json(route, allowedActions(stream)) : notFound(route, actionsMatch[1]!, path);
+    }
+
+    // Story 3a-9 (Gate 3) — the live artifact-read endpoint. Must precede the bare
+    // detail matcher (whose `([^/]+)$` would not match this longer path anyway) and the
+    // loud-501 fallthrough, since `useArtifact` is now live and fetches this.
+    const artifactMatch = /\/api\/v1\/workflows\/([^/]+)\/artifacts\/([^/]+)$/.exec(path);
+    if (artifactMatch) {
+      const stream = streamByRunId(artifactMatch[1]!);
+      return stream
+        ? json(route, artifactDetail(artifactMatch[1]!, artifactMatch[2]!, stream))
+        : notFound(route, artifactMatch[1]!, path);
     }
 
     const detailMatch = /\/api\/v1\/workflows\/([^/]+)$/.exec(path);
