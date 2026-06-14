@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -47,6 +48,19 @@ public class WorkflowCommandFingerprintFactory {
         // 2.10 trap T6 / OQ-2 (symmetric with ApproveSpecCommand.reason exclusion).
         append(digest, reject.reviewerRole());
         append(digest, reject.taggedFeedback().value());
+      }
+      case AcceptImplementationCommand accept -> {
+        // Story 3.20: technical-approval twin of ApproveSpecCommand. Fingerprint fields beyond the
+        // shared envelope are workflowRunId + artifactId + artifactVersion + contextVersion +
+        // reviewerRole. reason is intentionally NOT fingerprinted — free-form reviewer wording
+        // edits
+        // on the same review must replay idempotently (symmetric with ApproveSpecCommand.reason).
+        // reviewerRole IS fingerprinted: asserting a different role is a different command.
+        append(digest, accept.workflowRunId());
+        append(digest, accept.artifactId());
+        append(digest, accept.artifactVersion().toString());
+        append(digest, accept.contextVersion().toString());
+        append(digest, accept.reviewerRole());
       }
       case SubmitClarificationCommand clarify -> {
         // Story 2.11: canonical fingerprint fields beyond the shared envelope are

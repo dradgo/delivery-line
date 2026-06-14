@@ -117,6 +117,22 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.WAITING_FOR_REVIEW, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+        // Story 3.20 AC12 — the developer-review actor may accept the implementation here.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_REVIEW,
+            "developer",
+            List.of(AllowedAction.ACCEPT_IMPLEMENTATION, AllowedAction.VIEW_ONLY)),
+        // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
+        // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
+        // unintended action elsewhere.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+            "developer",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION)),
+        Arguments.of(
+            WorkflowState.FAILED,
+            "developer",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS)),
         Arguments.of(WorkflowState.COMPLETED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(WorkflowState.COMPLETED, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
@@ -439,13 +455,15 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
   @Test
   void recognizedActorRolesSetMembershipPinned() {
-    // Review P9 / Edge E14: explicit pin on the recognized-role set. Adding a third role string
-    // without updating the matrix would silently relax the UNKNOWN_ACTOR_ROLE contract for callers
-    // who supply the new value before a matrix row exists for it.
+    // Review P9 / Edge E14: explicit pin on the recognized-role set. Adding a role string without
+    // updating the matrix would silently relax the UNKNOWN_ACTOR_ROLE contract for callers who
+    // supply the new value before a matrix row exists for it. Story 3.20 (AC12) adds `developer`
+    // (recognized for accept_implementation in WAITING_FOR_REVIEW).
     assertThat(WorkflowInspectionService.RECOGNIZED_ACTOR_ROLES)
         .containsExactlyInAnyOrder(
             WorkflowInspectionService.ROLE_PRODUCT_REVIEWER,
-            WorkflowInspectionService.ROLE_WORKFLOW_OWNER);
+            WorkflowInspectionService.ROLE_WORKFLOW_OWNER,
+            WorkflowInspectionService.ROLE_DEVELOPER);
     assertThat(WorkflowInspectionService.DEFAULT_ACTOR_ROLE)
         .isEqualTo(WorkflowInspectionService.ROLE_PRODUCT_REVIEWER);
   }

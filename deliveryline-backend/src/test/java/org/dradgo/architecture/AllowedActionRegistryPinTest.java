@@ -23,4 +23,12 @@ class AllowedActionRegistryPinTest {
   void approveSpecWireValueIsPinned() {
     assertThat(AllowedAction.APPROVE_SPEC.value()).isEqualTo("approve_spec");
   }
+
+  @Test
+  void acceptImplementationWireValueIsPinned() {
+    // Story 3.20 AC12 — TechnicalApprovalService is the canonical executor for this action; the
+    // developer-role WAITING_FOR_REVIEW matrix branch returns it. Guard against a silent rename of
+    // the registry value (lockstep with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.ACCEPT_IMPLEMENTATION.value()).isEqualTo("accept_implementation");
+  }
 }

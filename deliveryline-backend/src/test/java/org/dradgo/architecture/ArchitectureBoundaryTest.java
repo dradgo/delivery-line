@@ -164,6 +164,10 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL;
 
   @ArchTest
+  static final ArchRule technical_approval_service_lives_in_application_approval =
+      ArchitectureRuleCatalog.TECHNICAL_APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL;
+
+  @ArchTest
   static final ArchRule clarification_service_lives_in_application_clarification =
       ArchitectureRuleCatalog.CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION;
 

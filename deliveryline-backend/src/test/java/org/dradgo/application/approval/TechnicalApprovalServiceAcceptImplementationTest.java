@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -16,6 +17,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -25,11 +27,14 @@ import org.dradgo.application.approval.spi.ApprovalWritePort.NewApproval;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.ArtifactService;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.integration.IntegrationLink;
+import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
-import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
@@ -38,6 +43,7 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -46,27 +52,27 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 
 /**
- * Story 2.9 unit-level coverage for {@link ApprovalService#approveSpec} with all dependencies
- * mocked. Pins (a)-(g) of AC10 plus the Logback {@link ListAppender} log-level pins required by the
- * cross-cutting logging instrumentation task.
+ * Story 3.20 unit-level coverage for {@link TechnicalApprovalService#acceptImplementation} with all
+ * dependencies mocked (the technical-approval twin of {@code ApprovalServiceApproveSpecTest}). Pins
+ * AC13 cases plus the Logback {@link ListAppender} log-level pins required by the cross-cutting
+ * logging task: the success line and the WARN rejection branches.
  *
- * <p>Idempotent-replay (AC10d) and idempotency-key conflict (AC10e) are pinned at the {@link
- * org.dradgo.application.workflow.WorkflowCommandService} layer (the surrounding {@code
- * executeIdempotent} pipeline owns reservation/replay) — those scenarios are exercised by the
- * separate Testcontainers contract test {@code WorkflowCommandServiceContractTest} that lives
- * alongside the existing approveSpec coverage.
+ * <p>Idempotent-replay (AC10) and idempotency conflict are pinned at the {@code
+ * WorkflowCommandService} layer (the surrounding {@code executeIdempotent} pipeline owns
+ * reservation/replay) and end-to-end by the contract IT.
  */
-class ApprovalServiceApproveSpecTest {
+class TechnicalApprovalServiceAcceptImplementationTest {
 
-  private static final String RUN_ID = "run_approve9999";
-  private static final String ARTIFACT_ID = "art_spec9999";
-  private static final String RUNNER_EXECUTION_ID = "rex_inv0001";
+  private static final String RUN_ID = "run_accept9999";
+  private static final String ARTIFACT_ID = "art_impl9999";
+  private static final String RUNNER_EXECUTION_ID = "rex_exe0001";
   private static final OffsetDateTime FIXED_NOW =
-      OffsetDateTime.of(2026, 5, 23, 12, 0, 0, 0, ZoneOffset.UTC);
+      OffsetDateTime.of(2026, 6, 14, 12, 0, 0, 0, ZoneOffset.UTC);
   private static final Clock FIXED_CLOCK = Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC);
 
   private ArtifactRecordPort artifactRecordPort;
@@ -74,13 +80,11 @@ class ApprovalServiceApproveSpecTest {
   private ApprovalWritePort approvalWritePort;
   private WorkflowEventWritePort workflowEventWritePort;
   private WorkflowTransitionService workflowTransitionService;
+  private WorkflowOrchestrationService workflowOrchestrationService;
+  private IntegrationLinkService integrationLinkService;
   private RunnerExecutionRecordPort runnerExecutionRecordPort;
-  private org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort
-      workflowRunRejectionLoopPort;
-  private org.dradgo.application.workflow.SpecRejectionEscalationThresholdProvider
-      escalationThresholdProvider;
 
-  private ApprovalService approvalService;
+  private TechnicalApprovalService technicalApprovalService;
 
   private ListAppender<ILoggingEvent> appender;
 
@@ -91,109 +95,141 @@ class ApprovalServiceApproveSpecTest {
     approvalWritePort = Mockito.mock(ApprovalWritePort.class);
     workflowEventWritePort = Mockito.mock(WorkflowEventWritePort.class);
     workflowTransitionService = Mockito.mock(WorkflowTransitionService.class);
+    workflowOrchestrationService = Mockito.mock(WorkflowOrchestrationService.class);
+    integrationLinkService = Mockito.mock(IntegrationLinkService.class);
     runnerExecutionRecordPort = Mockito.mock(RunnerExecutionRecordPort.class);
-    workflowRunRejectionLoopPort =
-        Mockito.mock(org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort.class);
-    escalationThresholdProvider =
-        new org.dradgo.application.workflow.SpecRejectionEscalationThresholdProvider(3);
-    approvalService =
-        new ApprovalService(
+    technicalApprovalService =
+        new TechnicalApprovalService(
             artifactRecordPort,
             artifactService,
             approvalWritePort,
             workflowEventWritePort,
             workflowTransitionService,
+            workflowOrchestrationService,
+            integrationLinkService,
             new ApprovalVersionBinder(artifactRecordPort, runnerExecutionRecordPort),
-            workflowRunRejectionLoopPort,
-            escalationThresholdProvider,
-            org.mockito.Mockito.mock(
-                org.dradgo.application.workflow.WorkflowOrchestrationService.class),
             FIXED_CLOCK);
 
     appender = new ListAppender<>();
     appender.start();
-    ((Logger) LoggerFactory.getLogger(ApprovalService.class)).addAppender(appender);
+    ((Logger) LoggerFactory.getLogger(TechnicalApprovalService.class)).addAppender(appender);
   }
 
   @AfterEach
   void tearDown() {
-    ((Logger) LoggerFactory.getLogger(ApprovalService.class)).detachAppender(appender);
+    ((Logger) LoggerFactory.getLogger(TechnicalApprovalService.class)).detachAppender(appender);
   }
 
   @Test
-  void happyPathInsertsApprovalAppendsEventAndTransitionsToExecuting() {
-    // (a) — happy path
-    seedArtifact(3);
+  void happyPathImplementationPlanTransitionsToExecutingAndDispatches() {
+    seedArtifact(ArtifactType.IMPLEMENTATION_PLAN, 3);
     seedRunnerExecutionContextBundleVersion(2);
     when(artifactService.isApprovalEligible(ARTIFACT_ID)).thenReturn(true);
-    when(approvalWritePort.insert(any())).thenAnswer(invocation -> persistedFromNew(invocation));
+    when(approvalWritePort.insert(any())).thenAnswer(this::persistedFromNew);
 
-    ApprovalResult result = approvalService.approveSpec(commandWithVersions(3, 2));
+    ApprovalResult result =
+        technicalApprovalService.acceptImplementation(commandWithVersions(3, 2));
 
-    assertThat(result.workflowRunId()).isEqualTo(RUN_ID);
-    assertThat(result.artifactId()).isEqualTo(ARTIFACT_ID);
+    assertThat(result.resultingState()).isEqualTo(WorkflowState.EXECUTING);
+    assertThat(result.reviewerRole()).isEqualTo("developer");
     assertThat(result.artifactVersion()).isEqualTo(3);
     assertThat(result.contextBundleVersion()).isEqualTo(2);
-    assertThat(result.reviewerRole()).isEqualTo("product_reviewer");
-    assertThat(result.resultingState()).isEqualTo(WorkflowState.EXECUTING);
-    assertThat(result.correlationId()).isEqualTo("corr-1");
     assertThat(result.approvalId()).startsWith("apr_");
 
     ArgumentCaptor<NewApproval> newApprovalCaptor = ArgumentCaptor.forClass(NewApproval.class);
     verify(approvalWritePort).insert(newApprovalCaptor.capture());
     NewApproval newApproval = newApprovalCaptor.getValue();
-    assertThat(newApproval.publicId()).startsWith("apr_");
     assertThat(newApproval.decision()).isEqualTo(ApprovalSnapshot.DECISION_APPROVED);
     assertThat(newApproval.rejectionTaxonomy()).isNull();
-    assertThat(newApproval.actorType()).isEqualTo(ActorType.HUMAN);
-    assertThat(newApproval.reviewerRole()).isEqualTo("product_reviewer");
+    assertThat(newApproval.reviewerRole()).isEqualTo("developer");
     assertThat(newApproval.decidedAt()).isEqualTo(FIXED_NOW);
 
+    // (AC9) attribution: the approval.approved event carries reviewerRole=developer matching the
+    // row.
     ArgumentCaptor<WorkflowEventRecord> eventCaptor =
         ArgumentCaptor.forClass(WorkflowEventRecord.class);
     verify(workflowEventWritePort).append(eventCaptor.capture());
-    WorkflowEventRecord approvalEvent = eventCaptor.getValue();
-    assertThat(approvalEvent.eventType()).isEqualTo(WorkflowEventType.APPROVAL_APPROVED);
-    assertThat(approvalEvent.workflowRunPublicId()).isEqualTo(RUN_ID);
-    // (g) attribution end-to-end — reviewerRole on the event matches the persisted reviewerRole.
-    assertThat(approvalEvent.details().get("reviewerRole")).isEqualTo("product_reviewer");
-    assertThat(approvalEvent.details().get("approvalId")).isEqualTo(newApproval.publicId());
-    assertThat(approvalEvent.details().get("artifactVersion")).isEqualTo(3);
-    assertThat(approvalEvent.details().get("contextBundleVersion")).isEqualTo(2);
-    // Review batch 1 P-correlationId-pin: AC6 says details = { …, correlationId? }; the
-    // production code emits the key only when non-null. Pin its presence so a future change that
-    // drops the conditional branch cannot slip through.
-    assertThat(approvalEvent.details().get("correlationId")).isEqualTo("corr-1");
-    assertThat(approvalEvent.details().get("idempotencyKey")).isEqualTo("idem-approve-1234567890");
+    WorkflowEventRecord event = eventCaptor.getValue();
+    assertThat(event.eventType()).isEqualTo(WorkflowEventType.APPROVAL_APPROVED);
+    assertThat(event.details().get("reviewerRole")).isEqualTo("developer");
+    assertThat(event.details().get("approvalId")).isEqualTo(newApproval.publicId());
 
-    @SuppressWarnings("unchecked")
-    ArgumentCaptor<Map<String, Object>> transitionDetails = ArgumentCaptor.forClass(Map.class);
+    // (AC8) transition -> EXECUTING then dispatchImplementation, and the event appended BEFORE the
+    // transition (Trap T5 ordering).
     verify(workflowTransitionService)
         .transition(
             eq(RUN_ID),
             eq(WorkflowState.EXECUTING),
             any(TransitionActor.class),
-            eq("approve specification"),
-            eq("idem-approve-1234567890"),
-            transitionDetails.capture());
-    assertThat(transitionDetails.getValue())
-        .containsEntry("approvalId", newApproval.publicId())
-        .containsEntry("reviewerRole", "product_reviewer")
-        .containsEntry("artifactId", ARTIFACT_ID)
-        .containsEntry("artifactVersion", 3)
-        .containsEntry("contextBundleVersion", 2);
+            eq("accept implementation"),
+            eq("idem-accept-1234567890"),
+            anyMap());
+    verify(workflowOrchestrationService).dispatchImplementation(RUN_ID, "corr-1");
+    InOrder inOrder = inOrder(workflowEventWritePort, workflowTransitionService);
+    inOrder.verify(workflowEventWritePort).append(any(WorkflowEventRecord.class));
+    inOrder
+        .verify(workflowTransitionService)
+        .transition(
+            eq(RUN_ID), eq(WorkflowState.EXECUTING), any(), anyString(), anyString(), anyMap());
 
     assertSuccessLogEmitted();
   }
 
   @Test
+  void happyPathPrOutputTransitionsToCompletedWithoutDispatch() {
+    seedArtifact(ArtifactType.PR_OUTPUT, 3);
+    seedRunnerExecutionContextBundleVersion(2);
+    when(artifactService.isApprovalEligible(ARTIFACT_ID)).thenReturn(true);
+    when(integrationLinkService.findActiveGitHubPrLink(RUN_ID))
+        .thenReturn(Optional.of(githubPrLink("owner/repo#1")));
+    when(approvalWritePort.insert(any())).thenAnswer(this::persistedFromNew);
+
+    ApprovalResult result =
+        technicalApprovalService.acceptImplementation(commandWithVersions(3, 2));
+
+    assertThat(result.resultingState()).isEqualTo(WorkflowState.COMPLETED);
+    // PR-link gate ran through the canonical method (self-match against the active link).
+    verify(integrationLinkService).assertArtifactPrLinkMatches(RUN_ID, "owner/repo#1");
+    verify(workflowTransitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.COMPLETED),
+            any(TransitionActor.class),
+            eq("accept implementation"),
+            eq("idem-accept-1234567890"),
+            anyMap());
+    // prOutput approval must NOT dispatch and must NOT call Linear directly (Trap T6 — the 3.16
+    // post-commit hook fires the sync).
+    verify(workflowOrchestrationService, never()).dispatchImplementation(anyString(), anyString());
+    assertSuccessLogEmitted();
+  }
+
+  @Test
+  void specArtifactIsRejectedWithInvalidCommandPayloadAndNoMutations() {
+    seedArtifact(ArtifactType.SPEC, 3);
+
+    DomainException error =
+        catchDomainException(
+            () -> technicalApprovalService.acceptImplementation(commandWithVersions(3, 2)));
+
+    assertThat(error.errorCode()).isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    assertThat(error.details())
+        .containsEntry("artifactType", "spec")
+        .containsEntry("reason", "technical_approval_requires_implementation_artifact");
+    verifyNoInteractions(approvalWritePort);
+    verifyNoInteractions(workflowEventWritePort);
+    verifyNoInteractions(workflowTransitionService);
+    verifyNoInteractions(workflowOrchestrationService);
+  }
+
+  @Test
   void versionMismatchRejectsBeforeAnyWrite() {
-    // (b) — version-mismatch (artifact version differs)
-    seedArtifact(4); // current
+    seedArtifact(ArtifactType.IMPLEMENTATION_PLAN, 4); // current artifact version differs
     seedRunnerExecutionContextBundleVersion(2);
 
     DomainException error =
-        catchDomainException(() -> approvalService.approveSpec(commandWithVersions(3, 2)));
+        catchDomainException(
+            () -> technicalApprovalService.acceptImplementation(commandWithVersions(3, 2)));
 
     assertThat(error.errorCode()).isEqualTo(DomainErrorCode.APPROVAL_VERSION_MISMATCH);
     assertThat(error.details())
@@ -201,64 +237,58 @@ class ApprovalServiceApproveSpecTest {
         .containsEntry("currentArtifactVersion", 4)
         .containsEntry("expectedContextBundleVersion", 2)
         .containsEntry("currentContextBundleVersion", 2);
-
     verifyNoInteractions(approvalWritePort);
     verifyNoInteractions(workflowEventWritePort);
     verifyNoInteractions(workflowTransitionService);
     verify(artifactService, never()).isApprovalEligible(anyString());
-
     assertWarnLogContains("APPROVAL_VERSION_MISMATCH");
   }
 
   @Test
-  void versionMismatchRejectsBeforeEligibilityCheckEvenWhenContextBundleDiffers() {
-    // (b) — context-bundle version differs while artifact version matches; trap T3 ordering.
-    seedArtifact(3);
-    seedRunnerExecutionContextBundleVersion(3);
-
-    DomainException error =
-        catchDomainException(() -> approvalService.approveSpec(commandWithVersions(3, 2)));
-
-    assertThat(error.errorCode()).isEqualTo(DomainErrorCode.APPROVAL_VERSION_MISMATCH);
-    assertThat(error.details())
-        .containsEntry("expectedContextBundleVersion", 2)
-        .containsEntry("currentContextBundleVersion", 3);
-    verify(artifactService, never()).isApprovalEligible(anyString());
-  }
-
-  @Test
   void unavailableArtifactPayloadRejectsAfterVersionCheck() {
-    // (c) — eligibility check fails after version-binding passes
-    seedArtifact(3);
+    seedArtifact(ArtifactType.IMPLEMENTATION_PLAN, 3);
     seedRunnerExecutionContextBundleVersion(2);
     when(artifactService.isApprovalEligible(ARTIFACT_ID)).thenReturn(false);
 
     DomainException error =
-        catchDomainException(() -> approvalService.approveSpec(commandWithVersions(3, 2)));
+        catchDomainException(
+            () -> technicalApprovalService.acceptImplementation(commandWithVersions(3, 2)));
 
     assertThat(error.errorCode()).isEqualTo(DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE);
-    assertThat(error.details())
-        .containsEntry("artifactId", ARTIFACT_ID)
-        .containsEntry("reason", "not_approval_eligible");
+    assertThat(error.details()).containsEntry("reason", "not_approval_eligible");
     verifyNoInteractions(approvalWritePort);
-    verifyNoInteractions(workflowEventWritePort);
     verifyNoInteractions(workflowTransitionService);
-
     assertWarnLogContains("ARTIFACT_PAYLOAD_UNAVAILABLE");
   }
 
   @Test
-  void illegalTransitionFromTransitionServicePropagatesAndIsLoggedAsWarn() {
-    // (f) — illegal-state-transition. The transition service throws after the row+event landed in
-    // the same transaction; ApprovalService re-raises, the outer @Transactional rolls back.
-    seedArtifact(3);
+  void prOutputWithNoActiveGitHubLinkFailsClosed() {
+    seedArtifact(ArtifactType.PR_OUTPUT, 3);
     seedRunnerExecutionContextBundleVersion(2);
     when(artifactService.isApprovalEligible(ARTIFACT_ID)).thenReturn(true);
-    when(approvalWritePort.insert(any())).thenAnswer(invocation -> persistedFromNew(invocation));
+    when(integrationLinkService.findActiveGitHubPrLink(RUN_ID)).thenReturn(Optional.empty());
+
+    DomainException error =
+        catchDomainException(
+            () -> technicalApprovalService.acceptImplementation(commandWithVersions(3, 2)));
+
+    assertThat(error.errorCode()).isEqualTo(DomainErrorCode.ARTIFACT_PR_LINK_MISMATCH);
+    verifyNoInteractions(approvalWritePort);
+    verifyNoInteractions(workflowEventWritePort);
+    verifyNoInteractions(workflowTransitionService);
+    assertWarnLogContains("ARTIFACT_PR_LINK_MISMATCH");
+  }
+
+  @Test
+  void illegalTransitionFromTransitionServicePropagatesAfterRowAndEvent() {
+    seedArtifact(ArtifactType.IMPLEMENTATION_PLAN, 3);
+    seedRunnerExecutionContextBundleVersion(2);
+    when(artifactService.isApprovalEligible(ARTIFACT_ID)).thenReturn(true);
+    when(approvalWritePort.insert(any())).thenAnswer(this::persistedFromNew);
     doThrow(
             new DomainException(
                 DomainErrorCode.ILLEGAL_TRANSITION,
-                "Illegal transition Inbox -> Executing",
+                "Illegal transition Investigating -> Executing",
                 Map.of("runId", RUN_ID)))
         .when(workflowTransitionService)
         .transition(
@@ -270,69 +300,47 @@ class ApprovalServiceApproveSpecTest {
             anyMap());
 
     DomainException error =
-        catchDomainException(() -> approvalService.approveSpec(commandWithVersions(3, 2)));
+        catchDomainException(
+            () -> technicalApprovalService.acceptImplementation(commandWithVersions(3, 2)));
 
     assertThat(error.errorCode()).isEqualTo(DomainErrorCode.ILLEGAL_TRANSITION);
-    // The row insert + event append already happened (they're inside the same outer transaction
-    // that the test does not actually commit). The point of this test is to assert the call order
-    // and the WARN signal — rollback is pinned by the persistence-level contract test.
+    // The row insert + event append already happened (same outer transaction, rolled back by the
+    // caller); the point is the call order + the WARN signal.
     verify(approvalWritePort).insert(any(NewApproval.class));
     verify(workflowEventWritePort).append(any(WorkflowEventRecord.class));
     assertWarnLogContains("ILLEGAL_TRANSITION");
-  }
-
-  @Test
-  void bootstrapBundleVersionIsOneWhenArtifactHasNoRunnerExecution() {
-    // (OQ-2) — bootstrap path: no runner_execution row -> current bundle version = 1.
-    seedArtifact(1);
-    when(artifactRecordPort.findRunnerExecutionIdForArtifact(ARTIFACT_ID))
-        .thenReturn(Optional.empty());
-    when(artifactService.isApprovalEligible(ARTIFACT_ID)).thenReturn(true);
-    when(approvalWritePort.insert(any())).thenAnswer(invocation -> persistedFromNew(invocation));
-
-    ApprovalResult result = approvalService.approveSpec(commandWithVersions(1, 1));
-
-    assertThat(result.contextBundleVersion()).isEqualTo(1);
-    verify(workflowTransitionService)
-        .transition(
-            eq(RUN_ID),
-            eq(WorkflowState.EXECUTING),
-            any(TransitionActor.class),
-            anyString(),
-            anyString(),
-            anyMap());
   }
 
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 
-  private ApproveSpecCommand commandWithVersions(int artifactVersion, int contextVersion) {
-    return new ApproveSpecCommand(
+  private AcceptImplementationCommand commandWithVersions(int artifactVersion, int contextVersion) {
+    return new AcceptImplementationCommand(
         RUN_ID,
         ARTIFACT_ID,
         artifactVersion,
         contextVersion,
-        "alex",
+        "dev-alex",
         ActorType.HUMAN,
-        "idem-approve-1234567890",
+        "idem-accept-1234567890",
         "corr-1",
-        "product_reviewer",
+        "developer",
         null);
   }
 
-  private void seedArtifact(int currentVersion) {
+  private void seedArtifact(ArtifactType type, int currentVersion) {
     when(artifactRecordPort.findByPublicId(ARTIFACT_ID))
         .thenReturn(
             Optional.of(
                 new ArtifactRecordSnapshot(
                     ARTIFACT_ID,
                     RUN_ID,
-                    ArtifactType.SPEC,
+                    type,
                     currentVersion,
                     null,
                     DataClassification.LOCAL_ONLY,
-                    "scratch://spec/" + ARTIFACT_ID,
+                    "scratch://impl/" + ARTIFACT_ID,
                     "sha-256",
                     "abc123def456",
                     null,
@@ -352,7 +360,7 @@ class ApprovalServiceApproveSpecTest {
                 new RunnerExecutionSnapshot(
                     RUNNER_EXECUTION_ID,
                     RUN_ID,
-                    RunnerStage.INVESTIGATION,
+                    RunnerStage.EXECUTION,
                     RunnerExecutionStatus.COMPLETED,
                     version,
                     FIXED_NOW,
@@ -361,6 +369,18 @@ class ApprovalServiceApproveSpecTest {
                     FIXED_NOW.plusMinutes(5),
                     FIXED_NOW.minusMinutes(1),
                     null)));
+  }
+
+  private IntegrationLink githubPrLink(String externalRef) {
+    return new IntegrationLink(
+        "ilk_github0001",
+        RUN_ID,
+        "github_pr",
+        externalRef,
+        IntegrationSyncStatus.LINKED,
+        Instant.parse("2026-06-14T11:00:00Z"),
+        null,
+        null);
   }
 
   private ApprovalSnapshot persistedFromNew(org.mockito.invocation.InvocationOnMock invocation) {
@@ -397,8 +417,8 @@ class ApprovalServiceApproveSpecTest {
             .anyMatch(
                 e ->
                     e.getLevel() == Level.INFO
-                        && e.getFormattedMessage().contains("approveSpec success"));
-    assertThat(found).as("expected an INFO 'approveSpec success' log line").isTrue();
+                        && e.getFormattedMessage().contains("acceptImplementation success"));
+    assertThat(found).as("expected an INFO 'acceptImplementation success' log line").isTrue();
   }
 
   private void assertWarnLogContains(String token) {

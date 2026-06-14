@@ -515,6 +515,27 @@ final class ArchitectureRuleCatalog {
                   "org.dradgo.domain..")
               .allowEmptyShould(false));
 
+  static final ArchRule TECHNICAL_APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL =
+      namedRule(
+          "TechnicalApprovalService must live under application.approval and stay free of persistence/adapter dependencies",
+          "Remediation: keep TechnicalApprovalService in org.dradgo.application.approval (story 3.20 trap T4, sibling of ApprovalService). The service orchestrates the technical-approval pipeline via application-owned ports + domain types — JPA entity types or any other adapter import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.approval.TechnicalApprovalService")
+              .should()
+              .resideInAPackage("org.dradgo.application.approval..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.beans.factory.annotation..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
   /**
    * Story 2.11 trap T7 sibling rule: ClarificationService stays in {@code
    * application.clarification} and never reaches into adapter/persistence types. Same shape as the

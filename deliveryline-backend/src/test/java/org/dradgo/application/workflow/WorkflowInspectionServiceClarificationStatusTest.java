@@ -207,7 +207,74 @@ class WorkflowInspectionServiceClarificationStatusTest {
     assertEquals(2, view.specRejectionLoopCount());
     assertEquals(true, view.escalationMarker());
     assertEquals(3, view.pendingClarifications());
+    // Story 3.20 FR21: no approvals seeded -> both states NONE (never collapsed).
+    assertEquals("NONE", view.productApprovalState());
+    assertEquals("NONE", view.technicalApprovalState());
     verify(clarifications).countPendingByWorkflowRun(RUN);
+  }
+
+  @Test
+  void getRunSummarySpecApprovedOnlyYieldsProductApprovedTechnicalNone() {
+    stubMinimalRunForSummary();
+    when(approvals.findLatestApprovedForArtifactLineage(RUN, "spec"))
+        .thenReturn(Optional.of(approved("apr_spec001", "product_reviewer")));
+
+    WorkflowRunDetailedSummaryView view = service.getRunSummary(RUN);
+
+    // FR21: product and technical acceptance are DISTINCT — a spec approval must not light
+    // technical.
+    assertEquals("APPROVED", view.productApprovalState());
+    assertEquals("NONE", view.technicalApprovalState());
+  }
+
+  @Test
+  void getRunSummaryPlanApprovedYieldsTechnicalApprovedProductNone() {
+    stubMinimalRunForSummary();
+    when(approvals.findLatestApprovedForArtifactLineage(RUN, "implementationPlan"))
+        .thenReturn(Optional.of(approved("apr_plan001", "developer")));
+
+    WorkflowRunDetailedSummaryView view = service.getRunSummary(RUN);
+
+    assertEquals("NONE", view.productApprovalState());
+    assertEquals("APPROVED", view.technicalApprovalState());
+  }
+
+  @Test
+  void getRunSummaryPrOutputApprovedYieldsTechnicalApproved() {
+    stubMinimalRunForSummary();
+    when(approvals.findLatestApprovedForArtifactLineage(RUN, "prOutput"))
+        .thenReturn(Optional.of(approved("apr_pr0001", "developer")));
+
+    WorkflowRunDetailedSummaryView view = service.getRunSummary(RUN);
+
+    assertEquals("APPROVED", view.technicalApprovalState());
+  }
+
+  private void stubMinimalRunForSummary() {
+    when(runs.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN, WorkflowState.WAITING_FOR_REVIEW, null, 7L, 0, false)));
+    when(events.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
+    when(clarifications.countPendingByWorkflowRun(RUN)).thenReturn(0);
+  }
+
+  private static org.dradgo.application.approval.ApprovalSnapshot approved(
+      String approvalId, String reviewerRole) {
+    return new org.dradgo.application.approval.ApprovalSnapshot(
+        approvalId,
+        RUN,
+        "art_" + approvalId,
+        1,
+        1,
+        "actor@example.com",
+        ActorType.HUMAN,
+        reviewerRole,
+        org.dradgo.application.approval.ApprovalSnapshot.DECISION_APPROVED,
+        null,
+        null,
+        NOW.minusMinutes(5));
   }
 
   @Test

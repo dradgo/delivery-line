@@ -8,6 +8,7 @@
     "await_outcome",
     "retry",
     "view_diagnostics",
-    "clear_escalation_marker"
+    "clear_escalation_marker",
+    "accept_implementation"
   ]
 }

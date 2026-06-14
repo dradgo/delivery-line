@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import org.dradgo.application.approval.ApprovalResult;
 import org.dradgo.application.approval.ApprovalService;
+import org.dradgo.application.approval.TechnicalApprovalService;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationResult;
@@ -23,6 +24,7 @@ import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -82,6 +84,7 @@ public class WorkflowCommandService {
   private final WorkflowCommandFingerprintFactory fingerprintFactory;
   private final IntegrationLinkService integrationLinkService;
   private final ApprovalService approvalService;
+  private final TechnicalApprovalService technicalApprovalService;
   private final ClarificationService clarificationService;
   private final ClarificationReadPort clarificationReadPort;
   // Story 3a-1 (Task 5 / AC1) — auto-dispatch the spec runner once a submitted run is created.
@@ -102,6 +105,7 @@ public class WorkflowCommandService {
       WorkflowCommandFingerprintFactory fingerprintFactory,
       IntegrationLinkService integrationLinkService,
       ApprovalService approvalService,
+      TechnicalApprovalService technicalApprovalService,
       ClarificationService clarificationService,
       ClarificationReadPort clarificationReadPort,
       WorkflowOrchestrationService workflowOrchestrationService) {
@@ -116,6 +120,7 @@ public class WorkflowCommandService {
     this.fingerprintFactory = fingerprintFactory;
     this.integrationLinkService = integrationLinkService;
     this.approvalService = approvalService;
+    this.technicalApprovalService = technicalApprovalService;
     this.clarificationService = clarificationService;
     this.clarificationReadPort = clarificationReadPort;
     this.workflowOrchestrationService = workflowOrchestrationService;
@@ -134,6 +139,19 @@ public class WorkflowCommandService {
   @Transactional
   public WorkflowStateChangeResult rejectSpec(RejectSpecCommand command) {
     return executeIdempotent(command, this::rejectSpecInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult acceptImplementation(AcceptImplementationCommand command) {
+    // Story 3.20: technical-approval twin of approveSpec. The approval row insert +
+    // approval.approved event append + transition (+ implementation-plan dispatch) all happen
+    // inside TechnicalApprovalService, participating in this method's @Transactional boundary. The
+    // legacy contract returns WorkflowStateChangeResult; story 3.23 will expose the richer
+    // ApprovalResult through the REST surface. Replay is special-cased
+    // (replayAcceptImplementation):
+    // the resulting state depends on the artifact type, so it cannot be hard-coded (Trap T2).
+    return executeIdempotent(
+        command, this::acceptImplementationInternal, this::replayAcceptImplementation);
   }
 
   @Transactional
@@ -260,6 +278,20 @@ public class WorkflowCommandService {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       ApprovalResult approvalResult = approvalService.rejectSpec(command);
+      return new WorkflowStateChangeResult(
+          approvalResult.workflowRunId(),
+          approvalResult.resultingState(),
+          approvalResult.correlationId());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  private WorkflowStateChangeResult acceptImplementationInternal(
+      AcceptImplementationCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      ApprovalResult approvalResult = technicalApprovalService.acceptImplementation(command);
       return new WorkflowStateChangeResult(
           approvalResult.workflowRunId(),
           approvalResult.resultingState(),
@@ -519,6 +551,24 @@ public class WorkflowCommandService {
   private SubmitWorkflowResult replaySubmit(String resultRef, SubmitWorkflowCommand command) {
     var workflowRun = findWorkflowRunForReplay(resultRef);
     return new SubmitWorkflowResult(
+        workflowRun.publicId(),
+        workflowRun.currentState(),
+        normalizeOptional(command.correlationId()));
+  }
+
+  /**
+   * Story 3.20 (Trap T2): {@code acceptImplementation}'s resulting state depends on the accepted
+   * artifact's type — {@code Completed} for a {@code prOutput}, {@code Executing} for an {@code
+   * implementationPlan}. The generic {@link #replayStateChange} hard-codes the post-state per
+   * command type, which would return the wrong state here, so this dedicated replay re-reads the
+   * run and returns its <strong>current</strong> {@code currentState()}. The run never leaves
+   * {@code Completed} (terminal) once reached, and an {@code implementationPlan} acceptance lands
+   * {@code Executing}; either way the live current state is the correct replay answer.
+   */
+  private WorkflowStateChangeResult replayAcceptImplementation(
+      String resultRef, AcceptImplementationCommand command) {
+    var workflowRun = findWorkflowRunForReplay(resultRef);
+    return new WorkflowStateChangeResult(
         workflowRun.publicId(),
         workflowRun.currentState(),
         normalizeOptional(command.correlationId()));

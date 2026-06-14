@@ -102,7 +102,7 @@ class ApprovalServiceRejectSpecTest {
             approvalWritePort,
             workflowEventWritePort,
             workflowTransitionService,
-            runnerExecutionRecordPort,
+            new ApprovalVersionBinder(artifactRecordPort, runnerExecutionRecordPort),
             workflowRunRejectionLoopPort,
             escalationThresholdProvider,
             org.mockito.Mockito.mock(
@@ -212,7 +212,7 @@ class ApprovalServiceRejectSpecTest {
             approvalWritePort,
             workflowEventWritePort,
             workflowTransitionService,
-            runnerExecutionRecordPort,
+            new ApprovalVersionBinder(artifactRecordPort, runnerExecutionRecordPort),
             workflowRunRejectionLoopPort,
             provider,
             org.mockito.Mockito.mock(

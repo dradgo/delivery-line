@@ -246,6 +246,30 @@ public class WorkflowInspectionService {
               .map(IntegrationLink::externalRef)
               .orElse(null);
       int pending = clarificationReadPort.countPendingByWorkflowRun(workflowRunPublicId);
+      // FR21 (story 3.20 AC4) — derive product vs technical acceptance as DISTINCT typed states,
+      // never collapsed. Product derives from the latest approved `spec` lineage; technical from
+      // the
+      // latest approved `implementationPlan` OR `prOutput` lineage (reviewer_role + artifact type
+      // already distinguish them at the data layer). REST/CLI/UI surfacing is deferred to
+      // 3.23/3.28/3.31 (Trap T8) — these two fields stay application-internal.
+      RunApprovalState productApprovalState =
+          approvalReadPort
+                  .findLatestApprovedForArtifactLineage(
+                      workflowRunPublicId, ArtifactType.SPEC.value())
+                  .isPresent()
+              ? RunApprovalState.APPROVED
+              : RunApprovalState.NONE;
+      boolean technicalApproved =
+          approvalReadPort
+                  .findLatestApprovedForArtifactLineage(
+                      workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value())
+                  .isPresent()
+              || approvalReadPort
+                  .findLatestApprovedForArtifactLineage(
+                      workflowRunPublicId, ArtifactType.PR_OUTPUT.value())
+                  .isPresent();
+      RunApprovalState technicalApprovalState =
+          technicalApproved ? RunApprovalState.APPROVED : RunApprovalState.NONE;
       WorkflowRunDetailedSummaryView view =
           new WorkflowRunDetailedSummaryView(
               run.publicId(),
@@ -255,12 +279,16 @@ public class WorkflowInspectionService {
               latest.map(record -> record.eventType().value()).orElse(null),
               run.specRejectionLoopCount(),
               run.escalationMarkerSet(),
-              pending);
+              pending,
+              productApprovalState.name(),
+              technicalApprovalState.name());
       log.info(
-          "getRunSummary success workflowRunId={} pendingClarifications={} currentState={}",
+          "getRunSummary success workflowRunId={} pendingClarifications={} currentState={} productApprovalState={} technicalApprovalState={}",
           workflowRunPublicId,
           pending,
-          view.currentState());
+          view.currentState(),
+          view.productApprovalState(),
+          view.technicalApprovalState());
       return view;
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
@@ -284,8 +312,17 @@ public class WorkflowInspectionService {
 
   static final String ROLE_WORKFLOW_OWNER = "workflow_owner";
 
+  /**
+   * Story 3.20 (AC12 / OQ-3) — the developer-review actor role recognized for {@code
+   * accept_implementation} in the {@code WAITING_FOR_REVIEW} state. Added to {@link
+   * #RECOGNIZED_ACTOR_ROLES} so {@code getAllowedActions(runId, "developer")} does not throw {@code
+   * UNKNOWN_ACTOR_ROLE}. {@code reject_implementation} (3.21) / {@code takeover} (3.22) reuse the
+   * same role + matrix branch.
+   */
+  static final String ROLE_DEVELOPER = "developer";
+
   static final Set<String> RECOGNIZED_ACTOR_ROLES =
-      Set.of(ROLE_PRODUCT_REVIEWER, ROLE_WORKFLOW_OWNER);
+      Set.of(ROLE_PRODUCT_REVIEWER, ROLE_WORKFLOW_OWNER, ROLE_DEVELOPER);
 
   /** Default {@code actorRole} when the query param is null/blank (story 2.14 AC6 MVP). */
   static final String DEFAULT_ACTOR_ROLE = ROLE_PRODUCT_REVIEWER;
@@ -431,8 +468,13 @@ public class WorkflowInspectionService {
       case EXECUTING:
         return List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME);
       case WAITING_FOR_REVIEW:
-        // SEAM (Epic 3/4): Epic 3 adds approve_implementation / reject_implementation / takeover
-        // for the developer-review actor here. MVP returns view_only for all roles.
+        // Story 3.20 (AC12): the developer-review actor may accept the implementation here. SEAM
+        // (Epic 3): reject_implementation (3.21) + takeover (3.22) additively extend THIS branch
+        // for
+        // the developer role; all other roles keep view_only.
+        if (ROLE_DEVELOPER.equals(actorRole)) {
+          return List.of(AllowedAction.ACCEPT_IMPLEMENTATION, AllowedAction.VIEW_ONLY);
+        }
         return List.of(AllowedAction.VIEW_ONLY);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
@@ -1481,6 +1523,24 @@ public class WorkflowInspectionService {
       Integer currentContextBundleVersion,
       String lastEventId) {}
 
+  /**
+   * Story 3.20 (FR21 / OQ-2) — minimal product/technical acceptance state. {@code APPROVED} iff a
+   * latest-approved row exists for the relevant artifact type(s); {@code NONE} otherwise. Kept
+   * localized so a future Decision Bar (story 3.28) widening to {@code PENDING}/{@code REJECTED} is
+   * a one-file change.
+   */
+  public enum RunApprovalState {
+    NONE,
+    APPROVED
+  }
+
+  /**
+   * Story 3.20 (AC4 / Trap T8): {@code productApprovalState} + {@code technicalApprovalState} are
+   * the FR21 separate acceptance states, appended at the END of the record. They are read
+   * internally (allowed-actions + tests today); REST/CLI/UI surfacing is deferred to stories
+   * 3.23/3.28/3.31 per the 2.12 {@code pendingClarifications} precedent, so {@code
+   * WorkflowSummaryResponse} /{@code WorkflowStatusView} are intentionally NOT widened.
+   */
   public record WorkflowRunDetailedSummaryView(
       String workflowRunId,
       String currentState,
@@ -1489,7 +1549,9 @@ public class WorkflowInspectionService {
       String lastEventType,
       int specRejectionLoopCount,
       boolean escalationMarker,
-      int pendingClarifications) {}
+      int pendingClarifications,
+      String productApprovalState,
+      String technicalApprovalState) {}
 
   /**
    * Story 2.12 AC6 / AC7: V9-rich clarification status used by {@link

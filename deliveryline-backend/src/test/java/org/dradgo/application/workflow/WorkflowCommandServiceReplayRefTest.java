@@ -47,6 +47,7 @@ class WorkflowCommandServiceReplayRefTest {
             mock(WorkflowCommandFingerprintFactory.class),
             mock(IntegrationLinkService.class),
             mock(ApprovalService.class),
+            mock(org.dradgo.application.approval.TechnicalApprovalService.class),
             mock(ClarificationService.class),
             clarificationReadPort,
             mock(WorkflowOrchestrationService.class));

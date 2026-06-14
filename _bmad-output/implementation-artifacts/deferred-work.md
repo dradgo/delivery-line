@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3-20 (2026-06-14)
+
+- **PR-link gate is a self-match tautology — true artifact-vs-link PR-ref comparison not enforced.** `TechnicalApprovalService.assertPrLinkPresentAndMatches` resolves `IntegrationLinkService.findActiveGitHubPrLink(runId).externalRef()` and passes that same ref into `assertArtifactPrLinkMatches(runId, sameRef)`, so the comparison is against itself: it enforces only that an active `github_pr` link *exists* (fail-closed when absent), never that the prOutput artifact's claimed PR ref matches the link. This is the Alex-confirmed OQ-1 pilot fallback (the artifact's true PR ref lives only in its payload JSON; no clean read port exists yet). **Follow-up:** when an artifact-prRef read port is available, tighten the gate to a true artifact-vs-link comparison against the canonical `owner/repo#number` form (see [[proutput-prref-validator-rejects-real-adapter]]).
+
 ## Deferred from: code review of story-3-26 (2026-06-14)
 
 - **Placeholder controls are focusable no-op affordances** — the internal context-ref placeholder (`<button>` with title only, no `onClick`/`aria-disabled`) and the revision-history anchor (`aria-disabled` but still focusable, no handler) are keyboard-focusable controls that do nothing. Intentional OQ-4/D5 placeholders mirroring `SpecArtifactRenderer`. When D5 wires live in-app deep-links, also run the internal href through `validateUrlScheme` (internal refs emit no href today, so currently safe). [`deliveryline-frontend/src/features/workflows/components/ImplementationPlanArtifactRenderer.tsx:95,154`]

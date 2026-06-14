@@ -5,15 +5,12 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 import org.dradgo.application.approval.spi.ApprovalWritePort;
 import org.dradgo.application.approval.spi.ApprovalWritePort.NewApproval;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.ArtifactService;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.observability.MdcKeys;
-import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
-import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.SpecRejectionEscalationThresholdProvider;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
@@ -69,7 +66,7 @@ public class ApprovalService {
   private final ApprovalWritePort approvalWritePort;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final WorkflowTransitionService workflowTransitionService;
-  private final RunnerExecutionRecordPort runnerExecutionRecordPort;
+  private final ApprovalVersionBinder approvalVersionBinder;
   private final WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort;
   private final SpecRejectionEscalationThresholdProvider escalationThresholdProvider;
   // Story 3a-1 (Task 5 / AC5) — re-dispatch the spec runner after a rejection re-enters
@@ -85,7 +82,7 @@ public class ApprovalService {
       ApprovalWritePort approvalWritePort,
       WorkflowEventWritePort workflowEventWritePort,
       WorkflowTransitionService workflowTransitionService,
-      RunnerExecutionRecordPort runnerExecutionRecordPort,
+      ApprovalVersionBinder approvalVersionBinder,
       WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
       SpecRejectionEscalationThresholdProvider escalationThresholdProvider,
       org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService) {
@@ -95,7 +92,7 @@ public class ApprovalService {
         approvalWritePort,
         workflowEventWritePort,
         workflowTransitionService,
-        runnerExecutionRecordPort,
+        approvalVersionBinder,
         workflowRunRejectionLoopPort,
         escalationThresholdProvider,
         workflowOrchestrationService,
@@ -110,7 +107,7 @@ public class ApprovalService {
       ApprovalWritePort approvalWritePort,
       WorkflowEventWritePort workflowEventWritePort,
       WorkflowTransitionService workflowTransitionService,
-      RunnerExecutionRecordPort runnerExecutionRecordPort,
+      ApprovalVersionBinder approvalVersionBinder,
       WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
       SpecRejectionEscalationThresholdProvider escalationThresholdProvider,
       org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService,
@@ -120,7 +117,7 @@ public class ApprovalService {
     this.approvalWritePort = approvalWritePort;
     this.workflowEventWritePort = workflowEventWritePort;
     this.workflowTransitionService = workflowTransitionService;
-    this.runnerExecutionRecordPort = runnerExecutionRecordPort;
+    this.approvalVersionBinder = approvalVersionBinder;
     this.workflowRunRejectionLoopPort = workflowRunRejectionLoopPort;
     this.escalationThresholdProvider = escalationThresholdProvider;
     this.workflowOrchestrationService = workflowOrchestrationService;
@@ -178,9 +175,13 @@ public class ApprovalService {
       // AC4: version-binding check FIRST (trap T3). Stale artifact version OR stale context bundle
       // version is a reviewer error that must surface before any payload-eligibility detail.
       int currentArtifactVersion = artifact.version();
-      int currentContextBundleVersion = resolveCurrentContextBundleVersion(command.artifactId());
-      if (currentArtifactVersion != command.artifactVersion()
-          || currentContextBundleVersion != command.contextVersion()) {
+      int currentContextBundleVersion =
+          approvalVersionBinder.resolveCurrentContextBundleVersion(command.artifactId());
+      if (!approvalVersionBinder.versionsMatch(
+          command.artifactVersion(),
+          currentArtifactVersion,
+          command.contextVersion(),
+          currentContextBundleVersion)) {
         throw versionMismatch(command, currentArtifactVersion, currentContextBundleVersion);
       }
 
@@ -343,9 +344,13 @@ public class ApprovalService {
       // artifact is a valid PM decision (the runner may have crashed mid-write; the reviewer is
       // explicitly rejecting the partial output).
       int currentArtifactVersion = artifact.version();
-      int currentContextBundleVersion = resolveCurrentContextBundleVersion(command.artifactId());
-      if (currentArtifactVersion != command.artifactVersion()
-          || currentContextBundleVersion != command.contextVersion()) {
+      int currentContextBundleVersion =
+          approvalVersionBinder.resolveCurrentContextBundleVersion(command.artifactId());
+      if (!approvalVersionBinder.versionsMatch(
+          command.artifactVersion(),
+          currentArtifactVersion,
+          command.contextVersion(),
+          currentContextBundleVersion)) {
         throw versionMismatchReject(command, currentArtifactVersion, currentContextBundleVersion);
       }
 
@@ -504,28 +509,6 @@ public class ApprovalService {
       MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
-  }
-
-  private int resolveCurrentContextBundleVersion(String artifactId) {
-    // OQ-2: artifacts with no linked runner_execution are treated as bootstrap (version 1).
-    Optional<String> runnerExecutionId =
-        artifactRecordPort.findRunnerExecutionIdForArtifact(artifactId);
-    if (runnerExecutionId.isEmpty()) {
-      log.debug(
-          "approveSpec bundle version bootstrap path artifactId={} reason=no_runner_execution_id",
-          artifactId);
-      return 1;
-    }
-    Optional<RunnerExecutionSnapshot> snapshot =
-        runnerExecutionRecordPort.findByPublicId(runnerExecutionId.get());
-    if (snapshot.isEmpty()) {
-      log.debug(
-          "approveSpec bundle version bootstrap path artifactId={} runnerExecutionId={} reason=runner_execution_not_found",
-          artifactId,
-          runnerExecutionId.get());
-      return 1;
-    }
-    return snapshot.get().contextBundleVersion();
   }
 
   private DomainException versionMismatch(

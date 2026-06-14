@@ -21,6 +21,7 @@ import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -58,11 +59,16 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import(ApprovalReviewerRoleResolver.class)
 class CommandModelSymmetryFoundationContract {
 
+  // Story 3.20 added AcceptImplementationCommand to the sealed permit set (service-only surface via
+  // WorkflowCommandService.acceptImplementation). Its REST round-trip is intentionally deferred to
+  // story 3.23 (accept-implementation endpoint + OpenAPI), so it is recorded here as a known permit
+  // without a manual REST capture below — the 3.23 story adds that round-trip in lockstep.
   private static final Set<Class<?>> EXPECTED_PERMITS =
       Set.of(
           SubmitWorkflowCommand.class,
           ApproveSpecCommand.class,
           RejectSpecCommand.class,
+          AcceptImplementationCommand.class,
           SubmitClarificationCommand.class,
           RetryWorkflowCommand.class,
           TakeoverWorkflowCommand.class);
