@@ -140,7 +140,8 @@ class WorkflowOrchestrationServiceTest {
             // path.
             new RunnerProperties.ImplementationStage(
                 org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch),
-            RunnerProperties.OpenSpec.defaults());
+            RunnerProperties.OpenSpec.defaults(),
+            100);
     return new WorkflowOrchestrationService(
         runnerBroker,
         transitionService,

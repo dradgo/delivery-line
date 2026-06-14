@@ -5,6 +5,10 @@ import java.util.Map;
 public enum RunnerExecutionStatus implements RegistryValue {
   PENDING("pending"),
   RUNNING("running"),
+  // Story 3.17a — pre-dispatch state for a row sitting in the RunnerExecutionQueue. dequeue()
+  // (FOR UPDATE SKIP LOCKED) leases it to a worker and flips it to RUNNING. Built dormant: no
+  // production code enqueues yet (story 3.17b activates the queue).
+  QUEUED("queued"),
   COMPLETED("completed"),
   FAILED("failed"),
   TIMED_OUT("timed_out"),

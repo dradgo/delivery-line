@@ -712,3 +712,9 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 ## Deferred from: code review of story-3a-9 (2026-06-14)
 
 - Read endpoint (`WorkflowInspectionService.getArtifactDetail`) decodes the full artifact payload as UTF-8 with no upper size bound and silently substitutes replacement characters for non-UTF-8 bytes. Deferred — pre-existing project-wide pattern (the payload store is unbounded everywhere; bodies are write-time-redacted markdown). Revisit if large/binary artifacts become a concern.
+
+## Deferred from: code review of story-3-17a (2026-06-14)
+
+- **`dequeueNext` lease + JPA re-read not atomic without an ambient tx** [RunnerExecutionPersistenceAdapter.java:286] — the native `UPDATE … RETURNING` + `findByPublicId` re-read rely on the caller's transaction; the method itself has no `@Transactional`. Safe today (the only path, `RunnerExecutionQueue.dequeue`, is `@Transactional`). When 3.17b wires direct callers, annotate `@Transactional` on `dequeueNext` so the lease + re-read are guaranteed one tx.
+- **`QUEUED` rows absent from the timeout/stale-scan + broker active-status sets** [RunnerExecutionStatus.java + findStaleByStatusInAndTimeoutAtBefore callers] — a `queued` row never times out or gets reclaimed; harmless while the queue is dormant, but in 3.17b a stuck `queued` row would permanently consume backpressure depth. Add queued-row lease reclamation/timeout (extend the 3.2 stale scan) during 3.17b activation.
+- **21-arg positional `RunnerExecutionSnapshot` ctor (+16-arg shim) is brittle** [RunnerExecutionSnapshot.java] — accepted tech-debt ([[runnerproperties-record-component-fanout]]); a mid-list field insertion shifts positional meaning across call-sites with no compile error. Consider a builder/named factory for the snapshot.

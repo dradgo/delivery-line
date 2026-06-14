@@ -374,7 +374,8 @@ class LocalRunnerWorkspaceStoreTest {
         RunnerProperties.SpecStage.defaults(),
         RunnerProperties.PlanStage.defaults(),
         RunnerProperties.ImplementationStage.defaults(),
-        RunnerProperties.OpenSpec.defaults());
+        RunnerProperties.OpenSpec.defaults(),
+        100);
   }
 
   private static Set<PosixFilePermission> allAccessDirPerms() {

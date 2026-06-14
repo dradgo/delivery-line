@@ -402,6 +402,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Missing rejection taxonomy",
         false);
+    // Story 3.17a (AC4) — queue backpressure is transient: the cap may free up as workers drain the
+    // queue. Mirror RUNNER_TIMEOUT's retryable mapping, but as SERVICE_UNAVAILABLE (503, capacity)
+    // rather than GATEWAY_TIMEOUT.
+    register(
+        metadata,
+        DomainErrorCode.RUNNER_QUEUE_FULL,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Runner queue is full",
+        true);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

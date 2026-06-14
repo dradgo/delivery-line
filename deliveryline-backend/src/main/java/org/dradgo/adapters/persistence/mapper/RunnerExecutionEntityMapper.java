@@ -31,6 +31,11 @@ public class RunnerExecutionEntityMapper {
         entity.getRawOutputReference(),
         classification,
         entity.getRawOutputByteSize(),
-        entity.getRedactionCount());
+        entity.getRedactionCount(),
+        entity.getDispatchedAt(),
+        entity.getWorkerId(),
+        entity.getQueuePriority(),
+        entity.getQueueAttemptCount(),
+        entity.getCorrelationId());
   }
 }

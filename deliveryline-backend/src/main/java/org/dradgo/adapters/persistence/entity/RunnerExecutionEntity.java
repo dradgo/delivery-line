@@ -63,6 +63,25 @@ public class RunnerExecutionEntity {
   @Column(name = "heartbeat_stale_emitted_at")
   private OffsetDateTime heartbeatStaleEmittedAt;
 
+  // Story 3.17a — runner execution queue substrate columns (V12). Populated by the
+  // RunnerExecutionQueue.enqueue/dequeue path; null/default for rows created by the legacy
+  // synchronous dispatch path (which never enqueues). queuePriority/queueAttemptCount carry the
+  // V12 NOT NULL DEFAULT (100 / 0) so pre-3.17a rows migrate without a backfill.
+  @Column(name = "dispatched_at")
+  private OffsetDateTime dispatchedAt;
+
+  @Column(name = "worker_id")
+  private String workerId;
+
+  @Column(name = "queue_priority", nullable = false)
+  private int queuePriority = 100;
+
+  @Column(name = "queue_attempt_count", nullable = false)
+  private int queueAttemptCount;
+
+  @Column(name = "correlation_id")
+  private String correlationId;
+
   // Story 3.6 AC3 — capture reference + metrics for the durable redacted runner-logs store. All
   // nullable: populated by a metadata-only recordRawOutput update after log capture (Trap T10).
   @Column(name = "raw_output_reference")
@@ -173,6 +192,46 @@ public class RunnerExecutionEntity {
 
   public void setHeartbeatStaleEmittedAt(OffsetDateTime heartbeatStaleEmittedAt) {
     this.heartbeatStaleEmittedAt = heartbeatStaleEmittedAt;
+  }
+
+  public OffsetDateTime getDispatchedAt() {
+    return dispatchedAt;
+  }
+
+  public void setDispatchedAt(OffsetDateTime dispatchedAt) {
+    this.dispatchedAt = dispatchedAt;
+  }
+
+  public String getWorkerId() {
+    return workerId;
+  }
+
+  public void setWorkerId(String workerId) {
+    this.workerId = workerId;
+  }
+
+  public int getQueuePriority() {
+    return queuePriority;
+  }
+
+  public void setQueuePriority(int queuePriority) {
+    this.queuePriority = queuePriority;
+  }
+
+  public int getQueueAttemptCount() {
+    return queueAttemptCount;
+  }
+
+  public void setQueueAttemptCount(int queueAttemptCount) {
+    this.queueAttemptCount = queueAttemptCount;
+  }
+
+  public String getCorrelationId() {
+    return correlationId;
+  }
+
+  public void setCorrelationId(String correlationId) {
+    this.correlationId = correlationId;
   }
 
   public String getRawOutputReference() {

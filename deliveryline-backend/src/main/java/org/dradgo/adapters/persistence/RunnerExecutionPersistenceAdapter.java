@@ -15,6 +15,7 @@ import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.adapters.persistence.mapper.RunnerExecutionEntityMapper;
 import org.dradgo.adapters.persistence.repository.RunnerExecutionRepository;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerExecutionStateMachine;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
@@ -37,29 +38,56 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
   private static final Logger log =
       LoggerFactory.getLogger(RunnerExecutionPersistenceAdapter.class);
 
+  // Story 3.17a (AC2 / Trap T12) — JPA @Lock(PESSIMISTIC_WRITE) emits FOR UPDATE WITHOUT SKIP
+  // LOCKED, so the dequeue lease (which MUST skip rows another worker already locked) is a native
+  // NamedParameterJdbcTemplate UPDATE ... RETURNING, mirroring WorkflowRunPersistenceAdapter.
+  private static final String DEQUEUE_SQL =
+      """
+      update runner_executions
+         set status = 'running',
+             worker_id = :workerId,
+             dispatched_at = now(),
+             queue_attempt_count = queue_attempt_count + 1
+       where id = (
+         select id
+           from runner_executions
+          where status = 'queued'
+          order by queue_priority asc, created_at asc, id asc
+          for update skip locked
+          limit 1
+       )
+      returning public_id
+      """;
+  private static final String COUNT_QUEUED_SQL =
+      "select count(*) from runner_executions where status = 'queued'";
+
   private final RunnerExecutionRepository runnerExecutionRepository;
   private final WorkflowRunRepository workflowRunRepository;
   private final RunnerExecutionEntityMapper mapper;
+  private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate jdbcTemplate;
   private final Clock clock;
 
   @org.springframework.beans.factory.annotation.Autowired
   public RunnerExecutionPersistenceAdapter(
       RunnerExecutionRepository runnerExecutionRepository,
       WorkflowRunRepository workflowRunRepository,
-      RunnerExecutionEntityMapper mapper) {
-    this(runnerExecutionRepository, workflowRunRepository, mapper, Clock.systemUTC());
+      RunnerExecutionEntityMapper mapper,
+      org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate jdbcTemplate) {
+    this(runnerExecutionRepository, workflowRunRepository, mapper, jdbcTemplate, Clock.systemUTC());
   }
 
   RunnerExecutionPersistenceAdapter(
       RunnerExecutionRepository runnerExecutionRepository,
       WorkflowRunRepository workflowRunRepository,
       RunnerExecutionEntityMapper mapper,
+      org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate jdbcTemplate,
       Clock clock) {
     this.runnerExecutionRepository =
         Objects.requireNonNull(runnerExecutionRepository, "runnerExecutionRepository");
     this.workflowRunRepository =
         Objects.requireNonNull(workflowRunRepository, "workflowRunRepository");
     this.mapper = Objects.requireNonNull(mapper, "mapper");
+    this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
     this.clock = Objects.requireNonNull(clock, "clock");
   }
 
@@ -188,6 +216,92 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         contextBundleVersion,
         saved.getTimeoutAt());
     return mapper.toSnapshot(saved);
+  }
+
+  // Story 3.17a (AC2) — insert a queued row for the RunnerExecutionQueue substrate. Mirrors
+  // insertPending but seeds the queue columns (priority + correlationId, no lease yet) and the
+  // queued status. Relies on the caller's transaction (RunnerExecutionQueue.enqueue is
+  // @Transactional) so the backpressure count + this insert decide atomically.
+  @Override
+  public RunnerExecutionSnapshot insertQueued(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      int contextBundleVersion,
+      Duration timeout,
+      int queuePriority,
+      String correlationId) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(stage, "stage");
+    Objects.requireNonNull(timeout, "timeout");
+    if (contextBundleVersion <= 0) {
+      throw new IllegalArgumentException("contextBundleVersion must be positive");
+    }
+    if (timeout.isZero() || timeout.isNegative()) {
+      throw new IllegalArgumentException("timeout must be positive");
+    }
+    WorkflowRunEntity workflowRun =
+        workflowRunRepository
+            .findByPublicId(workflowRunPublicId)
+            .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+    OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+    RunnerExecutionEntity entity = new RunnerExecutionEntity();
+    entity.setPublicId(publicId);
+    entity.setWorkflowRun(workflowRun);
+    entity.setStage(stage);
+    entity.setStatus(RunnerExecutionStatus.QUEUED);
+    entity.setContextBundleVersion(contextBundleVersion);
+    entity.setLastActivityAt(now);
+    entity.setTimeoutAt(now.plus(timeout));
+    entity.setFailureCategory(null);
+    entity.setCompletedAt(null);
+    entity.setQueuePriority(queuePriority);
+    entity.setQueueAttemptCount(0);
+    entity.setCorrelationId(correlationId);
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "insertQueued publicId={} workflowRunId={} stage={} queuePriority={} contextBundleVersion={}",
+        publicId,
+        workflowRunPublicId,
+        stage.value(),
+        queuePriority,
+        contextBundleVersion);
+    return mapper.toSnapshot(saved);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public long countQueued() {
+    Long count =
+        jdbcTemplate.queryForObject(COUNT_QUEUED_SQL, new java.util.HashMap<>(), Long.class);
+    return count == null ? 0L : count;
+  }
+
+  // Story 3.17a (AC2 / Trap T12) — native FOR UPDATE SKIP LOCKED lease. The UPDATE ... RETURNING
+  // public_id flips exactly one queued row to running under a row lock that skips rows another
+  // worker already holds; the leased row's full snapshot is then re-read via JPA (the RETURNING
+  // public_id avoids hand-mapping all columns + the workflow_run join here).
+  @Override
+  public Optional<RunnerExecutionSnapshot> dequeueNext(String workerId) {
+    if (workerId == null || workerId.isBlank()) {
+      throw new IllegalArgumentException("workerId must be non-blank");
+    }
+    String leasedPublicId =
+        jdbcTemplate.query(
+            DEQUEUE_SQL,
+            new org.springframework.jdbc.core.namedparam.MapSqlParameterSource(
+                "workerId", workerId),
+            rs -> rs.next() ? rs.getString(1) : null);
+    if (leasedPublicId == null) {
+      return Optional.empty();
+    }
+    log.info(
+        "dequeue leased runnerExecutionId={} workerId={}",
+        leasedPublicId,
+        MdcKeys.sanitizeForLog(workerId));
+    return runnerExecutionRepository.findByPublicId(leasedPublicId).map(mapper::toSnapshot);
   }
 
   @Override

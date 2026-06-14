@@ -27,6 +27,40 @@ class RunnerPropertiesTest {
     assertEquals(120L, defaults.docker().danglingContainerMinAgeSeconds());
     // Story 3.6 AC4 — log capture stays local-only by default (no shareable elevation).
     assertEquals(false, defaults.allowShareableLogs());
+    // Story 3.17a AC4 — the RunnerExecutionQueue backpressure cap defaults to 100.
+    assertEquals(100, defaults.queueMaxDepth());
+  }
+
+  @Test
+  void queueMaxDepthIsClampedToAtLeastOne() {
+    // Story 3.17a AC4 — a cap below 1 (0, negative, or an unset primitive bound to 0) would reject
+    // every enqueue; the compact ctor coerces it up to 1 rather than dead-queueing.
+    assertEquals(1, queueMaxDepthProperties(0).queueMaxDepth());
+    assertEquals(1, queueMaxDepthProperties(-5).queueMaxDepth());
+    // A configured value at or above 1 binds verbatim.
+    assertEquals(250, queueMaxDepthProperties(250).queueMaxDepth());
+  }
+
+  private static RunnerProperties queueMaxDepthProperties(int queueMaxDepth) {
+    RunnerProperties d = RunnerProperties.defaults();
+    return new RunnerProperties(
+        d.staleThresholdMultiplier(),
+        d.stageTimeouts(),
+        d.timeoutScanIntervalMs(),
+        d.timeoutScanBatchSize(),
+        d.staleScanIntervalMs(),
+        d.pollIntervalMs(),
+        d.recovery(),
+        d.mock(),
+        d.scheduling(),
+        d.docker(),
+        d.secretEnvNames(),
+        d.allowShareableLogs(),
+        d.specStage(),
+        d.planStage(),
+        d.implementationStage(),
+        d.openspec(),
+        queueMaxDepth);
   }
 
   @Test
@@ -49,7 +83,8 @@ class RunnerPropertiesTest {
             RunnerProperties.SpecStage.defaults(),
             RunnerProperties.PlanStage.defaults(),
             RunnerProperties.ImplementationStage.defaults(),
-            RunnerProperties.OpenSpec.defaults());
+            RunnerProperties.OpenSpec.defaults(),
+            100);
     assertEquals(true, enabled.allowShareableLogs());
   }
 
@@ -111,7 +146,8 @@ class RunnerPropertiesTest {
             new RunnerProperties.SpecStage(RunnerKind.CLAUDE, true),
             new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
             RunnerProperties.ImplementationStage.defaults(),
-            RunnerProperties.OpenSpec.defaults());
+            RunnerProperties.OpenSpec.defaults(),
+            100);
     assertEquals(
         RunnerKind.CLAUDE,
         claudeSpecCodexPlan.kindForStage(org.dradgo.domain.registry.RunnerStage.INVESTIGATION));
@@ -137,7 +173,8 @@ class RunnerPropertiesTest {
             RunnerProperties.SpecStage.defaults(),
             new RunnerProperties.PlanStage(RunnerKind.CLAUDE, false),
             RunnerProperties.ImplementationStage.defaults(),
-            RunnerProperties.OpenSpec.defaults());
+            RunnerProperties.OpenSpec.defaults(),
+            100);
     assertEquals(
         RunnerKind.CLAUDE,
         claudePlan.kindForStage(org.dradgo.domain.registry.RunnerStage.EXECUTION));
@@ -179,7 +216,8 @@ class RunnerPropertiesTest {
             RunnerProperties.SpecStage.defaults(),
             new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
             new RunnerProperties.ImplementationStage(RunnerKind.CLAUDE, true),
-            RunnerProperties.OpenSpec.defaults());
+            RunnerProperties.OpenSpec.defaults(),
+            100);
     assertEquals(
         RunnerKind.CODEX, props.kindForExecutionSubStage(ExecutionSubStage.IMPLEMENTATION_PLAN));
     assertEquals(RunnerKind.CLAUDE, props.kindForExecutionSubStage(ExecutionSubStage.PR_OUTPUT));
@@ -207,7 +245,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.SpecStage.defaults(),
                 RunnerProperties.PlanStage.defaults(),
                 RunnerProperties.ImplementationStage.defaults(),
-                RunnerProperties.OpenSpec.defaults()));
+                RunnerProperties.OpenSpec.defaults(),
+                100));
   }
 
   @Test
@@ -231,7 +270,8 @@ class RunnerPropertiesTest {
                 RunnerProperties.SpecStage.defaults(),
                 RunnerProperties.PlanStage.defaults(),
                 RunnerProperties.ImplementationStage.defaults(),
-                RunnerProperties.OpenSpec.defaults()));
+                RunnerProperties.OpenSpec.defaults(),
+                100));
   }
 
   @Test

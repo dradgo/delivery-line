@@ -79,7 +79,8 @@ class RunnerLogCaptureServiceTest {
         d.specStage(),
         d.planStage(),
         d.implementationStage(),
-        d.openspec());
+        d.openspec(),
+        d.queueMaxDepth());
   }
 
   private final CapturingLogStore store = new CapturingLogStore();

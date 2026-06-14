@@ -168,6 +168,10 @@ deliveryline:
     stale-scan-interval-ms: 60000
     # Story 3.2 — bind the previously implicit poll cadence so RunnerProperties owns it.
     poll-interval-ms: 5000
+    # Story 3.17a (AC4) — RunnerExecutionQueue backpressure cap: max rows in status='queued' at once.
+    # enqueue beyond this raises RUNNER_QUEUE_FULL (503, retryable) and writes no row. Clamped to >=1.
+    # The queue is dormant in 3.17a (no production caller); story 3.17b's worker pool drains it.
+    queue-max-depth: 100
     stage-timeouts:
       investigation: 600s
       execution: 600s

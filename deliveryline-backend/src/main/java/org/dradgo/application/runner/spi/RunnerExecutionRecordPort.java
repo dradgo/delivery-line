@@ -51,6 +51,40 @@ public interface RunnerExecutionRecordPort {
       int contextBundleVersion,
       ExecutionConstraints executionConstraints);
 
+  /**
+   * Story 3.17a (AC2) — insert a new {@code queued} row for the RunnerExecutionQueue substrate.
+   * Must be called inside an active transaction; the row is inserted with {@code status = queued},
+   * {@code last_activity_at = now()}, {@code timeout_at = now() + timeout}, {@code
+   * queue_attempt_count = 0}, no lease ({@code worker_id}/{@code dispatched_at} null), the supplied
+   * {@code queuePriority} + {@code correlationId}, and the supplied bundle version. Built dormant:
+   * no production code calls this in 3.17a (the worker pool + caller refactor land in 3.17b).
+   */
+  RunnerExecutionSnapshot insertQueued(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      int contextBundleVersion,
+      Duration timeout,
+      int queuePriority,
+      String correlationId);
+
+  /**
+   * Story 3.17a (AC4) — count the rows currently in {@code status = queued}. Backs the
+   * RunnerExecutionQueue backpressure cap; called under the enqueue write transaction so the count
+   * reflects rows committed (or inserted-and-pending) at decision time.
+   */
+  long countQueued();
+
+  /**
+   * Story 3.17a (AC2) — lease the next queued row to {@code workerId} using {@code FOR UPDATE SKIP
+   * LOCKED} so concurrent workers never pick the same row. Atomically flips the highest-priority
+   * (lowest {@code queue_priority}, then oldest {@code created_at}) queued row to {@code running},
+   * stamps {@code worker_id}/{@code dispatched_at = now()}, and increments {@code
+   * queue_attempt_count}. Returns the leased row, or empty when the queue holds no queued rows.
+   * Must run inside an active transaction. Built dormant: exercised by tests only in 3.17a.
+   */
+  Optional<RunnerExecutionSnapshot> dequeueNext(String workerId);
+
   RunnerExecutionSnapshot transitionToRunning(String publicId, OffsetDateTime lastActivityAt);
 
   RunnerExecutionSnapshot touchActivity(

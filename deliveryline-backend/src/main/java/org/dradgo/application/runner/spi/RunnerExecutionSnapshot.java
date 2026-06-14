@@ -24,7 +24,18 @@ public record RunnerExecutionSnapshot(
     String rawOutputReference,
     DataClassification rawOutputClassification,
     Long rawOutputByteSize,
-    Integer redactionCount) {
+    Integer redactionCount,
+    // Story 3.17a — runner execution queue substrate columns (V12). dispatchedAt/workerId carry the
+    // dequeue() lease; queuePriority/queueAttemptCount are the dequeue ORDER BY key + lease
+    // counter;
+    // correlationId is the originating story-1.19 id persisted at enqueue (AC5/AC8). All default to
+    // null / the V12 column defaults (priority 100, attempts 0) for rows the legacy synchronous
+    // dispatch path created (it never enqueues).
+    OffsetDateTime dispatchedAt,
+    String workerId,
+    int queuePriority,
+    int queueAttemptCount,
+    String correlationId) {
 
   /** Pre-3.2 callsite shim: derives a snapshot whose {@code heartbeatStaleEmittedAt} is null. */
   public RunnerExecutionSnapshot(
@@ -57,7 +68,7 @@ public record RunnerExecutionSnapshot(
   /**
    * Pre-3.6 callsite shim: derives a snapshot whose four {@code raw_output_*} capture fields are
    * null. Keeps the broker / cleanup / recovery tests that build snapshots directly compiling
-   * unchanged — only the persistence mapper populates the full 16-field shape.
+   * unchanged — only the persistence mapper populates the full shape.
    */
   public RunnerExecutionSnapshot(
       String publicId,
@@ -88,6 +99,53 @@ public record RunnerExecutionSnapshot(
         null,
         null,
         null,
+        null);
+  }
+
+  /**
+   * Pre-3.17a callsite shim: derives a snapshot whose five queue-substrate fields carry the V12
+   * column defaults (no lease, priority 100, zero attempts, no correlationId). Keeps every existing
+   * caller that builds the 16-field (through-3.6) shape compiling unchanged — only the persistence
+   * mapper populates the full 21-field shape with the real queue columns.
+   */
+  public RunnerExecutionSnapshot(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      RunnerExecutionStatus status,
+      int contextBundleVersion,
+      OffsetDateTime lastActivityAt,
+      OffsetDateTime timeoutAt,
+      FailureCategory failureCategory,
+      OffsetDateTime completedAt,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      OffsetDateTime heartbeatStaleEmittedAt,
+      String rawOutputReference,
+      DataClassification rawOutputClassification,
+      Long rawOutputByteSize,
+      Integer redactionCount) {
+    this(
+        publicId,
+        workflowRunPublicId,
+        stage,
+        status,
+        contextBundleVersion,
+        lastActivityAt,
+        timeoutAt,
+        failureCategory,
+        completedAt,
+        createdAt,
+        archivedAt,
+        heartbeatStaleEmittedAt,
+        rawOutputReference,
+        rawOutputClassification,
+        rawOutputByteSize,
+        redactionCount,
+        null,
+        null,
+        100,
+        0,
         null);
   }
 }

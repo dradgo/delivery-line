@@ -62,7 +62,15 @@ public record RunnerProperties(
     // DELIVERYLINE_RUNNER_OPENSPEC. OPTIONAL + UNVALIDATED nested record (mirrors the docker()
     // nesting precedent); a null/absent group falls back to disabled (default OFF) so the shared
     // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
-    OpenSpec openspec) {
+    OpenSpec openspec,
+    // Story 3.17a (AC4 / AC7) — RunnerExecutionQueue backpressure cap. The maximum number of rows
+    // that may sit in status='queued' at once; enqueue beyond it raises RUNNER_QUEUE_FULL and
+    // writes
+    // no row. Default 100. Clamped to >=1 in the compact ctor (a cap below 1 would reject every
+    // enqueue). Validated => the shared test application.yml MUST mirror it (Trap T5,
+    // [[validated-config-needs-test-yaml]]). Read by the dormant queue (exercised by tests only in
+    // 3.17a; the worker pool that drains the queue lands in 3.17b).
+    int queueMaxDepth) {
 
   public RunnerProperties {
     if (staleThresholdMultiplier <= 0.0d) {
@@ -105,6 +113,11 @@ public record RunnerProperties(
     implementationStage =
         implementationStage == null ? ImplementationStage.defaults() : implementationStage;
     openspec = openspec == null ? OpenSpec.defaults() : openspec;
+    // Story 3.17a AC4 — clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an unset
+    // primitive that bound to 0) would reject every enqueue; coerce to the minimum useful depth so
+    // a
+    // misconfiguration degrades to "depth 1" rather than a dead queue.
+    queueMaxDepth = queueMaxDepth < 1 ? 1 : queueMaxDepth;
   }
 
   public static RunnerProperties defaults() {
@@ -127,7 +140,8 @@ public record RunnerProperties(
         SpecStage.defaults(),
         PlanStage.defaults(),
         ImplementationStage.defaults(),
-        OpenSpec.defaults());
+        OpenSpec.defaults(),
+        100);
   }
 
   /**

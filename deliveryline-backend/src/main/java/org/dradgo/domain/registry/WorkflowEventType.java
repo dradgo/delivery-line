@@ -12,6 +12,9 @@ public enum WorkflowEventType implements RegistryValue {
   ARTIFACT_AVAILABLE("artifact.available"),
   ARTIFACT_FAILED("artifact.failed"),
   ARTIFACT_VERSION_CREATED("artifact.versionCreated"),
+  // Story 3.17a — appended by RunnerExecutionQueue.enqueue when a row is placed in the queue
+  // (pre-dispatch). Built dormant: no production code enqueues yet (story 3.17b activates it).
+  RUNNER_QUEUED("runner.queued"),
   RUNNER_STARTED("runner.started"),
   RUNNER_FAILED("runner.failed"),
   RUNNER_DISPATCHED("runner.dispatched"),

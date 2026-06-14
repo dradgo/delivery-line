@@ -39,7 +39,9 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
           WorkflowEventType.RUNNER_HEARTBEAT_STALE,
           WorkflowEventType.RUNNER_TIMEOUT,
           WorkflowEventType.RUNNER_ORPHANED,
-          WorkflowEventType.RUNNER_COMPLETED);
+          WorkflowEventType.RUNNER_COMPLETED,
+          // Story 3.17a — RunnerExecutionQueue.enqueue appends runner.queued through this port.
+          WorkflowEventType.RUNNER_QUEUED);
 
   private final WorkflowEventWritePort workflowEventWritePort;
 

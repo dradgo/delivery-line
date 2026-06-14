@@ -99,6 +99,7 @@
         "artifact.available",
         "artifact.failed",
         "artifact.versionCreated",
+        "runner.queued",
         "runner.started",
         "runner.failed",
         "runner.dispatched",

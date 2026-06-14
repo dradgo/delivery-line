@@ -106,7 +106,14 @@ public enum DomainErrorCode implements RegistryValue {
   // @NotNull RejectionTaxonomy field already prevents this at the command boundary; the REST-layer
   // INVALID_REJECTION_TAXONOMY deserialization concern belongs to story 3.24. BAD_REQUEST +
   // non-retryable (mirrors INVALID_COMMAND_PAYLOAD — a malformed reviewer decision, not transient).
-  MISSING_REJECTION_TAXONOMY("MISSING_REJECTION_TAXONOMY");
+  MISSING_REJECTION_TAXONOMY("MISSING_REJECTION_TAXONOMY"),
+  // Story 3.17a (AC4 / D5) — three-sites code (enum + ProblemDetailsCatalog + manifest). Raised by
+  // RunnerExecutionQueue.enqueue when the count of queued rows is already at
+  // deliveryline.runner.queue-max-depth; the row is NOT inserted and the error carries
+  // details.currentDepth + details.maxDepth. SERVICE_UNAVAILABLE + retryable=true (transient
+  // backpressure — mirrors RUNNER_TIMEOUT); the "run stays in its prior state" caller behavior is
+  // realized at the dispatch call-site in story 3.17b (here the error simply propagates).
+  RUNNER_QUEUE_FULL("RUNNER_QUEUE_FULL");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

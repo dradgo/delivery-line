@@ -563,6 +563,36 @@ final class ArchitectureRuleCatalog {
               .allowEmptyShould(false));
 
   /**
+   * Story 3.17a (AC6 / D4) sibling rule: the RunnerExecutionQueue substrate lives under {@code
+   * application.runner.queue} and reaches persistence only through the {@code
+   * application.runner.spi} ports — never {@code adapters.*}/{@code infrastructure.*} (Trap T11).
+   * Mirror of {@link #TECHNICAL_APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL}. The
+   * caller-restriction rules (who may call enqueue/dequeue) are deferred to story 3.17b where the
+   * callers are wired — in 3.17a the queue has no production caller so a restriction rule would be
+   * vacuous.
+   */
+  static final ArchRule RUNNER_EXECUTION_QUEUE_LIVES_IN_APPLICATION_RUNNER_QUEUE =
+      namedRule(
+          "RunnerExecutionQueue must live under application.runner.queue and stay free of persistence/adapter dependencies",
+          "Remediation: keep RunnerExecutionQueue + QueuedRunnerExecution in org.dradgo.application.runner.queue (story 3.17a AC6). The queue enqueues/dequeues via application-owned SPI ports + domain types — a JPA entity import or any adapters/infrastructure import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids (Trap T11).",
+          classes()
+              .that()
+              .resideInAPackage("org.dradgo.application.runner.queue..")
+              .should()
+              .resideInAPackage("org.dradgo.application.runner.queue..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.beans.factory.annotation..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
+  /**
    * Story 2.12 trap T8 sibling rule: ClarificationLifecycleService +
    * ClarificationLifecycleOrchestrator stay in {@code application.clarification} and never reach
    * into adapter/persistence types. Mirror of {@link

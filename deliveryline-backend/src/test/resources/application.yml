@@ -52,6 +52,10 @@ deliveryline:
     timeout-scan-batch-size: 50
     stale-scan-interval-ms: 60000
     poll-interval-ms: 5000
+    # Story 3.17a (AC4 / Trap T5) — validated cap must be mirrored here (test application.yml shadows,
+    # does not merge with, main). 100 matches production; RunnerExecutionQueueIT exercises
+    # RUNNER_QUEUE_FULL by seeding 100 queued rows against this default cap (no @TestPropertySource).
+    queue-max-depth: 100
     stage-timeouts:
       investigation: 600s
       execution: 600s
