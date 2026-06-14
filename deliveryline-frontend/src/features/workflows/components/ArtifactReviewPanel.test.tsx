@@ -86,7 +86,7 @@ describe('ArtifactReviewPanel — presentational dispatch (AC1, AC3)', () => {
     expect(panel()).toHaveAttribute('data-artifact-panel-state', 'default');
   });
 
-  it('routes implementationPlan → stub renderer', () => {
+  it('routes implementationPlan → variant renderer (story 3.26)', () => {
     renderDefault(implementationPlanArtifactView);
     expect(screen.getByTestId('implementation-plan-artifact-renderer')).toBeInTheDocument();
   });

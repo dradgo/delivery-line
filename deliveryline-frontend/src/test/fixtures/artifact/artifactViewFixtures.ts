@@ -86,7 +86,14 @@ export const specArtifactViewXss: SpecArtifactView = {
   ].join('\n'),
 };
 
-/** The implementation-plan variant (Epic 3 scope) — stub-rendered in E2. */
+/**
+ * The implementation-plan variant (Epic 3 scope), aligned to `art_plan_fix_rej_001`
+ * (`DEL-9002` v1 — the `happy-path-success.json` / `spec-rejection-and-resubmit.json`
+ * terminal state). Enriched with realistic structured steps (≥3, at least one carrying
+ * `detail` + `estimatedComplexity`) and typed context references (an internal spec ref
+ * + an external repo ref + a branch ref per story 3.9). The schema-v1 sub-schema carries
+ * `steps`/`contextReferences` as bare `string[]`; this read model enriches them (R2).
+ */
 export const implementationPlanArtifactView: ImplementationPlanArtifactView = {
   artifactType: 'implementationPlan',
   artifactId: 'art_plan_fix_rej_001',
@@ -94,7 +101,72 @@ export const implementationPlanArtifactView: ImplementationPlanArtifactView = {
   version: 1,
   classification: 'internal',
   createdAt: '2026-05-30T12:30:00Z',
-  body: '# Implementation Plan\n\nStep-by-step plan rendered fully in Epic 3.',
+  body: '# Implementation Plan\n\nStep-by-step plan to implement the corrected delivery flow.',
+  steps: [
+    {
+      summary: 'Add the payload validation guard to the request handler.',
+      detail:
+        'Introduce a `validatePayload` step **before** persistence.\n\n- Reject malformed input with a 400.\n- Keep the public API stable.',
+      estimatedComplexity: 'M',
+    },
+    {
+      summary: 'Backfill the regression test for the v1-rejected clause.',
+      detail: 'Cover the reviewer-flagged ambiguity with an explicit assertion.',
+    },
+    {
+      summary: 'Update the changelog and open the pull request.',
+    },
+  ],
+  contextReferences: [
+    { kind: 'spec', label: 'Approved specification — DEL-9002 v2', internal: true },
+    {
+      kind: 'repository',
+      label: 'dradgo/deliveryline',
+      href: 'https://github.com/dradgo/deliveryline',
+      internal: false,
+    },
+    {
+      kind: 'branch',
+      label: 'feature/del-9002-payload-validation',
+      href: 'https://github.com/dradgo/deliveryline/tree/feature/del-9002-payload-validation',
+      internal: false,
+    },
+  ],
+};
+
+/**
+ * An XSS-bearing implementation-plan fixture (AC3 / AC9 — mirrors `specArtifactViewXss`).
+ * Carries scriptable payloads in step `summary`/`detail` (a `<script>` + an `<img onerror>`)
+ * and a `javascript:` context-reference href. The renderer test feeds this through and
+ * asserts no active `<script>`/`<iframe>` renders and `window.__xss_executed` stays unset —
+ * proving the renderer routes untrusted content through the safe path (it does NOT re-test
+ * the sanitizer, which is story 2.24's own suite).
+ */
+export const implementationPlanArtifactViewXss: ImplementationPlanArtifactView = {
+  ...implementationPlanArtifactView,
+  artifactId: 'art_plan_xss_001',
+  title: 'Implementation Plan — XSS probe',
+  body: '# Plan\n\n<script>window.__xss_executed = true;</script>\n\nTrailing paragraph.',
+  steps: [
+    {
+      summary: '<script>window.__xss_executed = true;</script> Step with a scriptable summary.',
+      detail:
+        '<img src="x" onerror="window.__xss_executed = true" />\n\n[click me](javascript:alert(1))',
+      estimatedComplexity: 'L',
+    },
+    {
+      summary: 'A second step so the steps list still has structure.',
+    },
+  ],
+  contextReferences: [
+    { kind: 'spec', label: '<script>window.__xss_executed = true;</script> spec', internal: true },
+    {
+      kind: 'repository',
+      label: 'malicious link',
+      href: 'javascript:alert(1)',
+      internal: false,
+    },
+  ],
 };
 
 /** The PR-output variant (Epic 3 scope) — stub-rendered in E2. */

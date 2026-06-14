@@ -2,6 +2,12 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3-26 (2026-06-14)
+
+- **Placeholder controls are focusable no-op affordances** — the internal context-ref placeholder (`<button>` with title only, no `onClick`/`aria-disabled`) and the revision-history anchor (`aria-disabled` but still focusable, no handler) are keyboard-focusable controls that do nothing. Intentional OQ-4/D5 placeholders mirroring `SpecArtifactRenderer`. When D5 wires live in-app deep-links, also run the internal href through `validateUrlScheme` (internal refs emit no href today, so currently safe). [`deliveryline-frontend/src/features/workflows/components/ImplementationPlanArtifactRenderer.tsx:95,154`]
+- **External context-ref with a relative/scheme-less href becomes a `target="_blank"` "external" link** — `validateUrlScheme` returns `ok:true` for scheme-less relative input (same-origin), so an `internal:false` ref with `href:"/foo"` renders `<a href="/foo" target="_blank" rel="noopener noreferrer">`. Latent — no live `contextReferences` source yet; fixtures use absolute URLs. Add an absolute-URL expectation when the live artifact-read mapping lands. [`deliveryline-frontend/src/features/workflows/components/ImplementationPlanArtifactRenderer.tsx:80,103`]
+- **Empty/whitespace-only `summary`/`label`/`estimatedComplexity` render empty controls** — the guard accepts `''` (`typeof === 'string'`) and the renderer branches on `!== undefined`, so an empty `estimatedComplexity` shows a "Complexity" label with a blank badge, and empty summary/label produce label-less accordion triggers / empty interactive elements. Robustness nit; harden when a live wire source feeds these. [`deliveryline-frontend/src/features/workflows/components/ImplementationPlanArtifactRenderer.tsx:198,202`]
+
 ## Deferred from: code review of story-2-29 (2026-06-13)
 
 - **Dual lifecycle representation never bridged** — the headline 3-pill indicator (`submitted › accepted › incorporated`, the literal `LIFECYCLE_STAGES`) and the per-item/Mermaid set (`Open → Answered → Accepted → Incorporated`) are both faithful to the live UI but a first-run PM must reconcile "Answered = first dot (submitted)" unaided; one bridging sentence would help. Clarity polish only. [`docs/pm-loop-walkthrough.md:135,154-163`]

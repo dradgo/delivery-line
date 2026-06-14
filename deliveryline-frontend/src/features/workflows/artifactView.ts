@@ -57,9 +57,72 @@ export interface SpecArtifactView extends ArtifactViewBase {
   readonly truncated?: boolean;
 }
 
-/** The implementation-plan variant (Epic 3 scope) — stub-rendered in E2. */
+/**
+ * A single structured step of an implementation plan (story 3.26 AC2).
+ *
+ * Reconciliation R2: the runner-contracts schema-v1 sub-schema carries `steps` as a
+ * bare `string[]`. This frontend-owned read model ENRICHES each step additively — a
+ * plain schema string maps to `{ summary }`, with `detail`/`estimatedComplexity`
+ * populated by a future artifact-read story when the backend supplies them.
+ *
+ * `summary` and `detail` are UNTRUSTED runner-derived text: `summary` renders as
+ * React-escaped plain text (it cannot nest the block-level `SafeMarkdownRenderer`
+ * inside an `AccordionTrigger` button — T-STEPHTML), `detail` renders through
+ * `SafeMarkdownRenderer`.
+ */
+export interface ImplementationPlanStep {
+  /** UNTRUSTED — the step's one-line summary (React-escaped plain text). */
+  readonly summary: string;
+  /** UNTRUSTED — optional longer detail (rendered via `SafeMarkdownRenderer`). */
+  readonly detail?: string;
+  /** Optional trusted-style complexity label (e.g. "M", "high"). */
+  readonly estimatedComplexity?: string;
+}
+
+/**
+ * A context reference linked from an implementation plan (story 3.26 AC2 / story 3.9
+ * AC2). Internal refs (the approved spec artifact) navigate WITHIN DeliveryLine —
+ * rendered as OQ-4 placeholder controls until live deep-links land (D5). External
+ * refs (the linked GitHub repo + branch) open in a new tab ONLY when their `href`
+ * passes `validateUrlScheme`.
+ *
+ * Reconciliation R2: schema-v1 carries `contextReferences` as a bare `string[]`; this
+ * read model enriches them. `label` is UNTRUSTED runner-derived text (React-escaped);
+ * `href` is validated before an `<a>` is emitted.
+ */
+export interface ImplementationPlanContextRef {
+  readonly kind: 'spec' | 'repository' | 'branch' | 'other';
+  /** UNTRUSTED — the human-readable label (React-escaped). */
+  readonly label: string;
+  /** Optional target; validated via `validateUrlScheme` before any `<a>` render. */
+  readonly href?: string;
+  /** `true` → in-app navigation (placeholder); `false` → external `<a target="_blank">`. */
+  readonly internal: boolean;
+}
+
+/**
+ * The implementation-plan variant (Epic 3 scope) — fully rendered by
+ * `ImplementationPlanArtifactRenderer` (story 3.26). Carries the structured steps +
+ * context references on top of the shared base, plus the DORMANT state flags mirrored
+ * from the spec variant (D3) so the panel's stale/superseded/incomplete banners are
+ * reachable for this variant too (fixtures only — no live source).
+ */
 export interface ImplementationPlanArtifactView extends ArtifactViewBase {
   readonly artifactType: 'implementationPlan';
+  /**
+   * Ordered structured steps (story 3.26 AC2); enriched from schema-v1 `string[]` (R2).
+   * OPTIONAL (R3 reconciliation) — the live story-3a-9 `ArtifactDetail` wire DTO carries
+   * NO structured steps (it flattens the plan into the markdown `body`), so a live
+   * impl-plan artifact renders body-only; the rich step rendering is fixture-driven until
+   * a future read-model story maps the schema strings into this slot.
+   */
+  readonly steps?: readonly ImplementationPlanStep[];
+  /** Linked spec / repo / branch references (story 3.26 AC2, story 3.9 AC2). OPTIONAL (R3). */
+  readonly contextReferences?: readonly ImplementationPlanContextRef[];
+  /** DORMANT (D3) — backend flags with no live source yet; fixtures only. */
+  readonly stale?: boolean;
+  readonly superseded?: boolean;
+  readonly truncated?: boolean;
 }
 
 /** The PR-output variant (Epic 3 scope) — stub-rendered in E2. */
@@ -90,6 +153,39 @@ function hasSharedArtifactFields(value: Record<string, unknown>): boolean {
   );
 }
 
+/** Whether `value` is a valid {@link ImplementationPlanStep} (string `summary`; optional fields typed). */
+function isImplementationPlanStep(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.summary === 'string' &&
+    (value.detail === undefined || typeof value.detail === 'string') &&
+    (value.estimatedComplexity === undefined || typeof value.estimatedComplexity === 'string')
+  );
+}
+
+/** Whether `value` is a valid {@link ImplementationPlanContextRef} (string `label` + boolean `internal`). */
+function isImplementationPlanContextRef(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.label === 'string' &&
+    typeof value.internal === 'boolean' &&
+    (value.kind === 'spec' ||
+      value.kind === 'repository' ||
+      value.kind === 'branch' ||
+      value.kind === 'other') &&
+    (value.href === undefined || typeof value.href === 'string')
+  );
+}
+
+/** Whether the optional spec/impl-plan dormant flags on `value` are each a boolean when present. */
+function hasValidDormantFlags(value: Record<string, unknown>): boolean {
+  return (
+    (value.stale === undefined || typeof value.stale === 'boolean') &&
+    (value.superseded === undefined || typeof value.superseded === 'boolean') &&
+    (value.truncated === undefined || typeof value.truncated === 'boolean')
+  );
+}
+
 /**
  * Runtime guard for future artifact-read data. The hook is a disabled stub today,
  * but when it becomes live this prevents partial summary shapes from being cast into
@@ -100,7 +196,21 @@ export function isArtifactView(value: unknown): value is ArtifactView {
     return false;
   }
 
-  if (value.artifactType === 'implementationPlan' || value.artifactType === 'prOutput') {
+  if (value.artifactType === 'implementationPlan') {
+    // R3 — steps/contextReferences are OPTIONAL (the live wire DTO omits them); when
+    // present each must be a well-formed array, so a partial summary-like cast is still
+    // rejected before it reaches the renderer.
+    const stepsValid =
+      value.steps === undefined ||
+      (Array.isArray(value.steps) && value.steps.every(isImplementationPlanStep));
+    const refsValid =
+      value.contextReferences === undefined ||
+      (Array.isArray(value.contextReferences) &&
+        value.contextReferences.every(isImplementationPlanContextRef));
+    return stepsValid && refsValid && hasValidDormantFlags(value);
+  }
+
+  if (value.artifactType === 'prOutput') {
     return true;
   }
 
@@ -119,9 +229,7 @@ export function isArtifactView(value: unknown): value is ArtifactView {
   return (
     hasValidChangeSummary &&
     (value.checksum === undefined || typeof value.checksum === 'string') &&
-    (value.stale === undefined || typeof value.stale === 'boolean') &&
-    (value.superseded === undefined || typeof value.superseded === 'boolean') &&
-    (value.truncated === undefined || typeof value.truncated === 'boolean')
+    hasValidDormantFlags(value)
   );
 }
 
@@ -185,8 +293,9 @@ export interface ResolveArtifactPanelStateInput {
 /**
  * Pure state precedence (AC4): error → loading → empty/not-yet-generated →
  * conflicting/superseded → stale → incomplete → default. The dormant flags
- * (`superseded`/`stale`/`truncated`) exist only on the spec variant and have NO live
- * backend source yet (T4) — they fire ONLY from constructed fixtures, never fabricated
+ * (`superseded`/`stale`/`truncated`) exist on the spec AND implementation-plan variants
+ * (D3) and have NO live backend source yet (T4) — they fire ONLY from constructed
+ * fixtures, never fabricated
  * data. The only states reachable from the live route today are `loading → empty`
  * (the disabled `useArtifact` stub never resolves) and `error`.
  */
@@ -204,7 +313,9 @@ export function resolveArtifactPanelState({
   if (artifact === undefined) {
     return 'empty';
   }
-  if (artifact.artifactType === 'spec') {
+  // The dormant flags live on the spec AND implementation-plan variants (D3) and have
+  // NO live backend source yet (T4) — they fire ONLY from constructed fixtures.
+  if (artifact.artifactType === 'spec' || artifact.artifactType === 'implementationPlan') {
     if (artifact.superseded === true) {
       return 'superseded';
     }

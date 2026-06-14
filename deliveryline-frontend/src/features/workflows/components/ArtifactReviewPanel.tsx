@@ -73,7 +73,9 @@ function renderVariant(artifact: ArtifactView, compareEnabled: boolean): ReactNo
     case 'spec':
       return <SpecArtifactRenderer artifact={artifact} compareEnabled={compareEnabled} />;
     case 'implementationPlan':
-      return <ImplementationPlanArtifactRenderer artifact={artifact} />;
+      return (
+        <ImplementationPlanArtifactRenderer artifact={artifact} compareEnabled={compareEnabled} />
+      );
     case 'prOutput':
       return <PrOutputArtifactRenderer artifact={artifact} />;
     default:

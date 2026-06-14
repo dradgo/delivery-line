@@ -109,6 +109,40 @@ describe('isArtifactView', () => {
     expect(isArtifactView({ ...specArtifactView, body: undefined })).toBe(false);
     expect(isArtifactView({ ...specArtifactView, changeSummary: { before: 'old' } })).toBe(false);
   });
+
+  it('story 3.26 (R3) — validates impl-plan steps + refs WHEN PRESENT; tolerates their absence', () => {
+    // R3 — steps/contextReferences are OPTIONAL (the live story-3a-9 wire DTO omits them),
+    // so absence + empty arrays are valid; the body-only live mapping stays renderable.
+    expect(isArtifactView({ ...implementationPlanArtifactView, steps: undefined })).toBe(true);
+    expect(isArtifactView({ ...implementationPlanArtifactView, steps: [] })).toBe(true);
+    expect(
+      isArtifactView({ ...implementationPlanArtifactView, contextReferences: undefined }),
+    ).toBe(true);
+    expect(isArtifactView({ ...implementationPlanArtifactView, contextReferences: [] })).toBe(true);
+
+    // But a malformed step / ref shape is still rejected before it reaches the renderer.
+    expect(isArtifactView({ ...implementationPlanArtifactView, steps: ['plain string'] })).toBe(
+      false,
+    );
+    expect(isArtifactView({ ...implementationPlanArtifactView, steps: [{ detail: 'x' }] })).toBe(
+      false,
+    );
+    expect(
+      isArtifactView({
+        ...implementationPlanArtifactView,
+        contextReferences: [{ label: 'x', internal: true, kind: 'bogus' }],
+      }),
+    ).toBe(false);
+    expect(
+      isArtifactView({
+        ...implementationPlanArtifactView,
+        contextReferences: [{ label: 'x', kind: 'spec' }],
+      }),
+    ).toBe(false);
+
+    // The enriched fixture (typed steps + refs) passes.
+    expect(isArtifactView(implementationPlanArtifactView)).toBe(true);
+  });
 });
 
 describe('resolveArtifactPanelState', () => {
@@ -158,10 +192,31 @@ describe('resolveArtifactPanelState', () => {
     expect(resolveArtifactPanelState({ ...base, artifact: specArtifactView })).toBe('default');
   });
 
-  it('stub variants never resolve the spec-only dormant states → default', () => {
+  it('clean implementation-plan (no dormant flags) → default', () => {
     expect(resolveArtifactPanelState({ ...base, artifact: implementationPlanArtifactView })).toBe(
       'default',
     );
+  });
+
+  it('story 3.26 (D3) — implementation-plan dormant flags resolve to banner states', () => {
+    expect(
+      resolveArtifactPanelState({
+        ...base,
+        artifact: { ...implementationPlanArtifactView, superseded: true, stale: true },
+      }),
+    ).toBe('superseded');
+    expect(
+      resolveArtifactPanelState({
+        ...base,
+        artifact: { ...implementationPlanArtifactView, stale: true },
+      }),
+    ).toBe('stale');
+    expect(
+      resolveArtifactPanelState({
+        ...base,
+        artifact: { ...implementationPlanArtifactView, truncated: true },
+      }),
+    ).toBe('incomplete');
   });
 });
 
