@@ -98,6 +98,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/artifacts/{artifactId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a workflow artifact's redacted content
+         * @description Returns the redacted payload (UTF-8 markdown body) and metadata of a single artifact owned by the run. Backs the Artifact Review Panel spec read (story 3a-9).
+         */
+        get: operations["getArtifact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/clarifications/{clarificationId}/answer": {
         parameters: {
             query?: never;
@@ -244,6 +264,36 @@ export interface components {
             reason?: string;
             reviewerRole?: string;
         };
+        /** @description Redacted content of a single workflow artifact. */
+        ArtifactDetail: {
+            /** @example art_abc123 */
+            artifactId?: string;
+            /** @example spec */
+            artifactType?: string;
+            /**
+             * @description Redacted artifact payload as a UTF-8 markdown string (not base64).
+             * @example # Specification
+             *
+             *     ...
+             */
+            body?: string;
+            /**
+             * @description Short-form checksum (<algorithm>:<first 12 hex>); null when unset.
+             * @example SHA-256:9f86d081884c
+             */
+            checksum?: string;
+            /** @example shareable-redacted */
+            classification?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** @example available */
+            status?: string;
+            /**
+             * Format: int32
+             * @example 3
+             */
+            version?: number;
+        };
         ClarificationAnswerResponse: {
             clarificationId: string;
             /** @description Clarification row status after the answer commit. Typical values follow the clarification lifecycle (open / answered / accepted / incorporated / superseded / rejected_invalid). Story 2.13 round-4 P-R4-16: idempotent replays of pre-2.13 ("legacy 2-segment") result-refs whose underlying clarification row has been hard-deleted before the replay arrived surface the sentinel value "unknown" so the previously-200 response stays 200 and the idempotent-replay contract is preserved. TS clients should default-case unknown status values rather than narrowing exhaustively. */
@@ -253,6 +303,11 @@ export interface components {
             workflowRunId: string;
         };
         LatestArtifact: {
+            /**
+             * @description Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).
+             * @example art_abc123
+             */
+            artifactId?: string;
             /** @example spec */
             artifactType?: string;
             status?: string;
@@ -700,6 +755,64 @@ export interface operations {
                 };
             };
             /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+                /**
+                 * @description Artifact public id, e.g. art_abc123.
+                 * @example art_abc123
+                 */
+                artifactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Artifact content + metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDetail"];
+                };
+            };
+            /** @description Malformed run or artifact id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND) or no such artifact for this run (ARTIFACT_RECORD_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description Artifact payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE). */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -21,11 +21,14 @@ import { QueryCache, QueryClient, queryOptions } from '@tanstack/react-query';
 import { apiClient, unwrap } from './client';
 import { isProblemDetailsError, type ProblemDetailsError } from './problemDetails';
 import type { components } from './schema';
+import { artifactTypeLabel, type ArtifactView } from '@/features/workflows/artifactView';
 import { workflowKeys, type WorkflowListFilters } from '../queryKeys/workflowKeys';
 
 export type WorkflowDetail = components['schemas']['WorkflowDetail'];
 export type WorkflowSummary = components['schemas']['WorkflowSummary'];
 export type WorkflowEventsResponse = components['schemas']['WorkflowEventsResponse'];
+/** The raw artifact-read DTO (story 3a-9 Gate 3) — adapted into `ArtifactView` below. */
+export type ArtifactDetail = components['schemas']['ArtifactDetail'];
 
 /** Cache-freshness defaults (ms). Centralized so every hook reads the same policy. */
 export const STALE_TIME = {
@@ -35,6 +38,8 @@ export const STALE_TIME = {
   events: 60_000,
   /** Run-queue list — short, the queue turns over as runs advance. */
   list: 5_000,
+  /** Artifact content — long; the persisted redacted body is immutable for a given version. */
+  artifact: 60_000,
 } as const;
 
 const MAX_RETRIES = 2;
@@ -102,6 +107,82 @@ export function eventsQueryOptions(workflowRunId: string) {
     queryKey: workflowKeys.events(workflowRunId),
     queryFn: () => fetchWorkflowEvents(workflowRunId),
     staleTime: STALE_TIME.events,
+  });
+}
+
+/**
+ * Story 3a-9 (Gate 3 / D1) — compose the display `title` the frontend `ArtifactView`
+ * requires. The backend DTO deliberately omits `title` (it is a display concern with no
+ * clean backend source — Dev Notes D1); we derive it from the artifact type + version.
+ */
+function composeArtifactTitle(artifactType: string, version: number): string {
+  switch (artifactType) {
+    case 'spec':
+      return `Specification — v${version}`;
+    case 'implementationPlan':
+      return `Implementation Plan — v${version}`;
+    case 'prOutput':
+      return `PR Output — v${version}`;
+    default:
+      return `${artifactTypeLabel(artifactType)} — v${version}`;
+  }
+}
+
+/**
+ * Story 3a-9 (Gate 3 / D1) — map the raw `ArtifactDetail` wire DTO into the frontend-owned
+ * `ArtifactView` shape the Artifact Review Panel renders. CRITICAL: the result MUST satisfy
+ * `isArtifactView` (artifactId + title + finite version + classification + body + createdAt),
+ * or the panel renders `error` instead of `default`. We INJECT `artifactId` from the query
+ * arg (robust against a wire-null `artifactId` — `[[workflowdetail-wire-sends-null-not-undefined]]`)
+ * and COMPOSE `title` here; everything else passes through from the DTO.
+ */
+export function toArtifactView(dto: ArtifactDetail, artifactId: string): ArtifactView {
+  const version = typeof dto.version === 'number' ? dto.version : 0;
+  const artifactType = dto.artifactType ?? '';
+  const base = {
+    artifactId,
+    title: composeArtifactTitle(artifactType, version),
+    version,
+    classification: dto.classification ?? '',
+    body: dto.body ?? '',
+    createdAt: dto.createdAt ?? '',
+  };
+  if (artifactType === 'implementationPlan') {
+    return { ...base, artifactType: 'implementationPlan' };
+  }
+  if (artifactType === 'prOutput') {
+    return { ...base, artifactType: 'prOutput' };
+  }
+  // Default to the spec variant (the only fully-rendered type and this story's scope); an
+  // unknown wire type still carries through so `isArtifactView` can reject it loudly.
+  return {
+    ...base,
+    artifactType: (artifactType === 'spec' ? 'spec' : artifactType) as 'spec',
+    ...(typeof dto.checksum === 'string' ? { checksum: dto.checksum } : {}),
+  };
+}
+
+/**
+ * GET a single artifact's redacted content, throwing typed problem details (RUN_NOT_FOUND /
+ * ARTIFACT_RECORD_NOT_FOUND / ARTIFACT_PAYLOAD_UNAVAILABLE) on failure, then adapt the raw DTO
+ * into the `ArtifactView` the panel consumes.
+ */
+async function fetchArtifact(workflowRunId: string, artifactId: string): Promise<ArtifactView> {
+  const dto = unwrap(
+    await apiClient.GET('/api/v1/workflows/{workflowRunId}/artifacts/{artifactId}', {
+      params: { path: { workflowRunId, artifactId } },
+    }),
+  );
+  return toArtifactView(dto, artifactId);
+}
+
+/** Options for a single artifact's content (used by `useArtifact` AND any loader warm). */
+export function artifactQueryOptions(workflowRunId: string, artifactId: string) {
+  return queryOptions({
+    // Key by the globally-unique artifact public id (story 2.6 reserved this one-arg factory).
+    queryKey: workflowKeys.artifact(artifactId),
+    queryFn: () => fetchArtifact(workflowRunId, artifactId),
+    staleTime: STALE_TIME.artifact,
   });
 }
 

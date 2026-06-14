@@ -240,7 +240,7 @@ export function ArtifactReviewPanelContainer({
   workflowRunId,
   artifactId,
 }: ArtifactReviewPanelContainerProps) {
-  const artifactQuery = useArtifact(artifactId);
+  const artifactQuery = useArtifact(workflowRunId, artifactId);
   const allowedActionsQuery = useAllowedActions(workflowRunId);
 
   // The disabled stub returns `data: never | undefined` — always `undefined` at

@@ -194,6 +194,74 @@ public class WorkflowController {
   }
 
   /**
+   * Story 3a-9 (Gate 3): artifact-content read for the run-detail review surface. Returns the
+   * redacted artifact body (UTF-8 markdown) plus identity/type/version/status/classification/
+   * createdAt/checksum so the Artifact Review Panel (story 2.17) can render the real spec body
+   * before a reviewer fires {@code approve_spec}. Read-only and idempotent — no Idempotency-Key.
+   *
+   * <p>Cross-run safety: an {@code artifactId} not owned by {@code workflowRunId} returns 404
+   * {@code ARTIFACT_RECORD_NOT_FOUND} (never another run's artifact); a non-existent run returns
+   * 404 {@code RUN_NOT_FOUND}; a malformed id returns 400 {@code INVALID_ID_PREFIX} at the
+   * validation boundary — mirroring the detail endpoint.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/artifacts/{artifactId}",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getArtifact",
+      summary = "Get a workflow artifact's redacted content",
+      description =
+          "Returns the redacted payload (UTF-8 markdown body) and metadata of a single artifact "
+              + "owned by the run. Backs the Artifact Review Panel spec read (story 3a-9).")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Artifact content + metadata."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run or artifact id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "No such run (RUN_NOT_FOUND) or no such artifact for this run (ARTIFACT_RECORD_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "503",
+        description = "Artifact payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ArtifactDetailResponse getArtifact(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId,
+      @Parameter(description = "Artifact public id, e.g. art_abc123.", example = "art_abc123")
+          @PathVariable
+          String artifactId) {
+    log.info(
+        "REST get artifact received workflowRunId={} artifactId={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(artifactId));
+    ArtifactDetailResponse response =
+        ArtifactDetailResponse.from(
+            workflowInspectionService.getArtifactDetail(workflowRunId, artifactId));
+    log.info(
+        "REST get artifact success workflowRunId={} artifactId={} artifactType={} version={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(artifactId),
+        response.artifactType(),
+        response.version());
+    return response;
+  }
+
+  /**
    * Returns the backend-derived allowed actions for a workflow run plus a version stamp the UI
    * echoes back on mutations (story 2.14 AC1, AC6, AC11).
    *

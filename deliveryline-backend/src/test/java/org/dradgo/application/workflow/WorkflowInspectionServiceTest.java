@@ -51,6 +51,8 @@ class WorkflowInspectionServiceTest {
   private final WorkflowRunReadPort runs = mock(WorkflowRunReadPort.class);
   private final WorkflowEventReadPort events = mock(WorkflowEventReadPort.class);
   private final ArtifactRecordPort artifacts = mock(ArtifactRecordPort.class);
+  private final org.dradgo.application.artifact.spi.ArtifactPayloadStore payloadStore =
+      mock(org.dradgo.application.artifact.spi.ArtifactPayloadStore.class);
   private final org.dradgo.application.approval.spi.ApprovalReadPort approvals =
       mock(org.dradgo.application.approval.spi.ApprovalReadPort.class);
   private final IntegrationLinkService links = mock(IntegrationLinkService.class);
@@ -68,6 +70,7 @@ class WorkflowInspectionServiceTest {
           runs,
           events,
           artifacts,
+          payloadStore,
           approvals,
           links,
           redaction,
@@ -133,6 +136,9 @@ class WorkflowInspectionServiceTest {
     assertEquals(ArtifactType.SPEC.value(), spec.artifactType());
     assertEquals(2, spec.version());
     assertEquals(ArtifactStatus.AVAILABLE.value(), spec.status());
+    // Story 3a-9 Gate 2 — the latest-artifact view now carries the artifact public id so the
+    // approval bar's resolveSpecArtifactId (story 2.19) and the artifact-read endpoint can resolve.
+    assertEquals("art_spec2", spec.artifactId());
     assertNotNull(view.linkedTicket());
     assertEquals("LIN-101", view.linkedTicket().externalRef());
     assertEquals("await_outcome", view.nextSafeAction());

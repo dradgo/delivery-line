@@ -43,6 +43,7 @@ class SpecStageOrchestrationIT {
   @Autowired private WorkflowOrchestrationService orchestrationService;
   @Autowired private RunnerBroker runnerBroker;
   @Autowired private MockRunnerAdapter mockRunnerAdapter;
+  @Autowired private WorkflowInspectionService inspectionService;
 
   @AfterEach
   void cleanDatabase() {
@@ -149,6 +150,18 @@ class SpecStageOrchestrationIT {
         "available",
         jdbcTemplate.queryForObject(
             "select status from artifacts where public_id = ?", String.class, specArtifactId));
+
+    // Read half (story 3a-9 AC8): the reviewer reads the real broker-produced spec body through the
+    // artifact-read service path BEFORE approving — one integrated read -> approve -> Executing
+    // flow
+    // (the contract test exercises the HTTP boundary on hand-seeded rows; this asserts the live
+    // run).
+    WorkflowInspectionService.ArtifactDetailView specDetail =
+        inspectionService.getArtifactDetail(runId, specArtifactId);
+    assertEquals(specArtifactId, specDetail.artifactId());
+    assertEquals("spec", specDetail.artifactType());
+    assertEquals("available", specDetail.status());
+    assertTrue(specDetail.body() != null && !specDetail.body().isBlank());
 
     // Approving the spec must succeed and advance the run to Executing (plan-stage auto-dispatch is
     // off in this profile, so the run simply lands in Executing).

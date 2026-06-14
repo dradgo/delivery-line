@@ -124,6 +124,47 @@
         ],
         "type" : "object"
       },
+      "ArtifactDetail" : {
+        "description" : "Redacted content of a single workflow artifact.",
+        "properties" : {
+          "artifactId" : {
+            "example" : "art_abc123",
+            "type" : "string"
+          },
+          "artifactType" : {
+            "example" : "spec",
+            "type" : "string"
+          },
+          "body" : {
+            "description" : "Redacted artifact payload as a UTF-8 markdown string (not base64).",
+            "example" : "# Specification\n\n...",
+            "type" : "string"
+          },
+          "checksum" : {
+            "description" : "Short-form checksum (<algorithm>:<first 12 hex>); null when unset.",
+            "example" : "SHA-256:9f86d081884c",
+            "type" : "string"
+          },
+          "classification" : {
+            "example" : "shareable-redacted",
+            "type" : "string"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "available",
+            "type" : "string"
+          },
+          "version" : {
+            "example" : 3,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "ClarificationAnswerResponse" : {
         "properties" : {
           "clarificationId" : {
@@ -153,6 +194,11 @@
       },
       "LatestArtifact" : {
         "properties" : {
+          "artifactId" : {
+            "description" : "Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).",
+            "example" : "art_abc123",
+            "type" : "string"
+          },
           "artifactType" : {
             "example" : "spec",
             "type" : "string"
@@ -1148,6 +1194,80 @@
           }
         },
         "summary" : "Approve a run's specification (story 2.13 rebuild)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/artifacts/{artifactId}" : {
+      "get" : {
+        "description" : "Returns the redacted payload (UTF-8 markdown body) and metadata of a single artifact owned by the run. Backs the Artifact Review Panel spec read (story 3a-9).",
+        "operationId" : "getArtifact",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Artifact public id, e.g. art_abc123.",
+            "example" : "art_abc123",
+            "in" : "path",
+            "name" : "artifactId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ArtifactDetail"
+                }
+              }
+            },
+            "description" : "Artifact content + metadata."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run or artifact id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND) or no such artifact for this run (ARTIFACT_RECORD_NOT_FOUND)."
+          },
+          "503" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Artifact payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE)."
+          }
+        },
+        "summary" : "Get a workflow artifact's redacted content",
         "tags" : [
           "Workflows"
         ]

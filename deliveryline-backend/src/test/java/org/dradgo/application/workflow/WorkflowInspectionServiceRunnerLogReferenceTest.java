@@ -34,6 +34,7 @@ class WorkflowInspectionServiceRunnerLogReferenceTest {
           mock(WorkflowRunReadPort.class),
           mock(WorkflowEventReadPort.class),
           mock(ArtifactRecordPort.class),
+          mock(org.dradgo.application.artifact.spi.ArtifactPayloadStore.class),
           mock(ApprovalReadPort.class),
           mock(IntegrationLinkService.class),
           mock(RedactionPolicyService.class),

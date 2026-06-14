@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { ProblemDetailsError, toProblemDetails } from '@/lib/api/problemDetails';
+import { toArtifactView } from '@/lib/api/queryOptions';
 import {
   implementationPlanArtifactView,
   prOutputArtifactView,
@@ -190,9 +191,32 @@ describe('ArtifactReviewPanel — artifact primacy (AC6)', () => {
 });
 
 describe('ArtifactReviewPanelContainer — data seam (AC4, AC9, logging)', () => {
-  it('disabled useArtifact stub (idle, no data) → empty state (T3)', () => {
+  it('no resolved artifact (idle, no data) → empty state', () => {
     render(<ArtifactReviewPanelContainer workflowRunId="run_1" artifactId="art_1" />);
     expect(panel()).toHaveAttribute('data-artifact-panel-state', 'empty');
+  });
+
+  it('AC7/D1 — the live post-adapter ArtifactView renders default (not error)', () => {
+    // Pin the contract trap: the EXACT shape `fetchArtifact` produces (via toArtifactView)
+    // MUST satisfy isArtifactView, or the panel silently renders `error`. A future DTO/adapter
+    // drift that drops artifactId/title fails this loudly.
+    const live = toArtifactView(
+      {
+        artifactId: 'art_live0001',
+        artifactType: 'spec',
+        version: 3,
+        status: 'available',
+        classification: 'shareable-redacted',
+        createdAt: '2026-06-14T09:00:00Z',
+        checksum: 'sha-256:0123456789ab',
+        body: '# Specification\n\nThe redacted spec body.\n',
+      },
+      'art_live0001',
+    );
+    mockUseArtifact.mockReturnValue(fakeArtifactQuery({ data: live }));
+    render(<ArtifactReviewPanelContainer workflowRunId="run_1" artifactId="art_live0001" />);
+    expect(panel()).toHaveAttribute('data-artifact-panel-state', 'default');
+    expect(screen.getByTestId('spec-artifact-renderer')).toBeInTheDocument();
   });
 
   it('AC9 — Compare enables when allowed-actions reports compare AND a comparable revision exists', () => {

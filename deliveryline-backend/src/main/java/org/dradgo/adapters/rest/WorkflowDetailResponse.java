@@ -73,10 +73,20 @@ public record WorkflowDetailResponse(
   /** Latest artifact of a given type for the run. */
   @Schema(name = "LatestArtifact")
   public record LatestArtifact(
-      @Schema(example = "spec") String artifactType, int version, String status) {
+      @Schema(example = "spec") String artifactType,
+      int version,
+      String status,
+      @Schema(
+              description =
+                  "Public id of this latest artifact. Resolves the artifact-read endpoint "
+                      + "(GET .../artifacts/{artifactId}) and the spec approval/decision bar "
+                      + "(story 2.19 resolveSpecArtifactId).",
+              example = "art_abc123")
+          String artifactId) {
 
     static LatestArtifact from(LatestArtifactView view) {
-      return new LatestArtifact(view.artifactType(), view.version(), view.status());
+      return new LatestArtifact(
+          view.artifactType(), view.version(), view.status(), view.artifactId());
     }
   }
 

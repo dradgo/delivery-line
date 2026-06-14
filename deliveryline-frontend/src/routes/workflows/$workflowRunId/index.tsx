@@ -9,6 +9,7 @@ import {
   assertValidRunRouteParams,
 } from '@/lib/routing/routeParamValidation';
 import { useWorkflowDetail } from '@/features/workflows/hooks/useWorkflowDetail';
+import { resolveSpecArtifactId } from '@/features/workflows/approvalDecisionView';
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
 import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
 import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
@@ -115,6 +116,9 @@ function WorkflowDetailRoute() {
   const { clarificationId } = Route.useSearch();
   // Reads the cache the loader already warmed (AC10 — one shared entry).
   const { data } = useWorkflowDetail(workflowRunId);
+  // Story 3a-9 (AC6) — the real spec artifact id from the read model (story 2.19 resolver);
+  // `undefined` until the run produces a spec artifact, which hides the artifact link.
+  const specArtifactId = resolveSpecArtifactId(data);
 
   // AC8a — a run reported in a state this build doesn't recognize.
   if (data?.currentState !== undefined && !RECOGNIZED_STATES.has(data.currentState)) {
@@ -161,13 +165,15 @@ function WorkflowDetailRoute() {
         the tri-pane shell (story 2.7). The Artifact Review Panel (story 2.17) renders in the
         artifact-viewer route — open it via the link below.
       </p>
-      <Link
-        to="/workflows/$workflowRunId/artifacts/$artifactId"
-        params={{ workflowRunId, artifactId: 'art_sample0001' }}
-        className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
-      >
-        Open a sample artifact &rarr;
-      </Link>
+      {specArtifactId !== undefined ? (
+        <Link
+          to="/workflows/$workflowRunId/artifacts/$artifactId"
+          params={{ workflowRunId, artifactId: specArtifactId }}
+          className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
+        >
+          Open the specification &rarr;
+        </Link>
+      ) : null}
       {/* Decision Bar (AC4 sticky footer). Story 3.30 makes the mode state-driven: a
           `Failed` run gets the `recovery_operator` bar (the "Retry failed step" action);
           every other state gets the story-2.19 `spec_approval` bar. The selector owns the

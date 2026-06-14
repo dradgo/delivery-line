@@ -11,8 +11,10 @@ import java.util.Optional;
 import java.util.Set;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
+import org.dradgo.application.artifact.ArtifactChecksum;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.SpecificationArtifact;
+import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
@@ -36,6 +38,7 @@ import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.AllowedAction;
+import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -64,6 +67,7 @@ public class WorkflowInspectionService {
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
   private final ArtifactRecordPort artifactRecordPort;
+  private final ArtifactPayloadStore artifactPayloadStore;
   private final ApprovalReadPort approvalReadPort;
   private final IntegrationLinkService integrationLinkService;
   private final RedactionPolicyService redactionPolicyService;
@@ -76,6 +80,7 @@ public class WorkflowInspectionService {
       WorkflowRunReadPort workflowRunReadPort,
       WorkflowEventReadPort workflowEventReadPort,
       ArtifactRecordPort artifactRecordPort,
+      ArtifactPayloadStore artifactPayloadStore,
       ApprovalReadPort approvalReadPort,
       IntegrationLinkService integrationLinkService,
       RedactionPolicyService redactionPolicyService,
@@ -87,6 +92,8 @@ public class WorkflowInspectionService {
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
     this.artifactRecordPort = Objects.requireNonNull(artifactRecordPort, "artifactRecordPort");
+    this.artifactPayloadStore =
+        Objects.requireNonNull(artifactPayloadStore, "artifactPayloadStore");
     this.approvalReadPort = Objects.requireNonNull(approvalReadPort, "approvalReadPort");
     this.integrationLinkService =
         Objects.requireNonNull(integrationLinkService, "integrationLinkService");
@@ -545,7 +552,8 @@ public class WorkflowInspectionService {
                     new LatestArtifactView(
                         snapshot.artifactType().value(),
                         snapshot.version(),
-                        snapshot.status().value())));
+                        snapshot.status().value(),
+                        snapshot.publicId())));
       }
 
       LinkedTicketView linkedTicket =
@@ -781,6 +789,167 @@ public class WorkflowInspectionService {
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
+  }
+
+  /**
+   * Story 3a-9 (Gate 3): artifact-content read for the run-detail review surface. Backs {@code GET
+   * /api/v1/workflows/{workflowRunId}/artifacts/{artifactId}} — the live source the Artifact Review
+   * Panel (story 2.17) renders so a reviewer can read the real spec body before approving it.
+   *
+   * <p>Resolution + guard order (security-first; never leak another run's artifact existence):
+   *
+   * <ol>
+   *   <li>Validate both public-id prefixes ({@code run_} / {@code art_}) — malformed input surfaces
+   *       a governed {@code INVALID_ID_PREFIX} (400) at the boundary, mirroring {@link #getStatus};
+   *   <li>Resolve the run → {@code RUN_NOT_FOUND} (404) when absent;
+   *   <li>Resolve the artifact by public id → {@code ARTIFACT_RECORD_NOT_FOUND} (404) when absent;
+   *   <li>Cross-run ownership guard: an artifact owned by a different run is reported as {@code
+   *       ARTIFACT_RECORD_NOT_FOUND} (404) — identical to "absent" so existence never leaks;
+   *   <li>Classification guard: a {@code LOCAL_ONLY} artifact is never served and is likewise
+   *       reported as {@code ARTIFACT_RECORD_NOT_FOUND} (404);
+   *   <li>Read the persisted payload bytes via {@link ArtifactPayloadStore#readBytes(String)} →
+   *       {@code ARTIFACT_PAYLOAD_UNAVAILABLE} (503) when unreadable.
+   * </ol>
+   *
+   * <p>The returned {@code body} is the <em>already-redacted</em> payload (redaction happens at
+   * write time per stories 1.10 / 2.24) decoded as a UTF-8 markdown string — there is no new
+   * redaction logic here, and the raw bytes / {@code body} are never logged.
+   *
+   * @param workflowRunPublicId the {@code run_}-prefixed owning run id
+   * @param artifactPublicId the {@code art_}-prefixed artifact id
+   * @return a fully-populated read view: identity, type/version/status/classification, createdAt,
+   *     short-form checksum, and the redacted UTF-8 body
+   */
+  @Transactional(readOnly = true)
+  public ArtifactDetailView getArtifactDetail(String workflowRunPublicId, String artifactPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(artifactPublicId, PublicIdPrefixes.ARTIFACT);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactPublicId);
+    try {
+      log.info(
+          "getArtifactDetail entry workflowRunId={} artifactId={}",
+          workflowRunPublicId,
+          artifactPublicId);
+
+      // Resolve the run first so a non-existent run never reaches the artifact lookup
+      // (RUN_NOT_FOUND
+      // must win over ARTIFACT_RECORD_NOT_FOUND for a fabricated run id).
+      workflowRunReadPort
+          .findByPublicId(workflowRunPublicId)
+          .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+      ArtifactRecordSnapshot artifact =
+          artifactRecordPort
+              .findByPublicId(artifactPublicId)
+              .orElseThrow(() -> artifactRecordNotFound(artifactPublicId));
+
+      // Cross-run ownership guard — report as "not found", never leak that the id belongs to
+      // another run.
+      if (!workflowRunPublicId.equals(artifact.workflowRunId())) {
+        log.warn(
+            "getArtifactDetail cross-run reject workflowRunId={} artifactId={} ownerRunId={}",
+            workflowRunPublicId,
+            artifactPublicId,
+            artifact.workflowRunId());
+        throw artifactRecordNotFound(artifactPublicId);
+      }
+
+      // Classification guard — a local-only artifact must never be served as shareable content.
+      if (artifact.classification() == DataClassification.LOCAL_ONLY) {
+        log.warn(
+            "getArtifactDetail classification reject workflowRunId={} artifactId={}"
+                + " classification={}",
+            workflowRunPublicId,
+            artifactPublicId,
+            artifact.classification().value());
+        throw artifactRecordNotFound(artifactPublicId);
+      }
+
+      // Status guard — only AVAILABLE artifacts carry finalized, approvable content (mirrors
+      // ArtifactService.isApprovalEligible). A non-available artifact — notably the deliberately
+      // pending implementationPlan/prOutput, whose developer-review gate arrives with
+      // 3.20/3.23/3.26
+      // — is reported as "not found", never served prematurely.
+      if (artifact.status() != ArtifactStatus.AVAILABLE) {
+        log.warn(
+            "getArtifactDetail status reject workflowRunId={} artifactId={} status={}",
+            workflowRunPublicId,
+            artifactPublicId,
+            artifact.status().value());
+        throw artifactRecordNotFound(artifactPublicId);
+      }
+
+      Optional<byte[]> payloadBytes = artifactPayloadStore.readBytes(artifact.storageRef());
+      if (payloadBytes.isEmpty() || payloadBytes.get().length == 0) {
+        log.warn(
+            "getArtifactDetail payload unreadable workflowRunId={} artifactId={}",
+            workflowRunPublicId,
+            artifactPublicId);
+        throw artifactPayloadUnavailable(artifactPublicId);
+      }
+
+      String body = new String(payloadBytes.get(), java.nio.charset.StandardCharsets.UTF_8);
+      ArtifactDetailView view =
+          new ArtifactDetailView(
+              artifact.publicId(),
+              artifact.artifactType().value(),
+              artifact.version(),
+              artifact.status().value(),
+              artifact.classification().value(),
+              artifact.createdAt(),
+              shortChecksum(artifact.checksumAlgorithm(), artifact.checksumValue()),
+              body);
+      log.info(
+          "getArtifactDetail success workflowRunId={} artifactId={} artifactType={} version={}"
+              + " status={} bodyLength={}",
+          workflowRunPublicId,
+          artifactPublicId,
+          view.artifactType(),
+          view.version(),
+          view.status(),
+          body.length());
+      return view;
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Short-form checksum for display: {@code <algorithm>:<first 12 hex chars>}. Returns {@code null}
+   * when the artifact carries no checksum yet (e.g. a still-{@code pending} lineage row). Never
+   * exposes the full digest — the short form is enough to correlate without inviting offline
+   * brute-force of the underlying bytes.
+   */
+  private static String shortChecksum(String algorithm, String value) {
+    if (algorithm == null || value == null || value.isBlank()) {
+      return null;
+    }
+    // Normalize the algorithm to its canonical (upper-case) form so the served prefix is stable
+    // regardless of how the algorithm string happened to be persisted (e.g. "sha-256" vs
+    // "SHA-256").
+    String canonical = ArtifactChecksum.canonicalAlgorithm(algorithm);
+    String head = value.length() <= 12 ? value : value.substring(0, 12);
+    return canonical + ":" + head;
+  }
+
+  private static DomainException artifactRecordNotFound(String artifactPublicId) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", artifactPublicId);
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
+        "Artifact record not found: " + artifactPublicId,
+        details);
+  }
+
+  private static DomainException artifactPayloadUnavailable(String artifactPublicId) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", artifactPublicId);
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE,
+        "Artifact payload unavailable for " + artifactPublicId,
+        details);
   }
 
   /**
@@ -1216,7 +1385,35 @@ public class WorkflowInspectionService {
       int specRejectionLoopCount,
       boolean escalationMarker) {}
 
-  public record LatestArtifactView(String artifactType, int version, String status) {}
+  public record LatestArtifactView(
+      String artifactType, int version, String status, String artifactId) {
+
+    /**
+     * Convenience constructor for callers that do not surface the artifact public id (the CLI
+     * status/history renderer projects only {@code artifactType}/{@code version}/{@code status} —
+     * see {@code WorkflowCommandOutputs}). Production REST construction always passes the real
+     * {@code snapshot.publicId()} so {@code WorkflowDetail.latestArtifacts[].artifactId} resolves
+     * the spec approval bar (story 2.19) and the artifact-read endpoint (story 3a-9).
+     */
+    public LatestArtifactView(String artifactType, int version, String status) {
+      this(artifactType, version, status, null);
+    }
+  }
+
+  /**
+   * Story 3a-9 (Gate 3) read view for a single artifact's content. {@code body} is the persisted,
+   * already-redacted payload decoded as UTF-8 markdown; {@code checksumShortForm} is {@code
+   * <algorithm>:<first 12 hex>} or {@code null} when the artifact has no checksum yet.
+   */
+  public record ArtifactDetailView(
+      String artifactId,
+      String artifactType,
+      int version,
+      String status,
+      String classification,
+      OffsetDateTime createdAt,
+      String checksumShortForm,
+      String body) {}
 
   public record LinkedTicketView(String integrationType, String externalRef, String syncStatus) {}
 

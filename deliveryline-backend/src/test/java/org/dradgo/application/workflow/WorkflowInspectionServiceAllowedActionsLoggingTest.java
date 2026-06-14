@@ -60,6 +60,7 @@ class WorkflowInspectionServiceAllowedActionsLoggingTest {
           runs,
           events,
           artifacts,
+          mock(org.dradgo.application.artifact.spi.ArtifactPayloadStore.class),
           approvals,
           links,
           new RedactionPolicyService(new DataClassificationService()),

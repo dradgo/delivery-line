@@ -1,29 +1,24 @@
 /**
- * Story 2.6 (AC8) — typed artifact-read hook STUB.
+ * Story 3a-9 (Gate 3 / AC6) — typed artifact-read hook, now LIVE.
  *
- * SEAM (story 2.14 / artifact-read story): the artifact-read endpoint does NOT
- * exist in 6.9's OpenAPI snapshot yet, so this hook is a typed stub. The factory
- * key `workflowKeys.artifact(artifactId)` is the stable contract the real hook
- * will bind to (AC3). `enabled: false` keeps the query inert — it never fires the
- * placeholder `queryFn`, which exists only to make the not-yet-available contract
- * explicit and loud if a consumer force-enables it before the backend ships.
+ * Replaces the story-2.6 disabled stub: the artifact-read endpoint
+ * (`GET /api/v1/workflows/{workflowRunId}/artifacts/{artifactId}`) ships with this
+ * story, so the hook fetches through `artifactQueryOptions` (which adapts the raw
+ * `ArtifactDetail` DTO into the frontend-owned `ArtifactView` — D1). The query key
+ * stays `workflowKeys.artifact(artifactId)` (one arg — artifact public ids are
+ * globally unique), the stable contract reserved by story 2.6 AC3.
  *
- * Do NOT fabricate the endpoint here (story 2.6 anti-pattern). When the backend
- * adds it, regenerate the client (`npm run generate-api`) and replace the body
- * with a real `apiClient.GET` typed by the new response shape, dropping `enabled: false`.
+ * D2 — the endpoint path needs BOTH `workflowRunId` and `artifactId`, so the signature
+ * gained `workflowRunId`. The query is disabled until both ids are present so the
+ * detail route can render the panel before a spec artifact exists.
  */
 import { useQuery } from '@tanstack/react-query';
 
-import { workflowKeys } from '@/lib/queryKeys/workflowKeys';
+import { artifactQueryOptions } from '@/lib/api/queryOptions';
 
-export function useArtifact(artifactId: string) {
+export function useArtifact(workflowRunId: string, artifactId: string) {
   return useQuery({
-    queryKey: workflowKeys.artifact(artifactId),
-    queryFn: (): Promise<never> => {
-      throw new Error(
-        'useArtifact: the artifact-read endpoint is not available yet (ships with the artifact-read story; key reserved by story 2.6 AC3).',
-      );
-    },
-    enabled: false,
+    ...artifactQueryOptions(workflowRunId, artifactId),
+    enabled: workflowRunId.length > 0 && artifactId.length > 0,
   });
 }
