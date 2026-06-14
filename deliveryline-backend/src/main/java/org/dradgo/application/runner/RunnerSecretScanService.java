@@ -49,18 +49,22 @@ public class RunnerSecretScanService {
   static final String INJECTED_PROVIDER_KEY_CATEGORY = "injected_provider_key";
 
   /**
-   * The fuzzy / context-dependent redaction categories that are suppressed when scanning a cloned
-   * {@code repo/} working-tree file (the EXECUTION stage). Unlike the runner's own
-   * input/output/logs, the repo working tree is real source &amp; config: these heuristic shapes
-   * (loose {@code KEY=value} / high-entropy values, {@code "password": …} fields, {@code ?token=…}
-   * query params, file paths, env-var blocks) match ordinary code and produced a stream of bogus
-   * {@code runner_secret_leak} failures (FIN-14 / FIN-16) that froze the run. The precise detectors
-   * still run over repo files: the mandatory injected-provider-key substring check (the secret WE
-   * inject) plus the strongly-structured credential SHAPES (GitHub / Linear tokens, SSH &amp; PEM
-   * private keys, Authorization headers) — those are unambiguous secrets in any context and stay
-   * leak-worthy even in committed code.
+   * The fuzzy / context-dependent redaction categories that are suppressed when scanning content
+   * that merely <em>echoes</em> the target repo rather than being a runner-authored artifact: the
+   * cloned {@code repo/} working tree (EXECUTION stage) AND the agent's own transcript logs ({@code
+   * logs/runner.stdout} / {@code logs/runner.stderr}, which re-print whatever files the agent
+   * {@code cat}s/{@code sed}s from that repo). These heuristic shapes (loose {@code KEY=value} /
+   * high-entropy values, {@code "password": …} fields, {@code ?token=…} query params, file paths,
+   * env-var blocks) match ordinary code/config and produced a stream of bogus {@code
+   * runner_secret_leak} failures (FIN-14 / FIN-16 from repo files; the {@code
+   * leakedFile=logs/runner.stderr categories=[SECRET_FIELD]} run from a transcript echo of a
+   * committed {@code password: …} line) that failed otherwise-successful runs. The precise
+   * detectors still run over these files: the mandatory injected-provider-key substring check (the
+   * secret WE inject) plus the strongly-structured credential SHAPES (GitHub / Linear tokens, SSH
+   * &amp; PEM private keys, Authorization headers) — those are unambiguous secrets in any context
+   * and stay leak-worthy even in committed code or a transcript.
    */
-  private static final java.util.Set<RedactionCategory> REPO_SUPPRESSED_FUZZY_CATEGORIES =
+  private static final java.util.Set<RedactionCategory> FUZZY_HEURISTIC_CATEGORIES =
       java.util.EnumSet.of(
           RedactionCategory.ENV_VALUE,
           RedactionCategory.ENVIRONMENT_BLOCK,
@@ -70,6 +74,15 @@ public class RunnerSecretScanService {
 
   /** Workspace-relative prefix of cloned-repo working-tree files (see {@code REPO_SUBDIR}). */
   private static final String REPO_RELATIVE_PREFIX = "repo/";
+
+  /**
+   * Workspace-relative paths of the agent's raw transcript streams. These are not runner-authored
+   * artifacts — they capture the agent's stdout/stderr, which echoes arbitrary target-repo content
+   * the agent inspects, so they false-positive the {@link #FUZZY_HEURISTIC_CATEGORIES} exactly like
+   * the {@code repo/} working tree. The precise detectors still run over them.
+   */
+  private static final java.util.Set<String> TRANSCRIPT_LOG_RELATIVE_PATHS =
+      java.util.Set.of("logs/runner.stdout", "logs/runner.stderr");
 
   private final RunnerWorkspaceStore workspaceStore;
   private final RedactionPolicyService redactionPolicyService;
@@ -135,17 +148,22 @@ public class RunnerSecretScanService {
 
     for (WorkspaceScanFile file : files) {
       Set<String> categories = new LinkedHashSet<>();
-      // Cloned-repo working-tree files are real source/config — the fuzzy heuristic categories
-      // (ENV_VALUE etc.) false-positive on them, so suppress those and keep only the precise
-      // detectors (structured credential shapes below + the injected-key substring (ii)). The
-      // runner's own input/output/logs keep the full strict scan.
-      boolean repoWorkingTreeFile = file.relativePath().startsWith(REPO_RELATIVE_PREFIX);
+      // Files that merely ECHO the target repo — the cloned repo/ working tree and the agent's own
+      // transcript streams (runner.stdout/stderr, which re-print whatever the agent cat/seds) — are
+      // real source/config, not runner-authored artifacts. The fuzzy heuristic categories
+      // (ENV_VALUE / SECRET_FIELD etc.) false-positive on them (e.g. a committed `password: …`
+      // line), so suppress those and keep only the precise detectors (structured credential shapes
+      // below + the injected-key substring (ii)). The runner's own input/output (and any other
+      // logs/ file) keep the full strict scan.
+      boolean echoesRepoContent =
+          file.relativePath().startsWith(REPO_RELATIVE_PREFIX)
+              || TRANSCRIPT_LOG_RELATIVE_PATHS.contains(file.relativePath());
 
       // (i) known-shape detection via the sanctioned engine.
       RedactionResult result =
           redactionPolicyService.redact(file.text(), DataClassification.LOCAL_ONLY.value());
       for (RedactionCategory category : result.detectedCategories()) {
-        if (repoWorkingTreeFile && REPO_SUPPRESSED_FUZZY_CATEGORIES.contains(category)) {
+        if (echoesRepoContent && FUZZY_HEURISTIC_CATEGORIES.contains(category)) {
           continue;
         }
         categories.add(category.name());

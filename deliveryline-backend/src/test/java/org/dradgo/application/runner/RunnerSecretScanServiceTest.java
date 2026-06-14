@@ -232,6 +232,57 @@ class RunnerSecretScanServiceTest {
   }
 
   @Test
+  void transcriptLogSuppressesFuzzyHeuristicCategories() {
+    // The agent narrates its `cat`/`sed` of the target repo into runner.stderr, so a benign
+    // committed config line (here a Spring datasource `password: password`) re-appears in the
+    // transcript and trips the fuzzy SECRET_FIELD heuristic. The SAME byte is already pardoned in
+    // its repo/ working-tree origin (repoWorkingTreeFileSuppressesFuzzyHeuristicCategories), so the
+    // transcript echo is a strict false positive that must NOT count as a leak. This is the exact
+    // failure that failed run_b3fbca… (leakedFile=logs/runner.stderr categories=[SECRET_FIELD]).
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(
+                new WorkspaceScanFile(
+                    "logs/runner.stderr", "spring:\n  datasource:\n    password: password\n")));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isFalse();
+  }
+
+  @Test
+  void transcriptLogStillCatchesInjectedProviderKey() {
+    // Suppression on the transcript is scoped to the fuzzy heuristics only — the precise
+    // injected-provider-key substring detector still runs over runner.stderr/stdout. The secret WE
+    // injected escaping into the agent's log IS a real leak.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(new WorkspaceScanFile("logs/runner.stderr", "echoed key " + CODEX_VALUE)));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories())
+        .containsExactly(RunnerSecretScanService.INJECTED_PROVIDER_KEY_CATEGORY);
+  }
+
+  @Test
+  void transcriptLogStillCatchesStructuredCredentialShape() {
+    // Strongly-structured credential SHAPES (a ghp_ GitHub token) are unambiguous in any context
+    // and stay leak-worthy even in the agent transcript — only the fuzzy categories are suppressed
+    // for the runner.stderr/stdout transcript.
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(
+            List.of(
+                new WorkspaceScanFile("logs/runner.stderr", "Authorization: token " + GH_TOKEN)));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories()).contains("GITHUB_TOKEN");
+  }
+
+  @Test
   void repoWorkingTreeFileStillCatchesInjectedProviderKey() {
     // The precise injected-provider-key substring detector still runs over repo files — a runner
     // that wrote the secret WE injected into committed code is a real leak.
