@@ -168,7 +168,17 @@ class FlywaySchemaContractTest {
     assertStateRejected("NotARealState");
 
     List<String> requiredTaxonomy =
-        List.of("missing_scope", "unclear_specification", "misunderstood_implementation");
+        List.of(
+            // Product-rejection taxonomy (story 2.10 / V1).
+            "missing_scope",
+            "unclear_specification",
+            "misunderstood_implementation",
+            // Developer-rejection taxonomy (story 3.21 / V13 widened the two CHECK constraints).
+            "incorrect_approach",
+            "incomplete_implementation",
+            "quality_issue",
+            "breaks_existing_functionality",
+            "out_of_scope");
     for (String value : requiredTaxonomy) {
       assertRejectionTaxonomyAccepted(value);
     }

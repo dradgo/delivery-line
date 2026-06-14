@@ -140,6 +140,67 @@ class ContextBundleServiceExecutionStageTest {
     assertFalse(parsed.has("repositoryBranchRef"));
   }
 
+  // Story 3.21 (OQ-2) — a regenerated implementation-plan (after a prior plan rejection) must see
+  // the prior implementationPlan.rejection technical feedback so it can address it ("feedback flows
+  // back into the rebuild loop", FR17). Before 3.21 this rejection feedback was threaded only into
+  // the PR_OUTPUT sub-stage.
+  @Test
+  void implementationPlanSubStage_carriesPriorImplementationPlanRejectionFeedback()
+      throws Exception {
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ApprovalReadPort approvalReadPort = mock(ApprovalReadPort.class);
+    ClarificationReadPort clarificationReadPort = mock(ClarificationReadPort.class);
+    RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
+
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("DL-310", "Export pipeline", "Re-plan it."));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(Optional.of(availableArtifact(ART_SPEC_ID, ArtifactType.SPEC, "spec/v1.json")));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "implementationPlan"))
+        .thenReturn(Optional.empty());
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "prOutput"))
+        .thenReturn(Optional.empty());
+    when(approvalReadPort.listByWorkflowRunAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of(approval("apr_specapprove1", true)));
+    when(approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(RUN_ID, "implementationPlan"))
+        .thenReturn(List.of(approval("apr_planreject01", false)));
+    when(clarificationReadPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of());
+    when(redactionPolicyService.redact(any(JsonNode.class), eq("shareable-redacted")))
+        .thenAnswer(invocation -> redactionPassthrough(invocation.getArgument(0)));
+
+    ContextBundleService service =
+        new ContextBundleService(
+            ticketProvider,
+            artifactRecordPort,
+            approvalReadPort,
+            clarificationReadPort,
+            redactionPolicyService,
+            new RunnerContractValidator());
+
+    ContextBundle bundle =
+        service.create(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            REX_ID,
+            1,
+            CONSTRAINTS,
+            DataClassification.SHAREABLE_REDACTED,
+            ACTOR,
+            ExecutionSubStage.IMPLEMENTATION_PLAN,
+            null,
+            null);
+
+    JsonNode parsed = objectMapper.readTree(bundle.redactedPayload());
+    List<String> kinds = parsed.get("priorFeedbackReferences").findValuesAsText("kind");
+    assertEquals(List.of("spec.approval", "implementationPlan.rejection"), kinds);
+    assertTrue(
+        parsed
+            .get("priorFeedbackReferences")
+            .findValuesAsText("referenceId")
+            .contains("apr_planreject01"));
+  }
+
   // ---------------------------------------------------------------------------------------------
   // AC2 — pr-output sub-stage + repo context + branch
   // ---------------------------------------------------------------------------------------------

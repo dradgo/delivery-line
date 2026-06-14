@@ -53,6 +53,12 @@ public class WorkflowRunEntity {
   @Column(name = "escalation_marker_set", nullable = false)
   private boolean escalationMarkerSet = false;
 
+  // Story 3.21 / V13: counter of implementation-rejection loops on this run. Increments on every
+  // successful TechnicalApprovalService.rejectImplementation. Drives the same escalation-marker
+  // threshold check as the spec-rejection loop (the marker is shared — Decision D5).
+  @Column(name = "implementation_rejection_loop_count", nullable = false)
+  private int implementationRejectionLoopCount = 0;
+
   public Long getId() {
     return id;
   }
@@ -103,5 +109,13 @@ public class WorkflowRunEntity {
 
   void setEscalationMarkerSet(boolean escalationMarkerSet) {
     this.escalationMarkerSet = escalationMarkerSet;
+  }
+
+  public int getImplementationRejectionLoopCount() {
+    return implementationRejectionLoopCount;
+  }
+
+  void setImplementationRejectionLoopCount(int implementationRejectionLoopCount) {
+    this.implementationRejectionLoopCount = implementationRejectionLoopCount;
   }
 }

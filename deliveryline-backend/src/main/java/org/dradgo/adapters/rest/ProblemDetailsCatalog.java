@@ -394,6 +394,14 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Invalid completion-sync template",
         false);
+    // Story 3.21 (AC7) — a rejection missing its developer taxonomy is a malformed reviewer
+    // decision; mirror INVALID_COMMAND_PAYLOAD's BAD_REQUEST + non-retryable mapping.
+    register(
+        metadata,
+        DomainErrorCode.MISSING_REJECTION_TAXONOMY,
+        HttpStatus.BAD_REQUEST,
+        "Missing rejection taxonomy",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

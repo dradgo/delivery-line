@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3-21 (2026-06-14)
+
+- **Artifact-type guard excludes only `SPEC`; re-dispatch else-branch defaults to PR_OUTPUT with no allowlist.** `TechnicalApprovalService.rejectImplementation` rejects only `ArtifactType.SPEC` (line 354), and the re-dispatch branches `if (artifactType == IMPLEMENTATION_PLAN) retryPlanGeneration else retryImplementation` (line 498). Currently safe — `ArtifactType` has exactly 3 values (`SPEC`, `IMPLEMENTATION_PLAN`, `PR_OUTPUT`) — and it mirrors the sibling `acceptImplementation` pattern. **Follow-up:** if a 4th `ArtifactType` is ever added, it would pass the SPEC-only guard and be silently treated as a `prOutput` rejection (re-dispatching the implementation runner). Harden with an explicit `!= IMPLEMENTATION_PLAN && != PR_OUTPUT → throw` allowlist guard plus an `else throw illegalState` on the re-dispatch branch. [`deliveryline-backend/src/main/java/org/dradgo/application/approval/TechnicalApprovalService.java:354,498`]
+
 ## Deferred from: code review of story-3-20 (2026-06-14)
 
 - **PR-link gate is a self-match tautology — true artifact-vs-link PR-ref comparison not enforced.** `TechnicalApprovalService.assertPrLinkPresentAndMatches` resolves `IntegrationLinkService.findActiveGitHubPrLink(runId).externalRef()` and passes that same ref into `assertArtifactPrLinkMatches(runId, sameRef)`, so the comparison is against itself: it enforces only that an active `github_pr` link *exists* (fail-closed when absent), never that the prOutput artifact's claimed PR ref matches the link. This is the Alex-confirmed OQ-1 pilot fallback (the artifact's true PR ref lives only in its payload JSON; no clean read port exists yet). **Follow-up:** when an artifact-prRef read port is available, tighten the gate to a true artifact-vs-link comparison against the canonical `owner/repo#number` form (see [[proutput-prref-validator-rejects-real-adapter]]).

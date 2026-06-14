@@ -326,7 +326,12 @@
             "enum" : [
               "MISSING_SCOPE",
               "UNCLEAR_SPECIFICATION",
-              "MISUNDERSTOOD_IMPLEMENTATION"
+              "MISUNDERSTOOD_IMPLEMENTATION",
+              "INCORRECT_APPROACH",
+              "INCOMPLETE_IMPLEMENTATION",
+              "QUALITY_ISSUE",
+              "BREAKS_EXISTING_FUNCTIONALITY",
+              "OUT_OF_SCOPE"
             ],
             "type" : "string"
           }

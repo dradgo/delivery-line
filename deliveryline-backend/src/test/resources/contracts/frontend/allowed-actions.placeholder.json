@@ -9,6 +9,7 @@
     "retry",
     "view_diagnostics",
     "clear_escalation_marker",
-    "accept_implementation"
+    "accept_implementation",
+    "reject_implementation"
   ]
 }

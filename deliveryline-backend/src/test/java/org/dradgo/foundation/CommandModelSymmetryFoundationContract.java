@@ -23,6 +23,7 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -59,16 +60,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import(ApprovalReviewerRoleResolver.class)
 class CommandModelSymmetryFoundationContract {
 
-  // Story 3.20 added AcceptImplementationCommand to the sealed permit set (service-only surface via
-  // WorkflowCommandService.acceptImplementation). Its REST round-trip is intentionally deferred to
-  // story 3.23 (accept-implementation endpoint + OpenAPI), so it is recorded here as a known permit
-  // without a manual REST capture below — the 3.23 story adds that round-trip in lockstep.
+  // Story 3.20 added AcceptImplementationCommand and story 3.21 added RejectImplementationCommand
+  // to
+  // the sealed permit set (service-only surface via WorkflowCommandService.acceptImplementation /
+  // rejectImplementation). Their REST round-trips are intentionally deferred to stories 3.23 / 3.24
+  // (accept/reject-implementation endpoints + OpenAPI), so they are recorded here as known permits
+  // without a manual REST capture below — those stories add the round-trips in lockstep.
   private static final Set<Class<?>> EXPECTED_PERMITS =
       Set.of(
           SubmitWorkflowCommand.class,
           ApproveSpecCommand.class,
           RejectSpecCommand.class,
           AcceptImplementationCommand.class,
+          RejectImplementationCommand.class,
           SubmitClarificationCommand.class,
           RetryWorkflowCommand.class,
           TakeoverWorkflowCommand.class);

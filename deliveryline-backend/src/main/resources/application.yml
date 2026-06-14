@@ -73,6 +73,12 @@ deliveryline:
     # the threshold from below); subsequent rejections continue to advance the counter and the
     # workflow stays in Investigating — escalation does NOT terminate the workflow.
     spec-rejection-escalation-threshold: 3
+    # Story 3.21 (FR13): threshold above which TechnicalApprovalService.rejectImplementation raises
+    # the per-run escalation marker (the SAME marker as the spec-rejection loop — Decision D5). The
+    # escalation event is appended exactly once (when the implementation-rejection counter crosses
+    # the threshold from below); subsequent rejections continue to advance the counter and the
+    # workflow stays in Executing — escalation does NOT terminate the workflow.
+    implementation-rejection-escalation-threshold: 3
     # Story 3.9 (Decision D8) — deliveryline-bot git identity for RepositoryWorkspaceService commits.
     # Supplied at runtime via DELIVERYLINE_BOT_NAME / DELIVERYLINE_BOT_EMAIL (.env / process env);
     # blank ⇒ the built-in default identity is used for commits and the doctor git-bot-identity probe

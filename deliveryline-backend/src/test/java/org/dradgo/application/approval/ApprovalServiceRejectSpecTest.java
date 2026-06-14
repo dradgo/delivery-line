@@ -305,9 +305,14 @@ class ApprovalServiceRejectSpecTest {
 
   @Test
   void taggedFeedbackPersistedAsRegistryWireValue() {
-    // AC9(a) defense-in-depth: every taxonomy value persists through to the rejectionTaxonomy
-    // column as the registry wire value (matches the V1 CHECK constraint substring).
+    // AC9(a) defense-in-depth: every PRODUCT taxonomy value persists through to the
+    // rejectionTaxonomy column as the registry wire value (matches the CHECK constraint substring).
+    // Role-scoping (D4): developer-subset values are rejected on the spec path — asserted by
+    // developerTaxonomyRejectedOnSpecPath (code-review 2026-06-14).
     for (RejectionTaxonomy taxonomy : RejectionTaxonomy.values()) {
+      if (!taxonomy.isProductValue()) {
+        continue;
+      }
       Mockito.reset(approvalWritePort, workflowEventWritePort, workflowTransitionService);
       Mockito.reset(workflowRunRejectionLoopPort);
       seedArtifact(3);
@@ -321,6 +326,33 @@ class ApprovalServiceRejectSpecTest {
       verify(approvalWritePort).insert(captor.capture());
       assertThat(captor.getValue().rejectionTaxonomy()).isEqualTo(taxonomy.value());
     }
+  }
+
+  @Test
+  void developerTaxonomyRejectedOnSpecPath() {
+    // Role-scoping (D4): the V13 migration widened the shared rejection-taxonomy CHECK to admit the
+    // developer values, so the DB no longer blocks a developer value on a spec rejection — the
+    // service guard must, before any write (code-review finding 2026-06-14).
+    seedArtifact(3);
+    seedRunnerExecutionContextBundleVersion(2);
+
+    DomainException error =
+        catchDomainException(
+            () ->
+                approvalService.rejectSpec(
+                    commandWithVersions(3, 2, RejectionTaxonomy.INCORRECT_APPROACH)));
+
+    assertThat(error.errorCode()).isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    assertThat(error.details())
+        .containsEntry("reason", "spec_rejection_requires_product_taxonomy")
+        .containsEntry("taggedFeedback", "incorrect_approach");
+
+    verifyNoInteractions(approvalWritePort);
+    verifyNoInteractions(workflowEventWritePort);
+    verifyNoInteractions(workflowTransitionService);
+    verifyNoInteractions(workflowRunRejectionLoopPort);
+
+    assertWarnLogContains("spec_rejection_requires_product_taxonomy");
   }
 
   // ---------------------------------------------------------------------------

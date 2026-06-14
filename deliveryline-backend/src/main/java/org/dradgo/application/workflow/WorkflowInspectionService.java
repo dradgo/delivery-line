@@ -468,12 +468,15 @@ public class WorkflowInspectionService {
       case EXECUTING:
         return List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME);
       case WAITING_FOR_REVIEW:
-        // Story 3.20 (AC12): the developer-review actor may accept the implementation here. SEAM
-        // (Epic 3): reject_implementation (3.21) + takeover (3.22) additively extend THIS branch
-        // for
-        // the developer role; all other roles keep view_only.
+        // Story 3.20 (AC12) + Story 3.21 (AC9): the developer-review actor may accept OR reject the
+        // implementation here. SEAM (Epic 3): takeover (3.22) additively extends THIS branch for
+        // the
+        // developer role; all other roles keep view_only.
         if (ROLE_DEVELOPER.equals(actorRole)) {
-          return List.of(AllowedAction.ACCEPT_IMPLEMENTATION, AllowedAction.VIEW_ONLY);
+          return List.of(
+              AllowedAction.ACCEPT_IMPLEMENTATION,
+              AllowedAction.REJECT_IMPLEMENTATION,
+              AllowedAction.VIEW_ONLY);
         }
         return List.of(AllowedAction.VIEW_ONLY);
       case COMPLETED:

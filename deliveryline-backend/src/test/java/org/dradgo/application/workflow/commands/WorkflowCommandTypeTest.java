@@ -44,6 +44,21 @@ class WorkflowCommandTypeTest {
                 "r")
             .commandType());
     assertEquals(
+        "RejectImplementationCommand",
+        new RejectImplementationCommand(
+                "run_x",
+                "art_x",
+                1,
+                1,
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "developer",
+                org.dradgo.domain.registry.RejectionTaxonomy.INCORRECT_APPROACH,
+                "r")
+            .commandType());
+    assertEquals(
         "SubmitClarificationCommand",
         new SubmitClarificationCommand(
                 "run_x", "clr_x", "art_x", 1, "answer", "alex", ActorType.HUMAN, "k", null)

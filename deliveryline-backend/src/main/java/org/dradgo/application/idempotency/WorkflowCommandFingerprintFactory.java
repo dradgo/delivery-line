@@ -6,6 +6,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -61,6 +62,21 @@ public class WorkflowCommandFingerprintFactory {
         append(digest, accept.artifactVersion().toString());
         append(digest, accept.contextVersion().toString());
         append(digest, accept.reviewerRole());
+      }
+      case RejectImplementationCommand reject -> {
+        // Story 3.21: technical-rejection twin of RejectSpecCommand. Fingerprint fields beyond the
+        // shared envelope are workflowRunId + artifactId + artifactVersion + contextVersion +
+        // reviewerRole + taggedFeedback. reasonText is intentionally NOT fingerprinted — free-form
+        // reviewer wording edits on the same review must replay idempotently (symmetric with
+        // RejectSpecCommand.reasonText). reviewerRole + taggedFeedback ARE fingerprinted: a
+        // different role or a revised structured taxonomy on the same review is a different
+        // command.
+        append(digest, reject.workflowRunId());
+        append(digest, reject.artifactId());
+        append(digest, reject.artifactVersion().toString());
+        append(digest, reject.contextVersion().toString());
+        append(digest, reject.reviewerRole());
+        append(digest, reject.taggedFeedback().value());
       }
       case SubmitClarificationCommand clarify -> {
         // Story 2.11: canonical fingerprint fields beyond the shared envelope are

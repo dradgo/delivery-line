@@ -99,7 +99,14 @@ public enum DomainErrorCode implements RegistryValue {
   // unknown placeholder or omits a required one (Decision D4). Fails context boot so a malformed
   // pilot template never silently posts a broken merge-ready summary; BAD_REQUEST + non-retryable
   // (mirrors INVALID_COMMAND_PAYLOAD — it is a configuration defect, not a transient fault).
-  INVALID_COMPLETION_TEMPLATE("INVALID_COMPLETION_TEMPLATE");
+  INVALID_COMPLETION_TEMPLATE("INVALID_COMPLETION_TEMPLATE"),
+  // Story 3.21 (AC7 / D6) — three-sites code (enum + ProblemDetailsCatalog + manifest). Raised by
+  // TechnicalApprovalService.rejectImplementation when taggedFeedback is null (defense-in-depth for
+  // AR34a: no rejection row ever persists without a developer taxonomy). The typed
+  // @NotNull RejectionTaxonomy field already prevents this at the command boundary; the REST-layer
+  // INVALID_REJECTION_TAXONOMY deserialization concern belongs to story 3.24. BAD_REQUEST +
+  // non-retryable (mirrors INVALID_COMMAND_PAYLOAD — a malformed reviewer decision, not transient).
+  MISSING_REJECTION_TAXONOMY("MISSING_REJECTION_TAXONOMY");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

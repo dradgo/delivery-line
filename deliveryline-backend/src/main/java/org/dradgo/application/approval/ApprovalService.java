@@ -354,6 +354,15 @@ public class ApprovalService {
         throw versionMismatchReject(command, currentArtifactVersion, currentContextBundleVersion);
       }
 
+      // Role-scoping (Decision D4): a product spec rejection must carry a product-taxonomy value.
+      // The V13 migration widened the shared rejection-taxonomy DB CHECK to the 8-value union, so
+      // the database no longer rejects a developer value on a spec rejection — enforce the product
+      // subset here, symmetric to TechnicalApprovalService.rejectImplementation's developer-subset
+      // guard (code-review finding 2026-06-14).
+      if (!command.taggedFeedback().isProductValue()) {
+        throw nonProductTaxonomy(command);
+      }
+
       // AC2: persist the rejection row (decision=rejected + rejection_taxonomy populated).
       OffsetDateTime decidedAt = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
       String approvalPublicId = PublicIdPrefixes.APPROVAL.next();
@@ -668,6 +677,25 @@ public class ApprovalService {
     return new DomainException(
         DomainErrorCode.INVALID_COMMAND_PAYLOAD,
         "Artifact does not belong to the supplied workflow run",
+        details);
+  }
+
+  private DomainException nonProductTaxonomy(RejectSpecCommand command) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", command.artifactId());
+    details.put("workflowRunId", command.workflowRunId());
+    details.put("reviewerRole", command.reviewerRole());
+    details.put("taggedFeedback", command.taggedFeedback().value());
+    details.put("reason", "spec_rejection_requires_product_taxonomy");
+    log.warn(
+        "rejectSpec rejected INVALID_COMMAND_PAYLOAD workflowRunId={} artifactId={} reviewerRole={} taggedFeedback={} reason=spec_rejection_requires_product_taxonomy",
+        command.workflowRunId(),
+        command.artifactId(),
+        command.reviewerRole(),
+        command.taggedFeedback().value());
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "Spec rejection must carry a product-taxonomy value",
         details);
   }
 

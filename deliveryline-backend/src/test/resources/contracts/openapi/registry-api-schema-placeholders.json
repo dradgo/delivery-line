@@ -135,6 +135,7 @@
     "RUNNER_PR_REF_DRIFT": "https://deliveryline.local/problems/runner-pr-ref-drift",
     "RUNNER_OUTPUT_VALIDATION_FAILED": "https://deliveryline.local/problems/runner-output-validation-failed",
     "ARTIFACT_PR_LINK_MISMATCH": "https://deliveryline.local/problems/artifact-pr-link-mismatch",
-    "INVALID_COMPLETION_TEMPLATE": "https://deliveryline.local/problems/invalid-completion-template"
+    "INVALID_COMPLETION_TEMPLATE": "https://deliveryline.local/problems/invalid-completion-template",
+    "MISSING_REJECTION_TAXONOMY": "https://deliveryline.local/problems/missing-rejection-taxonomy"
   }
 }

@@ -13,16 +13,20 @@ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.workflow.ImplementationRejectionEscalationThresholdProvider;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
+import org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RejectionTaxonomy;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
@@ -68,6 +72,10 @@ public class TechnicalApprovalService {
   private static final Logger log = LoggerFactory.getLogger(TechnicalApprovalService.class);
 
   private static final String TRANSITION_REASON = "accept implementation";
+  private static final String REJECT_TRANSITION_REASON = "reject implementation";
+  // The developer-review reviewer role (mirrors WorkflowInspectionService.ROLE_DEVELOPER, which is
+  // package-private in the workflow package). Used only to scope the taxonomy subset guard.
+  private static final String DEVELOPER_REVIEWER_ROLE = "developer";
 
   private final ArtifactRecordPort artifactRecordPort;
   private final ArtifactService artifactService;
@@ -77,6 +85,8 @@ public class TechnicalApprovalService {
   private final WorkflowOrchestrationService workflowOrchestrationService;
   private final IntegrationLinkService integrationLinkService;
   private final ApprovalVersionBinder approvalVersionBinder;
+  private final WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort;
+  private final ImplementationRejectionEscalationThresholdProvider escalationThresholdProvider;
   private final Clock clock;
 
   @Autowired
@@ -88,7 +98,9 @@ public class TechnicalApprovalService {
       WorkflowTransitionService workflowTransitionService,
       WorkflowOrchestrationService workflowOrchestrationService,
       IntegrationLinkService integrationLinkService,
-      ApprovalVersionBinder approvalVersionBinder) {
+      ApprovalVersionBinder approvalVersionBinder,
+      WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
+      ImplementationRejectionEscalationThresholdProvider escalationThresholdProvider) {
     this(
         artifactRecordPort,
         artifactService,
@@ -98,6 +110,8 @@ public class TechnicalApprovalService {
         workflowOrchestrationService,
         integrationLinkService,
         approvalVersionBinder,
+        workflowRunRejectionLoopPort,
+        escalationThresholdProvider,
         Clock.systemUTC());
   }
 
@@ -112,6 +126,8 @@ public class TechnicalApprovalService {
       WorkflowOrchestrationService workflowOrchestrationService,
       IntegrationLinkService integrationLinkService,
       ApprovalVersionBinder approvalVersionBinder,
+      WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
+      ImplementationRejectionEscalationThresholdProvider escalationThresholdProvider,
       Clock clock) {
     this.artifactRecordPort = artifactRecordPort;
     this.artifactService = artifactService;
@@ -121,6 +137,8 @@ public class TechnicalApprovalService {
     this.workflowOrchestrationService = workflowOrchestrationService;
     this.integrationLinkService = integrationLinkService;
     this.approvalVersionBinder = approvalVersionBinder;
+    this.workflowRunRejectionLoopPort = workflowRunRejectionLoopPort;
+    this.escalationThresholdProvider = escalationThresholdProvider;
     this.clock = clock;
   }
 
@@ -265,6 +283,266 @@ public class TechnicalApprovalService {
           // just-inserted approval row + appended event disappear (no orphan row, no orphan event).
           log.warn(
               "acceptImplementation rejected ILLEGAL_TRANSITION approvalId={} workflowRunId={} cause={}",
+              approvalPublicId,
+              command.workflowRunId(),
+              domainError.getMessage());
+        }
+        throw domainError;
+      } finally {
+        MdcKeys.endScope(MdcKeys.APPROVAL_ID, priorApprovalId);
+      }
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  /**
+   * Story 3.21 — canonical executor for the {@link
+   * org.dradgo.domain.registry.AllowedAction#REJECT_IMPLEMENTATION} action (FR17): a developer
+   * rejecting a {@code implementationPlan} or {@code prOutput} artifact with structured technical
+   * feedback. The technical-rejection twin of {@link ApprovalService#rejectSpec} — same
+   * version-binding-first ordering, same {@code approvals(decision=rejected)} row → {@code
+   * approval.rejected} event → counter increment → escalation marker → {@link
+   * WorkflowTransitionService#transition} → re-dispatch sequence in one {@code
+   * MANDATORY}-propagation transaction (atomicity), differing in:
+   *
+   * <ul>
+   *   <li>artifact-type guard ({@code implementationPlan} | {@code prOutput}, never {@code spec});
+   *   <li>reviewer role ({@code developer}, FR46) + developer-rejection taxonomy (Decision D4);
+   *   <li>per-stage loop counter ({@code implementation_rejection_loop_count}, shared escalation
+   *       marker — Decision D5);
+   *   <li>transition target {@link WorkflowState#EXECUTING} for BOTH artifact kinds (Decision D3 —
+   *       {@code WaitingForReview → Investigating} is illegal in the live transition table), then a
+   *       type-branched pure re-dispatch ({@code implementationPlan → retryPlanGeneration}, {@code
+   *       prOutput → retryImplementation}).
+   * </ul>
+   *
+   * <p>Per Decision D3/OQ-1 there is intentionally no eligibility / PR-link gate: rejecting a
+   * stale-or-unavailable artifact is a valid developer decision (mirrors {@code rejectSpec} OQ-3).
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ApprovalResult rejectImplementation(RejectImplementationCommand command) {
+    PublicIdPrefixes.require(command.workflowRunId(), PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(command.artifactId(), PublicIdPrefixes.ARTIFACT);
+
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, command.artifactId());
+    try {
+      ArtifactRecordSnapshot artifact =
+          artifactRecordPort
+              .findByPublicId(command.artifactId())
+              .orElseThrow(() -> artifactNotFoundReject(command));
+
+      log.info(
+          "rejectImplementation entry workflowRunId={} artifactId={} artifactType={} expectedArtifactVersion={} expectedContextBundleVersion={} reviewerRole={} taggedFeedback={} actorIdentity={} actorType={}",
+          command.workflowRunId(),
+          command.artifactId(),
+          artifact.artifactType().value(),
+          command.artifactVersion(),
+          command.contextVersion(),
+          command.reviewerRole(),
+          command.taggedFeedback() == null ? null : command.taggedFeedback().value(),
+          command.actorIdentity(),
+          command.actorType().value());
+
+      // AC2 type guard: technical rejection targets ONLY implementationPlan / prOutput. A spec
+      // artifact must go through the product-rejection path (ApprovalService.rejectSpec). Mirrors
+      // acceptImplementation's INVALID_COMMAND_PAYLOAD guard (the live sibling — the epic's
+      // "ARTIFACT_TYPE_MISMATCH" code does not exist; see story Task 6 reconciliation).
+      ArtifactType artifactType = artifact.artifactType();
+      if (artifactType == ArtifactType.SPEC) {
+        throw artifactTypeInvalidReject(command, artifact);
+      }
+      // Defense-in-depth: refuse to reject another run's artifact (mirror acceptImplementation).
+      if (!artifact.workflowRunId().equals(command.workflowRunId())) {
+        throw artifactRunMismatchReject(command, artifact);
+      }
+
+      // AC3 version-binding FIRST (Trap T3): a stale artifact OR context-bundle version is a
+      // reviewer error that must surface before any write. No eligibility check (Decision D3/OQ-1).
+      int currentArtifactVersion = artifact.version();
+      int currentContextBundleVersion =
+          approvalVersionBinder.resolveCurrentContextBundleVersion(command.artifactId());
+      if (!approvalVersionBinder.versionsMatch(
+          command.artifactVersion(),
+          currentArtifactVersion,
+          command.contextVersion(),
+          currentContextBundleVersion)) {
+        throw versionMismatchReject(command, currentArtifactVersion, currentContextBundleVersion);
+      }
+
+      // AC7 taxonomy guard (defense-in-depth): the @NotNull RejectionTaxonomy field already
+      // prevents
+      // null at the command layer, but AR34a requires no rejection row ever persists without a
+      // non-null developer taxonomy. Also enforce role-scoping (Decision D4): a developer rejection
+      // must carry a developer-subset value.
+      RejectionTaxonomy taggedFeedback = command.taggedFeedback();
+      if (taggedFeedback == null) {
+        throw missingRejectionTaxonomy(command);
+      }
+      // Role-scoping (Decision D4) — unconditional: rejectImplementation is the developer-only
+      // reject path (AC1 reviewerRole=developer), so the reviewer role must be developer AND the
+      // taxonomy must be a developer-subset value. A non-developer reviewerRole no longer bypasses
+      // the subset check (code-review finding 2026-06-14).
+      if (!DEVELOPER_REVIEWER_ROLE.equals(command.reviewerRole())
+          || !taggedFeedback.isDeveloperValue()) {
+        throw nonDeveloperTaxonomy(command, taggedFeedback);
+      }
+
+      OffsetDateTime decidedAt = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+      String approvalPublicId = PublicIdPrefixes.APPROVAL.next();
+      String priorApprovalId = MdcKeys.beginScope(MdcKeys.APPROVAL_ID, approvalPublicId);
+      try {
+        // AC2 persist the rejection row (decision=rejected + developer rejection_taxonomy).
+        ApprovalSnapshot persisted =
+            approvalWritePort.insert(
+                new NewApproval(
+                    approvalPublicId,
+                    command.workflowRunId(),
+                    command.artifactId(),
+                    command.artifactVersion(),
+                    command.contextVersion(),
+                    command.actorIdentity(),
+                    command.actorType(),
+                    command.reviewerRole(),
+                    ApprovalSnapshot.DECISION_REJECTED,
+                    command.reasonText(),
+                    taggedFeedback.value(),
+                    decidedAt,
+                    command.idempotencyKey()));
+
+        // AC4 atomically increment the implementation-rejection loop counter (post-increment
+        // value).
+        int newLoopCount =
+            workflowRunRejectionLoopPort.incrementAndReadImplementationLoopCount(
+                command.workflowRunId());
+
+        // AC4 append the approval.rejected event INSIDE the same transaction.
+        workflowEventWritePort.append(
+            new WorkflowEventRecord(
+                PublicIdPrefixes.WORKFLOW_EVENT.next(),
+                command.workflowRunId(),
+                WorkflowEventType.APPROVAL_REJECTED,
+                null,
+                null,
+                command.actorIdentity(),
+                command.actorType(),
+                "implementation rejected",
+                null,
+                false,
+                decidedAt,
+                rejectEventDetails(command, persisted, newLoopCount)));
+
+        // AC6 escalation marker — flip false->true at most once per run (shared marker, Decision
+        // D5), emit escalation.required exactly once on the flip. Short-circuit the UPDATE when the
+        // marker is already set (avoid a wasted JDBC round-trip per subsequent rejection).
+        int threshold = escalationThresholdProvider.get();
+        boolean escalationMarkerNow = false;
+        if (newLoopCount >= threshold) {
+          if (workflowRunRejectionLoopPort.isEscalationMarkerSet(command.workflowRunId())) {
+            escalationMarkerNow = true;
+          } else {
+            int flipped = workflowRunRejectionLoopPort.markEscalationOnce(command.workflowRunId());
+            if (flipped == 1) {
+              escalationMarkerNow = true;
+              workflowEventWritePort.append(
+                  new WorkflowEventRecord(
+                      PublicIdPrefixes.WORKFLOW_EVENT.next(),
+                      command.workflowRunId(),
+                      WorkflowEventType.ESCALATION_REQUIRED,
+                      null,
+                      null,
+                      command.actorIdentity(),
+                      command.actorType(),
+                      "implementation rejection loop threshold exceeded",
+                      null,
+                      false,
+                      decidedAt,
+                      escalationEventDetails(command, threshold, newLoopCount)));
+              log.warn(
+                  "rejectImplementation escalation marker raised workflowRunId={} loopCount={} threshold={}",
+                  command.workflowRunId(),
+                  newLoopCount,
+                  threshold);
+            } else {
+              // Race: another transaction flipped the marker between our check and our flip. Treat
+              // as already-set — the other tx already emitted the escalation event (idempotency
+              // holds at the DB level).
+              escalationMarkerNow = true;
+              log.debug(
+                  "rejectImplementation escalation marker concurrent-flip workflowRunId={} loopCount={} threshold={}",
+                  command.workflowRunId(),
+                  newLoopCount,
+                  threshold);
+            }
+          }
+        }
+
+        // AC4/AC5 transition WaitingForReview -> Executing for BOTH artifact kinds (Decision D3).
+        // The transition service appends workflow.stateChanged on its own (do NOT append another).
+        log.info(
+            "rejectImplementation transition workflowRunId={} from=WaitingForReview to=Executing artifactType={}",
+            command.workflowRunId(),
+            artifactType.value());
+        workflowTransitionService.transition(
+            command.workflowRunId(),
+            WorkflowState.EXECUTING,
+            new TransitionActor(command.actorIdentity(), command.actorType()),
+            REJECT_TRANSITION_REASON,
+            command.idempotencyKey(),
+            transitionEventDetailsReject(command, persisted, newLoopCount, escalationMarkerNow));
+
+        // AC4/AC5 re-dispatch the appropriate runner AFTER the transition (Trap T1 — pure
+        // re-dispatch, never a second transition). Inside this MANDATORY transaction so a dispatch
+        // failure rolls back the rejection row + counter + transition. ContextBundleService threads
+        // the implementationPlan.rejection feedback into the regenerated bundle for both sub-stages
+        // (story 3.21 OQ-2). No-op when the stage auto-dispatch flag is false.
+        String correlationId = normalizeOptional(command.correlationId());
+        if (artifactType == ArtifactType.IMPLEMENTATION_PLAN) {
+          log.info(
+              "rejectImplementation retryPlanGeneration workflowRunId={} correlationId={}",
+              command.workflowRunId(),
+              correlationId);
+          workflowOrchestrationService.retryPlanGeneration(command.workflowRunId(), correlationId);
+        } else {
+          log.info(
+              "rejectImplementation retryImplementation workflowRunId={} correlationId={}",
+              command.workflowRunId(),
+              correlationId);
+          workflowOrchestrationService.retryImplementation(command.workflowRunId(), correlationId);
+        }
+
+        log.info(
+            "rejectImplementation success approvalId={} workflowRunId={} artifactId={} artifactType={} artifactVersion={} contextBundleVersion={} reviewerRole={} taggedFeedback={} loopCount={} escalationMarker={} resultingState={}",
+            persisted.publicId(),
+            persisted.workflowRunId(),
+            persisted.artifactId(),
+            artifactType.value(),
+            persisted.artifactVersion(),
+            persisted.contextBundleVersion(),
+            persisted.reviewerRole(),
+            taggedFeedback.value(),
+            newLoopCount,
+            escalationMarkerNow,
+            WorkflowState.EXECUTING.value());
+
+        return new ApprovalResult(
+            persisted.publicId(),
+            persisted.workflowRunId(),
+            persisted.artifactId(),
+            persisted.artifactVersion(),
+            persisted.contextBundleVersion(),
+            persisted.reviewerRole(),
+            persisted.decidedAt(),
+            WorkflowState.EXECUTING,
+            correlationId);
+      } catch (DomainException domainError) {
+        if (domainError.errorCode() == DomainErrorCode.ILLEGAL_TRANSITION) {
+          // Propagating ILLEGAL_TRANSITION rolls back the outer transaction so the just-inserted
+          // rejection row + appended events + counter increment all disappear together.
+          log.warn(
+              "rejectImplementation rejected ILLEGAL_TRANSITION approvalId={} workflowRunId={} cause={}",
               approvalPublicId,
               command.workflowRunId(),
               domainError.getMessage());
@@ -444,6 +722,176 @@ public class TechnicalApprovalService {
         DomainErrorCode.INVALID_COMMAND_PAYLOAD,
         "Artifact does not belong to the supplied workflow run",
         details);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 3.21 — rejectImplementation error builders + event details
+  // ---------------------------------------------------------------------------
+
+  private DomainException artifactNotFoundReject(RejectImplementationCommand command) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", command.artifactId());
+    details.put("workflowRunId", command.workflowRunId());
+    log.warn(
+        "rejectImplementation rejected ARTIFACT_RECORD_NOT_FOUND workflowRunId={} artifactId={}",
+        command.workflowRunId(),
+        command.artifactId());
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
+        "Artifact not found: " + command.artifactId(),
+        details);
+  }
+
+  private DomainException artifactTypeInvalidReject(
+      RejectImplementationCommand command, ArtifactRecordSnapshot artifact) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", command.artifactId());
+    details.put("artifactType", artifact.artifactType().value());
+    details.put("reason", "technical_rejection_requires_implementation_artifact");
+    details.put("workflowRunId", command.workflowRunId());
+    log.warn(
+        "rejectImplementation rejected INVALID_COMMAND_PAYLOAD workflowRunId={} artifactId={} artifactType={} reason=technical_rejection_requires_implementation_artifact",
+        command.workflowRunId(),
+        command.artifactId(),
+        artifact.artifactType().value());
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "rejectImplementation called against a non-implementation artifact",
+        details);
+  }
+
+  private DomainException artifactRunMismatchReject(
+      RejectImplementationCommand command, ArtifactRecordSnapshot artifact) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", command.artifactId());
+    details.put("artifactWorkflowRunId", artifact.workflowRunId());
+    details.put("commandWorkflowRunId", command.workflowRunId());
+    log.warn(
+        "rejectImplementation rejected INVALID_COMMAND_PAYLOAD workflowRunId={} artifactId={} artifactWorkflowRunId={} reason=artifact_run_mismatch",
+        command.workflowRunId(),
+        command.artifactId(),
+        artifact.workflowRunId());
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "Artifact does not belong to the supplied workflow run",
+        details);
+  }
+
+  private DomainException versionMismatchReject(
+      RejectImplementationCommand command,
+      int currentArtifactVersion,
+      int currentContextBundleVersion) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("expectedArtifactVersion", command.artifactVersion());
+    details.put("currentArtifactVersion", currentArtifactVersion);
+    details.put("expectedContextBundleVersion", command.contextVersion());
+    details.put("currentContextBundleVersion", currentContextBundleVersion);
+    details.put("artifactId", command.artifactId());
+    details.put("workflowRunId", command.workflowRunId());
+    log.warn(
+        "rejectImplementation rejected APPROVAL_VERSION_MISMATCH workflowRunId={} artifactId={} expectedArtifactVersion={} currentArtifactVersion={} expectedContextBundleVersion={} currentContextBundleVersion={}",
+        command.workflowRunId(),
+        command.artifactId(),
+        command.artifactVersion(),
+        currentArtifactVersion,
+        command.contextVersion(),
+        currentContextBundleVersion);
+    return new DomainException(
+        DomainErrorCode.APPROVAL_VERSION_MISMATCH,
+        "Technical rejection rejected: artifact version is stale",
+        details);
+  }
+
+  private DomainException missingRejectionTaxonomy(RejectImplementationCommand command) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", command.artifactId());
+    details.put("workflowRunId", command.workflowRunId());
+    details.put("reason", "tagged_feedback_required");
+    log.warn(
+        "rejectImplementation rejected MISSING_REJECTION_TAXONOMY workflowRunId={} artifactId={} reason=tagged_feedback_required",
+        command.workflowRunId(),
+        command.artifactId());
+    return new DomainException(
+        DomainErrorCode.MISSING_REJECTION_TAXONOMY,
+        "Technical rejection requires a non-null taggedFeedback value",
+        details);
+  }
+
+  private DomainException nonDeveloperTaxonomy(
+      RejectImplementationCommand command, RejectionTaxonomy taggedFeedback) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("artifactId", command.artifactId());
+    details.put("workflowRunId", command.workflowRunId());
+    details.put("reviewerRole", command.reviewerRole());
+    details.put("taggedFeedback", taggedFeedback.value());
+    details.put("reason", "developer_role_requires_developer_taxonomy");
+    log.warn(
+        "rejectImplementation rejected INVALID_COMMAND_PAYLOAD workflowRunId={} artifactId={} reviewerRole={} taggedFeedback={} reason=developer_role_requires_developer_taxonomy",
+        command.workflowRunId(),
+        command.artifactId(),
+        command.reviewerRole(),
+        taggedFeedback.value());
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "Developer rejection must carry a developer-taxonomy value",
+        details);
+  }
+
+  private static Map<String, Object> rejectEventDetails(
+      RejectImplementationCommand command,
+      ApprovalSnapshot persisted,
+      int implementationRejectionLoopCount) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("approvalId", persisted.publicId());
+    details.put("artifactId", persisted.artifactId());
+    details.put("artifactVersion", persisted.artifactVersion());
+    details.put("contextBundleVersion", persisted.contextBundleVersion());
+    details.put("reviewerRole", persisted.reviewerRole());
+    details.put("taggedFeedback", command.taggedFeedback().value());
+    details.put("implementationRejectionLoopCount", implementationRejectionLoopCount);
+    details.put("idempotencyKey", command.idempotencyKey());
+    String correlationId = normalizeOptional(command.correlationId());
+    if (correlationId != null) {
+      details.put("correlationId", correlationId);
+    }
+    return details;
+  }
+
+  private static Map<String, Object> escalationEventDetails(
+      RejectImplementationCommand command, int threshold, int implementationRejectionLoopCount) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("reason", "implementation_rejection_loop_threshold_exceeded");
+    details.put("implementationRejectionLoopCount", implementationRejectionLoopCount);
+    details.put("threshold", threshold);
+    details.put("idempotencyKey", command.idempotencyKey());
+    String correlationId = normalizeOptional(command.correlationId());
+    if (correlationId != null) {
+      details.put("correlationId", correlationId);
+    }
+    return details;
+  }
+
+  private static Map<String, Object> transitionEventDetailsReject(
+      RejectImplementationCommand command,
+      ApprovalSnapshot persisted,
+      int implementationRejectionLoopCount,
+      boolean escalationMarker) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("approvalId", persisted.publicId());
+    details.put("artifactId", persisted.artifactId());
+    details.put("artifactVersion", persisted.artifactVersion());
+    details.put("contextBundleVersion", persisted.contextBundleVersion());
+    details.put("reviewerRole", persisted.reviewerRole());
+    details.put("taggedFeedback", command.taggedFeedback().value());
+    details.put("implementationRejectionLoopCount", implementationRejectionLoopCount);
+    details.put("escalationMarker", escalationMarker);
+    details.put("commandType", command.commandType());
+    details.put("idempotencyKey", command.idempotencyKey());
+    String correlationId = normalizeOptional(command.correlationId());
+    if (correlationId != null) {
+      details.put("correlationId", correlationId);
+    }
+    return details;
   }
 
   private static Map<String, Object> approvalEventDetails(

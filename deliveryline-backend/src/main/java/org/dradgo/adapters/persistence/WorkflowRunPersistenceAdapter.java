@@ -39,13 +39,24 @@ public class WorkflowRunPersistenceAdapter
        where public_id = :publicId
        returning spec_rejection_loop_count
       """;
+  private static final String INCREMENT_IMPLEMENTATION_LOOP_COUNT_SQL =
+      """
+      update workflow_runs
+         set implementation_rejection_loop_count = implementation_rejection_loop_count + 1
+       where public_id = :publicId
+       returning implementation_rejection_loop_count
+      """;
   private static final String MARK_ESCALATION_SQL =
+      // RETURNING an int literal (not the boolean escalation_marker_set column) so the int row
+      // mapper below reads cleanly — a returned row means this call just-flipped the marker, zero
+      // rows means it was already set. Reading the boolean column via getInt throws "Bad value for
+      // type int : t" on Postgres (story 3.21 — first real-DB exercise of this escalation path).
       """
       update workflow_runs
          set escalation_marker_set = true
        where public_id = :publicId
          and escalation_marker_set = false
-       returning escalation_marker_set
+       returning 1
       """;
 
   private final WorkflowRunRepository workflowRunRepository;
@@ -124,6 +135,29 @@ public class WorkflowRunPersistenceAdapter
     }
     log.debug(
         "incrementAndReadLoopCount publicId={} newLoopCount={}", workflowRunPublicId, newCount);
+    return newCount;
+  }
+
+  @Override
+  public int incrementAndReadImplementationLoopCount(String workflowRunPublicId) {
+    Integer newCount =
+        jdbcTemplate.query(
+            INCREMENT_IMPLEMENTATION_LOOP_COUNT_SQL,
+            params(workflowRunPublicId),
+            rs -> rs.next() ? rs.getInt(1) : null);
+    if (newCount == null) {
+      log.warn(
+          "incrementAndReadImplementationLoopCount workflowRunNotFound publicId={}",
+          workflowRunPublicId);
+      throw new DomainException(
+          DomainErrorCode.RUN_NOT_FOUND,
+          "Workflow run not found: " + workflowRunPublicId,
+          Map.of("runId", workflowRunPublicId));
+    }
+    log.debug(
+        "incrementAndReadImplementationLoopCount publicId={} newLoopCount={}",
+        workflowRunPublicId,
+        newCount);
     return newCount;
   }
 

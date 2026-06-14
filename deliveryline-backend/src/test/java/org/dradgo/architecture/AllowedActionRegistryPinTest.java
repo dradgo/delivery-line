@@ -31,4 +31,13 @@ class AllowedActionRegistryPinTest {
     // the registry value (lockstep with allowed-actions.placeholder.json + RegistryContractTest).
     assertThat(AllowedAction.ACCEPT_IMPLEMENTATION.value()).isEqualTo("accept_implementation");
   }
+
+  @Test
+  void rejectImplementationWireValueIsPinned() {
+    // Story 3.21 AC9 — TechnicalApprovalService.rejectImplementation is the canonical executor; the
+    // developer-role WAITING_FOR_REVIEW matrix branch returns it alongside accept_implementation.
+    // Guard against a silent rename (lockstep with allowed-actions.placeholder.json +
+    // RegistryContractTest).
+    assertThat(AllowedAction.REJECT_IMPLEMENTATION.value()).isEqualTo("reject_implementation");
+  }
 }

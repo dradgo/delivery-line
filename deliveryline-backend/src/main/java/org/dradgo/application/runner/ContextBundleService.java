@@ -814,7 +814,13 @@ public class ContextBundleService {
           new PriorFeedbackReference(
               decision.publicId(), decision.isApproved() ? "spec.approval" : "spec.rejection"));
     }
-    if (subStage == ExecutionSubStage.PR_OUTPUT) {
+    // Story 3.21 (OQ-2) — thread prior implementation-plan rejections into BOTH execution
+    // sub-stages: the PR_OUTPUT bundle (so the pr-output runner sees why a prior plan was rejected,
+    // story 3.10) AND the regenerated IMPLEMENTATION_PLAN bundle (so a re-dispatched plan after a
+    // plan rejection sees the prior plan's technical feedback — "feedback flows back into the
+    // rebuild loop", FR17). Both sub-stages reference the same implementation-plan rejection rows.
+    if (subStage == ExecutionSubStage.PR_OUTPUT
+        || subStage == ExecutionSubStage.IMPLEMENTATION_PLAN) {
       for (ApprovalSnapshot rejection :
           approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(
               workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value())) {

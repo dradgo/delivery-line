@@ -11,7 +11,8 @@ public enum AllowedAction implements RegistryValue {
   RETRY("retry"),
   VIEW_DIAGNOSTICS("view_diagnostics"),
   CLEAR_ESCALATION_MARKER("clear_escalation_marker"),
-  ACCEPT_IMPLEMENTATION("accept_implementation");
+  ACCEPT_IMPLEMENTATION("accept_implementation"),
+  REJECT_IMPLEMENTATION("reject_implementation");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

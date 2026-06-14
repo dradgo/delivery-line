@@ -26,6 +26,7 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -152,6 +153,19 @@ public class WorkflowCommandService {
     // the resulting state depends on the artifact type, so it cannot be hard-coded (Trap T2).
     return executeIdempotent(
         command, this::acceptImplementationInternal, this::replayAcceptImplementation);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult rejectImplementation(RejectImplementationCommand command) {
+    // Story 3.21: technical-rejection twin of rejectSpec. The rejection row insert +
+    // approval.rejected
+    // event append + counter increment + optional escalation.required event + transition + runner
+    // re-dispatch all happen inside TechnicalApprovalService, participating in this method's
+    // @Transactional boundary. The legacy contract returns WorkflowStateChangeResult; story 3.24
+    // will expose the richer ApprovalResult through the REST surface. Replay resolves to EXECUTING
+    // for BOTH artifact kinds (Decision D3), so the generic replayStateChange hard-codes it (unlike
+    // acceptImplementation, whose target is artifact-type-dependent).
+    return executeIdempotent(command, this::rejectImplementationInternal, this::replayStateChange);
   }
 
   @Transactional
@@ -292,6 +306,20 @@ public class WorkflowCommandService {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       ApprovalResult approvalResult = technicalApprovalService.acceptImplementation(command);
+      return new WorkflowStateChangeResult(
+          approvalResult.workflowRunId(),
+          approvalResult.resultingState(),
+          approvalResult.correlationId());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  private WorkflowStateChangeResult rejectImplementationInternal(
+      RejectImplementationCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      ApprovalResult approvalResult = technicalApprovalService.rejectImplementation(command);
       return new WorkflowStateChangeResult(
           approvalResult.workflowRunId(),
           approvalResult.resultingState(),
@@ -588,6 +616,11 @@ public class WorkflowCommandService {
         switch (command) {
           case ApproveSpecCommand ignored -> WorkflowState.EXECUTING;
           case RejectSpecCommand ignored -> WorkflowState.INVESTIGATING;
+          // Story 3.21: both implementationPlan + prOutput rejection land in Executing (Decision
+          // D3),
+          // so a hard-coded replay state is correct (unlike acceptImplementation's type-dependent
+          // target, which uses the dedicated replayAcceptImplementation re-read).
+          case RejectImplementationCommand ignored -> WorkflowState.EXECUTING;
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();
         };

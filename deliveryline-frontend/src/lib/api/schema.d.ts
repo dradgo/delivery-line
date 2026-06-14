@@ -362,7 +362,7 @@ export interface components {
             reasonText: string;
             reviewerRole?: string;
             /** @enum {string} */
-            taggedFeedback: "MISSING_SCOPE" | "UNCLEAR_SPECIFICATION" | "MISUNDERSTOOD_IMPLEMENTATION";
+            taggedFeedback: "MISSING_SCOPE" | "UNCLEAR_SPECIFICATION" | "MISUNDERSTOOD_IMPLEMENTATION" | "INCORRECT_APPROACH" | "INCOMPLETE_IMPLEMENTATION" | "QUALITY_ISSUE" | "BREAKS_EXISTING_FUNCTIONALITY" | "OUT_OF_SCOPE";
         };
         RetryWorkflowRequest: {
             actorIdentity: string;

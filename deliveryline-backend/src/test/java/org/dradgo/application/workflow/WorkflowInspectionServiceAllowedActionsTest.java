@@ -117,11 +117,15 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.WAITING_FOR_REVIEW, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
-        // Story 3.20 AC12 — the developer-review actor may accept the implementation here.
+        // Story 3.20 AC12 + Story 3.21 AC9 — the developer-review actor may accept OR reject the
+        // implementation here.
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "developer",
-            List.of(AllowedAction.ACCEPT_IMPLEMENTATION, AllowedAction.VIEW_ONLY)),
+            List.of(
+                AllowedAction.ACCEPT_IMPLEMENTATION,
+                AllowedAction.REJECT_IMPLEMENTATION,
+                AllowedAction.VIEW_ONLY)),
         // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
         // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
         // unintended action elsewhere.
