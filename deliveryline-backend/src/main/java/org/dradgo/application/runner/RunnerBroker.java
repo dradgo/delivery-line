@@ -387,6 +387,14 @@ public class RunnerBroker {
   // dispatch
   // =====================================================================
 
+  /**
+   * @deprecated Story 3.17b — the legacy synchronous direct-dispatch path. Superseded by the queue:
+   *     production code enqueues via {@link RunnerExecutionQueue} and the worker pool runs {@link
+   *     #executeQueuedDispatch}. Retained for existing unit tests only — the ArchUnit rule {@code
+   *     NO_PRODUCTION_CALLER_MAY_INVOKE_LEGACY_SYNCHRONOUS_DISPATCH} pins it to zero production
+   *     callers (review D4). Do not call from production code.
+   */
+  @Deprecated
   public RunnerDispatchResult dispatch(
       String workflowRunId, RunnerStage stage, String idempotencyKey, ActorContext actor) {
     PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
@@ -695,6 +703,371 @@ public class RunnerBroker {
           workflowRunId,
           resolutionFailure.getClass().getSimpleName());
       return null;
+    }
+  }
+
+  // =====================================================================
+  // executeQueuedDispatch — story 3.17b worker-pool dispatch (relocated dispatch body)
+  // =====================================================================
+
+  /**
+   * Story 3.17b (AC1/AC3/AC4) — the relocated synchronous portion of {@link #dispatch}, run by the
+   * {@link org.dradgo.application.runner.queue.RunnerWorkerPool} worker thread off a row the queue
+   * already leased (status {@code running}, {@code worker_id}/{@code dispatched_at} stamped by
+   * {@code dequeue}). It reconstructs the originating {@link ActorContext} + idempotency key from
+   * the V14 carriage columns, reserves idempotency at worker time (preserving today's replay
+   * semantics), composes the (repo-cloning, stateful) context bundle on this bounded thread
+   * (Decision D2 — this is what makes "bounded resource use" real), dispatches to the adapter, and
+   * emits the same {@code RUNNER_STARTED}/{@code RUNNER_DISPATCHED} audit events the synchronous
+   * path did.
+   *
+   * <p>The dequeued running row REPLACES the synchronous path's fresh {@code insertPending} (AC1 —
+   * exactly one row per execution). The result harvest ({@code onResult} + {@code
+   * pollActiveExecutions}) is unchanged (R2/Trap T2): this method only covers ENQUEUE→DISPATCH.
+   *
+   * <p><b>Async failure (the queue-model semantic change).</b> The bundle is composed here, not in
+   * the caller's transaction, so a clone/compose failure can no longer unwind the submit/approve
+   * commit. Instead it drives the run to {@code Failed} via the same {@link #driveWorkflowFailed}
+   * machinery {@code onResult} uses — mirroring a runner failure.
+   *
+   * <p>Restricted to the worker pool by an ArchUnit caller rule (AC3b/D4). MDC restores {@code
+   * correlationId}/{@code workflowRunId}/{@code runnerExecutionId} for the dispatch duration (AC4).
+   */
+  public void executeQueuedDispatch(RunnerExecutionSnapshot leased) {
+    Objects.requireNonNull(leased, "leased");
+    String runnerExecutionId = leased.publicId();
+    String workflowRunId = leased.workflowRunPublicId();
+    RunnerStage stage = leased.stage();
+    int contextBundleVersion = leased.contextBundleVersion();
+    ActorContext actor = reconstructActor(leased);
+    String idempotencyKey = leased.idempotencyKey();
+
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    String priorCorrelationMdc = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, leased.correlationId());
+    try {
+      log.info(
+          "executeQueuedDispatch start runnerExecutionId={} workflowRunId={} stage={} queueAttempt={}",
+          runnerExecutionId,
+          workflowRunId,
+          stage.value(),
+          leased.queueAttemptCount());
+
+      // Reset the stale clock to dispatch time: the row's last_activity_at/timeout_at were set at
+      // enqueue, which may be much earlier than now if the row sat in the queue. The container the
+      // adapter is about to start runs from HERE, so the stale/timeout scans must measure from now.
+      // The worker runs with NO ambient transaction (unlike the synchronous dispatch path, which
+      // ran inside the caller's submit/approve tx). Every persistence write below is therefore
+      // wrapped in dispatchTransactionTemplate (PROPAGATION_REQUIRED → opens a fresh tx here); the
+      // disk/adapter I/O (writeContextBundle / adapter.dispatch) deliberately stays OUTSIDE a tx so
+      // a
+      // slow dispatch never holds a DB connection.
+      OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+      dispatchTransactionTemplate.executeWithoutResult(
+          status ->
+              recordPort.touchActivity(runnerExecutionId, now, runnerProperties.timeoutFor(stage)));
+
+      // Reserve idempotency at worker-dispatch time (Decision: preserve today's replay semantics).
+      // A REPLAY means a prior execution for this key already ran — this leased row is a duplicate
+      // (normally prevented by the callers' QUEUED-aware in-flight guards). Retire it without
+      // dispatching so it leaves ACTIVE_STATUSES and never reaches the adapter.
+      if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+        String fingerprint = dispatchFingerprint(workflowRunId, stage, contextBundleVersion);
+        ReservationOutcome reservation =
+            idempotencyService.checkAndReserve(
+                idempotencyKey, "RunnerBroker.dispatch", actor.actorIdentity(), fingerprint);
+        if (reservation.decision() == ReservationDecision.REPLAY) {
+          log.warn(
+              "executeQueuedDispatch duplicate leased row retired runnerExecutionId={} workflowRunId={} priorRunnerExecutionId={}",
+              runnerExecutionId,
+              workflowRunId,
+              reservation.resultRef());
+          retireDuplicateLeasedRow(runnerExecutionId);
+          return;
+        }
+      }
+
+      ExecutionConstraints constraints =
+          new ExecutionConstraints(runnerProperties.timeoutFor(stage), false);
+      ComposedDispatch composed;
+      try {
+        composed =
+            composeQueuedBundle(
+                runnerExecutionId, workflowRunId, stage, contextBundleVersion, constraints, actor);
+      } catch (DomainException compositionError) {
+        // Async failure path: there is no caller transaction to unwind. Complete the reservation
+        // FAILED (so a later same-key enqueue can re-reserve), then drive the run to Failed.
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+          idempotencyService.complete(
+              idempotencyKey, runnerExecutionId, IdempotencyRecordStatus.FAILED);
+        }
+        FailureCategory category = FailureCategory.RUNNER_CONTRACT_VIOLATION;
+        recordFailedBestEffort(runnerExecutionId, category);
+        log.warn(
+            "executeQueuedDispatch composition failed -> Failed runnerExecutionId={} workflowRunId={} stage={} errorCode={}",
+            runnerExecutionId,
+            workflowRunId,
+            stage.value(),
+            compositionError.errorCode().value());
+        driveWorkflowFailed(
+            workflowRunId,
+            runnerExecutionId,
+            category,
+            "runner dispatch composition failed: " + compositionError.errorCode().value());
+        return;
+      }
+
+      // Mock path keeps the RUNNER_STARTED audit event the synchronous insertPending tx emitted;
+      // the docker path emits RUNNER_DISPATCHED post-ack (below). The row already exists (running),
+      // so there is no insert — just the event.
+      boolean adapterTakesOverDispatchEvent =
+          runnerAdapter instanceof RecoverableRunnerAdapter recoverable
+              && recoverable.emitsDispatchedAfterAck();
+      if (!adapterTakesOverDispatchEvent) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runnerExecutionId", runnerExecutionId);
+        details.put("stage", stage.value());
+        details.put("contextBundleVersion", contextBundleVersion);
+        if (idempotencyKey != null) {
+          details.put("idempotencyKey", idempotencyKey);
+        }
+        dispatchTransactionTemplate.executeWithoutResult(
+            status ->
+                eventPort.append(
+                    workflowRunId,
+                    WorkflowEventType.RUNNER_STARTED,
+                    actor,
+                    "runner_dispatched",
+                    null,
+                    OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+                    details));
+      }
+
+      // Story 3.17b review (D1): the dispatch I/O below (bundle write + adapter.dispatch + post-ack
+      // RUNNER_DISPATCHED write) runs with NO caller transaction to unwind it — unlike the
+      // synchronous path, where an adapter throw rolled back the reservation + row inside the
+      // caller's submit/approve tx. A failure here must therefore mirror the composition-failure
+      // branch above: mark the reservation FAILED (so a later same-key enqueue can re-reserve
+      // rather
+      // than REPLAY-retire forever), record the run failed, and drive the workflow to Failed —
+      // otherwise the row is stranded `running` behind a poisoned COMPLETED key. The reservation is
+      // completed COMPLETED only AFTER a successful dispatch so it reflects true success.
+      try {
+        java.nio.file.Path bundlePath =
+            scratchStore.writeContextBundle(runnerExecutionId, composed.bundle().redactedPayload());
+        org.dradgo.domain.registry.RunnerKind dispatchKind =
+            stage == RunnerStage.EXECUTION
+                ? runnerProperties.kindForExecutionSubStage(composed.executionSubStage())
+                : runnerProperties.kindForStage(stage);
+        RunnerDispatchRequest request =
+            new RunnerDispatchRequest(
+                runnerExecutionId,
+                workflowRunId,
+                stage,
+                dispatchKind,
+                bundlePath,
+                constraints,
+                composed.bundle().effectiveClassification(),
+                composed.resolvedRepositoryRef(),
+                composed.resolvedTicketRef());
+        RunnerDispatchAck ack = runnerAdapter.dispatch(request);
+        // Docker path's RUNNER_DISPATCHED is a JPA write — wrap it in a tx (the worker has no
+        // ambient one). Mock path appended RUNNER_STARTED above and this is a no-op.
+        dispatchTransactionTemplate.executeWithoutResult(
+            status ->
+                appendRunnerDispatchedEventIfDocker(
+                    workflowRunId, runnerExecutionId, request.runnerKind(), ack, actor));
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+          idempotencyService.complete(
+              idempotencyKey, runnerExecutionId, IdempotencyRecordStatus.COMPLETED);
+        }
+        log.info(
+            "executeQueuedDispatch ok workflowRunId={} stage={} runnerExecutionId={} contextBundleVersion={} adapterRef={}",
+            workflowRunId,
+            stage.value(),
+            runnerExecutionId,
+            contextBundleVersion,
+            ack.adapterRef());
+      } catch (RuntimeException dispatchError) {
+        // Async failure path (no caller tx to unwind): mark the reservation FAILED, record the run
+        // failed, and drive the workflow to Failed — mirrors the composition-failure branch so an
+        // adapter/disk fault never strands a `running` row behind a COMPLETED idempotency key.
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+          idempotencyService.complete(
+              idempotencyKey, runnerExecutionId, IdempotencyRecordStatus.FAILED);
+        }
+        FailureCategory category = FailureCategory.RUNNER_CRASH;
+        recordFailedBestEffort(runnerExecutionId, category);
+        log.warn(
+            "executeQueuedDispatch dispatch failed -> Failed runnerExecutionId={} workflowRunId={} stage={} cause={}",
+            runnerExecutionId,
+            workflowRunId,
+            stage.value(),
+            dispatchError.toString());
+        driveWorkflowFailed(
+            workflowRunId,
+            runnerExecutionId,
+            category,
+            "runner dispatch failed: " + dispatchError.getClass().getSimpleName());
+      }
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /** Worker-dispatch composition result carried out of {@link #composeQueuedBundle}. */
+  private record ComposedDispatch(
+      ContextBundle bundle,
+      ExecutionSubStage executionSubStage,
+      String resolvedRepositoryRef,
+      String resolvedTicketRef) {}
+
+  /**
+   * Story 3.17b — the repo-resolve + bundle-compose portion of the relocated dispatch body (the
+   * worker analog of {@link #dispatch}'s lines that materialize the workspace and compose the
+   * bundle). A clone/compose failure is surfaced as a {@link DomainException} so the worker can
+   * drive the run to Failed (there is no caller transaction to unwind in the async model).
+   */
+  private ComposedDispatch composeQueuedBundle(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerStage stage,
+      int contextBundleVersion,
+      ExecutionConstraints constraints,
+      ActorContext actor) {
+    boolean repoContextStage = stage == RunnerStage.INVESTIGATION || stage == RunnerStage.EXECUTION;
+    String resolvedRepositoryRef =
+        (repoContextStage && repositoryWorkspaceService != null)
+            ? repositoryWorkspaceService.resolveConfiguredRepositoryRef().orElse(null)
+            : null;
+    ExecutionSubStage executionSubStage = null;
+    RepositoryContextSummary repositoryContextSummary = null;
+    String resolvedTicketRef = null;
+    String repositoryBranchRef = null;
+    try {
+      if (resolvedRepositoryRef != null) {
+        if (stage == RunnerStage.EXECUTION) {
+          resolvedTicketRef = resolveExecutionTicketRef(workflowRunId);
+        }
+        RepositoryWorkspaceService.RepositoryMount mount =
+            repositoryWorkspaceService.prepareWorkspace(
+                workflowRunId,
+                stage,
+                runnerExecutionId,
+                resolvedTicketRef,
+                null,
+                resolvedRepositoryRef);
+        repositoryContextSummary =
+            repositoryWorkspaceService.summarize(
+                mount, RepositoryWorkspaceService.configMappingVersion(resolvedRepositoryRef));
+        repositoryBranchRef = mount.branch();
+        log.info(
+            "executeQueuedDispatch repo-context resolved workflowRunId={} stage={} repositoryRef={} branchRef={} contextBundleVersion={}",
+            workflowRunId,
+            stage.value(),
+            resolvedRepositoryRef,
+            repositoryBranchRef,
+            contextBundleVersion);
+      } else if (repoContextStage) {
+        log.info(
+            "executeQueuedDispatch repo-context skipped workflowRunId={} stage={} reason={}",
+            workflowRunId,
+            stage.value(),
+            repositoryWorkspaceService == null ? "no_workspace_service" : "no_repo_resolved");
+      }
+
+      ContextBundle bundle;
+      if (stage == RunnerStage.INVESTIGATION) {
+        bundle =
+            contextBundleService.createForSpecInvestigation(
+                workflowRunId,
+                runnerExecutionId,
+                contextBundleVersion,
+                constraints,
+                DataClassification.SHAREABLE_REDACTED,
+                actor,
+                repositoryContextSummary);
+      } else {
+        executionSubStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
+        log.info(
+            "executeQueuedDispatch execution sub-stage derived workflowRunId={} subStage={} repoContextPresent={}",
+            workflowRunId,
+            executionSubStage,
+            repositoryContextSummary != null);
+        bundle =
+            contextBundleService.create(
+                workflowRunId,
+                stage,
+                runnerExecutionId,
+                contextBundleVersion,
+                constraints,
+                DataClassification.SHAREABLE_REDACTED,
+                actor,
+                executionSubStage,
+                repositoryContextSummary,
+                repositoryBranchRef);
+      }
+      return new ComposedDispatch(
+          bundle, executionSubStage, resolvedRepositoryRef, resolvedTicketRef);
+    } catch (GitCommandException gitError) {
+      log.warn(
+          "executeQueuedDispatch repo-context preparation failed workflowRunId={} stage={} runnerExecutionId={} gitFailureCategory={}",
+          workflowRunId,
+          stage.value(),
+          runnerExecutionId,
+          gitError.failureCategory().value());
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("workflowRunId", workflowRunId);
+      details.put("runnerExecutionId", runnerExecutionId);
+      details.put("stage", stage.value());
+      details.put("repositoryRef", resolvedRepositoryRef);
+      details.put("gitFailureCategory", gitError.failureCategory().value());
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "Repository workspace preparation failed during dispatch",
+          details);
+    }
+  }
+
+  private ActorContext reconstructActor(RunnerExecutionSnapshot leased) {
+    String identity =
+        leased.actorIdentity() == null || leased.actorIdentity().isBlank()
+            ? "system"
+            : leased.actorIdentity();
+    org.dradgo.domain.registry.ActorType actorType =
+        leased.actorType() == null
+            ? org.dradgo.domain.registry.ActorType.SYSTEM
+            : org.dradgo.domain.registry.ActorType.fromValue(
+                leased.actorType(), "runner_executions.actor_type");
+    return new ActorContext(identity, actorType, leased.correlationId());
+  }
+
+  private void retireDuplicateLeasedRow(String runnerExecutionId) {
+    try {
+      // Guarded transition needs an ambient tx; the worker has none, so open one.
+      dispatchTransactionTemplate.executeWithoutResult(
+          status -> executionService.recordOrphaned(runnerExecutionId));
+    } catch (DomainException ignored) {
+      // Already terminal (a concurrent scan/recovery beat us) — nothing to retire.
+      log.debug(
+          "executeQueuedDispatch duplicate retire no-op runnerExecutionId={} errorCode={}",
+          runnerExecutionId,
+          ignored.errorCode().value());
+    }
+  }
+
+  private void recordFailedBestEffort(String runnerExecutionId, FailureCategory category) {
+    try {
+      // Guarded transition needs an ambient tx; the worker has none, so open one.
+      dispatchTransactionTemplate.executeWithoutResult(
+          status -> executionService.recordFailed(runnerExecutionId, category));
+    } catch (DomainException alreadyTerminal) {
+      log.debug(
+          "executeQueuedDispatch recordFailed no-op runnerExecutionId={} errorCode={}",
+          runnerExecutionId,
+          alreadyTerminal.errorCode().value());
     }
   }
 
@@ -2269,6 +2642,31 @@ public class RunnerBroker {
         } catch (Exception error) {
           log.error(
               "scanForStaleExecutions orphan item failed runnerExecutionId={} cause={}",
+              snapshot.publicId(),
+              error.toString());
+        }
+      }
+      // Phase 3 (story 3.17b AC5 / D6) — worker-crash lease reclamation. A worker thread that died
+      // mid-dispatch leaves a LEASED row (worker_id set, dispatched_at stamped) whose container may
+      // never have started; its dispatched_at + last_activity_at age past the orphan threshold with
+      // no heartbeat. Route it through the SAME recordOrphaned + runner.orphaned path (do NOT fork
+      // a
+      // second orphan path). A worker-less queued row is never returned by this finder, so a row
+      // that is correctly waiting is never reclaimed. Phase 2's last_activity_at scan already
+      // covers
+      // these rows, but this explicit leased predicate makes the AC5 guarantee precise + testable.
+      List<RunnerExecutionSnapshot> leasedStaleCandidates =
+          recordPort.findLeasedStaleByStageAndDispatchedAtBefore(stage, orphanThreshold, batchSize);
+      for (RunnerExecutionSnapshot snapshot : leasedStaleCandidates) {
+        try {
+          Boolean flipped =
+              perItemTransactionTemplate.execute(status -> processStaleOrphan(snapshot));
+          if (Boolean.TRUE.equals(flipped)) {
+            orphanFlips++;
+          }
+        } catch (Exception error) {
+          log.error(
+              "scanForStaleExecutions leased-lease item failed runnerExecutionId={} cause={}",
               snapshot.publicId(),
               error.toString());
         }

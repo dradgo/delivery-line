@@ -24,7 +24,6 @@ import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.ContextBundleService;
 import org.dradgo.application.runner.ExecutionSubStage;
-import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.RunnerDispatchResult;
 import org.dradgo.application.runner.RunnerExecutionHandle;
 import org.dradgo.application.runner.RunnerProperties;
@@ -85,9 +84,14 @@ public class WorkflowOrchestrationService {
 
   private static final Logger log = LoggerFactory.getLogger(WorkflowOrchestrationService.class);
 
+  // Story 3.17b (Trap T1) — the in-flight guard set now includes QUEUED. With the queue activated,
+  // a
+  // dispatch that has only been enqueued (not yet leased by a worker) sits in status QUEUED; if the
+  // guard ignored it, a second submit/approve would enqueue a DUPLICATE execution for the same run.
   private static final java.util.List<org.dradgo.domain.registry.RunnerExecutionStatus>
       ACTIVE_STATUSES =
           java.util.List.of(
+              org.dradgo.domain.registry.RunnerExecutionStatus.QUEUED,
               org.dradgo.domain.registry.RunnerExecutionStatus.PENDING,
               org.dradgo.domain.registry.RunnerExecutionStatus.RUNNING);
 
@@ -129,7 +133,12 @@ public class WorkflowOrchestrationService {
   private static final java.util.Set<WorkflowState> EXECUTION_READY_OR_BEYOND =
       java.util.EnumSet.of(WorkflowState.WAITING_FOR_REVIEW, WorkflowState.COMPLETED);
 
-  private final RunnerBroker runnerBroker;
+  // Story 3.17b (AC3/D1) — the dispatch callers now enqueue onto the RunnerExecutionQueue instead
+  // of
+  // calling RunnerBroker.dispatch synchronously; the worker pool runs the real dispatch later. This
+  // service no longer depends on RunnerBroker at all, which also fully breaks the former
+  // broker↔orchestration constructor coupling (the broker still calls back lazily via a Supplier).
+  private final org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue;
   private final WorkflowTransitionService workflowTransitionService;
   private final WorkflowRunReadPort workflowRunReadPort;
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
@@ -149,7 +158,7 @@ public class WorkflowOrchestrationService {
   private final WorkflowEventWritePort workflowEventWritePort;
 
   public WorkflowOrchestrationService(
-      RunnerBroker runnerBroker,
+      org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       WorkflowTransitionService workflowTransitionService,
       WorkflowRunReadPort workflowRunReadPort,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
@@ -163,7 +172,8 @@ public class WorkflowOrchestrationService {
       ApprovalReadPort approvalReadPort,
       WorkflowEventReadPort workflowEventReadPort,
       WorkflowEventWritePort workflowEventWritePort) {
-    this.runnerBroker = Objects.requireNonNull(runnerBroker, "runnerBroker");
+    this.runnerExecutionQueue =
+        Objects.requireNonNull(runnerExecutionQueue, "runnerExecutionQueue");
     this.workflowTransitionService =
         Objects.requireNonNull(workflowTransitionService, "workflowTransitionService");
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
@@ -242,7 +252,7 @@ public class WorkflowOrchestrationService {
 
       String idempotencyKey = specDispatchKey(workflowRunId, snapshot.specRejectionLoopCount());
       RunnerDispatchResult result =
-          runnerBroker.dispatch(
+          enqueueDispatch(
               workflowRunId, RunnerStage.INVESTIGATION, idempotencyKey, systemActor(correlationId));
       logDispatchOutcome("dispatchSpecGeneration", workflowRunId, idempotencyKey, result);
       return result;
@@ -293,7 +303,7 @@ public class WorkflowOrchestrationService {
 
       String idempotencyKey = specDispatchKey(workflowRunId, snapshot.specRejectionLoopCount());
       RunnerDispatchResult result =
-          runnerBroker.dispatch(
+          enqueueDispatch(
               workflowRunId, RunnerStage.INVESTIGATION, idempotencyKey, systemActor(correlationId));
       logDispatchOutcome("retrySpecGeneration", workflowRunId, idempotencyKey, result);
       return result;
@@ -625,7 +635,7 @@ public class WorkflowOrchestrationService {
               runnerExecutionRecordPort.nextContextBundleVersion(
                   workflowRunId, RunnerStage.EXECUTION));
       RunnerDispatchResult result =
-          runnerBroker.dispatch(
+          enqueueDispatch(
               workflowRunId, RunnerStage.EXECUTION, idempotencyKey, systemActor(correlationId));
       logDispatchOutcome(op, workflowRunId, idempotencyKey, result);
       return result;
@@ -965,6 +975,45 @@ public class WorkflowOrchestrationService {
                     Map.of("runId", workflowRunId)));
   }
 
+  // Story 3.17b — default dequeue priority for orchestration-driven enqueues (matches the V12
+  // queue_priority column default). No caller distinguishes priorities yet; batch/priority tuning
+  // is
+  // story 3.18's concern.
+  private static final int DEFAULT_QUEUE_PRIORITY = 100;
+
+  /**
+   * Story 3.17b (AC3 / Trap T1) — enqueue a dispatch onto the {@link
+   * org.dradgo.application.runner.queue.RunnerExecutionQueue} (the worker pool runs the real
+   * dispatch later) and adapt the {@link org.dradgo.application.runner.queue.QueuedRunnerExecution}
+   * into a {@link RunnerDispatchResult.Queued} so the method's return type + its result-ignoring
+   * callers are unchanged. A {@code RUNNER_QUEUE_FULL} from the queue propagates unchanged: it
+   * rolls back the caller's submit/approve transaction (the run stays in its prior state) and
+   * surfaces as a retryable 503 — it never drives a FAILED transition (Trap T6).
+   */
+  private RunnerDispatchResult enqueueDispatch(
+      String workflowRunId,
+      org.dradgo.domain.registry.RunnerStage stage,
+      String idempotencyKey,
+      ActorContext actor) {
+    org.dradgo.application.runner.queue.QueuedRunnerExecution queued =
+        runnerExecutionQueue.enqueue(
+            workflowRunId, stage, idempotencyKey, actor, DEFAULT_QUEUE_PRIORITY);
+    // The queued row's real timeout starts when a worker dispatches it; the handle's timeoutAt is
+    // an
+    // informational estimate (now + the stage timeout) — the handle requires a non-null value.
+    java.time.OffsetDateTime estimatedTimeoutAt =
+        java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+            .plus(runnerProperties.timeoutFor(stage));
+    RunnerExecutionHandle handle =
+        new RunnerExecutionHandle(
+            queued.runnerExecutionPublicId(),
+            queued.workflowRunPublicId(),
+            queued.stage(),
+            org.dradgo.domain.registry.RunnerExecutionStatus.QUEUED,
+            estimatedTimeoutAt);
+    return new RunnerDispatchResult.Queued(handle, queued.queuedEventPublicId());
+  }
+
   private void logDispatchOutcome(
       String op, String workflowRunId, String idempotencyKey, RunnerDispatchResult result) {
     if (result.isReplay()) {
@@ -975,8 +1024,10 @@ public class WorkflowOrchestrationService {
           result.handle().runnerExecutionId(),
           idempotencyKey);
     } else {
+      // Story 3.17b (Trap T1) — the outcome is now "queued" (worker dispatches later), not
+      // "dispatched". Reporting "dispatched" here would silently misstate the run's progress.
       log.info(
-          "{} dispatched workflowRunId={} runnerExecutionId={} idempotencyKey={}",
+          "{} queued workflowRunId={} runnerExecutionId={} idempotencyKey={}",
           op,
           workflowRunId,
           result.handle().runnerExecutionId(),

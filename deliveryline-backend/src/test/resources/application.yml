@@ -56,6 +56,16 @@ deliveryline:
     # does not merge with, main). 100 matches production; RunnerExecutionQueueIT exercises
     # RUNNER_QUEUE_FULL by seeding 100 queued rows against this default cap (no @TestPropertySource).
     queue-max-depth: 100
+    # Story 3.17b (Trap T8 / D9) — the worker pool is OFF in the shared test profile so an always-on
+    # pool never dequeues/dispatches during unrelated @SpringBootTests (it shadows main; an absent
+    # key would also bind enabled=false, but mirror it explicitly for clarity). The activation ITs
+    # opt in via @TestPropertySource(worker-pool.enabled=true).
+    worker-pool:
+      enabled: false
+      size: 2
+      backoff:
+        initial: 1s
+        max: 10s
     stage-timeouts:
       investigation: 600s
       execution: 600s

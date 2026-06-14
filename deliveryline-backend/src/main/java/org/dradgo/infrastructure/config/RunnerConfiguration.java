@@ -2,6 +2,7 @@ package org.dradgo.infrastructure.config;
 
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerWorkerPoolProperties;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -23,7 +24,7 @@ import org.springframework.scheduling.annotation.Scheduled;
  * </ul>
  */
 @Configuration
-@EnableConfigurationProperties(RunnerProperties.class)
+@EnableConfigurationProperties({RunnerProperties.class, RunnerWorkerPoolProperties.class})
 @EnableScheduling
 public class RunnerConfiguration {
 

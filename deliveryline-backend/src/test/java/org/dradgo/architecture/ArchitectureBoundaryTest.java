@@ -106,6 +106,27 @@ class ArchitectureBoundaryTest {
   static final ArchRule only_orchestration_auto_advances_on_spec_runner_success =
       ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS;
 
+  // Story 3.17b (AC3b) — only orchestration/recovery/worker-pool may enqueue runner executions.
+  @ArchTest
+  static final ArchRule only_orchestration_recovery_and_worker_pool_may_enqueue =
+      ArchitectureRuleCatalog.ONLY_ORCHESTRATION_RECOVERY_AND_WORKER_POOL_MAY_ENQUEUE;
+
+  // Story 3.17b (AC3b) — only the worker pool may dequeue a leased runner execution.
+  @ArchTest
+  static final ArchRule only_worker_pool_may_dequeue =
+      ArchitectureRuleCatalog.ONLY_WORKER_POOL_MAY_DEQUEUE;
+
+  // Story 3.17b (AC3) — only the worker pool may run the relocated queued-dispatch body.
+  @ArchTest
+  static final ArchRule only_worker_pool_may_run_queued_dispatch =
+      ArchitectureRuleCatalog.ONLY_WORKER_POOL_MAY_RUN_QUEUED_DISPATCH;
+
+  // Story 3.17b review (D4) — no production class may call the deprecated synchronous dispatch
+  // path.
+  @ArchTest
+  static final ArchRule no_production_caller_may_invoke_legacy_synchronous_dispatch =
+      ArchitectureRuleCatalog.NO_PRODUCTION_CALLER_MAY_INVOKE_LEGACY_SYNCHRONOUS_DISPATCH;
+
   // Story 3.11 (AC9) — only WorkflowOrchestrationService auto-advances on a plan runner success.
   @ArchTest
   static final ArchRule only_orchestration_auto_advances_on_plan_runner_success =

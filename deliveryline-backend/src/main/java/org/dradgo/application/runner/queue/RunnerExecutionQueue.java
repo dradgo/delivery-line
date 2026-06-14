@@ -11,6 +11,7 @@ import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.queue.spi.RunnerQueueNotificationPort;
 import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
@@ -24,32 +25,32 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Story 3.17a — the PostgreSQL-backed runner execution queue SUBSTRATE (part A of the epic-3.17
- * split). {@link #enqueue} writes a lightweight {@code queued} {@code runner_executions} row + a
- * {@code runner.queued} event under a backpressure cap; {@link #dequeue} leases the next row with
- * {@code FOR UPDATE SKIP LOCKED} so concurrent workers never collide.
+ * Story 3.17a (substrate) + 3.17b (activation) — the PostgreSQL-backed runner execution queue.
+ * {@link #enqueue} writes a lightweight {@code queued} {@code runner_executions} row + a {@code
+ * runner.queued} event under a backpressure cap and fires a post-commit {@code NOTIFY
+ * runner_queue_updated} so an idle worker wakes within the AC2 latency budget; {@link #dequeue}
+ * leases the next row with {@code FOR UPDATE SKIP LOCKED} so concurrent workers never collide.
  *
- * <p><b>Dormant by design (Decision D0).</b> 3.17a builds and fully tests the queue in isolation —
- * <em>nothing in production enqueues</em>. The 7 dispatch callers stay on the synchronous {@code
- * RunnerBroker.dispatch} path; story 3.17b refactors them onto this queue and adds the worker pool
- * ({@code ThreadPoolTaskExecutor} + {@code LISTEN/NOTIFY}). This is the house
- * build-the-seam-before-the-call-site pattern (3.15/3.16).
+ * <p><b>Activated in 3.17b (Decision D1).</b> The 7 dispatch callers now {@code enqueue} instead of
+ * calling {@code RunnerBroker.dispatch} synchronously; the {@link
+ * org.dradgo.application.runner.queue.RunnerWorkerPool} dequeues these rows and runs the relocated
+ * dispatch body on a bounded thread pool.
  *
- * <p><b>Bundle composed at dispatch, not enqueue (Decision D2).</b> {@code enqueue} writes only a
- * cheap queued row; the {@code contextBundleRef} is accepted for the 3.17b worker but NOT composed
- * here (repo clone/summarize belongs on the bounded worker thread). The {@code idempotencyKey} is
- * accepted but NOT reserved in 3.17a (Open Question OQ-3 — reservation stays at the dispatch body
- * the 3.17b worker runs, preserving today's replay semantics).
+ * <p><b>Dispatch carriage persisted at enqueue (V14).</b> The bundle is still composed at dispatch
+ * on the worker (Decision D2), not here. But the worker needs the {@code idempotencyKey} + the
+ * originating {@link ActorContext} (identity/type/correlationId) to reconstruct the idempotency
+ * reservation + the dispatch events when it runs that body off a dequeued row — V12's {@code
+ * correlation_id} alone cannot rebuild a non-system actor (e.g. {@code RecoveryService.retry}). So
+ * enqueue persists all three onto the row; {@code dequeue} reads them back via the snapshot.
  *
  * <p>Lives in {@code application.runner.queue} (Application layer): it depends only on {@code
- * domain} + the {@code application.runner.spi} ports, never on {@code adapters}/{@code
- * infrastructure} (Trap T11).
- *
- * <p>Annotated {@code @Component} (not {@code @Service}) — like {@code RunnerBroker} — because its
- * name lacks the {@code *Service}/{@code *Orchestrator} suffix the application-service naming
- * ArchUnit rule pins on {@code @Service} beans.
+ * domain} + the {@code application.runner[.queue].spi} ports, never on {@code adapters}/{@code
+ * infrastructure} (Trap T11). Annotated {@code @Component} (not {@code @Service}) — like {@code
+ * RunnerBroker} — because its name lacks the {@code *Service} suffix the naming ArchUnit rule pins.
  */
 @Component
 public class RunnerExecutionQueue {
@@ -59,14 +60,16 @@ public class RunnerExecutionQueue {
   private final RunnerExecutionRecordPort recordPort;
   private final RunnerExecutionEventPort eventPort;
   private final RunnerProperties runnerProperties;
+  private final RunnerQueueNotificationPort notificationPort;
   private final Clock clock;
 
   @org.springframework.beans.factory.annotation.Autowired
   public RunnerExecutionQueue(
       RunnerExecutionRecordPort recordPort,
       RunnerExecutionEventPort eventPort,
-      RunnerProperties runnerProperties) {
-    this(recordPort, eventPort, runnerProperties, Clock.systemUTC());
+      RunnerProperties runnerProperties,
+      RunnerQueueNotificationPort notificationPort) {
+    this(recordPort, eventPort, runnerProperties, notificationPort, Clock.systemUTC());
   }
 
   // Package-private clock-injecting overload for deterministic tests (no Clock bean is published in
@@ -76,43 +79,49 @@ public class RunnerExecutionQueue {
       RunnerExecutionRecordPort recordPort,
       RunnerExecutionEventPort eventPort,
       RunnerProperties runnerProperties,
+      RunnerQueueNotificationPort notificationPort,
       Clock clock) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
+    this.notificationPort = Objects.requireNonNull(notificationPort, "notificationPort");
     this.clock = Objects.requireNonNull(clock, "clock");
   }
 
   /**
-   * Story 3.17a (AC2/AC4/AC5) — place a new {@code queued} row in the queue. Counts current queued
-   * rows under the write transaction and raises {@link DomainErrorCode#RUNNER_QUEUE_FULL} (writing
-   * NO row) when already at {@code deliveryline.runner.queue-max-depth}; otherwise mints a {@code
-   * rex_…} id, persists the row (with {@code correlationId} + {@code queuePriority}), and appends a
-   * {@code runner.queued} event.
+   * Story 3.17a (AC2/AC4/AC5) + 3.17b — place a new {@code queued} row in the queue. Counts current
+   * queued rows under the write transaction and raises {@link DomainErrorCode#RUNNER_QUEUE_FULL}
+   * (writing NO row) when already at {@code deliveryline.runner.queue-max-depth}; otherwise mints a
+   * {@code rex_…} id, persists the row (with the dispatch carriage — {@code idempotencyKey} + the
+   * {@code actor} identity/type + its {@code correlationId} + {@code queuePriority}), appends a
+   * {@code runner.queued} event, and registers a post-commit {@code NOTIFY} so an idle worker
+   * wakes.
    *
-   * @param contextBundleRef forward-compat for the 3.17b worker; NOT composed/persisted here (D2) —
-   *     nullable (3.17b composes the bundle at dispatch and may enqueue before a ref exists)
-   * @param idempotencyKey forward-compat; NOT reserved here (OQ-3) — nullable
-   * @param correlationId originating story-1.19 correlationId, persisted on the row (AC5); nullable
+   * @param idempotencyKey the dispatch idempotency key; the worker reserves it at dispatch time
+   *     (preserving today's replay semantics). Must be non-blank.
+   * @param actor the originating actor; its identity/type/correlationId are persisted so the worker
+   *     can rebuild the {@link ActorContext} the dispatch events + idempotency reservation use.
    * @param queuePriority dequeue ordering key (lower = sooner); must be {@code >= 0}
    */
   @Transactional
   public QueuedRunnerExecution enqueue(
       String workflowRunId,
       RunnerStage stage,
-      String contextBundleRef,
       String idempotencyKey,
-      String correlationId,
+      ActorContext actor,
       int queuePriority) {
     PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
     Objects.requireNonNull(stage, "stage");
-    // contextBundleRef + idempotencyKey are forward-compat inputs for the 3.17b worker (D2/OQ-3):
-    // accepted but unused in 3.17a, so they are nullable here. queuePriority IS the live dequeue
-    // ORDER BY key, so it is the validated input — a negative value would silently front-run every
-    // default-100 row.
+    Objects.requireNonNull(actor, "actor");
+    if (idempotencyKey == null || idempotencyKey.isBlank()) {
+      throw new IllegalArgumentException("idempotencyKey must not be blank");
+    }
+    // queuePriority IS the live dequeue ORDER BY key — a negative value would silently front-run
+    // every default-100 row.
     if (queuePriority < 0) {
       throw new IllegalArgumentException("queuePriority must be >= 0");
     }
+    String correlationId = actor.correlationId();
 
     String priorWorkflowRun = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorCorrelation = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, correlationId);
@@ -146,10 +155,14 @@ public class RunnerExecutionQueue {
               contextBundleVersion,
               timeout,
               queuePriority,
-              correlationId);
+              correlationId,
+              idempotencyKey,
+              actor.actorIdentity(),
+              actor.actorType().value());
       long resultingDepth = currentDepth + 1;
       String queuedEventId =
           appendQueuedEvent(workflowRunId, runnerExecutionId, stage, queuePriority, correlationId);
+      registerQueueNotifyAfterCommit(runnerExecutionId);
       log.info(
           "enqueue runnerExecutionId={} workflowRunId={} stage={} queuePriority={} currentDepth={} maxDepth={}",
           runnerExecutionId,
@@ -191,6 +204,39 @@ public class RunnerExecutionQueue {
                 snapshot.queuePriority()),
         () -> log.info("dequeue found no queued row workerId={}", safeWorkerId));
     return leased;
+  }
+
+  /**
+   * Story 3.17b (AC2) — fire {@code NOTIFY runner_queue_updated} AFTER the enqueue commits (the
+   * precedent is {@code WorkflowTransitionService}'s completion-sync afterCommit hook), so the
+   * {@code queued} row is durable before any worker wakes. Best-effort (Decision D8): a notify
+   * failure is swallowed with a WARN — workers still drain via the AC1 backoff poll. Degrades
+   * silently when no synchronization is active (e.g. a programmatic call outside a managed tx).
+   */
+  private void registerQueueNotifyAfterCommit(String runnerExecutionId) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      notifyQueuedBestEffort(runnerExecutionId);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            notifyQueuedBestEffort(runnerExecutionId);
+          }
+        });
+  }
+
+  private void notifyQueuedBestEffort(String runnerExecutionId) {
+    try {
+      notificationPort.notifyQueued();
+      log.debug("enqueue NOTIFY runner_queue_updated runnerExecutionId={}", runnerExecutionId);
+    } catch (RuntimeException notifyFailure) {
+      log.warn(
+          "enqueue NOTIFY failed (workers fall back to backoff poll) runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          notifyFailure.getClass().getSimpleName());
+    }
   }
 
   private String appendQueuedEvent(

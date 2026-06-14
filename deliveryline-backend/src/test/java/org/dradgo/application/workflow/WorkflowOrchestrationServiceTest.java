@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -20,11 +21,10 @@ import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.runner.ContextBundleService;
 import org.dradgo.application.runner.ExecutionSubStage;
-import org.dradgo.application.runner.RunnerBroker;
-import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchResult;
-import org.dradgo.application.runner.RunnerExecutionHandle;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.queue.QueuedRunnerExecution;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
@@ -44,7 +44,7 @@ class WorkflowOrchestrationServiceTest {
   private static final String RUN_ID = "run_orch12345678";
   private static final String REX_ID = "rex_orch12345678";
 
-  private RunnerBroker runnerBroker;
+  private RunnerExecutionQueue runnerExecutionQueue;
   private WorkflowTransitionService transitionService;
   private WorkflowRunReadPort readPort;
   private org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort;
@@ -66,7 +66,7 @@ class WorkflowOrchestrationServiceTest {
   @BeforeEach
   @SuppressWarnings("unchecked")
   void setUp() {
-    runnerBroker = mock(RunnerBroker.class);
+    runnerExecutionQueue = mock(RunnerExecutionQueue.class);
     transitionService = mock(WorkflowTransitionService.class);
     readPort = mock(WorkflowRunReadPort.class);
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
@@ -143,7 +143,7 @@ class WorkflowOrchestrationServiceTest {
             RunnerProperties.OpenSpec.defaults(),
             100);
     return new WorkflowOrchestrationService(
-        runnerBroker,
+        runnerExecutionQueue,
         transitionService,
         readPort,
         recordPort,
@@ -166,26 +166,21 @@ class WorkflowOrchestrationServiceTest {
                 new WorkflowRunSnapshot(RUN_ID, state, null, 1L, rejectionLoopCount, false)));
   }
 
-  private RunnerDispatchResult dispatched() {
-    return new RunnerDispatchResult.Dispatched(
-        new RunnerExecutionHandle(
-            REX_ID,
-            RUN_ID,
-            RunnerStage.INVESTIGATION,
-            RunnerExecutionStatus.PENDING,
-            OffsetDateTime.parse("2026-06-02T12:00:00Z")),
-        new RunnerDispatchAck("mock:happy-spec"));
+  private QueuedRunnerExecution dispatched() {
+    return new QueuedRunnerExecution(
+        REX_ID, RUN_ID, RunnerStage.INVESTIGATION, 100, "corr", 1L, "evt_q-spec0001");
   }
 
   @Test
   void dispatchSpecGenerationEnsuresInvestigatingAndDispatchesWithLoopZeroKey() {
     stubRun(WorkflowState.INBOX, 0);
-    when(runnerBroker.dispatch(eq(RUN_ID), eq(RunnerStage.INVESTIGATION), any(), any()))
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN_ID), eq(RunnerStage.INVESTIGATION), any(), any(), anyInt()))
         .thenReturn(dispatched());
 
     RunnerDispatchResult result = service(true).dispatchSpecGeneration(RUN_ID, "corr-1");
 
-    assertSame(RunnerExecutionStatus.PENDING, result.handle().status());
+    assertSame(RunnerExecutionStatus.QUEUED, result.handle().status());
     // Inbox -> Investigating transition fired (ADR 0004 direct trigger).
     verify(transitionService)
         .transition(
@@ -197,8 +192,9 @@ class WorkflowOrchestrationServiceTest {
     // Dispatch carries the loop-0 idempotency key + correlationId-bearing system actor.
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<ActorContext> actor = ArgumentCaptor.forClass(ActorContext.class);
-    verify(runnerBroker)
-        .dispatch(eq(RUN_ID), eq(RunnerStage.INVESTIGATION), key.capture(), actor.capture());
+    verify(runnerExecutionQueue)
+        .enqueue(
+            eq(RUN_ID), eq(RunnerStage.INVESTIGATION), key.capture(), actor.capture(), anyInt());
     org.junit.jupiter.api.Assertions.assertEquals("spec-dispatch:" + RUN_ID + ":0", key.getValue());
     org.junit.jupiter.api.Assertions.assertEquals("corr-1", actor.getValue().correlationId());
   }
@@ -206,24 +202,28 @@ class WorkflowOrchestrationServiceTest {
   @Test
   void dispatchSpecGenerationDoesNotReTransitionWhenAlreadyInvestigating() {
     stubRun(WorkflowState.INVESTIGATING, 0);
-    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(dispatched());
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(dispatched());
 
     service(true).dispatchSpecGeneration(RUN_ID, null);
 
     verify(transitionService, never()).transition(any(), any(), any(), any(), any());
-    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.INVESTIGATION), any(), any());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.INVESTIGATION), any(), any(), anyInt());
   }
 
   @Test
   void retrySpecGenerationReDispatchesWithBumpedLoopKeyAndNeverTransitions() {
     stubRun(WorkflowState.INVESTIGATING, 2);
-    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(dispatched());
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(dispatched());
 
     service(true).retrySpecGeneration(RUN_ID, "corr-r");
 
     verify(transitionService, never()).transition(any(), any(), any(), any(), any());
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.INVESTIGATION), key.capture(), any());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.INVESTIGATION), key.capture(), any(), anyInt());
     org.junit.jupiter.api.Assertions.assertEquals("spec-dispatch:" + RUN_ID + ":2", key.getValue());
   }
 
@@ -234,7 +234,7 @@ class WorkflowOrchestrationServiceTest {
     assertNull(disabled.dispatchSpecGeneration(RUN_ID, "c"));
     assertNull(disabled.retrySpecGeneration(RUN_ID, "c"));
 
-    verifyNoInteractions(runnerBroker);
+    verifyNoInteractions(runnerExecutionQueue);
     verifyNoInteractions(transitionService);
     verifyNoInteractions(readPort);
   }
@@ -354,15 +354,9 @@ class WorkflowOrchestrationServiceTest {
 
   // ===== Story 3.11 — plan-stage orchestration (AC1/AC3/AC5/AC6/AC10) =====
 
-  private RunnerDispatchResult executionDispatched() {
-    return new RunnerDispatchResult.Dispatched(
-        new RunnerExecutionHandle(
-            REX_ID,
-            RUN_ID,
-            RunnerStage.EXECUTION,
-            RunnerExecutionStatus.PENDING,
-            OffsetDateTime.parse("2026-06-09T12:00:00Z")),
-        new RunnerDispatchAck("mock:happy-implementation-plan"));
+  private QueuedRunnerExecution executionDispatched() {
+    return new QueuedRunnerExecution(
+        REX_ID, RUN_ID, RunnerStage.EXECUTION, 100, "corr", 1L, "evt_q-plan0001");
   }
 
   private org.dradgo.application.runner.spi.RunnerExecutionSnapshot executionSnapshot(
@@ -388,22 +382,23 @@ class WorkflowOrchestrationServiceTest {
     // NOT transition. The key derives from the next EXECUTION context-bundle version (Decision D2).
     stubRun(WorkflowState.EXECUTING, 0);
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(1);
-    when(runnerBroker.dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any()))
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenReturn(executionDispatched());
 
     RunnerDispatchResult result = service(true).dispatchPlanGeneration(RUN_ID, "corr-p");
 
-    assertSame(RunnerExecutionStatus.PENDING, result.handle().status());
+    assertSame(RunnerExecutionStatus.QUEUED, result.handle().status());
     verify(transitionService, never()).transition(any(), any(), any(), any(), any());
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<ActorContext> actor = ArgumentCaptor.forClass(ActorContext.class);
-    verify(runnerBroker)
-        .dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), actor.capture());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), actor.capture(), anyInt());
     org.junit.jupiter.api.Assertions.assertEquals("plan-dispatch:" + RUN_ID + ":1", key.getValue());
     org.junit.jupiter.api.Assertions.assertEquals("corr-p", actor.getValue().correlationId());
     // Logging contract: entry + dispatch-outcome INFO surfaces are observable.
     assertLoggedAt(Level.INFO, "dispatchPlanGeneration entry");
-    assertLoggedAt(Level.INFO, "dispatchPlanGeneration dispatched");
+    assertLoggedAt(Level.INFO, "dispatchPlanGeneration queued");
   }
 
   @Test
@@ -412,13 +407,15 @@ class WorkflowOrchestrationServiceTest {
     // fresh runnerExecutionId; re-dispatch ONLY, never re-transition (T1/T8).
     stubRun(WorkflowState.EXECUTING, 0);
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(2);
-    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(executionDispatched());
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(executionDispatched());
 
     service(true).retryPlanGeneration(RUN_ID, "corr-r");
 
     verify(transitionService, never()).transition(any(), any(), any(), any(), any());
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any(), anyInt());
     org.junit.jupiter.api.Assertions.assertEquals("plan-dispatch:" + RUN_ID + ":2", key.getValue());
   }
 
@@ -436,7 +433,7 @@ class WorkflowOrchestrationServiceTest {
     RunnerDispatchResult result = service(true).dispatchPlanGeneration(RUN_ID, "corr-p");
 
     assertTrue(result.isReplay());
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
     assertLoggedAt(Level.WARN, "in-flight no-op");
   }
 
@@ -447,7 +444,7 @@ class WorkflowOrchestrationServiceTest {
     assertNull(disabled.dispatchPlanGeneration(RUN_ID, "c"));
     assertNull(disabled.retryPlanGeneration(RUN_ID, "c"));
 
-    verifyNoInteractions(runnerBroker);
+    verifyNoInteractions(runnerExecutionQueue);
     verifyNoInteractions(transitionService);
     verifyNoInteractions(readPort);
   }
@@ -523,15 +520,9 @@ class WorkflowOrchestrationServiceTest {
 
   // ===== Story 3.12 — pr-output orchestration (AC1/AC5/AC8 + Task 2 sub-stage guard) =====
 
-  private RunnerDispatchResult prOutputDispatched() {
-    return new RunnerDispatchResult.Dispatched(
-        new RunnerExecutionHandle(
-            REX_ID,
-            RUN_ID,
-            RunnerStage.EXECUTION,
-            RunnerExecutionStatus.PENDING,
-            OffsetDateTime.parse("2026-06-10T12:00:00Z")),
-        new RunnerDispatchAck("mock:happy-pr-output"));
+  private QueuedRunnerExecution prOutputDispatched() {
+    return new QueuedRunnerExecution(
+        REX_ID, RUN_ID, RunnerStage.EXECUTION, 100, "corr", 1L, "evt_q-prout0001");
   }
 
   @Test
@@ -543,22 +534,23 @@ class WorkflowOrchestrationServiceTest {
     when(contextBundleService.deriveExecutionSubStage(RUN_ID))
         .thenReturn(ExecutionSubStage.PR_OUTPUT);
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(2);
-    when(runnerBroker.dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any()))
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenReturn(prOutputDispatched());
 
     RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
 
-    assertSame(RunnerExecutionStatus.PENDING, result.handle().status());
+    assertSame(RunnerExecutionStatus.QUEUED, result.handle().status());
     verify(transitionService, never()).transition(any(), any(), any(), any(), any());
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<ActorContext> actor = ArgumentCaptor.forClass(ActorContext.class);
-    verify(runnerBroker)
-        .dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), actor.capture());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), actor.capture(), anyInt());
     org.junit.jupiter.api.Assertions.assertEquals(
         "pr-output-dispatch:" + RUN_ID + ":2", key.getValue());
     org.junit.jupiter.api.Assertions.assertEquals("corr-i", actor.getValue().correlationId());
     assertLoggedAt(Level.INFO, "dispatchImplementation entry");
-    assertLoggedAt(Level.INFO, "dispatchImplementation dispatched");
+    assertLoggedAt(Level.INFO, "dispatchImplementation queued");
   }
 
   @Test
@@ -567,13 +559,15 @@ class WorkflowOrchestrationServiceTest {
     when(contextBundleService.deriveExecutionSubStage(RUN_ID))
         .thenReturn(ExecutionSubStage.PR_OUTPUT);
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(3);
-    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(prOutputDispatched());
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(prOutputDispatched());
 
     service(true).retryImplementation(RUN_ID, "corr-ir");
 
     verify(transitionService, never()).transition(any(), any(), any(), any(), any());
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any(), anyInt());
     org.junit.jupiter.api.Assertions.assertEquals(
         "pr-output-dispatch:" + RUN_ID + ":3", key.getValue());
   }
@@ -590,7 +584,7 @@ class WorkflowOrchestrationServiceTest {
     RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
 
     assertTrue(result.isReplay());
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
     assertLoggedAt(Level.WARN, "in-flight no-op");
   }
 
@@ -606,12 +600,14 @@ class WorkflowOrchestrationServiceTest {
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(5);
     when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
         .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.PENDING)));
-    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(prOutputDispatched());
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(prOutputDispatched());
 
     RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
 
     assertTrue(!result.isReplay());
-    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), anyInt());
   }
 
   @Test
@@ -624,12 +620,14 @@ class WorkflowOrchestrationServiceTest {
     when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(6);
     when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
         .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.PENDING)));
-    when(runnerBroker.dispatch(any(), any(), any(), any())).thenReturn(executionDispatched());
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(executionDispatched());
 
     RunnerDispatchResult result = service(true).dispatchPlanGeneration(RUN_ID, "corr-p");
 
     assertTrue(!result.isReplay());
-    verify(runnerBroker).dispatch(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any());
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), anyInt());
   }
 
   @Test
@@ -639,7 +637,7 @@ class WorkflowOrchestrationServiceTest {
     assertNull(disabled.dispatchImplementation(RUN_ID, "c"));
     assertNull(disabled.retryImplementation(RUN_ID, "c"));
 
-    verifyNoInteractions(runnerBroker);
+    verifyNoInteractions(runnerExecutionQueue);
     verifyNoInteractions(transitionService);
     verifyNoInteractions(readPort);
     verifyNoInteractions(contextBundleService);

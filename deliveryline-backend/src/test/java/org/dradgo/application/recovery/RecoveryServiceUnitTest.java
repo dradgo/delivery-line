@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -29,9 +30,8 @@ import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
-import org.dradgo.application.runner.RunnerBroker;
-import org.dradgo.application.runner.RunnerDispatchResult;
-import org.dradgo.application.runner.RunnerExecutionHandle;
+import org.dradgo.application.runner.queue.QueuedRunnerExecution;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -69,7 +69,7 @@ class RecoveryServiceUnitTest {
   private RunnerExecutionRecordPort runnerRecordPort;
   private ArtifactOperationPort artifactOperationPort;
   private WorkflowCommandService workflowCommandService;
-  private RunnerBroker runnerBroker;
+  private RunnerExecutionQueue runnerExecutionQueue;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
   private IdempotencyKeyValidator idempotencyKeyValidator;
@@ -82,7 +82,7 @@ class RecoveryServiceUnitTest {
     runnerRecordPort = mock(RunnerExecutionRecordPort.class);
     artifactOperationPort = mock(ArtifactOperationPort.class);
     workflowCommandService = mock(WorkflowCommandService.class);
-    runnerBroker = mock(RunnerBroker.class);
+    runnerExecutionQueue = mock(RunnerExecutionQueue.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     idempotencyKeyValidator = new IdempotencyKeyValidator();
@@ -93,7 +93,7 @@ class RecoveryServiceUnitTest {
             runnerRecordPort,
             artifactOperationPort,
             workflowCommandService,
-            runnerBroker,
+            runnerExecutionQueue,
             eventWritePort,
             recoveryRecordPort,
             idempotencyKeyValidator,
@@ -151,12 +151,13 @@ class RecoveryServiceUnitTest {
     assertEquals(IDEMPOTENCY_KEY, writeCaptor.getValue().idempotencyKey());
     assertEquals("evt_failure-aaaa1", writeCaptor.getValue().triggeringEventPublicId());
 
-    verify(runnerBroker, times(1))
-        .dispatch(
+    verify(runnerExecutionQueue, times(1))
+        .enqueue(
             eq(RUN),
             eq(RunnerStage.EXECUTION),
             eq(IDEMPOTENCY_KEY + ":runner"),
-            any(ActorContext.class));
+            any(ActorContext.class),
+            anyInt());
     verify(recoveryRecordPort, times(1)).markSucceeded(IDEMPOTENCY_KEY);
     verify(recoveryRecordPort, never()).markFailed(any());
   }
@@ -205,7 +206,7 @@ class RecoveryServiceUnitTest {
     verify(workflowCommandService, never()).retryWorkflow(any());
     verify(eventWritePort, never()).append(any());
     verify(recoveryRecordPort, never()).insert(any(RecoveryActionWriteCommand.class));
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test
@@ -247,7 +248,7 @@ class RecoveryServiceUnitTest {
     verify(workflowCommandService, never()).retryWorkflow(any());
     verify(eventWritePort, never()).append(any());
     verify(recoveryRecordPort, never()).insert(any(RecoveryActionWriteCommand.class));
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test
@@ -275,7 +276,7 @@ class RecoveryServiceUnitTest {
     assertEquals(RUN, error.details().get("requestedRunId"));
 
     verify(runReadPort, never()).findByPublicId(any());
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test
@@ -367,7 +368,7 @@ class RecoveryServiceUnitTest {
     assertEquals("evt_winret-bbbbb", result.recoveryRetriedEventPublicId());
     assertNull(result.newRunnerExecutionPublicId());
     // Loser must NOT redispatch the runner — the winner already did.
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
     verify(recoveryRecordPort, never()).markSucceeded(any());
   }
 
@@ -406,7 +407,7 @@ class RecoveryServiceUnitTest {
         assertThrows(
             DomainException.class, () -> service.retry(RUN, IDEMPOTENCY_KEY, actor(), null));
     assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test
@@ -439,7 +440,7 @@ class RecoveryServiceUnitTest {
     assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
     // Loser never reached recovery_actions insert and never dispatched.
     verify(recoveryRecordPort, never()).insert(any(RecoveryActionWriteCommand.class));
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test
@@ -478,7 +479,7 @@ class RecoveryServiceUnitTest {
         assertThrows(
             DomainException.class, () -> service.retry(RUN, IDEMPOTENCY_KEY, actor(), null));
     assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
-    verify(runnerBroker, never()).dispatch(any(), any(), any(), any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test
@@ -655,7 +656,8 @@ class RecoveryServiceUnitTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_recov-ccccc", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.INVESTIGATION), any(), any()))
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN), eq(RunnerStage.INVESTIGATION), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("broker network failure"));
 
     IllegalStateException error =
@@ -674,7 +676,8 @@ class RecoveryServiceUnitTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_recov-ccccc", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.INVESTIGATION), any(), any()))
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN), eq(RunnerStage.INVESTIGATION), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("broker network failure"));
     when(recoveryRecordPort.markFailed(IDEMPOTENCY_KEY))
         .thenThrow(
@@ -717,12 +720,13 @@ class RecoveryServiceUnitTest {
     assertEquals(rootCause, error.getSuppressed()[0]);
     // The broker dispatched, the audit row is still in `pending` — this is the documented
     // degraded state the operator must reconcile, not a behaviour bug.
-    verify(runnerBroker)
-        .dispatch(
+    verify(runnerExecutionQueue)
+        .enqueue(
             eq(RUN),
             eq(RunnerStage.EXECUTION),
             eq(IDEMPOTENCY_KEY + ":runner"),
-            any(ActorContext.class));
+            any(ActorContext.class),
+            anyInt());
   }
 
   @Test
@@ -884,7 +888,7 @@ class RecoveryServiceUnitTest {
     DomainException brokerError =
         new DomainException(
             DomainErrorCode.RUNNER_CONTRACT_VIOLATION, "runner adapter unreachable", Map.of());
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.EXECUTION), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenThrow(brokerError);
 
     DomainException error =
@@ -920,7 +924,7 @@ class RecoveryServiceUnitTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_recov-fffff", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.EXECUTION), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("socket closed"));
 
     assertThrows(
@@ -944,7 +948,7 @@ class RecoveryServiceUnitTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_recov-ggggg", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.EXECUTION), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("broker network failure"));
     when(recoveryRecordPort.markFailed(IDEMPOTENCY_KEY))
         .thenThrow(
@@ -969,7 +973,7 @@ class RecoveryServiceUnitTest {
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_recov-hhhhh", "pending"));
     IllegalStateException brokerError = new IllegalStateException("broker network failure");
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.EXECUTION), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenThrow(brokerError);
     // First append (recovery.retried during prep) succeeds; second append (recovery.dispatchFailed
     // in catch) blows up — suppressed onto the broker error, never masking it.
@@ -1068,15 +1072,10 @@ class RecoveryServiceUnitTest {
   }
 
   private void stubBrokerDispatch(String newRexPublicId, RunnerStage stage) {
-    RunnerExecutionHandle handle =
-        new RunnerExecutionHandle(
-            newRexPublicId,
-            RUN,
-            stage,
-            RunnerExecutionStatus.PENDING,
-            OffsetDateTime.parse("2026-05-15T12:30:00Z"));
-    when(runnerBroker.dispatch(eq(RUN), eq(stage), any(), any()))
-        .thenReturn(new RunnerDispatchResult.Replayed(handle));
+    QueuedRunnerExecution queued =
+        new QueuedRunnerExecution(newRexPublicId, RUN, stage, 100, "corr", 1L, "evt_queued-aaaa1");
+    when(runnerExecutionQueue.enqueue(eq(RUN), eq(stage), any(), any(), anyInt()))
+        .thenReturn(queued);
   }
 
   private RecoveryActionSnapshot recoveryActionSnapshot(String publicId, String resultStatus) {

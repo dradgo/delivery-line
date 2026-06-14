@@ -15,10 +15,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.dradgo.TestcontainersConfiguration;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
@@ -52,6 +54,10 @@ class RunnerExecutionQueueIT {
   @Autowired private RunnerExecutionRecordPort recordPort;
   @Autowired private JdbcTemplate jdbcTemplate;
 
+  private static ActorContext actor(String correlationId) {
+    return new ActorContext("system", ActorType.SYSTEM, correlationId);
+  }
+
   @AfterEach
   void tearDown() {
     // This @SpringBootTest is not @Transactional and shares its Postgres with sibling contract
@@ -67,7 +73,7 @@ class RunnerExecutionQueueIT {
     String runId = seedRun();
 
     QueuedRunnerExecution queued =
-        queue.enqueue(runId, RunnerStage.INVESTIGATION, "bundle-ref", "idem-1", "corr-42", 100);
+        queue.enqueue(runId, RunnerStage.INVESTIGATION, "idem-1", actor("corr-42"), 100);
     assertEquals(1L, queued.currentDepth());
     assertEquals("corr-42", queued.correlationId());
     assertEquals(
@@ -102,15 +108,15 @@ class RunnerExecutionQueueIT {
     // Enqueue out of priority order; lower queue_priority must dequeue first.
     String low =
         queue
-            .enqueue(runId, RunnerStage.INVESTIGATION, "b", "i1", "c", 200)
+            .enqueue(runId, RunnerStage.INVESTIGATION, "i1", actor("c"), 200)
             .runnerExecutionPublicId();
     String high =
         queue
-            .enqueue(runId, RunnerStage.INVESTIGATION, "b", "i2", "c", 50)
+            .enqueue(runId, RunnerStage.INVESTIGATION, "i2", actor("c"), 50)
             .runnerExecutionPublicId();
     String mid =
         queue
-            .enqueue(runId, RunnerStage.INVESTIGATION, "b", "i3", "c", 100)
+            .enqueue(runId, RunnerStage.INVESTIGATION, "i3", actor("c"), 100)
             .runnerExecutionPublicId();
 
     assertEquals(high, queue.dequeue("w").orElseThrow().publicId());
@@ -123,11 +129,11 @@ class RunnerExecutionQueueIT {
     String runId = seedRun();
     String a =
         queue
-            .enqueue(runId, RunnerStage.INVESTIGATION, "b", "i1", "c", 100)
+            .enqueue(runId, RunnerStage.INVESTIGATION, "i1", actor("c"), 100)
             .runnerExecutionPublicId();
     String b =
         queue
-            .enqueue(runId, RunnerStage.INVESTIGATION, "b", "i2", "c", 100)
+            .enqueue(runId, RunnerStage.INVESTIGATION, "i2", actor("c"), 100)
             .runnerExecutionPublicId();
 
     List<Optional<RunnerExecutionSnapshot>> results = runConcurrentDequeues(2);
@@ -141,7 +147,7 @@ class RunnerExecutionQueueIT {
   @Test
   void concurrentDequeuesOnASingleRowLeaseItExactlyOnce() throws Exception {
     String runId = seedRun();
-    queue.enqueue(runId, RunnerStage.INVESTIGATION, "b", "i1", "c", 100);
+    queue.enqueue(runId, RunnerStage.INVESTIGATION, "i1", actor("c"), 100);
 
     List<Optional<RunnerExecutionSnapshot>> results = runConcurrentDequeues(2);
 
@@ -159,7 +165,7 @@ class RunnerExecutionQueueIT {
     DomainException ex =
         assertThrows(
             DomainException.class,
-            () -> queue.enqueue(runId, RunnerStage.INVESTIGATION, "b", "i", "c", 100));
+            () -> queue.enqueue(runId, RunnerStage.INVESTIGATION, "i", actor("c"), 100));
 
     assertEquals(DomainErrorCode.RUNNER_QUEUE_FULL, ex.errorCode());
     assertEquals(100L, ex.details().get("currentDepth"));

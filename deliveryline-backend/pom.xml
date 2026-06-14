@@ -128,7 +128,10 @@
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
-			<scope>runtime</scope>
+			<!-- Story 3.17b: the RunnerQueueListener uses the pgjdbc LISTEN/NOTIFY API
+			     (org.postgresql.PGConnection#getNotifications) at compile time, so the driver is
+			     compile-scoped (was runtime). It remains the only Postgres-specific compile coupling
+			     and lives in the adapters.persistence layer. -->
 		</dependency>
 
 		<dependency>

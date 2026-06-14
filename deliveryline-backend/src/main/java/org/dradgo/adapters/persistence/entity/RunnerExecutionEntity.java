@@ -82,6 +82,20 @@ public class RunnerExecutionEntity {
   @Column(name = "correlation_id")
   private String correlationId;
 
+  // Story 3.17b — dispatch carriage columns (V14). enqueue persists the idempotency key + the
+  // originating actor identity/type so the worker pool can reconstruct them when it runs the
+  // relocated dispatch body off a dequeued row (V12's correlation_id alone cannot rebuild a
+  // non-system actor such as the one RecoveryService.retry passes). All nullable: the legacy
+  // synchronous dispatch path never enqueues, so its rows leave these null.
+  @Column(name = "idempotency_key")
+  private String idempotencyKey;
+
+  @Column(name = "actor_identity")
+  private String actorIdentity;
+
+  @Column(name = "actor_type")
+  private String actorType;
+
   // Story 3.6 AC3 — capture reference + metrics for the durable redacted runner-logs store. All
   // nullable: populated by a metadata-only recordRawOutput update after log capture (Trap T10).
   @Column(name = "raw_output_reference")
@@ -232,6 +246,30 @@ public class RunnerExecutionEntity {
 
   public void setCorrelationId(String correlationId) {
     this.correlationId = correlationId;
+  }
+
+  public String getIdempotencyKey() {
+    return idempotencyKey;
+  }
+
+  public void setIdempotencyKey(String idempotencyKey) {
+    this.idempotencyKey = idempotencyKey;
+  }
+
+  public String getActorIdentity() {
+    return actorIdentity;
+  }
+
+  public void setActorIdentity(String actorIdentity) {
+    this.actorIdentity = actorIdentity;
+  }
+
+  public String getActorType() {
+    return actorType;
+  }
+
+  public void setActorType(String actorType) {
+    this.actorType = actorType;
   }
 
   public String getRawOutputReference() {

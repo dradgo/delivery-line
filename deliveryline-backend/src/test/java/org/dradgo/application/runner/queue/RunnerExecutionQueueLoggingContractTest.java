@@ -17,11 +17,14 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.queue.spi.RunnerQueueNotificationPort;
 import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.junit.jupiter.api.AfterEach;
@@ -43,15 +46,23 @@ class RunnerExecutionQueueLoggingContractTest {
 
   private RunnerExecutionRecordPort recordPort;
   private RunnerExecutionEventPort eventPort;
+  private RunnerQueueNotificationPort notificationPort;
   private RunnerExecutionQueue queue;
   private ListAppender<ILoggingEvent> appender;
   private Logger queueLogger;
+
+  private static ActorContext actor(String correlationId) {
+    return new ActorContext("system", ActorType.SYSTEM, correlationId);
+  }
 
   @BeforeEach
   void setUp() {
     recordPort = mock(RunnerExecutionRecordPort.class);
     eventPort = mock(RunnerExecutionEventPort.class);
-    queue = new RunnerExecutionQueue(recordPort, eventPort, RunnerProperties.defaults(), CLOCK);
+    notificationPort = mock(RunnerQueueNotificationPort.class);
+    queue =
+        new RunnerExecutionQueue(
+            recordPort, eventPort, RunnerProperties.defaults(), notificationPort, CLOCK);
     queueLogger = (Logger) LoggerFactory.getLogger(RunnerExecutionQueue.class);
     appender = new ListAppender<>();
     appender.start();
@@ -69,11 +80,12 @@ class RunnerExecutionQueueLoggingContractTest {
   void enqueueLogsInfoWithPriorityAndDepth() {
     when(recordPort.countQueued()).thenReturn(5L);
     when(recordPort.nextContextBundleVersion(any(), any())).thenReturn(1);
-    when(recordPort.insertQueued(any(), any(), any(), anyInt(), any(), anyInt(), any()))
+    when(recordPort.insertQueued(
+            any(), any(), any(), anyInt(), any(), anyInt(), any(), any(), any(), any()))
         .thenAnswer(invocation -> snapshotFor(invocation.getArgument(0)));
     when(eventPort.append(any(), any(), any(), any(), any(), any(), any())).thenReturn("evt_q1");
 
-    queue.enqueue(RUN_ID, RunnerStage.INVESTIGATION, "bundle", "idem", "corr", 70);
+    queue.enqueue(RUN_ID, RunnerStage.INVESTIGATION, "idem", actor("corr"), 70);
 
     String logs = render();
     assertTrue(
@@ -90,7 +102,7 @@ class RunnerExecutionQueueLoggingContractTest {
 
     assertThrows(
         DomainException.class,
-        () -> queue.enqueue(RUN_ID, RunnerStage.EXECUTION, "bundle", "idem", "corr", 100));
+        () -> queue.enqueue(RUN_ID, RunnerStage.EXECUTION, "idem", actor("corr"), 100));
 
     String logs = render();
     assertTrue(hasLevel(Level.WARN), () -> "expected a WARN line; logs=\n" + logs);
@@ -150,6 +162,9 @@ class RunnerExecutionQueueLoggingContractTest {
         null,
         70,
         0,
-        "corr");
+        "corr",
+        "idem",
+        "system",
+        "system");
   }
 }

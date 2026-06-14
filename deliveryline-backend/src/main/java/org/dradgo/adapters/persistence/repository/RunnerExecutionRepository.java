@@ -76,6 +76,30 @@ public interface RunnerExecutionRepository extends JpaRepository<RunnerExecution
       @Param("cutoff") OffsetDateTime cutoff,
       Limit limit);
 
+  // Story 3.17b (AC5 / D6) — worker-crash lease reclamation. Finds LEASED-but-stalled rows: a
+  // worker dequeued them (worker_id set, dispatched_at stamped) but the lease has aged past the
+  // orphan threshold AND no heartbeat advanced last_activity_at since. Both predicates are required
+  // so a healthy long-running execution (which advances last_activity_at via the heartbeat path) is
+  // never reclaimed — only a row whose worker thread died mid-dispatch. queued rows (worker_id
+  // null)
+  // are deliberately excluded: they are correctly waiting and stay enqueueable.
+  @Query(
+      """
+		select runnerExecution
+		from RunnerExecutionEntity runnerExecution
+		where runnerExecution.status = :status
+		  and runnerExecution.stage = :stage
+		  and runnerExecution.workerId is not null
+		  and runnerExecution.dispatchedAt < :cutoff
+		  and runnerExecution.lastActivityAt < :cutoff
+		order by runnerExecution.dispatchedAt asc
+		""")
+  List<RunnerExecutionEntity> findLeasedStaleByStageAndDispatchedAtBefore(
+      @Param("status") String status,
+      @Param("stage") String stage,
+      @Param("cutoff") OffsetDateTime cutoff,
+      Limit limit);
+
   // Story 3.2 AC5: workspace cleanup uses status IN (completed, failed, timed_out, orphaned) AS
   // the primary defense against deleting workspaces whose row is still live (Trap T16). The
   // adapter constructs the status list from the closed-set RunnerExecutionStatus enum, NOT from

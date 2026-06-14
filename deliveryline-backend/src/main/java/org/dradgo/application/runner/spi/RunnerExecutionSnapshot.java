@@ -35,7 +35,14 @@ public record RunnerExecutionSnapshot(
     String workerId,
     int queuePriority,
     int queueAttemptCount,
-    String correlationId) {
+    String correlationId,
+    // Story 3.17b — dispatch carriage (V14). idempotencyKey + actorIdentity + actorType are
+    // persisted at enqueue so the worker pool can reconstruct the idempotency reservation + the
+    // event ActorContext when it runs the relocated dispatch body off a dequeued row. All null for
+    // rows the legacy synchronous dispatch path created (it never enqueues).
+    String idempotencyKey,
+    String actorIdentity,
+    String actorType) {
 
   /** Pre-3.2 callsite shim: derives a snapshot whose {@code heartbeatStaleEmittedAt} is null. */
   public RunnerExecutionSnapshot(
@@ -103,10 +110,10 @@ public record RunnerExecutionSnapshot(
   }
 
   /**
-   * Pre-3.17a callsite shim: derives a snapshot whose five queue-substrate fields carry the V12
-   * column defaults (no lease, priority 100, zero attempts, no correlationId). Keeps every existing
-   * caller that builds the 16-field (through-3.6) shape compiling unchanged — only the persistence
-   * mapper populates the full 21-field shape with the real queue columns.
+   * Pre-3.17a callsite shim: derives a snapshot whose queue-substrate + dispatch-carriage fields
+   * carry the V12/V14 column defaults (no lease, priority 100, zero attempts, no correlationId, no
+   * carriage). Keeps every existing caller that builds the 16-field (through-3.6) shape compiling
+   * unchanged — only the persistence mapper populates the full shape with the real queue columns.
    */
   public RunnerExecutionSnapshot(
       String publicId,
@@ -146,6 +153,9 @@ public record RunnerExecutionSnapshot(
         null,
         100,
         0,
+        null,
+        null,
+        null,
         null);
   }
 }

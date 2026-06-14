@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -25,9 +26,8 @@ import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
-import org.dradgo.application.runner.RunnerBroker;
-import org.dradgo.application.runner.RunnerDispatchResult;
-import org.dradgo.application.runner.RunnerExecutionHandle;
+import org.dradgo.application.runner.queue.QueuedRunnerExecution;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -73,7 +73,7 @@ class RecoveryLoggingContractTest {
   private RunnerExecutionRecordPort runnerRecordPort;
   private ArtifactOperationPort artifactOperationPort;
   private WorkflowCommandService workflowCommandService;
-  private RunnerBroker runnerBroker;
+  private RunnerExecutionQueue runnerExecutionQueue;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
 
@@ -84,7 +84,7 @@ class RecoveryLoggingContractTest {
     runnerRecordPort = mock(RunnerExecutionRecordPort.class);
     artifactOperationPort = mock(ArtifactOperationPort.class);
     workflowCommandService = mock(WorkflowCommandService.class);
-    runnerBroker = mock(RunnerBroker.class);
+    runnerExecutionQueue = mock(RunnerExecutionQueue.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     service =
@@ -94,7 +94,7 @@ class RecoveryLoggingContractTest {
             runnerRecordPort,
             artifactOperationPort,
             workflowCommandService,
-            runnerBroker,
+            runnerExecutionQueue,
             eventWritePort,
             recoveryRecordPort,
             new IdempotencyKeyValidator(),
@@ -173,7 +173,7 @@ class RecoveryLoggingContractTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_log2-aaaaa", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), any(RunnerStage.class), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), any(RunnerStage.class), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("broker network failure"));
 
     assertThrows(
@@ -192,7 +192,7 @@ class RecoveryLoggingContractTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_log4-aaaaa", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), any(RunnerStage.class), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), any(RunnerStage.class), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("broker network failure"));
 
     assertThrows(
@@ -221,7 +221,7 @@ class RecoveryLoggingContractTest {
     when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
     when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
         .thenReturn(recoveryActionSnapshot("rcv_log5-aaaaa", "pending"));
-    when(runnerBroker.dispatch(eq(RUN), any(RunnerStage.class), any(), any()))
+    when(runnerExecutionQueue.enqueue(eq(RUN), any(RunnerStage.class), any(), any(), anyInt()))
         .thenThrow(new IllegalStateException("broker network failure"));
     // Audit append blows up — event store transient outage.
     org.mockito.Mockito.doThrow(new IllegalStateException("event store unreachable"))
@@ -304,15 +304,11 @@ class RecoveryLoggingContractTest {
   }
 
   private void stubBrokerDispatchOk() {
-    RunnerExecutionHandle handle =
-        new RunnerExecutionHandle(
-            "rex_log1-bbbbb",
-            RUN,
-            RunnerStage.EXECUTION,
-            RunnerExecutionStatus.PENDING,
-            FIXED_NOW.plusMinutes(30));
-    when(runnerBroker.dispatch(eq(RUN), eq(RunnerStage.EXECUTION), any(), any()))
-        .thenReturn(new RunnerDispatchResult.Replayed(handle));
+    QueuedRunnerExecution queued =
+        new QueuedRunnerExecution(
+            "rex_log1-bbbbb", RUN, RunnerStage.EXECUTION, 100, "corr", 1L, "evt_queued-log1a");
+    when(runnerExecutionQueue.enqueue(eq(RUN), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
+        .thenReturn(queued);
   }
 
   private RecoveryActionSnapshot recoveryActionSnapshot(String publicId, String resultStatus) {

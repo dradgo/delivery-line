@@ -230,7 +230,10 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
       int contextBundleVersion,
       Duration timeout,
       int queuePriority,
-      String correlationId) {
+      String correlationId,
+      String idempotencyKey,
+      String actorIdentity,
+      String actorType) {
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     Objects.requireNonNull(stage, "stage");
@@ -260,6 +263,9 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     entity.setQueuePriority(queuePriority);
     entity.setQueueAttemptCount(0);
     entity.setCorrelationId(correlationId);
+    entity.setIdempotencyKey(idempotencyKey);
+    entity.setActorIdentity(actorIdentity);
+    entity.setActorType(actorType);
     RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
     log.info(
         "insertQueued publicId={} workflowRunId={} stage={} queuePriority={} contextBundleVersion={}",
@@ -488,6 +494,25 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     return runnerExecutionRepository
         .findStaleByStatusInAndStageAndLastActivityAtBefore(
             rawStatuses, stage.value(), cutoff, Limit.of(limit))
+        .stream()
+        .map(mapper::toSnapshot)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<RunnerExecutionSnapshot> findLeasedStaleByStageAndDispatchedAtBefore(
+      RunnerStage stage, Duration leaseWindow, int limit) {
+    Objects.requireNonNull(stage, "stage");
+    Objects.requireNonNull(leaseWindow, "leaseWindow");
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be positive");
+    }
+    OffsetDateTime cutoff =
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC).minus(leaseWindow);
+    return runnerExecutionRepository
+        .findLeasedStaleByStageAndDispatchedAtBefore(
+            RunnerExecutionStatus.RUNNING.value(), stage.value(), cutoff, Limit.of(limit))
         .stream()
         .map(mapper::toSnapshot)
         .collect(Collectors.toList());

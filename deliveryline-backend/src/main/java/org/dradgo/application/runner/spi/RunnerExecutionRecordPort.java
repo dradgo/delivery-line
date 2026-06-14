@@ -66,7 +66,13 @@ public interface RunnerExecutionRecordPort {
       int contextBundleVersion,
       Duration timeout,
       int queuePriority,
-      String correlationId);
+      String correlationId,
+      // Story 3.17b (V14 carriage) — the idempotency key + originating actor the relocated dispatch
+      // body needs at worker-dispatch time. Nullable: the legacy synchronous dispatch path never
+      // enqueues, and 3.17a's tests insert without carriage.
+      String idempotencyKey,
+      String actorIdentity,
+      String actorType);
 
   /**
    * Story 3.17a (AC4) — count the rows currently in {@code status = queued}. Backs the
@@ -132,6 +138,18 @@ public interface RunnerExecutionRecordPort {
    */
   List<RunnerExecutionSnapshot> findStaleByStatusInAndStageAndLastActivityAtBefore(
       List<RunnerExecutionStatus> statuses, RunnerStage stage, Duration staleWindow, int limit);
+
+  /**
+   * Story 3.17b (AC5 / D6) — worker-crash lease reclamation. Finds {@code running} rows for {@code
+   * stage} that a worker leased ({@code worker_id} not null, {@code dispatched_at} stamped) but
+   * whose lease has aged past {@code leaseWindow} (= {@code staleThresholdMultiplier × stage
+   * timeout}) AND whose {@code last_activity_at} is also past it (no heartbeat advanced it). The
+   * dual predicate spares a healthy long-running execution (it heartbeats) and targets only a
+   * stalled lease left by a dead worker thread. {@code queued} rows (no {@code worker_id}) are
+   * never returned — they are correctly waiting and stay enqueueable. Bounded by {@code limit}.
+   */
+  List<RunnerExecutionSnapshot> findLeasedStaleByStageAndDispatchedAtBefore(
+      RunnerStage stage, Duration leaseWindow, int limit);
 
   /**
    * Story 3.2 AC5: find rows past the workspace-retention horizon whose workspace has not been

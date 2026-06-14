@@ -1,6 +1,11 @@
 spring:
   application:
     name: deliveryline
+  # Story 3.17b (AC10) — graceful-shutdown drain budget. The RunnerWorkerPool (SmartLifecycle) gets
+  # up to this window on SIGTERM to let any in-flight dispatch finish before the executor stops;
+  # queued rows are untouched and survive the restart.
+  lifecycle:
+    timeout-per-shutdown-phase: 60s
   # Story 3.5 AC2 — load runner secrets (agent-provider API keys) from a local ./.env file when
   # present. The [.properties] extension hint makes Spring parse the extensionless .env as
   # KEY=VALUE properties. `optional:` keeps startup working when no .env exists (process env or
@@ -172,6 +177,18 @@ deliveryline:
     # enqueue beyond this raises RUNNER_QUEUE_FULL (503, retryable) and writes no row. Clamped to >=1.
     # The queue is dormant in 3.17a (no production caller); story 3.17b's worker pool drains it.
     queue-max-depth: 100
+    # Story 3.17b (AC1/AC6/AC10) — RunnerWorkerPool: the bounded ThreadPoolTaskExecutor that drains
+    # the queue. `enabled` is the master switch (ON in production; OFF in the test profile so an
+    # always-on pool never dequeues during unrelated @SpringBootTests — Trap T8). `size` = worker
+    # thread count (core=max; default 2, clamped 1..32). `backoff` is the idle worker poll window
+    # (starts at initial, doubles to max, resets on work) — LISTEN/NOTIFY shortens idle latency below
+    # this, the backoff is the always-correct liveness floor (Decision D8).
+    worker-pool:
+      enabled: true
+      size: 2
+      backoff:
+        initial: 1s
+        max: 10s
     stage-timeouts:
       investigation: 600s
       execution: 600s

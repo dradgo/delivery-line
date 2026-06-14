@@ -16,8 +16,6 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
-import org.dradgo.application.runner.RunnerBroker;
-import org.dradgo.application.runner.RunnerDispatchResult;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -58,10 +56,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p><strong>Idempotency-key namespacing:</strong> the user-supplied {@code idempotencyKey} flows
  * through three idempotency surfaces — {@link WorkflowCommandService#retryWorkflow} (workflow state
- * transition), {@link RunnerBroker#dispatch} (runner dispatch), and {@link
- * RecoveryActionRecordPort} (recovery_actions row). To prevent collisions on the broker's
- * fingerprint check ({@code workflowRunId|stage|contextBundleVersion}), the broker key is derived
- * by appending a stable {@code :runner} suffix. The recovery-action key is the bare key.
+ * transition), {@link org.dradgo.application.runner.queue.RunnerExecutionQueue#enqueue} (runner
+ * dispatch — story 3.17b), and {@link RecoveryActionRecordPort} (recovery_actions row). To prevent
+ * collisions on the broker's fingerprint check ({@code workflowRunId|stage|contextBundleVersion}),
+ * the broker key is derived by appending a stable {@code :runner} suffix. The recovery-action key
+ * is the bare key.
  *
  * <p><strong>State-mutation invariant:</strong> all workflow state changes route through {@link
  * WorkflowCommandService#retryWorkflow} (which calls {@code WorkflowTransitionService}). The
@@ -112,22 +111,27 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p><strong>Degraded-state contract (review F1 + dispatch-failure audit):</strong> the {@code
  * retry} flow runs the workflow-state transition, the {@code recovery.retried} event append, and
  * the {@code recovery_actions} insert inside a single {@code REQUIRES_NEW} transaction template
- * that commits BEFORE {@link RunnerBroker#dispatch} is invoked. If dispatch then fails, two fresh
- * {@code REQUIRES_NEW} transactions run: (1) the {@code recovery_actions} row is flipped to {@code
- * result_status = failed}; (2) a {@link WorkflowEventType#RECOVERY_DISPATCH_FAILED
- * recovery.dispatchFailed} event is appended carrying {@code errorCode}, {@code errorClass}, {@code
- * failedStage}, {@code recoveryActionId}, {@code recoveryRetriedEventId}, {@code idempotencyKey},
- * and (when present) {@code correlationId} and {@code reason}. The append-only invariant (NFR4) is
- * preserved — the already-committed {@code recovery.retried} event is never mutated; the typed
- * broker error reaches the audit trail through this second append. Failures appending the
- * dispatch-failed event are suppressed onto the original broker error so the caller still sees the
- * real cause. The workflow stays in {@code Executing} without a running runner; the next retry call
- * (or the broker's startup-recovery scan) can correct the dangling state.
+ * that commits BEFORE {@link org.dradgo.application.runner.queue.RunnerExecutionQueue#enqueue} is
+ * invoked. If the enqueue then fails, two fresh {@code REQUIRES_NEW} transactions run: (1) the
+ * {@code recovery_actions} row is flipped to {@code result_status = failed}; (2) a {@link
+ * WorkflowEventType#RECOVERY_DISPATCH_FAILED recovery.dispatchFailed} event is appended carrying
+ * {@code errorCode}, {@code errorClass}, {@code failedStage}, {@code recoveryActionId}, {@code
+ * recoveryRetriedEventId}, {@code idempotencyKey}, and (when present) {@code correlationId} and
+ * {@code reason}. The append-only invariant (NFR4) is preserved — the already-committed {@code
+ * recovery.retried} event is never mutated; the typed broker error reaches the audit trail through
+ * this second append. Failures appending the dispatch-failed event are suppressed onto the original
+ * broker error so the caller still sees the real cause. The workflow stays in {@code Executing}
+ * without a running runner; the next retry call (or the broker's startup-recovery scan) can correct
+ * the dangling state.
  */
 @Service
 public class RecoveryService {
 
   private static final Logger log = LoggerFactory.getLogger(RecoveryService.class);
+
+  // Story 3.17b — default dequeue priority for recovery-driven enqueues (matches the V12
+  // queue_priority column default). Recovery does not jump the queue; that is story 3.18's concern.
+  private static final int RECOVERY_QUEUE_PRIORITY = 100;
 
   static final String NEXT_SAFE_ACTION_RETRY = "retry";
   static final String NEXT_SAFE_ACTION_AWAIT_OUTCOME = "await_outcome";
@@ -161,7 +165,9 @@ public class RecoveryService {
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final ArtifactOperationPort artifactOperationPort;
   private final WorkflowCommandService workflowCommandService;
-  private final RunnerBroker runnerBroker;
+  // Story 3.17b (AC3/D1) — recovery retry now enqueues onto the RunnerExecutionQueue (the worker
+  // pool runs the real dispatch later) instead of calling RunnerBroker.dispatch synchronously.
+  private final org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final RecoveryActionRecordPort recoveryActionRecordPort;
   private final IdempotencyKeyValidator idempotencyKeyValidator;
@@ -176,7 +182,7 @@ public class RecoveryService {
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       ArtifactOperationPort artifactOperationPort,
       WorkflowCommandService workflowCommandService,
-      RunnerBroker runnerBroker,
+      org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       IdempotencyKeyValidator idempotencyKeyValidator,
@@ -187,7 +193,7 @@ public class RecoveryService {
         runnerExecutionRecordPort,
         artifactOperationPort,
         workflowCommandService,
-        runnerBroker,
+        runnerExecutionQueue,
         workflowEventWritePort,
         recoveryActionRecordPort,
         idempotencyKeyValidator,
@@ -202,7 +208,7 @@ public class RecoveryService {
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       ArtifactOperationPort artifactOperationPort,
       WorkflowCommandService workflowCommandService,
-      RunnerBroker runnerBroker,
+      org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       IdempotencyKeyValidator idempotencyKeyValidator,
@@ -218,7 +224,8 @@ public class RecoveryService {
         Objects.requireNonNull(artifactOperationPort, "artifactOperationPort");
     this.workflowCommandService =
         Objects.requireNonNull(workflowCommandService, "workflowCommandService");
-    this.runnerBroker = Objects.requireNonNull(runnerBroker, "runnerBroker");
+    this.runnerExecutionQueue =
+        Objects.requireNonNull(runnerExecutionQueue, "runnerExecutionQueue");
     this.workflowEventWritePort =
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.recoveryActionRecordPort =
@@ -409,13 +416,16 @@ public class RecoveryService {
         throw prepError;
       }
 
-      // Step 6 — dispatch the runner OUTSIDE any transaction so the audit trail above is durable
-      // before any side effects. Namespace the broker key with ":runner" so the broker's
-      // idempotency_records row cannot collide with the recovery action's idempotency_records row.
+      // Step 6 — enqueue the runner OUTSIDE any transaction so the audit trail above is durable
+      // before any side effects (story 3.17b OQ-4: enqueue opens its own REQUIRED tx + afterCommit
+      // NOTIFY here). Namespace the broker key with ":runner" so the worker's idempotency_records
+      // row cannot collide with the recovery action's idempotency_records row.
       String dispatchKey = validatedIdempotencyKey + ":runner";
-      RunnerDispatchResult dispatchResult;
+      org.dradgo.application.runner.queue.QueuedRunnerExecution dispatchResult;
       try {
-        dispatchResult = runnerBroker.dispatch(workflowRunId, failedStage, dispatchKey, actor);
+        dispatchResult =
+            runnerExecutionQueue.enqueue(
+                workflowRunId, failedStage, dispatchKey, actor, RECOVERY_QUEUE_PRIORITY);
       } catch (RuntimeException error) {
         boolean compensationFailed = false;
         try {
@@ -477,14 +487,12 @@ public class RecoveryService {
         throw error;
       }
 
-      String newRunnerExecutionId = dispatchResult.handle().runnerExecutionId();
-      // Story 3.2a AC10 / Trap T13: surface the runner.dispatched event id (docker path) as the
-      // retry audit anchor for the NEW dispatch. Null on the mock path (which emits runner.started
-      // inside the dispatch transaction) and on a replayed dispatch.
-      String runnerDispatchedEventPublicId =
-          (dispatchResult instanceof RunnerDispatchResult.Dispatched dispatched)
-              ? dispatched.runnerDispatchedEventPublicId()
-              : null;
+      String newRunnerExecutionId = dispatchResult.runnerExecutionPublicId();
+      // Story 3.17b — the retry now ENQUEUES; the real adapter dispatch (and its runner.dispatched
+      // event) happens later on a worker thread. The runner.queued event is the retry audit anchor
+      // for the new enqueued execution (replaces the former runner.dispatched anchor, story 3.2a
+      // AC10 / Trap T13, which is no longer produced synchronously here).
+      String runnerDispatchedEventPublicId = dispatchResult.queuedEventPublicId();
       try {
         resultStatusTransactionTemplate.executeWithoutResult(
             status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));

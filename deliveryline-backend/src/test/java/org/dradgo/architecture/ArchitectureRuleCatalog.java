@@ -27,7 +27,11 @@ import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.integration.linear.GovernedRunComment;
 import org.dradgo.application.integration.linear.LinearAdapter;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.RunnerBroker;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
+import org.dradgo.application.runner.queue.RunnerWorkerPool;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.workflow.DomainResult;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
@@ -35,6 +39,7 @@ import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
 import org.dradgo.domain.registry.AllowedAction;
+import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.shell.core.command.annotation.CommandGroup;
 import org.springframework.stereotype.Service;
@@ -405,6 +410,85 @@ final class ArchitectureRuleCatalog {
                   String.class));
 
   /**
+   * Story 3.17b (AC3b / D4) — the queue is the only entry to runner dispatch. Only {@link
+   * WorkflowOrchestrationService} (the 6 orchestration dispatch methods), {@link RecoveryService}
+   * (the recovery retry), and the {@link RunnerWorkerPool} may {@code enqueue}. Restricting it
+   * keeps a stray service from injecting work that bypasses the in-flight guards + backpressure.
+   */
+  static final ArchRule ONLY_ORCHESTRATION_RECOVERY_AND_WORKER_POOL_MAY_ENQUEUE =
+      namedRule(
+          "only WorkflowOrchestrationService, RecoveryService and RunnerWorkerPool may enqueue runner executions",
+          "Remediation: route runner dispatch through RunnerExecutionQueue.enqueue from the orchestration/recovery callers only (story 3.17b AC3b).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(WorkflowOrchestrationService.class.getName())
+              .and()
+              .doNotHaveFullyQualifiedName(RecoveryService.class.getName())
+              .and()
+              .doNotHaveFullyQualifiedName(RunnerWorkerPool.class.getName())
+              .should()
+              .callMethod(
+                  RunnerExecutionQueue.class,
+                  "enqueue",
+                  String.class,
+                  RunnerStage.class,
+                  String.class,
+                  ActorContext.class,
+                  int.class));
+
+  /**
+   * Story 3.17b (AC3b / D4) — only the {@link RunnerWorkerPool} worker loop may {@code dequeue} a
+   * leased row. No other class leases work off the queue.
+   */
+  static final ArchRule ONLY_WORKER_POOL_MAY_DEQUEUE =
+      namedRule(
+          "only RunnerWorkerPool may dequeue runner executions",
+          "Remediation: leasing queued executions is the worker pool's job — call RunnerExecutionQueue.dequeue only from RunnerWorkerPool (story 3.17b AC3b).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(RunnerWorkerPool.class.getName())
+              .should()
+              .callMethod(RunnerExecutionQueue.class, "dequeue", String.class));
+
+  /**
+   * Story 3.17b (AC3 / D4 / Trap T1) — the relocated dispatch body ({@link
+   * RunnerBroker#executeQueuedDispatch}) runs ONLY on the worker loop. No caller may invoke it
+   * directly, so there is no synchronous direct-dispatch path that bypasses the queue.
+   */
+  static final ArchRule ONLY_WORKER_POOL_MAY_RUN_QUEUED_DISPATCH =
+      namedRule(
+          "only RunnerWorkerPool may run the relocated queued-dispatch body",
+          "Remediation: RunnerBroker.executeQueuedDispatch is the worker-loop action — invoke it only from RunnerWorkerPool, never as a synchronous direct dispatch (story 3.17b AC3).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(RunnerWorkerPool.class.getName())
+              .should()
+              .callMethod(
+                  RunnerBroker.class, "executeQueuedDispatch", RunnerExecutionSnapshot.class));
+
+  /**
+   * Story 3.17b review (D4) — the legacy synchronous {@link RunnerBroker#dispatch} is retained for
+   * unit tests only. No PRODUCTION class may call it: the queue ({@code enqueue} + {@code
+   * executeQueuedDispatch} on the worker) is the only dispatch entry. ArchUnit scans the production
+   * classes, so this rule passing means there are zero production callers — strengthening AC3
+   * beyond the {@link #ONLY_WORKER_POOL_MAY_RUN_QUEUED_DISPATCH} restriction (which alone left the
+   * deprecated synchronous {@code dispatch} reachable).
+   */
+  static final ArchRule NO_PRODUCTION_CALLER_MAY_INVOKE_LEGACY_SYNCHRONOUS_DISPATCH =
+      namedRule(
+          "no production class may invoke the legacy synchronous RunnerBroker.dispatch",
+          "Remediation: route every dispatch through RunnerExecutionQueue.enqueue; RunnerBroker.dispatch is the deprecated synchronous path kept for tests only (story 3.17b AC3 / review D4).",
+          noClasses()
+              .should()
+              .callMethod(
+                  RunnerBroker.class,
+                  "dispatch",
+                  String.class,
+                  RunnerStage.class,
+                  String.class,
+                  ActorContext.class));
+
+  /**
    * Story 3.11 (AC9) — the plan-stage twin of {@link
    * #ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS}. The plan-stage success auto-advance
    * ({@code Executing -> WaitingForReview}) is owned solely by {@link
@@ -574,7 +658,7 @@ final class ArchitectureRuleCatalog {
   static final ArchRule RUNNER_EXECUTION_QUEUE_LIVES_IN_APPLICATION_RUNNER_QUEUE =
       namedRule(
           "RunnerExecutionQueue must live under application.runner.queue and stay free of persistence/adapter dependencies",
-          "Remediation: keep RunnerExecutionQueue + QueuedRunnerExecution in org.dradgo.application.runner.queue (story 3.17a AC6). The queue enqueues/dequeues via application-owned SPI ports + domain types — a JPA entity import or any adapters/infrastructure import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids (Trap T11).",
+          "Remediation: keep RunnerExecutionQueue + the worker pool / signal in org.dradgo.application.runner.queue (story 3.17a AC6 / 3.17b). The package depends on application-owned SPI ports + domain types + framework lifecycle/scheduling/tx primitives — a JPA entity import or any adapters/infrastructure import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids (Trap T11).",
           classes()
               .that()
               .resideInAPackage("org.dradgo.application.runner.queue..")
@@ -588,6 +672,13 @@ final class ArchitectureRuleCatalog {
                   "org.springframework.beans.factory.annotation..",
                   "org.springframework.stereotype..",
                   "org.springframework.transaction.annotation..",
+                  // Story 3.17b — the worker pool is a SmartLifecycle (context) running a
+                  // ThreadPoolTaskExecutor (scheduling); enqueue fires a post-commit NOTIFY via the
+                  // transaction.support synchronization API. All are framework primitives, never
+                  // adapters/persistence/infrastructure — the cross-layer ban (Trap T11) is intact.
+                  "org.springframework.context..",
+                  "org.springframework.scheduling..",
+                  "org.springframework.transaction.support..",
                   "org.dradgo.application..",
                   "org.dradgo.domain..")
               .allowEmptyShould(false));
