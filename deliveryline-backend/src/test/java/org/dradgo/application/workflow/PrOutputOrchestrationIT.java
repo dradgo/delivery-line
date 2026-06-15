@@ -3,8 +3,11 @@ package org.dradgo.application.workflow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Optional;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.runner.RunnerBroker;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -54,6 +57,7 @@ class PrOutputOrchestrationIT {
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private WorkflowOrchestrationService orchestrationService;
   @Autowired private RunnerBroker runnerBroker;
+  @Autowired private RunnerExecutionQueue runnerExecutionQueue;
 
   @AfterEach
   void cleanDatabase() {
@@ -81,11 +85,12 @@ class PrOutputOrchestrationIT {
 
     assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
     assertEquals(1, executionCount(runId));
-    assertEquals("pending", executionStatus(runId));
+    // Story 3.17b: dispatchImplementation enqueues, so the fresh row sits at `queued`.
+    assertEquals("queued", executionStatus(runId));
 
-    // Drive the async EXECUTION result deterministically (Trap T6) — the mock happy-pr-output
-    // result
-    // is harvested.
+    // Drive the async EXECUTION result deterministically (Trap T6) — lease+dispatch the queued row
+    // as a worker would, then harvest the mock happy-pr-output result.
+    drainQueue();
     runnerBroker.pollActiveExecutions();
 
     // AC5: the pr-output artifact is ingested and the run auto-advanced to WaitingForReview.
@@ -124,6 +129,7 @@ class PrOutputOrchestrationIT {
     seedApprovedImplementationPlan(runId, "art_proit_retry_plan");
 
     orchestrationService.dispatchImplementation(runId, "corr-proit-retry");
+    drainQueue();
     runnerBroker.pollActiveExecutions();
     assertEquals(WorkflowState.WAITING_FOR_REVIEW.value(), currentState(runId));
     assertEquals(1, executionCount(runId));
@@ -155,6 +161,19 @@ class PrOutputOrchestrationIT {
   private String currentState(String runId) {
     return jdbcTemplate.queryForObject(
         "select current_state from workflow_runs where public_id = ?", String.class, runId);
+  }
+
+  /**
+   * Story 3.17b — implementation dispatch now ENQUEUES; the worker pool (off in the test profile,
+   * Trap T7) leases + dispatches queued rows. Drive that leg deterministically here exactly as a
+   * worker would ({@code dequeue} → {@code executeQueuedDispatch}) so the subsequent {@code
+   * pollActiveExecutions()} can harvest the mock result (Trap T6: no async pool, no sleeping).
+   */
+  private void drainQueue() {
+    Optional<RunnerExecutionSnapshot> leased;
+    while ((leased = runnerExecutionQueue.dequeue("it-proutput-worker")).isPresent()) {
+      runnerBroker.executeQueuedDispatch(leased.get());
+    }
   }
 
   private int executionCount(String runId) {

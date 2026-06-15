@@ -3,9 +3,12 @@ package org.dradgo.application.workflow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Optional;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.adapters.runner.MockRunnerAdapter;
 import org.dradgo.application.runner.RunnerBroker;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -44,6 +47,7 @@ class SpecStageOrchestrationIT {
   @Autowired private RunnerBroker runnerBroker;
   @Autowired private MockRunnerAdapter mockRunnerAdapter;
   @Autowired private WorkflowInspectionService inspectionService;
+  @Autowired private RunnerExecutionQueue runnerExecutionQueue;
 
   @AfterEach
   void cleanDatabase() {
@@ -71,6 +75,20 @@ class SpecStageOrchestrationIT {
         runId);
   }
 
+  /**
+   * Story 3.17b — auto-dispatch now ENQUEUES onto the {@link RunnerExecutionQueue}; the worker pool
+   * (off in the test profile, Trap T8) is what leases + dispatches queued rows. Drive that leg
+   * deterministically here — exactly as a worker would ({@code dequeue} → {@code
+   * executeQueuedDispatch}) — so the row leaves {@code queued} and the subsequent {@code
+   * pollActiveExecutions()} can harvest the mock result (Trap T7: no async pool, no sleeping).
+   */
+  private void drainQueue() {
+    Optional<RunnerExecutionSnapshot> leased;
+    while ((leased = runnerExecutionQueue.dequeue("it-spec-worker")).isPresent()) {
+      runnerBroker.executeQueuedDispatch(leased.get());
+    }
+  }
+
   @Test
   void submitAutoDispatchesToInvestigatingThenSpecReadyOnPoll() {
     // AC1: submit creates the run and auto-dispatches the spec runner inside the submit
@@ -86,15 +104,20 @@ class SpecStageOrchestrationIT {
     assertEquals(WorkflowState.INVESTIGATING, submitResult.currentState());
     assertEquals(WorkflowState.INVESTIGATING.value(), currentState(runId));
     assertEquals(1, runnerExecutionCount(runId));
+    // Story 3.17b: the auto-dispatch enqueues, so the fresh row sits at `queued` until a worker
+    // leases it.
     assertEquals(
-        "pending",
+        "queued",
         jdbcTemplate.queryForObject(
             "select status from runner_executions where workflow_run_id ="
                 + " (select id from workflow_runs where public_id = ?)",
             String.class,
             runId));
 
-    // Drive the async result deterministically (Trap T7) — the mock happy-spec result is harvested.
+    // Drive the async result deterministically (Trap T7) — lease+dispatch the queued row as a
+    // worker
+    // would, then harvest the mock happy-spec result.
+    drainQueue();
     runnerBroker.pollActiveExecutions();
 
     // AC2/AC3: the spec artifact is available and the run auto-advanced to WaitingForSpecApproval.
@@ -133,6 +156,7 @@ class SpecStageOrchestrationIT {
                     "alex", ActorType.HUMAN, "idem-e2e-avail-12345", "corr-e2e-avail", "LIN-101"))
             .workflowRunId();
 
+    drainQueue();
     runnerBroker.pollActiveExecutions();
 
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), currentState(runId));
@@ -208,6 +232,7 @@ class SpecStageOrchestrationIT {
                 new SubmitWorkflowCommand(
                     "alex", ActorType.HUMAN, "idem-e2e-reject-12345", "corr-e2e-reject", "LIN-101"))
             .workflowRunId();
+    drainQueue();
     runnerBroker.pollActiveExecutions();
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), currentState(runId));
 
@@ -232,12 +257,13 @@ class SpecStageOrchestrationIT {
             RejectionTaxonomy.MISSING_SCOPE,
             "Needs more detail"));
 
-    // Run re-entered Investigating and a SECOND runner execution was dispatched (prior preserved).
+    // Run re-entered Investigating and a SECOND runner execution was enqueued (prior preserved).
+    // Story 3.17b: the fresh re-dispatch is `queued` (undrained here), not `pending`.
     assertEquals(WorkflowState.INVESTIGATING.value(), currentState(runId));
     assertEquals(2, runnerExecutionCount(runId));
     assertTrue(
         jdbcTemplate.queryForObject(
-                "select count(*) from runner_executions where status = 'pending' and workflow_run_id ="
+                "select count(*) from runner_executions where status = 'queued' and workflow_run_id ="
                     + " (select id from workflow_runs where public_id = ?)",
                 Integer.class,
                 runId)

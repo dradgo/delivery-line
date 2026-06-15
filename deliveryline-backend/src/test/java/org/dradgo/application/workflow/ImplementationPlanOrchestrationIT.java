@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Optional;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.runner.RunnerBroker;
+import org.dradgo.application.runner.queue.RunnerExecutionQueue;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.WorkflowState;
@@ -49,6 +52,7 @@ class ImplementationPlanOrchestrationIT {
   @Autowired private WorkflowOrchestrationService orchestrationService;
   @Autowired private RunnerBroker runnerBroker;
   @Autowired private ArtifactPayloadStore artifactPayloadStore;
+  @Autowired private RunnerExecutionQueue runnerExecutionQueue;
 
   @AfterEach
   void cleanDatabase() {
@@ -87,10 +91,12 @@ class ImplementationPlanOrchestrationIT {
 
     assertEquals(WorkflowState.EXECUTING.value(), currentState(runId));
     assertEquals(1, executionCount(runId));
-    assertEquals("pending", executionStatus(runId));
+    // Story 3.17b: the plan auto-dispatch enqueues, so the fresh row sits at `queued`.
+    assertEquals("queued", executionStatus(runId));
 
-    // Drive the async EXECUTION result deterministically (Trap T6) — the mock
-    // happy-implementation-plan result is harvested.
+    // Drive the async EXECUTION result deterministically (Trap T6) — lease+dispatch the queued row
+    // as a worker would, then harvest the mock happy-implementation-plan result.
+    drainQueue();
     runnerBroker.pollActiveExecutions();
 
     // AC2/AC3: the implementation-plan artifact is ingested and the run auto-advanced to
@@ -155,6 +161,7 @@ class ImplementationPlanOrchestrationIT {
             "corr-planit-retry",
             "product_reviewer",
             null));
+    drainQueue();
     runnerBroker.pollActiveExecutions();
     assertEquals(WorkflowState.WAITING_FOR_REVIEW.value(), currentState(runId));
     assertEquals(1, executionCount(runId));
@@ -186,6 +193,19 @@ class ImplementationPlanOrchestrationIT {
   private String currentState(String runId) {
     return jdbcTemplate.queryForObject(
         "select current_state from workflow_runs where public_id = ?", String.class, runId);
+  }
+
+  /**
+   * Story 3.17b — plan auto-dispatch now ENQUEUES; the worker pool (off in the test profile, Trap
+   * T11) leases + dispatches queued rows. Drive that leg deterministically here exactly as a worker
+   * would ({@code dequeue} → {@code executeQueuedDispatch}) so the subsequent {@code
+   * pollActiveExecutions()} can harvest the mock result (Trap T6: no async pool, no sleeping).
+   */
+  private void drainQueue() {
+    Optional<RunnerExecutionSnapshot> leased;
+    while ((leased = runnerExecutionQueue.dequeue("it-plan-worker")).isPresent()) {
+      runnerBroker.executeQueuedDispatch(leased.get());
+    }
   }
 
   private int executionCount(String runId) {

@@ -114,15 +114,17 @@ class RecoveryServiceDockerRetryContractTest {
             String.class,
             seededRex));
 
-    // (c) the retry anchor carries the runner.dispatched event id (docker path), and that event row
-    // exists; the legacy runner.started event was NOT emitted on the docker path.
+    // (c) Story 3.17b: retry now ENQUEUES (the worker pool performs the real adapter dispatch +
+    // emits runner.dispatched later — covered by RunnerWorkerPoolActivationIT). The retry anchor
+    // therefore carries the runner.queued event id (the enqueue event), and that event row exists;
+    // the legacy runner.started event was NOT emitted on the docker path.
     String anchor = result.runnerDispatchedEventPublicId();
-    assertNotNull(anchor, "docker retry must surface the runner.dispatched event id");
+    assertNotNull(anchor, "docker retry must surface the runner.queued event id");
     assertTrue(anchor.startsWith("evt_"));
     assertEquals(
         anchor,
         jdbcTemplate.queryForObject(
-            "select public_id from workflow_events where public_id=? and event_type='runner.dispatched'",
+            "select public_id from workflow_events where public_id=? and event_type='runner.queued'",
             String.class,
             anchor));
     Integer startedEvents =

@@ -13,9 +13,9 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
 /**
- * Story 1.19 AC4 (extended by story 2.9): the six MDC keys ({@link MdcKeys#ALL}) MUST use the exact
- * camelCase casing defined in {@code MdcKeys}. This test stamps each key, emits a log line,
- * captures the event via {@link ListAppender}, and asserts the {@link
+ * Story 1.19 AC4 (extended by story 2.9, then story 3.17b's {@code workerId}): the MDC keys ({@link
+ * MdcKeys#ALL}) MUST use the exact camelCase casing defined in {@code MdcKeys}. This test stamps
+ * each key, emits a log line, captures the event via {@link ListAppender}, and asserts the {@link
  * ILoggingEvent#getMDCPropertyMap()} contains the exact key names and rejects every forbidden
  * variant (snake_case, PascalCase, lowercase).
  *
@@ -52,6 +52,7 @@ class LoggingFieldNameContractTest {
     MDC.put(MdcKeys.ARTIFACT_ID, "art_x");
     MDC.put(MdcKeys.ARTIFACT_OPERATION_ID, "op_x");
     MDC.put(MdcKeys.APPROVAL_ID, "apr_x");
+    MDC.put(MdcKeys.WORKER_ID, "wkr_x");
 
     LOG.info("pin field names");
 
@@ -103,6 +104,7 @@ class LoggingFieldNameContractTest {
             "runnerExecutionId",
             "artifactId",
             "artifactOperationId",
-            "approvalId");
+            "approvalId",
+            "workerId");
   }
 }
