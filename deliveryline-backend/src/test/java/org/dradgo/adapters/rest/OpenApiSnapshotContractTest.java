@@ -89,6 +89,7 @@ class OpenApiSnapshotContractTest {
         .contains("submitWorkflow")
         .contains("approveSpec")
         .contains("rejectSpec")
+        .contains("acceptImplementation")
         .contains("retryWorkflow")
         .contains("takeoverWorkflow");
     assertThat(canonical)

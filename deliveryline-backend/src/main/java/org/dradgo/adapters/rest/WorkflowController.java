@@ -20,6 +20,7 @@ import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -526,6 +527,92 @@ public class WorkflowController {
   }
 
   @PostMapping(
+      value = "/{workflowRunId}/accept-implementation",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "acceptImplementation",
+      summary = "Accept a run's implementation (story 3.23)")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Acceptance recorded; state advanced."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ARTIFACT_PR_LINK_MISMATCH, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "503",
+        description = "ARTIFACT_PAYLOAD_UNAVAILABLE.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse acceptImplementation(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody AcceptImplementationRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    // Story 2.13 round-4 D-R4-1: see approveSpec javadoc.
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 3.23 R4: this is a developer-only endpoint. Validate the raw reviewerRole at the
+    // boundary with a typed code; do NOT route it through
+    // approvalReviewerRoleResolver.resolveFor(..)
+    // (its blank -> product_reviewer default would mask the mismatch). This is the key delta from
+    // approveSpec. The service persists the role verbatim from the command.
+    String reviewerRole = requireDeveloperReviewerRole(request.reviewerRole());
+    log.info(
+        "REST accept-implementation received workflowRunId={} artifactId={} expectedArtifactVersion={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(request.artifactId()),
+        request.expectedArtifactVersion(),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.acceptImplementation(
+                new AcceptImplementationCommand(
+                    workflowRunId,
+                    request.artifactId(),
+                    request.expectedArtifactVersion(),
+                    request.expectedContextBundleVersion(),
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    reviewerRole,
+                    request.reason())));
+    log.info(
+        "REST accept-implementation success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  @PostMapping(
       value = "/{workflowRunId}/clarifications/{clarificationId}/answer",
       consumes = MediaType.APPLICATION_JSON_VALUE,
       produces = MediaType.APPLICATION_JSON_VALUE)
@@ -665,6 +752,37 @@ public class WorkflowController {
           "Missing required header: Idempotency-Key",
           details);
     }
+  }
+
+  /**
+   * Story 3.23 R4: the {@code accept-implementation} (and, when it lands, the story 3.24 {@code
+   * reject-implementation}) endpoint is developer-only. The body {@code reviewerRole} must equal
+   * {@code developer} verbatim; anything else — including null/blank — is rejected at the
+   * controller boundary as a typed {@link DomainErrorCode#INVALID_REVIEWER_ROLE_FOR_ENDPOINT}.
+   * Unlike {@code approve-spec}, the value is deliberately NOT routed through {@code
+   * ApprovalReviewerRoleResolver.resolveFor(...)} (whose blank-fallback default {@code
+   * product_reviewer} would mask the mismatch). This is request-shape validation only (no domain
+   * decision), so it stays within the story 1.11 thin-controller ArchUnit rule. The returned
+   * trimmed value is the canonical {@code developer} role placed on the command.
+   */
+  private static String requireDeveloperReviewerRole(String reviewerRole) {
+    String trimmed = reviewerRole == null ? null : reviewerRole.trim();
+    if (!"developer".equals(trimmed)) {
+      // Story 3.23 logging task: audit the boundary rejection before throwing so the typed
+      // INVALID_REVIEWER_ROLE_FOR_ENDPOINT path is observable without re-deploying.
+      log.warn(
+          "REST accept-implementation rejected: reviewerRole must be 'developer' actualReviewerRole={}",
+          MdcKeys.sanitizeForLog(reviewerRole));
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("field", "reviewerRole");
+      details.put("expected", "developer");
+      details.put("actual", reviewerRole);
+      throw new DomainException(
+          DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
+          "Reviewer role must be 'developer' for this endpoint",
+          details);
+    }
+    return trimmed;
   }
 
   /**

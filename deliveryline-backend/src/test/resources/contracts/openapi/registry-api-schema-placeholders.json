@@ -138,6 +138,7 @@
     "ARTIFACT_PR_LINK_MISMATCH": "https://deliveryline.local/problems/artifact-pr-link-mismatch",
     "INVALID_COMPLETION_TEMPLATE": "https://deliveryline.local/problems/invalid-completion-template",
     "MISSING_REJECTION_TAXONOMY": "https://deliveryline.local/problems/missing-rejection-taxonomy",
-    "RUNNER_QUEUE_FULL": "https://deliveryline.local/problems/runner-queue-full"
+    "RUNNER_QUEUE_FULL": "https://deliveryline.local/problems/runner-queue-full",
+    "INVALID_REVIEWER_ROLE_FOR_ENDPOINT": "https://deliveryline.local/problems/invalid-reviewer-role-for-endpoint"
   }
 }

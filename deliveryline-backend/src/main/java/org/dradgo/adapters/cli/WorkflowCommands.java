@@ -33,6 +33,7 @@ import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistory
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -539,6 +540,129 @@ public class WorkflowCommands {
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
     }
+  }
+
+  @Command(
+      name = "accept-implementation",
+      description =
+          "Accept a workflow run's implementation (story 3.23 — CLI/REST equivalence for the technical-approval loop).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String acceptImplementation(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "artifact-id",
+              description = "Implementation artifact public id",
+              required = true)
+          String artifactId,
+      @Option(
+              longName = "expected-artifact-version",
+              description = "Implementation artifact version reviewed",
+              required = true)
+          Integer expectedArtifactVersion,
+      @Option(
+              longName = "expected-context-bundle-version",
+              description = "Context bundle version reviewed",
+              required = true)
+          Integer expectedContextBundleVersion,
+      @Option(
+              longName = "reviewer-role",
+              description = "Reviewer role (must be 'developer')",
+              required = true)
+          String reviewerRole,
+      @Option(longName = "reason", description = "Optional reviewer reason", required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 3.23: CLI mirrors REST's HUMAN-only audit posture for the technical-approval mutation
+    // (see approve-spec). reviewerRole is required and must be 'developer' (validated below).
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      // Story 3.23 R4: developer-only command. Validate the raw reviewer role with the same typed
+      // INVALID_REVIEWER_ROLE_FOR_ENDPOINT idiom as the REST controller; do NOT route it through
+      // approvalReviewerRoleResolver.resolveFor (its blank -> product_reviewer default masks it).
+      String resolvedReviewer = requireDeveloperReviewerRole(reviewerRole);
+      WorkflowStateChangeResult result =
+          workflowCommandService.acceptImplementation(
+              new AcceptImplementationCommand(
+                  runId,
+                  artifactId,
+                  expectedArtifactVersion,
+                  expectedContextBundleVersion,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation,
+                  resolvedReviewer,
+                  reason));
+      StringBuilder output =
+          new StringBuilder()
+              .append(result.workflowRunId())
+              .append(" accept-implementation accepted (state: ")
+              .append(result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow accept-implementation", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow accept-implementation", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure(
+          "workflow accept-implementation", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  /**
+   * Story 3.23 R4: CLI mirror of {@code WorkflowController.requireDeveloperReviewerRole}. The
+   * accept-implementation (and, when it lands, the 3.24 reject-implementation) command is
+   * developer-only; the {@code --reviewer-role} value must equal {@code developer} verbatim. Throws
+   * the same typed {@link DomainErrorCode#INVALID_REVIEWER_ROLE_FOR_ENDPOINT} {@link
+   * DomainException} so REST and CLI reject identical payloads identically (the CLI/REST
+   * equivalence pin). Deliberately does NOT use {@code ApprovalReviewerRoleResolver} (whose
+   * blank-fallback default {@code product_reviewer} would mask the mismatch).
+   */
+  private static String requireDeveloperReviewerRole(String reviewerRole) {
+    String trimmed = reviewerRole == null ? null : reviewerRole.trim();
+    if (!"developer".equals(trimmed)) {
+      // Story 3.23 logging task / review patch: audit the boundary rejection before throwing so the
+      // typed INVALID_REVIEWER_ROLE_FOR_ENDPOINT path is observable on the CLI surface as it is on
+      // REST (WorkflowController.requireDeveloperReviewerRole emits the symmetric WARN).
+      log.warn(
+          "CLI accept-implementation rejected: reviewerRole must be 'developer' actualReviewerRole={}",
+          MdcKeys.sanitizeForLog(reviewerRole));
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("field", "reviewerRole");
+      details.put("expected", "developer");
+      details.put("actual", reviewerRole);
+      throw new DomainException(
+          DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
+          "Reviewer role must be 'developer' for this endpoint",
+          details);
+    }
+    return trimmed;
   }
 
   @Command(

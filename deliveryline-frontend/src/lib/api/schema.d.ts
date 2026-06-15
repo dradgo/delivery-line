@@ -61,6 +61,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/accept-implementation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept a run's implementation (story 3.23) */
+        post: operations["acceptImplementation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/allowed-actions": {
         parameters: {
             query?: never;
@@ -210,6 +227,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AcceptImplementationRequest: {
+            artifactId: string;
+            /** Format: int32 */
+            expectedArtifactVersion: number;
+            /** Format: int32 */
+            expectedContextBundleVersion: number;
+            reason?: string;
+            reviewerRole?: string;
+        };
         /** @description Backend-derived list of allowed actions for the current state + actor role. */
         AllowedActions: {
             /**
@@ -641,6 +667,71 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    acceptImplementation: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptImplementationRequest"];
+            };
+        };
+        responses: {
+            /** @description Acceptance recorded; state advanced. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ARTIFACT_PR_LINK_MISMATCH, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

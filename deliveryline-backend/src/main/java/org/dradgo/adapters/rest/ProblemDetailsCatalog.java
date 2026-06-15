@@ -411,6 +411,16 @@ public final class ProblemDetailsCatalog {
         HttpStatus.SERVICE_UNAVAILABLE,
         "Runner queue is full",
         true);
+    // Story 3.23 (AC5 / R4) — a non-`developer` reviewer role on the accept-implementation (and
+    // 3.24 reject-implementation) endpoint is a malformed reviewer decision caught at the
+    // controller
+    // boundary; mirror INVALID_COMMAND_PAYLOAD's BAD_REQUEST + non-retryable mapping.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
+        HttpStatus.BAD_REQUEST,
+        "Invalid reviewer role for endpoint",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

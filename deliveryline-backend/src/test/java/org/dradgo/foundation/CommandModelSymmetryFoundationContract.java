@@ -61,11 +61,14 @@ import org.springframework.test.web.servlet.MockMvc;
 class CommandModelSymmetryFoundationContract {
 
   // Story 3.20 added AcceptImplementationCommand and story 3.21 added RejectImplementationCommand
-  // to
-  // the sealed permit set (service-only surface via WorkflowCommandService.acceptImplementation /
-  // rejectImplementation). Their REST round-trips are intentionally deferred to stories 3.23 / 3.24
-  // (accept/reject-implementation endpoints + OpenAPI), so they are recorded here as known permits
-  // without a manual REST capture below — those stories add the round-trips in lockstep.
+  // to the sealed permit set (service-only surface via WorkflowCommandService.acceptImplementation
+  // /
+  // rejectImplementation). Story 3.23 wired the accept-implementation REST endpoint + its
+  // round-trip
+  // capture below (everyWorkflowCommandPermitRoundTripsThroughRestAsTheCanonicalRecord). The
+  // RejectImplementationCommand REST round-trip stays deferred to story 3.24 (reject-implementation
+  // endpoint + OpenAPI), so it remains recorded as a known permit without a manual REST capture
+  // until that story lands.
   private static final Set<Class<?>> EXPECTED_PERMITS =
       Set.of(
           SubmitWorkflowCommand.class,
@@ -226,6 +229,45 @@ class CommandModelSymmetryFoundationContract {
               + expectedReject
               + " captured="
               + capturedReject);
+    }
+
+    // Story 3.23: the accept-implementation endpoint requires reviewerRole=developer (unlike
+    // approve-spec, whose body omits the role to pin the resolver default). The verbose wire
+    // versions map to the short command fields; header-derived actor, MDC-null correlation here.
+    AcceptImplementationCommand expectedAccept =
+        new AcceptImplementationCommand(
+            "run_found_submit01",
+            "art_impl_v1_xyz",
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            "idem-accept-ffffffffffffffff",
+            null,
+            "developer",
+            null);
+    when(workflowCommandService.acceptImplementation(any()))
+        .thenReturn(
+            new WorkflowStateChangeResult(
+                "run_found_submit01", WorkflowState.EXECUTING, "corr-accept-1"));
+    AcceptImplementationCommand capturedAccept =
+        captureAcceptImplementation(
+            "/api/v1/workflows/run_found_submit01/accept-implementation",
+            "idem-accept-ffffffffffffffff",
+            """
+            {
+              "artifactId": "art_impl_v1_xyz",
+              "expectedArtifactVersion": 1,
+              "expectedContextBundleVersion": 1,
+              "reviewerRole": "developer"
+            }
+            """);
+    if (!expectedAccept.equals(capturedAccept)) {
+      violations.add(
+          "AcceptImplementationCommand REST-to-command mismatch: expected="
+              + expectedAccept
+              + " captured="
+              + capturedAccept);
     }
 
     RetryWorkflowCommand expectedRetry =
@@ -408,6 +450,24 @@ class CommandModelSymmetryFoundationContract {
     verify(workflowCommandService).rejectSpec(captor.capture());
     RejectSpecCommand captured = captor.getValue();
     assertNotNull(captured, "captured RejectSpecCommand was null");
+    return captured;
+  }
+
+  private AcceptImplementationCommand captureAcceptImplementation(
+      String path, String idempotencyKey, String body) throws Exception {
+    mockMvc
+        .perform(
+            post(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", idempotencyKey)
+                .content(body))
+        .andExpect(status().isOk());
+    ArgumentCaptor<AcceptImplementationCommand> captor =
+        ArgumentCaptor.forClass(AcceptImplementationCommand.class);
+    verify(workflowCommandService).acceptImplementation(captor.capture());
+    AcceptImplementationCommand captured = captor.getValue();
+    assertNotNull(captured, "captured AcceptImplementationCommand was null");
     return captured;
   }
 

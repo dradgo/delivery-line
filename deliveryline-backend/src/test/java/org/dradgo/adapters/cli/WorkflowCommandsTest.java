@@ -9,8 +9,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.security.LocalActorIdentityResolver;
+import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
+import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
@@ -89,5 +94,111 @@ class WorkflowCommandsTest {
 
     assertEquals(DomainErrorCode.MISSING_IDEMPOTENCY_KEY, error.errorCode());
     verifyNoInteractions(service);
+  }
+
+  // Story 3.23 review (Decision 1): the CLI accept-implementation command was covered only by the
+  // happy-path equivalence test. These pin the developer-only boundary rejection (R4) and the
+  // generated-key branch directly on the CLI surface, so a regression in the CLI copy of
+  // requireDeveloperReviewerRole (e.g. routing through ApprovalReviewerRoleResolver.resolveFor,
+  // whose blank -> product_reviewer default masks the mismatch) would be caught here.
+
+  private static WorkflowCommands acceptImplementationCommands(WorkflowCommandService service) {
+    return new WorkflowCommands(
+        service,
+        null,
+        null,
+        () -> true,
+        () -> "01964c38-1c45-7000-8000-000000000000",
+        () -> "01964c38-1c45-7000-8000-000000000000",
+        new IdempotencyKeyValidator(),
+        null,
+        new ApprovalReviewerRoleResolver("product_reviewer"),
+        new LocalActorIdentityResolver("local-operator"),
+        null);
+  }
+
+  @Test
+  void acceptImplementationRejectsNonDeveloperReviewerRoleWithTypedErrorAndDoesNotCallService() {
+    WorkflowCommandService service = mock(WorkflowCommandService.class);
+    WorkflowCommands commands = acceptImplementationCommands(service);
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                commands.acceptImplementation(
+                    "run_accept1234",
+                    "art_impl1234",
+                    3,
+                    2,
+                    "product_reviewer",
+                    null,
+                    "idem-accept-cli-aaaaaa",
+                    "alex",
+                    "corr-accept-1",
+                    false));
+
+    assertEquals(DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT, error.errorCode());
+    assertEquals("reviewerRole", error.details().get("field"));
+    assertEquals("developer", error.details().get("expected"));
+    assertEquals("product_reviewer", error.details().get("actual"));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void acceptImplementationRejectsBlankReviewerRoleWithTypedErrorAndDoesNotCallService() {
+    WorkflowCommandService service = mock(WorkflowCommandService.class);
+    WorkflowCommands commands = acceptImplementationCommands(service);
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                commands.acceptImplementation(
+                    "run_accept1234",
+                    "art_impl1234",
+                    3,
+                    2,
+                    "   ",
+                    null,
+                    "idem-accept-cli-bbbbbb",
+                    "alex",
+                    "corr-accept-2",
+                    false));
+
+    assertEquals(DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT, error.errorCode());
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void acceptImplementationGeneratesIdempotencyKeyWhenOmittedAndSurfacesIt() {
+    WorkflowCommandService service = mock(WorkflowCommandService.class);
+    when(service.acceptImplementation(any()))
+        .thenReturn(
+            new WorkflowStateChangeResult(
+                "run_accept1234", WorkflowState.EXECUTING, "corr-accept-3"));
+    WorkflowCommands commands = acceptImplementationCommands(service);
+
+    String output =
+        commands.acceptImplementation(
+            "run_accept1234",
+            "art_impl1234",
+            3,
+            2,
+            "developer",
+            "LGTM",
+            null,
+            "alex",
+            "corr-accept-3",
+            false);
+
+    ArgumentCaptor<AcceptImplementationCommand> captor =
+        ArgumentCaptor.forClass(AcceptImplementationCommand.class);
+    verify(service).acceptImplementation(captor.capture());
+    assertEquals("01964c38-1c45-7000-8000-000000000000", captor.getValue().idempotencyKey());
+    assertEquals("developer", captor.getValue().reviewerRole());
+    assertEquals(
+        "run_accept1234 accept-implementation accepted (state: Executing) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
+        output);
   }
 }

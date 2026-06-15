@@ -113,7 +113,17 @@ public enum DomainErrorCode implements RegistryValue {
   // details.currentDepth + details.maxDepth. SERVICE_UNAVAILABLE + retryable=true (transient
   // backpressure — mirrors RUNNER_TIMEOUT); the "run stays in its prior state" caller behavior is
   // realized at the dispatch call-site in story 3.17b (here the error simply propagates).
-  RUNNER_QUEUE_FULL("RUNNER_QUEUE_FULL");
+  RUNNER_QUEUE_FULL("RUNNER_QUEUE_FULL"),
+  // Story 3.23 (AC5 / R4) — three-sites code (enum + ProblemDetailsCatalog + manifest). Raised at
+  // the REST/CLI controller boundary by the accept-implementation (and, when it lands, the 3.24
+  // reject-implementation) handler when the request body's reviewerRole is not exactly `developer`
+  // (including blank — which would otherwise default to `product_reviewer` via
+  // ApprovalReviewerRoleResolver and mask the mismatch). This is request-shape validation, not a
+  // domain decision (ArchUnit-safe). BAD_REQUEST + non-retryable (mirrors INVALID_COMMAND_PAYLOAD —
+  // a malformed reviewer decision, not a transient fault). SHARED with story 3.24: first-to-land
+  // creates it; the other reuses both the code and the `reviewerRole == developer` validation
+  // idiom.
+  INVALID_REVIEWER_ROLE_FOR_ENDPOINT("INVALID_REVIEWER_ROLE_FOR_ENDPOINT");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

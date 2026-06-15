@@ -17,6 +17,7 @@ import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -167,6 +168,79 @@ class CliRestEquivalenceContractTest {
         .as(
             "CLI and REST built different ApproveSpecCommand records for the same logical payload"
                 + " — fingerprint symmetry broken")
+        .isEqualTo(restCommand);
+  }
+
+  @Test
+  void acceptImplementationCommandRecordIsEqualAcrossRestAndCliForTheSamePayload()
+      throws Exception {
+    // Story 3.23: accept-implementation requires reviewerRole=developer on BOTH surfaces (validated
+    // at the controller boundary, not resolver-defaulted). Feeding the same developer payload to
+    // REST and CLI must build structurally-equal AcceptImplementationCommand records.
+    when(workflowCommandService.acceptImplementation(any()))
+        .thenReturn(new WorkflowStateChangeResult(RUN_ID, WorkflowState.EXECUTING, CORRELATION_ID));
+
+    mockMvc
+        .perform(
+            post("/api/v1/workflows/{runId}/accept-implementation", RUN_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", "idem-accept-equiv-dddddd")
+                .header("X-Actor-Identity", "alex")
+                .content(
+                    """
+                    {
+                      "artifactId": "%s",
+                      "expectedArtifactVersion": 3,
+                      "expectedContextBundleVersion": 2,
+                      "reviewerRole": "developer",
+                      "reason": "Implementation looks correct."
+                    }
+                    """
+                        .formatted(ARTIFACT_ID)))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<AcceptImplementationCommand> restCaptor =
+        ArgumentCaptor.forClass(AcceptImplementationCommand.class);
+    verify(workflowCommandService).acceptImplementation(restCaptor.capture());
+    AcceptImplementationCommand restCommand = restCaptor.getValue();
+
+    clearInvocations(workflowCommandService);
+
+    WorkflowCommands cli =
+        new WorkflowCommands(
+            workflowCommandService,
+            null,
+            null,
+            () -> false,
+            () -> "generated-idempotency-key-unused",
+            () -> "generated-correlation-id-unused",
+            new IdempotencyKeyValidator(),
+            null,
+            new ApprovalReviewerRoleResolver("product_reviewer"),
+            new LocalActorIdentityResolver("local-operator"),
+            null);
+    cli.acceptImplementation(
+        RUN_ID,
+        ARTIFACT_ID,
+        3,
+        2,
+        "developer",
+        "Implementation looks correct.",
+        "idem-accept-equiv-dddddd",
+        "alex",
+        CORRELATION_ID,
+        false);
+
+    ArgumentCaptor<AcceptImplementationCommand> cliCaptor =
+        ArgumentCaptor.forClass(AcceptImplementationCommand.class);
+    verify(workflowCommandService).acceptImplementation(cliCaptor.capture());
+    AcceptImplementationCommand cliCommand = cliCaptor.getValue();
+
+    assertThat(cliCommand)
+        .as(
+            "CLI and REST built different AcceptImplementationCommand records for the same logical"
+                + " payload — fingerprint symmetry broken")
         .isEqualTo(restCommand);
   }
 
