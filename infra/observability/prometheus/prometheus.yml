@@ -1,0 +1,28 @@
+# Story 3.19 (AC5/AC7) — Prometheus config for the optional DeliveryLine observability stack.
+#
+# AR25: this stack is gated behind the docker-compose `observability` profile and is NEVER required
+# for normal MVP operation, tests, or recovery. It scrapes the backend's Spring Boot Actuator
+# Prometheus endpoint (story 3.19 added micrometer-registry-prometheus + the management exposure).
+#
+# Scrape target note: the backend normally runs on the HOST (jar / IDE / `mvn spring-boot:run`), not
+# as a compose service, so the default target is `host.docker.internal:8080` (the prometheus service
+# in docker-compose.yml maps host.docker.internal -> host-gateway for Linux parity). If you run the
+# backend AS a compose service named `deliveryline-backend`, change the target to
+# `deliveryline-backend:8080`.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: deliveryline-backend
+    metrics_path: /actuator/prometheus
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          application: deliveryline

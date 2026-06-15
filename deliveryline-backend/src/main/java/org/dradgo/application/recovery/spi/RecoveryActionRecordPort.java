@@ -46,6 +46,16 @@ public interface RecoveryActionRecordPort {
   Optional<RecoveryActionSnapshot> findByIdempotencyKey(String idempotencyKey);
 
   /**
+   * Story 3.22 (AC8) — look up the most recent {@code action_type='takeover'} recovery action for a
+   * run. This row is the AUTHORITATIVE source of takeover attribution: {@code actor_identity},
+   * {@code actor_type}, {@code reviewer_role} ({@code 'developer'}), and {@code created_at} (the
+   * takeover timestamp). {@code WorkflowInspectionService.getRunSummary} reads it so the takeover
+   * actor and role are reconstructed from persisted data — never inferred from an arbitrary later
+   * audit event. Returns {@code Optional.empty()} when the run has no takeover row.
+   */
+  Optional<RecoveryActionSnapshot> findLatestTakeoverForRun(String workflowRunPublicId);
+
+  /**
    * Flip {@code result_status} from {@code pending} to {@code succeeded}. Throws {@code
    * DomainException(INTERNAL_ERROR)} if no matching row exists or if the current {@code
    * result_status} is not {@code pending}.

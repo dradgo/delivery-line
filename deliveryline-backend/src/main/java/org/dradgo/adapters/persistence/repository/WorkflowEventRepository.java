@@ -67,6 +67,20 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
 		select event from WorkflowEventEntity event
 		where event.workflowRun.publicId = :publicId
 		  and event.archivedAt is null
+		  and event.resultingState = :resultingState
+		  and event.priorState is not null
+		order by event.createdAt desc, event.id desc
+		""")
+  List<WorkflowEventEntity> findLatestTransitionToState(
+      @Param("publicId") String publicId,
+      @Param("resultingState") String resultingState,
+      Pageable pageable);
+
+  @Query(
+      """
+		select event from WorkflowEventEntity event
+		where event.workflowRun.publicId = :publicId
+		  and event.archivedAt is null
 		  and event.resultingState = 'Failed'
 		  and event.priorState is not null
 		order by event.createdAt desc, event.id desc

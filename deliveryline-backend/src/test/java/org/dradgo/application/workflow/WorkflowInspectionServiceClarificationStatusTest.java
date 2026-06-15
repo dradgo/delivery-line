@@ -16,6 +16,7 @@ import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ClarificationStatusView;
@@ -52,6 +53,8 @@ class WorkflowInspectionServiceClarificationStatusTest {
       mock(org.dradgo.application.runner.spi.RunnerScratchStore.class);
   private final org.dradgo.application.clarification.spi.ClarificationReadPort clarifications =
       mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
+  private final org.dradgo.application.recovery.spi.RecoveryActionRecordPort recoveryActions =
+      mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class);
 
   private final WorkflowInspectionService service =
       new WorkflowInspectionService(
@@ -65,7 +68,10 @@ class WorkflowInspectionServiceClarificationStatusTest {
           recovery,
           runnerExecutions,
           scratchStore,
-          clarifications);
+          clarifications,
+          recoveryActions,
+          org.dradgo.application.runner.RunnerProperties.defaults(),
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
 
   @Test
   void getClarificationStatusProjectsEachLifecycleShape() {
@@ -248,6 +254,93 @@ class WorkflowInspectionServiceClarificationStatusTest {
     WorkflowRunDetailedSummaryView view = service.getRunSummary(RUN);
 
     assertEquals("APPROVED", view.technicalApprovalState());
+  }
+
+  @Test
+  void getRunSummaryForTakenOverRunSourcesAttributionFromRecoveryActionNotEvent() {
+    OffsetDateTime takeoverAt = NOW.minusMinutes(10);
+    when(runs.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(RUN, WorkflowState.TAKEN_OVER, null, 7L, 0, false)));
+    // A later audit event is the "latest" — it must NOT supply the takeover actor.
+    when(events.findLatestByWorkflowRunPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowEventRecord(
+                    "evt_later9999",
+                    RUN,
+                    WorkflowEventType.RUNNER_COMPLETED,
+                    null,
+                    null,
+                    "runner-system",
+                    ActorType.SYSTEM,
+                    "later audit event",
+                    null,
+                    false,
+                    NOW,
+                    Map.of())));
+    // The → TakenOver transition event carries a DIFFERENT actor than the recovery action; only its
+    // reason (the reviewer free-text, OQ-4 source) must flow through, never its actor/role.
+    when(events.findLatestTransitionToState(RUN, WorkflowState.TAKEN_OVER))
+        .thenReturn(
+            Optional.of(
+                new WorkflowEventRecord(
+                    "evt_takeover123",
+                    RUN,
+                    WorkflowEventType.WORKFLOW_STATE_CHANGED,
+                    WorkflowState.WAITING_FOR_REVIEW,
+                    WorkflowState.TAKEN_OVER,
+                    "transition-actor",
+                    ActorType.SYSTEM,
+                    "continuing in IDE",
+                    null,
+                    true,
+                    takeoverAt.plusSeconds(1),
+                    Map.of())));
+    // The authoritative takeover recovery_actions row supplies who/when/role.
+    when(recoveryActions.findLatestTakeoverForRun(RUN))
+        .thenReturn(
+            Optional.of(
+                new RecoveryActionSnapshot(
+                    "rcv_takeover01",
+                    1L,
+                    RUN,
+                    "takeover",
+                    "evt_trigger001",
+                    "evt_takeover123",
+                    "alex",
+                    ActorType.HUMAN,
+                    "idem-takeover-attr-0001",
+                    "succeeded",
+                    takeoverAt,
+                    "developer")));
+    when(clarifications.countPendingByWorkflowRun(RUN)).thenReturn(0);
+
+    WorkflowRunDetailedSummaryView view = service.getRunSummary(RUN);
+
+    assertEquals("TakenOver", view.currentState());
+    // who/when/role come from the recovery action, not the transition event or the latest event.
+    assertEquals("alex", view.takenOverBy().actorIdentity());
+    assertEquals("human", view.takenOverBy().actorType());
+    assertEquals("developer", view.takenOverBy().reviewerRole());
+    assertEquals(takeoverAt, view.takenOverAt());
+    // reason is the only field sourced from the transition event (OQ-4: no recovery_actions
+    // column).
+    assertEquals("continuing in IDE", view.takenOverReason());
+    verify(recoveryActions).findLatestTakeoverForRun(RUN);
+  }
+
+  @Test
+  void getRunSummaryForNonTakenOverRunSkipsTakeoverLookupAndLeavesAttributionNull() {
+    stubMinimalRunForSummary();
+
+    WorkflowRunDetailedSummaryView view = service.getRunSummary(RUN);
+
+    assertNull(view.takenOverBy());
+    assertNull(view.takenOverAt());
+    assertNull(view.takenOverReason());
+    verify(recoveryActions, org.mockito.Mockito.never()).findLatestTakeoverForRun(RUN);
   }
 
   private void stubMinimalRunForSummary() {

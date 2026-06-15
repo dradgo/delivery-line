@@ -1,0 +1,13 @@
+# Story 3.19 (AC6) — Grafana datasource provisioning: point Grafana at the Prometheus service in the
+# observability compose profile. uid "prometheus" matches the datasource uid referenced by the
+# provisioned dashboards under infra/observability/grafana/dashboards/.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

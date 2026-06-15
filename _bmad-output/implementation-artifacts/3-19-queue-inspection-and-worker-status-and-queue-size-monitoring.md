@@ -1,6 +1,6 @@
 # Story 3.19: Queue Inspection + Worker Status + Queue-Size Monitoring
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -86,40 +86,40 @@ This is an **epic-3b** story that builds directly on 3.17b (queue activation) an
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Read-port + inspection view (AC1, AC3, AC9)**
-  - [ ] Add `RunnerQueueStatus` + `WorkerStatus` as nested public records in `WorkflowInspectionService` (NOT in `application.runner` — Reconciliation 1). Fields per AC1 + `staleQueuedCount`/`staleDispatchedCount` (AC3).
-  - [ ] Extend `RunnerExecutionRecordPort` (+ `RunnerExecutionPersistenceAdapter`) with batch-filterable reads: oldest-queued timestamp, active-leased rows list (`worker_id`,`dispatched_at`,`stage`,run+exec public ids), stale-queued count, stale-dispatched count, recent-throughput count (completed in last 60s). Reuse `countQueued()`; reuse stale window = `staleThresholdMultiplier × stageTimeout`.
-  - [ ] Implement `getRunnerQueueStatus(String batchIdOrNull)` `@Transactional(readOnly = true)`: poolSize from `RunnerWorkerPoolProperties.size()`, counts from the read port, `idleWorkers = max(0, poolSize − activeWorkers)`, `oldestQueuedAgeSeconds` from server-side `now() − min(created_at)`. Validate `batchId` prefix when present; empty/zeroed view when the batch has no rows.
-  - [ ] Drive with a Testcontainers IT (`*IT`) seeding queued/running/leased/stale rows; assert every field. ([[markescalationonce-boolean-returning-bug]] — verify new native SQL on real Postgres, not mocks.)
-- [ ] **Task 2 — CLI `workers status` (AC2, AC3)**
-  - [ ] New `WorkerCommands` `@Component @CommandGroup(name="workers", prefix="deliveryline")` with `@Command(name="status")` taking `--format` (default text) + `--watch`. Inject `WorkflowInspectionService` only.
-  - [ ] Add text + JSON renderers to `WorkflowCommandOutputs` (`schemaVersion` + `LinkedHashMap` → `writeJson`). Yellow/red ANSI on non-zero `staleQueuedCount`/`staleDispatchedCount`; strip ANSI for JSON + non-TTY.
-  - [ ] `--watch`: loop `print → Thread.sleep(intervalMs)`; add the line-anchored `config/checkstyle/suppressions.xml` entry for the `Thread.sleep` forbidden-call ([[checkstyle-suppressions-line-anchored]]).
-  - [ ] Test mirrors `WorkflowBatchCommandsTest` (mock `WorkflowInspectionService`, assert table header + color markers + JSON schema).
-- [ ] **Task 3 — REST `GET /api/v1/runner-queue/status` (AC4, AC9)**
-  - [ ] `RunnerQueueController` (`@RestController @RequestMapping("/api/v1/runner-queue")`) with `@GetMapping("/status")` + optional `@RequestParam(required=false) String batchId`; `@Operation`/`@ApiResponses` for OpenAPI.
-  - [ ] `RunnerQueueStatusResponse` (+ nested `WorkerStatusResponse`) records with `.from(RunnerQueueStatus)`; `@Schema(requiredMode=...)`; camelCase JSON.
-  - [ ] Regenerate snapshot: `mvn ... -Dopenapi.snapshot.write=true` (lifecycle phase, not direct goal — [[maven-arglineation-goal-crash]]), review diff, commit; re-run to confirm green.
-  - [ ] `@WebMvcTest(controllers = RunnerQueueController.class)` contract test (200 happy path, batch-filtered, malformed `batchId` → 400 `INVALID_ID_PREFIX`).
-- [ ] **Task 4 — Prometheus metrics (AC5)**
-  - [ ] Add `io.micrometer:micrometer-registry-prometheus` to `deliveryline-backend/pom.xml` (no version — Boot BOM). Add `management.endpoints.web.exposure.include: health,prometheus` to `src/main/resources/application.yml` AND `src/test/resources/application.yml` (Reconciliation 4).
-  - [ ] `RunnerQueueMetricsBinder implements MeterBinder` (gauges named with DOTS: `deliveryline.runner.pool.size`, `…active.workers`, `…idle.workers`, `…queue.depth`, `…queue.oldest.age.seconds`) — suppliers read the port / `getRunnerQueueStatus`. Register on a long-lived bean (gauge holds a weak ref).
-  - [ ] Counters `deliveryline.runner.dispatched.count` (total) + `deliveryline.runner.completed.count` tagged `{stage,outcome}` incremented at dispatch (RunnerWorkerPool) + completion (RunnerBroker.onResult); `Timer` `deliveryline.runner.dispatch.duration` tagged `{stage}` around dispatch. Instrumentation only — no behavior change.
-- [ ] **Task 5 — Observability infra (AC6, AC7, AC8)**
-  - [ ] Create `infra/observability/prometheus/prometheus.yml` (scrape `deliveryline-backend:8080/actuator/prometheus`, 15s) + `alerts.yml` (the four rules) + `README-alerting.md` (alertmanager opt-in for Slack/email/PagerDuty).
-  - [ ] Create `infra/observability/grafana/dashboards/runner-queue.json` + `grafana/provisioning/` (Prometheus datasource + dashboard auto-load).
-  - [ ] Add `prometheus` + `grafana` services to `docker-compose.yml` under the `observability` profile (version-pinned images, `${PROMETHEUS_HOST_PORT:-9090}` / `${GRAFANA_HOST_PORT:-3000}`). Update `infra/observability/README.md`.
-- [ ] **Task 6 — ArchUnit + foundation gate + remaining tests (AC10, AC11, AC12)**
-  - [ ] ArchUnit `namedRule` (catalog + `@ArchTest`): `RunnerQueueStatus`/`WorkerStatus` referenced only from `WorkflowInspectionService` + `RunnerQueueStatusResponse`. Verify via Failsafe ([[archunit-runs-in-failsafe-not-surefire]]).
-  - [ ] Foundation contract `*FoundationContract` asserting all view fields populated; wire into `FoundationGateVerificationTest`. `@SpringBootTest`+actuator scrapeable check (named `*IT`) asserting `/actuator/prometheus` contains `deliveryline_runner_queue_depth` with value == DB count.
-  - [ ] Grafana JSON parse test; `promtool check rules` test gated on promtool availability (SKIP-not-fail when absent; log the skip).
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, file I/O, HTTP/runner call), and every retry/replay/conflict/recovery branch.
-  - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
-  - [ ] Levels: `INFO` for normal lifecycle (request start/finish, state transitions, decisions taken), `WARN` for recoverable anomalies (replay, conflict, late-or-stale, fallback), `ERROR` only for unhandled failures or invariant breaks. `DEBUG` for hot-path detail.
-  - [ ] Every log must carry the relevant correlation/context keys: `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`, plus the entity's own public id (e.g. `runnerExecutionId`, `batchId`). Use MDC where the framework supports it; otherwise pass as parameters.
-  - [ ] Never log secrets, payload bytes, raw tokens, or full PII. Reference the redaction policy when in doubt.
-  - [ ] Add at least one assertion in a focused test that the expected log line(s) are emitted at the expected level for each new branch (use a list-appender or `OutputCaptureExtension`).
+- [x] **Task 1 — Read-port + inspection view (AC1, AC3, AC9)**
+  - [x] Add `RunnerQueueStatus` + `WorkerStatus` as nested public records in `WorkflowInspectionService` (NOT in `application.runner` — Reconciliation 1). Fields per AC1 + `staleQueuedCount`/`staleDispatchedCount` (AC3).
+  - [x] Extend `RunnerExecutionRecordPort` (+ `RunnerExecutionPersistenceAdapter`) with batch-filterable reads: oldest-queued timestamp, active-leased rows list (`worker_id`,`dispatched_at`,`stage`,run+exec public ids), stale-queued count, stale-dispatched count, recent-throughput count (completed in last 60s). Reuse `countQueued()`; reuse stale window = `staleThresholdMultiplier × stageTimeout`.
+  - [x] Implement `getRunnerQueueStatus(String batchIdOrNull)` `@Transactional(readOnly = true)`: poolSize from `RunnerWorkerPoolProperties.size()`, counts from the read port, `idleWorkers = max(0, poolSize − activeWorkers)`, `oldestQueuedAgeSeconds` from server-side `now() − min(created_at)`. Validate `batchId` prefix when present; empty/zeroed view when the batch has no rows.
+  - [x] Drive with a Testcontainers IT (`*IT`) seeding queued/running/leased/stale rows; assert every field. ([[markescalationonce-boolean-returning-bug]] — verify new native SQL on real Postgres, not mocks.)
+- [x] **Task 2 — CLI `workers status` (AC2, AC3)**
+  - [x] New `WorkerCommands` `@Component @CommandGroup(name="workers", prefix="deliveryline")` with `@Command(name="status")` taking `--format` (default text) + `--watch`. Inject `WorkflowInspectionService` only.
+  - [x] Add text + JSON renderers to `WorkflowCommandOutputs` (`schemaVersion` + `LinkedHashMap` → `writeJson`). Yellow/red ANSI on non-zero `staleQueuedCount`/`staleDispatchedCount`; strip ANSI for JSON + non-TTY.
+  - [x] `--watch`: loop `print → Thread.sleep(intervalMs)`; add the line-anchored `config/checkstyle/suppressions.xml` entry for the `Thread.sleep` forbidden-call ([[checkstyle-suppressions-line-anchored]]).
+  - [x] Test mirrors `WorkflowBatchCommandsTest` (mock `WorkflowInspectionService`, assert table header + color markers + JSON schema).
+- [x] **Task 3 — REST `GET /api/v1/runner-queue/status` (AC4, AC9)**
+  - [x] `RunnerQueueController` (`@RestController @RequestMapping("/api/v1/runner-queue")`) with `@GetMapping("/status")` + optional `@RequestParam(required=false) String batchId`; `@Operation`/`@ApiResponses` for OpenAPI.
+  - [x] `RunnerQueueStatusResponse` (+ nested `WorkerStatusResponse`) records with `.from(RunnerQueueStatus)`; `@Schema(requiredMode=...)`; camelCase JSON.
+  - [x] Regenerate snapshot: `mvn ... -Dopenapi.snapshot.write=true` (lifecycle phase, not direct goal — [[maven-arglineation-goal-crash]]), review diff, commit; re-run to confirm green.
+  - [x] `@WebMvcTest(controllers = RunnerQueueController.class)` contract test (200 happy path, batch-filtered, malformed `batchId` → 400 `INVALID_ID_PREFIX`).
+- [x] **Task 4 — Prometheus metrics (AC5)**
+  - [x] Add `io.micrometer:micrometer-registry-prometheus` to `deliveryline-backend/pom.xml` (no version — Boot BOM). Add `management.endpoints.web.exposure.include: health,prometheus` to `src/main/resources/application.yml` AND `src/test/resources/application.yml` (Reconciliation 4).
+  - [x] `RunnerQueueMetricsBinder implements MeterBinder` (gauges named with DOTS: `deliveryline.runner.pool.size`, `…active.workers`, `…idle.workers`, `…queue.depth`, `…queue.oldest.age.seconds`) — suppliers read the port / `getRunnerQueueStatus`. Register on a long-lived bean (gauge holds a weak ref).
+  - [x] Counters `deliveryline.runner.dispatched.count` (total) + `deliveryline.runner.completed.count` tagged `{stage,outcome}` incremented at dispatch (RunnerWorkerPool) + completion (RunnerBroker.onResult); `Timer` `deliveryline.runner.dispatch.duration` tagged `{stage}` around dispatch. Instrumentation only — no behavior change.
+- [x] **Task 5 — Observability infra (AC6, AC7, AC8)**
+  - [x] Create `infra/observability/prometheus/prometheus.yml` (scrape `deliveryline-backend:8080/actuator/prometheus`, 15s) + `alerts.yml` (the four rules) + `README-alerting.md` (alertmanager opt-in for Slack/email/PagerDuty).
+  - [x] Create `infra/observability/grafana/dashboards/runner-queue.json` + `grafana/provisioning/` (Prometheus datasource + dashboard auto-load).
+  - [x] Add `prometheus` + `grafana` services to `docker-compose.yml` under the `observability` profile (version-pinned images, `${PROMETHEUS_HOST_PORT:-9090}` / `${GRAFANA_HOST_PORT:-3000}`). Update `infra/observability/README.md`.
+- [x] **Task 6 — ArchUnit + foundation gate + remaining tests (AC10, AC11, AC12)**
+  - [x] ArchUnit `namedRule` (catalog + `@ArchTest`): `RunnerQueueStatus`/`WorkerStatus` referenced only from `WorkflowInspectionService` + `RunnerQueueStatusResponse`. Verify via Failsafe ([[archunit-runs-in-failsafe-not-surefire]]).
+  - [x] Foundation contract `*FoundationContract` asserting all view fields populated; wire into `FoundationGateVerificationTest`. `@SpringBootTest`+actuator scrapeable check (named `*IT`) asserting `/actuator/prometheus` contains `deliveryline_runner_queue_depth` with value == DB count.
+  - [x] Grafana JSON parse test; `promtool check rules` test gated on promtool availability (SKIP-not-fail when absent; log the skip).
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, file I/O, HTTP/runner call), and every retry/replay/conflict/recovery branch.
+  - [x] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
+  - [x] Levels: `INFO` for normal lifecycle (request start/finish, state transitions, decisions taken), `WARN` for recoverable anomalies (replay, conflict, late-or-stale, fallback), `ERROR` only for unhandled failures or invariant breaks. `DEBUG` for hot-path detail.
+  - [x] Every log must carry the relevant correlation/context keys: `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`, plus the entity's own public id (e.g. `runnerExecutionId`, `batchId`). Use MDC where the framework supports it; otherwise pass as parameters.
+  - [x] Never log secrets, payload bytes, raw tokens, or full PII. Reference the redaction policy when in doubt.
+  - [x] Add at least one assertion in a focused test that the expected log line(s) are emitted at the expected level for each new branch (use a list-appender or `OutputCaptureExtension`).
 
 ## Dev Notes
 
@@ -180,8 +180,101 @@ Every story is expected to leave the touched services observable enough to debug
 
 ### Agent Model Used
 
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-dev-story workflow.
+
 ### Debug Log References
+
+- Read-port: ONE native aggregate (`QUEUE_COUNTS_SQL`, Postgres `FILTER` + `make_interval` server-side cutoffs) + a leased-running id-then-reread (`LEASED_RUNNING_IDS_SQL`); `:batchId::text` cast keeps the NULL bind typed (3.18's `batch_submission_id` is native-only, no entity field → must be native SQL). Verified on real Postgres via `WorkflowInspectionRunnerQueueIT` (4/0) per [[markescalationonce-boolean-returning-bug]].
+- CLI ANSI: ESC built from `(char) 27` (never a literal control byte in source) after an initial Edit landed a raw ESC ([[literal-nul-byte-binarizes-source]] sibling — ESC doesn't binarize but cleaned anyway via PowerShell byte-replace).
+- `WorkerCommands` two-ctor context-boot crash ("No default constructor found") — fixed with `@Autowired` on the production ctor ([[two-public-constructors-need-autowired]]); only the Testcontainers ITs caught it (fast Surefire never boots the bean).
+- Prometheus scrape 404 in `@SpringBootTest` — Boot's test slice installs `DisableMetricsExportContextCustomizer`; re-enabled per-IT with `@TestPropertySource(management.prometheus.metrics.export.enabled=true)` (NOT in the shared test yml).
+- `--watch` `Thread::sleep` is a method REF (no `Thread.sleep(` paren) so it does NOT trip the `ForbiddenThreadSleep` regex; only the `System.out.println` refresh needed a line-anchored `ForbiddenSystemOut` suppression (anchor re-fixed to line 141 after spotless shifted it; [[checkstyle-suppressions-line-anchored]]). The XML comment must not contain `--` ([[pom-xml-comment-no-double-dash]] sibling).
+- OpenAPI snapshot regenerated via the `integration-test` phase + `-Dopenapi.snapshot.write=true` ([[maven-arglineation-goal-crash]]); frontend `schema.d.ts` regenerated + `check:api` in-sync + prettier-clean ([[openapi-regen-platform-shim]], [[prettier-gate-cascades-ci]]).
+- PowerShell wraps native-exe stderr (Mockito self-attach warning) as a NativeCommandError → spurious exit 1; relied on the `Tests run / BUILD SUCCESS` text, not `$LASTEXITCODE`.
 
 ### Completion Notes List
 
+Implemented story 3.19 as a READ-ONLY inspection + observability layer over the active 3.17a/3.17b queue + the 3.18 batch FK — no queue/worker/dispatch/write path touched.
+
+- **AC1/AC3/AC9 (Task 1):** `RunnerQueueStatus` + `WorkerStatus` nested public records in `WorkflowInspectionService` (`application.workflow`, NOT `application.runner` — the central boundary trap, R1). New `getRunnerQueueStatus(String batchIdOrNull)`; `poolSize` from `RunnerWorkerPoolProperties.size()`, `idleWorkers = max(0, poolSize − activeWorkers)`, per-worker list reconstructed from leased running DB rows (R6). New SPI: `RunnerQueueCounts` record + `loadQueueCounts(...)` + `findLeasedRunning(...)` on `RunnerExecutionRecordPort` (impl native SQL). Added 2 ctor deps to `WorkflowInspectionService` → 8 test ctor sites updated. Non-zero-stale `WARN` logged (Logging contract).
+- **AC2/AC3 (Task 2):** new `WorkerCommands` `@CommandGroup(name="workers")` `status` command (`--format`, `--watch`, `--interval-ms`, `--batch-id`); text + JSON renderers added to `WorkflowCommandOutputs` (`schemaVersion=1`); yellow/red ANSI on non-zero stale + queue depth, stripped for JSON/non-TTY. `--watch` loop seam-injected (gate + sleeper) for deterministic tests.
+- **AC4/AC9 (Task 3):** new `RunnerQueueController` `GET /api/v1/runner-queue/status[?batchId=]` + `RunnerQueueStatusResponse`; malformed `batchId` → 400 `INVALID_ID_PREFIX`. OpenAPI snapshot regenerated (+135 lines).
+- **AC5 (Task 4):** added `micrometer-registry-prometheus` + `management.endpoints.web.exposure.include: health,prometheus` (BOTH main + test yml, R4). `RunnerQueueMetricsBinder` (`infrastructure.observability`) registers the 5 DOT-named gauges reading via the read port (NOT the typed view, so it stays off the AC10 type-reference set; R5). Dispatch counter + `{stage}` duration timer at `executeQueuedDispatch`, completion `{stage,outcome}` counter at `onResult` — instrumented via an optional `@Autowired(required=false)` `MeterRegistry` SETTER on `RunnerBroker` (zero ctor fan-out; defaults to a no-op `SimpleMeterRegistry` in tests). `application.runner.queue` is whitelisted away from `io.micrometer`, so the binder lives in infrastructure and the worker pool is NOT instrumented directly.
+- **AC6/AC7/AC8 (Task 5):** created `infra/observability/prometheus/{prometheus.yml,alerts.yml,README-alerting.md}` (the 4 alert rules; alertmanager documented-only), `infra/observability/grafana/dashboards/runner-queue.json` + Grafana provisioning (datasource + dashboard auto-load); added `prometheus` + `grafana` services to `docker-compose.yml` under the `observability` profile + the reserved `*_HOST_PORT` env keys. R3: 3.7 shipped Kibana, so these dirs were created from scratch.
+- **AC10/AC11/AC12 (Task 6):** ArchUnit `RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS` (allow-set = `WorkflowInspectionService` + `RunnerQueueStatusResponse` + the CLI `WorkerCommands`/`WorkflowCommandOutputs`; the binder is deliberately excluded since it reads via the port). Foundation gate Contract #13: field-coverage `RunnerQueueInspectionFoundationContract` + the scrapeable `RunnerQueuePrometheusScrapeIT` (metric present + value == DB count). Grafana JSON parse test + promtool-gated rule-validity test (SKIP when promtool absent).
+
+**Deviations from epic AC text (live code wins, per Context & Central Reconciliation):** AC10's literal "only WIS + Response" allow-set extended to include the CLI consumer + renderer (the CLI calls the service directly, exactly as `WorkflowCommandOutputs` already references `WorkflowStatusView`); documented on the rule. The `onResult` completion counter buckets the rare handleSuccess-internal artifactRefs-empty failure as "success" (a minor, documented observability approximation). No new `DomainErrorCode`/`WorkflowEventType`/Flyway (R8).
+
+**Verification (PowerShell + local Docker, [[rtk-hook-only-matches-bash]], [[maven-arglineation-goal-crash]]):** fast Surefire 1001/0/12 + checkstyle 0 violations; `ArchitectureBoundaryTest` (Failsafe) 52/0 (new AC10 rule passes); new ITs GREEN — `OpenApiSnapshotContractTest` 1/0 (byte-exact after regen), `RunnerQueueEndpointContractTest` 3/0, `WorkflowInspectionRunnerQueueIT` 4/0, `RunnerQueuePrometheusScrapeIT` 1/0; `-Pfoundation-gate` 19/0 (incl Contract #13); frontend `check:api` in-sync + prettier-clean. **Recommended before merge:** WSL2/Linux clean-env Docker confirm ([[verify-ci-fixes-in-clean-env]], [[wsl-linux-ci-reproduction]]) + the frontend vitest/tsc tier (only the additive generated `schema.d.ts` changed) + code-review with a different LLM.
+
 ### File List
+
+**New — main:**
+- `deliveryline-backend/src/main/java/org/dradgo/application/runner/spi/RunnerQueueCounts.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkerCommands.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RunnerQueueController.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RunnerQueueStatusResponse.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/observability/RunnerQueueMetricsBinder.java`
+
+**Modified — main:**
+- `deliveryline-backend/src/main/java/org/dradgo/application/runner/spi/RunnerExecutionRecordPort.java` (2 read methods)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/RunnerExecutionPersistenceAdapter.java` (native SQL impls)
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java` (`getRunnerQueueStatus` + 2 nested records + 2 ctor deps)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (queue-status renderers)
+- `deliveryline-backend/src/main/java/org/dradgo/application/runner/RunnerBroker.java` (dispatch/completion meters via optional MeterRegistry setter)
+- `deliveryline-backend/pom.xml` (`micrometer-registry-prometheus`)
+- `deliveryline-backend/src/main/resources/application.yml` (`management` exposure)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated, +135)
+
+**New — test:**
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionRunnerQueueIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceRunnerQueueTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/WorkerCommandsTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/RunnerQueueEndpointContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/RunnerQueuePrometheusScrapeIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/infrastructure/observability/RunnerQueueMetricsBinderTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/observability/RunnerQueueObservabilityAssetsTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/foundation/RunnerQueueInspectionFoundationContract.java`
+
+**Modified — test:**
+- `deliveryline-backend/src/test/resources/application.yml` (`management` exposure)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java` (+ AC10 rule)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java` (register rule)
+- `deliveryline-backend/src/test/java/org/dradgo/foundation/FoundationGateVerificationTest.java` (Contract #13)
+- 8× `WorkflowInspectionService*Test.java` (ctor arity)
+
+**New — infra/observability:**
+- `infra/observability/prometheus/prometheus.yml`, `alerts.yml`, `README-alerting.md`
+- `infra/observability/grafana/dashboards/runner-queue.json`
+- `infra/observability/grafana/provisioning/datasources/prometheus.yml`
+- `infra/observability/grafana/provisioning/dashboards/dashboards.yml`
+
+**Modified — infra/config:**
+- `docker-compose.yml` (prometheus + grafana services + volumes)
+- `.env.example` (`PROMETHEUS_HOST_PORT` / `GRAFANA_HOST_PORT` / `GRAFANA_ADMIN_PASSWORD`)
+- `infra/observability/README.md` (Prometheus/Grafana section)
+- `config/checkstyle/suppressions.xml` (`WorkerCommands` ForbiddenSystemOut)
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated)
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-06-15 | Story 3.19 implemented: runner-queue inspection (`WorkflowInspectionService.getRunnerQueueStatus`) + `deliveryline workers status` CLI + `GET /api/v1/runner-queue/status` REST + Prometheus metrics (5 gauges + dispatch/completion counters/timer) + Grafana dashboard + alert rules + compose services. ArchUnit AC10 rule + foundation-gate Contract #13. All tasks complete; Status → review. |
+
+## Review Findings
+
+> Adversarial code review (bmad-code-review) — 2026-06-15. Three layers (Blind Hunter, Edge-Case Hunter, Acceptance Auditor). Acceptance Auditor independently verified AC1–AC12 are fully and faithfully implemented; all findings below are robustness/polish, no missing-AC or spec-contradiction. Scope was story 3.19 only (3.22 changes intermingled in shared files were excluded). 5 findings dismissed as noise.
+
+### Patch
+
+- [x] [Review][Patch] `--watch` loop terminates on a single transient `RuntimeException` from `getRunnerQueueStatus` — only `InterruptedException` is caught; a DB blip ends the whole monitor session (the metrics binder, by contrast, serves the last snapshot). Wrap the per-tick `renderTick`/`emit` in a `try/catch (RuntimeException)` that logs + continues. [deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkerCommands.java:117-129]
+- [x] [Review][Patch] REST `?batchId=` (empty/whitespace) diverges from the CLI — controller forwards `batchId` verbatim so a blank value hits `PublicIdPrefixes.require("")` → 400 `INVALID_ID_PREFIX`, while the CLI runs `emptyToNull` first and returns the global view. Normalize blank→null (mirror `emptyToNull`, ideally in the service seam so both transports agree). [deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RunnerQueueController.java:59-65]
+- [x] [Review][Patch] `colorStale` renders red at `>= QUEUE_DEPTH_CRITICAL` (200), borrowing the queue-depth threshold for a semantically unrelated stale count and contradicting the field's own comment ("yellow whenever non-zero") + AC3 (AC7 defines no stale-count critical). Make stale counts always yellow when non-zero (drop the borrowed red branch) or use a stale-specific threshold. [deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java (colorStale)]
+- [x] [Review][Patch] `recentThroughputPerMinute` is the raw `recentThroughput` count over `THROUGHPUT_WINDOW`, passed through unscaled — correct only because the window is hard-coded to exactly 60s. The "per minute" wire/JSON/REST field silently mislabels if the window ever changes. Normalize `recentThroughput * 60.0 / THROUGHPUT_WINDOW.toSeconds()` (or pin the equality with a test). [deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java:399]
+- [x] [Review][Patch] Worker-detail fields (`state`, `currentRunnerExecutionId`, `currentWorkflowRunId`, `currentStage`) are appended raw in the text renderer while `workerId` is passed through `escapeForText` — inconsistent control-char escaping for fields of the same row. Apply `escapeForText` consistently (low risk today: values are DB public ids / enum / "busy"). [deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java (renderQueueStatusText worker loop)]
+
+### Deferred
+
+- [x] [Review][Defer] `findLeasedRunning` does one JPA `findByPublicId` per leased id (N+1, cap 1024 not pool-size), and a row completing between the id-select and re-read is silently dropped — so `workers.size()` can fall below the `activeWorkers` scalar (separate query, READ COMMITTED). Low impact (bounded ≤ pool size in practice; observability-only skew). [deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/RunnerExecutionPersistenceAdapter.java (findLeasedRunning)] — deferred
+- [x] [Review][Defer] `staleDispatchedCount` uses `maxStaleWindow()` (slowest stage) uniformly, so a hung fast-stage dispatched row is under-counted until the slowest window elapses. Currently **inert** — both stage timeouts are 600s, so max == per-stage; only bites if the timeouts diverge. [deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java (maxStaleWindow)] — deferred

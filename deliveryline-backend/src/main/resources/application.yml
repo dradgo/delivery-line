@@ -1,3 +1,12 @@
+# Story 3.19 (AC5) — expose Actuator's Prometheus scrape endpoint (and health) so the optional
+# observability stack (AR25) can scrape runner-queue metrics at /actuator/prometheus. Only these two
+# endpoints are exposed; everything else stays off the web surface.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
 spring:
   application:
     name: deliveryline

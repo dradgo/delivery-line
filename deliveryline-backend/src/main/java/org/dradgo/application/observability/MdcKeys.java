@@ -29,6 +29,14 @@ public final class MdcKeys {
   // Story 3.17b — the RunnerWorkerPool worker-thread lease holder, carried on every worker-loop +
   // dispatch log so a multi-worker pool's lines are attributable.
   public static final String WORKER_ID = "workerId";
+  // Story 3.22 (review finding) — developer-takeover audit context. DeveloperTakeoverService stamps
+  // these so every takeover log line (and shipped JSON event) is attributable to the actor, the
+  // idempotency envelope, and the resulting recovery_actions row. actorIdentity is an actor handle
+  // (already emitted as a message param), NOT raw PII; the reviewer reasonText is NEVER promoted.
+  public static final String IDEMPOTENCY_KEY = "idempotencyKey";
+  public static final String ACTOR_IDENTITY = "actorIdentity";
+  public static final String ACTOR_TYPE = "actorType";
+  public static final String RECOVERY_ACTION_ID = "recoveryActionId";
 
   public static final Set<String> ALL =
       Set.of(
@@ -38,7 +46,11 @@ public final class MdcKeys {
           ARTIFACT_ID,
           ARTIFACT_OPERATION_ID,
           APPROVAL_ID,
-          WORKER_ID);
+          WORKER_ID,
+          IDEMPOTENCY_KEY,
+          ACTOR_IDENTITY,
+          ACTOR_TYPE,
+          RECOVERY_ACTION_ID);
 
   private MdcKeys() {
     throw new AssertionError("no instances");

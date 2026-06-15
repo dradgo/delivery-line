@@ -137,6 +137,54 @@ public class RunnerBroker {
   private final TransactionTemplate perItemTransactionTemplate;
   private final Clock clock;
 
+  // Story 3.19 (AC5) — dispatch/completion instrumentation. Optional SETTER injection (not a ctor
+  // arg) so none of the five constructors — nor the four external test call sites — change: tests
+  // keep the default no-op SimpleMeterRegistry (metrics go nowhere), production gets the Prometheus
+  // registry wired by Spring. Meters named with DOTS (Prometheus underscores them, Reconciliation
+  // 5).
+  private io.micrometer.core.instrument.MeterRegistry meterRegistry =
+      new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setMeterRegistry(io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    if (meterRegistry != null) {
+      this.meterRegistry = meterRegistry;
+    }
+  }
+
+  // Story 3.19 (AC5) — count a dispatch + record its duration (histogram, tagged stage), on the
+  // successful-dispatch path. Exception-safe.
+  private void recordDispatchMetrics(
+      io.micrometer.core.instrument.Timer.Sample sample, RunnerStage stage) {
+    try {
+      sample.stop(
+          meterRegistry.timer(
+              "deliveryline.runner.dispatch.duration",
+              "stage",
+              stage == null ? "unknown" : stage.value()));
+      meterRegistry.counter("deliveryline.runner.dispatched.count").increment();
+    } catch (RuntimeException ignored) {
+      // never let instrumentation break the dispatch path
+    }
+  }
+
+  // Story 3.19 (AC5) — record the runner-completion outcome counter, tagged by stage + outcome.
+  // Exception-safe: a metrics failure must never affect result processing.
+  private void recordCompletion(RunnerStage stage, String outcome) {
+    try {
+      meterRegistry
+          .counter(
+              "deliveryline.runner.completed.count",
+              "stage",
+              stage == null ? "unknown" : stage.value(),
+              "outcome",
+              outcome)
+          .increment();
+    } catch (RuntimeException ignored) {
+      // never let instrumentation break the dispatch/result path
+    }
+  }
+
   @org.springframework.beans.factory.annotation.Autowired
   public RunnerBroker(
       RunnerExecutionRecordPort recordPort,
@@ -870,7 +918,12 @@ public class RunnerBroker {
                 composed.bundle().effectiveClassification(),
                 composed.resolvedRepositoryRef(),
                 composed.resolvedTicketRef());
+        // Story 3.19 (AC5) — time the adapter dispatch (histogram, tagged stage) + count
+        // dispatches.
+        io.micrometer.core.instrument.Timer.Sample dispatchSample =
+            io.micrometer.core.instrument.Timer.start(meterRegistry);
         RunnerDispatchAck ack = runnerAdapter.dispatch(request);
+        recordDispatchMetrics(dispatchSample, stage);
         // Docker path's RUNNER_DISPATCHED is a JPA write — wrap it in a tx (the worker has no
         // ambient one). Mock path appended RUNNER_STARTED above and this is a no-op.
         dispatchTransactionTemplate.executeWithoutResult(
@@ -1089,6 +1142,11 @@ public class RunnerBroker {
     String workflowRunId = row.workflowRunPublicId();
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    // Story 3.19 (AC5) — completion outcome recorded once at exit (the branches below set it). A
+    // late result is bucketed "late_result"; the handleSuccess artifactRefs-empty sub-branch routes
+    // to failure internally and is the one case counted "success" (a known minor approximation for
+    // an observability counter, documented here).
+    String completionOutcome = null;
     try {
 
       // AC5 split (late-result branch): a row that has already been marked TIMED_OUT or ORPHANED
@@ -1096,9 +1154,18 @@ public class RunnerBroker {
       // RUNNER_FAILED with runner_late_result and forward artifact references via
       // ArtifactOperationService (which already marks them late_or_stale per 1.12 AC10), but
       // do NOT change the workflow-run state. Operator-driven recovery owns that path.
+      if (row.status() == RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER) {
+        log.info(
+            "onResult ignored runnerExecutionId={} workflowRunId={} reason=cancelled_for_takeover",
+            runnerExecutionId,
+            workflowRunId);
+        completionOutcome = "late_result";
+        return;
+      }
       if (row.status() == RunnerExecutionStatus.TIMED_OUT
           || row.status() == RunnerExecutionStatus.ORPHANED) {
         handleLateResult(runnerExecutionId, workflowRunId, row, payloadBytes);
+        completionOutcome = "late_result";
         return;
       }
 
@@ -1112,6 +1179,7 @@ public class RunnerBroker {
         FailureCategory category = classifyValidationFailure(result.errors());
         handleFailedValidation(
             runnerExecutionId, workflowRunId, row, category, result, payloadBytes);
+        completionOutcome = "failure";
         return;
       }
 
@@ -1130,6 +1198,7 @@ public class RunnerBroker {
                     new ValidationError(
                         ValidationErrorCode.JSON_PARSE_FAILED, "$", error.getMessage()))),
             payloadBytes);
+        completionOutcome = "failure";
         return;
       }
 
@@ -1138,11 +1207,16 @@ public class RunnerBroker {
           && failureCategoryNode.isTextual()
           && !failureCategoryNode.asText().isBlank()) {
         handleNonZeroExit(runnerExecutionId, workflowRunId, failureCategoryNode.asText());
+        completionOutcome = "failure";
         return;
       }
 
       handleSuccess(runnerExecutionId, workflowRunId, row, parsed);
+      completionOutcome = "success";
     } finally {
+      if (completionOutcome != null) {
+        recordCompletion(row.stage(), completionOutcome);
+      }
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }

@@ -6,9 +6,12 @@ import org.dradgo.domain.registry.ActorType;
  * SPI write command for inserting a row into {@code recovery_actions} (story 1.18 Task 2).
  *
  * <p>Field set mirrors the V1 schema column set excluding server-defaults ({@code id}, {@code
- * public_id}, {@code created_at}) which the adapter generates / the database supplies. {@code
- * reviewer_role} is intentionally not exposed — Epic 4's takeover/reconcile surface owns it; story
- * 1.18 always persists NULL.
+ * public_id}, {@code created_at}) which the adapter generates / the database supplies.
+ *
+ * <p>Story 3.22 (AC3 / OQ-6): {@code reviewerRole} is now exposed additively for the developer
+ * takeover path, which persists {@code reviewer_role='developer'} (the takeover invariant — Trap
+ * T2: NOT a field on {@code TakeoverWorkflowCommand}). Story 1.18 retry leaves it {@code null} via
+ * the 8-arg convenience constructor, preserving every existing call site.
  *
  * @param workflowRunPublicId required FK target ({@code run_…})
  * @param actionType one of {@code retry, rerun, resume, takeover, pause, reconcile}
@@ -21,6 +24,8 @@ import org.dradgo.domain.registry.ActorType;
  * @param resultStatus one of {@code pending, succeeded, failed} — start with {@code pending} and
  *     flip via {@link RecoveryActionRecordPort#markSucceeded(String)} / {@link
  *     RecoveryActionRecordPort#markFailed(String)}.
+ * @param reviewerRole nullable {@code reviewer_role} — {@code 'developer'} for takeover; {@code
+ *     null} for retry
  */
 public record RecoveryActionWriteCommand(
     String workflowRunPublicId,
@@ -30,4 +35,28 @@ public record RecoveryActionWriteCommand(
     String actorIdentity,
     ActorType actorType,
     String idempotencyKey,
-    String resultStatus) {}
+    String resultStatus,
+    String reviewerRole) {
+
+  /** Story 1.18 convenience constructor — persists {@code reviewer_role = null} (retry path). */
+  public RecoveryActionWriteCommand(
+      String workflowRunPublicId,
+      String actionType,
+      String triggeringEventPublicId,
+      String resultingEventPublicId,
+      String actorIdentity,
+      ActorType actorType,
+      String idempotencyKey,
+      String resultStatus) {
+    this(
+        workflowRunPublicId,
+        actionType,
+        triggeringEventPublicId,
+        resultingEventPublicId,
+        actorIdentity,
+        actorType,
+        idempotencyKey,
+        resultStatus,
+        null);
+  }
+}

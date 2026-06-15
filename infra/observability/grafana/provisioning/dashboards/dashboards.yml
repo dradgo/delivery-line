@@ -1,0 +1,16 @@
+# Story 3.19 (AC6) — Grafana dashboard provider: auto-load every dashboard JSON mounted under
+# /var/lib/grafana/dashboards (the docker-compose grafana service mounts
+# infra/observability/grafana/dashboards there read-only).
+apiVersion: 1
+
+providers:
+  - name: DeliveryLine
+    orgId: 1
+    folder: DeliveryLine
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

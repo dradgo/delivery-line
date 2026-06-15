@@ -49,7 +49,10 @@ class WorkflowInspectionServiceClarificationTest {
           recovery,
           runnerExecutions,
           scratchStore,
-          clarifications);
+          clarifications,
+          mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
+          org.dradgo.application.runner.RunnerProperties.defaults(),
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
 
   @Test
   void getClarificationsProjectsOrderedRowsFromTheReadPort() {

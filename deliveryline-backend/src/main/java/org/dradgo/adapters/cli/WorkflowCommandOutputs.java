@@ -9,6 +9,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
+import org.dradgo.application.workflow.WorkflowInspectionService.RunnerQueueStatus;
+import org.dradgo.application.workflow.WorkflowInspectionService.WorkerStatus;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
@@ -37,6 +39,19 @@ public class WorkflowCommandOutputs {
 
   static final int STATUS_SCHEMA_VERSION = 1;
   static final int HISTORY_SCHEMA_VERSION = 1;
+  static final int QUEUE_STATUS_SCHEMA_VERSION = 1;
+
+  // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
+  // rules in infra/observability/prometheus/alerts.yml (warn 50 / critical 200). The stale-count
+  // fields render yellow whenever non-zero (a stale row is itself the anomaly — AC3).
+  private static final long QUEUE_DEPTH_WARN = 50L;
+  private static final long QUEUE_DEPTH_CRITICAL = 200L;
+  // ESC built from its code point (never a literal control byte in source — keeps the file text,
+  // see the literal-control-byte lesson).
+  private static final String ESC = Character.toString((char) 27);
+  private static final String ANSI_YELLOW = ESC + "[33m";
+  private static final String ANSI_RED = ESC + "[31m";
+  private static final String ANSI_RESET = ESC + "[0m";
 
   private final ObjectMapper objectMapper;
 
@@ -235,6 +250,105 @@ public class WorkflowCommandOutputs {
     }
     payload.put("events", events);
     return writeJson(payload);
+  }
+
+  /**
+   * Story 3.19 (AC2/AC3) — text rendering of the runner-queue + worker-pool inspection view. {@code
+   * ansi} gates the yellow/red color codes: the caller passes {@code true} only for an interactive
+   * TTY in text mode, {@code false} for a non-TTY pipe (so {@code grep}/{@code awk} see clean
+   * text). Stale counts render yellow when non-zero; the queue-depth line is yellow at/above the
+   * warn threshold and red at/above the critical threshold (mirrors the alert rules).
+   */
+  public String renderQueueStatusText(RunnerQueueStatus view, boolean ansi) {
+    StringBuilder out = new StringBuilder();
+    out.append("pool size: ").append(view.poolSize()).append('\n');
+    out.append("active workers: ").append(view.activeWorkers()).append('\n');
+    out.append("idle workers: ").append(view.idleWorkers()).append('\n');
+    out.append("queue depth: ").append(colorQueueDepth(view.queueDepth(), ansi)).append('\n');
+    out.append("oldest queued at: ").append(formatTimestamp(view.oldestQueuedAt())).append('\n');
+    out.append("oldest queued age (s): ").append(view.oldestQueuedAgeSeconds()).append('\n');
+    out.append("in-flight executions: ").append(view.inFlightExecutions()).append('\n');
+    out.append("throughput (per min): ").append(view.recentThroughputPerMinute()).append('\n');
+    out.append("stale queued: ").append(colorStale(view.staleQueuedCount(), ansi)).append('\n');
+    out.append("stale dispatched: ")
+        .append(colorStale(view.staleDispatchedCount(), ansi))
+        .append('\n');
+    out.append("workers:");
+    if (view.workers().isEmpty()) {
+      out.append(" (none busy)");
+    } else {
+      for (WorkerStatus worker : view.workers()) {
+        // Escape every free-form field consistently (escapeForText is null-safe → "(none)"), not
+        // just workerId — the per-line format must stay un-splittable for grep/awk regardless of
+        // which column carries the value.
+        out.append("\n  ")
+            .append(escapeForText(worker.workerId()))
+            .append(' ')
+            .append(escapeForText(worker.state()))
+            .append(" rex=")
+            .append(escapeForText(worker.currentRunnerExecutionId()))
+            .append(" run=")
+            .append(escapeForText(worker.currentWorkflowRunId()))
+            .append(" stage=")
+            .append(escapeForText(worker.currentStage()))
+            .append(" dispatchedAt=")
+            .append(formatTimestamp(worker.dispatchedAt()));
+      }
+    }
+    return out.toString();
+  }
+
+  /**
+   * Story 3.19 (AC2) — stable-schema JSON for the runner-queue view. No ANSI ever (AC3); consumed
+   * by scripts + Grafana-adjacent tooling. {@code schemaVersion} pins backward compatibility.
+   */
+  public String renderQueueStatusJson(RunnerQueueStatus view) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", QUEUE_STATUS_SCHEMA_VERSION);
+    payload.put("poolSize", view.poolSize());
+    payload.put("activeWorkers", view.activeWorkers());
+    payload.put("idleWorkers", view.idleWorkers());
+    payload.put("queueDepth", view.queueDepth());
+    payload.put(
+        "oldestQueuedAt",
+        view.oldestQueuedAt() == null ? null : canonicalUtcIso(view.oldestQueuedAt()));
+    payload.put("oldestQueuedAgeSeconds", view.oldestQueuedAgeSeconds());
+    payload.put("inFlightExecutions", view.inFlightExecutions());
+    payload.put("recentThroughputPerMinute", view.recentThroughputPerMinute());
+    payload.put("staleQueuedCount", view.staleQueuedCount());
+    payload.put("staleDispatchedCount", view.staleDispatchedCount());
+    java.util.List<Map<String, Object>> workers = new java.util.ArrayList<>();
+    for (WorkerStatus worker : view.workers()) {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("workerId", worker.workerId());
+      entry.put("state", worker.state());
+      entry.put("currentRunnerExecutionId", worker.currentRunnerExecutionId());
+      entry.put("currentWorkflowRunId", worker.currentWorkflowRunId());
+      entry.put(
+          "dispatchedAt",
+          worker.dispatchedAt() == null ? null : canonicalUtcIso(worker.dispatchedAt()));
+      entry.put("currentStage", worker.currentStage());
+      workers.add(entry);
+    }
+    payload.put("workers", workers);
+    return writeJson(payload);
+  }
+
+  private static String colorStale(long value, boolean ansi) {
+    if (value == 0L || !ansi) {
+      return Long.toString(value);
+    }
+    // A stale row is itself the anomaly (AC3): yellow whenever non-zero. AC7 defines no stale-count
+    // critical threshold, so we do NOT borrow the (unrelated) queue-depth red threshold here.
+    return ANSI_YELLOW + value + ANSI_RESET;
+  }
+
+  private static String colorQueueDepth(long depth, boolean ansi) {
+    if (!ansi || depth < QUEUE_DEPTH_WARN) {
+      return Long.toString(depth);
+    }
+    String color = depth >= QUEUE_DEPTH_CRITICAL ? ANSI_RED : ANSI_YELLOW;
+    return color + depth + ANSI_RESET;
   }
 
   private String writeJson(Map<String, Object> payload) {

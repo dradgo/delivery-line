@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.WorkflowEventEntity;
 import org.dradgo.adapters.persistence.mapper.WorkflowEventEntityMapper;
@@ -63,6 +64,20 @@ public class WorkflowEventPersistenceAdapter
   public Optional<WorkflowEventRecord> findLatestByWorkflowRunPublicId(String workflowRunPublicId) {
     return workflowEventRepository
         .findFirstLatestByWorkflowRunPublicId(workflowRunPublicId)
+        .map(workflowEventEntityMapper::toRecord);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<WorkflowEventRecord> findLatestTransitionToState(
+      String workflowRunPublicId, org.dradgo.domain.registry.WorkflowState targetState) {
+    return workflowEventRepository
+        .findLatestTransitionToState(
+            workflowRunPublicId,
+            Objects.requireNonNull(targetState, "targetState").value(),
+            org.springframework.data.domain.PageRequest.of(0, 1))
+        .stream()
+        .findFirst()
         .map(workflowEventEntityMapper::toRecord);
   }
 

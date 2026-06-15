@@ -22,6 +22,10 @@ public interface WorkflowEventReadPort {
    */
   Optional<WorkflowEventRecord> findLatestByWorkflowRunPublicId(String workflowRunPublicId);
 
+  /** Latest state-change event whose resulting state equals {@code targetState}. */
+  Optional<WorkflowEventRecord> findLatestTransitionToState(
+      String workflowRunPublicId, org.dradgo.domain.registry.WorkflowState targetState);
+
   /**
    * Latest event marking a transition into the {@code Failed} state — i.e. the most recent {@code
    * workflow_events} row with {@code resulting_state = 'Failed'} and {@code prior_state IS NOT

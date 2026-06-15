@@ -10,6 +10,7 @@
     "view_diagnostics",
     "clear_escalation_marker",
     "accept_implementation",
-    "reject_implementation"
+    "reject_implementation",
+    "takeover_workflow"
   ]
 }

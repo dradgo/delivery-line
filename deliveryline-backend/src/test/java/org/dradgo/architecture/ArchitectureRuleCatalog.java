@@ -775,6 +775,26 @@ final class ArchitectureRuleCatalog {
                           "retry", String.class, String.class, ActorContext.class, String.class),
                       methodSignature("describeFailure", String.class))));
 
+  // Story 3.22 (Trap T1): DeveloperTakeoverService is the SIBLING of RecoveryService (not a third
+  // method on it). Pin its public surface to exactly takeoverWorkflow so a future story cannot
+  // silently widen it without an explicit scope decision (mirrors
+  // RECOVERY_SERVICE_IS_SCOPE_PROTECTED).
+  static final ArchRule DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED =
+      namedRule(
+          "DeveloperTakeoverService must expose only the takeoverWorkflow public method signature",
+          "Remediation: DeveloperTakeoverService is the canonical executor for the takeover action "
+              + "(story 3.22). Adding another public method is a scope change — update the story and "
+              + "this guard together.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.recovery.DeveloperTakeoverService")
+              .should(
+                  exposeOnlyPublicMethodSignatures(
+                      methodSignature(
+                          "takeoverWorkflow",
+                          org.dradgo.application.workflow.commands.TakeoverWorkflowCommand
+                              .class))));
+
   static final ArchRule LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
       namedRule(
           "Linear-specific GraphQL types must not leak through the application.integration.linear port",
@@ -959,6 +979,46 @@ final class ArchitectureRuleCatalog {
               .should()
               .dependOnClassesThat()
               .haveFullyQualifiedName(AllowedAction.class.getName()));
+
+  /**
+   * Story 3.19 (AC10) — the runner-queue typed views ({@code
+   * WorkflowInspectionService.RunnerQueueStatus} + {@code .WorkerStatus}, nested in {@code
+   * application.workflow}) may be referenced ONLY from {@code WorkflowInspectionService} (the
+   * producer), the REST {@code RunnerQueueStatusResponse} translator, and the CLI {@code workers
+   * status} surface ({@code WorkerCommands} + the {@code WorkflowCommandOutputs} renderer). Mirror
+   * of {@link #ALLOWED_ACTION_DERIVATION_LIVES_ONLY_IN_WORKFLOW_INSPECTION_SERVICE}. Enforces "all
+   * queue-status reading goes through {@code getRunnerQueueStatus}": the Prometheus exporter
+   * deliberately reads via the {@code RunnerExecutionRecordPort} read port (AC10 permits "service
+   * OR read port") and so never references these view types — keeping it OUT of the allow-list
+   * below.
+   *
+   * <p>The CLI consumer + renderer are in the allow-list (unlike the AllowedAction mirror, where
+   * the CLI consumes the already-translated REST response): the {@code workers status} command
+   * calls the inspection service directly and the typed view is its return type, exactly as {@code
+   * WorkflowCommandOutputs} already references {@code WorkflowStatusView}/{@code
+   * WorkflowHistoryView}.
+   */
+  static final ArchRule RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS =
+      namedRule(
+          "RunnerQueueStatus / WorkerStatus may only be referenced from WorkflowInspectionService (application), RunnerQueueStatusResponse (adapters.rest), and the CLI workers-status surface (WorkerCommands + WorkflowCommandOutputs)",
+          "Remediation: route all runner-queue-status reading through WorkflowInspectionService.getRunnerQueueStatus (story 3.19 AC10). Prometheus/other readers must use the RunnerExecutionRecordPort read port, not the typed view; only the REST response translates the typed view to the wire shape.",
+          noClasses()
+              .that()
+              .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService(\\$.*)?")
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.adapters\\.rest\\.RunnerQueueStatusResponse(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkerCommands(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkflowCommandOutputs(\\$.*)?")
+              .should()
+              .dependOnClassesThat()
+              .haveNameMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService\\$(RunnerQueueStatus|WorkerStatus)"));
 
   private ArchitectureRuleCatalog() {}
 

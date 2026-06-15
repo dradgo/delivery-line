@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/runner-queue/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runner worker-pool state, queue depth, oldest-queued age, stale counts, and per-worker current work. Optional batchId scopes the counts + workers to one batch. */
+        get: operations["getRunnerQueueStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows": {
         parameters: {
             query?: never;
@@ -433,6 +450,28 @@ export interface components {
             correlationId?: string;
             reasonText?: string;
         };
+        RunnerQueueStatusResponse: {
+            /** Format: int64 */
+            activeWorkers: number;
+            /** Format: int64 */
+            idleWorkers: number;
+            /** Format: int64 */
+            inFlightExecutions: number;
+            /** Format: int64 */
+            oldestQueuedAgeSeconds: number;
+            oldestQueuedAt?: string;
+            /** Format: int32 */
+            poolSize: number;
+            /** Format: int64 */
+            queueDepth: number;
+            /** Format: int64 */
+            recentThroughputPerMinute: number;
+            /** Format: int64 */
+            staleDispatchedCount: number;
+            /** Format: int64 */
+            staleQueuedCount: number;
+            workers: components["schemas"]["WorkerStatusResponse"][];
+        };
         SubmitWorkflowRequest: {
             actorIdentity: string;
             /** @enum {string} */
@@ -459,6 +498,14 @@ export interface components {
             rejectionReason?: string;
             runId?: string;
             ticketRef: string;
+        };
+        WorkerStatusResponse: {
+            currentRunnerExecutionId?: string;
+            currentStage?: string;
+            currentWorkflowRunId?: string;
+            dispatchedAt?: string;
+            state: string;
+            workerId: string;
         };
         /** @description Current status detail of a workflow run. */
         WorkflowDetail: {
@@ -625,6 +672,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getRunnerQueueStatus: {
+        parameters: {
+            query?: {
+                /** @description Scope queue depth + workers to one batch (bat_...) */
+                batchId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current runner-queue + worker-pool status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerQueueStatusResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX — the supplied batchId is not a bat_ public id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     listWorkflows: {
         parameters: {
             query?: {

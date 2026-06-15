@@ -21,6 +21,8 @@ import org.dradgo.domain.registry.ActorType;
  * @param idempotencyKey idempotency key
  * @param resultStatus one of {@code pending, succeeded, failed}
  * @param createdAt row creation timestamp (UTC)
+ * @param reviewerRole nullable {@code reviewer_role} — {@code 'developer'} for takeover (story
+ *     3.22), {@code null} for retry
  */
 public record RecoveryActionSnapshot(
     String publicId,
@@ -33,4 +35,36 @@ public record RecoveryActionSnapshot(
     ActorType actorType,
     String idempotencyKey,
     String resultStatus,
-    OffsetDateTime createdAt) {}
+    OffsetDateTime createdAt,
+    String reviewerRole) {
+
+  /**
+   * Story 1.18 convenience constructor — {@code reviewer_role = null} (retry path / test fixtures).
+   */
+  public RecoveryActionSnapshot(
+      String publicId,
+      Long internalId,
+      String workflowRunPublicId,
+      String actionType,
+      String triggeringEventPublicId,
+      String resultingEventPublicId,
+      String actorIdentity,
+      ActorType actorType,
+      String idempotencyKey,
+      String resultStatus,
+      OffsetDateTime createdAt) {
+    this(
+        publicId,
+        internalId,
+        workflowRunPublicId,
+        actionType,
+        triggeringEventPublicId,
+        resultingEventPublicId,
+        actorIdentity,
+        actorType,
+        idempotencyKey,
+        resultStatus,
+        createdAt,
+        null);
+  }
+}

@@ -177,6 +177,10 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.RECOVERY_SERVICE_IS_SCOPE_PROTECTED;
 
   @ArchTest
+  static final ArchRule developer_takeover_service_is_scope_protected =
+      ArchitectureRuleCatalog.DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED;
+
+  @ArchTest
   static final ArchRule specification_artifact_projection_lives_in_application_artifact =
       ArchitectureRuleCatalog.SPECIFICATION_ARTIFACT_PROJECTION_LIVES_IN_APPLICATION_ARTIFACT;
 
@@ -221,4 +225,9 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule runner_secrets_service_scope =
       ArchitectureRuleCatalog.RUNNER_SECRETS_SERVICE_SCOPE;
+
+  @ArchTest
+  static final ArchRule runner_queue_status_views_referenced_only_by_inspection_and_transports =
+      ArchitectureRuleCatalog
+          .RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS;
 }

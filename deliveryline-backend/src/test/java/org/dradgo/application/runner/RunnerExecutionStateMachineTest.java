@@ -140,4 +140,51 @@ class RunnerExecutionStateMachineTest {
     assertFalse(RunnerExecutionStateMachine.isTerminal(RunnerExecutionStatus.PENDING));
     assertFalse(RunnerExecutionStateMachine.isTerminal(RunnerExecutionStatus.RUNNING));
   }
+
+  // Story 3.22 (AC5 / Trap T4) — developer-takeover cancellation edges.
+  @Test
+  void pendingAndRunningCanBeCancelledForTakeover() {
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.PENDING, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.RUNNING, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+  }
+
+  @Test
+  void queuedAllowsRunningAndCancelledForTakeoverOnly() {
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.QUEUED, RunnerExecutionStatus.RUNNING));
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.QUEUED, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+    DomainException illegal =
+        assertThrows(
+            DomainException.class,
+            () ->
+                RunnerExecutionStateMachine.assertCanTransition(
+                    REX, RunnerExecutionStatus.QUEUED, RunnerExecutionStatus.COMPLETED));
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, illegal.errorCode());
+    assertEquals("transition_not_allowed", illegal.details().get("reason"));
+  }
+
+  @Test
+  void cancelledForTakeoverIsTerminalAndLocked() {
+    assertTrue(
+        RunnerExecutionStateMachine.isTerminal(RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+    for (RunnerExecutionStatus target : RunnerExecutionStatus.values()) {
+      assertThrows(
+          DomainException.class,
+          () ->
+              RunnerExecutionStateMachine.assertCanTransition(
+                  REX, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER, target),
+          () -> "terminal cancelled_for_takeover must not transition to " + target);
+    }
+  }
 }

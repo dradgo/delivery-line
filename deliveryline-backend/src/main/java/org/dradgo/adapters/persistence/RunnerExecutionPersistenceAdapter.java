@@ -20,12 +20,14 @@ import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerExecutionStateMachine;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerTakeoverCancellation;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Limit;
@@ -60,6 +62,48 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
       """;
   private static final String COUNT_QUEUED_SQL =
       "select count(*) from runner_executions where status = 'queued'";
+
+  // Story 3.19 (AC1/AC3/AC9) — one-pass scalar aggregate of the queue state. Postgres FILTER
+  // clauses keep every count on a single consistent snapshot of runner_executions; stale cutoffs +
+  // the oldest-queued age are computed server-side (now()), no JVM clock. The :batchId param is
+  // cast to text so a NULL bind keeps its type for the `is null` short-circuit (3.18's
+  // batch_submission_id is a native-only text column with no entity field, so this MUST be native
+  // SQL — JPQL cannot see it).
+  private static final String QUEUE_COUNTS_SQL =
+      """
+      select
+        count(*) filter (where status = 'queued') as queue_depth,
+        count(*) filter (where status = 'running' and worker_id is not null) as active_workers,
+        count(*) filter (
+          where status = 'queued'
+            and created_at < now() - make_interval(secs => :staleSecs)) as stale_queued,
+        count(*) filter (
+          where status = 'running' and worker_id is not null
+            and dispatched_at < now() - make_interval(secs => :staleSecs)) as stale_dispatched,
+        count(*) filter (
+          where status = 'completed'
+            and completed_at >= now() - make_interval(secs => :throughputSecs)) as recent_throughput,
+        min(created_at) filter (where status = 'queued') as oldest_queued_at,
+        coalesce(
+          floor(extract(epoch from (now() - min(created_at) filter (where status = 'queued')))),
+          0)::bigint as oldest_queued_age_seconds
+      from runner_executions
+      where (:batchId::text is null or batch_submission_id = :batchId::text)
+      """;
+
+  // Story 3.19 (AC1) — leased running rows backing the per-worker WorkerStatus list. Returns the
+  // public ids ordered oldest-lease-first; the adapter re-reads each via JPA (mirroring the dequeue
+  // RETURNING-then-reread pattern) so the full snapshot incl. the workflow_run public id is mapped
+  // through the lazy association inside the readOnly transaction.
+  private static final String LEASED_RUNNING_IDS_SQL =
+      """
+      select public_id
+        from runner_executions
+       where status = 'running' and worker_id is not null
+         and (:batchId::text is null or batch_submission_id = :batchId::text)
+       order by dispatched_at asc, id asc
+       limit :limit
+      """;
 
   private final RunnerExecutionRepository runnerExecutionRepository;
   private final WorkflowRunRepository workflowRunRepository;
@@ -193,8 +237,17 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     }
     WorkflowRunEntity workflowRun =
         workflowRunRepository
-            .findByPublicId(workflowRunPublicId)
+            .findByPublicIdForUpdate(workflowRunPublicId)
             .orElseThrow(() -> runNotFound(workflowRunPublicId));
+    WorkflowState runState = workflowRun.getCurrentState();
+    if (runState == WorkflowState.COMPLETED
+        || runState == WorkflowState.TAKEN_OVER
+        || runState == WorkflowState.RECONCILED) {
+      throw new DomainException(
+          DomainErrorCode.ILLEGAL_TRANSITION,
+          "Cannot enqueue runner execution for terminal workflow run",
+          Map.of("runId", workflowRunPublicId, "currentState", runState.value()));
+    }
 
     OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
     RunnerExecutionEntity entity = new RunnerExecutionEntity();
@@ -246,8 +299,17 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     }
     WorkflowRunEntity workflowRun =
         workflowRunRepository
-            .findByPublicId(workflowRunPublicId)
+            .findByPublicIdForUpdate(workflowRunPublicId)
             .orElseThrow(() -> runNotFound(workflowRunPublicId));
+    WorkflowState runState = workflowRun.getCurrentState();
+    if (runState == WorkflowState.COMPLETED
+        || runState == WorkflowState.TAKEN_OVER
+        || runState == WorkflowState.RECONCILED) {
+      throw new DomainException(
+          DomainErrorCode.ILLEGAL_TRANSITION,
+          "Cannot enqueue runner execution for terminal workflow run",
+          Map.of("runId", workflowRunPublicId, "currentState", runState.value()));
+    }
 
     OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
     RunnerExecutionEntity entity = new RunnerExecutionEntity();
@@ -283,6 +345,76 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     Long count =
         jdbcTemplate.queryForObject(COUNT_QUEUED_SQL, new java.util.HashMap<>(), Long.class);
     return count == null ? 0L : count;
+  }
+
+  // Story 3.19 (AC1/AC3/AC9) — one-pass scalar aggregate. readOnly tx for consistency with the
+  // sibling read methods; stale cutoffs computed server-side (now()) so the result is clock-drift
+  // free (verify on real Postgres, not mocks — markescalationonce-boolean-returning-bug lesson).
+  @Override
+  @Transactional(readOnly = true)
+  public org.dradgo.application.runner.spi.RunnerQueueCounts loadQueueCounts(
+      Duration staleWindow, Duration throughputWindow, String batchIdOrNull) {
+    Objects.requireNonNull(staleWindow, "staleWindow");
+    Objects.requireNonNull(throughputWindow, "throughputWindow");
+    if (batchIdOrNull != null) {
+      PublicIdPrefixes.require(batchIdOrNull, PublicIdPrefixes.BATCH_SUBMISSION);
+    }
+    var params =
+        new org.springframework.jdbc.core.namedparam.MapSqlParameterSource()
+            .addValue("staleSecs", staleWindow.toMillis() / 1000.0d)
+            .addValue("throughputSecs", throughputWindow.toMillis() / 1000.0d)
+            .addValue("batchId", batchIdOrNull);
+    org.dradgo.application.runner.spi.RunnerQueueCounts counts =
+        jdbcTemplate.queryForObject(
+            QUEUE_COUNTS_SQL,
+            params,
+            (rs, rowNum) ->
+                new org.dradgo.application.runner.spi.RunnerQueueCounts(
+                    rs.getLong("queue_depth"),
+                    rs.getLong("active_workers"),
+                    rs.getLong("stale_queued"),
+                    rs.getLong("stale_dispatched"),
+                    rs.getLong("recent_throughput"),
+                    rs.getObject("oldest_queued_at", OffsetDateTime.class),
+                    rs.getLong("oldest_queued_age_seconds")));
+    log.debug(
+        "loadQueueCounts batchId={} queueDepth={} activeWorkers={} staleQueued={} staleDispatched={}",
+        batchIdOrNull,
+        counts == null ? null : counts.queueDepth(),
+        counts == null ? null : counts.activeWorkers(),
+        counts == null ? null : counts.staleQueuedCount(),
+        counts == null ? null : counts.staleDispatchedCount());
+    return counts == null ? org.dradgo.application.runner.spi.RunnerQueueCounts.empty() : counts;
+  }
+
+  // Story 3.19 (AC1) — leased running rows for the per-worker view. Native id-select (with the
+  // optional batch filter) then JPA re-read preserving order, mirroring the dequeue
+  // RETURNING-then-reread pattern so the lazy workflow_run association is mapped inside this
+  // readOnly transaction.
+  @Override
+  @Transactional(readOnly = true)
+  public List<RunnerExecutionSnapshot> findLeasedRunning(String batchIdOrNull, int limit) {
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be positive");
+    }
+    if (batchIdOrNull != null) {
+      PublicIdPrefixes.require(batchIdOrNull, PublicIdPrefixes.BATCH_SUBMISSION);
+    }
+    var params =
+        new org.springframework.jdbc.core.namedparam.MapSqlParameterSource()
+            .addValue("batchId", batchIdOrNull)
+            .addValue("limit", limit);
+    List<String> publicIds =
+        jdbcTemplate.queryForList(LEASED_RUNNING_IDS_SQL, params, String.class);
+    List<RunnerExecutionSnapshot> rows = new java.util.ArrayList<>(publicIds.size());
+    for (String publicId : publicIds) {
+      runnerExecutionRepository
+          .findByPublicId(publicId)
+          .map(mapper::toSnapshot)
+          .ifPresent(rows::add);
+    }
+    log.debug("findLeasedRunning batchId={} leasedCount={}", batchIdOrNull, rows.size());
+    return List.copyOf(rows);
   }
 
   // Story 3.17a (AC2 / Trap T12) — native FOR UPDATE SKIP LOCKED lease. The UPDATE ... RETURNING
@@ -412,6 +544,37 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         });
   }
 
+  // Story 3.22 (AC5): guarded flip {queued|pending|running} → cancelled_for_takeover. No
+  // failureCategory (this is an operator takeover, not a failure); stamps completed_at like the
+  // other terminal mutators. Called inside the takeover service's REQUIRES_NEW transaction.
+  @Override
+  public Optional<RunnerTakeoverCancellation> markCancelledForTakeover(
+      String publicId, OffsetDateTime cancelledAt) {
+    Objects.requireNonNull(cancelledAt, "cancelledAt");
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    RunnerExecutionStatus previousStatus = entity.getStatus();
+    if (RunnerExecutionStateMachine.isTerminal(previousStatus)) {
+      return Optional.empty();
+    }
+    RunnerExecutionStateMachine.assertCanTransition(
+        publicId, previousStatus, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER);
+    entity.setStatus(RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER);
+    entity.setCompletedAt(cancelledAt.withOffsetSameInstant(ZoneOffset.UTC));
+    entity.setFailureCategory(null);
+    entity.setHeartbeatStaleEmittedAt(null);
+    runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "transition runnerExecutionId={} from={} to={}",
+        publicId,
+        previousStatus.value(),
+        RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER.value());
+    return Optional.of(new RunnerTakeoverCancellation(publicId, previousStatus));
+  }
+
   // Story 3.2a: self-transactional (REQUIRED) — unlike the other mutators (always called inside the
   // broker's TransactionTemplate), markArchived is invoked by
   // RunnerWorkspaceCleanupJob.sweepWorkspaces,
@@ -533,7 +696,8 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
             RunnerExecutionStatus.COMPLETED.value(),
             RunnerExecutionStatus.FAILED.value(),
             RunnerExecutionStatus.TIMED_OUT.value(),
-            RunnerExecutionStatus.ORPHANED.value());
+            RunnerExecutionStatus.ORPHANED.value(),
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER.value());
     return runnerExecutionRepository
         .findCompletedBeforeAndNotArchived(
             rawStatuses, cutoff.withOffsetSameInstant(ZoneOffset.UTC), Limit.of(limit))

@@ -1,6 +1,7 @@
 package org.dradgo.application.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,10 +25,15 @@ import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.FailureDescription;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
+import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.runner.RunnerLogReference;
+import org.dradgo.application.runner.RunnerProperties;
+import org.dradgo.application.runner.RunnerWorkerPoolProperties;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerQueueCounts;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
@@ -42,6 +48,7 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
@@ -75,6 +82,14 @@ public class WorkflowInspectionService {
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final RunnerScratchStore runnerScratchStore;
   private final ClarificationReadPort clarificationReadPort;
+  // Story 3.22 (AC8) — the authoritative source of takeover attribution (actor/role/timestamp) for
+  // a TakenOver run's getRunSummary, read from the takeover recovery_actions row (not an event).
+  private final RecoveryActionRecordPort recoveryActionRecordPort;
+  // Story 3.19 — config-only inputs for the runner-queue inspection view (Reconciliation 2/6/7):
+  // poolSize from RunnerWorkerPoolProperties.size() (always present even when the pool is disabled
+  // in the test profile); the stale/lease window from RunnerProperties.staleThresholdFor(stage).
+  private final RunnerProperties runnerProperties;
+  private final RunnerWorkerPoolProperties runnerWorkerPoolProperties;
 
   public WorkflowInspectionService(
       WorkflowRunReadPort workflowRunReadPort,
@@ -87,7 +102,10 @@ public class WorkflowInspectionService {
       RecoveryService recoveryService,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       RunnerScratchStore runnerScratchStore,
-      ClarificationReadPort clarificationReadPort) {
+      ClarificationReadPort clarificationReadPort,
+      RecoveryActionRecordPort recoveryActionRecordPort,
+      RunnerProperties runnerProperties,
+      RunnerWorkerPoolProperties runnerWorkerPoolProperties) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -105,6 +123,11 @@ public class WorkflowInspectionService {
     this.runnerScratchStore = Objects.requireNonNull(runnerScratchStore, "runnerScratchStore");
     this.clarificationReadPort =
         Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
+    this.recoveryActionRecordPort =
+        Objects.requireNonNull(recoveryActionRecordPort, "recoveryActionRecordPort");
+    this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
+    this.runnerWorkerPoolProperties =
+        Objects.requireNonNull(runnerWorkerPoolProperties, "runnerWorkerPoolProperties");
   }
 
   /**
@@ -270,6 +293,43 @@ public class WorkflowInspectionService {
                   .isPresent();
       RunApprovalState technicalApprovalState =
           technicalApproved ? RunApprovalState.APPROVED : RunApprovalState.NONE;
+      // Story 3.22 (AC8 / OQ-4): takeover attribution is populated ONLY for a TakenOver run.
+      // who/when/role are reconstructed from the AUTHORITATIVE takeover recovery_actions row
+      // (actor_identity, actor_type, reviewer_role='developer', created_at) — never inferred from
+      // an arbitrary later audit event, and reviewer_role is real persisted data rather than a
+      // hard-coded constant. The reviewer reason has no recovery_actions column (OQ-4), so it is
+      // read from the → TakenOver transition event's details (the only place
+      // WorkflowTransitionService
+      // persists it). A defensive fallback attributes from the transition event when no takeover
+      // recovery_actions row exists (legacy/edge runs).
+      TakeoverAttribution takenOverBy = null;
+      OffsetDateTime takenOverAt = null;
+      String takenOverReason = null;
+      if (run.currentState() == WorkflowState.TAKEN_OVER) {
+        Optional<RecoveryActionSnapshot> takeoverAction =
+            recoveryActionRecordPort.findLatestTakeoverForRun(workflowRunPublicId);
+        Optional<WorkflowEventRecord> takeoverTransition =
+            workflowEventReadPort.findLatestTransitionToState(
+                workflowRunPublicId, WorkflowState.TAKEN_OVER);
+        if (takeoverAction.isPresent()) {
+          RecoveryActionSnapshot action = takeoverAction.get();
+          takenOverBy =
+              new TakeoverAttribution(
+                  action.actorIdentity(),
+                  action.actorType() == null ? null : action.actorType().value(),
+                  action.reviewerRole());
+          takenOverAt = action.createdAt();
+        } else if (takeoverTransition.isPresent()) {
+          WorkflowEventRecord takeoverEvent = takeoverTransition.get();
+          takenOverBy =
+              new TakeoverAttribution(
+                  takeoverEvent.actorIdentity(),
+                  takeoverEvent.actorType() == null ? null : takeoverEvent.actorType().value(),
+                  "developer");
+          takenOverAt = takeoverEvent.createdAt();
+        }
+        takenOverReason = takeoverTransition.map(WorkflowEventRecord::reason).orElse(null);
+      }
       WorkflowRunDetailedSummaryView view =
           new WorkflowRunDetailedSummaryView(
               run.publicId(),
@@ -281,7 +341,10 @@ public class WorkflowInspectionService {
               run.escalationMarkerSet(),
               pending,
               productApprovalState.name(),
-              technicalApprovalState.name());
+              technicalApprovalState.name(),
+              takenOverBy,
+              takenOverAt,
+              takenOverReason);
       log.info(
           "getRunSummary success workflowRunId={} pendingClarifications={} currentState={} productApprovalState={} technicalApprovalState={}",
           workflowRunPublicId,
@@ -293,6 +356,115 @@ public class WorkflowInspectionService {
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
+  }
+
+  /** Story 3.19 — recent-completion window backing {@code recentThroughputPerMinute} (AC1). */
+  private static final Duration THROUGHPUT_WINDOW = Duration.ofSeconds(60);
+
+  /**
+   * Upper bound on the leased-running rows fetched for the per-worker view. Leased running rows are
+   * physically bounded by the worker-pool size (max 32 — {@code RunnerWorkerPoolProperties} clamps
+   * it), so this cap is far above any real value and never truncates; it is a runaway backstop
+   * only.
+   */
+  private static final int LEASED_FETCH_CAP = 1024;
+
+  /**
+   * Story 3.19 (AC1/AC3/AC9/AC10) — the single read seam for runner-queue + worker-pool inspection.
+   * Returns a {@link RunnerQueueStatus} typed view consumed by the CLI ({@code deliveryline workers
+   * status}), the REST endpoint ({@code GET /api/v1/runner-queue/status}), and the Prometheus
+   * exporter. READ-ONLY: touches no queue / worker / dispatch / write path.
+   *
+   * <p>{@code poolSize} comes from config ({@link RunnerWorkerPoolProperties#size()}) — always
+   * present even though the pool is disabled in the test profile (Reconciliation 7). All live
+   * counts come from the read port; {@code idleWorkers = max(0, poolSize − activeWorkers)} and the
+   * per-worker list is reconstructed from the leased running DB rows (the pool keeps no in-memory
+   * roster — Reconciliation 6). When {@code batchIdOrNull} is non-null the queue counts + worker
+   * list scope to that batch's executions (AC9); {@code poolSize} stays global. A malformed {@code
+   * batchId} raises the existing {@code INVALID_ID_PREFIX} via the read port's prefix guard.
+   */
+  @Transactional(readOnly = true)
+  public RunnerQueueStatus getRunnerQueueStatus(String batchIdRaw) {
+    // Normalize blank/whitespace to null (= global view) in this single seam so every transport
+    // agrees: the CLI already collapses an empty --batch-id to null, and doing it here makes the
+    // REST `?batchId=` empty/whitespace param behave the same (global) instead of failing the
+    // prefix guard with a 400. A genuinely malformed non-blank id still raises INVALID_ID_PREFIX.
+    String batchIdOrNull = (batchIdRaw == null || batchIdRaw.isBlank()) ? null : batchIdRaw.trim();
+    // batchId carried as a structured log parameter (not MDC): the MdcKeys permitted-key set is
+    // closed and adding a new key fans out to its contract — the Logging Requirements explicitly
+    // allow "pass as parameters" where MDC is not already wired.
+    log.info("getRunnerQueueStatus entry batchId={}", batchIdOrNull);
+    Duration staleWindow = maxStaleWindow();
+    RunnerQueueCounts counts =
+        runnerExecutionRecordPort.loadQueueCounts(staleWindow, THROUGHPUT_WINDOW, batchIdOrNull);
+    List<RunnerExecutionSnapshot> leased =
+        runnerExecutionRecordPort.findLeasedRunning(batchIdOrNull, LEASED_FETCH_CAP);
+
+    int poolSize = runnerWorkerPoolProperties.size();
+    long activeWorkers = counts.activeWorkers();
+    long idleWorkers = Math.max(0L, poolSize - activeWorkers);
+    List<WorkerStatus> workers = new ArrayList<>(leased.size());
+    for (RunnerExecutionSnapshot row : leased) {
+      workers.add(
+          new WorkerStatus(
+              row.workerId(),
+              "busy",
+              row.publicId(),
+              row.workflowRunPublicId(),
+              row.dispatchedAt(),
+              row.stage() == null ? null : row.stage().value()));
+    }
+
+    RunnerQueueStatus view =
+        new RunnerQueueStatus(
+            poolSize,
+            activeWorkers,
+            idleWorkers,
+            counts.queueDepth(),
+            counts.oldestQueuedAt(),
+            counts.oldestQueuedAgeSeconds(),
+            activeWorkers,
+            // Normalize the windowed completion count to a per-minute rate so the field name stays
+            // honest if THROUGHPUT_WINDOW ever moves off 60s (today the window is 60s → identity).
+            Math.round(
+                counts.recentThroughput() * 60.0 / Math.max(1L, THROUGHPUT_WINDOW.toSeconds())),
+            counts.staleQueuedCount(),
+            counts.staleDispatchedCount(),
+            List.copyOf(workers));
+
+    if (view.staleQueuedCount() > 0 || view.staleDispatchedCount() > 0) {
+      // A genuine operational anomaly worth a log line, not just a metric (Logging Requirements).
+      log.warn(
+          "getRunnerQueueStatus stale-detected batchId={} staleQueued={} staleDispatched={} queueDepth={}",
+          batchIdOrNull,
+          view.staleQueuedCount(),
+          view.staleDispatchedCount(),
+          view.queueDepth());
+    }
+    log.info(
+        "getRunnerQueueStatus success batchId={} queueDepth={} activeWorkers={} idleWorkers={} oldestQueuedAgeSeconds={}",
+        batchIdOrNull,
+        view.queueDepth(),
+        view.activeWorkers(),
+        view.idleWorkers(),
+        view.oldestQueuedAgeSeconds());
+    return view;
+  }
+
+  /**
+   * The lease/stale window = {@code staleThresholdMultiplier × stageTimeout}, identical to the
+   * broker's orphan threshold. The two stage timeouts can differ, so take the longest so a queued
+   * or dispatched row of the slower stage is never flagged stale prematurely by the shorter window.
+   */
+  private Duration maxStaleWindow() {
+    Duration max = Duration.ZERO;
+    for (RunnerStage stage : RunnerStage.values()) {
+      Duration window = runnerProperties.staleThresholdFor(stage);
+      if (window.compareTo(max) > 0) {
+        max = window;
+      }
+    }
+    return max.isZero() ? Duration.ofSeconds(1) : max;
   }
 
   /**
@@ -469,13 +641,13 @@ public class WorkflowInspectionService {
         return List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME);
       case WAITING_FOR_REVIEW:
         // Story 3.20 (AC12) + Story 3.21 (AC9): the developer-review actor may accept OR reject the
-        // implementation here. SEAM (Epic 3): takeover (3.22) additively extends THIS branch for
-        // the
-        // developer role; all other roles keep view_only.
+        // implementation here. Story 3.22 (AC9) additively adds takeover_workflow for the developer
+        // role; all other roles keep view_only.
         if (ROLE_DEVELOPER.equals(actorRole)) {
           return List.of(
               AllowedAction.ACCEPT_IMPLEMENTATION,
               AllowedAction.REJECT_IMPLEMENTATION,
+              AllowedAction.TAKEOVER_WORKFLOW,
               AllowedAction.VIEW_ONLY);
         }
         return List.of(AllowedAction.VIEW_ONLY);
@@ -1554,7 +1726,24 @@ public class WorkflowInspectionService {
       boolean escalationMarker,
       int pendingClarifications,
       String productApprovalState,
-      String technicalApprovalState) {}
+      String technicalApprovalState,
+      // Story 3.22 (AC8): takeover attribution (FR19 reconstruction — who/when/why). Populated ONLY
+      // when currentState == TAKEN_OVER, else null. Application-internal home; REST/CLI/UI
+      // surfacing
+      // is deferred to 3.25/3.28/3.29 (Trap T8, mirrors productApprovalState above). NOT widened
+      // onto WorkflowSummaryResponse/WorkflowStatusView — OpenApiSnapshotContractTest stays green.
+      TakeoverAttribution takenOverBy,
+      OffsetDateTime takenOverAt,
+      String takenOverReason) {}
+
+  /**
+   * Story 3.22 (AC8): the developer who took over a run — {@code actor_identity}, {@code
+   * actor_type}, and the takeover-invariant {@code reviewer_role='developer'}. Sourced from the
+   * {@code workflow.stateChanged → TakenOver} event (the takeover transition's actor); {@code
+   * reviewerRole} is the constant invariant (Trap T2: it is not carried on {@code
+   * TakeoverWorkflowCommand}).
+   */
+  public record TakeoverAttribution(String actorIdentity, String actorType, String reviewerRole) {}
 
   /**
    * Story 2.12 AC6 / AC7: V9-rich clarification status used by {@link
@@ -1711,4 +1900,61 @@ public class WorkflowInspectionService {
       return reference != null;
     }
   }
+
+  /**
+   * Story 3.19 (AC1/AC3) — typed runner-queue + worker-pool inspection view. Defined HERE (nested
+   * in {@code application.workflow}), NOT under {@code application.runner}, because the ArchUnit
+   * rule {@code REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER} forbids {@code
+   * adapters.rest}/{@code adapters.cli} from depending on {@code org.dradgo.application.runner..} —
+   * so the transport adapters can consume this view only if it lives in {@code
+   * application.workflow} (Reconciliation 1). AC10 pins reference to this type to {@link
+   * WorkflowInspectionService}, the REST {@code RunnerQueueStatusResponse}, and the CLI {@code
+   * workers status} surface.
+   *
+   * <ul>
+   *   <li>{@code poolSize} — configured worker count ({@link RunnerWorkerPoolProperties#size()});
+   *       global even under a {@code batchId} filter.
+   *   <li>{@code activeWorkers} / {@code inFlightExecutions} — leased running rows (the two are
+   *       equal by construction).
+   *   <li>{@code idleWorkers} — {@code max(0, poolSize − activeWorkers)}.
+   *   <li>{@code queueDepth} — rows in {@code status='queued'}.
+   *   <li>{@code oldestQueuedAt} / {@code oldestQueuedAgeSeconds} — oldest queued row + its
+   *       server-computed age in seconds (null/0 when the queue is empty).
+   *   <li>{@code recentThroughputPerMinute} — completions in the last 60s.
+   *   <li>{@code staleQueuedCount} / {@code staleDispatchedCount} — queued/leased rows past the
+   *       lease window (AC3).
+   *   <li>{@code workers} — one {@link WorkerStatus} per leased running row (the BUSY workers).
+   * </ul>
+   */
+  public record RunnerQueueStatus(
+      int poolSize,
+      long activeWorkers,
+      long idleWorkers,
+      long queueDepth,
+      OffsetDateTime oldestQueuedAt,
+      long oldestQueuedAgeSeconds,
+      long inFlightExecutions,
+      long recentThroughputPerMinute,
+      long staleQueuedCount,
+      long staleDispatchedCount,
+      List<WorkerStatus> workers) {
+
+    public RunnerQueueStatus {
+      workers = workers == null ? List.of() : List.copyOf(workers);
+    }
+  }
+
+  /**
+   * Story 3.19 (AC1) — per-worker state, reconstructed from a leased running {@code
+   * runner_executions} row (the worker pool keeps no in-memory roster — Reconciliation 6). {@code
+   * state} is {@code "busy"} for every entry the view emits (only leased workers are enumerable).
+   * The optional fields carry the current work; they are non-null for a busy worker.
+   */
+  public record WorkerStatus(
+      String workerId,
+      String state,
+      String currentRunnerExecutionId,
+      String currentWorkflowRunId,
+      OffsetDateTime dispatchedAt,
+      String currentStage) {}
 }

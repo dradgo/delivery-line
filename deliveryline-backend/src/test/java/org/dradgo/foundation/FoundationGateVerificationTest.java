@@ -284,4 +284,30 @@ class FoundationGateVerificationTest {
           "3.15", "org.dradgo.foundation.IntegrationLinkGitHubPrFoundationContract");
     }
   }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #13 — Runner-queue inspection + Prometheus scrape (story 3.19)")
+  class Contract13RunnerQueueInspection {
+
+    /** Story 3.19 AC11a — every RunnerQueueStatus / WorkerStatus field is populated. */
+    @Test
+    @DisplayName("getRunnerQueueStatus populates every view field")
+    void runnerQueueStatusFieldsPopulated() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.19", "org.dradgo.foundation.RunnerQueueInspectionFoundationContract");
+    }
+
+    /**
+     * Story 3.19 AC11b — the headline metric {@code deliveryline_runner_queue_depth} is scrapeable
+     * from Actuator's Prometheus endpoint and its value matches the DB queued count. Delegates to
+     * the Testcontainers IT (the gate tier has Docker up).
+     */
+    @Test
+    @DisplayName("deliveryline_runner_queue_depth is scrapeable and matches the DB count")
+    void queueDepthMetricScrapeable() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.19", "org.dradgo.adapters.rest.RunnerQueuePrometheusScrapeIT");
+    }
+  }
 }

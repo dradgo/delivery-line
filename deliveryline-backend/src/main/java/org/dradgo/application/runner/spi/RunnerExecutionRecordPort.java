@@ -82,6 +82,29 @@ public interface RunnerExecutionRecordPort {
   long countQueued();
 
   /**
+   * Story 3.19 (AC1/AC3/AC9) — read the scalar queue aggregate in ONE native SELECT so every count
+   * reflects a single snapshot. {@code staleWindow} is the lease window ({@code
+   * staleThresholdMultiplier × stageTimeout}); {@code throughputWindow} is the recent-completion
+   * window for {@code recentThroughput} (60s). When {@code batchIdOrNull} is non-null every count
+   * is scoped to {@code batch_submission_id = :batchId} (the 3.18 FK); otherwise it is global.
+   * Stale cutoffs + the oldest-queued age are computed server-side (Postgres {@code now()}), no JVM
+   * clock.
+   */
+  RunnerQueueCounts loadQueueCounts(
+      Duration staleWindow, Duration throughputWindow, String batchIdOrNull);
+
+  /**
+   * Story 3.19 (AC1) — the leased running rows that back the per-worker {@code WorkerStatus} list:
+   * {@code status='running' AND worker_id IS NOT NULL}, ordered oldest-lease-first. Each row
+   * carries {@code worker_id}, {@code dispatched_at}, {@code stage} and the run/execution public
+   * ids. When {@code batchIdOrNull} is non-null the rows are scoped to that batch. Bounded by
+   * {@code limit} (leased running rows are bounded by the worker-pool size at any instant). The
+   * pool keeps no in-memory roster — these DB rows are the authoritative busy-worker state
+   * (Reconciliation 6).
+   */
+  List<RunnerExecutionSnapshot> findLeasedRunning(String batchIdOrNull, int limit);
+
+  /**
    * Story 3.17a (AC2) — lease the next queued row to {@code workerId} using {@code FOR UPDATE SKIP
    * LOCKED} so concurrent workers never pick the same row. Atomically flips the highest-priority
    * (lowest {@code queue_priority}, then oldest {@code created_at}) queued row to {@code running},
@@ -104,6 +127,17 @@ public interface RunnerExecutionRecordPort {
   RunnerExecutionSnapshot markTimedOut(String publicId, OffsetDateTime completedAt);
 
   RunnerExecutionSnapshot markOrphaned(String publicId, OffsetDateTime completedAt);
+
+  /**
+   * Story 3.22 (AC5) — developer takeover: flip a {@code {queued, pending, running}} row to the
+   * terminal {@code cancelled_for_takeover} status (state-machine-guarded), stamping {@code
+   * completed_at = cancelledAt}. This is the authoritative "stop dispatch" signal — the row becomes
+   * invisible to the worker pool's {@code dequeueNext} (which leases {@code status='queued'}) and
+   * the broker's {@code ACTIVE_STATUSES = {pending, running}}. The live container (for a previously
+   * {@code running} row) is stopped best-effort, post-commit, via the runner adapter — never here.
+   */
+  Optional<RunnerTakeoverCancellation> markCancelledForTakeover(
+      String publicId, OffsetDateTime cancelledAt);
 
   /**
    * Story 3.2 AC5: marks the row as {@code archived_at = archivedAt} once its on-disk workspace has

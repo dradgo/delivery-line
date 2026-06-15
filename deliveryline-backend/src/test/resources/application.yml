@@ -129,6 +129,15 @@ deliveryline:
       # Story 3.2a AC4 — dangling-container sweep min-age grace window.
       dangling-container-min-age-seconds: 120
 
+# Story 3.19 (AC5 / Reconciliation 4) — the test application.yml SHADOWS (does not merge with) main,
+# so the management exposure MUST be mirrored here or the @SpringBootTest-booted scrapeable check
+# (RunnerQueuePrometheusScrapeIT) would 404 /actuator/prometheus (memory: validated-config-needs-test-yaml).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
 spring:
   # Story 2.13 round-3 review D3 follow-up: keep test slice fail-on-unknown aligned with prod config
   # so the @JsonIgnoreProperties(ignoreUnknown = false) annotation on request DTOs actually rejects

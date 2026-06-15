@@ -85,7 +85,10 @@ class WorkflowInspectionServiceSpecTest {
           recovery,
           runnerExecutions,
           scratch,
-          clarifications);
+          clarifications,
+          mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
+          org.dradgo.application.runner.RunnerProperties.defaults(),
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
 
   private final ListAppender<ILoggingEvent> serviceAppender =
       attachListAppender(WorkflowInspectionService.class);

@@ -40,4 +40,12 @@ class AllowedActionRegistryPinTest {
     // RegistryContractTest).
     assertThat(AllowedAction.REJECT_IMPLEMENTATION.value()).isEqualTo("reject_implementation");
   }
+
+  @Test
+  void takeoverWorkflowWireValueIsPinned() {
+    // Story 3.22 AC9 — DeveloperTakeoverService is the canonical executor; the developer-role
+    // WAITING_FOR_REVIEW matrix branch returns it alongside accept/reject. Guard against a silent
+    // rename (lockstep with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.TAKEOVER_WORKFLOW.value()).isEqualTo("takeover_workflow");
+  }
 }

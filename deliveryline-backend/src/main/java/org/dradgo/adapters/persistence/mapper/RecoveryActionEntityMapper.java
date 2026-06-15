@@ -23,6 +23,7 @@ public class RecoveryActionEntityMapper {
         entity.getActorType(),
         entity.getIdempotencyKey(),
         entity.getResultStatus(),
-        entity.getCreatedAt());
+        entity.getCreatedAt(),
+        entity.getReviewerRole());
   }
 }

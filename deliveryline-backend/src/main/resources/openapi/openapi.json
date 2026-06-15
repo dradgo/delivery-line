@@ -491,6 +491,68 @@
         ],
         "type" : "object"
       },
+      "RunnerQueueStatusResponse" : {
+        "properties" : {
+          "activeWorkers" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "idleWorkers" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "inFlightExecutions" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "oldestQueuedAgeSeconds" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "oldestQueuedAt" : {
+            "type" : "string"
+          },
+          "poolSize" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "queueDepth" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "recentThroughputPerMinute" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "staleDispatchedCount" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "staleQueuedCount" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "workers" : {
+            "items" : {
+              "$ref" : "#/components/schemas/WorkerStatusResponse"
+            },
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "activeWorkers",
+          "idleWorkers",
+          "inFlightExecutions",
+          "oldestQueuedAgeSeconds",
+          "poolSize",
+          "queueDepth",
+          "recentThroughputPerMinute",
+          "staleDispatchedCount",
+          "staleQueuedCount",
+          "workers"
+        ],
+        "type" : "object"
+      },
       "SubmitWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -597,6 +659,33 @@
         "required" : [
           "queueResult",
           "ticketRef"
+        ],
+        "type" : "object"
+      },
+      "WorkerStatusResponse" : {
+        "properties" : {
+          "currentRunnerExecutionId" : {
+            "type" : "string"
+          },
+          "currentStage" : {
+            "type" : "string"
+          },
+          "currentWorkflowRunId" : {
+            "type" : "string"
+          },
+          "dispatchedAt" : {
+            "type" : "string"
+          },
+          "state" : {
+            "type" : "string"
+          },
+          "workerId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "state",
+          "workerId"
         ],
         "type" : "object"
       },
@@ -1038,6 +1127,48 @@
   },
   "openapi" : "3.1.0",
   "paths" : {
+    "/api/v1/runner-queue/status" : {
+      "get" : {
+        "operationId" : "getRunnerQueueStatus",
+        "parameters" : [
+          {
+            "description" : "Scope queue depth + workers to one batch (bat_...)",
+            "in" : "query",
+            "name" : "batchId",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RunnerQueueStatusResponse"
+                }
+              }
+            },
+            "description" : "Current runner-queue + worker-pool status."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_ID_PREFIX — the supplied batchId is not a bat_ public id."
+          }
+        },
+        "summary" : "Runner worker-pool state, queue depth, oldest-queued age, stale counts, and per-worker current work. Optional batchId scopes the counts + workers to one batch.",
+        "tags" : [
+          "Runner Queue"
+        ]
+      }
+    },
     "/api/v1/workflows" : {
       "get" : {
         "description" : "Newest-first list of workflow runs for the review queue, optionally filtered by state.",
@@ -1932,6 +2063,10 @@
     {
       "description" : "Inspect and command governed workflow runs.",
       "name" : "Workflows"
+    },
+    {
+      "description" : "Inspect the runner execution queue + worker pool.",
+      "name" : "Runner Queue"
     }
   ]
 }

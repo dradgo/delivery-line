@@ -38,7 +38,8 @@
     "completed",
     "failed",
     "timed_out",
-    "orphaned"
+    "orphaned",
+    "cancelled_for_takeover"
   ],
   "idempotencyRecordStatuses": [
     "reserved",

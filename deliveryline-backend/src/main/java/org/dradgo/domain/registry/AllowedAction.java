@@ -12,7 +12,11 @@ public enum AllowedAction implements RegistryValue {
   VIEW_DIAGNOSTICS("view_diagnostics"),
   CLEAR_ESCALATION_MARKER("clear_escalation_marker"),
   ACCEPT_IMPLEMENTATION("accept_implementation"),
-  REJECT_IMPLEMENTATION("reject_implementation");
+  REJECT_IMPLEMENTATION("reject_implementation"),
+  // Story 3.22 (AC9) — developer takeover; canonical executor is DeveloperTakeoverService. Offered
+  // (with accept/reject) for state=WAITING_FOR_REVIEW + role=developer. After TakenOver is reached
+  // the only allowed action is view_only (already wired).
+  TAKEOVER_WORKFLOW("takeover_workflow");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

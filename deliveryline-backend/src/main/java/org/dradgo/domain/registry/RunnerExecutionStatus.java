@@ -12,7 +12,12 @@ public enum RunnerExecutionStatus implements RegistryValue {
   COMPLETED("completed"),
   FAILED("failed"),
   TIMED_OUT("timed_out"),
-  ORPHANED("orphaned");
+  ORPHANED("orphaned"),
+  // Story 3.22 (AC5) — developer-takeover terminal status. A row in this status is the
+  // authoritative
+  // "stop dispatch" signal: invisible to the worker pool's dequeueNext (leases status='queued')
+  // AND the broker's ACTIVE_STATUSES ({pending, running}), so neither dispatch path can pick it up.
+  CANCELLED_FOR_TAKEOVER("cancelled_for_takeover");
 
   private static final Map<String, RunnerExecutionStatus> LOOKUP = RegistryParsers.index(values());
 

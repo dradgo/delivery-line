@@ -53,6 +53,10 @@ class LoggingFieldNameContractTest {
     MDC.put(MdcKeys.ARTIFACT_OPERATION_ID, "op_x");
     MDC.put(MdcKeys.APPROVAL_ID, "apr_x");
     MDC.put(MdcKeys.WORKER_ID, "wkr_x");
+    MDC.put(MdcKeys.IDEMPOTENCY_KEY, "idem_x");
+    MDC.put(MdcKeys.ACTOR_IDENTITY, "alex");
+    MDC.put(MdcKeys.ACTOR_TYPE, "human");
+    MDC.put(MdcKeys.RECOVERY_ACTION_ID, "rcv_x");
 
     LOG.info("pin field names");
 
@@ -70,7 +74,11 @@ class LoggingFieldNameContractTest {
             "runnerExecutionId",
             "artifactId",
             "artifactOperationId",
-            "approvalId");
+            "approvalId",
+            "idempotencyKey",
+            "actorIdentity",
+            "actorType",
+            "recoveryActionId");
 
     // Reject snake_case / lowercase / PascalCase drift.
     assertThat(mdc)
@@ -105,6 +113,10 @@ class LoggingFieldNameContractTest {
             "artifactId",
             "artifactOperationId",
             "approvalId",
-            "workerId");
+            "workerId",
+            "idempotencyKey",
+            "actorIdentity",
+            "actorType",
+            "recoveryActionId");
   }
 }

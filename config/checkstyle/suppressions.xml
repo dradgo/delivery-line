@@ -28,6 +28,16 @@
             lines="103"/>
 
   <!--
+    WorkerCommands - System.out is the Spring Shell product-output channel for the
+    `deliveryline workers status` watch refresh loop (story 3.19 AC2), exactly as
+    DoctorCommands above. The continuous refresh must write each tick to stdout; it is
+    product output, not diagnostic logging, so it does not belong on the SLF4J logger.
+  -->
+  <suppress id="ForbiddenSystemOut"
+            files="[\\/]adapters[\\/]cli[\\/]WorkerCommands\.java$"
+            lines="150"/>
+
+  <!--
     IdempotencyService / WorkflowCommandService - Thread.sleep is a deliberate,
     bounded retry/replay backoff delay in application code. Refactoring this
     timing behaviour to an injected sleeper abstraction is out of scope for a

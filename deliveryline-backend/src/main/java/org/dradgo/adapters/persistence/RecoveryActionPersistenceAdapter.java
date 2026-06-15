@@ -43,6 +43,7 @@ public class RecoveryActionPersistenceAdapter implements RecoveryActionRecordPor
   static final String STATUS_SUCCEEDED = "succeeded";
   static final String STATUS_FAILED = "failed";
   static final String ACTION_TYPE_RETRY = "retry";
+  static final String ACTION_TYPE_TAKEOVER = "takeover";
 
   private final RecoveryActionRepository recoveryActionRepository;
   private final WorkflowRunRepository workflowRunRepository;
@@ -92,6 +93,9 @@ public class RecoveryActionPersistenceAdapter implements RecoveryActionRecordPor
     entity.setResultingEvent(resultingEvent);
     entity.setActorIdentity(command.actorIdentity());
     entity.setActorType(command.actorType());
+    // Story 3.22 (AC3): persist reviewer_role when the caller supplies it (takeover='developer');
+    // null for the retry path (story 1.18 convenience constructor).
+    entity.setReviewerRole(command.reviewerRole());
     entity.setIdempotencyKey(command.idempotencyKey());
     entity.setResultStatus(command.resultStatus());
 
@@ -128,6 +132,16 @@ public class RecoveryActionPersistenceAdapter implements RecoveryActionRecordPor
   public Optional<RecoveryActionSnapshot> findByIdempotencyKey(String idempotencyKey) {
     requireNonBlank("idempotencyKey", idempotencyKey);
     return recoveryActionRepository.findByIdempotencyKey(idempotencyKey).map(mapper::toSnapshot);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<RecoveryActionSnapshot> findLatestTakeoverForRun(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    return recoveryActionRepository
+        .findFirstByWorkflowRunPublicIdAndActionTypeOrderByCreatedAtDescIdDesc(
+            workflowRunPublicId, ACTION_TYPE_TAKEOVER)
+        .map(mapper::toSnapshot);
   }
 
   @Override

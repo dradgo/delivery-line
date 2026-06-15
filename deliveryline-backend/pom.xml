@@ -61,6 +61,13 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
+		<!-- Story 3.19 (AC5) — Prometheus registry so /actuator/prometheus exists (Actuator alone
+		     falls back to an in-memory SimpleMeterRegistry with no scrape endpoint). No version: the
+		     Spring Boot 4.0.6 BOM manages it. -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>

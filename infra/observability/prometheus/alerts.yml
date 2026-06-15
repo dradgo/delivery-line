@@ -1,0 +1,49 @@
+# Story 3.19 (AC7) — runner-queue alert rules. Thresholds are baked into the PromQL expressions
+# (the optional app-config knob deliveryline.runner.alerts.queue-depth-warn only surfaces the warn
+# level inside the app; it does NOT drive these rules). Validate with `promtool check rules alerts.yml`.
+#
+# Metric names are the Prometheus (underscore) rendering of the DOT-named Micrometer meters
+# (Reconciliation 5): deliveryline.runner.queue.depth -> deliveryline_runner_queue_depth, etc.
+groups:
+  - name: deliveryline-runner-queue
+    rules:
+      # Queue depth elevated for a sustained window — pool likely too small or workers stuck.
+      - alert: RunnerQueueDepthHigh
+        expr: deliveryline_runner_queue_depth > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Runner queue depth high (>50 for 5m)"
+          description: "deliveryline_runner_queue_depth has exceeded the warn threshold (50) for 5 minutes. Consider scaling the worker pool or investigating stuck workers."
+
+      # Queue depth critically high — users are very likely waiting; page.
+      - alert: RunnerQueueDepthCritical
+        expr: deliveryline_runner_queue_depth > 200
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Runner queue depth critical (>200 for 2m)"
+          description: "deliveryline_runner_queue_depth has exceeded the critical threshold (200) for 2 minutes. The worker pool cannot keep up; scale workers or halt new submissions."
+
+      # The oldest queued execution has been waiting longer than 2x the stage timeout (600s) — a row
+      # is starving regardless of overall depth.
+      - alert: RunnerOldestQueuedStale
+        expr: deliveryline_runner_queue_oldest_age_seconds > 1200
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest queued runner execution is stale (>2x stage timeout)"
+          description: "deliveryline_runner_queue_oldest_age_seconds exceeds 1200s (2x the 600s stage timeout). A queued execution is starving — check worker liveness and queue ordering."
+
+      # Every worker has been busy continuously — the pool is saturated and has no headroom.
+      - alert: RunnerPoolStarved
+        expr: deliveryline_runner_active_workers >= deliveryline_runner_pool_size
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Runner worker pool starved (all workers busy for 10m)"
+          description: "deliveryline_runner_active_workers has equalled deliveryline_runner_pool_size for 10 minutes. The pool has no idle capacity; consider increasing deliveryline.runner.worker-pool.size."

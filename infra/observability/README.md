@@ -1,9 +1,10 @@
-# DeliveryLine Observability (ELK) — story 3.7
+# DeliveryLine Observability — ELK (story 3.7) + Prometheus/Grafana (story 3.19)
 
-Profile-gated Elasticsearch + Logstash + Kibana stack for centralized, searchable log capture.
+Profile-gated Elasticsearch + Logstash + Kibana stack for centralized, searchable log capture, plus
+a Prometheus + Grafana stack for runner-queue metrics.
 
 > **Optional by design (AR25).** The backend runs byte-for-byte identically with or without this
-> stack. ELK is never required for normal operation, tests, or recovery. See
+> stack. It is never required for normal operation, tests, or recovery. See
 > [`docs/adr/0023-elk-replaces-loki.md`](../../docs/adr/0023-elk-replaces-loki.md).
 
 ## What's here
@@ -13,8 +14,35 @@ infra/observability/
 ├── logstash/pipelines/deliveryline.conf   # ingest (TCP + file) + classification drop + 2nd redaction + ES output
 ├── kibana/dashboards/*.ndjson             # saved-object dashboards (AC6) + shared index pattern
 ├── elasticsearch/ilm-policy.json          # 30-day index lifecycle policy (AC9)
+├── prometheus/prometheus.yml              # story 3.19 — scrape config (backend /actuator/prometheus)
+├── prometheus/alerts.yml                  # story 3.19 — runner-queue alert rules (AC7)
+├── prometheus/README-alerting.md          # story 3.19 — Alertmanager opt-in (Slack/email/PagerDuty)
+├── grafana/dashboards/runner-queue.json   # story 3.19 — "Runner Queue" dashboard (AC6)
+├── grafana/provisioning/                  # story 3.19 — Prometheus datasource + dashboard auto-load
 └── README.md                              # this file
 ```
+
+## Runner-queue metrics (story 3.19 — Prometheus + Grafana)
+
+On the SAME `observability` profile, Prometheus scrapes the backend's Spring Boot Actuator endpoint
+and Grafana renders the "Runner Queue" dashboard:
+
+- **Prometheus** → `http://localhost:${PROMETHEUS_HOST_PORT:-9090}` (alerts at `/alerts`)
+- **Grafana** → `http://localhost:${GRAFANA_HOST_PORT:-3000}` (anonymous Viewer; "Runner Queue"
+  dashboard auto-provisioned under the DeliveryLine folder)
+
+The backend must expose metrics: story 3.19 added `micrometer-registry-prometheus` +
+`management.endpoints.web.exposure.include: health,prometheus`, so `/actuator/prometheus` serves
+`deliveryline_runner_queue_depth` (headline), `_pool_size`, `_active_workers`, `_idle_workers`,
+`_queue_oldest_age_seconds`, the `_dispatched_count_total` / `_completed_count_total{stage,outcome}`
+counters, and the `_dispatch_duration_seconds{stage}` histogram.
+
+**Scrape target:** the backend usually runs on the HOST, so `prometheus.yml` targets
+`host.docker.internal:8080` (the compose service maps it to `host-gateway` for Linux). If you run the
+backend as a compose service, change the target to `deliveryline-backend:8080`.
+
+Alert routing (Slack/email/PagerDuty) is opt-in — see
+[`prometheus/README-alerting.md`](prometheus/README-alerting.md). No Alertmanager ships by default.
 
 ## Bring the stack up
 

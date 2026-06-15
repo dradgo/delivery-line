@@ -1336,6 +1336,33 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
+  void onResultAfterTakeoverCancellationPerformsNoResultSideEffects() {
+    RunnerExecutionSnapshot cancelled =
+        new RunnerExecutionSnapshot(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.INVESTIGATION,
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER,
+            1,
+            OffsetDateTime.now(CLOCK),
+            OffsetDateTime.now(CLOCK).minusSeconds(60),
+            null,
+            OffsetDateTime.now(CLOCK),
+            OffsetDateTime.now(CLOCK),
+            null);
+    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(cancelled));
+
+    broker.onResult(REX_ID, "{\"schemaVersion\":1".getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService, never()).recordFailed(any(), any());
+    verify(executionService, never()).recordCompleted(any());
+    verify(artifactOperationService, never()).recordOperation(any());
+    verify(eventPort, never()).append(any(), any(), any(), any(), any(), any(), any());
+    verify(workflowTransitionService, never())
+        .transition(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
   void onResultLateMalformedPayloadMarksLateResultFailedWithoutArtifactHarvest() {
     RunnerExecutionSnapshot timedOut =
         new RunnerExecutionSnapshot(

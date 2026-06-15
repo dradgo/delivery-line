@@ -41,7 +41,10 @@ class WorkflowInspectionServiceRunnerLogReferenceTest {
           mock(RecoveryService.class),
           runnerExecutions,
           mock(RunnerScratchStore.class),
-          mock(ClarificationReadPort.class));
+          mock(ClarificationReadPort.class),
+          mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
+          org.dradgo.application.runner.RunnerProperties.defaults(),
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
 
   private static RunnerExecutionSnapshot snapshot(
       String reference, DataClassification classification, Long byteSize, Integer redactionCount) {

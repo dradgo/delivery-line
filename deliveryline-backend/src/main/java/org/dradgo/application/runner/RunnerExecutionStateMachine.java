@@ -18,11 +18,17 @@ import org.dradgo.domain.registry.RunnerExecutionStatus;
  * <p>Allowed transitions:
  *
  * <pre>
- *   pending  → running | completed | failed | timed_out | orphaned
- *   running  → completed | failed | timed_out | orphaned
+ *   pending  → running | completed | failed | timed_out | orphaned | cancelled_for_takeover
+ *   queued   → running | cancelled_for_takeover
+ *   running  → completed | failed | timed_out | orphaned | cancelled_for_takeover
  *   timed_out|orphaned → failed (late-result reclassification)
- *   completed|failed → (no further transitions)
+ *   completed|failed|cancelled_for_takeover → (no further transitions)
  * </pre>
+ *
+ * <p>Story 3.22 (AC5 / Trap T4): {@code queued} was previously ABSENT from the {@code ALLOWED} map
+ * (dequeue flips queued→running via native {@code FOR UPDATE SKIP LOCKED} SQL that bypasses this
+ * guard). Developer-takeover flips queued rows through the guarded {@code markCancelledForTakeover}
+ * adapter path, so {@code queued} now has an explicit rule.
  *
  * <p>Reuses {@link DomainErrorCode#ILLEGAL_TRANSITION} — the registry already covers this shape (no
  * new code is needed; the rejection details disambiguate the runner vs workflow caller).
@@ -35,7 +41,8 @@ public final class RunnerExecutionStateMachine {
           RunnerExecutionStatus.COMPLETED,
           RunnerExecutionStatus.FAILED,
           RunnerExecutionStatus.TIMED_OUT,
-          RunnerExecutionStatus.ORPHANED);
+          RunnerExecutionStatus.ORPHANED,
+          RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER);
 
   static {
     Map<RunnerExecutionStatus, Set<RunnerExecutionStatus>> rules =
@@ -47,18 +54,29 @@ public final class RunnerExecutionStateMachine {
             RunnerExecutionStatus.COMPLETED,
             RunnerExecutionStatus.FAILED,
             RunnerExecutionStatus.TIMED_OUT,
-            RunnerExecutionStatus.ORPHANED));
+            RunnerExecutionStatus.ORPHANED,
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+    // Story 3.22 (Trap T4): queued was absent — add the rule so the guarded
+    // markCancelledForTakeover
+    // path is legal. The synchronous dequeue (native FOR UPDATE SKIP LOCKED) still flips
+    // queued→running outside this guard; this rule covers the takeover (and future guarded) edges.
+    rules.put(
+        RunnerExecutionStatus.QUEUED,
+        EnumSet.of(RunnerExecutionStatus.RUNNING, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
     rules.put(
         RunnerExecutionStatus.RUNNING,
         EnumSet.of(
             RunnerExecutionStatus.COMPLETED,
             RunnerExecutionStatus.FAILED,
             RunnerExecutionStatus.TIMED_OUT,
-            RunnerExecutionStatus.ORPHANED));
+            RunnerExecutionStatus.ORPHANED,
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
     rules.put(RunnerExecutionStatus.COMPLETED, EnumSet.noneOf(RunnerExecutionStatus.class));
     rules.put(RunnerExecutionStatus.FAILED, EnumSet.noneOf(RunnerExecutionStatus.class));
     rules.put(RunnerExecutionStatus.TIMED_OUT, EnumSet.of(RunnerExecutionStatus.FAILED));
     rules.put(RunnerExecutionStatus.ORPHANED, EnumSet.of(RunnerExecutionStatus.FAILED));
+    rules.put(
+        RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER, EnumSet.noneOf(RunnerExecutionStatus.class));
     ALLOWED = Map.copyOf(rules);
   }
 
