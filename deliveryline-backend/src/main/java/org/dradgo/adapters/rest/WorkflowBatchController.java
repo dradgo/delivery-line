@@ -31,10 +31,10 @@ import org.springframework.web.bind.annotation.RestController;
  * surface.
  *
  * <p>The endpoint ALWAYS returns 200 with the {@link BatchSubmissionResponse}; per-ticket
- * rejections live in the response body, never a non-2xx status — including a mid-batch
- * {@code RUNNER_QUEUE_FULL}, which the service catches per-ticket and reports as rejected outcomes
- * rather than surfacing as a 503. Non-2xx is reserved for whole-batch failures that abort before the
- * loop — a malformed payload (400) or an idempotency-key conflict (409).
+ * rejections live in the response body, never a non-2xx status — including a mid-batch {@code
+ * RUNNER_QUEUE_FULL}, which the service catches per-ticket and reports as rejected outcomes rather
+ * than surfacing as a 503. Non-2xx is reserved for whole-batch failures that abort before the loop
+ * — a malformed payload (400) or an idempotency-key conflict (409).
  */
 @RestController
 @Validated

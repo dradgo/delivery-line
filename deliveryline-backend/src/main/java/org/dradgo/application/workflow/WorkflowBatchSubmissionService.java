@@ -373,9 +373,9 @@ public class WorkflowBatchSubmissionService {
 
   /**
    * Returns a command whose ticket list is reduced to its order-preserving distinct elements. A
-   * null list is passed through unchanged so {@link #validateCommand} surfaces the {@code @NotEmpty}
-   * violation rather than this method NPE-ing. When there are no duplicates the original command is
-   * returned to avoid rebuilding the record.
+   * null list is passed through unchanged so {@link #validateCommand} surfaces the
+   * {@code @NotEmpty} violation rather than this method NPE-ing. When there are no duplicates the
+   * original command is returned to avoid rebuilding the record.
    */
   private SubmitBatchCommand normalizeTickets(SubmitBatchCommand command) {
     List<String> refs = command.linearTicketReferences();
