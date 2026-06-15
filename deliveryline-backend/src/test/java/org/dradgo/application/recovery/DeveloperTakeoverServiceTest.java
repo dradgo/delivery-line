@@ -490,7 +490,8 @@ class DeveloperTakeoverServiceTest {
   @Test
   void markSucceededFailureAfterCommitRaisesInternalErrorPreservingTakeoverAndAuditContext() {
     // The prep tx (transition + cancel-flips + recovery_actions insert) commits; only the
-    // out-of-band markSucceeded flip fails. The takeover effect is durable, but the recovery_actions
+    // out-of-band markSucceeded flip fails. The takeover effect is durable, but the
+    // recovery_actions
     // row is stuck `pending` — the service surfaces INTERNAL_ERROR ("operator reconciliation
     // required") rather than silently reporting success. Highest-consequence failure mode.
     stubHappyTakeover();
