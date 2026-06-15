@@ -146,6 +146,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null);
     cli.approveSpec(
         RUN_ID,
@@ -219,6 +220,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null);
     cli.acceptImplementation(
         RUN_ID,
@@ -289,6 +291,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null);
     cli.rejectSpec(
         RUN_ID,
@@ -365,6 +368,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null);
     cli.answerClarification(
         RUN_ID,
@@ -433,6 +437,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null);
     cli.approveSpec(
         RUN_ID,

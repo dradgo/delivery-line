@@ -621,6 +621,37 @@ final class ArchitectureRuleCatalog {
               .allowEmptyShould(false));
 
   /**
+   * Story 3.18 (AC10): WorkflowBatchSubmissionService stays in {@code application.workflow} and
+   * composes the single-submit command model via application-owned ports + domain types — never
+   * reaching into adapter/persistence/runner types. Same shape as the approval boundary rule, with
+   * {@code jakarta.validation} (payload validation) and {@code org.springframework.transaction}
+   * (the independent-transaction template that keeps best-effort idempotency writes isolated) added
+   * to the allow-list.
+   */
+  static final ArchRule BATCH_SUBMISSION_SERVICE_LIVES_IN_APPLICATION_WORKFLOW =
+      namedRule(
+          "WorkflowBatchSubmissionService must live under application.workflow and stay free of persistence/adapter dependencies",
+          "Remediation: keep WorkflowBatchSubmissionService in org.dradgo.application.workflow (story 3.18 AC10). It orchestrates batch submission by composing WorkflowCommandService.submit + IdempotencyService via application-owned ports and domain types — any adapter/persistence/runner import would re-introduce the cross-layer dependency LAYERED_BOUNDARIES forbids.",
+          classes()
+              .that()
+              .haveFullyQualifiedName(
+                  "org.dradgo.application.workflow.WorkflowBatchSubmissionService")
+              .should()
+              .resideInAPackage("org.dradgo.application.workflow..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "jakarta.validation..",
+                  "org.slf4j..",
+                  "org.springframework.beans.factory.annotation..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
+  /**
    * Story 2.11 trap T7 sibling rule: ClarificationService stays in {@code
    * application.clarification} and never reaches into adapter/persistence types. Same shape as the
    * approval boundary rule.

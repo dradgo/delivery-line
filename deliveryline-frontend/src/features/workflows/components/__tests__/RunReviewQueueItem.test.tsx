@@ -11,7 +11,7 @@
  */
 import type { ComponentProps, MouseEvent } from 'react';
 import type * as ReactRouter from '@tanstack/react-router';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import userEvent from '@testing-library/user-event';
@@ -21,6 +21,8 @@ import type { RunQueueRow } from '../../runQueueRow';
 import { toRunQueueRow } from '../../runQueueRow';
 import { specRejectAndResubmitSummary } from '@/test/fixtures/runQueue/specRejectAndResubmit';
 import { executionFailureSummary } from '@/test/fixtures/runQueue/executionFailure';
+import { openPrLinkage, prLinkageByState } from '@/test/fixtures/runQueue/prLinkage';
+import type { PrState } from '../../prLinkageView';
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof ReactRouter>();
@@ -388,8 +390,10 @@ describe('RunReviewQueueItem — logging contract (Task 6)', () => {
 describe('RunReviewQueueItem — fixture-driven rendering (AC12)', () => {
   it('renders the spec-rejection-and-resubmit terminal row (Completed + N rejections)', () => {
     render(<RunReviewQueueItem run={toRunQueueRow(specRejectAndResubmitSummary)} />);
-    expect(row()).toHaveTextContent('run_fix_rej_001');
-    expect(row()).toHaveTextContent('DEL-9002');
+    // The row body is a sibling of the stretched open-run overlay (D1), so assert content
+    // against the rendered document rather than the (empty) overlay anchor.
+    expect(screen.getByText('run_fix_rej_001')).toBeInTheDocument();
+    expect(screen.getByText('DEL-9002')).toBeInTheDocument();
     const badge = screen.getByTestId('workflow-state-badge');
     expect(badge).toHaveTextContent('Completed');
     expect(badge).toHaveAttribute('data-state-name', 'success');
@@ -400,7 +404,7 @@ describe('RunReviewQueueItem — fixture-driven rendering (AC12)', () => {
 
   it('renders the execution-failure terminal row (story 3.30 AC8 — Failed primary, escalation demoted)', () => {
     render(<RunReviewQueueItem run={toRunQueueRow(executionFailureSummary)} />);
-    expect(row()).toHaveTextContent('run_exec_fail_001');
+    expect(screen.getByText('run_exec_fail_001')).toBeInTheDocument();
     expect(row()).toHaveAttribute('data-queue-item-state', 'failed');
     const badge = screen.getByTestId('workflow-state-badge');
     expect(badge).toHaveTextContent('Failed');
@@ -409,5 +413,90 @@ describe('RunReviewQueueItem — fixture-driven rendering (AC12)', () => {
     // the escalation marker demotes to the secondary trust cluster.
     expect(screen.getByTestId('queue-item-primary-attention')).toHaveTextContent('Failed');
     expect(screen.getByTestId('queue-item-secondary')).toHaveTextContent('Escalated');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.31 — compact GitHub PR linkage + the D1 stretched-link click target.
+// ---------------------------------------------------------------------------
+describe('RunReviewQueueItem — PR linkage (story 3.31)', () => {
+  it('AC1/AC7 — renders the compact PR ref + state badge in the secondary cluster when present', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, prLinkage: openPrLinkage }} />);
+    const secondary = screen.getByTestId('queue-item-secondary');
+    const prLink = within(secondary).getByTestId('pr-linkage-link');
+    expect(prLink).toHaveTextContent('PR acme/widgets#42');
+    expect(within(secondary).getByTestId('pr-state-badge')).toHaveAttribute(
+      'data-pr-state',
+      'open',
+    );
+    // AC1 — the compact queue element omits branch/commit (those are strip-only).
+    expect(within(secondary).queryByTestId('pr-linkage-branch')).toBeNull();
+    expect(within(secondary).queryByTestId('pr-linkage-commit')).toBeNull();
+  });
+
+  it('AC8 — gracefully omits the PR linkage entirely when absent (Trap T-ABSENT)', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    expect(screen.queryByTestId('pr-linkage')).toBeNull();
+    // No secondary cluster at all for a plain row (no demoted signals either).
+    expect(screen.queryByTestId('queue-item-secondary')).toBeNull();
+  });
+
+  it('D1 — the PR link opens GitHub in a new tab without breaking whole-row open-run', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, prLinkage: openPrLinkage }} />);
+
+    // The whole-row open-run intent still resolves on the row's `<Link>` overlay.
+    expect(row().tagName).toBe('A');
+    expect(row()).toHaveAttribute('data-to', '/workflows/$workflowRunId');
+    expect(row()).toHaveAttribute('data-run-param', 'run_abc123');
+
+    // The PR link is a distinct anchor → GitHub, new tab.
+    const prLink = screen.getByTestId('pr-linkage-link');
+    expect(prLink).toHaveAttribute('href', 'https://github.com/acme/widgets/pull/42');
+    expect(prLink).toHaveAttribute('target', '_blank');
+    expect(prLink).toHaveAttribute('rel', 'noopener noreferrer');
+
+    // Clicking the PR link must NOT activate the row's open-run logging (D1 escape).
+    fireEvent.click(prLink);
+    expect(console.info).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'queueItem.open' }),
+    );
+  });
+
+  it('AC9 — the PR link carries the canonical accessible name; the row label is not polluted', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, prLinkage: openPrLinkage }} />);
+    expect(screen.getByTestId('pr-linkage-link')).toHaveAttribute(
+      'aria-label',
+      'Pull request 42 in acme/widgets, status open',
+    );
+    // The row's own accessible name (AC6 of 2.15) stays free of PR text.
+    expect(row().getAttribute('aria-label') ?? '').not.toMatch(/pull request/i);
+  });
+
+  it('AC10 — renders the badge for every PR lifecycle state', () => {
+    (['draft', 'open', 'merged', 'closed'] satisfies PrState[]).forEach((state) => {
+      const { unmount } = render(
+        <RunReviewQueueItem run={{ ...BASE_ROW, prLinkage: prLinkageByState[state] }} />,
+      );
+      expect(screen.getByTestId('pr-state-badge')).toHaveAttribute('data-pr-state', state);
+      unmount();
+    });
+  });
+
+  it('AC6 — the PR ref shown comes from the row view-model (never an artifact source)', () => {
+    // The component takes ONLY a `RunQueueRow` — there is no artifact prop/import path; the
+    // rendered PR ref can only be the view-model's backend-truth `prLinkage.prReference`.
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, prLinkage: { ...openPrLinkage, prReference: 'backend/truth#7' } }}
+      />,
+    );
+    expect(screen.getByTestId('pr-linkage-link')).toHaveTextContent('PR backend/truth#7');
+  });
+
+  it('AC10 — a row with PR linkage has zero axe violations', async () => {
+    const { container } = render(
+      <RunReviewQueueItem run={{ ...BASE_ROW, prLinkage: openPrLinkage }} />,
+    );
+    await expectNoA11yViolations(container);
   });
 });

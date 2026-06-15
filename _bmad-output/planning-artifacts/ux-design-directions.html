@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ai-hackaton-1 UX Design Directions</title>
+  <style>
+    :root {
+      --bg: #0f1416;
+      --panel: #151d20;
+      --panel-2: #1b2529;
+      --panel-3: #223035;
+      --line: #2f4348;
+      --text: #e7efef;
+      --muted: #96a8aa;
+      --teal: #2bb6a8;
+      --teal-soft: rgba(43, 182, 168, 0.16);
+      --ok: #49b56f;
+      --warn: #d6a33f;
+      --danger: #da625e;
+      --info: #4e94d6;
+      --shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --font: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #0b1012; color: var(--text); font-family: var(--font); }
+    body { line-height: 1.4; }
+    a { color: inherit; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      background: rgba(11, 16, 18, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .topbar h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .quick-nav {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .quick-nav a {
+      text-decoration: none;
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .quick-nav a:hover {
+      color: var(--text);
+      border-color: rgba(43,182,168,0.55);
+      background: rgba(43,182,168,0.08);
+    }
+
+    .intro {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .intro-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1.3fr 1fr;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .card h2, .card h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .card p, .card li {
+      font-size: 13px;
+      color: #cfdddd;
+    }
+
+    .card ul { margin: 0; padding-left: 18px; }
+    .card li + li { margin-top: 6px; }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(255,255,255,0.025);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .metric span {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .directions {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 8px 24px 56px;
+      display: grid;
+      gap: 28px;
+    }
+
+    .direction {
+      scroll-margin-top: 96px;
+      background: #0f1416;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .direction-header {
+      padding: 18px 20px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(43,182,168,0.08), rgba(15,20,22,0));
+    }
+
+    .direction-header h2 {
+      margin: 0;
+      font-size: 19px;
+    }
+
+    .direction-header p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      max-width: 820px;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tag {
+      font-size: 11px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: #dce8e8;
+    }
+
+    .mockup {
+      padding: 20px;
+      background:
+        radial-gradient(circle at top right, rgba(43,182,168,0.08), transparent 28%),
+        linear-gradient(180deg, #0e1315, #12191c);
+    }
+
+    .app {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #101719;
+      min-height: 560px;
+    }
+
+    .app-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.02);
+    }
+
+    .app-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .app-title strong { font-size: 13px; }
+    .app-title span { font-size: 11px; color: var(--muted); }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .btn, .chip {
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      color: var(--text);
+    }
+
+    .btn.primary {
+      background: var(--teal-soft);
+      border-color: rgba(43,182,168,0.4);
+      color: #d9fffb;
+    }
+
+    .chip.ok { color: #d7ffe4; border-color: rgba(73,181,111,0.35); background: rgba(73,181,111,0.12); }
+    .chip.warn { color: #ffe9ba; border-color: rgba(214,163,63,0.35); background: rgba(214,163,63,0.12); }
+    .chip.danger { color: #ffd6d2; border-color: rgba(218,98,94,0.35); background: rgba(218,98,94,0.12); }
+    .chip.info { color: #d8ebff; border-color: rgba(78,148,214,0.35); background: rgba(78,148,214,0.12); }
+
+    .shell {
+      display: grid;
+      min-height: 508px;
+      grid-template-columns: 232px 1fr 320px;
+    }
+
+    .shell.two-col { grid-template-columns: 232px 1fr; }
+    .shell.compare { grid-template-columns: 220px minmax(0, 1fr) 1fr 280px; }
+    .shell.timeline { grid-template-columns: 210px minmax(0, 1fr) 280px; }
+
+    .nav, .side {
+      background: rgba(255,255,255,0.02);
+      border-right: 1px solid rgba(255,255,255,0.08);
+      padding: 14px;
+    }
+
+    .side {
+      border-right: none;
+      border-left: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.018);
+    }
+
+    .main {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+      min-width: 0;
+    }
+
+    .nav h4, .side h4 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .nav-item, .status-item, .meta-row, .line-row, .timeline-row, .queue-row, .compare-box, .panel {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .nav-item {
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+
+    .nav-item.active {
+      border-color: rgba(43,182,168,0.45);
+      background: rgba(43,182,168,0.09);
+    }
+
+    .nav-item strong, .queue-row strong { display: block; font-size: 12px; }
+    .nav-item span, .queue-row span { font-size: 11px; color: var(--muted); display: block; margin-top: 3px; }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(43,182,168,0.10), rgba(255,255,255,0.02));
+    }
+
+    .hero h3 {
+      margin: 0 0 6px;
+      font-size: 17px;
+    }
+
+    .hero p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      max-width: 520px;
+    }
+
+    .hero-metrics {
+      display: grid;
+      gap: 8px;
+      min-width: 210px;
+    }
+
+    .hero-metrics .metric {
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 2px;
+    }
+
+    .section-title h4 {
+      margin: 0;
+      font-size: 13px;
+    }
+
+    .section-title span {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .panel {
+      padding: 12px;
+    }
+
+    .panel p {
+      margin: 0;
+      font-size: 12px;
+      color: #d5e0e0;
+    }
+
+    .panel + .panel { margin-top: 0; }
+
+    .meta-list, .status-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .meta-row, .status-item, .timeline-row, .queue-row {
+      padding: 10px;
+    }
+
+    .meta-row strong, .status-item strong, .timeline-row strong {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .meta-row span, .status-item span, .timeline-row span, .line-row span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .doc {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .doc-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .doc-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .doc-title strong { font-size: 12px; }
+    .doc-title span { font-size: 11px; color: var(--muted); }
+
+    .doc-body {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .doc-block {
+      padding: 10px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.025);
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .doc-block strong {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .doc-block p {
+      margin: 0;
+      font-size: 12px;
+      color: #d5e0e0;
+    }
+
+    .line-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .line-row {
+      padding: 9px 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .line-row strong { font-size: 12px; }
+
+    .timeline-list, .queue-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .compare-box {
+      padding: 12px;
+      min-width: 0;
+    }
+
+    .compare-box h5 {
+      margin: 0 0 8px;
+      font-size: 12px;
+    }
+
+    .direction-footer {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 14px;
+      padding: 0 20px 20px;
+      background: #0f1416;
+    }
+
+    .direction-footer .card {
+      box-shadow: none;
+      border-radius: 12px;
+      padding: 14px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .direction-footer h3 {
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .direction-footer p, .direction-footer li {
+      font-size: 12px;
+      color: #d0dcdc;
+    }
+
+    .footer-note {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 24px 48px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .intro-grid, .direction-footer, .comparison { grid-template-columns: 1fr; }
+      .shell, .shell.compare, .shell.timeline { grid-template-columns: 1fr; }
+      .nav, .side { border: none; border-bottom: 1px solid rgba(255,255,255,0.08); }
+      .side { border-top: 1px solid rgba(255,255,255,0.08); border-left: none; }
+      .compare-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>ai-hackaton-1 Design Directions</h1>
+      <p>Review-centric control surface variations built from the agreed visual and UX foundation.</p>
+    </div>
+    <nav class="quick-nav">
+      <a href="#dir-1">D1 Tri-Pane</a>
+      <a href="#dir-2">D2 Artifact First</a>
+      <a href="#dir-3">D3 Queue + Review</a>
+      <a href="#dir-4">D4 Timeline Lens</a>
+      <a href="#dir-5">D5 Compare Desk</a>
+      <a href="#dir-6">D6 Command Hybrid</a>
+    </nav>
+  </header>
+
+  <section class="intro">
+    <div class="intro-grid">
+      <div class="card">
+        <h2>How To Evaluate</h2>
+        <ul>
+          <li>Does the main artifact stay visually primary?</li>
+          <li>Can a reviewer find blockers, open questions, and next action without hunting?</li>
+          <li>Does the design feel governed and calm rather than dashboard-heavy?</li>
+          <li>Can PM, developer, and workflow owner all use the same surface with different emphasis?</li>
+          <li>Does state look explainable and attributable, not merely decorative?</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>Shared Foundation</h2>
+        <div class="comparison">
+          <div class="metric"><strong>Tone</strong><span>Neutral operational</span></div>
+          <div class="metric"><strong>Density</strong><span>Medium, structured</span></div>
+          <div class="metric"><strong>Accent</strong><span>Blue-green / teal</span></div>
+          <div class="metric"><strong>Shell</strong><span>Left nav + main + context</span></div>
+          <div class="metric"><strong>Reading</strong><span>Balanced scan / read</span></div>
+          <div class="metric"><strong>Trust</strong><span>Semantic clarity first</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <main class="directions">
+    <section class="direction" id="dir-1">
+      <div class="direction-header">
+        <h2>Direction 1: Balanced Tri-Pane Review Desk</h2>
+        <p>The default workstation interpretation. Stable left navigation, main artifact in the center, and a right-side context rail for blockers, questions, and artifact metadata.</p>
+        <div class="tags">
+          <span class="tag">Most balanced</span>
+          <span class="tag">Review-first</span>
+          <span class="tag">Strong context visibility</span>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="app">
+          <div class="app-top">
+            <div class="app-title">
+              <strong>Ticket run • DF-1482</strong>
+              <span>Spec approval pending • Product review lane</span>
+            </div>
+            <div class="toolbar">
+              <span class="chip warn">2 blockers</span>
+              <span class="chip info">3 open questions</span>
+              <button class="btn">Reject</button>
+              <button class="btn primary">Approve spec</button>
+            </div>
+          </div>
+          <div class="shell">
+            <aside class="nav">
+              <h4>Runs</h4>
+              <div class="nav-item active"><strong>DF-1482</strong><span>Waiting for spec approval</span></div>
+              <div class="nav-item"><strong>DF-1476</strong><span>Implementation review</span></div>
+              <div class="nav-item"><strong>DF-1458</strong><span>Recovery required</span></div>
+              <h4 style="margin-top:16px;">Navigation</h4>
+              <div class="nav-item"><strong>Pending review</strong><span>12 active items</span></div>
+              <div class="nav-item"><strong>Recovered runs</strong><span>Recent reversals</span></div>
+            </aside>
+            <section class="main">
+              <div class="hero">
+                <div>
+                  <h3>Specification revision 4</h3>
+                  <p>Clarify stock-reconciliation scope, preserve branch-level audit history, and exclude warehouse-admin workflows from MVP.</p>
+                </div>
+                <div class="hero-metrics">
+                  <div class="metric"><strong>Next artifact</strong><span>Implementation plan</span></div>
+                  <div class="metric"><strong>Evidence</strong><span>Spec + diff + notes</span></div>
+                </div>
+              </div>
+              <div class="section-title"><h4>Current specification</h4><span>Main review surface</span></div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Spec.md</strong><span>Updated 12 minutes ago by Codex runner</span></div>
+                  <span class="chip info">Diff available</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Scope</strong><p>Ticket resolution workflow should preserve causal trace from clarification through artifact progression.</p></div>
+                  <div class="doc-block"><strong>Open question</strong><p>Should PR creation happen only after developer review, or can pre-review draft PRs be created for comparison?</p></div>
+                  <div class="doc-block"><strong>Review note</strong><p>Approval requires all blockers resolved and residual risk explicitly visible.</p></div>
+                </div>
+              </div>
+              <div class="section-title"><h4>Clarification response</h4><span>Direct input + decision</span></div>
+              <div class="panel">
+                <p>Choose an option or respond directly. Your answer will be bound to the current spec revision and must visibly change state or explain why it did not.</p>
+              </div>
+            </section>
+            <aside class="side">
+              <h4>Context</h4>
+              <div class="status-list">
+                <div class="status-item"><strong>Blocker</strong><span>PR creation policy unresolved</span></div>
+                <div class="status-item"><strong>Open question</strong><span>Draft PR timing decision required</span></div>
+                <div class="status-item"><strong>Latest cause</strong><span>Clarification request raised by PM reviewer</span></div>
+              </div>
+              <h4 style="margin-top:16px;">Artifact lineage</h4>
+              <div class="meta-list">
+                <div class="meta-row"><strong>Spec v4</strong><span>From answers on v3</span></div>
+                <div class="meta-row"><strong>Plan</strong><span>Pending approval</span></div>
+                <div class="meta-row"><strong>PR</strong><span>Not generated</span></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <div class="direction-footer">
+        <div class="card"><h3>Best At</h3><p>Keeping main artifact central while secondary workflow context stays visible and actionable.</p></div>
+        <div class="card"><h3>Risk</h3><p>Can drift into clutter if too many context widgets are made persistent.</p></div>
+        <div class="card"><h3>Fit</h3><p>Strong default for mixed PM/developer review with clear blocker and clarification handling.</p></div>
+      </div>
+    </section>
+
+    <section class="direction" id="dir-2">
+      <div class="direction-header">
+        <h2>Direction 2: Artifact-First Focus Layout</h2>
+        <p>A cleaner variation where the main artifact dominates and supporting workflow context collapses into lighter modules.</p>
+        <div class="tags">
+          <span class="tag">Cleaner reading</span>
+          <span class="tag">Lower noise</span>
+          <span class="tag">PM-friendly</span>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="app">
+          <div class="app-top">
+            <div class="app-title">
+              <strong>Spec review • DF-1482</strong>
+              <span>Artifact-first mode</span>
+            </div>
+            <div class="toolbar">
+              <span class="chip ok">Trace visible</span>
+              <button class="btn">Comment</button>
+              <button class="btn primary">Resolve question</button>
+            </div>
+          </div>
+          <div class="shell two-col">
+            <aside class="nav">
+              <h4>Review lanes</h4>
+              <div class="nav-item active"><strong>Spec review</strong><span>3 questions remaining</span></div>
+              <div class="nav-item"><strong>Plan review</strong><span>Pending</span></div>
+              <div class="nav-item"><strong>PR review</strong><span>Not started</span></div>
+              <h4 style="margin-top:16px;">Signals</h4>
+              <div class="nav-item"><strong>Blockers</strong><span>2 active</span></div>
+              <div class="nav-item"><strong>History</strong><span>12 visible events</span></div>
+            </aside>
+            <section class="main">
+              <div class="hero">
+                <div>
+                  <h3>Read the proposal, answer the gap, move the ticket</h3>
+                  <p>The layout deprioritizes operational chrome in favor of readable artifact review and a direct clarification area.</p>
+                </div>
+                <div class="hero-metrics">
+                  <div class="metric"><strong>Reading mode</strong><span>Balanced scan</span></div>
+                  <div class="metric"><strong>State</strong><span>Waiting for answer</span></div>
+                </div>
+              </div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Specification</strong><span>Reviewable artifact with inline context</span></div>
+                  <span class="chip warn">Question unresolved</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Goal</strong><p>Provide a governed ticket-resolution loop where movement is visible and attributable.</p></div>
+                  <div class="doc-block"><strong>Question needing answer</strong><p>Should rollback preserve superseded artifacts in-place or move them to historical context?</p></div>
+                  <div class="doc-block"><strong>What changed last time</strong><p>Approval requirement was revised to demand visible evidence on every state transition.</p></div>
+                </div>
+              </div>
+              <div class="compare-grid">
+                <div class="compare-box">
+                  <h5>Structured options</h5>
+                  <div class="line-list">
+                    <div class="line-row"><strong>Preserve in place</strong><span>Higher review continuity</span></div>
+                    <div class="line-row"><strong>Move to history</strong><span>Cleaner main artifact</span></div>
+                  </div>
+                </div>
+                <div class="compare-box">
+                  <h5>Reviewer comment</h5>
+                  <div class="panel"><p>Direct text response area with explicit linkage to current artifact revision and question state.</p></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+      <div class="direction-footer">
+        <div class="card"><h3>Best At</h3><p>Long-form spec and plan review with less distraction.</p></div>
+        <div class="card"><h3>Risk</h3><p>Can hide too much workflow context unless state modules remain visible enough.</p></div>
+        <div class="card"><h3>Fit</h3><p>Good if reading clarity is valued above simultaneous operational context.</p></div>
+      </div>
+    </section>
+
+    <section class="direction" id="dir-3">
+      <div class="direction-header">
+        <h2>Direction 3: Queue-Centered Review Console</h2>
+        <p>Prioritizes the review queue and operational triage. Better for workflow owners or heavy multi-ticket review sessions.</p>
+        <div class="tags">
+          <span class="tag">Triage heavy</span>
+          <span class="tag">Operational</span>
+          <span class="tag">Queue-centric</span>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="app">
+          <div class="app-top">
+            <div class="app-title">
+              <strong>Pending review queue</strong>
+              <span>12 active tickets • 4 blocked • 2 recoveries</span>
+            </div>
+            <div class="toolbar">
+              <span class="chip danger">4 blockers</span>
+              <button class="btn">Filter</button>
+              <button class="btn primary">Open next ticket</button>
+            </div>
+          </div>
+          <div class="shell timeline">
+            <aside class="nav">
+              <h4>Queues</h4>
+              <div class="nav-item active"><strong>Spec approvals</strong><span>5 items</span></div>
+              <div class="nav-item"><strong>Plan review</strong><span>3 items</span></div>
+              <div class="nav-item"><strong>Recovery required</strong><span>2 items</span></div>
+            </aside>
+            <section class="main">
+              <div class="section-title"><h4>Ticket queue</h4><span>Choose next review target</span></div>
+              <div class="queue-list">
+                <div class="queue-row"><strong>DF-1482 • Spec approval</strong><span>Question unresolved • Last moved by PM answer</span></div>
+                <div class="queue-row"><strong>DF-1476 • Plan review</strong><span>Ready for go / no-go decision</span></div>
+                <div class="queue-row"><strong>DF-1458 • Recovery</strong><span>Blocked by stale artifact link</span></div>
+              </div>
+              <div class="section-title"><h4>Selected ticket summary</h4><span>Fast triage context</span></div>
+              <div class="hero">
+                <div>
+                  <h3>DF-1482 requires one policy answer</h3>
+                  <p>The queue stays primary. Artifact details are visible, but only after target selection.</p>
+                </div>
+                <div class="hero-metrics">
+                  <div class="metric"><strong>Ready after</strong><span>1 answer</span></div>
+                  <div class="metric"><strong>Next artifact</strong><span>Plan v1</span></div>
+                </div>
+              </div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Active artifact summary</strong><span>Condensed reading view</span></div>
+                  <span class="chip info">Summary mode</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Current issue</strong><p>Rollback artifact retention not yet approved.</p></div>
+                  <div class="doc-block"><strong>Last movement</strong><p>Spec updated after reviewer comment two hours ago.</p></div>
+                </div>
+              </div>
+            </section>
+            <aside class="side">
+              <h4>Immediate actions</h4>
+              <div class="status-list">
+                <div class="status-item"><strong>Answer question</strong><span>Required to generate plan</span></div>
+                <div class="status-item"><strong>Escalate</strong><span>Send to workflow owner</span></div>
+                <div class="status-item"><strong>Reject</strong><span>Return with reason</span></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <div class="direction-footer">
+        <div class="card"><h3>Best At</h3><p>Multi-ticket queue management and operational triage.</p></div>
+        <div class="card"><h3>Risk</h3><p>Main artifact can become secondary, weakening the review-centric promise.</p></div>
+        <div class="card"><h3>Fit</h3><p>Useful if workflow owners dominate usage, weaker if PM/developer artifact review is central.</p></div>
+      </div>
+    </section>
+
+    <section class="direction" id="dir-4">
+      <div class="direction-header">
+        <h2>Direction 4: Timeline-Led Evidence Lens</h2>
+        <p>Emphasizes causality and evidence history. Strongest for users who need to understand why movement happened or stalled.</p>
+        <div class="tags">
+          <span class="tag">Audit heavy</span>
+          <span class="tag">Causality-first</span>
+          <span class="tag">Recovery-friendly</span>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="app">
+          <div class="app-top">
+            <div class="app-title">
+              <strong>Run evidence</strong>
+              <span>Every movement linked to cause</span>
+            </div>
+            <div class="toolbar">
+              <span class="chip info">12 timeline events</span>
+              <button class="btn">Collapse details</button>
+              <button class="btn primary">Inspect event</button>
+            </div>
+          </div>
+          <div class="shell timeline">
+            <aside class="nav">
+              <h4>Flow</h4>
+              <div class="nav-item active"><strong>Current run</strong><span>Spec approval stage</span></div>
+              <div class="nav-item"><strong>Timeline</strong><span>Evidence-linked events</span></div>
+              <div class="nav-item"><strong>Artifacts</strong><span>6 generated outputs</span></div>
+            </aside>
+            <section class="main">
+              <div class="hero">
+                <div>
+                  <h3>Why did this ticket stop here?</h3>
+                  <p>This direction makes causality and event linkage the main review surface, with artifact reading one layer deeper.</p>
+                </div>
+                <div class="hero-metrics">
+                  <div class="metric"><strong>Last cause</strong><span>PM rejected policy gap</span></div>
+                  <div class="metric"><strong>Required next</strong><span>Revised answer</span></div>
+                </div>
+              </div>
+              <div class="section-title"><h4>Movement timeline</h4><span>Legible at a glance, inspectable on demand</span></div>
+              <div class="timeline-list">
+                <div class="timeline-row"><strong>09:48 • Spec revised</strong><span>Generated from PM answer on rollback visibility</span></div>
+                <div class="timeline-row"><strong>09:54 • Approval blocked</strong><span>Question about PR timing still unresolved</span></div>
+                <div class="timeline-row"><strong>10:02 • Review note added</strong><span>Developer requested explicit policy gate</span></div>
+              </div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Selected event evidence</strong><span>Linked artifact and rationale</span></div>
+                  <span class="chip warn">Blocking</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Decision</strong><p>Reject current revision until PR creation timing is explicit.</p></div>
+                  <div class="doc-block"><strong>Artifact impact</strong><p>Plan generation is paused. Spec remains active at v4.</p></div>
+                </div>
+              </div>
+            </section>
+            <aside class="side">
+              <h4>Linked evidence</h4>
+              <div class="meta-list">
+                <div class="meta-row"><strong>Actor</strong><span>Product reviewer</span></div>
+                <div class="meta-row"><strong>Source artifact</strong><span>Spec.md v4</span></div>
+                <div class="meta-row"><strong>Result state</strong><span>WAITING_FOR_SPEC_APPROVAL</span></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <div class="direction-footer">
+        <div class="card"><h3>Best At</h3><p>Explaining causality, stalled work, and recovery context.</p></div>
+        <div class="card"><h3>Risk</h3><p>Can feel more audit-centric than action-centric if overused.</p></div>
+        <div class="card"><h3>Fit</h3><p>Strong secondary lens or workflow-owner mode. Less ideal as the only main experience.</p></div>
+      </div>
+    </section>
+
+    <section class="direction" id="dir-5">
+      <div class="direction-header">
+        <h2>Direction 5: Compare Desk</h2>
+        <p>A comparison-first workspace for before/after review, spec diffs, and plan revisions. Strongest for proving change effect.</p>
+        <div class="tags">
+          <span class="tag">Diff-first</span>
+          <span class="tag">High trust</span>
+          <span class="tag">Developer-leaning</span>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="app">
+          <div class="app-top">
+            <div class="app-title">
+              <strong>Compare revisions</strong>
+              <span>What changed because of the last decision?</span>
+            </div>
+            <div class="toolbar">
+              <span class="chip info">Spec v3 → v4</span>
+              <button class="btn">Collapse unchanged</button>
+              <button class="btn primary">Approve revised section</button>
+            </div>
+          </div>
+          <div class="shell compare">
+            <aside class="nav">
+              <h4>Artifacts</h4>
+              <div class="nav-item active"><strong>Spec revisions</strong><span>Primary comparison</span></div>
+              <div class="nav-item"><strong>Plan revisions</strong><span>Pending</span></div>
+              <div class="nav-item"><strong>PR diff</strong><span>Not yet generated</span></div>
+            </aside>
+            <section class="main">
+              <div class="section-title"><h4>Before</h4><span>Previous approved baseline</span></div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Spec v3</strong><span>Before PM clarification</span></div>
+                  <span class="chip">Baseline</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Rollback handling</strong><p>Artifacts may move to history after rejection.</p></div>
+                  <div class="doc-block"><strong>PR policy</strong><p>Draft PR creation timing not specified.</p></div>
+                </div>
+              </div>
+            </section>
+            <section class="main">
+              <div class="section-title"><h4>After</h4><span>Current proposed state</span></div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Spec v4</strong><span>Generated after clarification</span></div>
+                  <span class="chip ok">Changed</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Rollback handling</strong><p>Superseded artifacts remain visible with historical markers.</p></div>
+                  <div class="doc-block"><strong>PR policy</strong><p>Still unresolved, blocks plan generation.</p></div>
+                </div>
+              </div>
+            </section>
+            <aside class="side">
+              <h4>Change summary</h4>
+              <div class="status-list">
+                <div class="status-item"><strong>Changed</strong><span>Rollback artifact visibility</span></div>
+                <div class="status-item"><strong>Still open</strong><span>Draft PR timing</span></div>
+                <div class="status-item"><strong>Can proceed?</strong><span>No, 1 blocker remains</span></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <div class="direction-footer">
+        <div class="card"><h3>Best At</h3><p>Making “what changed because of this decision” explicit.</p></div>
+        <div class="card"><h3>Risk</h3><p>Could feel too comparison-centric if users mostly need forward review instead of before/after validation.</p></div>
+        <div class="card"><h3>Fit</h3><p>Very strong for trust-building and review clarity. Best as a major mode or embedded artifact view.</p></div>
+      </div>
+    </section>
+
+    <section class="direction" id="dir-6">
+      <div class="direction-header">
+        <h2>Direction 6: Command Hybrid Review Surface</h2>
+        <p>Leans harder into CLI-style directness: compact option selection, explicit prompts, fast comments, and minimal ceremony around the next decision.</p>
+        <div class="tags">
+          <span class="tag">Direct interaction</span>
+          <span class="tag">Low ceremony</span>
+          <span class="tag">Hybrid PM/dev</span>
+        </div>
+      </div>
+      <div class="mockup">
+        <div class="app">
+          <div class="app-top">
+            <div class="app-title">
+              <strong>Decision prompt</strong>
+              <span>Choose action or comment directly</span>
+            </div>
+            <div class="toolbar">
+              <span class="chip info">Question 2 of 3</span>
+              <button class="btn">History</button>
+              <button class="btn primary">Submit response</button>
+            </div>
+          </div>
+          <div class="shell">
+            <aside class="nav">
+              <h4>Prompt stack</h4>
+              <div class="nav-item active"><strong>Current question</strong><span>PR creation timing</span></div>
+              <div class="nav-item"><strong>Previous answers</strong><span>2 accepted</span></div>
+              <div class="nav-item"><strong>Blocked outputs</strong><span>Plan generation paused</span></div>
+            </aside>
+            <section class="main">
+              <div class="hero">
+                <div>
+                  <h3>What should happen when spec approval is still pending?</h3>
+                  <p>This direction keeps the next decision highly explicit and compresses secondary context into supporting modules.</p>
+                </div>
+                <div class="hero-metrics">
+                  <div class="metric"><strong>Current actor</strong><span>Product reviewer</span></div>
+                  <div class="metric"><strong>Impact</strong><span>Plan generation blocked</span></div>
+                </div>
+              </div>
+              <div class="compare-grid">
+                <div class="compare-box">
+                  <h5>Options</h5>
+                  <div class="line-list">
+                    <div class="line-row"><strong>Allow draft PR</strong><span>Developer can inspect earlier</span></div>
+                    <div class="line-row"><strong>Block until approval</strong><span>Preserves stricter governance</span></div>
+                    <div class="line-row"><strong>Escalate decision</strong><span>Requires workflow owner</span></div>
+                  </div>
+                </div>
+                <div class="compare-box">
+                  <h5>Comment</h5>
+                  <div class="panel"><p>Free text response remains available. Any answer must bind to the active spec revision and visibly affect progression or explain why it cannot.</p></div>
+                </div>
+              </div>
+              <div class="doc">
+                <div class="doc-head">
+                  <div class="doc-title"><strong>Relevant context</strong><span>Only what the user needs now</span></div>
+                  <span class="chip warn">Decision required</span>
+                </div>
+                <div class="doc-body">
+                  <div class="doc-block"><strong>Current policy draft</strong><p>PR may be generated after plan approval, but before implementation review.</p></div>
+                  <div class="doc-block"><strong>Consequence</strong><p>The selected answer will generate plan v1 or keep plan generation blocked.</p></div>
+                </div>
+              </div>
+            </section>
+            <aside class="side">
+              <h4>Support context</h4>
+              <div class="meta-list">
+                <div class="meta-row"><strong>Last answer</strong><span>Accepted 18 minutes ago</span></div>
+                <div class="meta-row"><strong>Next artifact</strong><span>Plan.md v1</span></div>
+                <div class="meta-row"><strong>Review history</strong><span>3 decisions, 1 blocker</span></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <div class="direction-footer">
+        <div class="card"><h3>Best At</h3><p>Low-friction clarification and explicit next-decision handling.</p></div>
+        <div class="card"><h3>Risk</h3><p>Can oversimplify artifact reading if prompt-first interaction dominates too much.</p></div>
+        <div class="card"><h3>Fit</h3><p>Good hybrid for guided clarification loops. Strong if direct response is central.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="footer-note">
+    Open this file in a browser and compare the directions by asking: which one best preserves artifact-first review, visible blocker context, and governed movement without turning into a dashboard or an IDE?
+  </div>
+</body>
+</html>

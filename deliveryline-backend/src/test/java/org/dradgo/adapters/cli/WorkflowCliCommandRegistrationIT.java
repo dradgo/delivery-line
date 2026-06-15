@@ -45,6 +45,7 @@ class WorkflowCliCommandRegistrationIT {
                       mock(RecoveryService.class),
                       null,
                       new LocalActorIdentityResolver("local-operator"),
+                      null,
                       null));
 
   @Test

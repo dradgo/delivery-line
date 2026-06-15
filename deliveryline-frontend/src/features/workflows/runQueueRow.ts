@@ -22,6 +22,8 @@
  */
 import type { WorkflowSummary } from '@/lib/api/queryOptions';
 
+import type { PrLinkageView } from './prLinkageView';
+
 /**
  * The full Queue-Item anatomy (epic AC1). Fields absent from the live
  * `WorkflowSummary` are optional and stay `undefined` until the backend projection
@@ -58,6 +60,14 @@ export interface RunQueueRow {
    * is built/tested via constructed fixtures only, never fabricated from live data.
    */
   failureCategory?: string | undefined;
+  /**
+   * Story 3.31 — backend-truth GitHub PR linkage for the compact queue element.
+   * DORMANT: the live `WorkflowSummary` carries no PR projection (same reconciliation
+   * as `summary`/`staleIndicator`), so this is built/tested via constructed fixtures
+   * only and never fabricated. PR linkage is metadata, NOT an attention/dominant-state
+   * signal — it does not feed `resolvePrimaryAttentionIndicator`/`resolveQueueItemState`.
+   */
+  prLinkage?: PrLinkageView | undefined;
 }
 
 /**
@@ -102,6 +112,8 @@ export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
     openQuestionCount: undefined,
     staleIndicator: undefined,
     failureCategory: undefined,
+    // Story 3.31 — DORMANT: the live list summary has no PR projection.
+    prLinkage: undefined,
   };
 }
 

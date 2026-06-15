@@ -24,6 +24,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit a batch of workflow tickets (best-effort, per-ticket outcomes) */
+        post: operations["submitBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/submit-workflow": {
         parameters: {
             query?: never;
@@ -320,6 +337,25 @@ export interface components {
              */
             version?: number;
         };
+        BatchSubmissionRequest: {
+            actorIdentity: string;
+            /** @enum {string} */
+            actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
+            correlationId?: string;
+            linearTicketReferences: string[];
+        };
+        BatchSubmissionResponse: {
+            actorIdentity: string;
+            batchId: string;
+            /** Format: int32 */
+            queuedCount: number;
+            /** Format: int32 */
+            rejectedCount: number;
+            submittedAt: string;
+            tickets: components["schemas"]["TicketResult"][];
+            /** Format: int32 */
+            total: number;
+        };
         ClarificationAnswerResponse: {
             clarificationId: string;
             /** @description Clarification row status after the answer commit. Typical values follow the clarification lifecycle (open / answered / accepted / incorporated / superseded / rejected_invalid). Story 2.13 round-4 P-R4-16: idempotent replays of pre-2.13 ("legacy 2-segment") result-refs whose underlying clarification row has been hard-deleted before the replay arrived surface the sentinel value "unknown" so the previously-200 response stays 200 and the idempotent-replay contract is preserved. TS clients should default-case unknown status values rather than narrowing exhaustively. */
@@ -415,6 +451,14 @@ export interface components {
             actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
             correlationId?: string;
             reasonText?: string;
+        };
+        TicketResult: {
+            /** @enum {string} */
+            queueResult: "queued" | "rejected";
+            rejectionCode?: string;
+            rejectionReason?: string;
+            runId?: string;
+            ticketRef: string;
         };
         /** @description Current status detail of a workflow run. */
         WorkflowDetail: {
@@ -602,6 +646,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowSummary"][];
+                };
+            };
+        };
+    };
+    submitBatch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchSubmissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch accepted; body carries per-ticket queued/rejected outcomes (a rejected ticket does NOT make the batch non-2xx). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchSubmissionResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, or INVALID_COMMAND_PAYLOAD (empty list, oversize, or above the configured batch maximum). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT (same key, different fingerprint). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

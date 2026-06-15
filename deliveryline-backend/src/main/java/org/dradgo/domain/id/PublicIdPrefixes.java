@@ -19,7 +19,8 @@ public enum PublicIdPrefixes implements RegistryValue {
   RUNNER_EXECUTION("runnerExecution", "rex_", "ck_runner_executions_public_id_format"),
   INTEGRATION_LINK("integrationLink", "ilk_", "ck_integration_links_public_id_format"),
   RECOVERY_ACTION("recoveryAction", "rcv_", "ck_recovery_actions_public_id_format"),
-  IDEMPOTENCY_RECORD("idempotencyRecord", "idm_", "ck_idempotency_records_public_id_format");
+  IDEMPOTENCY_RECORD("idempotencyRecord", "idm_", "ck_idempotency_records_public_id_format"),
+  BATCH_SUBMISSION("batchSubmission", "bat_", "ck_batch_submissions_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

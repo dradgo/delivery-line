@@ -24,6 +24,19 @@
  */
 import type { WorkflowDetail } from '@/lib/api/queryOptions';
 
+import { toPrLinkageView, type GitHubPrLinkWire, type PrLinkageView } from './prLinkageView';
+
+/**
+ * Story 3.31 — the intended future projection of `github_pr` `integration_links`
+ * rows onto the workflow-detail read model (story 3.15 AC1). The live wire has NO
+ * `integrationLinks` field today, so production reads `undefined` (DORMANT) and only
+ * fixtures inject it. When a future read-model story surfaces it, this extension
+ * disappears in favour of a real generated field — the mapper body is unchanged.
+ */
+export type WorkflowDetailWithLinkage = WorkflowDetail & {
+  readonly integrationLinks?: readonly GitHubPrLinkWire[] | undefined;
+};
+
 /**
  * Age (ms) past which a run with no fresh activity is treated as stale (OQ-3,
  * 10 minutes). This is the single stale-derivation seam — when the backend
@@ -53,6 +66,14 @@ export interface RunContextView {
   readonly triggerReference: string | undefined;
   /** Always `undefined` in Epic 2 — no backend field yet (populated in Epic 3). */
   readonly branchOrCommitReference: string | undefined;
+  /**
+   * Story 3.31 — backend-truth GitHub PR linkage (the projection of a `github_pr`
+   * `integration_links` row). DORMANT: the live wire has no source, so this is
+   * `undefined` in production and populated only via fixtures. When present, the
+   * strip prefers `prLinkage.branch`/`prLinkage.commitSha` for the branch/commit
+   * display over the legacy `branchOrCommitReference` slot.
+   */
+  readonly prLinkage: PrLinkageView | undefined;
   readonly escalationMarker: boolean;
   /** Derived client-side from `lastActivityAt` age (AC9 seam). */
   readonly staleIndicator: boolean;
@@ -139,6 +160,9 @@ export function toRunContextView(detail: WorkflowDetail, now: number = Date.now(
     triggerReference: presentOrUndefined(detail.linkedTicket?.externalRef),
     // AC1 reconciliation — no backend field in E2; always a placeholder (Epic 3 fills it).
     branchOrCommitReference: undefined,
+    // Story 3.31 — DORMANT: the live `WorkflowDetail` has no `integrationLinks`, so this
+    // maps to `undefined` in production; fixtures inject the future projection shape.
+    prLinkage: toPrLinkageView((detail as WorkflowDetailWithLinkage).integrationLinks),
     escalationMarker: detail.escalationMarker ?? false,
     staleIndicator: isStale(lastActivityAt, now),
     lastActivityAt,

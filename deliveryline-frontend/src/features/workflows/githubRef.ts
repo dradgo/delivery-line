@@ -58,6 +58,25 @@ function encodeBranchPath(branch: string): string {
     .join('/');
 }
 
+/**
+ * Whether a verbatim (backend-supplied) PR URL is safe to place in an `<a href>` —
+ * an absolute `https://github.com/…` URL. Guards the "prefer prUrl verbatim" path
+ * (story 3.31 AC6) against a `javascript:` / non-GitHub URL slipping in from the
+ * future live `integration_links` projection; callers fall back to the derived
+ * {@link prUrl} when this returns `false`. Defense-in-depth, mirroring the
+ * {@link branchUrl} `..`-traversal hardening — `rel="noopener"` does NOT block a
+ * `javascript:` scheme.
+ */
+export function isGitHubHttpsUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === 'https:' && parsed.hostname === 'github.com';
+}
+
 /** The canonical GitHub PR URL for a parsed reference. */
 export function prUrl(reference: ParsedPrReference): string {
   return `${GITHUB_BASE}/${encodeURIComponent(reference.owner)}/${encodeURIComponent(

@@ -6,7 +6,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { branchUrl, commitUrl, parsePrReference, prUrl, shortSha } from './githubRef';
+import {
+  branchUrl,
+  commitUrl,
+  isGitHubHttpsUrl,
+  parsePrReference,
+  prUrl,
+  shortSha,
+} from './githubRef';
 
 describe('parsePrReference', () => {
   it('parses an org/repo#number reference', () => {
@@ -56,5 +63,20 @@ describe('URL builders', () => {
     expect(commitUrl('acme', 'widgets', '3f9a1c2b')).toBe(
       'https://github.com/acme/widgets/commit/3f9a1c2b',
     );
+  });
+});
+
+describe('isGitHubHttpsUrl', () => {
+  it('accepts an absolute https github.com URL', () => {
+    expect(isGitHubHttpsUrl('https://github.com/acme/widgets/pull/42')).toBe(true);
+  });
+
+  it('rejects javascript:, non-https, off-GitHub, and unparseable values', () => {
+    expect(isGitHubHttpsUrl('javascript:alert(1)')).toBe(false);
+    expect(isGitHubHttpsUrl('http://github.com/acme/widgets/pull/42')).toBe(false);
+    expect(isGitHubHttpsUrl('https://evil.example/acme/widgets/pull/42')).toBe(false);
+    expect(isGitHubHttpsUrl('https://github.com.evil.example/x')).toBe(false);
+    expect(isGitHubHttpsUrl('not a url')).toBe(false);
+    expect(isGitHubHttpsUrl('')).toBe(false);
   });
 });

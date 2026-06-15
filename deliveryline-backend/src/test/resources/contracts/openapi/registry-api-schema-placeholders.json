@@ -76,7 +76,8 @@
     "runnerExecution": "rex_",
     "integrationLink": "ilk_",
     "recoveryAction": "rcv_",
-    "idempotencyRecord": "idm_"
+    "idempotencyRecord": "idm_",
+    "batchSubmission": "bat_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",

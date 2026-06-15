@@ -46,6 +46,7 @@ class WorkflowCommandsRunnerLogsFlagTest {
           mock(RecoveryService.class),
           null,
           new LocalActorIdentityResolver("local-operator"),
+          null,
           null);
 
   private void stubStatus() {

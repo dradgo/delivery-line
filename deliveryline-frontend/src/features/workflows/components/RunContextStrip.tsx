@@ -42,6 +42,7 @@ import {
   type RunContextView,
 } from '../runContextView';
 import { StateSignifierChip, WorkflowStateBadge } from './WorkflowStateBadge';
+import { PrLinkageDetails } from './PrLinkageDetails';
 
 /**
  * AC4 — documented vertical-real-estate cap applied across all states. The strip
@@ -178,9 +179,25 @@ function StripContent({ view, nowMs }: { view: RunContextView; nowMs: number }) 
       <Item label="Trigger" testId="run-context-trigger" title={view.triggerReference}>
         {view.triggerReference ?? <NotReported />}
       </Item>
-      <Item label="Branch" testId="run-context-branch" title={view.branchOrCommitReference}>
-        {view.branchOrCommitReference ?? <NotReported />}
-      </Item>
+      {/* Story 3.31 (AC2/AC3/AC8) — the PR-linkage cluster supersedes the legacy Branch
+          slot when present (Trap T-ABSENT: rendered ONLY when prLinkage != null — never a
+          "Not reported" placeholder for the PR slots). The legacy branchOrCommitReference
+          Item stays as the dormant placeholder until the backend populates it. */}
+      {view.prLinkage == null ? (
+        <Item label="Branch" testId="run-context-branch" title={view.branchOrCommitReference}>
+          {view.branchOrCommitReference ?? <NotReported />}
+        </Item>
+      ) : (
+        <span
+          className="inline-flex min-w-0 items-center gap-1"
+          data-testid="run-context-pr-linkage"
+        >
+          <span className="shrink-0 text-annotation uppercase tracking-wide text-text-tertiary">
+            PR
+          </span>
+          <PrLinkageDetails prLinkage={view.prLinkage} nowMs={nowMs} variant="strip" />
+        </span>
+      )}
     </Inline>
   );
 }
@@ -303,6 +320,22 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
     }
     console.warn({ event: 'runContext.stale', staleForMs });
   }, [state, staleForMs]);
+
+  // Story 3.31 (AC5) — GitHub unreachable: the cached `prState` still renders (NFR17
+  // reconstruction); emit a FIELD-ONLY structured log (never the PR url/ref/token).
+  // Keyed on primitives so it fires once per unreachable linkage, not every render.
+  const prUnreachable = view?.prLinkage?.githubReachable === false;
+  const prState = view?.prLinkage?.prState;
+  const prStaleForMs =
+    view?.prLinkage?.lastSyncedAt !== undefined
+      ? nowMs - Date.parse(view.prLinkage.lastSyncedAt)
+      : undefined;
+  useEffect(() => {
+    if (!prUnreachable) {
+      return;
+    }
+    console.warn({ event: 'runContext.prGithubUnreachable', prState, staleForMs: prStaleForMs });
+  }, [prUnreachable, prState, prStaleForMs]);
 
   const handleRetry = () => {
     console.info({ event: 'runContext.retry' });

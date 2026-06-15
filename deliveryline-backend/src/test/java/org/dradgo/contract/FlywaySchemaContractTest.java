@@ -37,7 +37,8 @@ class FlywaySchemaContractTest {
           "runner_executions",
           "integration_links",
           "recovery_actions",
-          "idempotency_records");
+          "idempotency_records",
+          "batch_submissions");
 
   private static final Map<String, String> EXPECTED_PUBLIC_ID_PREFIX =
       Map.ofEntries(
@@ -50,7 +51,8 @@ class FlywaySchemaContractTest {
           Map.entry("runner_executions", "rex_"),
           Map.entry("integration_links", "ilk_"),
           Map.entry("recovery_actions", "rcv_"),
-          Map.entry("idempotency_records", "idm_"));
+          Map.entry("idempotency_records", "idm_"),
+          Map.entry("batch_submissions", "bat_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 

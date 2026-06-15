@@ -114,6 +114,7 @@ class WorkflowCommandsTest {
         null,
         new ApprovalReviewerRoleResolver("product_reviewer"),
         new LocalActorIdentityResolver("local-operator"),
+        null,
         null);
   }
 

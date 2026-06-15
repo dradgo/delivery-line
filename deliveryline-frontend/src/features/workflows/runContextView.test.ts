@@ -167,6 +167,7 @@ describe('resolveRunContextState', () => {
     lastTransitionEventType: 'RUNNER_DISPATCHED',
     triggerReference: 'DEL-1234',
     branchOrCommitReference: undefined,
+    prLinkage: undefined,
     escalationMarker: false,
     staleIndicator: false,
     lastActivityAt: ACTIVITY,

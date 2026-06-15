@@ -188,6 +188,11 @@ class ArchitectureBoundaryTest {
   static final ArchRule technical_approval_service_lives_in_application_approval =
       ArchitectureRuleCatalog.TECHNICAL_APPROVAL_SERVICE_LIVES_IN_APPLICATION_APPROVAL;
 
+  // Story 3.18 (AC10) — batch submission service stays in application.workflow, no adapter deps.
+  @ArchTest
+  static final ArchRule batch_submission_service_lives_in_application_workflow =
+      ArchitectureRuleCatalog.BATCH_SUBMISSION_SERVICE_LIVES_IN_APPLICATION_WORKFLOW;
+
   @ArchTest
   static final ArchRule clarification_service_lives_in_application_clarification =
       ArchitectureRuleCatalog.CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION;

@@ -63,6 +63,7 @@ class WorkflowCliJsonSchemaContractTest {
           mock(RecoveryService.class),
           null,
           new LocalActorIdentityResolver("local-operator"),
+          null,
           null);
   private final SchemaRegistry schemaRegistry =
       SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);

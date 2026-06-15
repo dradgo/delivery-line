@@ -45,6 +45,7 @@ import {
 } from '../runQueueRow';
 import { QUEUE_ROW_MIN_HEIGHT } from '../queueState';
 import { StateSignifierChip, WorkflowStateBadge } from './WorkflowStateBadge';
+import { PrLinkageDetails } from './PrLinkageDetails';
 
 export type RunReviewQueueItemVariant = 'reviewer' | 'operator';
 
@@ -246,10 +247,12 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
         ) : null}
       </Inline>
 
-      {/* AC2 — secondary trust-signal cluster (demoted attention signals + spec rejections + assignee). */}
+      {/* AC2 — secondary trust-signal cluster (demoted attention signals + spec rejections +
+          assignee + the story-3.31 PR linkage). */}
       {secondarySignals.length > 0 ||
       (typeof row.specRejectionLoopCount === 'number' && row.specRejectionLoopCount > 0) ||
-      row.assigneeHint !== undefined ? (
+      row.assigneeHint !== undefined ||
+      row.prLinkage != null ? (
         <Inline
           gap="2"
           wrap
@@ -277,6 +280,12 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
             <span className="text-meta text-text-secondary" data-testid="queue-item-assignee">
               {row.assigneeHint}
             </span>
+          ) : null}
+          {/* Story 3.31 (AC1/AC7/AC8) — compact PR linkage, rendered ONLY when present
+              (Trap T-ABSENT). The same shared treatment as the strip; the PR `<a>` carries
+              the D1 stretched-link escape so it opens GitHub without breaking whole-row open-run. */}
+          {row.prLinkage != null ? (
+            <PrLinkageDetails prLinkage={row.prLinkage} nowMs={nowMs} variant="queue" />
           ) : null}
         </Inline>
       ) : null}
@@ -390,21 +399,28 @@ export function RunReviewQueueItem({
         event.currentTarget.click();
       }
     };
+    // Story 3.31 (D1) — the STRETCHED-LINK pattern. Story 2.15 wrapped the whole row in a
+    // single `<Link>`; a nested PR `<a>` inside an anchor is invalid HTML + an a11y failure.
+    // Instead the row is a `relative` wrapper, the open-run `<Link>` is an absolutely-positioned
+    // `inset-0` overlay (still the focusable open-run control — Enter/Space/click all open the
+    // run), and the PR link is rendered as a sibling at `relative z-[2]` (in PrLinkageDetails)
+    // so it escapes the overlay and is independently clickable. The testid + state + keyboard
+    // handlers stay on the `<Link>` so it remains the row's open-run control.
     return (
-      <Link
-        to="/workflows/$workflowRunId"
-        params={{ workflowRunId: run.runId as string }}
-        aria-label={ariaLabel}
-        className={containerClass}
-        style={{ minHeight: QUEUE_ROW_MIN_HEIGHT }}
-        data-queue-item-state={state}
-        data-variant="reviewer"
-        data-testid="run-review-queue-item"
-        onClick={logOpen}
-        onKeyDown={handleKeyDown}
-      >
+      <div className={cn('relative', containerClass)} style={{ minHeight: QUEUE_ROW_MIN_HEIGHT }}>
+        <Link
+          to="/workflows/$workflowRunId"
+          params={{ workflowRunId: run.runId as string }}
+          aria-label={ariaLabel}
+          className="absolute inset-0 z-[1] rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          data-queue-item-state={state}
+          data-variant="reviewer"
+          data-testid="run-review-queue-item"
+          onClick={logOpen}
+          onKeyDown={handleKeyDown}
+        />
         {body}
-      </Link>
+      </div>
     );
   }
 

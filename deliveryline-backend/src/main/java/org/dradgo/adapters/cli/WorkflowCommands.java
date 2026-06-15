@@ -5,8 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -23,7 +26,10 @@ import org.dradgo.application.recovery.RetryRecoveryResult;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
+import org.dradgo.application.workflow.BatchSubmissionResult;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
+import org.dradgo.application.workflow.TicketBatchResult;
+import org.dradgo.application.workflow.WorkflowBatchSubmissionService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLookupResult;
@@ -36,6 +42,7 @@ import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.SubmitBatchCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
@@ -77,6 +84,9 @@ public class WorkflowCommands {
   // Story 3.16 (AC5) — manual completion-sync retry path. Nullable in the legacy/inspection-less
   // test constructors; the sync-completion command guards via requireOrchestrationWired().
   private final WorkflowOrchestrationService workflowOrchestrationService;
+  // Story 3.18 — batch submission. Nullable in the legacy/inspection-less test constructors; the
+  // submit-batch command guards via requireBatchWired().
+  private final WorkflowBatchSubmissionService workflowBatchSubmissionService;
 
   @Autowired
   public WorkflowCommands(
@@ -89,7 +99,8 @@ public class WorkflowCommands {
       RecoveryService recoveryService,
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
-      WorkflowOrchestrationService workflowOrchestrationService) {
+      WorkflowOrchestrationService workflowOrchestrationService,
+      WorkflowBatchSubmissionService workflowBatchSubmissionService) {
     this(
         workflowCommandService,
         workflowInspectionService,
@@ -101,7 +112,8 @@ public class WorkflowCommands {
         recoveryService,
         approvalReviewerRoleResolver,
         localActorIdentityResolver,
-        workflowOrchestrationService);
+        workflowOrchestrationService,
+        workflowBatchSubmissionService);
   }
 
   /**
@@ -125,6 +137,7 @@ public class WorkflowCommands {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -139,7 +152,8 @@ public class WorkflowCommands {
       RecoveryService recoveryService,
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
-      WorkflowOrchestrationService workflowOrchestrationService) {
+      WorkflowOrchestrationService workflowOrchestrationService,
+      WorkflowBatchSubmissionService workflowBatchSubmissionService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.outputs = outputs;
@@ -151,6 +165,7 @@ public class WorkflowCommands {
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
     this.workflowOrchestrationService = workflowOrchestrationService;
+    this.workflowBatchSubmissionService = workflowBatchSubmissionService;
   }
 
   @Command(
@@ -207,6 +222,178 @@ public class WorkflowCommands {
       throw re;
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "submit-batch",
+      description =
+          "Submit a batch of Linear tickets for governed execution (best-effort: one rejected"
+              + " ticket does not fail the batch). Provide exactly one of --tickets / --from-file.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String submitBatch(
+      @Option(longName = "tickets", description = "Comma-separated Linear ticket references")
+          String tickets,
+      @Option(longName = "from-file", description = "File of ticket references (one per line)")
+          String fromFile,
+      @Option(longName = "actor-identity", description = "Actor identity") String actorIdentity,
+      @Option(longName = "actor-type", description = "Actor type", defaultValue = "HUMAN")
+          ActorType actorType,
+      @Option(longName = "idempotency-key", description = "Batch-level idempotency key")
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Batch correlation ID")
+          String correlationId,
+      @Option(
+              longName = "exit-on-any-rejection",
+              description = "Exit non-zero when any ticket is rejected",
+              defaultValue = "false")
+          boolean exitOnAnyRejection) {
+    requireBatchWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    String batchId = null;
+    try {
+      List<String> ticketRefs = parseBatchTickets(tickets, fromFile);
+      String resolvedActorIdentity = resolveActorIdentity(actorIdentity);
+      String resolvedIdempotencyKey = resolveIdempotencyKey(idempotencyKey);
+      BatchSubmissionResult result =
+          workflowBatchSubmissionService.submitBatch(
+              new SubmitBatchCommand(
+                  ticketRefs,
+                  resolvedActorIdentity,
+                  actorType,
+                  resolvedIdempotencyKey,
+                  correlationId));
+      batchId = result.batchId();
+      String table = renderBatchTable(result);
+      emitSuccess("workflow submit-batch", batchId, resolvedCorrelation, start);
+      if (exitOnAnyRejection && result.rejectedCount() > 0) {
+        // OQ-2: signal a non-zero exit in strict mode by throwing a CLI-band DomainException whose
+        // message carries the full table (the exit mapper prints it). No new DomainErrorCode is
+        // introduced (Decision D-NOCODE); the rejections are already itemized in the table above.
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("batchId", batchId);
+        details.put("rejectedCount", result.rejectedCount());
+        details.put("queuedCount", result.queuedCount());
+        throw new DomainException(
+            DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+            "\n"
+                + table
+                + "\nbatch "
+                + batchId
+                + " completed with "
+                + result.rejectedCount()
+                + " rejected ticket(s); --exit-on-any-rejection set",
+            details);
+      }
+      String output = table;
+      if (idempotencyKey == null) {
+        output += "\n[generated-idempotency-key: " + resolvedIdempotencyKey + "]";
+      }
+      return output;
+    } catch (DomainException de) {
+      emitFailure("workflow submit-batch", batchId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow submit-batch", batchId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  /**
+   * Parse the ticket list from exactly one of {@code --tickets} (CSV) or {@code --from-file} (one
+   * ref per line; blank lines and {@code #}-comment lines are ignored). Supplying neither or both
+   * raises {@code INVALID_COMMAND_PAYLOAD}.
+   */
+  private List<String> parseBatchTickets(String tickets, String fromFile) {
+    boolean hasTickets = tickets != null && !tickets.isBlank();
+    boolean hasFile = fromFile != null && !fromFile.isBlank();
+    if (hasTickets == hasFile) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("rule", "provide exactly one of --tickets / --from-file");
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+          "Provide exactly one of --tickets or --from-file",
+          details);
+    }
+    List<String> refs = new ArrayList<>();
+    if (hasTickets) {
+      for (String token : tickets.split(",")) {
+        String trimmed = token.trim();
+        if (!trimmed.isEmpty()) {
+          refs.add(trimmed);
+        }
+      }
+    } else {
+      for (String line : readTicketFile(fromFile)) {
+        String trimmed = line.trim();
+        if (!trimmed.isEmpty() && !trimmed.startsWith("#")) {
+          refs.add(trimmed);
+        }
+      }
+    }
+    return refs;
+  }
+
+  private List<String> readTicketFile(String fromFile) {
+    try {
+      return Files.readAllLines(Path.of(fromFile), StandardCharsets.UTF_8);
+    } catch (IOException error) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("file", fromFile);
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Cannot read --from-file: " + fromFile, details);
+    }
+  }
+
+  /** Render the {@code Ticket | Run ID | Outcome | Reason} batch result table. */
+  private String renderBatchTable(BatchSubmissionResult result) {
+    StringBuilder out = new StringBuilder();
+    out.append("batch ")
+        .append(result.batchId())
+        .append(" (total ")
+        .append(result.total())
+        .append(", queued ")
+        .append(result.queuedCount())
+        .append(", rejected ")
+        .append(result.rejectedCount())
+        .append(")\n");
+    out.append("Ticket | Run ID | Outcome | Reason\n");
+    for (TicketBatchResult ticket : result.tickets()) {
+      out.append(escapeCell(ticket.ticketRef()))
+          .append(" | ")
+          .append(ticket.runId() == null ? "-" : escapeCell(ticket.runId()))
+          .append(" | ")
+          .append(escapeCell(ticket.queueResult()))
+          .append(" | ")
+          .append(ticket.rejectionReason() == null ? "-" : escapeCell(ticket.rejectionReason()))
+          .append('\n');
+    }
+    if (out.length() > 0 && out.charAt(out.length() - 1) == '\n') {
+      out.setLength(out.length() - 1);
+    }
+    return out.toString();
+  }
+
+  private static String escapeCell(String value) {
+    if (value == null) {
+      return "-";
+    }
+    return value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n");
+  }
+
+  private void requireBatchWired() {
+    if (workflowBatchSubmissionService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_submit_batch_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without WorkflowBatchSubmissionService; inject it to use"
+              + " submit-batch",
+          details);
     }
   }
 

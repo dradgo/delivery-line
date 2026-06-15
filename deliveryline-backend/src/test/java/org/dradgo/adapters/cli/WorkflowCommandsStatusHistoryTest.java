@@ -88,6 +88,7 @@ class WorkflowCommandsStatusHistoryTest {
           recovery,
           null,
           new LocalActorIdentityResolver("local-operator"),
+          null,
           null);
 
   @Test

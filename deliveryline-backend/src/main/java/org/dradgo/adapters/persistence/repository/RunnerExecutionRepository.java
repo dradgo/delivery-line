@@ -8,12 +8,34 @@ import org.dradgo.adapters.persistence.entity.RunnerExecutionEntity;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface RunnerExecutionRepository extends JpaRepository<RunnerExecutionEntity, Long> {
 
   Optional<RunnerExecutionEntity> findByPublicId(String publicId);
+
+  /**
+   * Story 3.18 (AC4) — stamp {@code batch_submission_id} onto every runner execution of a workflow
+   * run, tracing a queued execution back to the batch that submitted it (serves story 3.19's
+   * per-batch queue filtering). Native UPDATE so it needs no {@code RunnerExecutionEntity} field
+   * for the forward-only column. Best-effort: returns 0 when the run dispatched no runner
+   * execution.
+   */
+  @Modifying
+  @Query(
+      value =
+          """
+          update runner_executions
+             set batch_submission_id = :batchSubmissionId
+           where workflow_run_id =
+                 (select id from workflow_runs where public_id = :workflowRunPublicId)
+          """,
+      nativeQuery = true)
+  int stampBatchSubmissionId(
+      @Param("workflowRunPublicId") String workflowRunPublicId,
+      @Param("batchSubmissionId") String batchSubmissionId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(

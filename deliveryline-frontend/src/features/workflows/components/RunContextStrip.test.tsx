@@ -18,6 +18,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { server } from '@/test/server';
 import type { WorkflowDetail } from '@/lib/api/queryOptions';
 import { specRejectAndResubmitDetail } from '@/test/fixtures/runContext/specRejectAndResubmit';
+import {
+  prLinkageDisplayDetail,
+  prLinkageDisplayGitHubUnreachableDetail,
+  prLinkageDisplayNoLinkageDetail,
+  prLinkageDisplayStaleGitHubDetail,
+} from '@/test/fixtures/runContext/prLinkageDisplay';
 import { RUN_STALE_THRESHOLD_MS } from '../runContextView';
 import { expectNoA11yViolations } from '@/test/a11y/axe';
 
@@ -444,6 +450,99 @@ describe('RunContextStrip — recovery baseline (story 3.30, AC2)', () => {
     server.use(detailResponse(failedDetail));
     const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
     await screen.findByTestId('run-recovery-baseline');
+    await expectNoA11yViolations(container);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.31 — GitHub PR linkage cluster (DORMANT; fixture-driven).
+// ---------------------------------------------------------------------------
+describe('RunContextStrip — PR linkage (story 3.31)', () => {
+  async function renderPopulated(detail: WorkflowDetail) {
+    server.use(detailResponse(detail));
+    const result = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'default'));
+    return result;
+  }
+
+  it('AC2/AC3 — renders branch + short-commit (full-SHA tooltip) + PR link + badge + last-sync', async () => {
+    await renderPopulated(prLinkageDisplayDetail);
+    const cluster = screen.getByTestId('run-context-pr-linkage');
+
+    // Branch link → backend-truth repo (acme/widgets), runner-emitted branch value.
+    const branch = within(cluster).getByTestId('pr-linkage-branch');
+    expect(branch).toHaveAttribute(
+      'href',
+      'https://github.com/acme/widgets/tree/deliveryline/DEL-9002',
+    );
+
+    // Commit short-form (7 chars) + the full SHA preserved in the tooltip (AC3).
+    const commit = within(cluster).getByTestId('pr-linkage-commit');
+    expect(commit).toHaveTextContent('a3f2911');
+    expect(commit).not.toHaveTextContent('a3f29110d4');
+    expect(commit).toHaveAttribute('title', 'a3f29110d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9');
+    expect(commit).toHaveAttribute(
+      'href',
+      'https://github.com/acme/widgets/commit/a3f29110d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9',
+    );
+
+    // PR link → verbatim backend-truth prUrl + AC9 accessible name.
+    const prLink = within(cluster).getByTestId('pr-linkage-link');
+    expect(prLink).toHaveTextContent('PR acme/widgets#42');
+    expect(prLink).toHaveAttribute('href', 'https://github.com/acme/widgets/pull/42');
+    expect(prLink).toHaveAttribute('target', '_blank');
+    expect(prLink).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(prLink).toHaveAttribute('aria-label', 'Pull request 42 in acme/widgets, status open');
+
+    // State badge + the fresh last-sync timestamp (2 min before pinned now).
+    expect(within(cluster).getByTestId('pr-state-badge')).toHaveAttribute('data-pr-state', 'open');
+    expect(within(cluster).getByTestId('pr-linkage-last-sync')).toHaveTextContent(
+      'synced 2 minutes ago',
+    );
+
+    // AC3 — the height cap stays applied with the cluster added (layout regression).
+    expect(region()).toHaveStyle({ maxHeight: RUN_CONTEXT_STRIP_MAX_HEIGHT });
+  });
+
+  it('AC4 — past the freshness threshold, the badge renders the stale affordance', async () => {
+    await renderPopulated(prLinkageDisplayStaleGitHubDetail);
+    const stale = within(screen.getByTestId('run-context-pr-linkage')).getByTestId(
+      'pr-linkage-stale',
+    );
+    expect(stale).toHaveTextContent('(stale, last synced 10 minutes ago)');
+    // The cached badge still renders alongside the affordance.
+    expect(screen.getByTestId('pr-state-badge')).toHaveAttribute('data-pr-state', 'merged');
+  });
+
+  it('AC5 — GitHub unreachable: cached prState still renders + field-only warn fires', async () => {
+    await renderPopulated(prLinkageDisplayGitHubUnreachableDetail);
+    // Cached backend-truth state still renders (NFR17 reconstruction).
+    expect(screen.getByTestId('pr-state-badge')).toHaveAttribute('data-pr-state', 'open');
+    expect(screen.getByTestId('pr-linkage-stale')).toBeInTheDocument();
+
+    const warnMock = vi.mocked(console.warn);
+    const call = warnMock.mock.calls.find(
+      ([arg]) =>
+        (arg as { event?: string } | undefined)?.event === 'runContext.prGithubUnreachable',
+    );
+    expect(call).toBeDefined();
+    const payload = call![0] as Record<string, unknown>;
+    // Field-only contract: stable code/flags, never the PR url / ref / token.
+    expect(Object.keys(payload).sort()).toEqual(['event', 'prState', 'staleForMs']);
+    expect(payload).toMatchObject({ event: 'runContext.prGithubUnreachable', prState: 'open' });
+    expect(JSON.stringify(payload)).not.toContain('acme/widgets');
+  });
+
+  it('AC8 — no GitHub linkage: the PR cluster is omitted entirely (no "Not reported" PR slot)', async () => {
+    await renderPopulated(prLinkageDisplayNoLinkageDetail);
+    expect(screen.queryByTestId('run-context-pr-linkage')).toBeNull();
+    // The legacy Branch placeholder still shows (dormant), proving the PR slots are absent
+    // (Trap T-ABSENT) — there is no PR-specific "Not reported".
+    expect(screen.getByTestId('run-context-branch')).toHaveTextContent('Not reported');
+  });
+
+  it('AC10 — populated PR linkage has zero axe violations', async () => {
+    const { container } = await renderPopulated(prLinkageDisplayDetail);
     await expectNoA11yViolations(container);
   });
 });

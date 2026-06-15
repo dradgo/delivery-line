@@ -198,6 +198,86 @@
         },
         "type" : "object"
       },
+      "BatchSubmissionRequest" : {
+        "properties" : {
+          "actorIdentity" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "actorType" : {
+            "enum" : [
+              "HUMAN",
+              "AGENT",
+              "SYSTEM",
+              "SERVICE_ACCOUNT"
+            ],
+            "type" : "string"
+          },
+          "correlationId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "linearTicketReferences" : {
+            "items" : {
+              "maxLength" : 128,
+              "minLength" : 0,
+              "type" : "string"
+            },
+            "maxItems" : 1000,
+            "minItems" : 0,
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "actorType",
+          "linearTicketReferences"
+        ],
+        "type" : "object"
+      },
+      "BatchSubmissionResponse" : {
+        "properties" : {
+          "actorIdentity" : {
+            "type" : "string"
+          },
+          "batchId" : {
+            "type" : "string"
+          },
+          "queuedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "rejectedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "submittedAt" : {
+            "type" : "string"
+          },
+          "tickets" : {
+            "items" : {
+              "$ref" : "#/components/schemas/TicketResult"
+            },
+            "type" : "array"
+          },
+          "total" : {
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "required" : [
+          "actorIdentity",
+          "batchId",
+          "queuedCount",
+          "rejectedCount",
+          "submittedAt",
+          "tickets",
+          "total"
+        ],
+        "type" : "object"
+      },
       "ClarificationAnswerResponse" : {
         "properties" : {
           "clarificationId" : {
@@ -489,6 +569,34 @@
         "required" : [
           "actorIdentity",
           "actorType"
+        ],
+        "type" : "object"
+      },
+      "TicketResult" : {
+        "properties" : {
+          "queueResult" : {
+            "enum" : [
+              "queued",
+              "rejected"
+            ],
+            "type" : "string"
+          },
+          "rejectionCode" : {
+            "type" : "string"
+          },
+          "rejectionReason" : {
+            "type" : "string"
+          },
+          "runId" : {
+            "type" : "string"
+          },
+          "ticketRef" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "queueResult",
+          "ticketRef"
         ],
         "type" : "object"
       },
@@ -972,6 +1080,67 @@
           }
         },
         "summary" : "List workflow runs",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/batch" : {
+      "post" : {
+        "operationId" : "submitBatch",
+        "parameters" : [
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/BatchSubmissionRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/BatchSubmissionResponse"
+                }
+              }
+            },
+            "description" : "Batch accepted; body carries per-ticket queued/rejected outcomes (a rejected ticket does NOT make the batch non-2xx)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, or INVALID_COMMAND_PAYLOAD (empty list, oversize, or above the configured batch maximum)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "IDEMPOTENCY_KEY_CONFLICT (same key, different fingerprint)."
+          }
+        },
+        "summary" : "Submit a batch of workflow tickets (best-effort, per-ticket outcomes)",
         "tags" : [
           "Workflows"
         ]
