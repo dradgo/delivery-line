@@ -39,7 +39,8 @@ class WorkflowBatchSubmissionIT {
 
   // Clean both before and after: this IT links shared ticket refs (LIN-101/102) on the reused
   // Testcontainers Postgres. Without teardown the active integration_links row leaked across
-  // classes and tripped a cross-run conflict in whichever LIN-101 IT (e.g. SpecStageOrchestrationIT)
+  // classes and tripped a cross-run conflict in whichever LIN-101 IT (e.g.
+  // SpecStageOrchestrationIT)
   // happened to run next — a class-ordering-dependent flake.
   @BeforeEach
   @AfterEach
