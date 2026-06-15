@@ -16,6 +16,7 @@ import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.RejectionTaxonomy;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -49,6 +50,10 @@ class SpecStageOrchestrationIT {
   @Autowired private WorkflowInspectionService inspectionService;
   @Autowired private RunnerExecutionQueue runnerExecutionQueue;
 
+  // Clean both before and after so residue leaked by a prior IT on the reused Testcontainers
+  // Postgres (e.g. an active LIN-101 integration_links row) cannot cross-run-conflict this class's
+  // LIN-101 submits regardless of class execution order.
+  @BeforeEach
   @AfterEach
   void cleanDatabase() {
     jdbcTemplate.update("delete from idempotency_records");

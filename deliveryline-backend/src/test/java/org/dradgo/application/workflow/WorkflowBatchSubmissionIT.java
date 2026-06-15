@@ -7,6 +7,8 @@ import java.util.UUID;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.workflow.commands.SubmitBatchCommand;
 import org.dradgo.domain.registry.ActorType;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +36,25 @@ class WorkflowBatchSubmissionIT {
 
   @Autowired private WorkflowBatchSubmissionService service;
   @Autowired private JdbcTemplate jdbcTemplate;
+
+  // Clean both before and after: this IT links shared ticket refs (LIN-101/102) on the reused
+  // Testcontainers Postgres. Without teardown the active integration_links row leaked across
+  // classes and tripped a cross-run conflict in whichever LIN-101 IT (e.g. SpecStageOrchestrationIT)
+  // happened to run next — a class-ordering-dependent flake.
+  @BeforeEach
+  @AfterEach
+  void cleanDatabase() {
+    jdbcTemplate.update("delete from idempotency_records");
+    jdbcTemplate.update("delete from integration_links");
+    jdbcTemplate.update("delete from clarifications");
+    jdbcTemplate.update("delete from approvals");
+    jdbcTemplate.update("delete from artifact_operations");
+    jdbcTemplate.update("delete from artifacts");
+    jdbcTemplate.update("delete from runner_executions");
+    jdbcTemplate.update("delete from batch_submissions");
+    jdbcTemplate.update("delete from workflow_events");
+    jdbcTemplate.update("delete from workflow_runs");
+  }
 
   @Test
   void persistsBatchStampsQueuedRunsAndReplaysIdentically() {
