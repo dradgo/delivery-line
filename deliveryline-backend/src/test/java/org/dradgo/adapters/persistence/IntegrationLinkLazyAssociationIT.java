@@ -36,8 +36,8 @@ import org.springframework.test.context.ActiveProfiles;
  * Seeded rows are committed (no rollback), so the test cleans up after itself to avoid the known
  * cross-IT {@code integration_links} leak (CI flake).
  *
- * <p>Named {@code *IT} so Failsafe (Docker tier) runs it and the no-Docker Surefire tier excludes it
- * ([[springboot-testcontainers-test-must-be-IT]]).
+ * <p>Named {@code *IT} so Failsafe (Docker tier) runs it and the no-Docker Surefire tier excludes
+ * it ([[springboot-testcontainers-test-must-be-IT]]).
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
