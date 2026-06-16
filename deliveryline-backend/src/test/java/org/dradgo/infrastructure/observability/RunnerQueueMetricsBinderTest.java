@@ -26,12 +26,20 @@ class RunnerQueueMetricsBinderTest {
 
   private final RunnerExecutionRecordPort recordPort = mock(RunnerExecutionRecordPort.class);
 
+  // Micrometer gauges hold their state object (the binder) via a WEAK reference. In production the
+  // binder is a strongly-held @Component, but here it is a local; without a strong reference the GC
+  // can collect it between bind() and the assertions, so gauge.value() returns NaN (a windows-only
+  // CI flake). Retaining the last-bound binder in a field keeps it reachable for the test method.
+  @SuppressWarnings("unused")
+  private RunnerQueueMetricsBinder boundBinder;
+
   private SimpleMeterRegistry bind(RunnerQueueCounts counts) {
     when(recordPort.loadQueueCounts(any(Duration.class), any(Duration.class), isNull()))
         .thenReturn(counts);
     RunnerQueueMetricsBinder binder =
         new RunnerQueueMetricsBinder(
             recordPort, RunnerProperties.defaults(), RunnerWorkerPoolProperties.defaults());
+    this.boundBinder = binder;
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     binder.bindTo(registry);
     return registry;
