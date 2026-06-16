@@ -27,7 +27,8 @@ export type ConfirmationActionId =
   | 'rejectWithReason'
   | 'approveWhenStaleOrConflict'
   | 'stopOrchestrator'
-  | 'retryOrRecoverConsequential';
+  | 'retryOrRecoverConsequential'
+  | 'takeoverWorkflow';
 
 /** Ordered list form of {@link ConfirmationActionId} for iteration (tests). */
 export const CONFIRMATION_ACTION_IDS: readonly ConfirmationActionId[] = [
@@ -35,6 +36,7 @@ export const CONFIRMATION_ACTION_IDS: readonly ConfirmationActionId[] = [
   'approveWhenStaleOrConflict',
   'stopOrchestrator',
   'retryOrRecoverConsequential',
+  'takeoverWorkflow',
 ];
 
 /** A single catalogued confirm-before action. */
@@ -94,5 +96,19 @@ export const CONFIRMATION_CATALOG: Record<ConfirmationActionId, ConfirmationCata
     consequenceTemplate:
       'Retry will re-execute the last failed step with a fresh runner. The previous failure will be preserved in the timeline.',
     owningStory: '3.30',
+  },
+  // Story 3.28 (AC4 / R6) — the takeover confirmation consequence text. `consequenceTemplate`
+  // is the VERBATIM copy of `openapi.json` `paths./api/v1/workflows/{workflowRunId}/
+  // takeover.post.description` (story 3.25 AC9). `openapi-typescript` strips endpoint
+  // descriptions from `schema.d.ts`, so there is NO runtime field to read — this catalog
+  // constant IS the canonical UI copy (the same pattern story 3.30 used for the retry
+  // consequence). Keep byte-for-byte in sync with the OpenAPI source; pinned by a test.
+  takeoverWorkflow: {
+    id: 'takeoverWorkflow',
+    requiresConfirmation: true,
+    intent: 'danger',
+    consequenceTemplate:
+      'Stops orchestrator dispatch, cancels all in-flight + queued runner executions, records a developer takeover, and transitions the run to the TakenOver terminal state while preserving all prior context (artifacts, audit trail, and the active GitHub PR link). This action is non-reversible in E3 — Epic 4 will add takeover-revert; until then, a taken-over run can only be closed by an operator action.',
+    owningStory: '3.28',
   },
 };

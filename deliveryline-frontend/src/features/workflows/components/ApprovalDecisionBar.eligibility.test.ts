@@ -19,6 +19,12 @@ import { describe, expect, it } from 'vitest';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BAR = readFileSync(join(HERE, 'ApprovalDecisionBar.tsx'), 'utf8');
 const CONTAINER = readFileSync(join(HERE, 'ApprovalDecisionBarContainer.tsx'), 'utf8');
+// Story 3.28 — the impl-review container wires its own eligibility; the same UX-DR12 rule
+// applies (3.28 review P4). Source eligibility ONLY from `useAllowedActions`, no inference.
+const IMPL_CONTAINER = readFileSync(
+  join(HERE, 'ImplementationReviewDecisionBarContainer.tsx'),
+  'utf8',
+);
 
 /** Patterns that would indicate frontend-side eligibility inference (UX-DR12 violation). */
 const FORBIDDEN_PATTERNS: ReadonlyArray<RegExp> = [
@@ -35,10 +41,16 @@ describe('AC11 — the bar consumes only backend-reported allowed actions', () =
     expect(CONTAINER).toContain('useAllowedActions(workflowRunId)');
   });
 
-  it('neither the bar nor the container imports a permission-inference helper', () => {
+  it('the impl-review container sources eligibility from useAllowedActions (3.28)', () => {
+    expect(IMPL_CONTAINER).toContain("from '../hooks/useAllowedActions'");
+    expect(IMPL_CONTAINER).toContain('useAllowedActions(workflowRunId)');
+  });
+
+  it('neither the bar nor the containers import a permission-inference helper', () => {
     for (const pattern of FORBIDDEN_PATTERNS) {
       expect(BAR).not.toMatch(pattern);
       expect(CONTAINER).not.toMatch(pattern);
+      expect(IMPL_CONTAINER).not.toMatch(pattern);
     }
   });
 

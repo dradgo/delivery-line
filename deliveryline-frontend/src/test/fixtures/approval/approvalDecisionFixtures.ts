@@ -15,6 +15,7 @@ import type {
 
 const RUN_ID = 'run_appr_demo_001';
 const ARTIFACT_ID = 'art_spec_appr_001';
+const IMPL_ARTIFACT_ID = 'art_impl_appr_001';
 
 /** A live version stamp with BOTH ints present → `deriveExpectedVersions` succeeds. */
 export const versionStampFull: ApprovalVersionStamp = {
@@ -83,11 +84,82 @@ export const blockedNullVersionsView = baseView({ versionStamp: versionStampNull
 /** `stale` source — paired with `localUi.stale` or a 409 mutation error in the test. */
 export const staleView = baseView();
 
-/** `disabled` — the E3 stub mode (mode-specific control restriction, AC1/AC3). */
+// ---- Story 3.28 — implementation_review fixtures -------------------------------
+
+/** A takeover summary WITH a preserved PR reference (AC7 — renders the "Continue in PR" link). */
+export const decisionSummaryTakenOverWithPr: DecisionSummary = {
+  decision: 'takenover',
+  resultingState: 'TakenOver',
+  decidedAt: '2026-06-16T09:15:00.000Z',
+  actor: 'Alex (developer)',
+  correlationId: 'corr_takeover_001',
+  preservedPrReference: 'octo/repo#42',
+  cancelledInFlightCount: 1,
+  cancelledQueuedCount: 2,
+};
+
+/** A takeover summary with NO preserved PR reference (AC7 — label-only, no link). */
+export const decisionSummaryTakenOverNoPr: DecisionSummary = {
+  decision: 'takenover',
+  resultingState: 'TakenOver',
+  decidedAt: '2026-06-16T09:15:00.000Z',
+  actor: 'Alex (developer)',
+  correlationId: 'corr_takeover_002',
+};
+
+/** An accepted summary (AC6 — persisted post-submit outcome). */
+export const decisionSummaryAccepted: DecisionSummary = {
+  decision: 'accepted',
+  resultingState: 'Executing',
+  decidedAt: '2026-06-16T09:15:00.000Z',
+  actor: 'Alex (developer)',
+  correlationId: 'corr_accept_001',
+};
+
+/** `ready` — all three developer actions present, implementation artifact + versions resolvable. */
+export const implementationReviewReadyView = baseView({
+  mode: 'implementation_review',
+  actions: ['accept_implementation', 'reject_implementation', 'takeover_workflow'],
+  currentState: 'WaitingForReview',
+  decisionContextLabel: 'Review implementation v2 by Alex (developer)',
+  artifactId: IMPL_ARTIFACT_ID,
+});
+
+/** `blocked` accept/reject (no implementation artifact) BUT takeover stays available (R1). */
+export const implementationReviewTakeoverOnlyView = baseView({
+  mode: 'implementation_review',
+  actions: ['accept_implementation', 'reject_implementation', 'takeover_workflow'],
+  currentState: 'WaitingForReview',
+  decisionContextLabel: 'Review implementation by Alex (developer)',
+  artifactId: undefined,
+});
+
+/** `blocked` — no actions at all (degenerate; the prior E3-stub fixture, now a real blocked render). */
 export const implementationReviewView = baseView({
   mode: 'implementation_review',
   actions: [],
+  currentState: 'WaitingForReview',
   artifactId: undefined,
+});
+
+/** `success` (takeover) — paired with `{ status: 'success' }`; carries the takeover summary + PR ref. */
+export const implementationReviewSuccessTakenOverView = baseView({
+  mode: 'implementation_review',
+  actions: ['accept_implementation', 'reject_implementation', 'takeover_workflow'],
+  currentState: 'TakenOver',
+  decisionContextLabel: 'Review implementation v2 by Alex (developer)',
+  artifactId: IMPL_ARTIFACT_ID,
+  lastDecision: decisionSummaryTakenOverWithPr,
+});
+
+/** `success` (accept) — paired with `{ status: 'success' }`; carries the accepted summary. */
+export const implementationReviewSuccessAcceptedView = baseView({
+  mode: 'implementation_review',
+  actions: ['accept_implementation', 'reject_implementation', 'takeover_workflow'],
+  currentState: 'Executing',
+  decisionContextLabel: 'Review implementation v2 by Alex (developer)',
+  artifactId: IMPL_ARTIFACT_ID,
+  lastDecision: decisionSummaryAccepted,
 });
 
 /**

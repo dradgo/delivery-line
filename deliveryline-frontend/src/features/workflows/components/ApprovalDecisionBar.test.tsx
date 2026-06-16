@@ -16,6 +16,11 @@ import { tabbableElements } from '@/test/a11y/keyboard';
 import {
   blockedNoArtifactView,
   blockedPendingClarificationsView,
+  decisionSummaryTakenOverNoPr,
+  implementationReviewReadyView,
+  implementationReviewSuccessAcceptedView,
+  implementationReviewSuccessTakenOverView,
+  implementationReviewTakeoverOnlyView,
   implementationReviewView,
   inlineLayoutView,
   lockedView,
@@ -53,9 +58,12 @@ function renderBar(
   localUi: ApprovalLocalUi = {},
   overrides: Partial<{
     onApprove: () => void;
-    onReject: () => void;
+    onReject: (draft: { reasonText: string; taggedFeedback: string }) => void;
     onRefresh: () => void;
     onRetry: () => void;
+    onAccept: () => void;
+    onRejectImplementation: (draft: { reasonText: string; taggedFeedback: string }) => void;
+    onTakeover: (reasonText: string) => void;
   }> = {},
 ) {
   return render(
@@ -67,6 +75,9 @@ function renderBar(
       onReject={overrides.onReject ?? vi.fn()}
       onRefresh={overrides.onRefresh ?? vi.fn()}
       onRetry={overrides.onRetry ?? vi.fn()}
+      onAccept={overrides.onAccept ?? vi.fn()}
+      onRejectImplementation={overrides.onRejectImplementation ?? vi.fn()}
+      onTakeover={overrides.onTakeover ?? vi.fn()}
     />,
   );
 }
@@ -155,10 +166,12 @@ describe('ApprovalDecisionBar — mode dispatch (AC1)', () => {
     expect(screen.getByTestId('approval-action-area')).toBeInTheDocument();
   });
 
-  it('implementation_review renders the Epic 3 placeholder (disabled)', () => {
+  it('implementation_review with no actions/artifact renders blocked (real renderer, not a stub)', () => {
     renderBar(implementationReviewView);
-    expect(barState()).toBe('disabled');
-    expect(screen.getByTestId('approval-mode-placeholder')).toHaveTextContent(/Epic 3/);
+    expect(barState()).toBe('blocked');
+    // The E3 stub is gone — a real blocked render explains the unavailable accept/reject.
+    expect(screen.queryByTestId('approval-mode-placeholder')).not.toBeInTheDocument();
+    expect(screen.getByTestId('impl-review-blocked-reason')).toBeInTheDocument();
   });
 
   it('recovery_operator (View only) — Failed run with no retry action renders no primary CTA', () => {
@@ -408,7 +421,14 @@ describe('ApprovalDecisionBar a11y (story 2.25)', () => {
     ['reason-coded (disabled secondary)', reasonCodedView, IDLE, {}],
     ['multi-candidate', multiCandidateView, IDLE, {}],
     ['inline layout', inlineLayoutView, IDLE, {}],
-    ['implementation_review stub', implementationReviewView, IDLE, {}],
+    ['implementation_review blocked', implementationReviewView, IDLE, {}],
+    ['implementation_review ready', implementationReviewReadyView, IDLE, {}],
+    [
+      'implementation_review success (takeover)',
+      implementationReviewSuccessTakenOverView,
+      { status: 'success' },
+      {},
+    ],
     ['recovery_operator stub', recoveryOperatorView, IDLE, {}],
   ];
 
@@ -494,5 +514,142 @@ describe('ApprovalDecisionBar a11y (story 2.25)', () => {
     expect(tabbables.length).toBeGreaterThanOrEqual(6);
     expect(within(dialog).getByRole('button', { name: /confirm rejection/i })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+  });
+});
+
+describe('ApprovalDecisionBar — implementation_review mode (story 3.28)', () => {
+  const READY: ApprovalMutationState = { status: 'idle' };
+
+  it('AC1/AC2 — renders all three developer actions with exactly one primary', () => {
+    renderBar(implementationReviewReadyView, READY);
+    expect(barState()).toBe('ready');
+    const accept = screen.getByRole('button', { name: 'Accept implementation' });
+    expect(accept).toHaveAttribute('data-primary', 'true');
+    expect(screen.getByRole('button', { name: 'Reject with feedback' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Take over' })).toBeInTheDocument();
+    const area = screen.getByTestId('impl-review-action-area');
+    expect(area.querySelectorAll('[data-primary="true"]')).toHaveLength(1);
+  });
+
+  it('AC1 — Accept fires onAccept', async () => {
+    const onAccept = vi.fn();
+    const user = userEvent.setup();
+    renderBar(implementationReviewReadyView, READY, {}, { onAccept });
+    await user.click(screen.getByRole('button', { name: 'Accept implementation' }));
+    expect(onAccept).toHaveBeenCalledTimes(1);
+  });
+
+  it('R1 — Take over remains available even when accept/reject are blocked (no artifact)', () => {
+    renderBar(implementationReviewTakeoverOnlyView, READY);
+    expect(barState()).toBe('blocked');
+    expect(screen.queryByRole('button', { name: 'Accept implementation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reject with feedback' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Take over' })).toBeInTheDocument();
+    expect(screen.getByTestId('impl-review-blocked-reason')).toBeInTheDocument();
+  });
+
+  it('AC3/R5 — the rejection dialog enforces reasonText + a developer taxonomy selection', async () => {
+    const onRejectImplementation = vi.fn();
+    const user = userEvent.setup();
+    renderBar(implementationReviewReadyView, READY, {}, { onRejectImplementation });
+    await user.click(screen.getByRole('button', { name: 'Reject with feedback' }));
+
+    const dialog = screen.getByTestId('approval-rejection-dialog');
+    // Developer taxonomy options — NOT the spec set.
+    expect(within(dialog).getByText('Incorrect approach')).toBeInTheDocument();
+    expect(within(dialog).getByText('Out of scope')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Missing scope')).not.toBeInTheDocument();
+
+    // Submitting with empty reason/selection shows the validation error and does not fire.
+    await user.click(within(dialog).getByRole('button', { name: /confirm rejection/i }));
+    expect(within(dialog).getByRole('alert')).toBeInTheDocument();
+    expect(onRejectImplementation).not.toHaveBeenCalled();
+
+    await user.type(screen.getByTestId('approval-rejection-reason'), 'wrong layering');
+    await user.click(within(dialog).getByLabelText('Quality issue'));
+    await user.click(within(dialog).getByRole('button', { name: /confirm rejection/i }));
+    expect(onRejectImplementation).toHaveBeenCalledWith({
+      reasonText: 'wrong layering',
+      taggedFeedback: 'QUALITY_ISSUE',
+    });
+  });
+
+  it('AC4/R6 — the takeover dialog renders the verbatim OpenAPI consequence text + enforces reasonText', async () => {
+    const onTakeover = vi.fn();
+    const user = userEvent.setup();
+    renderBar(implementationReviewReadyView, READY, {}, { onTakeover });
+    await user.click(screen.getByRole('button', { name: 'Take over' }));
+
+    const dialog = await screen.findByTestId('confirmation-dialog');
+    expect(dialog).toHaveTextContent(
+      /Stops orchestrator dispatch, cancels all in-flight \+ queued runner executions/,
+    );
+    expect(dialog).toHaveTextContent(/This action is non-reversible in E3/);
+
+    const confirm = within(dialog).getByRole('button', { name: /confirm takeover/i });
+    expect(confirm).toBeDisabled();
+    await user.type(within(dialog).getByTestId('takeover-reason'), 'manual continuation');
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+    expect(onTakeover).toHaveBeenCalledWith('manual continuation');
+  });
+
+  it('AC5/R2 — APPROVAL_VERSION_MISMATCH renders the stale state with a refresh CTA', () => {
+    renderBar(implementationReviewReadyView, {
+      status: 'error',
+      errorCode: 'APPROVAL_VERSION_MISMATCH',
+    });
+    expect(barState()).toBe('stale');
+    expect(screen.getByTestId('approval-stale')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /refresh and review/i })).toBeInTheDocument();
+  });
+
+  it('AC6 — a settled decision persists the post-submit summary', () => {
+    renderBar(implementationReviewSuccessAcceptedView, { status: 'success' });
+    expect(barState()).toBe('success');
+    const summary = screen.getByTestId('approval-decision-summary');
+    expect(within(summary).getByTestId('approval-summary-chip')).toHaveTextContent('Accepted');
+    expect(within(summary).getByTestId('approval-summary-ref')).toHaveTextContent(
+      'corr_accept_001',
+    );
+  });
+
+  it('AC7/R9 — post-takeover renders the "Continue in PR" link + read-only label', () => {
+    renderBar(implementationReviewSuccessTakenOverView, { status: 'success' });
+    expect(barState()).toBe('success');
+    expect(screen.getByTestId('takeover-readonly-label')).toHaveTextContent('Run is taken over');
+    const link = screen.getByTestId('takeover-continue-pr');
+    expect(link).toHaveAttribute('href', 'https://github.com/octo/repo/pull/42');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('AC7/R9 — post-takeover with NO preserved PR ref renders the label without a link', () => {
+    const view = {
+      ...implementationReviewSuccessTakenOverView,
+      lastDecision: decisionSummaryTakenOverNoPr,
+    };
+    renderBar(view, { status: 'success' });
+    expect(screen.getByTestId('takeover-readonly-label')).toBeInTheDocument();
+    expect(screen.queryByTestId('takeover-continue-pr')).not.toBeInTheDocument();
+  });
+
+  it('AC8 — the success announcement is routed through the single live region', () => {
+    renderBar(implementationReviewSuccessTakenOverView, { status: 'success' });
+    expect(screen.getByTestId('approval-live-region')).toHaveTextContent(/taken over/i);
+  });
+
+  it('AC8 — all three actions are keyboard reachable', () => {
+    renderBar(implementationReviewReadyView, READY);
+    const area = screen.getByTestId('impl-review-action-area');
+    const labels = tabbableElements(area).map((el) => el.textContent);
+    expect(labels).toContain('Accept implementation');
+    expect(labels).toContain('Reject with feedback');
+    expect(labels).toContain('Take over');
+  });
+
+  it('AC10 — the ready implementation_review bar has zero axe violations', async () => {
+    const { container } = renderBar(implementationReviewReadyView, READY);
+    await expectNoA11yViolations(container);
   });
 });

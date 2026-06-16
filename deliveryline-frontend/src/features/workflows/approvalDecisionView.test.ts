@@ -10,16 +10,20 @@ import { describe, expect, it } from 'vitest';
 import {
   ARTIFACT_UNAVAILABLE_REASON,
   GENERIC_DISABLED_REASON,
+  buildImplementationContextLabel,
   buildRecoveryContextLabel,
   canRetry,
   coerceAction,
   deriveExpectedVersions,
+  deriveImplementationExpectedVersions,
   isStaleAgainst,
   mapDisabledReason,
   normalizeActions,
   pendingClarificationsMessage,
   resolveApprovalBarState,
   resolveConsequenceHint,
+  resolveImplementationArtifact,
+  resolveImplementationArtifactId,
   resolvePrimaryAction,
   resolveSpecArtifactId,
   type ApprovalDecisionView,
@@ -29,6 +33,8 @@ import {
   blockedNoArtifactView,
   blockedNoPrimaryView,
   blockedNullVersionsView,
+  implementationReviewReadyView,
+  implementationReviewTakeoverOnlyView,
   implementationReviewView,
   lockedView,
   readyView,
@@ -245,8 +251,8 @@ describe('resolveApprovalBarState (AC3/AC6 — precedence locked > error > stale
     expect(resolveApprovalBarState(blockedNullVersionsView, { status: 'idle' })).toBe('blocked');
   });
 
-  it('disabled for a stub mode (mode-specific control restriction)', () => {
-    expect(resolveApprovalBarState(implementationReviewView, { status: 'idle' })).toBe('disabled');
+  it('blocked (not a stub) for implementation_review with no actions/artifact (story 3.28)', () => {
+    expect(resolveApprovalBarState(implementationReviewView, { status: 'idle' })).toBe('blocked');
   });
 
   it('exposes a never-bare artifact-unavailable reason constant', () => {
@@ -288,5 +294,106 @@ describe('story 3.30 — recovery_operator resolution + retry recognition', () =
       /implementation stage/,
     );
     expect(buildRecoveryContextLabel(undefined)).toBe('Recover the failed run');
+  });
+});
+
+describe('approvalDecisionView — implementation_review helpers (story 3.28)', () => {
+  it('normalizeActions keeps the three developer actions (R7 — not coerced to unknown)', () => {
+    expect(
+      normalizeActions(['accept_implementation', 'reject_implementation', 'takeover_workflow']),
+    ).toEqual(['accept_implementation', 'reject_implementation', 'takeover_workflow']);
+    expect(coerceAction('accept_implementation')).toBe('accept_implementation');
+    expect(coerceAction('takeover_workflow')).toBe('takeover_workflow');
+  });
+
+  it('resolveImplementationArtifact picks the highest-version implementation artifact (R1)', () => {
+    const detail: WorkflowDetail = {
+      latestArtifacts: [
+        { artifactType: 'spec', artifactId: 'art_spec', version: 5 },
+        { artifactType: 'implementationPlan', artifactId: 'art_plan', version: 1 },
+        { artifactType: 'prOutput', artifactId: 'art_pr', version: 2 },
+      ],
+    };
+    expect(resolveImplementationArtifact(detail)).toEqual({ artifactId: 'art_pr', version: 2 });
+    expect(resolveImplementationArtifactId(detail)).toBe('art_pr');
+    // No implementation artifact yet → undefined (accept/reject blocked; takeover still ok).
+    expect(resolveImplementationArtifact({ latestArtifacts: [] })).toBeUndefined();
+    expect(resolveImplementationArtifactId(undefined)).toBeUndefined();
+  });
+
+  it('resolveImplementationArtifact prefers prOutput over a higher-version implementationPlan (3.28 D1)', () => {
+    // Independent version sequences: the PR under review wins even when the plan out-versions it.
+    const detail: WorkflowDetail = {
+      latestArtifacts: [
+        { artifactType: 'implementationPlan', artifactId: 'art_plan', version: 5 },
+        { artifactType: 'prOutput', artifactId: 'art_pr', version: 2 },
+      ],
+    };
+    expect(resolveImplementationArtifact(detail)).toEqual({ artifactId: 'art_pr', version: 2 });
+    // Falls back to the plan only when no prOutput exists.
+    expect(
+      resolveImplementationArtifact({
+        latestArtifacts: [
+          { artifactType: 'implementationPlan', artifactId: 'art_plan', version: 5 },
+        ],
+      }),
+    ).toEqual({ artifactId: 'art_plan', version: 5 });
+  });
+
+  it('deriveImplementationExpectedVersions uses the impl artifact version + stamp context version (R3)', () => {
+    expect(
+      deriveImplementationExpectedVersions({ artifactId: 'a', version: 2 }, versionStampFull),
+    ).toEqual({ expectedArtifactVersion: 2, expectedContextBundleVersion: 1 });
+    // Absent artifact version or context-bundle version → null (blocked).
+    expect(
+      deriveImplementationExpectedVersions(
+        { artifactId: 'a', version: undefined },
+        versionStampFull,
+      ),
+    ).toBeNull();
+    expect(deriveImplementationExpectedVersions(undefined, versionStampFull)).toBeNull();
+  });
+
+  it('buildImplementationContextLabel reads the impl artifact version + actor', () => {
+    const detail: WorkflowDetail = {
+      currentActorIdentity: 'agent-runner',
+      latestArtifacts: [{ artifactType: 'prOutput', artifactId: 'art_pr', version: 4 }],
+    };
+    expect(buildImplementationContextLabel(detail)).toBe(
+      'Review implementation v4 by agent-runner',
+    );
+    expect(buildImplementationContextLabel(undefined)).toBe('Review implementation');
+  });
+
+  it('resolves implementation_review states (success checked before blocked — R8)', () => {
+    expect(resolveApprovalBarState(implementationReviewReadyView, { status: 'idle' })).toBe(
+      'ready',
+    );
+    expect(resolveApprovalBarState(implementationReviewView, { status: 'idle' })).toBe('blocked');
+    expect(resolveApprovalBarState(implementationReviewTakeoverOnlyView, { status: 'idle' })).toBe(
+      'blocked',
+    );
+    expect(resolveApprovalBarState(implementationReviewReadyView, { status: 'pending' })).toBe(
+      'submitting',
+    );
+    // success wins over a refetched-empty (terminal) action set — preserves the summary.
+    expect(resolveApprovalBarState(implementationReviewView, { status: 'success' })).toBe(
+      'success',
+    );
+    expect(
+      resolveApprovalBarState(implementationReviewReadyView, {
+        status: 'error',
+        errorCode: 'APPROVAL_VERSION_MISMATCH',
+      }),
+    ).toBe('stale');
+  });
+
+  it('resolveConsequenceHint returns the implementation_review hints (AC2)', () => {
+    expect(resolveConsequenceHint('implementation_review', 'accept_implementation')).toMatch(
+      /advances the run/,
+    );
+    expect(resolveConsequenceHint('implementation_review', 'reject_implementation')).toMatch(
+      /back for rework/,
+    );
   });
 });

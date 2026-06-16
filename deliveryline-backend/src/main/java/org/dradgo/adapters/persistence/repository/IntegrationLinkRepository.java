@@ -12,12 +12,24 @@ import org.springframework.data.repository.query.Param;
 
 public interface IntegrationLinkRepository extends JpaRepository<IntegrationLinkEntity, Long> {
 
-  Optional<IntegrationLinkEntity> findByPublicId(String publicId);
+  // join fetch the workflowRun: IntegrationLinkEntityMapper.toDomain dereferences
+  // workflowRun.publicId, and these reads are called from non-OSIV, non-@Transactional callers
+  // (the RunnerWorkerPool thread) where a lazy proxy would otherwise throw
+  // LazyInitializationException once the per-query session closes.
+  @Query(
+      """
+		select integrationLink
+		from IntegrationLinkEntity integrationLink
+		  join fetch integrationLink.workflowRun
+		where integrationLink.publicId = :publicId
+		""")
+  Optional<IntegrationLinkEntity> findByPublicId(@Param("publicId") String publicId);
 
   @Query(
       """
 		select integrationLink
 		from IntegrationLinkEntity integrationLink
+		  join fetch integrationLink.workflowRun
 		where integrationLink.integrationType = :integrationType
 		  and integrationLink.externalRef = :externalRef
 		  and integrationLink.archivedAt is null
@@ -43,7 +55,8 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
       """
 		select integrationLink
 		from IntegrationLinkEntity integrationLink
-		where integrationLink.workflowRun.publicId = :workflowRunPublicId
+		  join fetch integrationLink.workflowRun workflowRun
+		where workflowRun.publicId = :workflowRunPublicId
 		  and integrationLink.archivedAt is null
 		  and integrationLink.syncStatus <> 'superseded'
 		order by integrationLink.integrationType asc, integrationLink.createdAt asc

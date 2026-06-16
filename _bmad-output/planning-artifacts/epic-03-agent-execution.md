@@ -873,3 +873,121 @@ So that a real spec produced by story 3a-1 is actually reviewable and approvable
 
 **Risk:** the OpenAPI/`schema.ts` regen is a known cross-shell chore (`[[openapi-regen-platform-shim]]`, `[[frontend-lockfile-cross-platform]]`); adding `artifactId` to `LatestArtifactView` is a contract change that reds `RegistryContractTest`/snapshot drift until regenerated (`[[new-workfloweventtype-fixture-sites]]` pattern). Verify on Linux/Docker CI before merge (`[[verify-ci-fixes-in-clean-env]]`).
 
+---
+
+## Epic 3b Net-New Stories (added 2026-06-16)
+
+> Net-new per `sprint-change-proposal-2026-06-16-waiting-for-review.md` ("Option X" — execution-stage review loop). Surfaced by the first real full-cycle **execution** run (`run_ae258aa42f524ba29db3c795732a21e6`, FIN-21) reaching `WaitingForReview` unusable end-to-end — the execution-stage twin of the spec-stage gate that story 3a-9 closed (the Epic-2-retro "first real full-cycle run" pilot-readiness gate, `[[epic-2-retro-real-run-gate]]`). Three approved 2026-06-16 design specs decompose it: `2026-06-16-runner-two-phase-execution-contract-design.md` (#1), `2026-06-16-waiting-for-review-availability-design.md` (#2b), `2026-06-16-waiting-for-review-ui-design.md` (#3). Full acceptance criteria are drafted by `bmad-create-story` when each story enters the cycle — the stubs below capture working title, goal, current-behavior, dependencies, AC-shape reference, and design source. **Sequencing:** `(3b-1 → 3b-2)` and `3b-3` parallel → `3b-4` → `3b-5`/`3b-6`.
+
+### Story 3b-1: Thread `ExecutionSubStage` → Runner Stage Token (Dispatch + Adapter)
+
+As a backend developer + workflow orchestrator,
+I want the execution dispatch to carry the resolved `ExecutionSubStage` so `DockerRunnerAdapter` sets `DELIVERYLINE_RUNNER_STAGE` to `implementation-plan` / `pr-output` (the tokens `entrypoint.sh map_stage` already accepts) instead of the coarse `execution`,
+So that an `IMPLEMENTATION_PLAN` dispatch runs the read-only plan phase (emits `implementationPlan`, no push) and a `PR_OUTPUT` dispatch implements + pushes + emits `prOutput` — fixing the root cause that every execution dispatch ran `prOutput` regardless of sub-stage.
+
+**Current behavior to change:** `DockerRunnerAdapter` (`:243`) sets `DELIVERYLINE_RUNNER_STAGE = request.stage().value()` → `"execution"`; `entrypoint.sh map_stage` (`:246`) maps `execution → prOutput` unconditionally. The broker already derives the sub-stage for logging (`executeQueuedDispatch … subStage=IMPLEMENTATION_PLAN`) — reuse that single derivation.
+
+**Dependencies:** 3.1 (DockerRunnerAdapter), 3.11 (`dispatchPlanGeneration` + execution dispatch path), 3.12 (PR/output orchestration + `validateAndEnrichPrOutput`), 1.13 (RunnerBroker + ContextBundleService — `deriveExecutionSubStage`), 1.6 (runner-contracts schema), 3.3/3.4 (runner images + `entrypoint.sh map_stage` — confirmed stage-aware, no image change expected).
+
+**AC-shape reference:**
+- Dispatch carries the resolved `ExecutionSubStage` (preferred: add the sub-stage to the dispatch request built in `executeQueuedDispatch`; alternative: keep `request.stage()` as `RunnerStage` and add a `subStage` field, adapter chooses the env token from the pair — decide in story design). `INVESTIGATION` still maps to `spec-investigation`/`investigation`.
+- `DockerRunnerAdapter` sets `DELIVERYLINE_RUNNER_STAGE ∈ {implementation-plan, pr-output}` from the resolved sub-stage. **Caution:** do not add a second Docker record constructor — it breaks Spring binding (`[[runner-image-stale-causes-exit-20]]`).
+- Conformance ITs (folds in spec #1 "Story C"): an `implementation-plan` dispatch produces an `implementationPlan` with `read-only` sandbox (no repo writes); a `pr-output` dispatch produces a `prOutput`. Confirm `runner.mjs build --stage` already emits both shapes (it does) — assert, don't add.
+- Unit/IT: each sub-stage dispatches the correct runner stage token; investigation/spec path unchanged (regression).
+- ArchUnit boundary unchanged; `RUNNER_ARTIFACT_TYPE_MISMATCH` still guards a runner emitting the wrong artifact type for the dispatched sub-stage.
+
+**Design source:** `docs/superpowers/specs/2026-06-16-runner-two-phase-execution-contract-design.md` (sub-project #1, Story A + Story C).
+
+### Story 3b-2: Two-Dispatch Execution Orchestration — Plan-Approval Re-Dispatches the PR Phase
+
+As a workflow orchestrator,
+I want approving the implementation plan to re-dispatch a second execution run (the PR phase), so the full walk is approve spec → dispatch #1 (plan, read-only) → plan review → approve plan → dispatch #2 (PR, implement+push) → PR review → accept → `Completed`,
+So that the two-phase contract from 3b-1 actually reaches the `PR_OUTPUT` sub-stage and persists the `github_pr` link via `validateAndEnrichPrOutput`.
+
+**Current behavior to change:** today only ONE execution dispatch happens (because the runner always did `prOutput`). **Open question to resolve in story design:** does `TechnicalApprovalService.acceptImplementation` on an `implementationPlan` (→ `Executing`) already re-dispatch the PR phase, or must it be added? Trace `WorkflowOrchestrationService.onPlanStageSucceeded` / the accept-plan transition and the dispatch trigger.
+
+**Dependencies:** 3b-1 (sub-stage threading — required), 3.11 (`dispatchPlanGeneration`), 3.12 (`validateAndEnrichPrOutput` + PR/output orchestration), 3.20 (`acceptImplementation` — the plan-approval entry point), 3.15 (GitHub PR integration-link persistence), 1.5 (state-transition table).
+
+**AC-shape reference:**
+- Spec approval triggers `dispatchPlanGeneration` (already observed); with 3b-1 the first execution dispatch genuinely runs the plan phase (read-only, no push).
+- Accepting the plan re-dispatches the PR phase (add the trigger if absent); the PR dispatch produces a `prOutput`, pushes, and `validateAndEnrichPrOutput` runs (persisting the `github_pr` link).
+- Idempotency: duplicate accept / re-dispatch for an in-flight PR-phase execution is a no-op (mirror 3.11 AC6).
+- **End-to-end orchestration IT (the headline AC):** approve spec → plan dispatch emits `implementationPlan` (no push) → `WaitingForReview` → accept plan → PR dispatch emits `prOutput` + pushes + persists `github_pr` link → `WaitingForReview` → accept → `Completed`. Investigation/spec path unchanged (regression).
+- `[[post-commit-hook-needs-requires-new]]` applies if the re-dispatch fires from a transaction-synchronization afterCommit hook.
+
+**Design source:** `docs/superpowers/specs/2026-06-16-runner-two-phase-execution-contract-design.md` (sub-project #1, Story B).
+
+### Story 3b-3: WaitingForReview Artifact Availability — Mark `implementationPlan`/`prOutput` `available` on Ingest + Surface the Implementation-Artifact Link
+
+As a Workflow Owner / developer reviewer,
+I want execution-produced artifacts (`implementationPlan`, `prOutput`) marked `available` on ingest and a state-aware "Open the implementation output →" link surfaced at `WaitingForReview`,
+So that `acceptImplementation` (which requires `isApprovalEligible` = AVAILABLE) can fire and the reviewer can actually reach the implementation artifact — the execution-stage twin of 3a-9's spec-stage Gate 1.
+
+**Current behavior to change:** only `spec` is marked available (`RunnerBroker.markSpecArtifactAvailable`, ingest loop `RunnerBroker.java:1342`); `implementationPlan`/`prOutput` stay `pending`. The detail route (`routes/workflows/$workflowRunId/index.tsx`) links only the spec via `resolveSpecArtifactId`. The embedded SPA bundle is stale (predates the `implementation_review` bar).
+
+**Dependencies:** 3a-9 (spec-stage availability pattern — generalize `markSpecArtifactAvailable` → `markArtifactAvailable`; this story **supersedes** 3a-9's deliberate `pending`-on-ingest posture for `IMPLEMENTATION_PLAN`/`PR_OUTPUT`), 3.12 (3.12 enrich `UPDATE` interaction), 1.12 (artifact operations + `markAvailable`, `[[markavailable-has-no-production-caller]]`), 2.1 (SPA embed at `mvn package`), 3.28 (`implementation_review` bar — re-embed activates it), `resolveImplementationArtifact` (live as of 3a-9).
+
+**AC-shape reference:**
+- Backend: in `RunnerBroker.onResult`'s ingest loop (~`:1342`), after the artifact `CREATE` succeeds, mark `SPEC`, `IMPLEMENTATION_PLAN`, and `PR_OUTPUT` `available` (today only `SPEC`). Generalize `markSpecArtifactAvailable` → `markArtifactAvailable` (checksum over the ingested payload bytes + the payload-store-reported `storageRef`; no spec-specific assumptions). Idempotent-replay safe.
+- `prOutput` × 3.12 enrich: the enrich `UPDATE` runs only in the `PR_OUTPUT` sub-stage and after the in-loop marking. **Verify the enrich does not revert status to `pending`; if it does, re-mark `available` after `enrichPrOutputArtifact`** so the enriched version is the available one. Auto-advance (`onPlanStageSucceeded`/`onPrOutputStageSucceeded`) unchanged.
+- Frontend: render an "Open the implementation output →" link when `resolveImplementationArtifact(data)` resolves an artifact id (prefers `prOutput`/`implementationPlan`, highest version), targeting the existing `/workflows/$workflowRunId/artifacts/$artifactId` route. No decision-bar change here.
+- Rebuild + re-embed: `mvn package` rebuilds the SPA into backend `static/` (`[[embedded-frontend-at-package-phase]]`); verify on the live `WaitingForReview` run.
+- Tests (failing-first): `RunnerBrokerUnitTest` — ingested `prOutput`/`implementationPlan` end `available`; `PrOutputOrchestrationIT`/`ImplementationPlanOrchestrationIT` — artifact row `status=available` + run `WaitingForReview`; no spec regression (`SpecStageOrchestrationIT`); a route/page test asserting the impl-artifact link renders with a `prOutput` `artifactId` and not when only a spec exists.
+
+**Note:** marking `prOutput` available is a prerequisite for #3's accept flow (`isApprovalEligible`). This story does NOT change runner behavior or fix the sub-stage mismatch (that is 3b-1/3b-2), and does NOT ship the real `prOutput` renderer (that is 3b-5) — the generic viewer may render a raw `prOutput` JSON as `error`, which is acceptable for this story.
+
+**Design source:** `docs/superpowers/specs/2026-06-16-waiting-for-review-availability-design.md` (sub-project #2b).
+
+### Story 3b-4: Developer-Role Wiring at WaitingForReview
+
+As the single operator (one user, multiple roles for now),
+I want the UI to request allowed-actions as `developer` when `currentState === 'WaitingForReview'` and send the `developer` reviewer role on accept/reject/takeover calls,
+So that the already-built `implementation_review` decision bar's actions appear and fire instead of being `blocked`/inert because `getAllowedActions` defaults to `product_reviewer`.
+
+**Current behavior to change:** `getAllowedActions` defaults to `product_reviewer` (the `ApprovalReviewerRoleResolver` `@Value` fallback); accept/reject/takeover are only returned for the `developer` role → the decision bar is `blocked`.
+
+**Dependencies:** 3.28 (`implementation_review` bar + `ImplementationReviewDecisionBarContainer` + `useAcceptImplementation`/`useRejectImplementation`/`useTakeoverWorkflow` hooks), 3.23/3.24/3.25 (accept/reject/takeover REST endpoints + reviewer-role boundary), 2.14 (allowed-actions version stamp the bar reads live), 2.13 (header-based role attribution — explicitly OUT of scope; keep the wiring isolated so a future 2.13 swap-in is clean).
+
+**AC-shape reference:**
+- UI requests allowed-actions as `developer` at `WaitingForReview` (single-user-all-roles) and sends the developer reviewer role on the decision calls. Mechanism decided in story design; keep isolated for a future 2.13 header-attribution swap.
+- With the developer role, the bar renders accept/reject/takeover and a decision transitions the run (vitest + a manual run after `mvn package`).
+- A thin contract test that allowed-actions for `WaitingForReview` returns the developer action set.
+- **Note:** a `prOutput` accept still needs the `github_pr` link (backend `assertNoConflictingRepoLink` / accept PR-link gate) from 3b-1/3b-2 — sequence the full `prOutput` accept after #1, or test against a plan-phase accept (plan-phase accept/reject/takeover do not need the link).
+
+**Design source:** `docs/superpowers/specs/2026-06-16-waiting-for-review-ui-design.md` (sub-project #3, Story A; takeover folds in).
+
+### Story 3b-5: `prOutput` Review Renderer — PR Link + State Badge + Unified Diff
+
+As a developer reviewer,
+I want a dedicated `prOutput` review panel that renders the PR link (via `githubRef` + `PrStateBadge`) and the unified diff (via `SafeUnifiedDiffRenderer` / `parseUnifiedDiff`),
+So that a `prOutput` (JSON: branch/commitSha/prReference/diffReference) renders as a reviewable PR + diff instead of `error`, and accept/reject fire end-to-end against the real PR.
+
+**Current behavior to change:** the generic artifact viewer renders the artifact body as markdown; a `prOutput` JSON likely fails the `isArtifactView` guard → renders `error`. **Reconcile against done story 3.27** (PR/output ARP variant renderer): the variant exists but is likely unreachable for a live `prOutput` because the raw JSON body fails `isArtifactView` (`[[artifact-read-dto-must-satisfy-isartifactview]]`, `[[artifactview-variant-field-fanout]]`) — wire the done variant to the live artifact path; do not re-build it.
+
+**Dependencies:** 3b-3 (`prOutput` available + linkable), 3b-4 (developer-role actions), 3.27 (PR/output ARP variant — reconcile), 3.31 (`githubRef.ts`, `PrStateBadge`, `SafeUnifiedDiffRenderer`/`parseUnifiedDiff` — reused unforked; `[[githubref-branchurl-dot-traversal]]` guard retained), 3.23/3.24 (accept/reject endpoints).
+
+**AC-shape reference:**
+- A `prOutput` review panel: summary + PR link (`PrStateBadge` + `githubRef` URL hardening) + unified diff (`SafeUnifiedDiffRenderer`/`parseUnifiedDiff`), diff sourced from the artifact payload / `diffReference`. Decide render location (artifact-viewer route vs inline review panel on the detail page) in story design.
+- Accept / reject fire and transition the run; the post-decision success summary + kept-alive announcement behavior in `WorkflowDecisionBar` is preserved (bar stays mounted through the state flip).
+- Respect `[[frontend-react-refresh-no-fn-exports]]` (helpers in `.ts`, not `.tsx`) and `exactOptionalPropertyTypes` when extending ArtifactView variants.
+- Tests: a live `prOutput` renders as PR link + diff (not `error`); accept/reject vitest + a manual run after `mvn package`.
+
+**Design source:** `docs/superpowers/specs/2026-06-16-waiting-for-review-ui-design.md` (sub-project #3, Story B).
+
+### Story 3b-6: `implementationPlan` Review Rendering + Plan-Phase Accept/Reject/Takeover
+
+As a developer reviewer,
+I want the `implementationPlan` artifact's ordered steps rendered for review, with accept / reject (developer taxonomy) / takeover wired end-to-end for the plan phase,
+So that the plan phase of the two-dispatch flow is reviewable and actionable — the path that needs no `github_pr` link (unlike a `prOutput` accept).
+
+**Current behavior to change:** the `implementationPlan` review rendering is not surfaced on the live review path. **Reconcile against done story 3.26** (impl-plan ARP variant renderer): wire the existing variant to the live artifact path (same `isArtifactView` reachability reconciliation as 3b-5/3.27); do not re-build it.
+
+**Dependencies:** 3b-4 (developer-role actions), 3b-3 (`implementationPlan` available + linkable), 3.26 (impl-plan ARP variant — reconcile), 3.21 (`rejectImplementation` + developer rejection taxonomy `incorrect_approach`/`incomplete_implementation`/`quality_issue`/`breaks_existing_functionality`/`out_of_scope`), 3.22/3.25 (takeover service + endpoint + preserved-PR affordance).
+
+**AC-shape reference:**
+- Render the `implementationPlan` ordered steps for review (reuse the 3.26 variant on the live path).
+- Plan-phase accept / reject (developer taxonomy) / takeover wired end-to-end to the existing endpoints, including the post-decision success summary and the takeover preserved-PR affordance. Plan-phase decisions need no `github_pr` link.
+- Tests: the `implementationPlan` renders its steps (not `error`); plan-phase accept/reject/takeover vitest + a manual run after `mvn package`.
+
+**Design source:** `docs/superpowers/specs/2026-06-16-waiting-for-review-ui-design.md` (sub-project #3, Story C; takeover folds in).
+

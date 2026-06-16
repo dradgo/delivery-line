@@ -24,6 +24,7 @@ const RUN_ID = 'run_recovery_survive_001';
 const ALLOWED_URL = 'http://localhost/api/v1/workflows/:runId/allowed-actions';
 const DETAIL_URL = 'http://localhost/api/v1/workflows/:runId';
 const RETRY_URL = 'http://localhost/api/v1/workflows/:runId/retry-workflow';
+const TAKEOVER_URL = 'http://localhost/api/v1/workflows/:runId/takeover';
 
 function client() {
   return new QueryClient({
@@ -77,6 +78,102 @@ describe('WorkflowDecisionBar — recovery survives the post-retry state flip (P
     expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
       'data-approval-bar-mode',
       'recovery_operator',
+    );
+  });
+});
+
+describe('WorkflowDecisionBar — implementation_review selection + survival (story 3.28 R10)', () => {
+  it('selects the implementation_review bar for a WaitingForReview run', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () =>
+        HttpResponse.json({
+          actions: ['accept_implementation', 'reject_implementation', 'takeover_workflow'],
+          versionStamp: { workflowState: 'WaitingForReview', currentContextBundleVersion: 1 },
+        }),
+      ),
+      http.get(DETAIL_URL, () =>
+        HttpResponse.json({
+          workflowRunId: RUN_ID,
+          currentState: 'WaitingForReview',
+          latestArtifacts: [
+            {
+              artifactType: 'prOutput',
+              artifactId: 'art_impl_001',
+              version: 2,
+              status: 'available',
+            },
+          ],
+        }),
+      ),
+    );
+    render(
+      <QueryClientProvider client={client()}>
+        <WorkflowDecisionBar workflowRunId={RUN_ID} />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: 'Accept implementation' });
+    expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
+      'data-approval-bar-mode',
+      'implementation_review',
+    );
+  });
+
+  it('keeps the bar mounted + shows the takeover summary after the run flips to TakenOver', async () => {
+    let takenOver = false;
+    server.use(
+      http.get(ALLOWED_URL, () =>
+        HttpResponse.json({
+          actions: takenOver
+            ? []
+            : ['accept_implementation', 'reject_implementation', 'takeover_workflow'],
+          versionStamp: {
+            workflowState: takenOver ? 'TakenOver' : 'WaitingForReview',
+            currentContextBundleVersion: 1,
+          },
+        }),
+      ),
+      http.get(DETAIL_URL, () =>
+        HttpResponse.json({
+          workflowRunId: RUN_ID,
+          currentState: takenOver ? 'TakenOver' : 'WaitingForReview',
+          latestArtifacts: [
+            {
+              artifactType: 'prOutput',
+              artifactId: 'art_impl_001',
+              version: 2,
+              status: 'available',
+            },
+          ],
+        }),
+      ),
+      http.post(TAKEOVER_URL, () => {
+        takenOver = true;
+        return HttpResponse.json({
+          workflowRunId: RUN_ID,
+          currentState: 'TakenOver',
+          recoveryActionId: 'rec_001',
+          replayed: false,
+          preservedPrReference: 'octo/repo#42',
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client()}>
+        <WorkflowDecisionBar workflowRunId={RUN_ID} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Take over' }));
+    await user.type(await screen.findByTestId('takeover-reason'), 'manual continuation');
+    await user.click(screen.getByRole('button', { name: 'Confirm takeover' }));
+
+    // Even though the run is now TakenOver (out of WaitingForReview), the impl bar stays
+    // mounted and shows the takeover summary + PR affordance.
+    await waitFor(() => expect(screen.getByTestId('takeover-continue-pr')).toBeInTheDocument());
+    expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
+      'data-approval-bar-mode',
+      'implementation_review',
     );
   });
 });

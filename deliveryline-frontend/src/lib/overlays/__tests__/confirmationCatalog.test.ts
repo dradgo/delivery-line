@@ -4,6 +4,10 @@
  * Asserts every UX-DR18 confirm-before action is documented, marked
  * `requiresConfirmation: true`, and carries a non-empty consequence template.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,6 +21,7 @@ const EXPECTED_ACTIONS: readonly ConfirmationActionId[] = [
   'approveWhenStaleOrConflict',
   'stopOrchestrator',
   'retryOrRecoverConsequential',
+  'takeoverWorkflow',
 ];
 
 describe('confirmationCatalog', () => {
@@ -40,4 +45,20 @@ describe('confirmationCatalog', () => {
       expect(['danger', 'warning', 'info']).toContain(entry.intent);
     },
   );
+
+  it('story 3.28 (R6) — takeoverWorkflow consequence is the VERBATIM OpenAPI takeover.post.description', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const openapiPath = join(
+      here,
+      '../../../../../deliveryline-backend/src/main/resources/openapi/openapi.json',
+    );
+    const openapi = JSON.parse(readFileSync(openapiPath, 'utf8')) as {
+      paths: Record<string, { post?: { description?: string } }>;
+    };
+    const description =
+      openapi.paths['/api/v1/workflows/{workflowRunId}/takeover']?.post?.description;
+    expect(description).toBeDefined();
+    expect(CONFIRMATION_CATALOG.takeoverWorkflow.consequenceTemplate).toBe(description);
+    expect(CONFIRMATION_CATALOG.takeoverWorkflow.intent).toBe('danger');
+  });
 });

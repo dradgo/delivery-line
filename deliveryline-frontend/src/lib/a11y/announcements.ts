@@ -87,3 +87,12 @@ export const failureEntered = 'This run has failed. Review the failure and recov
 export const retryInitiated = 'Retrying the failed step.';
 /** Announced once a retry is recorded (success), mirroring the inline outcome (never a toast). */
 export const retryRecorded = 'Retry recorded. The previous failure is preserved in the timeline.';
+
+// ---- Implementation review (story 3.28) ----------------------------------------
+
+/** Announced once an implementation is accepted (success), mirroring the inline outcome. */
+export const implementationAccepted = 'Implementation accepted. Decision recorded.';
+/** Announced once an implementation is rejected (success), mirroring the inline outcome. */
+export const implementationRejected = 'Implementation rejected. Decision recorded.';
+/** Announced once a developer takeover is recorded (success); the run is now taken over. */
+export const workflowTakenOver = 'Run taken over for developer continuation. Decision recorded.';

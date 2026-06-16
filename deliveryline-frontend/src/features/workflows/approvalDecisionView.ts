@@ -61,10 +61,26 @@ export type DecisionAction =
   | 'reject_spec'
   | 'answer_clarification'
   | 'retry'
+  // Story 3.28 (R7) — the developer technical-review actions. Wire values from
+  // `AllowedAction.java` (`accept_implementation` / `reject_implementation` /
+  // `takeover_workflow`); they MUST also live in `KNOWN_ACTIONS` below or `coerceAction`
+  // drops them to `'unknown'` and the implementation_review bar is permanently `blocked`.
+  | 'accept_implementation'
+  | 'reject_implementation'
+  | 'takeover_workflow'
   | 'unknown';
 
 /** The rework taxonomy (story 2.10) — the schema's UPPERCASE wire enum (T-TAGGED-UPPERCASE). */
 export type TaggedFeedback = components['schemas']['RejectSpecRequest']['taggedFeedback'];
+
+/**
+ * Story 3.28 (R5) — the developer rejection taxonomy. The generated `taggedFeedback`
+ * union carries ALL 8 wire values (spec + developer); the backend enforces the role
+ * subset (`INVALID_REJECTION_TAXONOMY`). The UI offers ONLY the 5 developer values via
+ * `DEVELOPER_TAGGED_FEEDBACK_OPTIONS` — distinct from the spec `TaggedFeedback` set.
+ */
+export type DeveloperTaggedFeedback =
+  components['schemas']['RejectImplementationRequest']['taggedFeedback'];
 
 /** The live `AllowedActions.versionStamp` parts the bar consumes (AC6). */
 export interface ApprovalVersionStamp {
@@ -76,8 +92,12 @@ export interface ApprovalVersionStamp {
 
 /** The persisted post-submit decision outcome (AC9). */
 export interface DecisionSummary {
-  /** Which decision landed. */
-  readonly decision: 'approved' | 'rejected';
+  /**
+   * Which decision landed. `approved`/`rejected` are the spec-approval outcomes;
+   * story 3.28 adds the developer-review outcomes `accepted` / `takenover` (reject
+   * reuses `rejected`).
+   */
+  readonly decision: 'approved' | 'rejected' | 'accepted' | 'takenover';
   /** The resulting workflow state from `WorkflowStateChangeResponse.currentState`. */
   readonly resultingState: string;
   /** ISO timestamp the decision was recorded (pinned in tests). */
@@ -86,6 +106,16 @@ export interface DecisionSummary {
   readonly actor?: string | undefined;
   /** The linked event reference for audit (AC9) — `WorkflowStateChangeResponse.correlationId`. */
   readonly correlationId?: string | undefined;
+  /**
+   * Story 3.28 (R9 / AC7) — takeover-only: the preserved GitHub PR reference
+   * (`TakeoverResponse.preservedPrReference`, e.g. `org/repo#42`) the post-takeover bar
+   * links to. UNTRUSTED runner-derived text — must pass `githubRef.ts` URL hardening
+   * before becoming an `href`. `null`/absent → render the read-only label WITHOUT a link.
+   */
+  readonly preservedPrReference?: string | undefined;
+  /** Story 3.28 (R9) — takeover-only informational counts (null/absent on idempotent replay). */
+  readonly cancelledInFlightCount?: number | undefined;
+  readonly cancelledQueuedCount?: number | undefined;
 }
 
 /**
@@ -124,6 +154,13 @@ export interface RejectionDraft {
   readonly taggedFeedback: TaggedFeedback;
 }
 
+/** Story 3.28 — the developer rejection draft (the developer taxonomy variant of {@link RejectionDraft}). */
+export interface ImplementationRejectionDraft {
+  /** Reviewer-authored free text — pass through, NEVER log (T-LOG-PII). */
+  readonly reasonText: string;
+  readonly taggedFeedback: DeveloperTaggedFeedback;
+}
+
 /** The two version ints a mutation request carries (AC6) — there is no single stamp field (T-VERSIONSTAMP). */
 export interface ExpectedVersions {
   readonly expectedArtifactVersion: number;
@@ -154,6 +191,10 @@ const KNOWN_ACTIONS: ReadonlySet<string> = new Set<DecisionAction>([
   'reject_spec',
   'answer_clarification',
   'retry',
+  // Story 3.28 (R7) — the developer technical-review actions.
+  'accept_implementation',
+  'reject_implementation',
+  'takeover_workflow',
   'unknown',
 ]);
 
@@ -307,7 +348,13 @@ const CONSEQUENCE_HINTS: Readonly<
     approve_spec: 'Approval will transition the run to Executing.',
     reject_spec: 'Rejection sends the specification back for rework.',
   },
-  implementation_review: {},
+  // Story 3.28 (AC2) — the short inline hints; takeover's FULL consequence text lives
+  // in the confirm dialog (`CONFIRMATION_CATALOG.takeoverWorkflow`).
+  implementation_review: {
+    accept_implementation: 'Accepting advances the run past technical review.',
+    reject_implementation: 'Rejection sends the implementation back for rework.',
+    takeover_workflow: 'Taking over stops orchestration and hands the run to a developer.',
+  },
   // Story 3.30 (AC3) — the short inline hint; the FULL consequence text lives in the
   // retry confirmation dialog (`CONFIRMATION_CATALOG.retryOrRecoverConsequential`).
   recovery_operator: {
@@ -365,12 +412,39 @@ export function resolveApprovalBarState(
     }
     return canRetry(view) ? 'ready' : 'disabled';
   }
-  // The remaining stub modes have no live decision-firing path (AC1/AC3 `disabled`).
-  // Resolve them to `disabled` BEFORE blocked so a stub mode reads as a deliberate
-  // control restriction, not a missing-artifact block.
-  if (view.mode !== 'spec_approval') {
-    return 'disabled';
+  // Story 3.28 — the implementation_review mode is a REAL decision path (no longer a
+  // stub). Mirrors spec_approval's `primary === null || !canFire → blocked → success →
+  // ready`, BUT the primary is `accept_implementation` and `canFire` reads the resolved
+  // implementation `artifactId` + a derivable version stamp. Resolved BEFORE the generic
+  // non-spec_approval `disabled` fallthrough (exactly how recovery_operator was carved
+  // out above). NOTE: `Take over` is modeled as an ALWAYS-available secondary by the
+  // renderer (it needs no artifactId/version), so a `blocked` accept still renders the
+  // takeover control — the state here only governs the accept/reject primary path.
+  if (view.mode === 'implementation_review') {
+    // `success` is checked BEFORE `blocked` (mirroring recovery_operator): after a decision
+    // lands the run leaves WaitingForReview and the refetched allowed-actions drop
+    // accept/reject — without this, the post-decision summary (AC6) + takeover PR
+    // affordance (AC7) would be torn down to `blocked` the instant the run advances.
+    if (mutation.status === 'success') {
+      return 'success';
+    }
+    const primary = view.actions.includes('accept_implementation') ? 'accept_implementation' : null;
+    // canFire reads the resolved implementation `artifactId` (R8) + the context-bundle
+    // version (R3) — NOT `deriveExpectedVersions`, which gates on the SPEC version
+    // (`currentSpecArtifactVersion`) that accept/reject-implementation never send. The
+    // container sets `artifactId` only when the full firing request is buildable (the impl
+    // artifact has a numeric version), so an `artifactId` here implies a derivable version.
+    const canFire =
+      view.artifactId !== undefined &&
+      typeof view.versionStamp?.currentContextBundleVersion === 'number';
+    if (primary === null || !canFire) {
+      return 'blocked';
+    }
+    return 'ready';
   }
+  // The remaining mode is `spec_approval` (recovery_operator + implementation_review are
+  // handled above; the `ApprovalBarMode` union is exhaustive — a new mode would add its own
+  // branch, exactly like the two above).
   const primary = resolvePrimaryAction(view.actions);
   const canFire =
     view.artifactId !== undefined && deriveExpectedVersions(view.versionStamp) !== null;
@@ -446,4 +520,98 @@ export function buildDecisionContextLabel(
   const actor = detail?.currentActorIdentity;
   const actorPart = actor !== undefined && actor.trim() !== '' ? ` by ${actor}` : '';
   return `Approve specification${versionPart}${actorPart}`;
+}
+
+/** A resolved implementation artifact (id + version) accept/reject fires against (story 3.28). */
+export interface ResolvedImplementationArtifact {
+  readonly artifactId: string;
+  readonly version: number | undefined;
+}
+
+/**
+ * Story 3.28 (R1) — resolve the implementation artifact under technical review. Mirrors
+ * {@link resolveSpecArtifactId} but filters `artifactType ∈ {implementationPlan, prOutput}`
+ * and picks the HIGHEST-version entry (`latestArtifacts` order is not guaranteed to be
+ * version order). Live as of story 3a-9 (the read model populates `latestArtifacts[].
+ * artifactId`). Returns undefined when no implementation artifact exists yet → accept/reject
+ * render `blocked` (takeover stays available — it needs no artifact). READS (never
+ * fabricates) the forward-compat `artifactId`; an absent id stays undefined.
+ */
+export function resolveImplementationArtifact(
+  detail: WorkflowDetail | undefined,
+): ResolvedImplementationArtifact | undefined {
+  const all = detail?.latestArtifacts ?? [];
+  // The technical review is of the PR output — prefer the highest-version `prOutput`, and
+  // fall back to `implementationPlan` ONLY when no `prOutput` exists (3.28 review, D1). The
+  // two types are INDEPENDENT version sequences, so a single cross-type "highest version"
+  // pick could otherwise select the plan over the PR actually under review.
+  const pickHighest = (type: 'prOutput' | 'implementationPlan') => {
+    let chosen: (typeof all)[number] | undefined;
+    for (const candidate of all) {
+      if (candidate.artifactType !== type) {
+        continue;
+      }
+      if (
+        chosen === undefined ||
+        (candidate.version ?? Number.NEGATIVE_INFINITY) >
+          (chosen.version ?? Number.NEGATIVE_INFINITY)
+      ) {
+        chosen = candidate;
+      }
+    }
+    return chosen;
+  };
+  const chosen = pickHighest('prOutput') ?? pickHighest('implementationPlan');
+  const candidateId = (chosen as { artifactId?: unknown } | undefined)?.artifactId;
+  if (typeof candidateId !== 'string') {
+    return undefined;
+  }
+  return {
+    artifactId: candidateId,
+    version: typeof chosen?.version === 'number' ? chosen.version : undefined,
+  };
+}
+
+/** Convenience: the resolved implementation artifact's id (or undefined) — drives `canFire`. */
+export function resolveImplementationArtifactId(
+  detail: WorkflowDetail | undefined,
+): string | undefined {
+  return resolveImplementationArtifact(detail)?.artifactId;
+}
+
+/**
+ * Story 3.28 (R3 / OQ-1) — derive the two version ints for accept/reject-implementation.
+ * Unlike spec approval, `expectedArtifactVersion` comes from the resolved IMPLEMENTATION
+ * artifact's version (the backend's `ApprovalVersionBinder` compares against the artifact
+ * identified by `artifactId`), NOT from `versionStamp.currentSpecArtifactVersion` (which is
+ * the LATEST SPEC version at `WaitingForReview`). `expectedContextBundleVersion` comes from
+ * the stamp. Returns null when either int is absent → contributes to `blocked`
+ * (T-VERSIONSTAMP). Do NOT reuse {@link deriveExpectedVersions} here (it would send the
+ * spec version as the artifact version).
+ */
+export function deriveImplementationExpectedVersions(
+  artifact: ResolvedImplementationArtifact | undefined,
+  versionStamp: ApprovalVersionStamp | undefined,
+): ExpectedVersions | null {
+  if (artifact === undefined || versionStamp === undefined) {
+    return null;
+  }
+  const { version } = artifact;
+  const { currentContextBundleVersion } = versionStamp;
+  if (typeof version !== 'number' || typeof currentContextBundleVersion !== 'number') {
+    return null;
+  }
+  return {
+    expectedArtifactVersion: version,
+    expectedContextBundleVersion: currentContextBundleVersion,
+  };
+}
+
+/** Compose the implementation-review decision-context line (AC2) from the live read model. */
+export function buildImplementationContextLabel(detail: WorkflowDetail | undefined): string {
+  const version = resolveImplementationArtifact(detail)?.version;
+  const versionPart = typeof version === 'number' ? ` v${version}` : '';
+  const actor = detail?.currentActorIdentity;
+  const actorPart = actor !== undefined && actor.trim() !== '' ? ` by ${actor}` : '';
+  return `Review implementation${versionPart}${actorPart}`;
 }

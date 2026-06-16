@@ -37,10 +37,13 @@ import {
   decisionStale,
   decisionSubmitFailed,
   failureEntered,
+  implementationAccepted,
+  implementationRejected,
   retryInitiated,
   retryRecorded,
   specApproved,
   specRejected,
+  workflowTakenOver,
 } from '@/lib/a11y/announcements';
 import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
 
@@ -55,9 +58,12 @@ import {
   type ApprovalLocalUi,
   type ApprovalMutationState,
   type DecisionSummary,
+  type DeveloperTaggedFeedback,
+  type ImplementationRejectionDraft,
   type RejectionDraft,
   type TaggedFeedback,
 } from '../approvalDecisionView';
+import { parsePrReference, prUrl } from '../githubRef';
 import { StateSignifierChip } from './WorkflowStateBadge';
 
 /** The UPPERCASE rework taxonomy (story 2.10 / T-TAGGED-UPPERCASE) + human labels. */
@@ -65,6 +71,22 @@ const TAGGED_FEEDBACK_OPTIONS: ReadonlyArray<{ value: TaggedFeedback; label: str
   { value: 'MISSING_SCOPE', label: 'Missing scope' },
   { value: 'UNCLEAR_SPECIFICATION', label: 'Unclear specification' },
   { value: 'MISUNDERSTOOD_IMPLEMENTATION', label: 'Misunderstood implementation' },
+];
+
+/**
+ * Story 3.28 (R5) — the DEVELOPER rejection taxonomy (5 values) + human labels. DISTINCT
+ * from {@link TAGGED_FEEDBACK_OPTIONS} (the product/spec set) — the dialog renders these in
+ * `implementation_review` mode. Wire values bind by Jackson enum NAME (UPPERCASE).
+ */
+const DEVELOPER_TAGGED_FEEDBACK_OPTIONS: ReadonlyArray<{
+  value: DeveloperTaggedFeedback;
+  label: string;
+}> = [
+  { value: 'INCORRECT_APPROACH', label: 'Incorrect approach' },
+  { value: 'INCOMPLETE_IMPLEMENTATION', label: 'Incomplete implementation' },
+  { value: 'QUALITY_ISSUE', label: 'Quality issue' },
+  { value: 'BREAKS_EXISTING_FUNCTIONALITY', label: 'Breaks existing functionality' },
+  { value: 'OUT_OF_SCOPE', label: 'Out of scope' },
 ];
 
 export interface ApprovalDecisionBarProps {
@@ -88,6 +110,15 @@ export interface ApprovalDecisionBarProps {
    * passes none.
    */
   onRetry?: (() => void) | undefined;
+  /**
+   * Story 3.28 — fire the accept-implementation mutation (the impl-review container wires
+   * this to `useAcceptImplementation`). Only `implementation_review` invokes it.
+   */
+  onAccept?: (() => void) | undefined;
+  /** Story 3.28 — confirm a developer rejection (wired to `useRejectImplementation`). */
+  onRejectImplementation?: ((draft: ImplementationRejectionDraft) => void) | undefined;
+  /** Story 3.28 — confirm a takeover with the captured reason (wired to `useTakeoverWorkflow`). */
+  onTakeover?: ((reasonText: string) => void) | undefined;
 }
 
 /** Layout classes per AC4 — sticky footer vs in-flow inline section. */
@@ -97,18 +128,61 @@ const LAYOUT_CLASS: Record<ApprovalDecisionView['layout'], string> = {
   inline_section: 'w-full rounded-md border border-border bg-surface px-4 py-3',
 };
 
+/** Decision-outcome presentation (chip tone + label) per decision kind (AC9 / story 3.28). */
+const DECISION_PRESENTATION: Record<
+  DecisionSummary['decision'],
+  { stateName: 'success' | 'stale' | 'recovery'; label: string }
+> = {
+  approved: { stateName: 'success', label: 'Approved' },
+  accepted: { stateName: 'success', label: 'Accepted' },
+  rejected: { stateName: 'stale', label: 'Rejected' },
+  takenover: { stateName: 'recovery', label: 'Taken over' },
+};
+
+/**
+ * Story 3.28 (AC7 / R9) — the post-takeover affordance: a "Run is taken over" read-only
+ * label + (when a PR reference was preserved) a "Continue work in PR {ref}" GitHub link
+ * (new tab, hardened via `githubRef.ts`). A null/malformed reference renders the label
+ * WITHOUT a link (no empty placeholder).
+ */
+function TakeoverPrAffordance({ summary }: { summary: DecisionSummary }) {
+  const reference = summary.preservedPrReference;
+  const parsed =
+    reference !== undefined && reference.trim() !== '' ? parsePrReference(reference) : null;
+  return (
+    <div className="flex flex-col gap-1" data-testid="takeover-pr-affordance">
+      <StateSignifierChip
+        stateName="recovery"
+        label="Run is taken over"
+        testId="takeover-readonly-label"
+      />
+      {parsed !== null ? (
+        <a
+          href={prUrl(parsed)}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="takeover-continue-pr"
+          className="text-meta text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+        >
+          Continue work in PR {reference}
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 /** The persisted post-submit / prior-decision outcome (AC9) — never auto-clears. */
 function DecisionSummaryView({ summary, locked }: { summary: DecisionSummary; locked: boolean }) {
+  const presentation = DECISION_PRESENTATION[summary.decision];
   return (
     <div className="flex flex-col gap-1" data-testid="approval-decision-summary">
       <StateSignifierChip
-        stateName={summary.decision === 'approved' ? 'success' : 'stale'}
-        label={summary.decision === 'approved' ? 'Approved' : 'Rejected'}
+        stateName={presentation.stateName}
+        label={presentation.label}
         testId="approval-summary-chip"
       />
       <p className="text-meta text-text-secondary">
-        {summary.decision === 'approved' ? 'Approved' : 'Rejected'} ·{' '}
-        <time dateTime={summary.decidedAt}>{summary.decidedAt}</time>
+        {presentation.label} · <time dateTime={summary.decidedAt}>{summary.decidedAt}</time>
         {' · '}resulting state <code>{summary.resultingState}</code>
         {summary.correlationId !== undefined ? (
           <>
@@ -122,6 +196,7 @@ function DecisionSummaryView({ summary, locked }: { summary: DecisionSummary; lo
           <SafeMarkdownRenderer source={`by ${summary.actor}`} />
         </div>
       ) : null}
+      {summary.decision === 'takenover' ? <TakeoverPrAffordance summary={summary} /> : null}
       {locked ? (
         <p className="text-meta text-text-tertiary">This decision is recorded and read-only.</p>
       ) : null}
@@ -129,27 +204,25 @@ function DecisionSummaryView({ summary, locked }: { summary: DecisionSummary; lo
   );
 }
 
-/** The E3/E4 stub-mode placeholder (AC1) — keeps the mode contract without dead UI. */
-function StubPlaceholder({ label, epic }: { label: string; epic: string }) {
-  return (
-    <p className="text-meta text-text-tertiary" data-testid="approval-mode-placeholder">
-      {label} — available in {epic}.
-    </p>
-  );
-}
-
-/** The region-local rejection rationale dialog (AC8) — NOT 2.23's primitives (T-MODAL). */
-function RejectionDialog({
+/**
+ * The region-local rejection rationale dialog (AC8) — NOT 2.23's primitives (T-MODAL).
+ * Generic over the taxonomy value so it serves BOTH the spec ({@link TAGGED_FEEDBACK_OPTIONS})
+ * and the story-3.28 developer ({@link DEVELOPER_TAGGED_FEEDBACK_OPTIONS}) sets without a
+ * second component (the `options` prop supplies the radio set + value type).
+ */
+function RejectionDialog<TFeedback extends string>({
   labelledById,
+  options,
   onCancel,
   onConfirm,
 }: {
   labelledById: string;
+  options: ReadonlyArray<{ value: TFeedback; label: string }>;
   onCancel: () => void;
-  onConfirm: (draft: RejectionDraft) => void;
+  onConfirm: (draft: { reasonText: string; taggedFeedback: TFeedback }) => void;
 }) {
   const [reasonText, setReasonText] = useState('');
-  const [taggedFeedback, setTaggedFeedback] = useState<TaggedFeedback | ''>('');
+  const [taggedFeedback, setTaggedFeedback] = useState<TFeedback | ''>('');
   const [validationError, setValidationError] = useState<string | undefined>(undefined);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -192,11 +265,11 @@ function RejectionDialog({
       </label>
       <fieldset className="flex flex-col gap-1 text-meta text-text-secondary">
         <legend className="mb-1">Kind of rework needed</legend>
-        {TAGGED_FEEDBACK_OPTIONS.map((option) => (
+        {options.map((option) => (
           <label key={option.value} className="flex items-center gap-2">
             <input
               type="radio"
-              name="approval-tagged-feedback"
+              name={`${labelledById}-feedback`}
               value={option.value}
               checked={taggedFeedback === option.value}
               onChange={() => setTaggedFeedback(option.value)}
@@ -231,25 +304,36 @@ export function ApprovalDecisionBar({
   onReject,
   onRefresh,
   onRetry,
+  onAccept,
+  onRejectImplementation,
+  onTakeover,
 }: ApprovalDecisionBarProps) {
   // A failed allowed-actions read is a distinct error from a missing artifact (blocked)
   // or a mutation failure — surface it as `error` with a load-specific message + retry,
-  // never the benign "not yet available" blocked text. Story 3.30 (P3) extends this to
-  // `recovery_operator`: a failed read must not masquerade as "View only / no recovery
-  // action available".
-  const showLoadError =
-    loadError === true && (view.mode === 'spec_approval' || view.mode === 'recovery_operator');
+  // never the benign "not yet available" blocked text. Every mode is now a real decision
+  // path (spec_approval / recovery_operator / implementation_review), so a load error
+  // applies to all of them — a failed read must never masquerade as "no decision available".
+  const showLoadError = loadError === true;
   const state = showLoadError ? 'error' : resolveApprovalBarState(view, mutation, localUi);
   const idBase = useId();
   const consequenceId = `${idBase}-approve-consequence`;
   const rejectReasonId = `${idBase}-reject-reason`;
   const dialogTitleId = `${idBase}-reject-dialog`;
+  // Story 3.28 — distinct ids for the implementation-review action area.
+  const implRejectDialogTitleId = `${idBase}-impl-reject-dialog`;
+  const acceptConsequenceId = `${idBase}-accept-consequence`;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const rejectTriggerRef = useRef<HTMLButtonElement>(null);
   // Story 3.30 — the retry confirm-before overlay (the shared 2.23 `ConfirmationDialog`,
   // NOT the region-local rejection dialog). `ConfirmationDialog` owns focus restoration.
   const [retryConfirmOpen, setRetryConfirmOpen] = useState(false);
+  // Story 3.28 — the implementation-review dialogs: the developer rejection rationale
+  // (region-local) + the takeover confirm-before overlay (shared `ConfirmationDialog`).
+  const [implRejectDialogOpen, setImplRejectDialogOpen] = useState(false);
+  const [takeoverConfirmOpen, setTakeoverConfirmOpen] = useState(false);
+  const [takeoverReason, setTakeoverReason] = useState('');
+  const implRejectTriggerRef = useRef<HTMLButtonElement>(null);
 
   const closeDialog = () => {
     setDialogOpen(false);
@@ -261,6 +345,17 @@ export function ApprovalDecisionBar({
     setDialogOpen(false);
     onReject(draft);
     rejectTriggerRef.current?.focus();
+  };
+
+  const closeImplRejectDialog = () => {
+    setImplRejectDialogOpen(false);
+    implRejectTriggerRef.current?.focus();
+  };
+
+  const confirmImplRejection = (draft: ImplementationRejectionDraft) => {
+    setImplRejectDialogOpen(false);
+    onRejectImplementation?.(draft);
+    implRejectTriggerRef.current?.focus();
   };
 
   // AC10 / story 2.25 AC5+AC7 — announce decision-lifecycle transitions through a
@@ -280,24 +375,44 @@ export function ApprovalDecisionBar({
             : view.currentState === 'Failed'
               ? failureEntered
               : ''
-      : showLoadError
-        ? decisionOptionsLoadFailed
-        : state === 'stale'
-          ? decisionStale(
-              'This view is out of date.',
-              'Refresh to review the latest version before deciding.',
-            )
-          : state === 'error'
-            ? decisionSubmitFailed
-            : state === 'success'
-              ? view.lastDecision !== undefined
-                ? view.lastDecision.decision === 'approved'
-                  ? specApproved
-                  : specRejected
-                : // Decision settled but the resolved outcome isn't repopulated yet —
-                  // announce the generic recorded message rather than going silent.
-                  decisionRecorded
-              : '';
+      : view.mode === 'implementation_review'
+        ? // Story 3.28 (AC8) — the implementation-review lifecycle through the same region.
+          showLoadError
+          ? decisionOptionsLoadFailed
+          : state === 'stale'
+            ? decisionStale(
+                'This view is out of date.',
+                'Refresh to review the latest version before deciding.',
+              )
+            : state === 'error'
+              ? decisionSubmitFailed
+              : state === 'success'
+                ? view.lastDecision?.decision === 'accepted'
+                  ? implementationAccepted
+                  : view.lastDecision?.decision === 'rejected'
+                    ? implementationRejected
+                    : view.lastDecision?.decision === 'takenover'
+                      ? workflowTakenOver
+                      : decisionRecorded
+                : ''
+        : showLoadError
+          ? decisionOptionsLoadFailed
+          : state === 'stale'
+            ? decisionStale(
+                'This view is out of date.',
+                'Refresh to review the latest version before deciding.',
+              )
+            : state === 'error'
+              ? decisionSubmitFailed
+              : state === 'success'
+                ? view.lastDecision !== undefined
+                  ? view.lastDecision.decision === 'approved'
+                    ? specApproved
+                    : specRejected
+                  : // Decision settled but the resolved outcome isn't repopulated yet —
+                    // announce the generic recorded message rather than going silent.
+                    decisionRecorded
+                : '';
   // Deferred so a mount-time error/success (present at first render) is still
   // announced as a change, not swallowed as the region's initial content (AC5).
   const announcement = useLiveAnnouncement(announcementText);
@@ -453,6 +568,7 @@ export function ApprovalDecisionBar({
         {dialogOpen ? (
           <RejectionDialog
             labelledById={dialogTitleId}
+            options={TAGGED_FEEDBACK_OPTIONS}
             onCancel={closeDialog}
             onConfirm={confirmRejection}
           />
@@ -563,6 +679,193 @@ export function ApprovalDecisionBar({
     }
   }
 
+  /**
+   * Story 3.28 (AC1, AC2, AC6, AC7, AC8) — the `implementation_review` action area.
+   * `accept_implementation` is the single visually-primary control (`data-primary`);
+   * `Reject with feedback` + `Take over` are subordinate secondaries. `Take over` is
+   * ALWAYS available when in the allowed-actions (it needs no artifact/version), so it
+   * renders even when accept/reject are `blocked` (`acceptReady === false`).
+   */
+  function renderImplementationActions({ acceptReady }: { acceptReady: boolean }) {
+    const hasAccept = acceptReady && view.actions.includes('accept_implementation');
+    const hasReject = acceptReady && view.actions.includes('reject_implementation');
+    const takeoverAvailable = view.actions.includes('takeover_workflow');
+    const acceptConsequence = resolveConsequenceHint(
+      'implementation_review',
+      'accept_implementation',
+    );
+    return (
+      <div className="flex flex-col gap-2" data-testid="impl-review-action-area">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* AC2 — exactly one primary-styled control (`data-primary`). Accept is HIDDEN
+              (not disabled) when it cannot fire (no implementation artifact / versions). */}
+          {hasAccept ? (
+            <Button
+              type="button"
+              variant="default"
+              data-primary="true"
+              disabled={mutation.status === 'pending'}
+              aria-describedby={acceptConsequence !== undefined ? acceptConsequenceId : undefined}
+              onClick={onAccept}
+            >
+              Accept implementation
+            </Button>
+          ) : null}
+          {hasReject ? (
+            <Button
+              ref={implRejectTriggerRef}
+              type="button"
+              variant="outline"
+              onClick={() => setImplRejectDialogOpen(true)}
+            >
+              Reject with feedback
+            </Button>
+          ) : null}
+          {takeoverAvailable ? (
+            <Button type="button" variant="outline" onClick={() => setTakeoverConfirmOpen(true)}>
+              Take over
+            </Button>
+          ) : null}
+        </div>
+        {hasAccept && acceptConsequence !== undefined ? (
+          <p id={acceptConsequenceId} className="text-meta text-text-tertiary">
+            {acceptConsequence}
+          </p>
+        ) : null}
+        {!acceptReady ? (
+          // NEVER a bare disabled control — explain why accept/reject are unavailable while
+          // keeping takeover (which needs no artifact) actionable above.
+          <p className="text-meta text-text-secondary" data-testid="impl-review-blocked-reason">
+            The implementation is not yet available for an accept or reject decision.
+          </p>
+        ) : null}
+        {implRejectDialogOpen ? (
+          <RejectionDialog
+            labelledById={implRejectDialogTitleId}
+            options={DEVELOPER_TAGGED_FEEDBACK_OPTIONS}
+            onCancel={closeImplRejectDialog}
+            onConfirm={confirmImplRejection}
+          />
+        ) : null}
+        {takeoverAvailable ? (
+          // AC4 — the shared confirm-before overlay with the VERBATIM OpenAPI consequence
+          // text + a REQUIRED reasonText (confirm gated until non-blank), intent=danger.
+          <ConfirmationDialog
+            open={takeoverConfirmOpen}
+            onOpenChange={(open) => {
+              setTakeoverConfirmOpen(open);
+              if (!open) {
+                setTakeoverReason('');
+              }
+            }}
+            intent={CONFIRMATION_CATALOG.takeoverWorkflow.intent}
+            title="Take over run"
+            consequence={CONFIRMATION_CATALOG.takeoverWorkflow.consequenceTemplate}
+            confirmLabel="Confirm takeover"
+            cancelLabel="Cancel"
+            isConfirming={mutation.status === 'pending'}
+            confirmDisabled={takeoverReason.trim() === '' || mutation.status === 'pending'}
+            onConfirm={() => {
+              const reason = takeoverReason.trim();
+              setTakeoverConfirmOpen(false);
+              setTakeoverReason('');
+              onTakeover?.(reason);
+            }}
+          >
+            <label className="flex flex-col gap-1 text-meta text-text-secondary">
+              <span>Reason (required)</span>
+              <textarea
+                value={takeoverReason}
+                onChange={(event) => setTakeoverReason(event.target.value)}
+                rows={3}
+                className="rounded-md border border-input bg-background p-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+                data-testid="takeover-reason"
+              />
+            </label>
+          </ConfirmationDialog>
+        ) : null}
+      </div>
+    );
+  }
+
+  /**
+   * Story 3.28 — the REAL `implementation_review` render (replaces the E3 stub). The
+   * shared state machine drives `locked`/`success`/`submitting`/`error`/`stale`; the
+   * action area (`ready`/`blocked`) renders accept primary + reject + takeover secondaries,
+   * keeping `Take over` available even when accept/reject are blocked.
+   */
+  function renderImplementationReview() {
+    switch (state) {
+      case 'locked':
+        return view.lastDecision !== undefined ? (
+          <DecisionSummaryView summary={view.lastDecision} locked />
+        ) : (
+          <p className="text-meta text-text-tertiary">A decision has already been made.</p>
+        );
+      case 'success':
+        return view.lastDecision !== undefined ? (
+          <div className="flex flex-col gap-1">
+            <DecisionSummaryView summary={view.lastDecision} locked={false} />
+            <p className="text-meta text-text-secondary">Decision recorded.</p>
+          </div>
+        ) : (
+          <p className="text-meta text-text-secondary">Decision recorded.</p>
+        );
+      case 'submitting':
+        return (
+          <span
+            role="status"
+            aria-busy="true"
+            className="text-meta text-text-secondary"
+            data-testid="approval-submitting"
+          >
+            Submitting your decision…
+          </span>
+        );
+      case 'error':
+        return (
+          <ErrorState
+            variant="failedRetrieval"
+            urgency="active"
+            title="Your decision wasn't submitted"
+            message={`The decision could not be submitted${
+              mutation.errorCode !== undefined ? ` (${mutation.errorCode})` : ''
+            }. Refresh and try again.`}
+            nextAction={{ kind: 'Refresh', onRefresh }}
+          />
+        );
+      case 'stale': {
+        // Only accept/reject can be stale (takeover sends no versions — AC5/R2). No version
+        // number is surfaced here: the impl-review decision targets the IMPLEMENTATION
+        // artifact, so `currentSpecArtifactVersion` would be the WRONG number (3.28 review P2).
+        return (
+          <div className="flex flex-col gap-2" data-testid="approval-stale">
+            <StateSignifierChip
+              stateName="stale"
+              label="Out of date"
+              testId="approval-stale-chip"
+            />
+            <p className="text-meta text-text-secondary">
+              The run changed since this view loaded. Review the latest version before deciding.
+            </p>
+            <div>
+              <Button type="button" variant="outline" onClick={onRefresh}>
+                Refresh and review
+              </Button>
+            </div>
+          </div>
+        );
+      }
+      case 'blocked':
+        return renderImplementationActions({ acceptReady: false });
+      case 'disabled':
+      case 'ready':
+        return renderImplementationActions({ acceptReady: true });
+      default:
+        return null;
+    }
+  }
+
   function renderBody() {
     if (showLoadError) {
       return (
@@ -581,7 +884,7 @@ export function ApprovalDecisionBar({
       case 'spec_approval':
         return renderSpecApproval();
       case 'implementation_review':
-        return <StubPlaceholder label="Implementation review" epic="Epic 3" />;
+        return renderImplementationReview();
       case 'recovery_operator':
         return renderRecoveryOperator();
       default:
