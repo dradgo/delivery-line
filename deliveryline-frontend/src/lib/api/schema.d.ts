@@ -206,6 +206,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/reject-implementation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a run's implementation with structured technical feedback (story 3.24) */
+        post: operations["rejectImplementation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/reject-spec": {
         parameters: {
             query?: never;
@@ -431,6 +448,17 @@ export interface components {
              * @example https://deliveryline.local/problems/run-not-found
              */
             type: string;
+        };
+        RejectImplementationRequest: {
+            artifactId: string;
+            /** Format: int32 */
+            expectedArtifactVersion: number;
+            /** Format: int32 */
+            expectedContextBundleVersion: number;
+            reasonText: string;
+            reviewerRole?: string;
+            /** @enum {string} */
+            taggedFeedback: "MISSING_SCOPE" | "UNCLEAR_SPECIFICATION" | "MISUNDERSTOOD_IMPLEMENTATION" | "INCORRECT_APPROACH" | "INCOMPLETE_IMPLEMENTATION" | "QUALITY_ISSUE" | "BREAKS_EXISTING_FUNCTIONALITY" | "OUT_OF_SCOPE";
         };
         RejectSpecRequest: {
             artifactId: string;
@@ -1173,6 +1201,62 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    rejectImplementation: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectImplementationRequest"];
+            };
+        };
+        responses: {
+            /** @description Rejection recorded; state advanced. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_REJECTION_TAXONOMY, MISSING_REJECTION_TAXONOMY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -421,6 +421,17 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Invalid reviewer role for endpoint",
         false);
+    // Story 3.24 (AC4 / R4) — a taggedFeedback that is a valid RejectionTaxonomy but a product
+    // value
+    // (not in the developer subset) on the reject-implementation endpoint is a malformed reviewer
+    // decision caught at the controller boundary; mirror INVALID_COMMAND_PAYLOAD's BAD_REQUEST +
+    // non-retryable mapping.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_REJECTION_TAXONOMY,
+        HttpStatus.BAD_REQUEST,
+        "Invalid rejection taxonomy",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

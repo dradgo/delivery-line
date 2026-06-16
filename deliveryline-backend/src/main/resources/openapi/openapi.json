@@ -410,6 +410,54 @@
         ],
         "type" : "object"
       },
+      "RejectImplementationRequest" : {
+        "properties" : {
+          "artifactId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "expectedArtifactVersion" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "expectedContextBundleVersion" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "reasonText" : {
+            "maxLength" : 1024,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reviewerRole" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "taggedFeedback" : {
+            "enum" : [
+              "MISSING_SCOPE",
+              "UNCLEAR_SPECIFICATION",
+              "MISUNDERSTOOD_IMPLEMENTATION",
+              "INCORRECT_APPROACH",
+              "INCOMPLETE_IMPLEMENTATION",
+              "QUALITY_ISSUE",
+              "BREAKS_EXISTING_FUNCTIONALITY",
+              "OUT_OF_SCOPE"
+            ],
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "artifactId",
+          "expectedArtifactVersion",
+          "expectedContextBundleVersion",
+          "reasonText",
+          "taggedFeedback"
+        ],
+        "type" : "object"
+      },
       "RejectSpecRequest" : {
         "properties" : {
           "artifactId" : {
@@ -1852,6 +1900,93 @@
           }
         },
         "summary" : "Get workflow run event history",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/reject-implementation" : {
+      "post" : {
+        "operationId" : "rejectImplementation",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RejectImplementationRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "Rejection recorded; state advanced."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_REJECTION_TAXONOMY, MISSING_REJECTION_TAXONOMY."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL."
+          }
+        },
+        "summary" : "Reject a run's implementation with structured technical feedback (story 3.24)",
         "tags" : [
           "Workflows"
         ]

@@ -123,7 +123,19 @@ public enum DomainErrorCode implements RegistryValue {
   // a malformed reviewer decision, not a transient fault). SHARED with story 3.24: first-to-land
   // creates it; the other reuses both the code and the `reviewerRole == developer` validation
   // idiom.
-  INVALID_REVIEWER_ROLE_FOR_ENDPOINT("INVALID_REVIEWER_ROLE_FOR_ENDPOINT");
+  INVALID_REVIEWER_ROLE_FOR_ENDPOINT("INVALID_REVIEWER_ROLE_FOR_ENDPOINT"),
+  // Story 3.24 (AC4 / R4) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Pre-reserved
+  // by story 3.21's MISSING_REJECTION_TAXONOMY comment above. Raised at the REST/CLI controller
+  // boundary by the reject-implementation handler when the request's taggedFeedback is a valid
+  // RejectionTaxonomy value but NOT in the developer subset (e.g. a product value like
+  // MISSING_SCOPE)
+  // — surfaced via RejectionTaxonomy.isDeveloperValue(). An entirely-unknown enum string fails
+  // Jackson deserialization first → INVALID_COMMAND_PAYLOAD (no extra code). This is request-shape
+  // validation, not a domain decision (ArchUnit-safe); the service keeps its own defense-in-depth
+  // subset guard (3.21, INVALID_COMMAND_PAYLOAD). BAD_REQUEST + non-retryable (mirrors
+  // INVALID_COMMAND_PAYLOAD — a malformed reviewer decision, not a transient fault).
+  INVALID_REJECTION_TAXONOMY("INVALID_REJECTION_TAXONOMY");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

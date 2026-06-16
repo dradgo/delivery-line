@@ -16,10 +16,12 @@ import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RejectionTaxonomy;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -200,6 +202,119 @@ class WorkflowCommandsTest {
     assertEquals("developer", captor.getValue().reviewerRole());
     assertEquals(
         "run_accept1234 accept-implementation accepted (state: Executing) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
+        output);
+  }
+
+  // Story 3.24 (AC6/AC10): CLI/REST parity for the reject-implementation command. These pin the two
+  // developer-only boundary rejections (R4 — non-developer reviewerRole, product-subset
+  // taggedFeedback) and the generated-key + Executing-state happy path directly on the CLI surface,
+  // so a regression in the CLI copy of the role/taxonomy guards is caught here.
+
+  private static WorkflowCommands fullyWiredCommands(WorkflowCommandService service) {
+    return new WorkflowCommands(
+        service,
+        null,
+        null,
+        () -> true,
+        () -> "01964c38-1c45-7000-8000-000000000000",
+        () -> "01964c38-1c45-7000-8000-000000000000",
+        new IdempotencyKeyValidator(),
+        null,
+        new ApprovalReviewerRoleResolver("product_reviewer"),
+        new LocalActorIdentityResolver("local-operator"),
+        null,
+        null);
+  }
+
+  @Test
+  void rejectImplementationRejectsNonDeveloperReviewerRoleWithTypedErrorAndDoesNotCallService() {
+    WorkflowCommandService service = mock(WorkflowCommandService.class);
+    WorkflowCommands commands = fullyWiredCommands(service);
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                commands.rejectImplementation(
+                    "run_reject1234",
+                    "art_impl1234",
+                    3,
+                    2,
+                    RejectionTaxonomy.INCORRECT_APPROACH,
+                    "Rework.",
+                    "product_reviewer",
+                    "idem-reject-cli-aaaaaa",
+                    "alex",
+                    "corr-reject-1",
+                    false));
+
+    assertEquals(DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT, error.errorCode());
+    assertEquals("reviewerRole", error.details().get("field"));
+    assertEquals("developer", error.details().get("expected"));
+    assertEquals("product_reviewer", error.details().get("actual"));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void rejectImplementationRejectsProductTaxonomyWithTypedErrorAndDoesNotCallService() {
+    WorkflowCommandService service = mock(WorkflowCommandService.class);
+    WorkflowCommands commands = fullyWiredCommands(service);
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                commands.rejectImplementation(
+                    "run_reject1234",
+                    "art_impl1234",
+                    3,
+                    2,
+                    // A valid RejectionTaxonomy but a PRODUCT value — rejected by the subset guard.
+                    RejectionTaxonomy.MISSING_SCOPE,
+                    "Rework.",
+                    "developer",
+                    "idem-reject-cli-bbbbbb",
+                    "alex",
+                    "corr-reject-2",
+                    false));
+
+    assertEquals(DomainErrorCode.INVALID_REJECTION_TAXONOMY, error.errorCode());
+    assertEquals("taggedFeedback", error.details().get("field"));
+    assertEquals("missing_scope", error.details().get("value"));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void rejectImplementationGeneratesIdempotencyKeyWhenOmittedAndSurfacesExecutingState() {
+    WorkflowCommandService service = mock(WorkflowCommandService.class);
+    when(service.rejectImplementation(any()))
+        .thenReturn(
+            new WorkflowStateChangeResult(
+                "run_reject1234", WorkflowState.EXECUTING, "corr-reject-3"));
+    WorkflowCommands commands = fullyWiredCommands(service);
+
+    String output =
+        commands.rejectImplementation(
+            "run_reject1234",
+            "art_impl1234",
+            3,
+            2,
+            RejectionTaxonomy.INCORRECT_APPROACH,
+            "Rework.",
+            "developer",
+            null,
+            "alex",
+            "corr-reject-3",
+            false);
+
+    ArgumentCaptor<RejectImplementationCommand> captor =
+        ArgumentCaptor.forClass(RejectImplementationCommand.class);
+    verify(service).rejectImplementation(captor.capture());
+    assertEquals("01964c38-1c45-7000-8000-000000000000", captor.getValue().idempotencyKey());
+    assertEquals("developer", captor.getValue().reviewerRole());
+    assertEquals(RejectionTaxonomy.INCORRECT_APPROACH, captor.getValue().taggedFeedback());
+    assertEquals(
+        "run_reject1234 reject-implementation accepted (state: Executing) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
         output);
   }
 }

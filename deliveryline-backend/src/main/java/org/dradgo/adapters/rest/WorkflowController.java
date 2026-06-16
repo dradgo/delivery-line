@@ -22,6 +22,7 @@ import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -30,6 +31,7 @@ import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RejectionTaxonomy;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -584,7 +586,8 @@ public class WorkflowController {
     // approvalReviewerRoleResolver.resolveFor(..)
     // (its blank -> product_reviewer default would mask the mismatch). This is the key delta from
     // approveSpec. The service persists the role verbatim from the command.
-    String reviewerRole = requireDeveloperReviewerRole(request.reviewerRole());
+    String reviewerRole =
+        requireDeveloperReviewerRole("accept-implementation", request.reviewerRole());
     log.info(
         "REST accept-implementation received workflowRunId={} artifactId={} expectedArtifactVersion={} actorIdentity={}",
         MdcKeys.sanitizeForLog(workflowRunId),
@@ -607,6 +610,94 @@ public class WorkflowController {
                     request.reason())));
     log.info(
         "REST accept-implementation success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/reject-implementation",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "rejectImplementation",
+      summary = "Reject a run's implementation with structured technical feedback (story 3.24)")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Rejection recorded; state advanced."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_REJECTION_TAXONOMY, MISSING_REJECTION_TAXONOMY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND or ARTIFACT_RECORD_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "APPROVAL_VERSION_MISMATCH, IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse rejectImplementation(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody RejectImplementationRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    // Story 2.13 round-4 D-R4-1: see approveSpec javadoc.
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 3.24 R4: developer-only endpoint. Validate the raw reviewerRole at the boundary with
+    // the
+    // typed INVALID_REVIEWER_ROLE_FOR_ENDPOINT idiom shared with accept-implementation (story
+    // 3.23);
+    // do NOT route it through approvalReviewerRoleResolver.resolveFor(..) (its blank ->
+    // product_reviewer default would mask the mismatch). The service persists the role verbatim.
+    String reviewerRole =
+        requireDeveloperReviewerRole("reject-implementation", request.reviewerRole());
+    // Story 3.24 R4: taggedFeedback must be a developer-subset RejectionTaxonomy. An unknown enum
+    // string fails Jackson first (INVALID_COMMAND_PAYLOAD); a valid-but-product value (e.g.
+    // MISSING_SCOPE) is rejected here as the typed INVALID_REJECTION_TAXONOMY. The service keeps
+    // its
+    // own defense-in-depth subset guard.
+    requireDeveloperRejectionTaxonomy(request.taggedFeedback());
+    log.info(
+        "REST reject-implementation received workflowRunId={} artifactId={} expectedArtifactVersion={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(request.artifactId()),
+        request.expectedArtifactVersion(),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.rejectImplementation(
+                new RejectImplementationCommand(
+                    workflowRunId,
+                    request.artifactId(),
+                    request.expectedArtifactVersion(),
+                    request.expectedContextBundleVersion(),
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    reviewerRole,
+                    request.taggedFeedback(),
+                    request.reasonText())));
+    log.info(
+        "REST reject-implementation success workflowRunId={} currentState={}",
         workflowRunId,
         response.currentState());
     return response;
@@ -765,13 +856,16 @@ public class WorkflowController {
    * decision), so it stays within the story 1.11 thin-controller ArchUnit rule. The returned
    * trimmed value is the canonical {@code developer} role placed on the command.
    */
-  private static String requireDeveloperReviewerRole(String reviewerRole) {
+  private static String requireDeveloperReviewerRole(String action, String reviewerRole) {
     String trimmed = reviewerRole == null ? null : reviewerRole.trim();
     if (!"developer".equals(trimmed)) {
       // Story 3.23 logging task: audit the boundary rejection before throwing so the typed
-      // INVALID_REVIEWER_ROLE_FOR_ENDPOINT path is observable without re-deploying.
+      // INVALID_REVIEWER_ROLE_FOR_ENDPOINT path is observable without re-deploying. The shared
+      // helper is invoked from both accept-implementation (3.23) and reject-implementation (3.24);
+      // the {action} label keeps the audit line attributed to the correct endpoint.
       log.warn(
-          "REST accept-implementation rejected: reviewerRole must be 'developer' actualReviewerRole={}",
+          "REST {} rejected: reviewerRole must be 'developer' actualReviewerRole={}",
+          action,
           MdcKeys.sanitizeForLog(reviewerRole));
       Map<String, Object> details = new LinkedHashMap<>();
       details.put("field", "reviewerRole");
@@ -783,6 +877,33 @@ public class WorkflowController {
           details);
     }
     return trimmed;
+  }
+
+  /**
+   * Story 3.24 R4: the {@code reject-implementation} endpoint accepts only the
+   * <strong>developer</strong>-subset {@link RejectionTaxonomy} values (story 3.21). A valid-but-
+   * product value (e.g. {@code MISSING_SCOPE}) is rejected at the controller boundary as a typed
+   * {@link DomainErrorCode#INVALID_REJECTION_TAXONOMY}. An entirely-unknown enum string never
+   * reaches here — Jackson deserialization fails first and the {@code
+   * HttpMessageNotReadableException} advice surfaces {@code INVALID_COMMAND_PAYLOAD}. This is
+   * request-shape validation only (no domain decision), staying within the story 1.11
+   * thin-controller ArchUnit rule; the service keeps its own defense-in-depth subset guard.
+   */
+  private static void requireDeveloperRejectionTaxonomy(RejectionTaxonomy taggedFeedback) {
+    if (!taggedFeedback.isDeveloperValue()) {
+      // Story 3.24 logging task: audit the boundary rejection before throwing so the typed
+      // INVALID_REJECTION_TAXONOMY path is observable without re-deploying.
+      log.warn(
+          "REST reject-implementation rejected: taggedFeedback must be a developer-subset value taggedFeedback={}",
+          MdcKeys.sanitizeForLog(taggedFeedback.value()));
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("field", "taggedFeedback");
+      details.put("value", taggedFeedback.value());
+      throw new DomainException(
+          DomainErrorCode.INVALID_REJECTION_TAXONOMY,
+          "Tagged feedback must be a developer-rejection taxonomy value",
+          details);
+    }
   }
 
   /**

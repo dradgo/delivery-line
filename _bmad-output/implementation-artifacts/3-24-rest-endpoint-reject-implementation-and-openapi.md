@@ -1,6 +1,6 @@
 # Story 3.24: REST Endpoint — `reject-implementation` + OpenAPI
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -27,18 +27,18 @@ so that developer rejections flow through the same idempotency + Problem Details
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — `RejectImplementationRequest` REST DTO** (AC: 2)
-  - [ ] Create `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RejectImplementationRequest.java` mirroring `RejectSpecRequest` (`adapters/rest/RejectSpecRequest.java`) exactly: `@JsonIgnoreProperties(ignoreUnknown = false)` record with `@NotBlank @Size(max=128) String artifactId`, `@NotNull @Positive Integer expectedArtifactVersion`, `@NotNull @Positive Integer expectedContextBundleVersion`, `@Size(max=128) String reviewerRole`, `@NotNull RejectionTaxonomy taggedFeedback`, `@NotBlank @Size(max=1024) String reasonText`.
-  - [ ] Javadoc: note the verbose wire names `expectedArtifactVersion`/`expectedContextBundleVersion` map to the short `artifactVersion`/`contextVersion` command fields (Trap T1, already documented on `RejectImplementationCommand`), and that `taggedFeedback` must be a **developer**-subset `RejectionTaxonomy` value (controller enforces — Task 3).
-  - [ ] **Wire-value gotcha (R5):** Jackson deserializes the `RejectionTaxonomy` enum by **constant NAME** (UPPERCASE, e.g. `"INCORRECT_APPROACH"`), NOT by `value()` (`incorrect_approach`) — verify against the working `reject-spec` contract (`RejectSpecEndpointContractTest` sends `"taggedFeedback": "MISSING_SCOPE"`). Use the UPPERCASE names in all REST test fixtures.
+- [x] **Task 1 — `RejectImplementationRequest` REST DTO** (AC: 2)
+  - [x] Create `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RejectImplementationRequest.java` mirroring `RejectSpecRequest` (`adapters/rest/RejectSpecRequest.java`) exactly: `@JsonIgnoreProperties(ignoreUnknown = false)` record with `@NotBlank @Size(max=128) String artifactId`, `@NotNull @Positive Integer expectedArtifactVersion`, `@NotNull @Positive Integer expectedContextBundleVersion`, `@Size(max=128) String reviewerRole`, `@NotNull RejectionTaxonomy taggedFeedback`, `@NotBlank @Size(max=1024) String reasonText`.
+  - [x] Javadoc: note the verbose wire names `expectedArtifactVersion`/`expectedContextBundleVersion` map to the short `artifactVersion`/`contextVersion` command fields (Trap T1, already documented on `RejectImplementationCommand`), and that `taggedFeedback` must be a **developer**-subset `RejectionTaxonomy` value (controller enforces — Task 3).
+  - [x] **Wire-value gotcha (R5):** Jackson deserializes the `RejectionTaxonomy` enum by **constant NAME** (UPPERCASE, e.g. `"INCORRECT_APPROACH"`), NOT by `value()` (`incorrect_approach`) — verify against the working `reject-spec` contract (`RejectSpecEndpointContractTest` sends `"taggedFeedback": "MISSING_SCOPE"`). Use the UPPERCASE names in all REST test fixtures.
 
-- [ ] **Task 2 — Two new REST-layer `DomainErrorCode`s (three-sites each)** (AC: 4) — see [[new-domainerrorcode-three-sites]]
-  - [ ] `INVALID_REJECTION_TAXONOMY` — Site 1: add to `domain/registry/DomainErrorCode.java` (a `// INVALID_REJECTION_TAXONOMY deserialization concern belongs to story 3.24` placeholder comment is already parked there at line ~107 — replace it with the real constant). Site 2: `register(...)` in `adapters/rest/ProblemDetailsCatalog.java` with `HttpStatus.BAD_REQUEST`, title "Invalid rejection taxonomy", `retryable=false` (mirror the `MISSING_REJECTION_TAXONOMY` registration at lines ~399–404). Site 3: add `"INVALID_REJECTION_TAXONOMY": "https://deliveryline.local/problems/invalid-rejection-taxonomy"` to `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json#problemTypeUris`.
-  - [ ] `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` — Site 1: add to `DomainErrorCode.java`. Site 2: `register(...)` in `ProblemDetailsCatalog.java` with `HttpStatus.BAD_REQUEST`, title "Invalid reviewer role for endpoint", `retryable=false`. Site 3: add `"INVALID_REVIEWER_ROLE_FOR_ENDPOINT": "https://deliveryline.local/problems/invalid-reviewer-role-for-endpoint"` to the placeholders manifest. (Shared with story 3.23 accept REST — 3.24 lands first and creates it; R6.)
-  - [ ] Verify the three sites with `-Pfoundation-gate` and `RegistryContractTest` (PowerShell — [[rtk-hook-only-matches-bash]]).
+- [x] **Task 2 — Two new REST-layer `DomainErrorCode`s (three-sites each)** (AC: 4) — see [[new-domainerrorcode-three-sites]]
+  - [x] `INVALID_REJECTION_TAXONOMY` — Site 1: added to `domain/registry/DomainErrorCode.java` (real constant, with the documenting comment; the parked placeholder comment in the `MISSING_REJECTION_TAXONOMY` block above remains as historical context). Site 2: `register(...)` in `adapters/rest/ProblemDetailsCatalog.java` with `HttpStatus.BAD_REQUEST`, title "Invalid rejection taxonomy", `retryable=false`. Site 3: added `"INVALID_REJECTION_TAXONOMY": "https://deliveryline.local/problems/invalid-rejection-taxonomy"` to `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json#problemTypeUris`.
+  - [x] `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` — **already created by story 3.23 (R6 — 3.23 landed first), reused verbatim**: the enum constant, the `ProblemDetailsCatalog` registration, the placeholders-manifest URI, AND the `requireDeveloperReviewerRole` controller/CLI idiom all pre-exist. No additive work needed beyond consuming them.
+  - [x] Verified the three sites with `-Pfoundation-gate` (34/0) and `RegistryContractTest` (18/0) (PowerShell — [[rtk-hook-only-matches-bash]]).
 
-- [ ] **Task 3 — `rejectImplementation` controller handler** (AC: 1, 3, 4, 7, 8)
-  - [ ] Add a `rejectImplementation(...)` `@PostMapping("/{workflowRunId}/reject-implementation")` method to `WorkflowController`, copied from `rejectSpec` (lines 447–526) with these deltas:
+- [x] **Task 3 — `rejectImplementation` controller handler** (AC: 1, 3, 4, 7, 8)
+  - [x] Add a `rejectImplementation(...)` `@PostMapping("/{workflowRunId}/reject-implementation")` method to `WorkflowController`, copied from `rejectSpec` (lines 447–526) with these deltas:
     - Body type `RejectImplementationRequest`; service call `workflowCommandService.rejectImplementation(...)`.
     - Reuse the header guards verbatim: `rejectMultiValuedIdempotencyKeyHeader`, `requireNonBlankIdempotencyKey`, `rejectMultiValuedActorIdentityHeader`, `localActorIdentityResolver.requireSafe(...)` + `resolve(...)`, correlation from `MDC.get(MdcKeys.CORRELATION_ID)`.
     - **Role validation (R4):** the body `reviewerRole` must equal `"developer"`. Do **NOT** route it through `approvalReviewerRoleResolver.resolveFor(...)` (that defaults blank → `product_reviewer` and would mask the error). Resolve the raw value (trim), and if it is null/blank/`!= "developer"` throw `new DomainException(DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT, ...)` with `details{ field:"reviewerRole", expected:"developer", actual:<value> }` (LinkedHashMap, deterministic order — matches the controller's existing detail-payload pattern).
@@ -46,30 +46,27 @@ so that developer rejections flow through the same idempotency + Problem Details
     - Build `RejectImplementationCommand` positionally — **field order is**: `workflowRunId, artifactId, expectedArtifactVersion, expectedContextBundleVersion, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId, reviewerRole(="developer"), taggedFeedback, reasonText` (matches `RejectImplementationCommand` ctor — identical order to the `reject-spec` call site, confirmed).
     - Map the result with `WorkflowStateChangeResponse.from(...)` (R2 — same response DTO as `reject-spec`).
     - INFO entry/exit logs mirroring `reject-spec` (sanitize all user-supplied values via `MdcKeys.sanitizeForLog`).
-  - [ ] `@Operation(operationId = "rejectImplementation", summary = ...)` + `@ApiResponses` documenting the AC4 code set on 200/400/404/409 (copy the `reject-spec` `@ApiResponses` and append the two new 400 codes; drop the 503 `ARTIFACT_PAYLOAD_UNAVAILABLE` line — rejection does NOT read the artifact payload, unlike approve-spec).
+  - [x] `@Operation(operationId = "rejectImplementation", summary = ...)` + `@ApiResponses` documenting the AC4 code set on 200/400/404/409 (copied the `reject-spec` `@ApiResponses`, appended the new 400 codes; dropped the 503 `ARTIFACT_PAYLOAD_UNAVAILABLE` line — R8). Also added a `requireDeveloperRejectionTaxonomy(...)` private helper next to the inherited `requireDeveloperReviewerRole(...)`.
 
-- [ ] **Task 4 — `deliveryline reject-implementation` CLI command** (AC: 6)
-  - [ ] Add a `rejectImplementation(...)` `@Command(name = "reject-implementation", ...)` to `adapters/cli/WorkflowCommands.java`, copied from `rejectSpec` (lines 544–634). Options: `--artifact-id` (req), `--expected-artifact-version` (req Integer), `--expected-context-bundle-version` (req Integer), `--tagged-feedback` (req `RejectionTaxonomy`), `--reason-text` (req), `--reviewer-role` (req — developer; mirror REST: validate `== "developer"` → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`), `--idempotency-key`/`--actor-identity`/`--correlation-id`/`--verbose` (opt). Validate `taggedFeedback.isDeveloperValue()` → `INVALID_REJECTION_TAXONOMY` for CLI/REST parity.
-  - [ ] Resolve actor via `resolveActorIdentity(...)`, idempotency via `idempotencyKeyValidator.requireValid(resolveIdempotencyKey(...))`, correlation via `pushCorrelation(...)`; call `workflowCommandService.rejectImplementation(new RejectImplementationCommand(...))` with `ActorType.HUMAN`. Output line: `"<runId> reject-implementation accepted (state: " + result.currentState().value() + ")"` (always `Executing` — R1). Emit success/failure telemetry (`emitSuccess`/`emitFailure`, `codeFor`) and use `WorkflowCliExitStatusExceptionMapper.BEAN_NAME`.
-  - [ ] No new constructor dependency — `WorkflowCommands` already injects `workflowCommandService`, `approvalReviewerRoleResolver`, `localActorIdentityResolver`, `idempotencyKeyValidator` (do NOT add a ctor arg — avoids the 3-arg/legacy-ctor fan-out, [[two-public-constructors-need-autowired]]).
+- [x] **Task 4 — `deliveryline reject-implementation` CLI command** (AC: 6)
+  - [x] Added a `rejectImplementation(...)` `@Command(name = "reject-implementation", ...)` to `adapters/cli/WorkflowCommands.java`, copied from `rejectSpec`. Options: `--artifact-id` (req), `--expected-artifact-version` (req Integer), `--expected-context-bundle-version` (req Integer), `--tagged-feedback` (req `RejectionTaxonomy`), `--reason-text` (req), `--reviewer-role` (req — developer; reuses `requireDeveloperReviewerRole` → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`), `--idempotency-key`/`--actor-identity`/`--correlation-id`/`--verbose` (opt). Added a CLI `requireDeveloperRejectionTaxonomy(...)` mirror → `INVALID_REJECTION_TAXONOMY` for CLI/REST parity.
+  - [x] Resolves actor via `resolveActorIdentity(...)`, idempotency via `idempotencyKeyValidator.requireValid(resolveIdempotencyKey(...))`, correlation via `pushCorrelation(...)`; calls `workflowCommandService.rejectImplementation(new RejectImplementationCommand(...))` with `ActorType.HUMAN`. Output line: `"<runId> reject-implementation accepted (state: " + result.currentState().value() + ")"`. Emits success/failure telemetry (`emitSuccess`/`emitFailure`, `codeFor`) and uses `WorkflowCliExitStatusExceptionMapper.BEAN_NAME`.
+  - [x] No new constructor dependency — `WorkflowCommands` already injects `workflowCommandService`, `approvalReviewerRoleResolver`, `localActorIdentityResolver`, `idempotencyKeyValidator` ([[two-public-constructors-need-autowired]]).
 
-- [ ] **Task 5 — OpenAPI snapshot + generated TS client regen** (AC: 5)
-  - [ ] Run the snapshot regen: backend snapshot via the `test`/`integration-test` lifecycle phase + `-Dopenapi.snapshot.write=true` (NOT the direct surefire/failsafe goal — [[maven-arglineation-goal-crash]]), then `npm run generate-api`. Cross-shell coordination required (WSL2 for step 1 ELK/backend, the node-bin-owning shell for step 2 — [[openapi-regen-platform-shim]]); `scripts/regen-openapi.sh` is the canonical driver.
-  - [ ] Commit both regenerated files: `src/main/resources/openapi/openapi.json` + `deliveryline-frontend/src/lib/api/schema.d.ts`. The snapshot must now contain `rejectImplementation`, the `RejectImplementationRequest` schema, and the two new problem codes.
-  - [ ] Optional but recommended: extend `OpenApiSnapshotContractTest`'s additive command-surface assertion (lines ~87–93) with `.contains("rejectImplementation")` so a future accidental deletion of the operation fails loudly (the byte-equality check already covers it, but the explicit assertion documents intent).
+- [x] **Task 5 — OpenAPI snapshot + generated TS client regen** (AC: 5)
+  - [x] Ran the snapshot regen: backend snapshot via the `integration-test` lifecycle phase + `-Dopenapi.snapshot.write=true` (NOT the direct failsafe goal — [[maven-arglineation-goal-crash]]; with `-Dtest=Zzz -Dsurefire.failIfNoSpecifiedTests=false` to skip the unit tier), then `npm run generate-api` (node-bin shell — [[openapi-regen-platform-shim]]). `prettier --write` + `check:api` both clean ([[prettier-gate-cascades-ci]]).
+  - [x] Both regenerated files updated: `src/main/resources/openapi/openapi.json` (+135 lines — contains `rejectImplementation`, the `RejectImplementationRequest` schema, and the new problem codes) + `deliveryline-frontend/src/lib/api/schema.d.ts`.
+  - [x] Extended `OpenApiSnapshotContractTest`'s additive command-surface assertion with `.contains("rejectImplementation")`. Byte-equality re-verified green (1/0).
 
-- [ ] **Task 6 — Contract / endpoint tests** (AC: 10)
-  - [ ] Create `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/RejectImplementationEndpointContractTest.java` (`@WebMvcTest(controllers = WorkflowController.class)` + `@Import(ApprovalReviewerRoleResolver.class)`, `@MockitoBean WorkflowCommandService` / `WorkflowInspectionService` / `LocalActorIdentityResolver`), mirroring `RejectSpecEndpointContractTest`. Cover every AC10 case. Happy paths stub `workflowCommandService.rejectImplementation(any())` → `new WorkflowStateChangeResult(RUN_ID, WorkflowState.EXECUTING, null)` and assert `currentState=Executing` for both plan + prOutput fixtures, capture the `RejectImplementationCommand` arg and assert its fields (incl. `actorType=HUMAN`, `reviewerRole="developer"`, version mapping). Error cases assert `status` + `code` + `details` JSON (never human text).
-  - [ ] CLI/REST parity test: extend the existing CLI test surface (mirror the `reject-spec` parity test) asserting the CLI `reject-implementation` and the REST endpoint construct equal commands and surface identical typed error codes.
-  - [ ] Foundation-gate / boot tier: ensure `OpenApiSnapshotContractTest` (Failsafe, Testcontainers) is green after regen — it boots the app, so any springdoc annotation error surfaces here, not in `mvnw test`.
+- [x] **Task 6 — Contract / endpoint tests** (AC: 10)
+  - [x] Created `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/RejectImplementationEndpointContractTest.java` (`@WebMvcTest(controllers = WorkflowController.class)` + `@Import(ApprovalReviewerRoleResolver.class)`), mirroring `AcceptImplementationEndpointContractTest`. 16 tests covering every AC10 case: both happy paths → `Executing` (R1), missing idempotency key, blank/non-developer role → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`, product taxonomy → `INVALID_REJECTION_TAXONOMY`, unknown enum → `INVALID_COMMAND_PAYLOAD`, spec artifact → `INVALID_COMMAND_PAYLOAD` (R7), version mismatch, idempotency conflict, illegal transition, run-not-found, idempotent replay, schema validation, actor fallback, correlation propagation. Captures the `RejectImplementationCommand` arg + asserts fields (`actorType=HUMAN`, `reviewerRole="developer"`, version mapping, taxonomy).
+  - [x] CLI/REST parity: added 3 tests to `WorkflowCommandsTest` (non-developer role → typed error + no service call; product taxonomy → typed error + no service call; generated-key happy path → `Executing` + captured command fields).
+  - [x] Foundation-gate / boot tier: `OpenApiSnapshotContractTest` (Failsafe, Testcontainers) green after regen (1/0), `RegistryContractTest` 18/0, `ArchitectureBoundaryTest` 52/0, `-Pfoundation-gate` 34/0.
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, file I/O, HTTP/runner call), and every retry/replay/conflict/recovery branch.
-  - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
-  - [ ] Levels: `INFO` for normal lifecycle (request start/finish, state transitions, decisions taken), `WARN` for recoverable anomalies (replay, conflict, late-or-stale, fallback), `ERROR` only for unhandled failures or invariant breaks. `DEBUG` for hot-path detail.
-  - [ ] Every log must carry the relevant correlation/context keys: `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`, plus the entity's own public id (e.g. `artifactId`). Use MDC where the framework supports it; otherwise pass as parameters.
-  - [ ] Never log secrets, payload bytes, raw tokens, or full PII. Reference the redaction policy when in doubt.
-  - [ ] Add at least one assertion in a focused test that the expected log line(s) are emitted at the expected level for each new branch (use a list-appender or `OutputCaptureExtension`). For this story the new branches are at the controller boundary: assert the INFO `REST reject-implementation received/success` lines and the WARN/typed-rejection path for `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` / `INVALID_REJECTION_TAXONOMY`.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Controller boundary: INFO `REST reject-implementation received/success` lines (sanitized run/artifact/actor ids); WARN audit lines before the typed `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` (inherited helper) and `INVALID_REJECTION_TAXONOMY` (new helper) throws. CLI mirror emits the symmetric WARN + success/failure telemetry. State-machine/persistence logs remain owned by the service (not duplicated at the controller).
+  - [x] Parameterized logging only; all user-supplied values sanitized via `MdcKeys.sanitizeForLog`; free-form `reasonText` never logged verbatim (pinned by a `noneMatch` assertion in the endpoint test).
+  - [x] Log-line assertions added: the endpoint test pins the INFO received/success lines and both WARN boundary-rejection lines via the `ListAppender`.
 
 ## Dev Notes
 
@@ -169,6 +166,48 @@ claude-opus-4-8[1m] (Opus 4.8, 1M context)
 
 ### Debug Log References
 
+- `mvn -pl deliveryline-backend test` (focused): `RejectImplementationEndpointContractTest` 16/0, `WorkflowCommandsTest` 10/0, total 26/0.
+- OpenAPI regen: `integration-test -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true` (snapshot +135 lines), `npm run generate-api`, `prettier --write`, `check:api` (in sync).
+- Boot tier: `OpenApiSnapshotContractTest` 1/0 (byte-equal), `RegistryContractTest` 18/0, `ArchitectureBoundaryTest` 52/0.
+- `-Pfoundation-gate` 34/0 (probe sweep confirms `INVALID_REJECTION_TAXONOMY status=400`).
+- Full unit tier: 1015/0/12. Spotless applied (comment reflow); Checkstyle 0 violations.
+
 ### Completion Notes List
 
+- **R6 already satisfied by story 3.23 (which landed first):** `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` (enum + `ProblemDetailsCatalog` registration + placeholders-manifest URI) AND the `requireDeveloperReviewerRole` controller/CLI idiom all pre-existed and were reused verbatim. Net-new error-code work was therefore only `INVALID_REJECTION_TAXONOMY` (the single three-sites addition), plus the new `requireDeveloperRejectionTaxonomy` boundary guard mirrored on both the controller and CLI.
+- **R1 honored:** both `implementationPlan` and `prOutput` rejection assert `currentState=Executing` (no `Investigating`); the response is the plain `WorkflowStateChangeResponse` (R2 — no `apr_` id / escalation marker).
+- **R7/R8 honored:** spec-artifact guard surfaces as `INVALID_COMMAND_PAYLOAD` (service-owned), no controller type-check; no 503 `ARTIFACT_PAYLOAD_UNAVAILABLE` arm (rejection does not read the payload). R3: terminal/illegal cases surface as `ILLEGAL_TRANSITION`/`WORKFLOW_RUN_TERMINAL` with no controller allowed-actions pre-check.
+- **R5 honored:** REST fixtures send the UPPERCASE enum NAME (`INCORRECT_APPROACH`); an unknown enum string fails Jackson first → `INVALID_COMMAND_PAYLOAD`.
+- Open Questions OQ-1 (response richness), OQ-2 (`ACTION_NOT_ALLOWED`), OQ-3 (distinct typed codes) all implemented on the **recommended** path (mirror reject-spec / state-only response; rely on the transition table; add the distinct typed codes). No service / persistence / migration / registry / state-machine / transition-table / event changes.
+- **Verification still recommended before merge:** WSL2/Linux clean-env Docker confirmation ([[verify-ci-fixes-in-clean-env]], [[wsl-linux-ci-reproduction]]) + frontend vitest/tsc tier + code-review with a different LLM.
+
 ### File List
+
+**New:**
+
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RejectImplementationRequest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/RejectImplementationEndpointContractTest.java`
+
+**Modified:**
+
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java` (+`rejectImplementation` handler + `requireDeveloperRejectionTaxonomy` helper + imports)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommands.java` (+`reject-implementation` command + `requireDeveloperRejectionTaxonomy` helper + import)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java` (+`INVALID_REJECTION_TAXONOMY`)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java` (+1 `register(...)` for `INVALID_REJECTION_TAXONOMY`)
+- `deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (+1 problem-type URI)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated — new operation + request schema + error code, +135 lines)
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated from the snapshot)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java` (+`.contains("rejectImplementation")` assertion)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/WorkflowCommandsTest.java` (+3 CLI/REST parity tests + imports)
+
+### Change Log
+
+- 2026-06-15 — Story 3.24 implemented (bmad-dev-story). REST + CLI `reject-implementation` adapter over the `done` 3.21 `WorkflowCommandService.rejectImplementation` service; added the single net-new `INVALID_REJECTION_TAXONOMY` three-sites code (`INVALID_REVIEWER_ROLE_FOR_ENDPOINT` reused from 3.23 per R6); OpenAPI snapshot + TS client regenerated. Status `ready-for-dev → in-progress → review`.
+
+### Review Findings
+
+> 2026-06-16 bmad-code-review — 3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) over the working-tree diff scoped to the story File List (11 files; 2 new + 9 modified). All 10 ACs + R1–R8 verified implemented (Acceptance Auditor: zero correctness violations, zero scope creep — diff touches only the declared File List, no service/migration/registry/state-machine/transition-table change). Positional `RejectImplementationCommand` construction (11 args) verified correct against the record ctor in BOTH REST + CLI; taxonomy boolean guard (`!isDeveloperValue()`) verified correct direction; `reasonText` never logged (pinned by `noneMatch`). Triage: 0 decision-needed, 1 patch, 2 defer, 3 dismissed.
+
+- [x] [Review][Patch] Reused `requireDeveloperReviewerRole` WARN misattributes the new reject path as "accept-implementation rejected" [WorkflowController.java:863, WorkflowCommands.java:969] — the 3.23 helper is now also called from the new `rejectImplementation` handlers (REST `:669`, CLI `:886`), but its WARN hardcodes `"REST/CLI accept-implementation rejected: reviewerRole must be 'developer'..."`. A developer rejecting via `reject-implementation` with a bad role emits an audit line attributing it to *accept-implementation*. Introduced by this story (added a 2nd caller). The sibling `requireDeveloperRejectionTaxonomy` (new) correctly says "reject-implementation". (source: blind+auditor) — **FIXED 2026-06-16:** added a `String action` parameter to both `requireDeveloperReviewerRole` copies (REST + CLI); the WARN template is now `"REST/CLI {} rejected: reviewerRole must be 'developer'..."` with the caller passing `"accept-implementation"`/`"reject-implementation"`. Behavior-identical (the `"reviewerRole must be 'developer'"` substring is preserved, so the existing 3.23 `getFormattedMessage().contains(...)` assertions still pass). Verified: `RejectImplementationEndpointContractTest` 16/0, `AcceptImplementationEndpointContractTest` 16/0, `WorkflowCommandsTest` 10/0 (Spotless applied).
+- [x] [Review][Defer] OpenAPI `reviewerRole` advertised optional while de-facto required [RejectImplementationRequest.java / openapi.json / schema.d.ts] — deferred, pre-existing. The DTO mirrors `RejectSpecRequest` field-for-field (`@Size(max=128)` without `@NotBlank`, role validated in-controller per R4), so springdoc emits `reviewerRole?: string`; any request omitting it always 400s at the boundary. This is the established convention across reject-spec/accept-implementation, not introduced here. (source: blind)
+- [x] [Review][Defer] CLI omitted required option (`--tagged-feedback`/`--reviewer-role`/`--reason-text`) yields a Spring Shell framework error, not a typed domain code [WorkflowCommands.java] — deferred, pre-existing. REST returns typed `INVALID_COMMAND_PAYLOAD` for the same omission; the CLI aborts at the framework layer before a `DomainException` is built. Pre-existing CLI/REST asymmetry shared by all `required = true` Spring Shell commands (incl. accept-implementation). (source: edge)
