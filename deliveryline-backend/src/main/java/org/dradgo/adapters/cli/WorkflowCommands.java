@@ -21,8 +21,10 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
+import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -46,6 +48,7 @@ import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitBatchCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
+import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -88,6 +91,10 @@ public class WorkflowCommands {
   // Story 3.18 — batch submission. Nullable in the legacy/inspection-less test constructors; the
   // submit-batch command guards via requireBatchWired().
   private final WorkflowBatchSubmissionService workflowBatchSubmissionService;
+  // Story 3.25 — the RICH developer-takeover service (story 3.22). Nullable in the
+  // legacy/inspection-less test constructors; the takeover command guards via
+  // requireTakeoverWired().
+  private final DeveloperTakeoverService developerTakeoverService;
 
   @Autowired
   public WorkflowCommands(
@@ -101,7 +108,8 @@ public class WorkflowCommands {
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
       WorkflowOrchestrationService workflowOrchestrationService,
-      WorkflowBatchSubmissionService workflowBatchSubmissionService) {
+      WorkflowBatchSubmissionService workflowBatchSubmissionService,
+      DeveloperTakeoverService developerTakeoverService) {
     this(
         workflowCommandService,
         workflowInspectionService,
@@ -114,7 +122,8 @@ public class WorkflowCommands {
         approvalReviewerRoleResolver,
         localActorIdentityResolver,
         workflowOrchestrationService,
-        workflowBatchSubmissionService);
+        workflowBatchSubmissionService,
+        developerTakeoverService);
   }
 
   /**
@@ -139,6 +148,7 @@ public class WorkflowCommands {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -154,7 +164,8 @@ public class WorkflowCommands {
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
       WorkflowOrchestrationService workflowOrchestrationService,
-      WorkflowBatchSubmissionService workflowBatchSubmissionService) {
+      WorkflowBatchSubmissionService workflowBatchSubmissionService,
+      DeveloperTakeoverService developerTakeoverService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.outputs = outputs;
@@ -167,6 +178,7 @@ public class WorkflowCommands {
     this.localActorIdentityResolver = localActorIdentityResolver;
     this.workflowOrchestrationService = workflowOrchestrationService;
     this.workflowBatchSubmissionService = workflowBatchSubmissionService;
+    this.developerTakeoverService = developerTakeoverService;
   }
 
   @Command(
@@ -589,6 +601,103 @@ public class WorkflowCommands {
       throw de;
     } catch (RuntimeException re) {
       emitFailure("workflow retry", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "takeover",
+      description =
+          "Take over a governed workflow run for manual developer continuation (story 3.25 —"
+              + " CLI/REST equivalence). Stops orchestrator dispatch, cancels in-flight + queued"
+              + " runner executions, and transitions the run to the TakenOver terminal state while"
+              + " preserving all prior context (artifacts, audit trail, GitHub PR link). This action"
+              + " is non-reversible in E3.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String takeover(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "reason",
+              description = "Why the takeover is needed (required, free-form)",
+              required = true)
+          String reason,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 3.25 R4: takeover is a developer/HUMAN action. The CLI mirrors accept-implementation's
+    // HUMAN-only audit posture (optional --actor-identity resolved with local-operator fallback,
+    // ActorType.HUMAN hard-coded). NO --actor-type, NO --reviewer-role (the service hard-codes the
+    // developer reviewer role; reviewer_role is the takeover invariant, not a command field).
+    // --reason is required because the rich service mandates a non-blank reasonText.
+    requireTakeoverWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      TakeoverResult result =
+          developerTakeoverService.takeoverWorkflow(
+              new TakeoverWorkflowCommand(
+                  runId,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation,
+                  reason));
+      StringBuilder output =
+          new StringBuilder()
+              .append(result.recoveryActionPublicId())
+              .append(" takeover submitted (state: ")
+              .append(result.resultingState().value())
+              .append(")");
+      if (result.cancelledInFlightCount() != null) {
+        output
+            .append(" [cancelled-in-flight: ")
+            .append(result.cancelledInFlightCount())
+            .append(']');
+      }
+      if (result.cancelledQueuedCount() != null) {
+        output.append(" [cancelled-queued: ").append(result.cancelledQueuedCount()).append(']');
+      }
+      if (result.preservedPrReference() != null) {
+        output.append(" [pr: ").append(result.preservedPrReference()).append(']');
+      }
+      if (result.replayed()) {
+        output.append(" [replayed]");
+      }
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow takeover", runId, resolvedCorrelation, start);
+      // Audit the reason length only — the free-form developer prose is never logged verbatim
+      // (mirrors retry's reason-handling).
+      log.info(
+          "workflow takeover reason supplied correlationId={} workflowRunId={} reasonLength={}",
+          resolvedCorrelation,
+          runId,
+          reason.length());
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow takeover", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow takeover", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
       throw re;
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
@@ -1549,6 +1658,17 @@ public class WorkflowCommands {
       throw new DomainException(
           DomainErrorCode.INTERNAL_ERROR,
           "WorkflowCommands was constructed without RecoveryService; inject RecoveryService to use retry",
+          details);
+    }
+  }
+
+  private void requireTakeoverWired() {
+    if (developerTakeoverService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_takeover_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without DeveloperTakeoverService; inject DeveloperTakeoverService to use takeover",
           details);
     }
   }

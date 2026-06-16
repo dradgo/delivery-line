@@ -47,6 +47,7 @@ class WorkflowCommandsRunnerLogsFlagTest {
           null,
           new LocalActorIdentityResolver("local-operator"),
           null,
+          null,
           null);
 
   private void stubStatus() {

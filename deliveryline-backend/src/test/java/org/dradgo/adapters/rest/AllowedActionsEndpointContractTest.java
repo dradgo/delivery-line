@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -56,6 +57,7 @@ class AllowedActionsEndpointContractTest {
   @MockitoBean private WorkflowCommandService workflowCommandService;
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
+  @MockitoBean private DeveloperTakeoverService developerTakeoverService;
 
   @Test
   void happyPathReturnsAllowedActionsAndVersionStamp() throws Exception {

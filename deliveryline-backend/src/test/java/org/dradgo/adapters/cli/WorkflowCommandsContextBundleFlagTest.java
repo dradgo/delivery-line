@@ -90,6 +90,7 @@ class WorkflowCommandsContextBundleFlagTest {
           null,
           new LocalActorIdentityResolver("local-operator"),
           null,
+          null,
           null);
 
   @Test

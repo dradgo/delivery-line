@@ -46,6 +46,7 @@ class WorkflowCliCommandRegistrationIT {
                       null,
                       new LocalActorIdentityResolver("local-operator"),
                       null,
+                      null,
                       null));
 
   @Test

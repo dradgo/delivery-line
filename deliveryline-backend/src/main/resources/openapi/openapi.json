@@ -649,6 +649,61 @@
         },
         "type" : "object"
       },
+      "TakeoverRequest" : {
+        "properties" : {
+          "reasonText" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reviewerRole" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "reasonText"
+        ],
+        "type" : "object"
+      },
+      "TakeoverResponse" : {
+        "properties" : {
+          "cancelledInFlightCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "cancelledQueuedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "preservedPrReference" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "currentState",
+          "recoveryActionId",
+          "replayed",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "TakeoverWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -2133,6 +2188,94 @@
           }
         },
         "summary" : "Retry a failed workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/takeover" : {
+      "post" : {
+        "description" : "Stops orchestrator dispatch, cancels all in-flight + queued runner executions, records a developer takeover, and transitions the run to the TakenOver terminal state while preserving all prior context (artifacts, audit trail, and the active GitHub PR link). This action is non-reversible in E3 — Epic 4 will add takeover-revert; until then, a taken-over run can only be closed by an operator action.",
+        "operationId" : "takeover",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/TakeoverRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TakeoverResponse"
+                }
+              }
+            },
+            "description" : "Takeover recorded; run is now TakenOver. This action is non-reversible in E3 — Epic 4 will add takeover-revert; until then, a taken-over run can only be closed by an operator action."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL."
+          }
+        },
+        "summary" : "Take over a workflow run for manual developer continuation (story 3.25)",
         "tags" : [
           "Workflows"
         ]

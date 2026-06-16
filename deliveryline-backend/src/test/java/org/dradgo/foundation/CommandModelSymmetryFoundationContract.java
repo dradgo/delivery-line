@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Set;
 import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
@@ -91,6 +92,11 @@ class CommandModelSymmetryFoundationContract {
   // Story 2.13 — WorkflowController depends on LocalActorIdentityResolver; mocked here to
   // deterministically return "alex" so the captured commands match the expected actor identity.
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
+
+  // Story 3.25 — WorkflowController wires the rich DeveloperTakeoverService for POST /takeover. The
+  // bean must exist for this slice to construct the controller; the existing captureTakeover
+  // round-trip still exercises the transition-only /takeover-workflow path (R9 — unchanged).
+  @MockitoBean private DeveloperTakeoverService developerTakeoverService;
 
   @org.junit.jupiter.api.BeforeEach
   void stubActorResolver() {

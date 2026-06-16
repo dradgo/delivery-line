@@ -52,7 +52,8 @@ class WorkflowBatchCommandsTest {
         null,
         new LocalActorIdentityResolver("local-operator"),
         null,
-        batchService);
+        batchService,
+        null);
   }
 
   private BatchSubmissionResult result(int queued, int rejected, List<TicketBatchResult> tickets) {

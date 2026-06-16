@@ -15,6 +15,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -79,16 +81,22 @@ public class WorkflowController {
   private final WorkflowInspectionService workflowInspectionService;
   private final ApprovalReviewerRoleResolver approvalReviewerRoleResolver;
   private final LocalActorIdentityResolver localActorIdentityResolver;
+  // Story 3.25: the RICH developer-takeover service (story 3.22). Wired by the new POST /takeover
+  // endpoint (cancelled-runner counts + preserved PR ref). The pre-existing transition-only POST
+  // /takeover-workflow endpoint keeps using workflowCommandService.takeoverWorkflow (R1 / R9).
+  private final DeveloperTakeoverService developerTakeoverService;
 
   public WorkflowController(
       WorkflowCommandService workflowCommandService,
       WorkflowInspectionService workflowInspectionService,
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
-      LocalActorIdentityResolver localActorIdentityResolver) {
+      LocalActorIdentityResolver localActorIdentityResolver,
+      DeveloperTakeoverService developerTakeoverService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
+    this.developerTakeoverService = developerTakeoverService;
   }
 
   // ---------------------------------------------------------------------------
@@ -821,6 +829,99 @@ public class WorkflowController {
                 idempotencyKey,
                 request.correlationId(),
                 request.reasonText())));
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/takeover",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "takeover",
+      summary = "Take over a workflow run for manual developer continuation (story 3.25)",
+      description =
+          "Stops orchestrator dispatch, cancels all in-flight + queued runner executions, records a"
+              + " developer takeover, and transitions the run to the TakenOver terminal state while"
+              + " preserving all prior context (artifacts, audit trail, and the active GitHub PR"
+              + " link). This action is non-reversible in E3 — Epic 4 will add takeover-revert;"
+              + " until then, a taken-over run can only be closed by an operator action.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description =
+            "Takeover recorded; run is now TakenOver. This action is non-reversible in E3 — Epic 4"
+                + " will add takeover-revert; until then, a taken-over run can only be closed by an"
+                + " operator action."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public TakeoverResponse takeover(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody TakeoverRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    // Story 2.13 round-4 D-R4-1: see approveSpec javadoc.
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 3.25 R8: developer-only endpoint. Validate the raw reviewerRole at the boundary with
+    // the
+    // shared typed INVALID_REVIEWER_ROLE_FOR_ENDPOINT idiom (story 3.23), then DISCARD it — the
+    // rich
+    // DeveloperTakeoverService does NOT accept a reviewer role on the command and hard-codes
+    // 'developer' on the recovery_actions insert. The validation is request-shape only (UI
+    // fail-fast
+    // + symmetry with accept-/reject-implementation), so it stays within the thin-controller rule.
+    requireDeveloperReviewerRole("takeover", request.reviewerRole());
+    log.info(
+        "REST takeover received workflowRunId={} actorIdentity={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // @NotBlank + @Valid guarantee non-null reasonText by the time the body executes; log its
+        // length only — the free-form developer prose is never logged verbatim.
+        request.reasonText().length());
+    TakeoverResult result =
+        developerTakeoverService.takeoverWorkflow(
+            new TakeoverWorkflowCommand(
+                workflowRunId,
+                actorIdentity,
+                ActorType.HUMAN,
+                idempotencyKey,
+                correlationId,
+                request.reasonText()));
+    TakeoverResponse response = TakeoverResponse.from(result);
+    log.info(
+        "REST takeover success workflowRunId={} currentState={} recoveryActionId={} cancelledInFlightCount={} cancelledQueuedCount={} replayed={}",
+        workflowRunId,
+        response.currentState(),
+        response.recoveryActionId(),
+        response.cancelledInFlightCount(),
+        response.cancelledQueuedCount(),
+        response.replayed());
+    return response;
   }
 
   /**

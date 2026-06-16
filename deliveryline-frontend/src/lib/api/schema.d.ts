@@ -257,6 +257,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take over a workflow run for manual developer continuation (story 3.25)
+         * @description Stops orchestrator dispatch, cancels all in-flight + queued runner executions, records a developer takeover, and transitions the run to the TakenOver terminal state while preserving all prior context (artifacts, audit trail, and the active GitHub PR link). This action is non-reversible in E3 — Epic 4 will add takeover-revert; until then, a taken-over run can only be closed by an operator action.
+         */
+        post: operations["takeover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/takeover-workflow": {
         parameters: {
             query?: never;
@@ -511,6 +531,22 @@ export interface components {
             correlationId?: string;
             currentState?: string;
             workflowRunId?: string;
+        };
+        TakeoverRequest: {
+            reasonText: string;
+            reviewerRole?: string;
+        };
+        TakeoverResponse: {
+            /** Format: int32 */
+            cancelledInFlightCount?: number;
+            /** Format: int32 */
+            cancelledQueuedCount?: number;
+            correlationId?: string;
+            currentState: string;
+            preservedPrReference?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            workflowRunId: string;
         };
         TakeoverWorkflowRequest: {
             actorIdentity: string;
@@ -1355,6 +1391,62 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+        };
+    };
+    takeover: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TakeoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Takeover recorded; run is now TakenOver. This action is non-reversible in E3 — Epic 4 will add takeover-revert; until then, a taken-over run can only be closed by an operator action. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TakeoverResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

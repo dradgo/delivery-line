@@ -10,6 +10,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
@@ -18,6 +20,7 @@ import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
+import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -116,6 +119,7 @@ class WorkflowCommandsTest {
         null,
         new ApprovalReviewerRoleResolver("product_reviewer"),
         new LocalActorIdentityResolver("local-operator"),
+        null,
         null,
         null);
   }
@@ -223,6 +227,7 @@ class WorkflowCommandsTest {
         new ApprovalReviewerRoleResolver("product_reviewer"),
         new LocalActorIdentityResolver("local-operator"),
         null,
+        null,
         null);
   }
 
@@ -316,5 +321,149 @@ class WorkflowCommandsTest {
     assertEquals(
         "run_reject1234 reject-implementation accepted (state: Executing) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
         output);
+  }
+
+  // Story 3.25 (AC6/AC10): CLI/REST equivalence for the takeover command. The CLI wires the RICH
+  // DeveloperTakeoverService (not WorkflowCommandService), so these pin the HUMAN-only actor
+  // posture
+  // + reasonText pass-through (command field equality with the REST capture), the rich-result
+  // output
+  // rendering (state + cancelled counts + PR ref + replayed), and the generated-key branch.
+  // --reason
+  // is required at the framework level; the developer reviewer role is the service-hard-coded
+  // takeover invariant (no --reviewer-role flag).
+
+  private static WorkflowCommands takeoverCommands(DeveloperTakeoverService takeoverService) {
+    return new WorkflowCommands(
+        mock(WorkflowCommandService.class),
+        null,
+        null,
+        () -> true,
+        () -> "01964c38-1c45-7000-8000-000000000000",
+        () -> "01964c38-1c45-7000-8000-000000000000",
+        new IdempotencyKeyValidator(),
+        null,
+        new ApprovalReviewerRoleResolver("product_reviewer"),
+        new LocalActorIdentityResolver("local-operator"),
+        null,
+        null,
+        takeoverService);
+  }
+
+  @Test
+  void takeoverRendersStateCancelledCountsAndPrAndCapturesHumanDeveloperCommand() {
+    DeveloperTakeoverService takeoverService = mock(DeveloperTakeoverService.class);
+    when(takeoverService.takeoverWorkflow(any()))
+        .thenReturn(
+            new TakeoverResult(
+                "run_takeover1234",
+                "rcv_takeover1234",
+                WorkflowState.TAKEN_OVER,
+                "evt_takeover_a",
+                2,
+                1,
+                "https://github.com/acme/repo/pull/42",
+                "corr-takeover-1",
+                false));
+    WorkflowCommands commands = takeoverCommands(takeoverService);
+
+    String output =
+        commands.takeover(
+            "run_takeover1234",
+            "Agent stuck; taking over the PR manually.",
+            "alex",
+            "idem-takeover-cli-aaaaaa",
+            "corr-takeover-1",
+            false);
+
+    ArgumentCaptor<TakeoverWorkflowCommand> captor =
+        ArgumentCaptor.forClass(TakeoverWorkflowCommand.class);
+    verify(takeoverService).takeoverWorkflow(captor.capture());
+    TakeoverWorkflowCommand captured = captor.getValue();
+    assertEquals("run_takeover1234", captured.workflowRunId());
+    assertEquals("alex", captured.actorIdentity());
+    // R4: HUMAN actor posture, mirroring the REST capture (CLI/REST equivalence on outcomes).
+    assertEquals(ActorType.HUMAN, captured.actorType());
+    assertEquals("idem-takeover-cli-aaaaaa", captured.idempotencyKey());
+    assertEquals("Agent stuck; taking over the PR manually.", captured.reasonText());
+    assertEquals(
+        "rcv_takeover1234 takeover submitted (state: TakenOver) [cancelled-in-flight: 2] [cancelled-queued: 1] [pr: https://github.com/acme/repo/pull/42]",
+        output);
+  }
+
+  @Test
+  void takeoverGeneratesIdempotencyKeyWhenOmittedAndSurfacesIt() {
+    DeveloperTakeoverService takeoverService = mock(DeveloperTakeoverService.class);
+    when(takeoverService.takeoverWorkflow(any()))
+        .thenReturn(
+            new TakeoverResult(
+                "run_takeover1234",
+                "rcv_takeover1234",
+                WorkflowState.TAKEN_OVER,
+                "evt_takeover_b",
+                0,
+                0,
+                null,
+                "corr-takeover-2",
+                false));
+    WorkflowCommands commands = takeoverCommands(takeoverService);
+
+    String output =
+        commands.takeover(
+            "run_takeover1234", "Taking over.", "alex", null, "corr-takeover-2", false);
+
+    ArgumentCaptor<TakeoverWorkflowCommand> captor =
+        ArgumentCaptor.forClass(TakeoverWorkflowCommand.class);
+    verify(takeoverService).takeoverWorkflow(captor.capture());
+    assertEquals("01964c38-1c45-7000-8000-000000000000", captor.getValue().idempotencyKey());
+    assertEquals(
+        "rcv_takeover1234 takeover submitted (state: TakenOver) [cancelled-in-flight: 0] [cancelled-queued: 0] [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
+        output);
+  }
+
+  @Test
+  void takeoverReplayRendersReplayedBracketAndOmitsNullCounts() {
+    DeveloperTakeoverService takeoverService = mock(DeveloperTakeoverService.class);
+    when(takeoverService.takeoverWorkflow(any()))
+        .thenReturn(
+            new TakeoverResult(
+                "run_takeover1234",
+                "rcv_takeover1234",
+                WorkflowState.TAKEN_OVER,
+                "evt_takeover_c",
+                null,
+                null,
+                null,
+                "corr-takeover-3",
+                true));
+    WorkflowCommands commands = takeoverCommands(takeoverService);
+
+    String output =
+        commands.takeover(
+            "run_takeover1234",
+            "Taking over.",
+            "alex",
+            "idem-takeover-cli-cccccc",
+            "corr-takeover-3",
+            false);
+
+    // null counts + null PR ref are omitted; replayed bracket present (no generated-key —
+    // supplied).
+    assertEquals("rcv_takeover1234 takeover submitted (state: TakenOver) [replayed]", output);
+  }
+
+  @Test
+  void takeoverWithoutWiredServiceThrowsInternalError() {
+    WorkflowCommands legacy =
+        new WorkflowCommands(
+            mock(WorkflowCommandService.class),
+            () -> true,
+            () -> "01964c38-1c45-7000-8000-000000000000");
+
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () -> legacy.takeover("run_takeover1234", "Taking over.", "alex", null, null, false));
+    assertEquals(DomainErrorCode.INTERNAL_ERROR, error.errorCode());
   }
 }

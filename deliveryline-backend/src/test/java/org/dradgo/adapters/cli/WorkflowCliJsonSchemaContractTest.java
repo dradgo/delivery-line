@@ -64,6 +64,7 @@ class WorkflowCliJsonSchemaContractTest {
           null,
           new LocalActorIdentityResolver("local-operator"),
           null,
+          null,
           null);
   private final SchemaRegistry schemaRegistry =
       SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);

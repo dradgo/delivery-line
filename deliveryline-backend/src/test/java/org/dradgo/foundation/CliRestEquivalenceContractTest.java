@@ -12,6 +12,7 @@ import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -76,6 +77,7 @@ class CliRestEquivalenceContractTest {
   @MockitoBean private WorkflowCommandService workflowCommandService;
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
+  @MockitoBean private DeveloperTakeoverService developerTakeoverService;
 
   @BeforeEach
   void stubActorResolverAndSeedMdc() {
@@ -146,6 +148,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null,
             null);
     cli.approveSpec(
@@ -221,6 +224,7 @@ class CliRestEquivalenceContractTest {
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
             null,
+            null,
             null);
     cli.acceptImplementation(
         RUN_ID,
@@ -291,6 +295,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null,
             null);
     cli.rejectSpec(
@@ -369,6 +374,7 @@ class CliRestEquivalenceContractTest {
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
             null,
+            null,
             null);
     cli.answerClarification(
         RUN_ID,
@@ -437,6 +443,7 @@ class CliRestEquivalenceContractTest {
             null,
             new ApprovalReviewerRoleResolver("product_reviewer"),
             new LocalActorIdentityResolver("local-operator"),
+            null,
             null,
             null);
     cli.approveSpec(

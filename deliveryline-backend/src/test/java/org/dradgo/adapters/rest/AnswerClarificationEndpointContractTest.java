@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowCommandService;
@@ -51,6 +52,7 @@ class AnswerClarificationEndpointContractTest {
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
+  @MockitoBean private DeveloperTakeoverService developerTakeoverService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
 
   @BeforeEach

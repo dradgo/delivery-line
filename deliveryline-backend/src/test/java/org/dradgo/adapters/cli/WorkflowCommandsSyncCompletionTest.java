@@ -33,6 +33,7 @@ class WorkflowCommandsSyncCompletionTest {
         null,
         new LocalActorIdentityResolver("local-operator"),
         orchestration,
+        null,
         null);
   }
 
