@@ -28,6 +28,7 @@ import org.dradgo.adapters.runner.docker.CreateContainerSpec;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.application.runner.CapturedLogs;
 import org.dradgo.application.runner.ExecutionConstraints;
+import org.dradgo.application.runner.ExecutionSubStage;
 import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerLogCaptureService.RunnerLogTruncation;
@@ -242,6 +243,73 @@ class DockerRunnerAdapterUnitTest {
     assertThat(spec.labels().values())
         .as("no container label value may carry the secret")
         .noneMatch(v -> v.contains("sk-codex-unit-test-value"));
+  }
+
+  @Test
+  void dispatchEmitsImplementationPlanTokenForExecutionPlanSubStage() {
+    // Story 3b.1 AC2/AC4: EXECUTION + IMPLEMENTATION_PLAN → the read-only plan token.
+    assertThat(
+            dispatchedStageToken(
+                dispatchRequest(RunnerStage.EXECUTION, ExecutionSubStage.IMPLEMENTATION_PLAN)))
+        .isEqualTo("implementation-plan");
+  }
+
+  @Test
+  void dispatchEmitsPrOutputTokenForExecutionPrOutputSubStage() {
+    // Story 3b.1 AC2/AC4: EXECUTION + PR_OUTPUT → the implement-and-push token.
+    assertThat(
+            dispatchedStageToken(
+                dispatchRequest(RunnerStage.EXECUTION, ExecutionSubStage.PR_OUTPUT)))
+        .isEqualTo("pr-output");
+  }
+
+  @Test
+  void dispatchEmitsLegacyExecutionTokenWhenExecutionSubStageNull() {
+    // Story 3b.1 AC2/AC4: EXECUTION + null subStage → byte-identical legacy "execution" fallback
+    // (recovery/retry path), which map_stage maps to prOutput.
+    assertThat(dispatchedStageToken(dispatchRequest(RunnerStage.EXECUTION, null)))
+        .isEqualTo("execution");
+  }
+
+  @Test
+  void dispatchEmitsInvestigationTokenForInvestigationStage() {
+    // Story 3b.1 AC2/AC6: INVESTIGATION is unchanged regardless of subStage (carries null).
+    assertThat(dispatchedStageToken(dispatchRequest(RunnerStage.INVESTIGATION, null)))
+        .isEqualTo("investigation");
+  }
+
+  @Test
+  void dispatchLogsResolvedStageTokenAtInfoForExecutionSubStage() {
+    // Story 3b.1 (Logging task): the resolved wire token is observable at INFO (the exact field
+    // that was wrong on run_ae258…), keyed by runnerExecutionId + workflowRunId.
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(DockerRunnerAdapter.class);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      adapter.dispatch(
+          dispatchRequest(RunnerStage.EXECUTION, ExecutionSubStage.IMPLEMENTATION_PLAN));
+    } finally {
+      logger.detachAppender(appender);
+    }
+
+    assertThat(appender.list)
+        .anySatisfy(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+              assertThat(event.getFormattedMessage())
+                  .contains("docker dispatch stage token resolved")
+                  .contains("runnerExecutionId=" + REX_ID)
+                  .contains("workflowRunId=" + RUN_ID)
+                  .contains("runnerStageToken=implementation-plan");
+            });
   }
 
   @Test
@@ -743,6 +811,35 @@ class DockerRunnerAdapterUnitTest {
         Path.of("/scratch/context-bundle.v1.json"),
         new ExecutionConstraints(Duration.ofSeconds(600L), false),
         DataClassification.SHAREABLE_REDACTED);
+  }
+
+  /**
+   * Story 3b.1 — build a CODEX dispatch carrying an explicit (stage, subStage) pair so the
+   * DELIVERYLINE_RUNNER_STAGE token resolution can be asserted per sub-stage.
+   */
+  private RunnerDispatchRequest dispatchRequest(RunnerStage stage, ExecutionSubStage subStage) {
+    return new RunnerDispatchRequest(
+        REX_ID,
+        RUN_ID,
+        stage,
+        RunnerKind.CODEX,
+        Path.of("/scratch/context-bundle.v1.json"),
+        new ExecutionConstraints(Duration.ofSeconds(600L), false),
+        DataClassification.SHAREABLE_REDACTED,
+        null,
+        null,
+        subStage);
+  }
+
+  private String dispatchedStageToken(RunnerDispatchRequest request) {
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+    adapter.dispatch(request);
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    return specCaptor.getValue().environment().get("DELIVERYLINE_RUNNER_STAGE");
   }
 
   private static RunnerExecutionSnapshot runnerExecutionSnapshot() {

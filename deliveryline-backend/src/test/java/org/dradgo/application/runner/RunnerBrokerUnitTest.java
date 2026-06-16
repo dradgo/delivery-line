@@ -2,6 +2,7 @@ package org.dradgo.application.runner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -167,7 +168,12 @@ class RunnerBrokerUnitTest {
             any());
     verify(idempotencyService).complete(eq("idem-1"), any(), eq(IdempotencyRecordStatus.COMPLETED));
     verify(scratchStore).writeContextBundle(any(), any(byte[].class));
-    verify(runnerAdapter).dispatch(any());
+    // Story 3b.1 (AC6) — an INVESTIGATION dispatch carries no sub-stage, so the adapter keeps the
+    // unchanged "investigation" token.
+    ArgumentCaptor<RunnerDispatchRequest> requestCaptor =
+        ArgumentCaptor.forClass(RunnerDispatchRequest.class);
+    verify(runnerAdapter).dispatch(requestCaptor.capture());
+    assertNull(requestCaptor.getValue().subStage());
   }
 
   @Test
@@ -303,6 +309,9 @@ class RunnerBrokerUnitTest {
         ArgumentCaptor.forClass(RunnerDispatchRequest.class);
     verify(runnerAdapter).dispatch(requestCaptor.capture());
     assertEquals("GH-101", requestCaptor.getValue().repositoryRef());
+    // Story 3b.1 (AC1) — the EXECUTION dispatch carries the derived sub-stage so the adapter emits
+    // the precise pr-output / implementation-plan token instead of the coarse execution token.
+    assertEquals(ExecutionSubStage.PR_OUTPUT, requestCaptor.getValue().subStage());
   }
 
   @Test

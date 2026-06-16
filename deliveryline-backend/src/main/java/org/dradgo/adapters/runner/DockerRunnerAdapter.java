@@ -20,6 +20,7 @@ import org.dradgo.adapters.runner.docker.CreateContainerSpec;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.adapters.runner.docker.DockerLogSanitizer;
 import org.dradgo.application.runner.CapturedLogs;
+import org.dradgo.application.runner.ExecutionSubStage;
 import org.dradgo.application.runner.RunnerDispatchAck;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerExecutionService;
@@ -38,6 +39,7 @@ import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerKind;
+import org.dradgo.domain.registry.RunnerStage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -240,7 +242,24 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         secretEnv.size());
 
     Map<String, String> containerEnv = new LinkedHashMap<>(secretEnv);
-    containerEnv.put("DELIVERYLINE_RUNNER_STAGE", request.stage().value());
+    // Story 3b.1 (AC2) — resolve the precise DELIVERYLINE_RUNNER_STAGE token from the (stage,
+    // subStage) pair so an EXECUTION+IMPLEMENTATION_PLAN dispatch runs the read-only plan phase
+    // (implementation-plan → implementationPlan) and EXECUTION+PR_OUTPUT implements + pushes
+    // (pr-output → prOutput). INVESTIGATION and the null/legacy generic path stay byte-identical
+    // (investigation / execution). Only this env var drives entrypoint.sh map_stage — the coarse
+    // deliveryline.stage label above stays request.stage().value() (observability-only).
+    String runnerStageToken = resolveRunnerStageToken(request);
+    containerEnv.put("DELIVERYLINE_RUNNER_STAGE", runnerStageToken);
+    // The wire token is the exact field that was wrong on run_ae258… (execution → always prOutput);
+    // log it at INFO keyed by runnerExecutionId + workflowRunId so a prod incident is diagnosable
+    // without re-deploying. Never logs payload bytes, secrets, or the provider key (Trap T5).
+    log.info(
+        "docker dispatch stage token resolved runnerExecutionId={} workflowRunId={} stage={} subStage={} runnerStageToken={}",
+        rexId,
+        request.workflowRunId(),
+        request.stage().value(),
+        request.subStage(),
+        runnerStageToken);
     // Story 3a-8 (AC1) — surface the opt-in OpenSpec authoring flag to the entrypoint the same way
     // as the stage. Emitted ONLY when enabled, so a flag-off dispatch is byte-identical at the
     // container interior (no new env var at all). Reuses the already-injected runnerProperties — no
@@ -535,6 +554,34 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         containerId,
         recoveredLogBytes);
     return safeRecoverPoll(runnerExecutionId);
+  }
+
+  /**
+   * Story 3b.1 (AC2) — resolve the {@code DELIVERYLINE_RUNNER_STAGE} env token from the {@code
+   * (stage, subStage)} pair. These are literal {@code entrypoint.sh map_stage} contract tokens, not
+   * registry {@code value()}s:
+   *
+   * <ul>
+   *   <li>{@code INVESTIGATION} → {@code "investigation"} (= {@code request.stage().value()}).
+   *   <li>{@code EXECUTION} + {@code IMPLEMENTATION_PLAN} → {@code "implementation-plan"}
+   *       (read-only plan phase, emits {@code implementationPlan}, no push).
+   *   <li>{@code EXECUTION} + {@code PR_OUTPUT} → {@code "pr-output"} (implements + pushes, emits
+   *       {@code prOutput}).
+   *   <li>{@code EXECUTION} + {@code subStage == null} → {@code "execution"} (legacy/recovery
+   *       fallback → {@code map_stage} maps to {@code prOutput}; byte-identical to pre-3b
+   *       behavior).
+   * </ul>
+   */
+  private static String resolveRunnerStageToken(RunnerDispatchRequest request) {
+    if (request.stage() == RunnerStage.EXECUTION && request.subStage() != null) {
+      ExecutionSubStage subStage = request.subStage();
+      return switch (subStage) {
+        case IMPLEMENTATION_PLAN -> "implementation-plan";
+        case PR_OUTPUT -> "pr-output";
+      };
+    }
+    // INVESTIGATION → "investigation"; EXECUTION + null → "execution" (legacy generic path).
+    return request.stage().value();
   }
 
   /**

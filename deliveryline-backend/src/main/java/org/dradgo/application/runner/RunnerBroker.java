@@ -688,6 +688,9 @@ public class RunnerBroker {
           stage == RunnerStage.EXECUTION
               ? runnerProperties.kindForExecutionSubStage(executionSubStage)
               : runnerProperties.kindForStage(stage);
+      // Story 3b.1 (AC1) — thread the resolved sub-stage (null for INVESTIGATION, derived only in
+      // the EXECUTION branch) so DockerRunnerAdapter emits implementation-plan / pr-output instead
+      // of the coarse execution token. Deprecated sync path; kept consistent with the queue path.
       RunnerDispatchRequest request =
           new RunnerDispatchRequest(
               reservedRexId,
@@ -698,7 +701,8 @@ public class RunnerBroker {
               constraints,
               bundle.effectiveClassification(),
               resolvedRepositoryRef,
-              resolvedTicketRef);
+              resolvedTicketRef,
+              executionSubStage);
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
 
       // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy
@@ -907,6 +911,9 @@ public class RunnerBroker {
             stage == RunnerStage.EXECUTION
                 ? runnerProperties.kindForExecutionSubStage(composed.executionSubStage())
                 : runnerProperties.kindForStage(stage);
+        // Story 3b.1 (AC1) — queue/production path: carry composed.executionSubStage() (null for
+        // INVESTIGATION) so the adapter selects implementation-plan / pr-output. This is the exact
+        // wire field that was wrong on run_ae258… (execution → always prOutput).
         RunnerDispatchRequest request =
             new RunnerDispatchRequest(
                 runnerExecutionId,
@@ -917,7 +924,8 @@ public class RunnerBroker {
                 constraints,
                 composed.bundle().effectiveClassification(),
                 composed.resolvedRepositoryRef(),
-                composed.resolvedTicketRef());
+                composed.resolvedTicketRef(),
+                composed.executionSubStage());
         // Story 3.19 (AC5) — time the adapter dispatch (histogram, tagged stage) + count
         // dispatches.
         io.micrometer.core.instrument.Timer.Sample dispatchSample =
