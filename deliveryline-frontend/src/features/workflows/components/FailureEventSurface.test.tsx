@@ -117,3 +117,130 @@ describe('FailureEventSurface', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.29 (Task 5, AC5/R6) — the takeover row (a live workflow.stateChanged
+// → TakenOver event; NOT a recovery.takeover event type).
+// ---------------------------------------------------------------------------
+describe('FailureEventSurface — takeover row (story 3.29)', () => {
+  const TAKEN_OVER_RUN = 'run_taken_over_001';
+
+  function takeoverEvent(overrides: Record<string, unknown> = {}) {
+    return {
+      publicId: 'evt_takeover_001',
+      workflowRunPublicId: TAKEN_OVER_RUN,
+      eventType: 'workflow.stateChanged',
+      priorState: 'WaitingForReview',
+      resultingState: 'TakenOver',
+      actorIdentity: 'dev@acme.example',
+      actorType: 'human',
+      reason: 'Agent stalled on an ambiguous merge conflict',
+      failureCategory: null,
+      interventionMarker: true,
+      createdAt: '2026-06-17T11:00:00Z',
+      details: { reviewerRole: 'developer', correlationId: 'corr_takeover_001' },
+      ...overrides,
+    };
+  }
+
+  function serve(events: Record<string, unknown>[]) {
+    server.use(
+      http.get(EVENTS_URL, () =>
+        HttpResponse.json({
+          workflowRun: {
+            publicId: TAKEN_OVER_RUN,
+            ticketRef: 'DEL-9002',
+            createdAt: '2026-06-17T10:00:00Z',
+            terminalState: 'TakenOver',
+          },
+          events,
+        }),
+      ),
+    );
+  }
+
+  it('renders the takeover transition prominently with actor + reason + permalink anchor', async () => {
+    serve([takeoverEvent()]);
+    renderSurface(TAKEN_OVER_RUN);
+    await screen.findByTestId('failure-event-surface');
+
+    const row = screen
+      .getAllByTestId('failure-event-row')
+      .find((r) => r.getAttribute('data-event-type') === 'workflow.stateChanged');
+    expect(row).toBeDefined();
+    const takeoverRow = row as HTMLElement;
+    // Recovery-styled "Taken over" chip (non-color signifier) + actor + reason.
+    const chip = within(takeoverRow).getByText('Taken over');
+    expect(chip.closest('[data-state-name]')).toHaveAttribute('data-state-name', 'recovery');
+    expect(takeoverRow).toHaveTextContent('dev@acme.example');
+    expect(takeoverRow).toHaveTextContent('Agent stalled on an ambiguous merge conflict');
+    // AC5 permalink anchor — the event publicId is the element id + data hook.
+    expect(takeoverRow).toHaveAttribute('id', 'evt_takeover_001');
+    expect(takeoverRow).toHaveAttribute('data-event-id', 'evt_takeover_001');
+  });
+
+  it('opens the diagnostics panel with actor + reason + correlationId (no runner-logs affordance)', async () => {
+    const user = userEvent.setup();
+    serve([takeoverEvent()]);
+    renderSurface(TAKEN_OVER_RUN);
+    await screen.findByTestId('failure-event-surface');
+
+    await user.click(screen.getByTestId('failure-event-row'));
+    expect(await screen.findByTestId('failure-diagnostics-actor')).toHaveTextContent(
+      'dev@acme.example',
+    );
+    expect(screen.getByTestId('failure-diagnostics-reason')).toHaveTextContent(
+      'Agent stalled on an ambiguous merge conflict',
+    );
+    expect(screen.getByTestId('failure-diagnostics-correlation')).toHaveTextContent(
+      'corr_takeover_001',
+    );
+    // A takeover is not a runner failure → no category block, no runner-logs placeholder.
+    expect(screen.queryByTestId('failure-diagnostics-category')).toBeNull();
+    expect(screen.queryByTestId('failure-diagnostics-logs')).toBeNull();
+  });
+
+  it('renders the takeover reason as escaped text, never raw HTML', async () => {
+    serve([takeoverEvent({ reason: '<img src=x onerror="alert(1)">stuck' })]);
+    renderSurface(TAKEN_OVER_RUN);
+    const surface = await screen.findByTestId('failure-event-surface');
+    expect(surface).toHaveTextContent('<img src=x onerror="alert(1)">stuck');
+    expect(surface.querySelector('img')).toBeNull();
+  });
+
+  it('coexists with a failure event without breaking the failure rendering', async () => {
+    serve([
+      {
+        publicId: 'evt_fail_xx',
+        workflowRunPublicId: TAKEN_OVER_RUN,
+        eventType: 'runner.failed',
+        priorState: 'Executing',
+        resultingState: 'Failed',
+        actorIdentity: 'codex-runner',
+        actorType: 'agent',
+        reason: 'container exited 1',
+        failureCategory: 'runner_crash',
+        interventionMarker: false,
+        createdAt: '2026-06-17T10:30:00Z',
+        details: {},
+      },
+      takeoverEvent(),
+    ]);
+    renderSurface(TAKEN_OVER_RUN);
+    await screen.findByTestId('failure-event-surface');
+
+    const rows = screen.getAllByTestId('failure-event-row');
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.getAttribute('data-event-type') === 'runner.failed')).toBe(true);
+    expect(rows.some((r) => r.getAttribute('data-event-type') === 'workflow.stateChanged')).toBe(
+      true,
+    );
+  });
+
+  it('a11y — the takeover surface has zero axe violations', async () => {
+    serve([takeoverEvent()]);
+    const { container } = renderSurface(TAKEN_OVER_RUN);
+    await screen.findByTestId('failure-event-surface');
+    await expectNoA11yViolations(container);
+  });
+});

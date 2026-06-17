@@ -68,6 +68,17 @@ export interface RunQueueRow {
    * signal — it does not feed `resolvePrimaryAttentionIndicator`/`resolveQueueItemState`.
    */
   prLinkage?: PrLinkageView | undefined;
+  /**
+   * Story 3.29 (AC3/R5) — the developer who took over, for a `TakenOver` row's
+   * secondary metadata. DORMANT: the lean `WorkflowSummary` list payload carries no
+   * attribution and per-row event fetches are out of scope (same reconciliation as
+   * `summary`/`prLinkage`), so this is built/tested via constructed fixtures only and
+   * never fabricated from live data. Takeover is metadata, NOT an attention/dominant
+   * signal — it does not feed `resolvePrimaryAttentionIndicator`/`resolveQueueItemState`.
+   */
+  takenOverBy?: string | undefined;
+  /** Story 3.29 (AC3/R5) — when the takeover happened; DORMANT (see {@link takenOverBy}). */
+  takenOverAt?: string | undefined;
 }
 
 /**
@@ -114,6 +125,9 @@ export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
     failureCategory: undefined,
     // Story 3.31 — DORMANT: the live list summary has no PR projection.
     prLinkage: undefined,
+    // Story 3.29 — DORMANT: the lean list summary carries no takeover attribution.
+    takenOverBy: undefined,
+    takenOverAt: undefined,
   };
 }
 

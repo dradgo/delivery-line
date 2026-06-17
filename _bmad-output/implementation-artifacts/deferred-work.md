@@ -780,3 +780,7 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 
 - AC5 live `WaitingForReview` run verification was not performed headlessly (self-disclosed in the story Dev Notes). A reviewer must confirm on a running app that the "Open the implementation output →" link renders and the ingested `implementationPlan`/`prOutput` artifact reads `available` in the read model.
 - Frontend impl-output link (`index.tsx:402`) is gated on `implArtifactId !== undefined`, not on the artifact's AVAILABLE status. If the best-effort enrich mark fails, `resolveImplementationArtifact` returns the highest-version (PENDING) `prOutput` id and the link renders to a non-acceptable artifact. Minor UX; partly subsumed by 3b-5 (the real `prOutput` PR/diff renderer).
+
+## Deferred from: code review of story-3.29 (2026-06-17)
+
+- Unrelated story-3b-3 test file present untracked in the working tree (`deliveryline-frontend/src/routes/workflows/$workflowRunId/index.test.tsx` — its own header declares "Story 3b-3 (AC4 / AC6) implementation-output link"). Not part of the 3.29 changeset; ensure it is committed under 3b-3, not bundled into the 3.29 commit.

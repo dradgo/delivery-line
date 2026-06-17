@@ -36,6 +36,9 @@ function WorkflowsRoute() {
     <QueueShell
       filters={search}
       onClearFilters={() => void navigate({ search: {} })}
+      onToggleTakenOverFilter={(next) =>
+        void navigate({ search: next !== undefined ? { state: next } : {} })
+      }
       renderItem={(summary) => <RunReviewQueueItem run={toRunQueueRow(summary)} />}
     />
   );

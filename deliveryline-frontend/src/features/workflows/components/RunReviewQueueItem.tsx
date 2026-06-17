@@ -92,6 +92,28 @@ const ATTENTION_ARIA_TERM: Record<AttentionIndicator, string> = {
   stale: 'stale',
 };
 
+/**
+ * Story 3.29 (AC3/R5) — compose the DORMANT takeover metadata line from PRESENT
+ * fields only (never the literal "undefined"): `Taken over by {actor} · {age}`, or
+ * just one part when only one is provided. Non-exported (this is a `.tsx`, so only
+ * components may be exported — `frontend-react-refresh-no-fn-exports`).
+ */
+function takeoverMetaText(
+  takenOverBy: string | undefined,
+  takenOverAt: string | undefined,
+  nowMs: number,
+): string {
+  const parts: string[] = [];
+  if (takenOverBy !== undefined) {
+    parts.push(`Taken over by ${takenOverBy}`);
+  }
+  const relative = formatRelativeTime(takenOverAt, nowMs);
+  if (relative !== null) {
+    parts.push(takenOverBy !== undefined ? relative : `Taken over ${relative}`);
+  }
+  return parts.join(' · ');
+}
+
 /** Friendly display label for a (dormant) artifact type — mirrors `RunContextStrip`. */
 function artifactDisplayLabel(type: string): string {
   switch (type) {
@@ -252,7 +274,9 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
       {secondarySignals.length > 0 ||
       (typeof row.specRejectionLoopCount === 'number' && row.specRejectionLoopCount > 0) ||
       row.assigneeHint !== undefined ||
-      row.prLinkage != null ? (
+      row.prLinkage != null ||
+      row.takenOverBy !== undefined ||
+      row.takenOverAt !== undefined ? (
         <Inline
           gap="2"
           wrap
@@ -286,6 +310,14 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
               the D1 stretched-link escape so it opens GitHub without breaking whole-row open-run. */}
           {row.prLinkage != null ? (
             <PrLinkageDetails prLinkage={row.prLinkage} nowMs={nowMs} variant="queue" />
+          ) : null}
+          {/* Story 3.29 (AC3/R5) — DORMANT takeover attribution, rendered ONLY when the
+              fixture provides it (the lean list summary never carries it). Metadata, not
+              an attention signal. Actor identity is untrusted — React-escaped plain text. */}
+          {row.takenOverBy !== undefined || row.takenOverAt !== undefined ? (
+            <span className="text-meta text-text-secondary" data-testid="queue-item-takeover">
+              {takeoverMetaText(row.takenOverBy, row.takenOverAt, nowMs)}
+            </span>
           ) : null}
         </Inline>
       ) : null}

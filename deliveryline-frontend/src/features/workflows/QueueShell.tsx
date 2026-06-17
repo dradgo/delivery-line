@@ -55,6 +55,13 @@ export interface QueueShellProps {
   renderItem?: (item: WorkflowSummary) => ReactNode;
   /** Clears all filters (the route navigates to the empty-search URL) (AC4). */
   onClearFilters?: () => void;
+  /**
+   * Story 3.29 (AC4/R5) — toggle the single-state `?state` filter between
+   * `TakenOver` (view ONLY taken-over runs) and cleared. The route performs the
+   * navigation; `QueueShell` holds NO filter state (the URL is the single source of
+   * truth — active state is read back from `filters.state`).
+   */
+  onToggleTakenOverFilter?: (next: 'TakenOver' | undefined) => void;
 }
 
 /** True when any filter carries a meaningful (non-empty) value. */
@@ -152,7 +159,12 @@ function GettingStartedAction() {
   );
 }
 
-export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueShellProps) {
+export function QueueShell({
+  filters = {},
+  renderItem,
+  onClearFilters,
+  onToggleTakenOverFilter,
+}: QueueShellProps) {
   const query = useWorkflowsList(filters);
   const items = query.data ?? [];
   const filtersActive = hasActiveFilters(filters);
@@ -187,6 +199,17 @@ export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueSh
     onClearFilters?.();
   };
 
+  // Story 3.29 (AC4/R5) — the taken-over filter is the live single-state `?state`
+  // filter pinned to `TakenOver`. Active state is read from the URL-backed `filters`
+  // (no local state); toggling navigates to `?state=TakenOver` ⇄ cleared.
+  const takenOverActive = filters.state === 'TakenOver';
+  const handleToggleTakenOver = () => {
+    const next = takenOverActive ? undefined : 'TakenOver';
+    // Field-only log (Task 7) — the new filter state ONLY, never row content.
+    console.info({ event: 'queue.toggleTakenOverFilter', state: next });
+    onToggleTakenOverFilter?.(next);
+  };
+
   // AC5 — defer the announcement by one commit so even the cold-load "Loading…"
   // message (present at mount) is announced as a change, not swallowed as the
   // region's initial content (the 2.20 cold-load skeleton silence gap).
@@ -198,11 +221,24 @@ export function QueueShell({ filters = {}, renderItem, onClearFilters }: QueueSh
           regardless of queue state (not only from the empty state). */}
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-page-title">Run review queue</h1>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/submit" data-testid="queue-submit-run-link">
-            Submit a run
-          </Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* AC4/R5 — taken-over filter toggle (view-only-taken-over ⇄ all). */}
+          <Button
+            type="button"
+            variant={takenOverActive ? 'default' : 'outline'}
+            size="sm"
+            aria-pressed={takenOverActive}
+            onClick={handleToggleTakenOver}
+            data-testid="queue-takenover-filter-toggle"
+          >
+            {takenOverActive ? 'Showing taken-over runs' : 'Show taken-over runs'}
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/submit" data-testid="queue-submit-run-link">
+              Submit a run
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* AC8 — single visually-hidden polite announcer for the active state. */}

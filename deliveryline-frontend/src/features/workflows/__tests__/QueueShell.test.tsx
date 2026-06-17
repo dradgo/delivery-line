@@ -366,3 +366,64 @@ describe('QueueShell', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.29 (AC4/R5) — the "Show taken-over runs" filter toggle.
+// ---------------------------------------------------------------------------
+describe('QueueShell — taken-over filter toggle (story 3.29)', () => {
+  it('toggles ON: navigates to ?state=TakenOver and logs the new state', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+    const onToggle = vi.fn();
+
+    renderShell(<QueueShell filters={{}} onToggleTakenOverFilter={onToggle} />);
+
+    const toggle = await screen.findByTestId('queue-takenover-filter-toggle');
+    // Unfiltered → toggle is off.
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle).toHaveTextContent('Show taken-over runs');
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledWith('TakenOver');
+    expect(console.info).toHaveBeenCalledWith({
+      event: 'queue.toggleTakenOverFilter',
+      state: 'TakenOver',
+    });
+  });
+
+  it('reflects the active URL state and toggles OFF (clears ?state)', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+    const onToggle = vi.fn();
+
+    renderShell(
+      <QueueShell filters={{ state: 'TakenOver' }} onToggleTakenOverFilter={onToggle} />,
+    );
+
+    const toggle = await screen.findByTestId('queue-takenover-filter-toggle');
+    // The URL is the single source of truth — active state is reflected, not local.
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(toggle).toHaveTextContent('Showing taken-over runs');
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(undefined);
+    expect(console.info).toHaveBeenCalledWith({
+      event: 'queue.toggleTakenOverFilter',
+      state: undefined,
+    });
+  });
+
+  it('keeps the filtered-empty + Clear filters path working for ?state=TakenOver', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+    const onClearFilters = vi.fn();
+
+    const { container } = renderShell(
+      <QueueShell filters={{ state: 'TakenOver' }} onClearFilters={onClearFilters} />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-queue-state="filtered-empty"]')).not.toBeNull(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(onClearFilters).toHaveBeenCalledTimes(1);
+  });
+});

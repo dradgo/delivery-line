@@ -500,3 +500,62 @@ describe('RunReviewQueueItem — PR linkage (story 3.31)', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.29 — TakenOver badge (LIVE) + DORMANT per-row takeover attribution.
+// ---------------------------------------------------------------------------
+describe('RunReviewQueueItem — takeover (story 3.29, AC3)', () => {
+  const TAKEN_OVER_ROW: RunQueueRow = { ...BASE_ROW, currentState: 'TakenOver' };
+
+  it('R3 — a TakenOver run renders the recovery badge with the raw "TakenOver" label (CLI parity)', () => {
+    render(<RunReviewQueueItem run={TAKEN_OVER_ROW} />);
+    const badge = screen.getByTestId('workflow-state-badge');
+    expect(badge).toHaveTextContent('TakenOver');
+    expect(badge).toHaveAttribute('data-state-name', 'recovery');
+    // Icon + label pairing (never color-alone, AC3 non-color signifier).
+    expect(badge.querySelector('svg')).not.toBeNull();
+  });
+
+  it('R5 — renders DORMANT actor + timestamp metadata when the fixture provides them', () => {
+    render(
+      <RunReviewQueueItem
+        run={{
+          ...TAKEN_OVER_ROW,
+          takenOverBy: 'dev@acme.example',
+          takenOverAt: '2026-05-30T12:00:00Z',
+        }}
+      />,
+    );
+    const takeover = within(screen.getByTestId('queue-item-secondary')).getByTestId(
+      'queue-item-takeover',
+    );
+    expect(takeover).toHaveTextContent('Taken over by dev@acme.example');
+    expect(takeover).toHaveTextContent('3 minutes ago');
+  });
+
+  it('R5 — takeover is metadata, NOT a primary attention signal', () => {
+    render(
+      <RunReviewQueueItem run={{ ...TAKEN_OVER_ROW, takenOverBy: 'dev@acme.example' }} />,
+    );
+    // The takeover line never escalates into the primary-attention slot.
+    expect(screen.queryByTestId('queue-item-primary-attention')).toBeNull();
+  });
+
+  it('R5 — omits the takeover metadata entirely when absent (fixture-driven, Trap T-ABSENT)', () => {
+    render(<RunReviewQueueItem run={TAKEN_OVER_ROW} />);
+    expect(screen.queryByTestId('queue-item-takeover')).toBeNull();
+  });
+
+  it('AC10 — a taken-over row with attribution has zero axe violations', async () => {
+    const { container } = render(
+      <RunReviewQueueItem
+        run={{
+          ...TAKEN_OVER_ROW,
+          takenOverBy: 'dev@acme.example',
+          takenOverAt: '2026-05-30T12:00:00Z',
+        }}
+      />,
+    );
+    await expectNoA11yViolations(container);
+  });
+});

@@ -46,6 +46,9 @@ describe('toRunQueueRow', () => {
     expect(row.blockerCount).toBeUndefined();
     expect(row.openQuestionCount).toBeUndefined();
     expect(row.staleIndicator).toBeUndefined();
+    // Story 3.29 — takeover attribution is DORMANT (the lean list summary has none).
+    expect(row.takenOverBy).toBeUndefined();
+    expect(row.takenOverAt).toBeUndefined();
   });
 
   it('passes through absent live fields as undefined (never fabricated)', () => {

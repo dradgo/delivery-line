@@ -25,6 +25,7 @@
 import type { WorkflowDetail } from '@/lib/api/queryOptions';
 
 import { toPrLinkageView, type GitHubPrLinkWire, type PrLinkageView } from './prLinkageView';
+import type { TakeoverAttributionView } from './takeoverView';
 
 /**
  * Story 3.31 — the intended future projection of `github_pr` `integration_links`
@@ -74,6 +75,14 @@ export interface RunContextView {
    * display over the legacy `branchOrCommitReference` slot.
    */
   readonly prLinkage: PrLinkageView | undefined;
+  /**
+   * Story 3.29 (AC2b/R2/R4) — developer-takeover attribution (who/when/why). LIVE
+   * from the workflow-events stream, NOT a `WorkflowDetail` field (none exists). The
+   * pure {@link toRunContextView} is detail-only and leaves this UNSET; the strip
+   * merges it from {@link selectTakeoverAttribution} over `useWorkflowEvents`, gated
+   * to `currentState === 'TakenOver'`. Optional (`exactOptionalPropertyTypes`-safe).
+   */
+  readonly takeover?: TakeoverAttributionView | undefined;
   readonly escalationMarker: boolean;
   /** Derived client-side from `lastActivityAt` age (AC9 seam). */
   readonly staleIndicator: boolean;

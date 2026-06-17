@@ -33,6 +33,7 @@ import { isProblemDetailsError } from '@/lib/api/problemDetails';
 import { cn } from '@/lib/utils';
 
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
+import { useWorkflowEvents } from '../hooks/useWorkflowEvents';
 import { humanizeFailureCategory, humanizeNextSafeAction } from '../failureCategoryView';
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
 import {
@@ -41,6 +42,7 @@ import {
   toRunContextView,
   type RunContextView,
 } from '../runContextView';
+import { selectTakeoverAttribution } from '../takeoverView';
 import { StateSignifierChip, WorkflowStateBadge } from './WorkflowStateBadge';
 import { PrLinkageDetails } from './PrLinkageDetails';
 
@@ -266,6 +268,78 @@ function RecoveryBaseline({ view, nowMs }: { view: RunContextView; nowMs: number
   );
 }
 
+/**
+ * Story 3.29 (Task 2, AC2b/AC7) — the developer-takeover attribution block.
+ *
+ * Rendered as a SEPARATE labeled region below the height-capped orientation strip
+ * (the strip stays a single lightweight row, AC4 of 2.16), mirroring `RecoveryBaseline`.
+ * It is mounted ONLY when `currentState === 'TakenOver'`, which gates `useWorkflowEvents`
+ * (R4: the events query fires only on a taken-over run, never on every strip mount).
+ * Attribution is derived LIVE from the events stream via {@link selectTakeoverAttribution}
+ * (R2 — backend truth, no DTO field). Renders nothing until/unless a takeover transition
+ * is present (mirrors story 3.31 T-ABSENT discipline — no empty placeholder). The reviewer
+ * `takenOverBy` identity + `takenOverReason` are untrusted free text — React-escaped here,
+ * never raw HTML.
+ */
+function RunTakeoverAttribution({
+  workflowRunId,
+  nowMs,
+}: {
+  workflowRunId: string;
+  nowMs: number;
+}) {
+  const eventsQuery = useWorkflowEvents(workflowRunId);
+  const takeover =
+    eventsQuery.data !== undefined
+      ? selectTakeoverAttribution(eventsQuery.data.events)
+      : undefined;
+  if (takeover === undefined) {
+    return null;
+  }
+  const actorText = coalesceActor(takeover.takenOverBy, takeover.actorType);
+  const relTakeover = formatRelativeTime(takeover.takenOverAt, nowMs);
+  const utcTakeover = formatUtcTimestamp(takeover.takenOverAt);
+  return (
+    <section
+      aria-label="Takeover"
+      data-testid="run-takeover-attribution"
+      className="w-full rounded-md border border-state-recovery-border bg-surface px-4 py-2"
+    >
+      <Inline gap="4" wrap align="center">
+        <StateSignifierChip
+          stateName="recovery"
+          label="Taken over"
+          testId="run-takeover-chip"
+        />
+        <Item label="Taken over by" testId="run-takeover-actor" title={actorText}>
+          {actorText ?? <NotReported />}
+        </Item>
+        {takeover.reviewerRole !== undefined ? (
+          <Item label="Role" testId="run-takeover-role">
+            {takeover.reviewerRole}
+          </Item>
+        ) : null}
+        <Item label="When">
+          {relTakeover !== null ? (
+            <time dateTime={takeover.takenOverAt} title={utcTakeover ?? undefined}>
+              {relTakeover}
+            </time>
+          ) : (
+            <NotReported />
+          )}
+        </Item>
+      </Inline>
+      {takeover.takenOverReason !== undefined ? (
+        // Untrusted reviewer free text — React-escaped plain text (never raw HTML),
+        // mirroring the `FailureEventSurface` reason discipline.
+        <p className="mt-1 text-sm text-text-secondary" data-testid="run-takeover-reason">
+          {takeover.takenOverReason}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
   const query = useWorkflowDetail(workflowRunId);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -350,6 +424,14 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
     view !== undefined &&
     view.currentState === 'Failed';
 
+  // Story 3.29 (AC2b/AC7) — surface the takeover attribution block ONLY for a
+  // taken-over run; mounting gates the `useWorkflowEvents` fetch (R4).
+  const showTakeover =
+    state !== 'loading' &&
+    state !== 'error' &&
+    view !== undefined &&
+    view.currentState === 'TakenOver';
+
   return (
     <>
       <section
@@ -391,6 +473,7 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
         ) : null}
       </section>
       {view !== undefined && showRecovery ? <RecoveryBaseline view={view} nowMs={nowMs} /> : null}
+      {showTakeover ? <RunTakeoverAttribution workflowRunId={workflowRunId} nowMs={nowMs} /> : null}
     </>
   );
 }

@@ -546,3 +546,131 @@ describe('RunContextStrip — PR linkage (story 3.31)', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.29 — developer-takeover attribution block (LIVE from the events stream).
+// ---------------------------------------------------------------------------
+describe('RunContextStrip — takeover attribution (story 3.29, AC2b/AC7)', () => {
+  const EVENTS_URL = 'http://localhost/api/v1/workflows/:id/events';
+
+  const takenOverDetail: WorkflowDetail = {
+    workflowRunId: RUN_ID,
+    currentState: 'TakenOver',
+    currentActorIdentity: 'dev@acme.example',
+    currentActorType: 'human',
+    escalationMarker: false,
+    lastEventAt: '2026-05-30T12:00:00Z',
+    lastActivityTimestamp: '2026-05-30T12:00:00Z',
+    latestArtifacts: [{ artifactType: 'prOutput', status: 'ready', version: 2 }],
+    linkedTicket: { externalRef: 'DEL-9002' },
+  };
+
+  /** A `WorkflowEventsResponse` stream whose latest takeover transition is authoritative. */
+  function takeoverEvents(reason: string | null) {
+    return {
+      workflowRun: {
+        publicId: RUN_ID,
+        ticketRef: 'DEL-9002',
+        createdAt: '2026-05-30T11:00:00Z',
+        terminalState: 'TakenOver',
+      },
+      events: [
+        {
+          publicId: 'evt_review_1',
+          workflowRunPublicId: RUN_ID,
+          eventType: 'workflow.stateChanged',
+          priorState: 'Executing',
+          resultingState: 'WaitingForReview',
+          actorIdentity: 'system',
+          actorType: 'system',
+          reason: null,
+          failureCategory: null,
+          interventionMarker: false,
+          createdAt: '2026-05-30T11:30:00Z',
+          details: {},
+        },
+        {
+          publicId: 'evt_to_1',
+          workflowRunPublicId: RUN_ID,
+          eventType: 'workflow.stateChanged',
+          priorState: 'WaitingForReview',
+          resultingState: 'TakenOver',
+          actorIdentity: 'dev@acme.example',
+          actorType: 'human',
+          reason,
+          failureCategory: null,
+          interventionMarker: true,
+          createdAt: '2026-05-30T12:00:00Z',
+          details: { reviewerRole: 'developer', correlationId: 'corr_to_1' },
+        },
+      ],
+    };
+  }
+
+  function serveTakeover(reason: string | null = 'Agent stuck on an ambiguous merge conflict') {
+    server.use(
+      detailResponse(takenOverDetail),
+      http.get(EVENTS_URL, () => HttpResponse.json(takeoverEvents(reason))),
+    );
+  }
+
+  it('renders the takeover block (actor + role + time + reason) for a taken-over run', async () => {
+    serveTakeover();
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+
+    const block = await screen.findByTestId('run-takeover-attribution');
+    expect(within(block).getByTestId('run-takeover-chip')).toHaveTextContent('Taken over');
+    expect(within(block).getByTestId('run-takeover-chip')).toHaveAttribute(
+      'data-state-name',
+      'recovery',
+    );
+    expect(within(block).getByTestId('run-takeover-actor')).toHaveTextContent('dev@acme.example');
+    expect(within(block).getByTestId('run-takeover-role')).toHaveTextContent('developer');
+    expect(within(block).getByText('5 minutes ago')).toBeInTheDocument();
+    expect(within(block).getByTestId('run-takeover-reason')).toHaveTextContent(
+      'Agent stuck on an ambiguous merge conflict',
+    );
+  });
+
+  it('omits the takeover block for a non-taken-over run (no events fetch needed)', async () => {
+    let eventsFetched = false;
+    server.use(
+      detailResponse(specRejectAndResubmitDetail),
+      http.get(EVENTS_URL, () => {
+        eventsFetched = true;
+        return HttpResponse.json(takeoverEvents('x'));
+      }),
+    );
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+
+    await waitFor(() => expect(region()).toHaveAttribute('data-run-context-state', 'default'));
+    expect(screen.queryByTestId('run-takeover-attribution')).toBeNull();
+    // R4 — the events query is gated; a non-taken-over run never fetches it.
+    expect(eventsFetched).toBe(false);
+  });
+
+  it('renders the reason as escaped text, never raw HTML (untrusted reviewer text)', async () => {
+    serveTakeover('<img src=x onerror="alert(1)">stuck');
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+
+    const reason = await screen.findByTestId('run-takeover-reason');
+    // The angle-bracket payload renders as literal text, not a live <img> element.
+    expect(reason).toHaveTextContent('<img src=x onerror="alert(1)">stuck');
+    expect(reason.querySelector('img')).toBeNull();
+  });
+
+  it('omits the reason line when the takeover carries no reason', async () => {
+    serveTakeover(null);
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+
+    await screen.findByTestId('run-takeover-attribution');
+    expect(screen.queryByTestId('run-takeover-reason')).toBeNull();
+  });
+
+  it('AC10 — the takeover block has zero axe violations', async () => {
+    serveTakeover();
+    const { container } = renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    await screen.findByTestId('run-takeover-attribution');
+    await expectNoA11yViolations(container);
+  });
+});
