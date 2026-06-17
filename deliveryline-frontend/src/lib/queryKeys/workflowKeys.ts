@@ -58,9 +58,21 @@ export const workflowKeys = {
   /** A run's artifact list (endpoint ships in a later story; key authored now). */
   artifacts: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'artifacts'] as const,
-  /** A run's allowed operator actions (endpoint ships in story 2.14; key authored now). */
-  allowedActions: (workflowRunId: string) =>
-    [...workflowKeys.detail(workflowRunId), 'allowedActions'] as const,
+  /**
+   * A run's allowed operator actions (endpoint ships in story 2.14; key authored now).
+   *
+   * Story 3b-4: an optional `actorRole` scopes the cache entry per role — appended to the
+   * key ONLY when provided (any falsy value collapses to the base key, so an empty string
+   * cannot fork a phantom entry distinct from the byte-identical no-arg request), so the
+   * developer-role entry (story 3b-4) is distinct from the default (`product_reviewer`) one
+   * and the no-arg key stays byte-identical to today (spec/recovery consumers unaffected).
+   * Either way the key remains a structural PREFIX child of `detail(id)`, so the
+   * `detail(id)` invalidation cascade still refreshes it.
+   */
+  allowedActions: (workflowRunId: string, actorRole?: string) =>
+    actorRole == null || actorRole === ''
+      ? ([...workflowKeys.detail(workflowRunId), 'allowedActions'] as const)
+      : ([...workflowKeys.detail(workflowRunId), 'allowedActions', actorRole] as const),
   /**
    * A run's clarifications (read endpoint ships with the clarification-read story;
    * key authored now by story 2.18). A PREFIX child of `detail(id)`, so a spec

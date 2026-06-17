@@ -31,6 +31,7 @@ import { isProblemDetailsError } from '@/lib/api/problemDetails';
 import {
   buildImplementationContextLabel,
   deriveImplementationExpectedVersions,
+  DEVELOPER_REVIEWER_ROLE,
   normalizeActions,
   resolveImplementationArtifact,
   type ApprovalBarLayout,
@@ -75,7 +76,10 @@ export function ImplementationReviewDecisionBarContainer({
   reject: rejectProp,
   takeover: takeoverProp,
 }: ImplementationReviewDecisionBarContainerProps) {
-  const allowedActionsQuery = useAllowedActions(workflowRunId);
+  // Story 3b-4: request as `developer` so the matrix returns accept/reject/takeover at
+  // `WaitingForReview` (the default `product_reviewer` returns only `[view_only]`, which
+  // renders the bar `blocked`/inert). Spec/recovery containers keep the no-arg default.
+  const allowedActionsQuery = useAllowedActions(workflowRunId, DEVELOPER_REVIEWER_ROLE);
   const detailQuery = useWorkflowDetail(workflowRunId);
   // Internal instances are always created (hooks rule); they stay idle when a prop is given.
   const internalAccept = useAcceptImplementation(workflowRunId);
@@ -133,7 +137,7 @@ export function ImplementationReviewDecisionBarContainer({
       return; // Never fire a request we cannot complete (R1) — accept renders blocked.
     }
     accept.mutate(
-      { artifactId, ...expectedVersions },
+      { artifactId, ...expectedVersions, reviewerRole: DEVELOPER_REVIEWER_ROLE },
       {
         onSuccess: (data) => {
           // Field-only (T-LOG-PII): the response state, never reason/artifactId/run id.
@@ -161,6 +165,7 @@ export function ImplementationReviewDecisionBarContainer({
         ...expectedVersions,
         reasonText: draft.reasonText,
         taggedFeedback: draft.taggedFeedback,
+        reviewerRole: DEVELOPER_REVIEWER_ROLE,
       },
       {
         onSuccess: (data) => {
@@ -188,7 +193,7 @@ export function ImplementationReviewDecisionBarContainer({
       return;
     }
     takeover.mutate(
-      { reasonText },
+      { reasonText, reviewerRole: DEVELOPER_REVIEWER_ROLE },
       {
         onSuccess: (data) => {
           // Field-only (T-LOG-PII): the response state ONLY — NEVER preservedPrReference /

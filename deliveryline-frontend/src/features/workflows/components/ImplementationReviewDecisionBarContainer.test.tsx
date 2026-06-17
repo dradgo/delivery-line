@@ -6,9 +6,14 @@
  * takeover mutations. Asserts: a `WaitingForReview` run with an implementation artifact
  * renders the ready bar; each mutation fires with the correct body (accept/reject send the
  * IMPLEMENTATION artifact version + the stamp context-bundle version; takeover sends only
- * reasonText, NO versions / actor / reviewerRole); the success paths log field-only events
+ * reasonText + reviewerRole, NO versions / actor); the success paths log field-only events
  * with NO PII; `APPROVAL_VERSION_MISMATCH` → stale + refetch; takeover success captures
  * `preservedPrReference` for the AC7 PR affordance.
+ *
+ * Story 3b-4 — developer-role wiring: the container now requests allowed-actions as
+ * `developer` (the `allowed()` handler only returns the full action set for that role; a
+ * default request would return `[view_only]` and render the bar blocked) and each of
+ * accept/reject/takeover POSTs `reviewerRole: 'developer'`.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
@@ -43,8 +48,20 @@ const REVIEW_STAMP = {
 
 const ALL_ACTIONS = ['accept_implementation', 'reject_implementation', 'takeover_workflow'];
 
-function allowed(actions: string[] = ALL_ACTIONS) {
-  return HttpResponse.json({ actions, versionStamp: REVIEW_STAMP });
+/** The `actorRole` query param the container last requested allowed-actions with (3b-4). */
+let lastAllowedActorRole: string | null = null;
+
+/**
+ * Story 3b-4: capture the requested `actorRole` and gate the action set on it — only the
+ * `developer` role unblocks the full accept/reject/takeover set; any other (the default
+ * `product_reviewer`) returns `[view_only]`, proving the role is what unblocks the bar.
+ */
+function allowed(request?: Request, actions: string[] = ALL_ACTIONS) {
+  if (request) {
+    lastAllowedActorRole = new URL(request.url).searchParams.get('actorRole');
+  }
+  const resolved = request && lastAllowedActorRole !== 'developer' ? ['view_only'] : actions;
+  return HttpResponse.json({ actions: resolved, versionStamp: REVIEW_STAMP });
 }
 
 function reviewDetail() {
@@ -79,12 +96,13 @@ function renderContainer() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  lastAllowedActorRole = null;
 });
 
 describe('ImplementationReviewDecisionBarContainer', () => {
   it('renders the ready bar with all three actions for a WaitingForReview run', async () => {
     server.use(
-      http.get(ALLOWED_URL, () => allowed()),
+      http.get(ALLOWED_URL, ({ request }) => allowed(request)),
       http.get(DETAIL_URL, () => reviewDetail()),
     );
     renderContainer();
@@ -101,13 +119,15 @@ describe('ImplementationReviewDecisionBarContainer', () => {
       'data-approval-bar-mode',
       'implementation_review',
     );
+    // Story 3b-4: the bar is ready ONLY because the container requested as `developer`.
+    expect(lastAllowedActorRole).toBe('developer');
   });
 
   it('accept fires with the impl artifact version + stamp context version and logs field-only impl.acceptSubmit', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     let body: Record<string, unknown> | undefined;
     server.use(
-      http.get(ALLOWED_URL, () => allowed()),
+      http.get(ALLOWED_URL, ({ request }) => allowed(request)),
       http.get(DETAIL_URL, () => reviewDetail()),
       http.post(ACCEPT_URL, async ({ request }) => {
         body = (await request.json()) as Record<string, unknown>;
@@ -123,6 +143,7 @@ describe('ImplementationReviewDecisionBarContainer', () => {
       artifactId: 'art_impl_001',
       expectedArtifactVersion: 2,
       expectedContextBundleVersion: 1,
+      reviewerRole: 'developer',
     });
     await waitFor(() =>
       expect(info).toHaveBeenCalledWith({ event: 'impl.acceptSubmit', currentState: 'Executing' }),
@@ -137,7 +158,7 @@ describe('ImplementationReviewDecisionBarContainer', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     let body: Record<string, unknown> | undefined;
     server.use(
-      http.get(ALLOWED_URL, () => allowed()),
+      http.get(ALLOWED_URL, ({ request }) => allowed(request)),
       http.get(DETAIL_URL, () => reviewDetail()),
       http.post(REJECT_URL, async ({ request }) => {
         body = (await request.json()) as Record<string, unknown>;
@@ -158,6 +179,7 @@ describe('ImplementationReviewDecisionBarContainer', () => {
       expectedContextBundleVersion: 1,
       reasonText: 'secret reviewer note',
       taggedFeedback: 'INCOMPLETE_IMPLEMENTATION',
+      reviewerRole: 'developer',
     });
     await waitFor(() =>
       expect(info).toHaveBeenCalledWith({
@@ -175,7 +197,7 @@ describe('ImplementationReviewDecisionBarContainer', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     let body: Record<string, unknown> | undefined;
     server.use(
-      http.get(ALLOWED_URL, () => allowed()),
+      http.get(ALLOWED_URL, ({ request }) => allowed(request)),
       http.get(DETAIL_URL, () => reviewDetail()),
       http.post(TAKEOVER_URL, async ({ request }) => {
         body = (await request.json()) as Record<string, unknown>;
@@ -196,7 +218,7 @@ describe('ImplementationReviewDecisionBarContainer', () => {
     await user.click(screen.getByRole('button', { name: /confirm takeover/i }));
 
     await waitFor(() => expect(body).toBeDefined());
-    expect(body).toEqual({ reasonText: 'manual continuation' });
+    expect(body).toEqual({ reasonText: 'manual continuation', reviewerRole: 'developer' });
 
     // AC7 — the captured PR ref drives the "Continue in PR" affordance.
     await waitFor(() =>
@@ -219,9 +241,9 @@ describe('ImplementationReviewDecisionBarContainer', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let allowedHits = 0;
     server.use(
-      http.get(ALLOWED_URL, () => {
+      http.get(ALLOWED_URL, ({ request }) => {
         allowedHits += 1;
-        return allowed();
+        return allowed(request);
       }),
       http.get(DETAIL_URL, () => reviewDetail()),
       http.post(ACCEPT_URL, () =>
@@ -283,7 +305,7 @@ describe('ImplementationReviewDecisionBarContainer', () => {
 
   it('a11y — the ready bar has zero axe violations', async () => {
     server.use(
-      http.get(ALLOWED_URL, () => allowed()),
+      http.get(ALLOWED_URL, ({ request }) => allowed(request)),
       http.get(DETAIL_URL, () => reviewDetail()),
     );
     const { container } = renderContainer();

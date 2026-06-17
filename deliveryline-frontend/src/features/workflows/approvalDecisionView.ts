@@ -82,6 +82,21 @@ export type TaggedFeedback = components['schemas']['RejectSpecRequest']['taggedF
 export type DeveloperTaggedFeedback =
   components['schemas']['RejectImplementationRequest']['taggedFeedback'];
 
+/**
+ * Story 3b-4 — the reviewer role the single operator carries at `WaitingForReview`.
+ *
+ * Per the user's "one user, multiple roles for now" decision, the operator IS the
+ * `developer` at this state: the `implementation_review` container requests
+ * allowed-actions with this role (so the matrix returns accept/reject/takeover instead of
+ * the default `product_reviewer`'s `[view_only]`) and sends it as `reviewerRole` on the
+ * three decisions (which the REST endpoints gate to equal `"developer"`).
+ *
+ * Kept behind one constant (isolated, here in the `.ts` sibling — not the `.tsx`, per
+ * `frontend-react-refresh-no-fn-exports`) so the deferred story-2.13 header-based role
+ * attribution has exactly ONE swap point. Do NOT thread a role-provider abstraction now.
+ */
+export const DEVELOPER_REVIEWER_ROLE = 'developer';
+
 /** The live `AllowedActions.versionStamp` parts the bar consumes (AC6). */
 export interface ApprovalVersionStamp {
   readonly currentContextBundleVersion?: number | null;

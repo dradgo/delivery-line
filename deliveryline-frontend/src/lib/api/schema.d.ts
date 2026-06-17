@@ -979,7 +979,7 @@ export interface operations {
                  * @description Actor role for action gating; defaults to product_reviewer when absent. Recognized values are case-sensitive — any other value returns 400 UNKNOWN_ACTOR_ROLE.
                  * @example product_reviewer
                  */
-                actorRole?: "product_reviewer" | "workflow_owner";
+                actorRole?: "product_reviewer" | "workflow_owner" | "developer";
             };
             header?: never;
             path: {

@@ -12,6 +12,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
 import { PROBLEM_JSON_CONTENT_TYPE, isProblemDetailsError } from '@/lib/api/problemDetails';
+import { workflowKeys } from '@/lib/queryKeys/workflowKeys';
 import { server } from '@/test/server';
 import { useAllowedActions } from './useAllowedActions';
 
@@ -51,6 +52,45 @@ describe('useAllowedActions (LIVE — story 2.18 T5 → 2.19)', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.actions).toEqual(['approve_spec', 'reject_spec']);
     expect(result.current.data?.versionStamp.currentSpecArtifactVersion).toBe(3);
+  });
+
+  it('actorRole=developer → GET carries ?actorRole=developer + uses a distinct query key (3b-4)', async () => {
+    const requestedRoles: (string | null)[] = [];
+    server.use(
+      http.get(ALLOWED_URL, ({ request }) => {
+        const role = new URL(request.url).searchParams.get('actorRole');
+        requestedRoles.push(role);
+        return HttpResponse.json({
+          actions: role === 'developer' ? ['accept_implementation'] : ['view_only'],
+          versionStamp: {
+            currentSpecArtifactVersion: 3,
+            currentContextBundleVersion: 1,
+            lastEventId: 'evt_review_100',
+            workflowState: 'WaitingForReview',
+          },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useAllowedActions(RUN_ID, 'developer'), {
+      wrapper: createWrapper(queryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // The role reached the wire as the `actorRole` query param.
+    expect(requestedRoles).toContain('developer');
+    expect(result.current.data?.actions).toEqual(['accept_implementation']);
+
+    // The developer entry must not collide with the default (no-arg) cache entry — the key
+    // is the role-scoped variant (AC2 / DD2), still a prefix-child of `detail(id)`.
+    expect(workflowKeys.allowedActions(RUN_ID, 'developer')).not.toEqual(
+      workflowKeys.allowedActions(RUN_ID),
+    );
+    expect(workflowKeys.allowedActions(RUN_ID, 'developer')).toEqual([
+      ...workflowKeys.detail(RUN_ID),
+      'allowedActions',
+      'developer',
+    ]);
   });
 
   it('problem+json error → typed ProblemDetailsError state', async () => {

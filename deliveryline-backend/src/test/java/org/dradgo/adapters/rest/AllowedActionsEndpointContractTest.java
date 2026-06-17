@@ -128,6 +128,39 @@ class AllowedActionsEndpointContractTest {
   }
 
   @Test
+  void getAllowedActionsAsDeveloperAtWaitingForReviewReturnsImplementationActions()
+      throws Exception {
+    // Story 3b-4: the `developer` role is now advertised on the actorRole enum; at
+    // WaitingForReview the matrix returns the developer technical-review action set. The
+    // service-unit matrix already pins the logic (WorkflowInspectionServiceAllowedActionsTest);
+    // this pins the REST boundary + the now-advertised enum value.
+    AllowedActionsView view =
+        new AllowedActionsView(
+            List.of(
+                AllowedAction.ACCEPT_IMPLEMENTATION,
+                AllowedAction.REJECT_IMPLEMENTATION,
+                AllowedAction.TAKEOVER_WORKFLOW,
+                AllowedAction.VIEW_ONLY),
+            new AllowedActionsVersionStamp("WaitingForReview", 3, 1, "evt_review_100"));
+    when(workflowInspectionService.getAllowedActions(eq(RUN_ID), eq("developer")))
+        .thenReturn(view);
+
+    mockMvc
+        .perform(
+            get("/api/v1/workflows/{runId}/allowed-actions", RUN_ID)
+                .param("actorRole", "developer")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.actions[0]").value("accept_implementation"))
+        .andExpect(jsonPath("$.actions[1]").value("reject_implementation"))
+        .andExpect(jsonPath("$.actions[2]").value("takeover_workflow"))
+        .andExpect(jsonPath("$.actions[3]").value("view_only"))
+        .andExpect(jsonPath("$.versionStamp.workflowState").value("WaitingForReview"));
+
+    verify(workflowInspectionService).getAllowedActions(eq(RUN_ID), eq("developer"));
+  }
+
+  @Test
   void unknownActorRoleReturns400WithUnknownActorRoleProblemDetails() throws Exception {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("actorRole", "auditor");

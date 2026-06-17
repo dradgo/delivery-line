@@ -784,3 +784,7 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 ## Deferred from: code review of story-3.29 (2026-06-17)
 
 - Unrelated story-3b-3 test file present untracked in the working tree (`deliveryline-frontend/src/routes/workflows/$workflowRunId/index.test.tsx` — its own header declares "Story 3b-3 (AC4 / AC6) implementation-output link"). Not part of the 3.29 changeset; ensure it is committed under 3b-3, not bundled into the 3.29 commit.
+
+## Deferred from: code review of 3b-4 (2026-06-17)
+
+- AC7 live manual verify was not performed headlessly (self-disclosed in the story Task 6 / Completion Notes). A reviewer/operator must confirm on a live `WaitingForReview` run that the decision bar shows Accept/Reject/Take over (not `blocked`) and that a plan-phase accept/reject or a takeover transitions the run. Note: a `prOutput` *accept* additionally needs the 3b-1/3b-2 `github_pr` link to pass the backend PR-link gate — verify accept against a plan-phase artifact, or exercise takeover/reject (no link needed).

@@ -1596,7 +1596,8 @@
             "schema" : {
               "enum" : [
                 "product_reviewer",
-                "workflow_owner"
+                "workflow_owner",
+                "developer"
               ],
               "type" : "null"
             }

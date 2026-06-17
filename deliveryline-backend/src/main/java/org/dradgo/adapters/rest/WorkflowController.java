@@ -327,7 +327,7 @@ public class WorkflowController {
               schema =
                   @Schema(
                       type = "string",
-                      allowableValues = {"product_reviewer", "workflow_owner"},
+                      allowableValues = {"product_reviewer", "workflow_owner", "developer"},
                       nullable = true))
           @RequestParam(name = "actorRole", required = false)
           String actorRole) {

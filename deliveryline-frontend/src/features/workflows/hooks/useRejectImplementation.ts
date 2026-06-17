@@ -42,7 +42,11 @@ export interface RejectImplementationVariables {
   reasonText: string;
   /** The DEVELOPER rejection taxonomy (R5) — distinct from the spec set. */
   taggedFeedback: DeveloperTaggedFeedback;
-  /** R4 — omitted today (no live role context); accepted for forward-compat. */
+  /**
+   * R4 — the reviewer role. Optional on the wire, but the impl-review container now sends
+   * `"developer"` (story 3b-4); when sent the REST endpoint requires it to equal
+   * `"developer"` (else `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`).
+   */
   reviewerRole?: string | undefined;
 }
 

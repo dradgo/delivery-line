@@ -19,9 +19,9 @@
  * ACTOR (R4): OMIT `actorIdentity`/`actorType` — the endpoint derives the actor from the
  * optional `X-Actor-Identity` header and the backend defaults `local-operator` / HUMAN
  * (identical to `useApproveSpec` / `useRejectSpec`, which send no actor — do NOT copy
- * `useRetryWorkflow`'s body-actor pattern). `reviewerRole` is OMITTED (optional; if sent
- * must equal `"developer"` → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`); accepted for
- * forward-compat exactly like the spec hooks.
+ * `useRetryWorkflow`'s body-actor pattern). `reviewerRole` is optional on the wire; the
+ * impl-review container now sends `"developer"` (story 3b-4) — when sent it must equal
+ * `"developer"` → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`.
  *
  * Typed failures surface via `ProblemDetailsError` (the factory's `unwrap`):
  * `APPROVAL_VERSION_MISMATCH` (stale, AC5), `ARTIFACT_PR_LINK_MISMATCH` (409, accept-only),
@@ -48,7 +48,11 @@ export interface AcceptImplementationVariables {
   expectedContextBundleVersion: number;
   /** Optional reviewer note — reviewer-authored, NEVER logged (T-LOG-PII). */
   reason?: string | undefined;
-  /** R4 — omitted today (no live role context); accepted for forward-compat. */
+  /**
+   * R4 — the reviewer role. Optional on the wire, but the impl-review container now sends
+   * `"developer"` (story 3b-4); when sent the REST endpoint requires it to equal
+   * `"developer"` (else `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`).
+   */
   reviewerRole?: string | undefined;
 }
 

@@ -41,9 +41,10 @@ describe('AC11 — the bar consumes only backend-reported allowed actions', () =
     expect(CONTAINER).toContain('useAllowedActions(workflowRunId)');
   });
 
-  it('the impl-review container sources eligibility from useAllowedActions (3.28)', () => {
+  it('the impl-review container sources eligibility from useAllowedActions (3.28 / 3b-4)', () => {
     expect(IMPL_CONTAINER).toContain("from '../hooks/useAllowedActions'");
-    expect(IMPL_CONTAINER).toContain('useAllowedActions(workflowRunId)');
+    // Story 3b-4: the call gained the developer role arg — the substring updates with it.
+    expect(IMPL_CONTAINER).toContain('useAllowedActions(workflowRunId, DEVELOPER_REVIEWER_ROLE)');
   });
 
   it('neither the bar nor the containers import a permission-inference helper', () => {
