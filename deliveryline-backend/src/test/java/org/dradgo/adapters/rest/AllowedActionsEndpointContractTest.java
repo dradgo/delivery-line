@@ -142,8 +142,7 @@ class AllowedActionsEndpointContractTest {
                 AllowedAction.TAKEOVER_WORKFLOW,
                 AllowedAction.VIEW_ONLY),
             new AllowedActionsVersionStamp("WaitingForReview", 3, 1, "evt_review_100"));
-    when(workflowInspectionService.getAllowedActions(eq(RUN_ID), eq("developer")))
-        .thenReturn(view);
+    when(workflowInspectionService.getAllowedActions(eq(RUN_ID), eq("developer"))).thenReturn(view);
 
     mockMvc
         .perform(
