@@ -76,9 +76,9 @@ public class RunnerBroker {
 
   private static final Logger log = LoggerFactory.getLogger(RunnerBroker.class);
 
-  // Strong digest used when promoting an ingested SPEC artifact to `available` (must be one of
-  // ArtifactChecksum.ALLOWED_ALGORITHMS).
-  private static final String SPEC_CHECKSUM_ALGORITHM = "SHA-256";
+  // Strong digest used when promoting an ingested runner-produced artifact (spec / implementation
+  // plan / pr-output) to `available` (must be one of ArtifactChecksum.ALLOWED_ALGORITHMS).
+  private static final String ARTIFACT_CHECKSUM_ALGORITHM = "SHA-256";
 
   private static final List<RunnerExecutionStatus> ACTIVE_STATUSES =
       List.of(RunnerExecutionStatus.PENDING, RunnerExecutionStatus.RUNNING);
@@ -1335,20 +1335,47 @@ public class RunnerBroker {
       if (artifactType == ArtifactType.PR_OUTPUT) {
         prOutputArtifactId = opResult.artifact().publicId();
       }
-      // Spec-stage availability wiring — promote the freshly-ingested SPEC artifact to `available`
-      // (checksum + storageRef stamped) so the human spec-approval gate accepts it. Without this
-      // the
-      // artifact stays `pending` and ArtifactService.isApprovalEligible (which requires
-      // status=AVAILABLE) rejects approval with ARTIFACT_PAYLOAD_UNAVAILABLE — the reviewer can see
-      // the spec but never approve it. The auto-advance to WaitingForSpecApproval (Decision D1)
-      // still
-      // fires on ingest regardless; this only makes the resulting artifact approval-eligible.
-      // Scoped
-      // to SPEC: the plan/pr-output stages auto-advance with no human approval gate, so they keep
-      // the
-      // deliberate `pending` ingest behaviour.
-      if (artifactType == ArtifactType.SPEC) {
-        markSpecArtifactAvailable(opResult, payload.bytes(), correlationId);
+      // Availability wiring — promote the freshly-ingested runner artifact to `available` (checksum
+      // + storageRef stamped) so the approval-eligibility gate accepts it. Without this the
+      // artifact
+      // stays `pending` and ArtifactService.isApprovalEligible (which requires status=AVAILABLE)
+      // rejects approval with ARTIFACT_PAYLOAD_UNAVAILABLE — the reviewer can see the artifact but
+      // never accept it. The auto-advance (Decision D1) still fires on ingest regardless; this only
+      // makes the resulting artifact approval-eligible.
+      // Story 3b-3: widened from SPEC-only to also cover IMPLEMENTATION_PLAN and PR_OUTPUT so the
+      // execution-stage acceptImplementation gate (isApprovalEligible = AVAILABLE) can fire — this
+      // supersedes 3a-9's Decision-D1 `pending`-on-ingest posture for the two execution-stage
+      // types.
+      // NOTE (THE TRAP): a real PR_OUTPUT with a GitHub push is later enriched
+      // (validateAndEnrichPrOutput -> enrichPrOutputArtifact) which createNextVersions a new
+      // PENDING
+      // v2; that enriched head is marked available separately inside enrichPrOutputArtifact. This
+      // in-loop mark covers v1 (the no-enrich cases: plan, no-push pr-output, and every mock-runner
+      // result where captureAndPush returns empty).
+      if (artifactType == ArtifactType.SPEC
+          || artifactType == ArtifactType.IMPLEMENTATION_PLAN
+          || artifactType == ArtifactType.PR_OUTPUT) {
+        // Story 3b-3 review patch — availability marking is best-effort and runs inside
+        // handleSuccess BEFORE recordCompleted (:1539); an uncaught RuntimeException (e.g. a
+        // DomainException from markAvailable's checksum/state verification, or the digest-missing
+        // IllegalStateException) would escape onResult — whose outer try has only a finally, no
+        // catch (:1224) — and strand the execution RUNNING (re-harvested). Swallow ALL failures so
+        // a
+        // successfully-executed run is never unwound by an availability-marking error; the artifact
+        // simply stays `pending` (not approval-eligible) until a re-harvest re-marks it. Mirrors
+        // the
+        // enrich twin's guard (:2028) which documents this exact failure mode.
+        try {
+          markArtifactAvailable(opResult, payload.bytes(), correlationId);
+        } catch (RuntimeException error) {
+          log.warn(
+              "onResult artifact availability marking failed (best-effort) runnerExecutionId={} "
+                  + "workflowRunId={} artifactId={} cause={}",
+              runnerExecutionId,
+              workflowRunId,
+              opResult.artifact().publicId(),
+              error.toString());
+        }
       }
     }
 
@@ -1905,35 +1932,39 @@ public class RunnerBroker {
   }
 
   /**
-   * Promote a freshly-ingested SPEC artifact to {@code available} so the human spec-approval gate
-   * ({@code ArtifactService.isApprovalEligible}, which requires {@code status=AVAILABLE} plus a
-   * populated checksum + storageRef) accepts it. The checksum is computed over the SAME payload
-   * bytes the broker handed to {@code recordOperation}, and the storageRef is the canonical
-   * location the payload store reported writing them to — so {@code markAvailable}'s
-   * payload-vs-checksum verification is guaranteed to match. Runs inside the poller's per-item
-   * transaction alongside the ingest, so the artifact is available before the spec-ready transition
-   * is observable.
+   * Promote a freshly-ingested runner-produced artifact (spec / implementation plan / pr-output) to
+   * {@code available} so the approval-eligibility gate ({@code ArtifactService.isApprovalEligible},
+   * which requires {@code status=AVAILABLE} plus a populated checksum + storageRef) accepts it. The
+   * checksum is computed over the SAME payload bytes the broker handed to {@code recordOperation},
+   * and the storageRef is the canonical location the payload store reported writing them to — so
+   * {@code markAvailable}'s payload-vs-checksum verification is guaranteed to match. Runs inside
+   * the poller's per-item transaction alongside the ingest, so the artifact is available before the
+   * stage-ready transition is observable.
    *
    * <p>{@code storageRef} is {@code null} on an idempotent replay (a duplicate {@code onResult}
    * that did not re-write the payload); in that case the artifact was already made available by the
    * original ingest and there is nothing to re-stamp ({@code markAvailable} is itself idempotent).
+   *
+   * <p>Story 3b-3 generalized this from the spec-only path to all three runner artifact types; the
+   * enriched PR_OUTPUT head (a new PENDING version produced by {@code enrichPrOutputArtifact}) is
+   * marked available by a second call from inside that method.
    */
-  private void markSpecArtifactAvailable(
+  private void markArtifactAvailable(
       RecordArtifactOperationResult opResult, byte[] payloadBytes, String correlationId) {
     String storageRef = opResult.storageRef();
     if (storageRef == null) {
       return;
     }
     String checksumHex =
-        ArtifactChecksum.digestHex(SPEC_CHECKSUM_ALGORITHM, payloadBytes)
+        ArtifactChecksum.digestHex(ARTIFACT_CHECKSUM_ALGORITHM, payloadBytes)
             .orElseThrow(
                 () ->
                     new IllegalStateException(
                         "JVM does not provide required digest algorithm: "
-                            + SPEC_CHECKSUM_ALGORITHM));
+                            + ARTIFACT_CHECKSUM_ALGORITHM));
     artifactOperationService.markAvailable(
         opResult.artifact().publicId(),
-        new ArtifactChecksum(SPEC_CHECKSUM_ALGORITHM, checksumHex),
+        new ArtifactChecksum(ARTIFACT_CHECKSUM_ALGORITHM, checksumHex),
         storageRef,
         new ActorContext("system", org.dradgo.domain.registry.ActorType.SYSTEM, correlationId));
   }
@@ -2005,6 +2036,15 @@ public class RunnerBroker {
           actual.branchRef(),
           actual.commitSha(),
           actual.prRef());
+      // Story 3b-3 (AC2 — THE TRAP): the enrich UPDATE above createNextVersions a NEW PENDING v2
+      // (ArtifactOperationService.createOrAdvanceArtifact UPDATE = createNextVersion), so the
+      // highest-version prOutput — the one resolveImplementationArtifact selects for the reviewer —
+      // is now PENDING again. Mark THAT enriched head available (checksum over the enriched bytes,
+      // storageRef from the enrich result) so acceptImplementation's isApprovalEligible=AVAILABLE
+      // gate can fire. Still best-effort: a marking failure stays inside this try/catch and must
+      // not
+      // unwind the committed runner outcome or block the WaitingForReview advance.
+      markArtifactAvailable(result, enrichedBytes, correlationId);
     } catch (RuntimeException | java.io.IOException error) {
       // Story 3.12 review patch — enrichment is best-effort and runs BEFORE recordCompleted; an
       // uncaught RuntimeException (Jackson / artifact-service) would escape onResult and strand the

@@ -775,3 +775,8 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 ## Deferred from: code review of story-3b.2 (2026-06-16)
 
 - **Production PR-link "match" gate compares a ref to itself** — `TechnicalApprovalService.assertPrLinkPresentAndMatches` → `assertArtifactPrLinkMatches` → `IntegrationLinkService` (~:596-600) compares the active link's `external_ref` to itself (`active.externalRef().equals(active.externalRef())`), so a mismatched artifact-claimed PR reference can never be detected — the gate only fails on an absent/empty link. Surfaced while auditing story 3b.2's AC5 (the seeded-link assertion is therefore tautological for the "binds" half). Pre-existing (3.12/3.23), not introduced by the test-only 3b.2 change. Worth a follow-up to either feed the artifact's own claimed PR ref into the comparison or document the gate as presence-only.
+
+## Deferred from: code review of 3b-3 (2026-06-17)
+
+- AC5 live `WaitingForReview` run verification was not performed headlessly (self-disclosed in the story Dev Notes). A reviewer must confirm on a running app that the "Open the implementation output →" link renders and the ingested `implementationPlan`/`prOutput` artifact reads `available` in the read model.
+- Frontend impl-output link (`index.tsx:402`) is gated on `implArtifactId !== undefined`, not on the artifact's AVAILABLE status. If the best-effort enrich mark fails, `resolveImplementationArtifact` returns the highest-version (PENDING) `prOutput` id and the link renders to a non-acceptable artifact. Minor UX; partly subsumed by 3b-5 (the real `prOutput` PR/diff renderer).

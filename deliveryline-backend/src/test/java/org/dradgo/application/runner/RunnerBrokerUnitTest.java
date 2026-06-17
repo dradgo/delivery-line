@@ -2185,6 +2185,117 @@ class RunnerBrokerUnitTest {
         enriched.contains("PR-1"), () -> "enriched payload missing prReference: " + enriched);
   }
 
+  // ===== Story 3b-3 — ingest-stage availability marking generalized to plan / pr-output =====
+
+  @Test
+  void implementationPlanIngestMarksArtifactAvailable() {
+    // Story 3b-3 (AC1): the freshly-ingested implementationPlan artifact is promoted to `available`
+    // on ingest (checksum over the payload bytes + storageRef from the op result), so the
+    // execution-stage acceptImplementation gate (isApprovalEligible = AVAILABLE) can fire.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
+    stubArtifactRecordSuccessAvailable();
+
+    orchBroker.onResult(REX_ID, implementationPlanResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    ArgumentCaptor<RecordArtifactOperationCommand> command =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService).recordOperation(command.capture());
+    ArgumentCaptor<org.dradgo.application.artifact.ArtifactChecksum> checksum =
+        ArgumentCaptor.forClass(org.dradgo.application.artifact.ArtifactChecksum.class);
+    verify(artifactOperationService)
+        .markAvailable(
+            eq("art_test01234567"), checksum.capture(), eq("store/implementationPlan.json"), any());
+    assertEquals("SHA-256", checksum.getValue().algorithm());
+    // Story 3b-3 review patch — pin the checksum to the digest of the SAME bytes handed to
+    // recordOperation (not just the algorithm), so a regression stamping a constant/wrong-payload
+    // digest is caught.
+    assertEquals(
+        org.dradgo.application.artifact.ArtifactChecksum.digestHex(
+                "SHA-256", command.getValue().payloadContent())
+            .orElseThrow(),
+        checksum.getValue().value());
+  }
+
+  @Test
+  void prOutputIngestMarksArtifactAvailableWhenNoPushOutcome() {
+    // Story 3b-3 (AC1): the no-push prOutput path (the mock runner — captureAndPush empty, no
+    // enrich) promotes the v1 ingested artifact to `available` directly in the ingest loop.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccessAvailable();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    verify(artifactOperationService)
+        .markAvailable(eq("art_test01234567"), any(), eq("store/prOutput.json"), any());
+  }
+
+  @Test
+  void prOutputEnrichedHeadIsTheArtifactMarkedAvailable() {
+    // Story 3b-3 (AC2 — THE TRAP): a real push enriches the ingested prOutput via a follow-on
+    // UPDATE that createNextVersions a NEW PENDING v2 — the highest-version artifact the frontend
+    // resolveImplementationArtifact selects. The broker must mark THAT enriched head available, not
+    // only the v1 created in the ingest loop (a v1-only mark leaves the reviewer's resolved target
+    // PENDING → acceptImplementation fails ARTIFACT_PAYLOAD_UNAVAILABLE). Reported refs match the
+    // push outcome (no drift) so the enrich path is reached.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true)));
+    RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccessEnrichedHead();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    // The enriched v2 head — the resolver's target — is marked available.
+    ArgumentCaptor<RecordArtifactOperationCommand> commands =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService, times(2)).recordOperation(commands.capture());
+    ArgumentCaptor<org.dradgo.application.artifact.ArtifactChecksum> v2Checksum =
+        ArgumentCaptor.forClass(org.dradgo.application.artifact.ArtifactChecksum.class);
+    verify(artifactOperationService)
+        .markAvailable(
+            eq("art_prv2_000002"), v2Checksum.capture(), eq("store/prOutput-v2.json"), any());
+    // Story 3b-3 review patch — the v2 mark must digest the ENRICHED bytes (the UPDATE command's
+    // payload), not v1's: pin it so a bug marking v2 with v1's checksum is caught.
+    RecordArtifactOperationCommand enrichCommand =
+        commands.getAllValues().stream()
+            .filter(
+                c -> c.operationType() == org.dradgo.domain.registry.ArtifactOperationType.UPDATE)
+            .findFirst()
+            .orElseThrow();
+    assertEquals(
+        org.dradgo.application.artifact.ArtifactChecksum.digestHex(
+                "SHA-256", enrichCommand.payloadContent())
+            .orElseThrow(),
+        v2Checksum.getValue().value());
+    // The v1 created in the ingest loop is also promoted (harmless; the resolver picks the
+    // highest).
+    verify(artifactOperationService)
+        .markAvailable(eq("art_prv1_000001"), any(), eq("store/prOutput-v1.json"), any());
+  }
+
   private static String implementationPlanResultPayload() {
     // Mirrors runner-result.v1.implementation-plan.valid.json (steps + contextReferences, NOT
     // contentReference — the broker's artifactPayload serializes the ref JSON in that case).
@@ -2337,6 +2448,71 @@ class RunnerBrokerUnitTest {
                       OffsetDateTime.now(CLOCK));
               return new RecordArtifactOperationResult(artifact, op);
             });
+  }
+
+  /**
+   * Story 3b-3 — like {@link #stubArtifactRecordSuccess()} but carries a non-null {@code
+   * storageRef} ({@code store/<artifactType>.json}) so the broker's {@code markArtifactAvailable}
+   * actually promotes the ingested artifact (the no-null-storageRef branch). The artifact public id
+   * is constant ({@code art_test01234567}).
+   */
+  private void stubArtifactRecordSuccessAvailable() {
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              return recordResultWithStorageRef(
+                  command, "art_test01234567", "store/" + command.artifactType().value() + ".json");
+            });
+  }
+
+  /**
+   * Story 3b-3 (AC2) — distinct ids/refs for the CREATE (ingest v1) vs the enrichment UPDATE
+   * (createNextVersion v2) so the enriched-head test can prove {@code markAvailable} targets the v2
+   * head, not the v1 created in the ingest loop. Both carry a non-null storageRef so both are
+   * promoted.
+   */
+  private void stubArtifactRecordSuccessEnrichedHead() {
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              boolean isUpdate =
+                  command.operationType()
+                      == org.dradgo.domain.registry.ArtifactOperationType.UPDATE;
+              String artifactPublicId = isUpdate ? "art_prv2_000002" : "art_prv1_000001";
+              String storageRef = isUpdate ? "store/prOutput-v2.json" : "store/prOutput-v1.json";
+              return recordResultWithStorageRef(command, artifactPublicId, storageRef);
+            });
+  }
+
+  private static RecordArtifactOperationResult recordResultWithStorageRef(
+      RecordArtifactOperationCommand command, String artifactPublicId, String storageRef) {
+    ArtifactRecordSnapshot artifact =
+        ArtifactRecordSnapshot.withoutFailureMetadata(
+            artifactPublicId,
+            command.workflowRunId(),
+            command.artifactType(),
+            1,
+            null,
+            org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+            null,
+            null,
+            null,
+            org.dradgo.domain.registry.ArtifactStatus.PENDING,
+            null);
+    ArtifactOperationSnapshot op =
+        new ArtifactOperationSnapshot(
+            "op_test01234567",
+            command.workflowRunId(),
+            artifactPublicId,
+            command.operationType().value(),
+            org.dradgo.domain.registry.ArtifactOperationStatus.PENDING,
+            command.idempotencyKey(),
+            null,
+            null,
+            OffsetDateTime.now(CLOCK));
+    return new RecordArtifactOperationResult(artifact, op, storageRef);
   }
 
   private static String specResultPayload(String artifactType) {

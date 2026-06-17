@@ -27,12 +27,11 @@ import org.springframework.test.context.TestPropertySource;
 /**
  * Story 3.11 (AC11) — end-to-end plan-stage orchestration over the real wiring (Testcontainers
  * Postgres + mock runner {@code happy-implementation-plan}). The EXECUTION analog of {@link
- * SpecStageOrchestrationIT}: it seeds an approval-eligible spec artifact directly (the mock spec
- * path leaves the spec artifact {@code pending} — {@code markAvailable} is unwired, OQ-1/Decision
- * D1), approves the spec to fire the {@code WaitingForSpecApproval -> Executing} transition + the
- * {@code dispatchPlanGeneration} trigger, then drives the async plan result deterministically via
- * {@link RunnerBroker#pollActiveExecutions()} (Trap T6 — never sleep on the 5s scheduler) and
- * asserts the run auto-advanced {@code Executing -> WaitingForReview}.
+ * SpecStageOrchestrationIT}: it seeds an approval-eligible spec artifact directly (to skip the spec
+ * stage and start at the plan stage), approves the spec to fire the {@code WaitingForSpecApproval
+ * -> Executing} transition + the {@code dispatchPlanGeneration} trigger, then drives the async plan
+ * result deterministically via {@link RunnerBroker#pollActiveExecutions()} (Trap T6 — never sleep
+ * on the 5s scheduler) and asserts the run auto-advanced {@code Executing -> WaitingForReview}.
  *
  * <p>Opts into the plan-stage auto-dispatch master switch via {@link TestPropertySource} (the
  * shared test profile keeps it OFF, Trap T11). Like the spec IT, the deterministic failure-mode →
@@ -103,15 +102,17 @@ class ImplementationPlanOrchestrationIT {
     // WaitingForReview.
     assertEquals(WorkflowState.WAITING_FOR_REVIEW.value(), currentState(runId));
     assertEquals("completed", executionStatus(runId));
-    // Decision D1: the implementation-plan artifact lineage was ingested but stays `pending`
-    // (markAvailable has no production caller; the auto-advance fires on successful INGEST).
+    // Story 3b-3 (AC6, supersedes 3a-9 Decision-D1): the implementation-plan artifact is now marked
+    // `available` on ingest (broker ingest-loop markArtifactAvailable) so the acceptImplementation
+    // eligibility gate (isApprovalEligible = AVAILABLE) accepts it. The auto-advance still fires on
+    // successful INGEST regardless. (queryForObject also asserts exactly one such artifact row.)
     assertEquals(
-        1,
+        "available",
         jdbcTemplate.queryForObject(
-            "select count(*) from artifacts where workflow_run_id ="
+            "select status from artifacts where workflow_run_id ="
                 + " (select id from workflow_runs where public_id = ?)"
                 + " and artifact_type = 'implementationPlan'",
-            Integer.class,
+            String.class,
             runId));
   }
 

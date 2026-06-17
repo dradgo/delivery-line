@@ -9,7 +9,10 @@ import {
   assertValidRunRouteParams,
 } from '@/lib/routing/routeParamValidation';
 import { useWorkflowDetail } from '@/features/workflows/hooks/useWorkflowDetail';
-import { resolveSpecArtifactId } from '@/features/workflows/approvalDecisionView';
+import {
+  resolveImplementationArtifact,
+  resolveSpecArtifactId,
+} from '@/features/workflows/approvalDecisionView';
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
 import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
 import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
@@ -119,6 +122,10 @@ function WorkflowDetailRoute() {
   // Story 3a-9 (AC6) — the real spec artifact id from the read model (story 2.19 resolver);
   // `undefined` until the run produces a spec artifact, which hides the artifact link.
   const specArtifactId = resolveSpecArtifactId(data);
+  // Story 3b-3 (AC4) — the execution-stage implementation artifact id (story 3.28 resolver: prefers
+  // the highest-version `prOutput`, falls back to `implementationPlan`); `undefined` until the
+  // execution stage produces an implementation artifact, which hides the implementation-output link.
+  const implArtifactId = resolveImplementationArtifact(data)?.artifactId;
 
   // AC8a — a run reported in a state this build doesn't recognize.
   if (data?.currentState !== undefined && !RECOGNIZED_STATES.has(data.currentState)) {
@@ -172,6 +179,20 @@ function WorkflowDetailRoute() {
           className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
         >
           Open the specification &rarr;
+        </Link>
+      ) : null}
+      {/* Story 3b-3 (AC4) — the execution-stage twin of the spec link: once the run has produced an
+          implementation artifact (plan or pr-output), surface a link to the artifact-viewer route so
+          the developer reviewer at WaitingForReview can reach the implementation output. Gated on a
+          resolved id; the generic viewer renders the raw artifact (the rich prOutput PR/diff renderer
+          is story 3b-5). */}
+      {implArtifactId !== undefined ? (
+        <Link
+          to="/workflows/$workflowRunId/artifacts/$artifactId"
+          params={{ workflowRunId, artifactId: implArtifactId }}
+          className="text-body text-brand-600 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus focus-visible:ring-offset-2"
+        >
+          Open the implementation output &rarr;
         </Link>
       ) : null}
       {/* Decision Bar (AC4 sticky footer). Story 3.30 makes the mode state-driven: a

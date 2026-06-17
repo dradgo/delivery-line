@@ -96,11 +96,19 @@ class PrOutputOrchestrationIT {
     // AC5: the pr-output artifact is ingested and the run auto-advanced to WaitingForReview.
     assertEquals(WorkflowState.WAITING_FOR_REVIEW.value(), currentState(runId));
     assertEquals("completed", executionStatus(runId));
-    // Decision D1: the prOutput artifact lineage was ingested but stays `pending` (markAvailable
-    // has
-    // no production caller; the auto-advance fires on successful INGEST).
-    assertTrue(
-        prOutputArtifactCount(runId) >= 1, "expected at least one ingested prOutput artifact");
+    // Story 3b-3 (AC6, supersedes 3a-9 Decision-D1): the prOutput artifact is now marked
+    // `available` on ingest. The mock runner produces no push outcome (captureAndPush empty, no
+    // enrich), so the single v1 artifact is promoted directly in the broker ingest loop.
+    assertEquals(
+        1, prOutputArtifactCount(runId), "expected exactly one ingested prOutput artifact");
+    assertEquals(
+        "available",
+        jdbcTemplate.queryForObject(
+            "select status from artifacts where workflow_run_id ="
+                + " (select id from workflow_runs where public_id = ?)"
+                + " and artifact_type = 'prOutput'",
+            String.class,
+            runId));
   }
 
   @Test
