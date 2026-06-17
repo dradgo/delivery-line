@@ -534,9 +534,7 @@ describe('RunReviewQueueItem — takeover (story 3.29, AC3)', () => {
   });
 
   it('R5 — takeover is metadata, NOT a primary attention signal', () => {
-    render(
-      <RunReviewQueueItem run={{ ...TAKEN_OVER_ROW, takenOverBy: 'dev@acme.example' }} />,
-    );
+    render(<RunReviewQueueItem run={{ ...TAKEN_OVER_ROW, takenOverBy: 'dev@acme.example' }} />);
     // The takeover line never escalates into the primary-attention slot.
     expect(screen.queryByTestId('queue-item-primary-attention')).toBeNull();
   });

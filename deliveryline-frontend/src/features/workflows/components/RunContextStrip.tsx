@@ -290,9 +290,7 @@ function RunTakeoverAttribution({
 }) {
   const eventsQuery = useWorkflowEvents(workflowRunId);
   const takeover =
-    eventsQuery.data !== undefined
-      ? selectTakeoverAttribution(eventsQuery.data.events)
-      : undefined;
+    eventsQuery.data !== undefined ? selectTakeoverAttribution(eventsQuery.data.events) : undefined;
   if (takeover === undefined) {
     return null;
   }
@@ -306,11 +304,7 @@ function RunTakeoverAttribution({
       className="w-full rounded-md border border-state-recovery-border bg-surface px-4 py-2"
     >
       <Inline gap="4" wrap align="center">
-        <StateSignifierChip
-          stateName="recovery"
-          label="Taken over"
-          testId="run-takeover-chip"
-        />
+        <StateSignifierChip stateName="recovery" label="Taken over" testId="run-takeover-chip" />
         <Item label="Taken over by" testId="run-takeover-actor" title={actorText}>
           {actorText ?? <NotReported />}
         </Item>

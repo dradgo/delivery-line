@@ -121,7 +121,10 @@ function FailureRow({
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus',
         )}
       >
-        <StateSignifierChip stateName={recovery || takeover ? 'recovery' : 'error'} label={chipLabel} />
+        <StateSignifierChip
+          stateName={recovery || takeover ? 'recovery' : 'error'}
+          label={chipLabel}
+        />
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <span className="min-w-0 shrink-0 truncate text-sm text-text-primary">{primaryText}</span>
           {takeover && reason !== undefined ? (

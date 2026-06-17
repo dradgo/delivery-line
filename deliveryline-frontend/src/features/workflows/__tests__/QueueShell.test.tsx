@@ -395,9 +395,7 @@ describe('QueueShell — taken-over filter toggle (story 3.29)', () => {
     server.use(http.get(LIST_URL, () => HttpResponse.json([])));
     const onToggle = vi.fn();
 
-    renderShell(
-      <QueueShell filters={{ state: 'TakenOver' }} onToggleTakenOverFilter={onToggle} />,
-    );
+    renderShell(<QueueShell filters={{ state: 'TakenOver' }} onToggleTakenOverFilter={onToggle} />);
 
     const toggle = await screen.findByTestId('queue-takenover-filter-toggle');
     // The URL is the single source of truth — active state is reflected, not local.
