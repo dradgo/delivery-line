@@ -127,8 +127,7 @@ public class GitHubMockAdapter implements RepositoryHostAdapter {
     // Normalize blank/null to "" so the idempotency key matches the real adapter's
     // isBlank()->default-branch fallback posture (parity), and so the synthesized PR identity
     // below stays consistent with the dedup key.
-    String normalizedTarget =
-        (targetBranch == null || targetBranch.isBlank()) ? "" : targetBranch;
+    String normalizedTarget = (targetBranch == null || targetBranch.isBlank()) ? "" : targetBranch;
     CreatePullRequestKey key = new CreatePullRequestKey(repoRef, sourceBranch, normalizedTarget);
     PullRequest existing = createdPullRequests.get(key);
     if (existing != null) {
