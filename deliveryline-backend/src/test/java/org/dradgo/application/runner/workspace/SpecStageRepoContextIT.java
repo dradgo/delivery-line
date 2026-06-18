@@ -24,8 +24,7 @@ import org.dradgo.adapters.git.CliGitAdapter;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.runner.ContextBundleService;
@@ -38,6 +37,8 @@ import org.dradgo.application.runner.workspace.spi.RepoTreeEntry;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowProperties;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.RunnerStage;
@@ -100,13 +101,15 @@ class SpecStageRepoContextIT {
     LocalRunnerWorkspaceStore store = new LocalRunnerWorkspaceStore(home.toString());
     CliGitAdapter git =
         new CliGitAdapter(new RedactionPolicyService(new DataClassificationService()));
-    GitHubAdapter gitHubAdapter = Mockito.mock(GitHubAdapter.class);
+    RepositoryHostAdapter gitHubAdapter = Mockito.mock(RepositoryHostAdapter.class);
     RunnerSecretsService secrets = Mockito.mock(RunnerSecretsService.class);
     RunnerExecutionRecordPort recordPort = Mockito.mock(RunnerExecutionRecordPort.class);
     IntegrationLinkRecordPort links = Mockito.mock(IntegrationLinkRecordPort.class);
 
-    when(gitHubAdapter.getRepositoryByRef(REPO_REF))
-        .thenReturn(Optional.of(new GitHubRepository(REPO_REF, "owner/repo", "main", remoteUrl)));
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of(REPO_REF)))
+        .thenReturn(
+            Optional.of(
+                new Repository(RepositoryRef.of(REPO_REF), "owner/repo", "main", remoteUrl)));
     when(secrets.resolveHostSecret("GITHUB_TOKEN")).thenReturn(Optional.of(TOKEN));
     when(links.findActiveByWorkflowRun(anyString())).thenReturn(Optional.empty());
 

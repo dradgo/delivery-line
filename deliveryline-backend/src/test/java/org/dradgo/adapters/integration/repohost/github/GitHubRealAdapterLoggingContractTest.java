@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -10,10 +10,11 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import org.dradgo.application.integration.github.GitHubAdapterException;
 import org.dradgo.application.integration.github.GitHubProperties;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -84,7 +85,9 @@ class GitHubRealAdapterLoggingContractTest {
                 .header("X-RateLimit-Remaining", "0")
                 .header("X-RateLimit-Reset", "1700000000"));
 
-    assertThrows(GitHubAdapterException.class, () -> adapter.getRepositoryByRef("octo/hello"));
+    assertThrows(
+        RepositoryHostAdapterException.class,
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
 
     assertThat(warnMessages())
         .anyMatch(m -> m.contains("rate_limited") && m.contains("resetAtSeconds=1700000000"));
@@ -100,7 +103,7 @@ class GitHubRealAdapterLoggingContractTest {
         .andExpect(method(HttpMethod.GET))
         .andRespond(withSuccess("[" + PR_JSON + "]", MediaType.APPLICATION_JSON));
 
-    adapter.createPullRequest("octo/hello", "feature/x", "title", "body");
+    adapter.createPullRequest(RepositoryRef.of("octo/hello"), "feature/x", null, "title", "body");
 
     assertThat(infoAndWarnMessages()).anyMatch(m -> m.contains("resolution=idempotent_existing"));
   }
@@ -113,7 +116,7 @@ class GitHubRealAdapterLoggingContractTest {
             withSuccess(REPO_JSON, MediaType.APPLICATION_JSON)
                 .header("X-RateLimit-Remaining", "50"));
 
-    adapter.getRepositoryByRef("octo/hello");
+    adapter.getRepositoryByRef(RepositoryRef.of("octo/hello"));
 
     assertThat(appender.list).isNotEmpty();
     assertThat(appender.list)

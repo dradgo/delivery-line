@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;

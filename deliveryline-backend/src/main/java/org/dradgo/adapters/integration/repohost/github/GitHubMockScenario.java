@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import java.util.Objects;
 import org.dradgo.domain.registry.IntegrationFailureCategory;

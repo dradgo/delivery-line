@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,13 +14,17 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubBranch;
 import org.dradgo.application.integration.github.GitHubProperties;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CommentResult;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryHostCapabilities;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
@@ -40,13 +44,14 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 /**
- * Production {@link GitHubAdapter} backed by the GitHub REST API v3 (story 3.14). Activated under
- * Spring profile {@code github-real} (opt-in only; never in any default profile group, mirroring
- * {@code linear-real}). GitHub twin of {@code LinearRealAdapter}.
+ * Production {@link RepositoryHostAdapter} (GitHub kind) backed by the GitHub REST API v3 (story
+ * 3.14). Activated under Spring profile {@code github-real} (opt-in only; never in any default
+ * profile group, mirroring {@code linear-real}). GitHub twin of {@code LinearRealAdapter};
+ * extracted to the vendor-neutral port by story 3.33.
  *
  * <p><strong>Reference formats accepted.</strong> A {@code repoRef} is {@code "owner/repo"}; a
- * {@code prRef} is {@code "owner/repo#number"}. Parsing is private to the adapter — refs stay plain
- * {@link String}s on the {@link GitHubAdapter} port.
+ * {@code prRef} is {@code "owner/repo#number"}. Parsing is private to the adapter — refs are opaque
+ * {@link RepositoryRef}/{@link PullRequestRef} tokens on the {@link RepositoryHostAdapter} port.
  *
  * <p><strong>Authentication (AC2).</strong> The PAT is read from {@code GITHUB_TOKEN} via {@link
  * GitHubProperties} and set as {@code Authorization: Bearer <token>} at request time inside the
@@ -59,7 +64,8 @@ import org.springframework.web.util.UriComponentsBuilder;
  *
  * <p><strong>Idempotent PR creation (AC4).</strong> {@link #createPullRequest} first searches for
  * an open PR for the same {@code (owner:branch, base)} and returns it instead of stacking a
- * duplicate.
+ * duplicate. The base is the supplied {@code targetBranch} (story 3.33 OQ-2); a blank target falls
+ * back to the repository default branch (legacy behavior preserved byte-for-byte).
  *
  * <p><strong>Rate-limit awareness (AC5).</strong> {@code X-RateLimit-Remaining}/{@code
  * X-RateLimit-Reset} are inspected on every response: WARN below {@code rate-limit-warn-threshold},
@@ -68,11 +74,11 @@ import org.springframework.web.util.UriComponentsBuilder;
  *
  * <p><strong>Failure classification (AC7).</strong> HTTP outcomes map to the existing GitHub {@link
  * IntegrationFailureCategory} values via {@link #classify}; everything throws {@link
- * GitHubAdapterException}, never a generic unclassified error. This adapter does NOT retry.
+ * RepositoryHostAdapterException}, never a generic unclassified error. This adapter does NOT retry.
  */
 @Component
 @Profile("github-real")
-public class GitHubRealAdapter implements GitHubAdapter {
+public class GitHubRealAdapter implements RepositoryHostAdapter {
 
   private static final Logger log = LoggerFactory.getLogger(GitHubRealAdapter.class);
 
@@ -112,8 +118,9 @@ public class GitHubRealAdapter implements GitHubAdapter {
   // ---------------------------------------------------------------------------------------------
 
   @Override
-  public Optional<GitHubRepository> getRepositoryByRef(String repoRef) {
-    Objects.requireNonNull(repoRef, "repoRef");
+  public Optional<Repository> getRepositoryByRef(RepositoryRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    String repoRef = ref.value();
     ParsedRepoRef repo = parseRepoRef(repoRef);
     long startedAt = System.nanoTime();
     Optional<JsonNode> body =
@@ -131,8 +138,9 @@ public class GitHubRealAdapter implements GitHubAdapter {
   }
 
   @Override
-  public Optional<GitHubPullRequest> getPullRequestByRef(String prRef) {
-    Objects.requireNonNull(prRef, "prRef");
+  public Optional<PullRequest> getPullRequestByRef(PullRequestRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    String prRef = ref.value();
     ParsedPrRef pr = parsePrRef(prRef);
     long startedAt = System.nanoTime();
     Optional<JsonNode> body =
@@ -152,9 +160,10 @@ public class GitHubRealAdapter implements GitHubAdapter {
   }
 
   @Override
-  public Optional<GitHubBranch> getBranchByRef(String repoRef, String branchName) {
-    Objects.requireNonNull(repoRef, "repoRef");
+  public Optional<Branch> getBranchByRef(RepositoryRef repoRefValue, String branchName) {
+    Objects.requireNonNull(repoRefValue, "repo");
     Objects.requireNonNull(branchName, "branchName");
+    String repoRef = repoRefValue.value();
     ParsedRepoRef repo = parseRepoRef(repoRef);
     long startedAt = System.nanoTime();
     Optional<JsonNode> body =
@@ -180,15 +189,16 @@ public class GitHubRealAdapter implements GitHubAdapter {
   // ---------------------------------------------------------------------------------------------
 
   @Override
-  public GitHubPullRequest createPullRequest(
-      String repoRef, String branch, String title, String body) {
-    Objects.requireNonNull(repoRef, "repoRef");
+  public PullRequest createPullRequest(
+      RepositoryRef repoRefValue, String branch, String targetBranch, String title, String body) {
+    Objects.requireNonNull(repoRefValue, "repo");
     Objects.requireNonNull(branch, "branch");
+    String repoRef = repoRefValue.value();
     ParsedRepoRef repo = parseRepoRef(repoRef);
     long startedAt = System.nanoTime();
 
-    // Target branch defaults to the repository's default branch (documented choice — no
-    // per-run target is wired here; story 3.9 owns the branch convention, Decision D7).
+    // Existence check (also resolves the default branch for the blank-targetBranch back-compat
+    // path). A 404 here classifies as GITHUB_REPO_NOT_FOUND (story 3.13 AC5 / 3.33 R1).
     JsonNode repoJson =
         getOrEmptyOnNotFound(
                 repoUri(repo),
@@ -196,19 +206,24 @@ public class GitHubRealAdapter implements GitHubAdapter {
                 IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND)
             .orElseThrow(
                 () ->
-                    new GitHubAdapterException(
+                    new RepositoryHostAdapterException(
                         IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND,
                         "GitHub createPullRequest: repository not found for repoRef=" + repoRef));
-    String baseBranch = requireText(repoJson, "default_branch", "createPullRequest");
+    // OQ-2: honor the explicit target branch; a blank target falls back to the repository default
+    // branch so the legacy (story 3.14) behavior is preserved byte-for-byte.
+    String baseBranch =
+        (targetBranch == null || targetBranch.isBlank())
+            ? requireText(repoJson, "default_branch", "createPullRequest")
+            : targetBranch;
 
     // AC4 idempotency probe: an open PR for the same (head, base) is reused, never duplicated.
-    Optional<GitHubPullRequest> existing = findOpenPullRequest(repo, branch, baseBranch, repoRef);
+    Optional<PullRequest> existing = findOpenPullRequest(repo, branch, baseBranch, repoRef);
     if (existing.isPresent()) {
       log.warn(
           "github_real create_pull_request repoRef={} branch={} resolution=idempotent_existing prRef={}",
           repoRef,
           branch,
-          existing.get().prRef());
+          existing.get().prRef().value());
       return existing.get();
     }
 
@@ -228,20 +243,21 @@ public class GitHubRealAdapter implements GitHubAdapter {
             payload,
             "createPullRequest",
             IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND);
-    GitHubPullRequest pullRequest = toPullRequest(repoRef, created);
+    PullRequest pullRequest = toPullRequest(repoRef, created);
     log.info(
         "github_real create_pull_request repoRef={} branch={} resolution=created prRef={} number={} durationMs={}",
         repoRef,
         branch,
-        pullRequest.prRef(),
+        pullRequest.prRef().value(),
         pullRequest.number(),
         elapsedMs(startedAt));
     return pullRequest;
   }
 
   @Override
-  public GitHubPullRequest updatePullRequest(String prRef, String body) {
-    Objects.requireNonNull(prRef, "prRef");
+  public PullRequest updatePullRequest(PullRequestRef ref, String body) {
+    Objects.requireNonNull(ref, "ref");
+    String prRef = ref.value();
     ParsedPrRef pr = parsePrRef(prRef);
     long startedAt = System.nanoTime();
     String redactedBody = redact(body);
@@ -262,16 +278,18 @@ public class GitHubRealAdapter implements GitHubAdapter {
   }
 
   @Override
-  public void commentOnPullRequest(String prRef, String body) {
-    Objects.requireNonNull(prRef, "prRef");
+  public CommentResult commentOnPullRequest(PullRequestRef ref, String body) {
+    Objects.requireNonNull(ref, "ref");
     Objects.requireNonNull(body, "body");
+    String prRef = ref.value();
     ParsedPrRef pr = parsePrRef(prRef);
     long startedAt = System.nanoTime();
     String redactedBody = redact(body);
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("body", redactedBody);
     // PR comments are issue comments in GitHub's model (issues/{number}/comments). Real GitHub
-    // does not dedupe comments; the adapter's idempotency story is the PR, not comments (AC4).
+    // does not dedupe comments; the adapter's idempotency story is the PR, not comments (AC4) — so
+    // this always reports POSTED (the SKIPPED_DUPLICATE asymmetry is the mock's, story 3.33 R3).
     send(
         "POST",
         repoUri(pr, "issues", String.valueOf(pr.number()), "comments"),
@@ -282,6 +300,12 @@ public class GitHubRealAdapter implements GitHubAdapter {
         "github_real comment_on_pull_request prRef={} resolution=posted durationMs={}",
         prRef,
         elapsedMs(startedAt));
+    return CommentResult.POSTED;
+  }
+
+  @Override
+  public RepositoryHostCapabilities getCapabilities() {
+    return RepositoryHostCapabilities.githubDefaults();
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -318,7 +342,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
     try {
       serialized = objectMapper.writeValueAsString(jsonBody);
     } catch (IOException error) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub " + operation + " failed to serialize request body",
           error);
@@ -339,7 +363,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
     }
   }
 
-  private Optional<GitHubPullRequest> findOpenPullRequest(
+  private Optional<PullRequest> findOpenPullRequest(
       ParsedRepoRef repo, String headBranch, String baseBranch, String repoRef) {
     URI uri =
         UriComponentsBuilder.fromPath("")
@@ -385,7 +409,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
       long resetAtSeconds = parseResetAtSeconds(headers);
       log.warn(
           "github_real {} rate_limited remaining=0 resetAtSeconds={}", operation, resetAtSeconds);
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_RATE_LIMITED,
           "GitHub " + operation + " rate limit exhausted (resetAtSeconds=" + resetAtSeconds + ")",
           rateLimitDetails(resetAtSeconds));
@@ -404,9 +428,9 @@ public class GitHubRealAdapter implements GitHubAdapter {
    * Maps an HTTP failure onto the existing GitHub {@link IntegrationFailureCategory} values (AC7) —
    * never a generic unclassified error. Mirrors {@code LinearRealAdapter}'s catch-cascade order.
    */
-  private GitHubAdapterException classify(
+  private RepositoryHostAdapterException classify(
       RuntimeException error, String operation, IntegrationFailureCategory notFoundCategory) {
-    if (error instanceof GitHubAdapterException already) {
+    if (error instanceof RepositoryHostAdapterException already) {
       // A rate-limit raise from inspectRateLimit (or a nested classified failure) is already typed.
       return already;
     }
@@ -419,7 +443,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
         long resetAtSeconds = parseResetAtSeconds(forbidden.getResponseHeaders());
         log.warn(
             "github_real {} rate_limited status=403 resetAtSeconds={}", operation, resetAtSeconds);
-        return new GitHubAdapterException(
+        return new RepositoryHostAdapterException(
             IntegrationFailureCategory.GITHUB_RATE_LIMITED,
             "GitHub " + operation + " rate limited (403, resetAtSeconds=" + resetAtSeconds + ")",
             forbidden,
@@ -435,7 +459,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
       long resetAtSeconds = parseResetAtSeconds(tooMany.getResponseHeaders());
       log.warn(
           "github_real {} rate_limited status=429 resetAtSeconds={}", operation, resetAtSeconds);
-      return new GitHubAdapterException(
+      return new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_RATE_LIMITED,
           "GitHub " + operation + " rate limited (429, resetAtSeconds=" + resetAtSeconds + ")",
           tooMany,
@@ -475,7 +499,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
           "github_real {} failed cause={} category=github_network_failure",
           operation,
           io.getMostSpecificCause().getClass().getSimpleName());
-      return new GitHubAdapterException(
+      return new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub "
               + operation
@@ -493,13 +517,13 @@ public class GitHubRealAdapter implements GitHubAdapter {
         "github_real {} failed cause={} category=github_network_failure",
         operation,
         error.getClass().getSimpleName());
-    return new GitHubAdapterException(
+    return new RepositoryHostAdapterException(
         IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
         "GitHub " + operation + " failed: " + error.getClass().getSimpleName(),
         error);
   }
 
-  private GitHubAdapterException warnAndBuild(
+  private RepositoryHostAdapterException warnAndBuild(
       String operation,
       RestClientResponseException error,
       IntegrationFailureCategory category,
@@ -509,7 +533,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
         operation,
         error.getStatusCode(),
         category.value());
-    return new GitHubAdapterException(
+    return new RepositoryHostAdapterException(
         category, "GitHub " + operation + " " + reason + ": " + error.getStatusCode(), error);
   }
 
@@ -568,18 +592,18 @@ public class GitHubRealAdapter implements GitHubAdapter {
   // JSON → domain mapping.
   // ---------------------------------------------------------------------------------------------
 
-  private GitHubRepository toRepository(String repoRef, JsonNode json) {
-    return new GitHubRepository(
-        repoRef,
+  private Repository toRepository(String repoRef, JsonNode json) {
+    return new Repository(
+        RepositoryRef.of(repoRef),
         requireText(json, "full_name", "getRepositoryByRef"),
         requireText(json, "default_branch", "getRepositoryByRef"),
         requireText(json, "html_url", "getRepositoryByRef"));
   }
 
-  private GitHubPullRequest toPullRequest(String repoRef, JsonNode json) {
+  private PullRequest toPullRequest(String repoRef, JsonNode json) {
     int number = json.path("number").asInt(-1);
     if (number < 0) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub PR response missing numeric 'number' for repoRef=" + repoRef);
     }
@@ -587,26 +611,32 @@ public class GitHubRealAdapter implements GitHubAdapter {
     String state = requireText(json, "state", "pullRequest");
     String url = requireText(json, "html_url", "pullRequest");
     Instant createdAt = parseInstant(requireText(json, "created_at", "pullRequest"));
-    return new GitHubPullRequest(
-        repoRef + "#" + number, repoRef, number, sourceBranch, state, url, createdAt);
+    return new PullRequest(
+        PullRequestRef.of(repoRef + "#" + number),
+        RepositoryRef.of(repoRef),
+        number,
+        sourceBranch,
+        state,
+        url,
+        createdAt);
   }
 
-  private GitHubBranch toBranch(String repoRef, JsonNode json) {
+  private Branch toBranch(String repoRef, JsonNode json) {
     String name = requireText(json, "name", "getBranchByRef");
     String headSha = requireText(json.path("commit"), "sha", "getBranchByRef");
-    return new GitHubBranch(repoRef, name, headSha);
+    return new Branch(RepositoryRef.of(repoRef), name, headSha);
   }
 
   private JsonNode parseJson(String body, String operation) {
     if (body == null || body.isBlank()) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub " + operation + " returned an empty body");
     }
     try {
       return objectMapper.readTree(body);
     } catch (IOException error) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub " + operation + " returned non-JSON body",
           error);
@@ -623,7 +653,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
   private static String requireText(JsonNode node, String field, String operation) {
     JsonNode value = node.path(field);
     if (value.isMissingNode() || value.isNull() || value.asText().isBlank()) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub " + operation + " response missing required field: " + field);
     }
@@ -634,7 +664,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
     try {
       return Instant.parse(raw);
     } catch (DateTimeParseException error) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
           "GitHub response has non-ISO-8601 created_at: " + raw,
           error);
@@ -644,7 +674,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
   private static ParsedRepoRef parseRepoRef(String repoRef) {
     Matcher matcher = REPO_REF_PATTERN.matcher(repoRef);
     if (!matcher.matches()) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND,
           "GitHub repository reference must be owner/repo: " + repoRef);
     }
@@ -654,7 +684,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
   private static ParsedPrRef parsePrRef(String prRef) {
     Matcher matcher = PR_REF_PATTERN.matcher(prRef);
     if (!matcher.matches()) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_PR_NOT_FOUND,
           "GitHub pull-request reference must be owner/repo#number: " + prRef);
     }
@@ -662,7 +692,7 @@ public class GitHubRealAdapter implements GitHubAdapter {
       return new ParsedPrRef(
           matcher.group(1), matcher.group(2), Integer.parseInt(matcher.group(3)));
     } catch (NumberFormatException outOfRange) {
-      throw new GitHubAdapterException(
+      throw new RepositoryHostAdapterException(
           IntegrationFailureCategory.GITHUB_PR_NOT_FOUND,
           "GitHub pull-request reference number is out of range: " + prRef,
           outOfRange);

@@ -14,10 +14,8 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import org.dradgo.application.integration.IntegrationLink;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
@@ -27,6 +25,10 @@ import org.dradgo.application.runner.workspace.spi.GitCommandException;
 import org.dradgo.application.runner.workspace.spi.GitCommandPort;
 import org.dradgo.application.workflow.WorkflowProperties;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
@@ -47,7 +49,7 @@ class RepositoryWorkspaceServiceTest {
   private static final Path REPO_DIR = Path.of("/tmp/wsroot/" + REX + "/repo");
 
   private GitCommandPort git;
-  private GitHubAdapter gitHubAdapter;
+  private RepositoryHostAdapter gitHubAdapter;
   private RunnerSecretsService secrets;
   private RunnerWorkspaceStore store;
   private RunnerExecutionRecordPort recordPort;
@@ -57,7 +59,7 @@ class RepositoryWorkspaceServiceTest {
   @BeforeEach
   void setUp() {
     git = Mockito.mock(GitCommandPort.class);
-    gitHubAdapter = Mockito.mock(GitHubAdapter.class);
+    gitHubAdapter = Mockito.mock(RepositoryHostAdapter.class);
     secrets = Mockito.mock(RunnerSecretsService.class);
     store = Mockito.mock(RunnerWorkspaceStore.class);
     recordPort = Mockito.mock(RunnerExecutionRecordPort.class);
@@ -73,7 +75,8 @@ class RepositoryWorkspaceServiceTest {
 
   @Test
   void prepareWorkspaceThrowsMismatchWhenRepoUnresolvable() {
-    when(gitHubAdapter.getRepositoryByRef("GH-unknown")).thenReturn(Optional.empty());
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of("GH-unknown")))
+        .thenReturn(Optional.empty());
 
     assertThatThrownBy(
             () ->
@@ -98,8 +101,9 @@ class RepositoryWorkspaceServiceTest {
 
   @Test
   void prepareWorkspaceThrowsMismatchWhenExistingGithubLinkPointsAtDifferentRepo() {
-    when(gitHubAdapter.getRepositoryByRef(REPO_REF))
-        .thenReturn(Optional.of(new GitHubRepository(REPO_REF, "owner/repo", "main", "url")));
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of(REPO_REF)))
+        .thenReturn(
+            Optional.of(new Repository(RepositoryRef.of(REPO_REF), "owner/repo", "main", "url")));
     when(links.findActiveByWorkflowRun(RUN_ID))
         .thenReturn(
             Optional.of(
@@ -112,10 +116,17 @@ class RepositoryWorkspaceServiceTest {
                     Instant.now(),
                     null,
                     null)));
-    when(gitHubAdapter.getPullRequestByRef("PR-9"))
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of("PR-9")))
         .thenReturn(
             Optional.of(
-                new GitHubPullRequest("PR-9", "GH-OTHER", 9, "b", "open", "u", Instant.now())));
+                new PullRequest(
+                    PullRequestRef.of("PR-9"),
+                    RepositoryRef.of("GH-OTHER"),
+                    9,
+                    "b",
+                    "open",
+                    "u",
+                    Instant.now())));
 
     assertThatThrownBy(
             () ->
@@ -132,9 +143,10 @@ class RepositoryWorkspaceServiceTest {
 
   @Test
   void prepareWorkspaceClonesChecksOutStampsConfigAndReturnsMount() {
-    when(gitHubAdapter.getRepositoryByRef(REPO_REF))
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of(REPO_REF)))
         .thenReturn(
-            Optional.of(new GitHubRepository(REPO_REF, "owner/repo", "main", "git://remote")));
+            Optional.of(
+                new Repository(RepositoryRef.of(REPO_REF), "owner/repo", "main", "git://remote")));
     when(store.prepareRepositoryDir(REX)).thenReturn(REPO_DIR);
     when(git.checkoutOrReuseBranch(eq(REPO_DIR), anyString(), any()))
         .thenReturn(GitCommandPort.BranchOutcome.CREATED);
@@ -183,8 +195,19 @@ class RepositoryWorkspaceServiceTest {
         .thenReturn(
             new GitCommandPort.PushResult(
                 "abc1234", "deliveryline/DEL-9/stage-ef123456", "git://remote"));
-    when(gitHubAdapter.createPullRequest(eq(REPO_REF), anyString(), anyString(), anyString()))
-        .thenReturn(new GitHubPullRequest("PR-1", REPO_REF, 1, "b", "open", "u", Instant.now()));
+    when(git.getLocalConfig(REPO_DIR, "deliveryline.defaultBranch"))
+        .thenReturn(Optional.of("main"));
+    when(gitHubAdapter.createPullRequest(
+            eq(RepositoryRef.of(REPO_REF)), anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(
+            new PullRequest(
+                PullRequestRef.of("PR-1"),
+                RepositoryRef.of(REPO_REF),
+                1,
+                "b",
+                "open",
+                "u",
+                Instant.now()));
 
     Optional<RepositoryWorkspaceService.RepositoryPushOutcome> outcome =
         service.captureAndPush(REX);
@@ -195,8 +218,9 @@ class RepositoryWorkspaceServiceTest {
     assertThat(outcome.get().prRef()).isEqualTo("PR-1");
     verify(gitHubAdapter)
         .createPullRequest(
-            eq(REPO_REF),
+            eq(RepositoryRef.of(REPO_REF)),
             eq("deliveryline/DEL-9/stage-ef123456"),
+            eq("main"),
             eq("[DEL-9] Fix flaky dispatch"),
             anyString());
 
@@ -223,8 +247,8 @@ class RepositoryWorkspaceServiceTest {
     assertThat(outcome).isEmpty();
     verify(git, never()).push(any(), anyString(), any());
     verify(gitHubAdapter, never())
-        .createPullRequest(anyString(), anyString(), anyString(), anyString());
-    verify(gitHubAdapter, never()).updatePullRequest(anyString(), anyString());
+        .createPullRequest(any(), anyString(), any(), anyString(), anyString());
+    verify(gitHubAdapter, never()).updatePullRequest(any(), anyString());
   }
 
   @Test
@@ -244,9 +268,9 @@ class RepositoryWorkspaceServiceTest {
         .thenReturn(
             new GitCommandPort.PushResult(
                 "abc1234", "deliveryline/DEL-9/stage-ef123456", "git://remote"));
-    when(gitHubAdapter.createPullRequest(anyString(), anyString(), anyString(), anyString()))
+    when(gitHubAdapter.createPullRequest(any(), anyString(), any(), anyString(), anyString()))
         .thenThrow(
-            new GitHubAdapterException(
+            new RepositoryHostAdapterException(
                 IntegrationFailureCategory.GITHUB_NETWORK_FAILURE, "github unavailable"));
 
     assertThatThrownBy(() -> service.captureAndPush(REX))
@@ -259,8 +283,9 @@ class RepositoryWorkspaceServiceTest {
 
   @Test
   void prepareWorkspaceTreatsEmptyExistingGithubLinkAsMismatchBeforeClone() {
-    when(gitHubAdapter.getRepositoryByRef(REPO_REF))
-        .thenReturn(Optional.of(new GitHubRepository(REPO_REF, "owner/repo", "main", "url")));
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of(REPO_REF)))
+        .thenReturn(
+            Optional.of(new Repository(RepositoryRef.of(REPO_REF), "owner/repo", "main", "url")));
     when(links.findActiveByWorkflowRun(RUN_ID))
         .thenReturn(
             Optional.of(
@@ -273,7 +298,7 @@ class RepositoryWorkspaceServiceTest {
                     Instant.now(),
                     null,
                     null)));
-    when(gitHubAdapter.getPullRequestByRef("PR-9")).thenReturn(Optional.empty());
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of("PR-9"))).thenReturn(Optional.empty());
 
     assertThatThrownBy(
             () ->

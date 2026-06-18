@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3-33 (2026-06-18)
+
+- **Stray untracked frontend test in the working tree belongs to story 3b-3, not 3.33.** `deliveryline-frontend/src/routes/workflows/$workflowRunId/index.test.tsx` is untracked and its own docblock reads "Story 3b-3 (AC4 / AC6) — the WorkflowDetail route surfaces an 'Open the implementation output →' link." It is not in story 3.33's File List (3.33 is backend-only). **Follow-up:** exclude it from the 3.33 commit; it should land with story 3b-3's work. [`deliveryline-frontend/src/routes/workflows/$workflowRunId/index.test.tsx`]
+
 ## Deferred from: code review of story-3-32 (2026-06-17)
 
 - **`kind` fail-fast validates the kind value, not profile-vs-kind consistency.** `assertSupportedTicketSourceKind` rejects an unsupported kind (e.g. `jira`) but does NOT assert a backing `linear-*` profile is active for `kind=linear`. A `kind=linear` deployment with no profile passes the assertion, then fails later with an opaque Spring no-bean error when the unconditional `IntegrationLinkService` requires a `TicketSourceAdapter` bean. Forward-looking: only the `linear` kind exists today (no mismatch possible) and the unconditional consumer already fails-fast at startup. **Follow-up:** add a profile-vs-kind cross-check when the second kind (3.33 GitHub / a future JIRA) lands. [`LinearConfiguration.java` assertSupportedTicketSourceKind]

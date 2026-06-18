@@ -2003,7 +2003,7 @@ class RunnerBrokerUnitTest {
 
     verify(executionService).recordCompleted(REX_ID);
     verify(linkService)
-        .linkGitHubPr(
+        .linkPullRequest(
             eq(RUN_ID),
             eq(prRef),
             org.mockito.ArgumentMatchers.isNull(),
@@ -2041,7 +2041,7 @@ class RunnerBrokerUnitTest {
             new org.dradgo.domain.DomainException(
                 org.dradgo.domain.registry.DomainErrorCode.INTEGRATION_LINK_CONFLICT, "conflict"))
         .when(linkService)
-        .linkGitHubPr(any(), any(), any(), any(), any(), any(), any());
+        .linkPullRequest(any(), any(), any(), any(), any(), any(), any());
 
     broker.onResult(
         REX_ID, prOutputResultPayload(branch, commitSha, prRef).getBytes(StandardCharsets.UTF_8));

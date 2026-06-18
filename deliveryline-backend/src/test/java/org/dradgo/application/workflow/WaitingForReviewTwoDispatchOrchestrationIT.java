@@ -484,10 +484,10 @@ class WaitingForReviewTwoDispatchOrchestrationIT {
 
   /**
    * Design Decision DD2 — seed an active {@code github_pr} link (a direct insert; {@code
-   * IntegrationLinkService.linkGitHubPr} resolves the PR via the {@code github-mock}/{@code
-   * github-real} GitHubAdapter, which is not on the classpath under this IT's profiles). Represents
-   * what {@code validateAndEnrichPrOutput} persists in production. The {@code prOutput} accept's
-   * PR-link gate ({@code assertPrLinkPresentAndMatches}) requires exactly one active link.
+   * IntegrationLinkService.linkPullRequest} resolves the PR via the {@code github-mock}/{@code
+   * github-real} RepositoryHostAdapter, which is not on the classpath under this IT's profiles).
+   * Represents what {@code validateAndEnrichPrOutput} persists in production. The {@code prOutput}
+   * accept's PR-link gate ({@code assertPrLinkPresentAndMatches}) requires exactly one active link.
    */
   private void seedActiveGitHubPrLink(String runId, String prReference) {
     Long runDbId =

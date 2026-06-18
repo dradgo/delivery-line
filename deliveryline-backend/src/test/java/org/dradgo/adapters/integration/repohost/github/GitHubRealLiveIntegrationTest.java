@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import org.dradgo.application.integration.github.GitHubProperties;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -57,9 +58,9 @@ class GitHubRealLiveIntegrationTest {
         new GitHubRealAdapter(
             client, properties, new RedactionPolicyService(new DataClassificationService()));
 
-    var repository = adapter.getRepositoryByRef(repoRef);
+    var repository = adapter.getRepositoryByRef(RepositoryRef.of(repoRef));
 
     assertThat(repository).isPresent();
-    assertThat(repository.get().repoRef()).isEqualTo(repoRef);
+    assertThat(repository.get().repoRef().value()).isEqualTo(repoRef);
   }
 }

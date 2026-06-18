@@ -11,10 +11,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.dradgo.application.integration.IntegrationLink;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.RunnerSecretsService;
@@ -27,6 +25,10 @@ import org.dradgo.application.runner.workspace.spi.RepoTreeEntry;
 import org.dradgo.application.workflow.WorkflowProperties;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.RunnerStage;
@@ -48,15 +50,15 @@ import org.springframework.stereotype.Service;
  * runIdShort}, not the stage, so the convention is stage-agnostic).
  *
  * <p>Boundary (AC13/Trap T1): collaborators are the {@link GitCommandPort} SPI, the {@link
- * GitHubAdapter} port (read-only here), {@link RunnerSecretsService}, {@link RunnerWorkspaceStore},
- * {@link IntegrationLinkRecordPort}, and {@link WorkflowProperties} — never {@code
- * org.dradgo.adapters..} or a git-library type. Pinned by the {@code
+ * RepositoryHostAdapter} port (read-only here), {@link RunnerSecretsService}, {@link
+ * RunnerWorkspaceStore}, {@link IntegrationLinkRecordPort}, and {@link WorkflowProperties} — never
+ * {@code org.dradgo.adapters..} or a git-library type. Pinned by the {@code
  * REPOSITORY_WORKSPACE_SERVICE_SCOPE} ArchUnit rule.
  *
  * <p>Bean-gated on {@code github-mock}/{@code github-real} — exactly the profiles under which a
- * {@link GitHubAdapter} bean exists ({@code GitHubMockAdapter}/{@code GitHubRealAdapter} carry the
- * same profiles). In any other context (e.g. a lean {@code @SpringBootTest} contract on {@code
- * [test, linear-mock]}) the bean is absent, the broker/adapter {@code
+ * {@link RepositoryHostAdapter} bean exists ({@code GitHubMockAdapter}/{@code GitHubRealAdapter}
+ * carry the same profiles). In any other context (e.g. a lean {@code @SpringBootTest} contract on
+ * {@code [test, linear-mock]}) the bean is absent, the broker/adapter {@code
  * ObjectProvider<RepositoryWorkspaceService>} resolves to null, and the repository seam stays
  * dormant (Decision D0). The service-level tests construct it directly via {@code new}, so the
  * profile gate does not affect them.
@@ -98,9 +100,14 @@ public class RepositoryWorkspaceService {
   static final String CONFIG_TICKET_SUMMARY = "deliveryline.ticketSummary";
   static final String CONFIG_RUN_ID = "deliveryline.workflowRunId";
   static final String CONFIG_STAGE = "deliveryline.stage";
+  // Story 3.33 (OQ-2) — the resolved repository default branch, stamped at prepare time so the
+  // capture-time PR-create can thread it as the explicit createPullRequest targetBranch (D6
+  // restart-robust: derived from the on-disk repo, not re-fetched). A blank/absent marker makes the
+  // host adapter fall back to its internally-resolved default branch (legacy behavior preserved).
+  static final String CONFIG_DEFAULT_BRANCH = "deliveryline.defaultBranch";
 
   private final GitCommandPort git;
-  private final GitHubAdapter gitHubAdapter;
+  private final RepositoryHostAdapter repositoryHostAdapter;
   private final RunnerSecretsService runnerSecretsService;
   private final RunnerWorkspaceStore workspaceStore;
   private final RunnerExecutionRecordPort recordPort;
@@ -111,7 +118,7 @@ public class RepositoryWorkspaceService {
   @org.springframework.beans.factory.annotation.Autowired
   public RepositoryWorkspaceService(
       GitCommandPort git,
-      GitHubAdapter gitHubAdapter,
+      RepositoryHostAdapter repositoryHostAdapter,
       RunnerSecretsService runnerSecretsService,
       RunnerWorkspaceStore workspaceStore,
       RunnerExecutionRecordPort recordPort,
@@ -119,7 +126,7 @@ public class RepositoryWorkspaceService {
       WorkflowProperties workflowProperties) {
     this(
         git,
-        gitHubAdapter,
+        repositoryHostAdapter,
         runnerSecretsService,
         workspaceStore,
         recordPort,
@@ -130,7 +137,7 @@ public class RepositoryWorkspaceService {
 
   public RepositoryWorkspaceService(
       GitCommandPort git,
-      GitHubAdapter gitHubAdapter,
+      RepositoryHostAdapter repositoryHostAdapter,
       RunnerSecretsService runnerSecretsService,
       RunnerWorkspaceStore workspaceStore,
       RunnerExecutionRecordPort recordPort,
@@ -138,7 +145,8 @@ public class RepositoryWorkspaceService {
       WorkflowProperties workflowProperties,
       Clock clock) {
     this.git = Objects.requireNonNull(git, "git");
-    this.gitHubAdapter = Objects.requireNonNull(gitHubAdapter, "gitHubAdapter");
+    this.repositoryHostAdapter =
+        Objects.requireNonNull(repositoryHostAdapter, "repositoryHostAdapter");
     this.runnerSecretsService =
         Objects.requireNonNull(runnerSecretsService, "runnerSecretsService");
     this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
@@ -177,7 +185,7 @@ public class RepositoryWorkspaceService {
           repositoryRef);
 
       // AC9 guard FIRST — resolve the repo and reconcile against any existing github_pr link.
-      GitHubRepository repository = resolveRepositoryOrMismatch(workflowRunId, repositoryRef);
+      Repository repository = resolveRepositoryOrMismatch(workflowRunId, repositoryRef);
       assertNoConflictingRepoLink(workflowRunId, repositoryRef);
 
       String token = runnerSecretsService.resolveHostSecret(GITHUB_TOKEN_ENV).orElse(null);
@@ -211,6 +219,9 @@ public class RepositoryWorkspaceService {
           repoDir, CONFIG_TICKET_SUMMARY, linearTicketSummary == null ? "" : linearTicketSummary);
       git.setLocalConfig(repoDir, CONFIG_RUN_ID, workflowRunId == null ? "" : workflowRunId);
       git.setLocalConfig(repoDir, CONFIG_STAGE, stage.value());
+      // Story 3.33 — stamp the resolved default branch for capture-time createPullRequest
+      // targeting.
+      git.setLocalConfig(repoDir, CONFIG_DEFAULT_BRANCH, repository.defaultBranch());
 
       log.info(
           "prepareWorkspace ok workflowRunId={} runnerExecutionId={} branch={} branchOutcome={} defaultBranch={}",
@@ -271,6 +282,7 @@ public class RepositoryWorkspaceService {
       String ticketRef = git.getLocalConfig(repoDir, CONFIG_TICKET_REF).orElse(null);
       String ticketSummary = git.getLocalConfig(repoDir, CONFIG_TICKET_SUMMARY).orElse(null);
       String stage = git.getLocalConfig(repoDir, CONFIG_STAGE).orElse(snapshot.stage().value());
+      String defaultBranch = git.getLocalConfig(repoDir, CONFIG_DEFAULT_BRANCH).orElse(null);
       String token = runnerSecretsService.resolveHostSecret(GITHUB_TOKEN_ENV).orElse(null);
 
       boolean committed = false;
@@ -295,7 +307,14 @@ public class RepositoryWorkspaceService {
 
       String prRef =
           createOrUpdatePullRequest(
-              workflowRunId, repoRef, branch, ticketRef, ticketSummary, stage, push.commitSha());
+              workflowRunId,
+              repoRef,
+              branch,
+              defaultBranch,
+              ticketRef,
+              ticketSummary,
+              stage,
+              push.commitSha());
 
       log.info(
           "captureAndPush ok workflowRunId={} runnerExecutionId={} branch={} commitSha={} committed={} prRef={}",
@@ -441,11 +460,11 @@ public class RepositoryWorkspaceService {
   // AC9 guard helpers
   // =====================================================================
 
-  private GitHubRepository resolveRepositoryOrMismatch(String workflowRunId, String repositoryRef) {
-    Optional<GitHubRepository> repo;
+  private Repository resolveRepositoryOrMismatch(String workflowRunId, String repositoryRef) {
+    Optional<Repository> repo;
     try {
-      repo = gitHubAdapter.getRepositoryByRef(repositoryRef);
-    } catch (GitHubAdapterException adapterError) {
+      repo = repositoryHostAdapter.getRepositoryByRef(RepositoryRef.of(repositoryRef));
+    } catch (RepositoryHostAdapterException adapterError) {
       throw repoMismatch(
           workflowRunId,
           repositoryRef,
@@ -466,18 +485,18 @@ public class RepositoryWorkspaceService {
       return;
     }
     String prRef = existing.get().externalRef();
-    Optional<GitHubPullRequest> pr;
+    Optional<PullRequest> pr;
     try {
-      pr = gitHubAdapter.getPullRequestByRef(prRef);
-    } catch (GitHubAdapterException adapterError) {
+      pr = repositoryHostAdapter.getPullRequestByRef(PullRequestRef.of(prRef));
+    } catch (RepositoryHostAdapterException adapterError) {
       // A linked PR we can no longer resolve is itself a reconciliation failure.
       throw repoMismatch(workflowRunId, repositoryRef, "linked PR unresolvable");
     }
-    if (pr.isPresent() && !repositoryRef.equals(pr.get().repoRef())) {
+    if (pr.isPresent() && !repositoryRef.equals(pr.get().repoRef().value())) {
       throw repoMismatch(
           workflowRunId,
           repositoryRef,
-          "run already linked to repo " + pr.get().repoRef() + " via PR " + prRef);
+          "run already linked to repo " + pr.get().repoRef().value() + " via PR " + prRef);
     }
     if (pr.isEmpty()) {
       throw repoMismatch(workflowRunId, repositoryRef, "linked PR does not resolve");
@@ -503,6 +522,7 @@ public class RepositoryWorkspaceService {
       String workflowRunId,
       String repoRef,
       String branch,
+      String targetBranch,
       String ticketRef,
       String ticketSummary,
       String stage,
@@ -526,22 +546,29 @@ public class RepositoryWorkspaceService {
     if (existing.isPresent()
         && GITHUB_PR_INTEGRATION_TYPE.equals(existing.get().integrationType())) {
       try {
-        GitHubPullRequest updated =
-            gitHubAdapter.updatePullRequest(existing.get().externalRef(), body);
+        PullRequest updated =
+            repositoryHostAdapter.updatePullRequest(
+                PullRequestRef.of(existing.get().externalRef()), body);
         log.info(
-            "captureAndPush PR updated workflowRunId={} prRef={}", workflowRunId, updated.prRef());
-        return updated.prRef();
-      } catch (GitHubAdapterException adapterFailure) {
+            "captureAndPush PR updated workflowRunId={} prRef={}",
+            workflowRunId,
+            updated.prRef().value());
+        return updated.prRef().value();
+      } catch (RepositoryHostAdapterException adapterFailure) {
         throw mapGitHubFailure("updatePullRequest", adapterFailure);
       }
     }
     String title = pullRequestTitle(ticketRef, ticketSummary);
     try {
-      GitHubPullRequest created = gitHubAdapter.createPullRequest(repoRef, branch, title, body);
+      PullRequest created =
+          repositoryHostAdapter.createPullRequest(
+              RepositoryRef.of(repoRef), branch, targetBranch, title, body);
       log.info(
-          "captureAndPush PR created workflowRunId={} prRef={}", workflowRunId, created.prRef());
-      return created.prRef();
-    } catch (GitHubAdapterException adapterFailure) {
+          "captureAndPush PR created workflowRunId={} prRef={}",
+          workflowRunId,
+          created.prRef().value());
+      return created.prRef().value();
+    } catch (RepositoryHostAdapterException adapterFailure) {
       throw mapGitHubFailure("createPullRequest", adapterFailure);
     }
   }
@@ -636,7 +663,7 @@ public class RepositoryWorkspaceService {
   }
 
   private static GitCommandException mapGitHubFailure(
-      String op, GitHubAdapterException adapterFailure) {
+      String op, RepositoryHostAdapterException adapterFailure) {
     return new GitCommandException(
         switch (adapterFailure.failureCategory()) {
           case GITHUB_AUTH_FAILED, GITHUB_PERMISSION_DENIED ->

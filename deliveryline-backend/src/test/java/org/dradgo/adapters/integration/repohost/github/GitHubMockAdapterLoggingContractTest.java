@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -7,6 +7,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.util.List;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,7 +50,8 @@ class GitHubMockAdapterLoggingContractTest {
             null,
             IntegrationFailureCategory.GITHUB_RATE_LIMITED));
     try {
-      adapter.commentOnPullRequest(GitHubMockScenarioRegistry.REF_PR_RATE_LIMITED, "body");
+      adapter.commentOnPullRequest(
+          PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_RATE_LIMITED), "body");
     } catch (RuntimeException expected) {
       // expected — we only care about the emitted log line.
     }
@@ -64,18 +67,28 @@ class GitHubMockAdapterLoggingContractTest {
             GitHubMockScenario.Behaviour.CONFLICT,
             null,
             null));
-    adapter.getPullRequestByRef(GitHubMockScenarioRegistry.REF_PR_CONFLICT);
+    adapter.getPullRequestByRef(PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_CONFLICT));
     assertContainsLogAt(Level.WARN, "resolution=conflict");
   }
 
   @Test
   void idempotencyReplayBranchesLogWarnAndNeverLogBodyContent() {
     adapter.createPullRequest(
-        GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK, "feature/x", "title", SECRET_BODY);
+        RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
+        "feature/x",
+        null,
+        "title",
+        SECRET_BODY);
     adapter.createPullRequest(
-        GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK, "feature/x", "title", SECRET_BODY);
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, SECRET_BODY);
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, SECRET_BODY);
+        RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
+        "feature/x",
+        null,
+        "title",
+        SECRET_BODY);
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), SECRET_BODY);
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), SECRET_BODY);
 
     assertContainsLogAt(Level.WARN, "create_pull_request");
     assertContainsLogAt(Level.WARN, "comment_on_pull_request");
@@ -90,7 +103,7 @@ class GitHubMockAdapterLoggingContractTest {
   @Test
   void updatePullRequestNotFoundLogsWarn() {
     try {
-      adapter.updatePullRequest("PR-NEVER-SEEDED", "body");
+      adapter.updatePullRequest(PullRequestRef.of("PR-NEVER-SEEDED"), "body");
     } catch (RuntimeException expected) {
       // expected — we only care about the emitted log line.
     }

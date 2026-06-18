@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -9,9 +9,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import org.dradgo.application.integration.github.GitHubBranch;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.Repository;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,10 +24,10 @@ import org.springframework.stereotype.Component;
  * tests may register adversarial / conflict scenarios via {@link #register(GitHubMockScenario)}
  * (cleanup with {@link #clearTestScenarios()}). Mirrors {@code LinearMockScenarioRegistry}.
  *
- * <p>The three happy fixtures (AC3) are loaded eagerly at construction into per-entity indexes so
- * the adapter can resolve repositories by {@code repoRef}, PRs by {@code prRef}, and branches by
- * {@code (repoRef, name)}. Profile-activated by {@code github-mock} so the bean only loads when the
- * mock GitHub stack is wired.
+ * <p>The three happy fixtures (story 3.13 AC3) are loaded eagerly at construction into per-entity
+ * indexes so the adapter can resolve repositories by {@code repoRef}, PRs by {@code prRef}, and
+ * branches by {@code (repoRef, name)}. Profile-activated by {@code github-mock} so the bean only
+ * loads when the mock GitHub stack is wired.
  *
  * <p>Determinism note: fixture JSON files contain absolute {@code createdAt} instants and stable
  * SHAs/IDs — no wall-clock arithmetic happens inside the registry.
@@ -43,7 +43,7 @@ public class GitHubMockScenarioRegistry {
   private static final String BRANCH_KEY_SEPARATOR = "\u0000";
 
   /**
-   * Stable repository references for the three production fixtures (AC3, aligned to
+   * Stable repository references for the three production fixtures (story 3.13 AC3, aligned to
    * LIN-101/102/103).
    */
   public static final String REPO_FEATURE_LOW_RISK = "GH-101";
@@ -81,11 +81,9 @@ public class GitHubMockScenarioRegistry {
   public static final String CONFLICT_PR_REPO_REF = "GH-999-unrelated";
 
   private final ConcurrentMap<String, GitHubMockScenario> scenarios = new ConcurrentHashMap<>();
-  private final ConcurrentMap<String, GitHubRepository> repositoriesByRef =
-      new ConcurrentHashMap<>();
-  private final ConcurrentMap<String, GitHubPullRequest> pullRequestsByRef =
-      new ConcurrentHashMap<>();
-  private final ConcurrentMap<String, GitHubBranch> branchesByKey = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, Repository> repositoriesByRef = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, PullRequest> pullRequestsByRef = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, Branch> branchesByKey = new ConcurrentHashMap<>();
   private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
   public GitHubMockScenarioRegistry() {
@@ -120,14 +118,14 @@ public class GitHubMockScenarioRegistry {
     GitHubMockScenario scenario =
         registerDefault(repoRef, GitHubMockScenario.Behaviour.HAPPY, resource, null);
     GitHubFixture fixture = loadHappyFixture(scenario);
-    repositoriesByRef.put(fixture.repository().repoRef(), fixture.repository());
-    pullRequestsByRef.put(fixture.pullRequest().prRef(), fixture.pullRequest());
+    repositoriesByRef.put(fixture.repository().repoRef().value(), fixture.repository());
+    pullRequestsByRef.put(fixture.pullRequest().prRef().value(), fixture.pullRequest());
     branchesByKey.put(
-        branchKey(fixture.branch().repoRef(), fixture.branch().name()), fixture.branch());
+        branchKey(fixture.branch().repoRef().value(), fixture.branch().name()), fixture.branch());
     log.debug(
         "github_mock fixture_loaded repoRef={} prRef={} branch={}",
-        fixture.repository().repoRef(),
-        fixture.pullRequest().prRef(),
+        fixture.repository().repoRef().value(),
+        fixture.pullRequest().prRef().value(),
         fixture.branch().name());
   }
 
@@ -155,15 +153,15 @@ public class GitHubMockScenarioRegistry {
     return Collections.unmodifiableMap(Map.copyOf(scenarios));
   }
 
-  public Optional<GitHubRepository> findRepository(String repoRef) {
+  public Optional<Repository> findRepository(String repoRef) {
     return Optional.ofNullable(repositoriesByRef.get(repoRef));
   }
 
-  public Optional<GitHubPullRequest> findPullRequest(String prRef) {
+  public Optional<PullRequest> findPullRequest(String prRef) {
     return Optional.ofNullable(pullRequestsByRef.get(prRef));
   }
 
-  public Optional<GitHubBranch> findBranch(String repoRef, String branchName) {
+  public Optional<Branch> findBranch(String repoRef, String branchName) {
     return Optional.ofNullable(branchesByKey.get(branchKey(repoRef, branchName)));
   }
 

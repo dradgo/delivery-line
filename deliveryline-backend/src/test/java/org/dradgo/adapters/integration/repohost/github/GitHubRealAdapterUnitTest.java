@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -16,13 +16,15 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import java.net.SocketTimeoutException;
 import java.util.Optional;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubBranch;
 import org.dradgo.application.integration.github.GitHubProperties;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,10 +97,10 @@ class GitHubRealAdapterUnitTest {
         .andExpect(header("Accept", "application/vnd.github+json"))
         .andRespond(withSuccess(REPO_JSON, MediaType.APPLICATION_JSON));
 
-    Optional<GitHubRepository> repo = adapter.getRepositoryByRef("octo/hello");
+    Optional<Repository> repo = adapter.getRepositoryByRef(RepositoryRef.of("octo/hello"));
 
     assertTrue(repo.isPresent());
-    assertEquals("octo/hello", repo.get().repoRef());
+    assertEquals("octo/hello", repo.get().repoRef().value());
     assertEquals("octo/hello", repo.get().fullName());
     assertEquals("main", repo.get().defaultBranch());
     mockServer.verify();
@@ -110,7 +112,7 @@ class GitHubRealAdapterUnitTest {
         .expect(requestTo(BASE_URL + "/repos/octo/missing"))
         .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
-    assertTrue(adapter.getRepositoryByRef("octo/missing").isEmpty());
+    assertTrue(adapter.getRepositoryByRef(RepositoryRef.of("octo/missing")).isEmpty());
     mockServer.verify();
   }
 
@@ -121,11 +123,11 @@ class GitHubRealAdapterUnitTest {
         .andExpect(method(HttpMethod.GET))
         .andRespond(withSuccess(PR_JSON, MediaType.APPLICATION_JSON));
 
-    Optional<GitHubPullRequest> pr = adapter.getPullRequestByRef("octo/hello#7");
+    Optional<PullRequest> pr = adapter.getPullRequestByRef(PullRequestRef.of("octo/hello#7"));
 
     assertTrue(pr.isPresent());
-    assertEquals("octo/hello#7", pr.get().prRef());
-    assertEquals("octo/hello", pr.get().repoRef());
+    assertEquals("octo/hello#7", pr.get().prRef().value());
+    assertEquals("octo/hello", pr.get().repoRef().value());
     assertEquals(7, pr.get().number());
     assertEquals("feature/x", pr.get().sourceBranch());
     assertEquals("open", pr.get().state());
@@ -140,7 +142,7 @@ class GitHubRealAdapterUnitTest {
             withSuccess(
                 "{\"name\":\"main\",\"commit\":{\"sha\":\"abc123\"}}", MediaType.APPLICATION_JSON));
 
-    Optional<GitHubBranch> branch = adapter.getBranchByRef("octo/hello", "main");
+    Optional<Branch> branch = adapter.getBranchByRef(RepositoryRef.of("octo/hello"), "main");
 
     assertTrue(branch.isPresent());
     assertEquals("main", branch.get().name());
@@ -157,7 +159,7 @@ class GitHubRealAdapterUnitTest {
                 "{\"name\":\"feature/x\",\"commit\":{\"sha\":\"abc123\"}}",
                 MediaType.APPLICATION_JSON));
 
-    Optional<GitHubBranch> branch = adapter.getBranchByRef("octo/hello", "feature/x");
+    Optional<Branch> branch = adapter.getBranchByRef(RepositoryRef.of("octo/hello"), "feature/x");
 
     assertTrue(branch.isPresent());
     assertEquals("feature/x", branch.get().name());
@@ -168,7 +170,7 @@ class GitHubRealAdapterUnitTest {
   void repoRefWithUriMetacharactersIsClassifiedWithoutNetwork() {
     assertCategory(
         IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND,
-        () -> adapter.getRepositoryByRef("octo/hello?x=1"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello?x=1")));
     mockServer.verify();
   }
 
@@ -178,7 +180,7 @@ class GitHubRealAdapterUnitTest {
         .expect(requestTo(BASE_URL + "/repos/octo/hello/pulls/999"))
         .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
-    assertTrue(adapter.getPullRequestByRef("octo/hello#999").isEmpty());
+    assertTrue(adapter.getPullRequestByRef(PullRequestRef.of("octo/hello#999")).isEmpty());
     mockServer.verify();
   }
 
@@ -189,7 +191,7 @@ class GitHubRealAdapterUnitTest {
     expectRepoGet(withStatus(HttpStatus.UNAUTHORIZED));
     assertCategory(
         IntegrationFailureCategory.GITHUB_AUTH_FAILED,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   @Test
@@ -197,7 +199,7 @@ class GitHubRealAdapterUnitTest {
     expectRepoGet(withStatus(HttpStatus.FORBIDDEN).header("X-RateLimit-Remaining", "50"));
     assertCategory(
         IntegrationFailureCategory.GITHUB_PERMISSION_DENIED,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   @Test
@@ -208,7 +210,7 @@ class GitHubRealAdapterUnitTest {
             .header("X-RateLimit-Reset", "1700000000"));
     assertCategory(
         IntegrationFailureCategory.GITHUB_RATE_LIMITED,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   @Test
@@ -216,7 +218,7 @@ class GitHubRealAdapterUnitTest {
     expectRepoGet(withStatus(HttpStatus.TOO_MANY_REQUESTS));
     assertCategory(
         IntegrationFailureCategory.GITHUB_RATE_LIMITED,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   @Test
@@ -227,7 +229,9 @@ class GitHubRealAdapterUnitTest {
         .andRespond(withStatus(HttpStatus.NOT_FOUND));
     assertCategory(
         IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND,
-        () -> adapter.createPullRequest("octo/missing", "feature/x", "t", "b"));
+        () ->
+            adapter.createPullRequest(
+                RepositoryRef.of("octo/missing"), "feature/x", null, "t", "b"));
   }
 
   @Test
@@ -235,7 +239,7 @@ class GitHubRealAdapterUnitTest {
     expectRepoGet(withStatus(HttpStatus.UNSUPPORTED_MEDIA_TYPE));
     assertCategory(
         IntegrationFailureCategory.GITHUB_API_VERSION_INCOMPATIBLE,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   @Test
@@ -254,7 +258,9 @@ class GitHubRealAdapterUnitTest {
 
     assertCategory(
         IntegrationFailureCategory.GITHUB_BRANCH_PROTECTED,
-        () -> adapter.createPullRequest("octo/hello", "feature/x", "title", "body"));
+        () ->
+            adapter.createPullRequest(
+                RepositoryRef.of("octo/hello"), "feature/x", null, "title", "body"));
   }
 
   @Test
@@ -262,7 +268,7 @@ class GitHubRealAdapterUnitTest {
     expectRepoGet(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
     assertCategory(
         IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   @Test
@@ -270,7 +276,7 @@ class GitHubRealAdapterUnitTest {
     expectRepoGet(withException(new SocketTimeoutException("read timed out")));
     assertCategory(
         IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
-        () -> adapter.getRepositoryByRef("octo/hello"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
   }
 
   // -------- Rate-limit awareness (AC5) ---------------------------------------------------------
@@ -284,7 +290,7 @@ class GitHubRealAdapterUnitTest {
                 .header("X-RateLimit-Remaining", "50")
                 .header("X-RateLimit-Reset", "1700000000"));
 
-    Optional<GitHubRepository> repo = adapter.getRepositoryByRef("octo/hello");
+    Optional<Repository> repo = adapter.getRepositoryByRef(RepositoryRef.of("octo/hello"));
 
     assertTrue(repo.isPresent(), "below-threshold remaining is WARN-only — the call still returns");
     mockServer.verify();
@@ -299,8 +305,10 @@ class GitHubRealAdapterUnitTest {
                 .header("X-RateLimit-Remaining", "0")
                 .header("X-RateLimit-Reset", "1700000000"));
 
-    GitHubAdapterException error =
-        assertThrows(GitHubAdapterException.class, () -> adapter.getRepositoryByRef("octo/hello"));
+    RepositoryHostAdapterException error =
+        assertThrows(
+            RepositoryHostAdapterException.class,
+            () -> adapter.getRepositoryByRef(RepositoryRef.of("octo/hello")));
     assertEquals(IntegrationFailureCategory.GITHUB_RATE_LIMITED, error.failureCategory());
     assertEquals("1700000000", error.details().get("resetAtSeconds"));
     mockServer.verify();
@@ -318,7 +326,8 @@ class GitHubRealAdapterUnitTest {
         .andExpect(content().string(containsString("[REDACTED_GITHUB_TOKEN]")))
         .andRespond(withSuccess("{\"id\":123}", MediaType.APPLICATION_JSON));
 
-    adapter.commentOnPullRequest("octo/hello#7", "Run summary with token " + secret);
+    adapter.commentOnPullRequest(
+        PullRequestRef.of("octo/hello#7"), "Run summary with token " + secret);
 
     mockServer.verify();
   }
@@ -340,7 +349,8 @@ class GitHubRealAdapterUnitTest {
         .andExpect(content().string(containsString("[REDACTED_GITHUB_TOKEN]")))
         .andRespond(withSuccess(PR_JSON, MediaType.APPLICATION_JSON));
 
-    adapter.createPullRequest("octo/hello", "feature/x", "title " + secret, "body " + secret);
+    adapter.createPullRequest(
+        RepositoryRef.of("octo/hello"), "feature/x", null, "title " + secret, "body " + secret);
 
     mockServer.verify();
   }
@@ -355,7 +365,7 @@ class GitHubRealAdapterUnitTest {
         .andExpect(content().string(containsString("[REDACTED_GITHUB_TOKEN]")))
         .andRespond(withSuccess(PR_JSON, MediaType.APPLICATION_JSON));
 
-    adapter.updatePullRequest("octo/hello#7", "new body " + secret);
+    adapter.updatePullRequest(PullRequestRef.of("octo/hello#7"), "new body " + secret);
 
     mockServer.verify();
   }
@@ -373,9 +383,11 @@ class GitHubRealAdapterUnitTest {
         .andRespond(withSuccess("[" + PR_JSON + "]", MediaType.APPLICATION_JSON));
     // No POST expectation — an unexpected POST would fail mockServer.verify().
 
-    GitHubPullRequest pr = adapter.createPullRequest("octo/hello", "feature/x", "title", "body");
+    PullRequest pr =
+        adapter.createPullRequest(
+            RepositoryRef.of("octo/hello"), "feature/x", null, "title", "body");
 
-    assertEquals("octo/hello#7", pr.prRef());
+    assertEquals("octo/hello#7", pr.prRef().value());
     assertEquals(7, pr.number());
     mockServer.verify();
   }
@@ -397,9 +409,11 @@ class GitHubRealAdapterUnitTest {
         .andExpect(content().string(containsString("\"head\":\"feature/x\"")))
         .andRespond(withSuccess(PR_JSON, MediaType.APPLICATION_JSON));
 
-    GitHubPullRequest pr = adapter.createPullRequest("octo/hello", "feature/x", "title", "body");
+    PullRequest pr =
+        adapter.createPullRequest(
+            RepositoryRef.of("octo/hello"), "feature/x", null, "title", "body");
 
-    assertEquals("octo/hello#7", pr.prRef());
+    assertEquals("octo/hello#7", pr.prRef().value());
     mockServer.verify();
   }
 
@@ -412,9 +426,9 @@ class GitHubRealAdapterUnitTest {
         .andExpect(method(HttpMethod.PATCH))
         .andRespond(withSuccess(PR_JSON, MediaType.APPLICATION_JSON));
 
-    GitHubPullRequest pr = adapter.updatePullRequest("octo/hello#7", "new body");
+    PullRequest pr = adapter.updatePullRequest(PullRequestRef.of("octo/hello#7"), "new body");
 
-    assertEquals("octo/hello#7", pr.prRef());
+    assertEquals("octo/hello#7", pr.prRef().value());
     mockServer.verify();
   }
 
@@ -422,7 +436,9 @@ class GitHubRealAdapterUnitTest {
   void oversizedPullRequestNumberThrowsClassifiedExceptionWithoutNetwork() {
     assertCategory(
         IntegrationFailureCategory.GITHUB_PR_NOT_FOUND,
-        () -> adapter.updatePullRequest("octo/hello#999999999999999999999999999999", "body"));
+        () ->
+            adapter.updatePullRequest(
+                PullRequestRef.of("octo/hello#999999999999999999999999999999"), "body"));
     mockServer.verify();
   }
 
@@ -435,14 +451,14 @@ class GitHubRealAdapterUnitTest {
 
     assertCategory(
         IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
-        () -> adapter.updatePullRequest("octo/hello#7", "body"));
+        () -> adapter.updatePullRequest(PullRequestRef.of("octo/hello#7"), "body"));
   }
 
   @Test
   void malformedRepoRefThrowsClassifiedWithoutNetwork() {
     assertCategory(
         IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND,
-        () -> adapter.getRepositoryByRef("not-a-valid-ref"));
+        () -> adapter.getRepositoryByRef(RepositoryRef.of("not-a-valid-ref")));
     // No expectation registered + no call made — implicit "no network" assertion.
     mockServer.verify();
   }
@@ -455,7 +471,8 @@ class GitHubRealAdapterUnitTest {
   }
 
   private void assertCategory(IntegrationFailureCategory expected, Runnable call) {
-    GitHubAdapterException error = assertThrows(GitHubAdapterException.class, call::run);
+    RepositoryHostAdapterException error =
+        assertThrows(RepositoryHostAdapterException.class, call::run);
     assertEquals(expected, error.failureCategory());
     mockServer.verify();
   }

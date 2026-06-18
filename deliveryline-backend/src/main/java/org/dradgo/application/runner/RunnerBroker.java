@@ -1872,7 +1872,7 @@ public class RunnerBroker {
       // defense-in-depth). The idempotency key is supplied for signature fidelity — idempotency
       // comes from the same-run/same-ref no-op plus the V6 unique index.
       String idempotencyKey = "linkGitHubPr:" + workflowRunId + ":" + actual.prRef();
-      linkService.linkGitHubPr(
+      linkService.linkPullRequest(
           workflowRunId,
           actual.prRef(),
           null,

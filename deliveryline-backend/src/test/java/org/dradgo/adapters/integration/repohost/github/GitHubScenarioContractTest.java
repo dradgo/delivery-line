@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,7 +73,7 @@ class GitHubScenarioContractTest {
       GitHubFixture fixture = registry.loadHappyFixture(scenario);
       assertEquals(
           scenario.ref(),
-          fixture.repository().repoRef(),
+          fixture.repository().repoRef().value(),
           () -> "fixture repoRef must match registry key for " + scenario.ref());
       assertFalse(fixture.repository().fullName().isBlank());
       assertFalse(fixture.repository().defaultBranch().isBlank());

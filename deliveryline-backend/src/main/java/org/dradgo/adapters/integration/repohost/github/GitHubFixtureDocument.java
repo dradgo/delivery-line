@@ -1,21 +1,25 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
-import org.dradgo.application.integration.github.GitHubBranch;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 
 /**
  * Wire-form of a GitHub mock fixture JSON file (kept project-internal — not shared with the runner
- * contracts module). Bundles a repository, its single open PR, and the PR's source branch (AC3).
- * Conforms to {@code schemas/github-fixture-mock.v1.schema.json}.
+ * contracts module). Bundles a repository, its single open PR, and the PR's source branch (story
+ * 3.13 AC3). Conforms to {@code schemas/github-fixture-mock.v1.schema.json}.
  *
- * <p>Adapter-only translation type: not exposed through the {@link GitHubRepository}/{@link
- * GitHubPullRequest}/{@link GitHubBranch} port surface. Mirrors {@code LinearTicketFixtureDocument}
- * ({@code @JsonCreator}, ISO-8601 parsing).
+ * <p>Adapter-only translation type: not exposed through the {@link Repository}/{@link
+ * PullRequest}/{@link Branch} port surface. Mirrors {@code LinearTicketFixtureDocument}
+ * ({@code @JsonCreator}, ISO-8601 parsing). The JSON keeps the {@code repoRef}/{@code prRef} string
+ * fields; they are wrapped into the neutral {@link RepositoryRef}/{@link PullRequestRef} value
+ * records here (story 3.33).
  */
 final class GitHubFixtureDocument {
 
@@ -59,8 +63,8 @@ final class GitHubFixtureDocument {
       this.url = url;
     }
 
-    GitHubRepository toDomain() {
-      return new GitHubRepository(repoRef, fullName, defaultBranch, url);
+    Repository toDomain() {
+      return new Repository(RepositoryRef.of(repoRef), fullName, defaultBranch, url);
     }
   }
 
@@ -91,9 +95,15 @@ final class GitHubFixtureDocument {
       this.createdAt = createdAt;
     }
 
-    GitHubPullRequest toDomain() {
-      return new GitHubPullRequest(
-          prRef, repoRef, number, sourceBranch, state, url, parseInstant("createdAt", createdAt));
+    PullRequest toDomain() {
+      return new PullRequest(
+          PullRequestRef.of(prRef),
+          RepositoryRef.of(repoRef),
+          number,
+          sourceBranch,
+          state,
+          url,
+          parseInstant("createdAt", createdAt));
     }
   }
 
@@ -112,8 +122,8 @@ final class GitHubFixtureDocument {
       this.headSha = headSha;
     }
 
-    GitHubBranch toDomain() {
-      return new GitHubBranch(repoRef, name, headSha);
+    Branch toDomain() {
+      return new Branch(RepositoryRef.of(repoRef), name, headSha);
     }
   }
 

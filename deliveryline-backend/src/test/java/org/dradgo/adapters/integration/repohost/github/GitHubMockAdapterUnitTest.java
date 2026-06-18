@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -7,10 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Optional;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubBranch;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,9 +44,9 @@ class GitHubMockAdapterUnitTest {
 
   @Test
   void getBranchReturnsTheSourceBranchPerRepo() {
-    Optional<GitHubBranch> branch =
+    Optional<Branch> branch =
         adapter.getBranchByRef(
-            GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK,
+            RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
             GitHubMockScenarioRegistry.BRANCH_FEATURE_LOW_RISK);
     assertTrue(branch.isPresent(), "GH-101's source branch must resolve from the fixture");
     assertEquals(GitHubMockScenarioRegistry.BRANCH_FEATURE_LOW_RISK, branch.get().name());
@@ -53,22 +55,26 @@ class GitHubMockAdapterUnitTest {
     assertTrue(
         adapter
             .getBranchByRef(
-                GitHubMockScenarioRegistry.REPO_BUG_FIX, GitHubMockScenarioRegistry.BRANCH_BUG_FIX)
+                RepositoryRef.of(GitHubMockScenarioRegistry.REPO_BUG_FIX),
+                GitHubMockScenarioRegistry.BRANCH_BUG_FIX)
             .isPresent());
     assertTrue(
         adapter
             .getBranchByRef(
-                GitHubMockScenarioRegistry.REPO_DOCS, GitHubMockScenarioRegistry.BRANCH_DOCS)
+                RepositoryRef.of(GitHubMockScenarioRegistry.REPO_DOCS),
+                GitHubMockScenarioRegistry.BRANCH_DOCS)
             .isPresent());
   }
 
   @Test
   void lookupsReturnEmptyForUnregisteredRefs() {
-    assertTrue(adapter.getRepositoryByRef("GH-UNKNOWN-999").isEmpty());
-    assertTrue(adapter.getPullRequestByRef("PR-UNKNOWN-999").isEmpty());
+    assertTrue(adapter.getRepositoryByRef(RepositoryRef.of("GH-UNKNOWN-999")).isEmpty());
+    assertTrue(adapter.getPullRequestByRef(PullRequestRef.of("PR-UNKNOWN-999")).isEmpty());
     assertTrue(
         adapter
-            .getBranchByRef(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK, "no/such-branch")
+            .getBranchByRef(
+                RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
+                "no/such-branch")
             .isEmpty());
   }
 
@@ -78,49 +84,54 @@ class GitHubMockAdapterUnitTest {
     assertTrue(
         adapter
             .getBranchByRef(
-                GitHubMockScenarioRegistry.REPO_BUG_FIX,
+                RepositoryRef.of(GitHubMockScenarioRegistry.REPO_BUG_FIX),
                 GitHubMockScenarioRegistry.BRANCH_FEATURE_LOW_RISK)
             .isEmpty());
   }
 
   @Test
   void repoNotFoundRefThrowsClassifiedException() {
-    GitHubAdapterException error =
+    RepositoryHostAdapterException error =
         assertThrows(
-            GitHubAdapterException.class,
-            () -> adapter.getRepositoryByRef(GitHubMockScenarioRegistry.REF_REPO_NOT_FOUND));
+            RepositoryHostAdapterException.class,
+            () ->
+                adapter.getRepositoryByRef(
+                    RepositoryRef.of(GitHubMockScenarioRegistry.REF_REPO_NOT_FOUND)));
     assertEquals(IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND, error.failureCategory());
   }
 
   @Test
   void permissionDeniedRefThrowsClassifiedException() {
-    GitHubAdapterException error =
+    RepositoryHostAdapterException error =
         assertThrows(
-            GitHubAdapterException.class,
-            () -> adapter.getPullRequestByRef(GitHubMockScenarioRegistry.REF_PR_PERMISSION_DENIED));
+            RepositoryHostAdapterException.class,
+            () ->
+                adapter.getPullRequestByRef(
+                    PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_PERMISSION_DENIED)));
     assertEquals(IntegrationFailureCategory.GITHUB_PERMISSION_DENIED, error.failureCategory());
   }
 
   @Test
   void rateLimitedRefThrowsClassifiedExceptionOnComment() {
-    GitHubAdapterException error =
+    RepositoryHostAdapterException error =
         assertThrows(
-            GitHubAdapterException.class,
+            RepositoryHostAdapterException.class,
             () ->
                 adapter.commentOnPullRequest(
-                    GitHubMockScenarioRegistry.REF_PR_RATE_LIMITED, "any body"));
+                    PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_RATE_LIMITED), "any body"));
     assertEquals(IntegrationFailureCategory.GITHUB_RATE_LIMITED, error.failureCategory());
   }
 
   @Test
   void protectedBranchRefThrowsClassifiedExceptionOnCreate() {
-    GitHubAdapterException error =
+    RepositoryHostAdapterException error =
         assertThrows(
-            GitHubAdapterException.class,
+            RepositoryHostAdapterException.class,
             () ->
                 adapter.createPullRequest(
-                    GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK,
+                    RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
                     GitHubMockScenarioRegistry.REF_BRANCH_PROTECTED,
+                    null,
                     "title",
                     "body"));
     assertEquals(IntegrationFailureCategory.GITHUB_BRANCH_PROTECTED, error.failureCategory());
@@ -132,34 +143,41 @@ class GitHubMockAdapterUnitTest {
     registry.register(
         new GitHubMockScenario(
             "TEST-REPO-404", GitHubMockScenario.Behaviour.REPO_NOT_FOUND, null, null));
-    GitHubAdapterException error =
+    RepositoryHostAdapterException error =
         assertThrows(
-            GitHubAdapterException.class, () -> adapter.getRepositoryByRef("TEST-REPO-404"));
+            RepositoryHostAdapterException.class,
+            () -> adapter.getRepositoryByRef(RepositoryRef.of("TEST-REPO-404")));
     assertEquals(IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND, error.failureCategory());
   }
 
   @Test
   void conflictRefReturnsPullRequestWithDeliberatelyConflictingRepo() {
-    Optional<GitHubPullRequest> conflicting =
-        adapter.getPullRequestByRef(GitHubMockScenarioRegistry.REF_PR_CONFLICT);
+    Optional<PullRequest> conflicting =
+        adapter.getPullRequestByRef(PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_CONFLICT));
     assertTrue(conflicting.isPresent(), "AC4: the conflict ref returns a PR (it does not throw)");
-    assertEquals(GitHubMockScenarioRegistry.CONFLICT_PR_REPO_REF, conflicting.get().repoRef());
+    assertEquals(
+        GitHubMockScenarioRegistry.CONFLICT_PR_REPO_REF, conflicting.get().repoRef().value());
     assertNotEquals(
         GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK,
-        conflicting.get().repoRef(),
+        conflicting.get().repoRef().value(),
         "the conflict PR's repo must differ from any seeded happy repo");
   }
 
   @Test
   void createPullRequestIsIdempotentOnRepoAndBranch() {
     assertTrue(adapter.createdPullRequests().isEmpty());
-    GitHubPullRequest first =
+    PullRequest first =
         adapter.createPullRequest(
-            GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK, "feature/new-thing", "t", "b");
-    GitHubPullRequest second =
-        adapter.createPullRequest(
-            GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK,
+            RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
             "feature/new-thing",
+            null,
+            "t",
+            "b");
+    PullRequest second =
+        adapter.createPullRequest(
+            RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
+            "feature/new-thing",
+            null,
             "different title",
             "different body");
     assertEquals(first, second, "AC8: re-creating the same (repoRef, branch) returns the same PR");
@@ -176,12 +194,15 @@ class GitHubMockAdapterUnitTest {
   @Test
   void commentOnPullRequestIsIdempotentOnPrAndContent() {
     assertTrue(adapter.postedComments().isEmpty());
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, "Run summary v1");
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, "Run summary v1");
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), "Run summary v1");
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), "Run summary v1");
     assertEquals(1, adapter.postedComments().size(), "AC8: re-posting the same content is a no-op");
 
     // A different body on the same PR records a distinct comment.
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, "Run summary v2");
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), "Run summary v2");
     assertEquals(2, adapter.postedComments().size());
 
     adapter.clearPostedComments();
@@ -192,8 +213,10 @@ class GitHubMockAdapterUnitTest {
   void commentOnPullRequestDoesNotDedupeDifferentBodiesWithSameJavaHashCode() {
     assertEquals("Aa".hashCode(), "BB".hashCode(), "test precondition: Java hash collision");
 
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, "Aa");
-    adapter.commentOnPullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, "BB");
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), "Aa");
+    adapter.commentOnPullRequest(
+        PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), "BB");
 
     assertEquals(
         2,
@@ -203,14 +226,15 @@ class GitHubMockAdapterUnitTest {
 
   @Test
   void updatePullRequestReturnsSeededRecordAndThrowsForUnknownRef() {
-    GitHubPullRequest updated =
-        adapter.updatePullRequest(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, "new body");
-    assertEquals(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, updated.prRef());
+    PullRequest updated =
+        adapter.updatePullRequest(
+            PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK), "new body");
+    assertEquals(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK, updated.prRef().value());
 
-    GitHubAdapterException error =
+    RepositoryHostAdapterException error =
         assertThrows(
-            GitHubAdapterException.class,
-            () -> adapter.updatePullRequest("PR-NEVER-SEEDED", "body"));
+            RepositoryHostAdapterException.class,
+            () -> adapter.updatePullRequest(PullRequestRef.of("PR-NEVER-SEEDED"), "body"));
     assertEquals(IntegrationFailureCategory.GITHUB_PR_NOT_FOUND, error.failureCategory());
   }
 
@@ -231,18 +255,18 @@ class GitHubMockAdapterUnitTest {
   }
 
   private void assertRepoPresent(String repoRef, String expectedFullName) {
-    Optional<GitHubRepository> repository = adapter.getRepositoryByRef(repoRef);
+    Optional<Repository> repository = adapter.getRepositoryByRef(RepositoryRef.of(repoRef));
     assertTrue(
         repository.isPresent(), () -> repoRef + " must resolve from the production fixtures");
-    assertEquals(repoRef, repository.get().repoRef());
+    assertEquals(repoRef, repository.get().repoRef().value());
     assertEquals(expectedFullName, repository.get().fullName());
     assertEquals("main", repository.get().defaultBranch());
   }
 
   private void assertPrPresent(String prRef, int expectedNumber) {
-    Optional<GitHubPullRequest> pullRequest = adapter.getPullRequestByRef(prRef);
+    Optional<PullRequest> pullRequest = adapter.getPullRequestByRef(PullRequestRef.of(prRef));
     assertTrue(pullRequest.isPresent(), () -> prRef + " must resolve from the production fixtures");
-    assertEquals(prRef, pullRequest.get().prRef());
+    assertEquals(prRef, pullRequest.get().prRef().value());
     assertEquals(expectedNumber, pullRequest.get().number());
     assertEquals("open", pullRequest.get().state());
   }

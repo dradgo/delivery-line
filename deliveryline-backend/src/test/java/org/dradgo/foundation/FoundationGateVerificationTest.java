@@ -229,19 +229,19 @@ class FoundationGateVerificationTest {
     @DisplayName("GitHubMockAdapterUnitTest passes (mock implements the GitHubAdapter port)")
     void gitHubMockImplementsPort() {
       FoundationGateAssertions.delegateRunAssertGreen(
-          "3.13", "org.dradgo.adapters.integration.github.GitHubMockAdapterUnitTest");
+          "3.13", "org.dradgo.adapters.integration.repohost.github.GitHubMockAdapterUnitTest");
     }
 
     @Test
     @DisplayName("GitHubScenarioContractTest passes (port + deterministic fixtures load)")
     void gitHubFixturesLoad() {
       FoundationGateAssertions.delegateRunAssertGreen(
-          "3.13", "org.dradgo.adapters.integration.github.GitHubScenarioContractTest");
+          "3.13", "org.dradgo.adapters.integration.repohost.github.GitHubScenarioContractTest");
     }
 
     @Test
     @DisplayName(
-        "GITHUB_TYPES_MUST_NOT_LEAK_THROUGH_PORT is enforced (via ArchitectureBoundaryTest)")
+        "REPOSITORY_HOST_TYPES_MUST_NOT_LEAK_THROUGH_PORT is enforced (via ArchitectureBoundaryTest)")
     void gitHubPortBoundaryEnforced() {
       // The dedicated ArchUnit rule is registered as an @ArchTest field in ArchitectureBoundaryTest
       // (already delegate-run by Contract #1); re-running it here keeps the GitHub port-boundary
@@ -328,6 +328,26 @@ class FoundationGateVerificationTest {
     void ticketSourceAbstractionContract() {
       FoundationGateAssertions.delegateRunAssertGreen(
           "3.32", "org.dradgo.foundation.TicketSourceAbstractionFoundationContract");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName(
+      "Contract #15 — RepositoryHostAdapter abstraction parity + capability declaration (story 3.33)")
+  class Contract15RepositoryHostAbstraction {
+
+    /**
+     * Story 3.33 AC10 — the GitHub mock + real adapters satisfy the vendor-neutral {@code
+     * RepositoryHostAdapter} port, return neutral {@code Repository}/{@code PullRequest}s on a
+     * happy read, classify failures identically, and declare the same GitHub capability set. The
+     * draft-PR clause is vacuously satisfied (no draft path; story 3.33 R5/OQ-5).
+     */
+    @Test
+    @DisplayName("RepositoryHostAdapter mock/real parity + capability declaration")
+    void repositoryHostAbstractionContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.33", "org.dradgo.foundation.RepositoryHostAbstractionFoundationContract");
     }
   }
 }

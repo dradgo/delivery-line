@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -10,11 +10,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubBranch;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CommentResult;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryHostCapabilities;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,11 +26,12 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
- * Deterministic, fixture-backed {@link GitHubAdapter} implementation. Activated under Spring
- * profile {@code github-mock} — the default profile in {@code test}; opt-in for {@code
- * local}/{@code demo}. GitHub twin of {@code LinearMockAdapter} (story 1.14).
+ * Deterministic, fixture-backed {@link RepositoryHostAdapter} implementation (the GitHub kind).
+ * Activated under Spring profile {@code github-mock} — the default profile in {@code test}; opt-in
+ * for {@code local}/{@code demo}. GitHub twin of {@code LinearMockAdapter} (story 1.14); extracted
+ * to the vendor-neutral port by story 3.33.
  *
- * <p>Determinism contract (AC2, AC8):
+ * <p>Determinism contract (story 3.13 AC2, AC8):
  *
  * <ul>
  *   <li>No randomness — every lookup is keyed to a ref via {@link GitHubMockScenarioRegistry};
@@ -37,15 +42,15 @@ import org.springframework.stereotype.Component;
  *       GitHubProfileWiringContractTest} (AC6).
  * </ul>
  *
- * <p>Idempotency (AC8, Decision D3 — unlike the Linear mock which appended every call): {@link
- * #createPullRequest} dedupes on {@code (repoRef, sourceBranch)}; {@link #commentOnPullRequest}
- * dedupes on {@code (prRef, fingerprint(body))}. Re-calls return the existing record / are a no-op.
- * The {@link #createdPullRequests()} / {@link #postedComments()} accessors are test-only and NOT on
- * the {@link GitHubAdapter} port.
+ * <p>Idempotency (AC8): {@link #createPullRequest} dedupes on {@code (repoRef, sourceBranch,
+ * targetBranch)}; {@link #commentOnPullRequest} dedupes on {@code (prRef, fingerprint(body))} and
+ * surfaces a replay as {@link CommentResult#SKIPPED_DUPLICATE}. The {@link #createdPullRequests()}
+ * / {@link #postedComments()} accessors are test-only and NOT on the {@link RepositoryHostAdapter}
+ * port.
  */
 @Component
 @Profile("github-mock")
-public class GitHubMockAdapter implements GitHubAdapter {
+public class GitHubMockAdapter implements RepositoryHostAdapter {
 
   private static final Logger log = LoggerFactory.getLogger(GitHubMockAdapter.class);
 
@@ -53,7 +58,7 @@ public class GitHubMockAdapter implements GitHubAdapter {
   private static final Instant SYNTHETIC_CREATED_AT = Instant.parse("2026-01-01T00:00:00Z");
 
   private final GitHubMockScenarioRegistry registry;
-  private final ConcurrentMap<CreatePullRequestKey, GitHubPullRequest> createdPullRequests =
+  private final ConcurrentMap<CreatePullRequestKey, PullRequest> createdPullRequests =
       new ConcurrentHashMap<>();
   private final ConcurrentMap<CommentKey, PostedComment> postedComments = new ConcurrentHashMap<>();
 
@@ -62,10 +67,11 @@ public class GitHubMockAdapter implements GitHubAdapter {
   }
 
   @Override
-  public Optional<GitHubRepository> getRepositoryByRef(String repoRef) {
-    Objects.requireNonNull(repoRef, "repoRef");
+  public Optional<Repository> getRepositoryByRef(RepositoryRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    String repoRef = ref.value();
     throwIfAdversarial(repoRef, "getRepositoryByRef");
-    Optional<GitHubRepository> repository = registry.findRepository(repoRef);
+    Optional<Repository> repository = registry.findRepository(repoRef);
     log.info(
         "github_mock get_repository repoRef={} resolution={}",
         repoRef,
@@ -74,20 +80,21 @@ public class GitHubMockAdapter implements GitHubAdapter {
   }
 
   @Override
-  public Optional<GitHubPullRequest> getPullRequestByRef(String prRef) {
-    Objects.requireNonNull(prRef, "prRef");
+  public Optional<PullRequest> getPullRequestByRef(PullRequestRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    String prRef = ref.value();
     Optional<GitHubMockScenario> scenario = registry.find(prRef);
     if (scenario.isPresent()
         && scenario.get().behaviour() == GitHubMockScenario.Behaviour.CONFLICT) {
-      GitHubPullRequest conflicting = conflictPullRequest(prRef);
+      PullRequest conflicting = conflictPullRequest(prRef);
       log.warn(
           "github_mock get_pull_request prRef={} resolution=conflict conflictRepoRef={}",
           prRef,
-          conflicting.repoRef());
+          conflicting.repoRef().value());
       return Optional.of(conflicting);
     }
     throwIfAdversarial(prRef, "getPullRequestByRef");
-    Optional<GitHubPullRequest> pullRequest = findAnyPullRequest(prRef);
+    Optional<PullRequest> pullRequest = findAnyPullRequest(prRef);
     log.info(
         "github_mock get_pull_request prRef={} resolution={}",
         prRef,
@@ -96,10 +103,11 @@ public class GitHubMockAdapter implements GitHubAdapter {
   }
 
   @Override
-  public Optional<GitHubBranch> getBranchByRef(String repoRef, String branchName) {
-    Objects.requireNonNull(repoRef, "repoRef");
+  public Optional<Branch> getBranchByRef(RepositoryRef repo, String branchName) {
+    Objects.requireNonNull(repo, "repo");
     Objects.requireNonNull(branchName, "branchName");
-    Optional<GitHubBranch> branch = registry.findBranch(repoRef, branchName);
+    String repoRef = repo.value();
+    Optional<Branch> branch = registry.findBranch(repoRef, branchName);
     log.info(
         "github_mock get_branch repoRef={} branch={} resolution={}",
         repoRef,
@@ -109,52 +117,59 @@ public class GitHubMockAdapter implements GitHubAdapter {
   }
 
   @Override
-  public GitHubPullRequest createPullRequest(
-      String repoRef, String branch, String title, String body) {
-    Objects.requireNonNull(repoRef, "repoRef");
-    Objects.requireNonNull(branch, "branch");
+  public PullRequest createPullRequest(
+      RepositoryRef repo, String sourceBranch, String targetBranch, String title, String body) {
+    Objects.requireNonNull(repo, "repo");
+    Objects.requireNonNull(sourceBranch, "sourceBranch");
+    String repoRef = repo.value();
     // AC5: a protected source branch is rejected — the special branch ref is the injection key.
-    throwIfAdversarial(branch, "createPullRequest");
-    CreatePullRequestKey key = new CreatePullRequestKey(repoRef, branch);
-    GitHubPullRequest existing = createdPullRequests.get(key);
+    throwIfAdversarial(sourceBranch, "createPullRequest");
+    // Normalize blank/null to "" so the idempotency key matches the real adapter's
+    // isBlank()->default-branch fallback posture (parity), and so the synthesized PR identity
+    // below stays consistent with the dedup key.
+    String normalizedTarget =
+        (targetBranch == null || targetBranch.isBlank()) ? "" : targetBranch;
+    CreatePullRequestKey key = new CreatePullRequestKey(repoRef, sourceBranch, normalizedTarget);
+    PullRequest existing = createdPullRequests.get(key);
     if (existing != null) {
-      // AC8: idempotent replay — same (repoRef, branch) returns the already-created record.
+      // AC8: idempotent replay — same (repoRef, sourceBranch, targetBranch) returns the record.
       log.warn(
           "github_mock create_pull_request repoRef={} branch={} resolution=idempotent_replay prRef={}",
           repoRef,
-          branch,
-          existing.prRef());
+          sourceBranch,
+          existing.prRef().value());
       return existing;
     }
-    GitHubPullRequest created = synthesizePullRequest(repoRef, branch);
-    GitHubPullRequest raced = createdPullRequests.putIfAbsent(key, created);
+    PullRequest created = synthesizePullRequest(repoRef, sourceBranch, normalizedTarget);
+    PullRequest raced = createdPullRequests.putIfAbsent(key, created);
     if (raced != null) {
       log.warn(
           "github_mock create_pull_request repoRef={} branch={} resolution=idempotent_replay prRef={}",
           repoRef,
-          branch,
-          raced.prRef());
+          sourceBranch,
+          raced.prRef().value());
       return raced;
     }
     log.info(
         "github_mock create_pull_request repoRef={} branch={} resolution=created prRef={} number={}",
         repoRef,
-        branch,
-        created.prRef(),
+        sourceBranch,
+        created.prRef().value(),
         created.number());
     return created;
   }
 
   @Override
-  public GitHubPullRequest updatePullRequest(String prRef, String body) {
-    Objects.requireNonNull(prRef, "prRef");
+  public PullRequest updatePullRequest(PullRequestRef ref, String body) {
+    Objects.requireNonNull(ref, "ref");
+    String prRef = ref.value();
     throwIfAdversarial(prRef, "updatePullRequest");
-    GitHubPullRequest pullRequest =
+    PullRequest pullRequest =
         findAnyPullRequest(prRef)
             .orElseThrow(
                 () -> {
-                  GitHubAdapterException failure =
-                      new GitHubAdapterException(
+                  RepositoryHostAdapterException failure =
+                      new RepositoryHostAdapterException(
                           IntegrationFailureCategory.GITHUB_PR_NOT_FOUND,
                           "github_mock updatePullRequest: no PR seeded for prRef=" + prRef);
                   log.warn(
@@ -168,20 +183,21 @@ public class GitHubMockAdapter implements GitHubAdapter {
   }
 
   @Override
-  public void commentOnPullRequest(String prRef, String body) {
-    Objects.requireNonNull(prRef, "prRef");
+  public CommentResult commentOnPullRequest(PullRequestRef ref, String body) {
+    Objects.requireNonNull(ref, "ref");
     Objects.requireNonNull(body, "body");
+    String prRef = ref.value();
     // AC5: pr-rate-limited / pr-403 injection keyed by prRef.
     throwIfAdversarial(prRef, "commentOnPullRequest");
     String fingerprint = fingerprint(body);
     CommentKey key = new CommentKey(prRef, fingerprint);
     if (postedComments.containsKey(key)) {
-      // AC8: idempotent replay — same (prRef, fingerprint) is a no-op.
+      // AC8: idempotent replay — same (prRef, fingerprint) is a no-op (SKIPPED_DUPLICATE).
       log.warn(
           "github_mock comment_on_pull_request prRef={} fingerprint={} resolution=idempotent_replay",
           prRef,
           fingerprint);
-      return;
+      return CommentResult.SKIPPED_DUPLICATE;
     }
     PostedComment raced = postedComments.putIfAbsent(key, new PostedComment(prRef, fingerprint));
     if (raced != null) {
@@ -189,19 +205,25 @@ public class GitHubMockAdapter implements GitHubAdapter {
           "github_mock comment_on_pull_request prRef={} fingerprint={} resolution=idempotent_replay",
           prRef,
           fingerprint);
-      return;
+      return CommentResult.SKIPPED_DUPLICATE;
     }
     log.info(
         "github_mock comment_on_pull_request prRef={} fingerprint={} resolution=recorded",
         prRef,
         fingerprint);
+    return CommentResult.POSTED;
+  }
+
+  @Override
+  public RepositoryHostCapabilities getCapabilities() {
+    return RepositoryHostCapabilities.githubDefaults();
   }
 
   /**
    * Test-only accessor returning the deduped created-PR records. Returns an immutable snapshot. Not
-   * part of the {@link GitHubAdapter} port — only adapter-scope tests should depend on it.
+   * part of the {@link RepositoryHostAdapter} port — only adapter-scope tests should depend on it.
    */
-  public List<GitHubPullRequest> createdPullRequests() {
+  public List<PullRequest> createdPullRequests() {
     return List.copyOf(createdPullRequests.values());
   }
 
@@ -220,13 +242,13 @@ public class GitHubMockAdapter implements GitHubAdapter {
     postedComments.clear();
   }
 
-  private Optional<GitHubPullRequest> findAnyPullRequest(String prRef) {
-    Optional<GitHubPullRequest> seeded = registry.findPullRequest(prRef);
+  private Optional<PullRequest> findAnyPullRequest(String prRef) {
+    Optional<PullRequest> seeded = registry.findPullRequest(prRef);
     if (seeded.isPresent()) {
       return seeded;
     }
     return createdPullRequests.values().stream()
-        .filter(pullRequest -> pullRequest.prRef().equals(prRef))
+        .filter(pullRequest -> pullRequest.prRef().value().equals(prRef))
         .findFirst();
   }
 
@@ -237,7 +259,7 @@ public class GitHubMockAdapter implements GitHubAdapter {
     }
     switch (scenario.get().behaviour()) {
       case REPO_NOT_FOUND, PERMISSION_DENIED, RATE_LIMITED, BRANCH_PROTECTED -> {
-        GitHubAdapterException failure = failure(scenario.get(), operation);
+        RepositoryHostAdapterException failure = failure(scenario.get(), operation);
         log.warn(
             "github_mock {} ref={} resolution=simulated_failure category={}",
             operation,
@@ -251,10 +273,10 @@ public class GitHubMockAdapter implements GitHubAdapter {
     }
   }
 
-  private GitHubPullRequest conflictPullRequest(String prRef) {
-    return new GitHubPullRequest(
-        prRef,
-        GitHubMockScenarioRegistry.CONFLICT_PR_REPO_REF,
+  private PullRequest conflictPullRequest(String prRef) {
+    return new PullRequest(
+        PullRequestRef.of(prRef),
+        RepositoryRef.of(GitHubMockScenarioRegistry.CONFLICT_PR_REPO_REF),
         999,
         "conflict/source-branch",
         "open",
@@ -262,13 +284,16 @@ public class GitHubMockAdapter implements GitHubAdapter {
         SYNTHETIC_CREATED_AT);
   }
 
-  private GitHubPullRequest synthesizePullRequest(String repoRef, String branch) {
-    int stable = (repoRef + "/" + branch).hashCode() & 0x7fffffff;
+  private PullRequest synthesizePullRequest(String repoRef, String branch, String targetBranch) {
+    // Identity derives from (repoRef, sourceBranch, targetBranch) — the same tuple as the
+    // CreatePullRequestKey — so two distinct dedup keys can never collapse onto a byte-identical
+    // synthesized prRef/number (a PR into a different base branch is a different PR).
+    int stable = (repoRef + "/" + branch + "->" + targetBranch).hashCode() & 0x7fffffff;
     int number = 1000 + (stable % 9000);
     String prRef = "PR-NEW-" + Integer.toHexString(stable);
-    return new GitHubPullRequest(
-        prRef,
-        repoRef,
+    return new PullRequest(
+        PullRequestRef.of(prRef),
+        RepositoryRef.of(repoRef),
         number,
         branch,
         "open",
@@ -276,7 +301,8 @@ public class GitHubMockAdapter implements GitHubAdapter {
         SYNTHETIC_CREATED_AT);
   }
 
-  private static GitHubAdapterException failure(GitHubMockScenario scenario, String operation) {
+  private static RepositoryHostAdapterException failure(
+      GitHubMockScenario scenario, String operation) {
     IntegrationFailureCategory category = scenario.expectedFailureCategory();
     if (category == null) {
       category =
@@ -288,7 +314,7 @@ public class GitHubMockAdapter implements GitHubAdapter {
             default -> IntegrationFailureCategory.SYNC_FAILURE;
           };
     }
-    return new GitHubAdapterException(
+    return new RepositoryHostAdapterException(
         category,
         "github_mock "
             + operation
@@ -299,9 +325,8 @@ public class GitHubMockAdapter implements GitHubAdapter {
   }
 
   /**
-   * Deterministic, body-content-free idempotency fingerprint. Uses the trimmed body's {@link
-   * String#hashCode()} (specified, JVM-stable) rendered as hex — never the body bytes themselves,
-   * so no PR content is logged or stored.
+   * Deterministic, body-content-free idempotency fingerprint. Uses the trimmed body's SHA-256
+   * rendered as hex — never the body bytes themselves, so no PR content is logged or stored.
    */
   private static String fingerprint(String body) {
     try {
@@ -318,7 +343,7 @@ public class GitHubMockAdapter implements GitHubAdapter {
    */
   public record PostedComment(String prRef, String fingerprint) {}
 
-  private record CreatePullRequestKey(String repoRef, String branch) {}
+  private record CreatePullRequestKey(String repoRef, String sourceBranch, String targetBranch) {}
 
   private record CommentKey(String prRef, String fingerprint) {}
 }

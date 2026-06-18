@@ -1,8 +1,8 @@
-package org.dradgo.adapters.integration.github;
+package org.dradgo.adapters.integration.repohost.github;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import org.dradgo.application.integration.github.GitHubAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.infrastructure.config.GitHubConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -34,8 +34,8 @@ class GitHubProfileWiringContractTest {
         .run(
             context -> {
               assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(GitHubAdapter.class);
-              assertThat(context.getBean(GitHubAdapter.class))
+              assertThat(context).hasSingleBean(RepositoryHostAdapter.class);
+              assertThat(context.getBean(RepositoryHostAdapter.class))
                   .isInstanceOf(GitHubMockAdapter.class);
               assertThat(context).hasSingleBean(GitHubMockScenarioRegistry.class);
               // AC6: no network capability under github-mock — no GitHub HTTP-client bean exists.
@@ -63,7 +63,7 @@ class GitHubProfileWiringContractTest {
     contextRunner.run(
         context -> {
           assertThat(context).hasNotFailed();
-          assertThat(context).doesNotHaveBean(GitHubAdapter.class);
+          assertThat(context).doesNotHaveBean(RepositoryHostAdapter.class);
           assertThat(context).doesNotHaveBean(GitHubMockAdapter.class);
           assertThat(context).doesNotHaveBean(GitHubMockScenarioRegistry.class);
         });

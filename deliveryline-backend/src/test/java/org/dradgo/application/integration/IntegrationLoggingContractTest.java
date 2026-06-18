@@ -24,9 +24,8 @@ import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubPullRequest;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
@@ -36,6 +35,9 @@ import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.ActorType;
@@ -250,10 +252,10 @@ class IntegrationLoggingContractTest {
   @Test
   void linkGitHubPrHappyPathEmitsEntryAndSuccessLogsWithContext() {
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
-    GitHubAdapter gitHubAdapter = mock(GitHubAdapter.class);
+    RepositoryHostAdapter gitHubAdapter = mock(RepositoryHostAdapter.class);
     IntegrationLinkService service = githubService(port, gitHubAdapter);
 
-    when(gitHubAdapter.getPullRequestByRef("octo/hello#42"))
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of("octo/hello#42")))
         .thenReturn(Optional.of(samplePullRequest("open")));
     when(port.findActiveByTypeAndExternalRefForUpdate("github_pr", "octo/hello#42"))
         .thenReturn(Optional.empty());
@@ -262,7 +264,8 @@ class IntegrationLoggingContractTest {
     when(port.insert(any(NewIntegrationLink.class)))
         .thenReturn(sampleGithubLink("ilk_log000000001"));
 
-    service.linkGitHubPr(RUN_ID, "octo/hello#42", "octo/hello", "feature/x", "abc1234", ACTOR, "k");
+    service.linkPullRequest(
+        RUN_ID, "octo/hello#42", "octo/hello", "feature/x", "abc1234", ACTOR, "k");
 
     assertContains(serviceAppender.list, Level.INFO, "linkGitHubPr entry");
     assertContains(serviceAppender.list, Level.INFO, "linkGitHubPr success");
@@ -272,16 +275,16 @@ class IntegrationLoggingContractTest {
   @Test
   void linkGitHubPrCrossRunConflictEmitsWarn() {
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
-    GitHubAdapter gitHubAdapter = mock(GitHubAdapter.class);
+    RepositoryHostAdapter gitHubAdapter = mock(RepositoryHostAdapter.class);
     IntegrationLinkService service = githubService(port, gitHubAdapter);
 
-    when(gitHubAdapter.getPullRequestByRef("octo/hello#42"))
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of("octo/hello#42")))
         .thenReturn(Optional.of(samplePullRequest("open")));
     when(port.findActiveByTypeAndExternalRefForUpdate("github_pr", "octo/hello#42"))
         .thenReturn(Optional.of(sampleGithubLink("ilk_other0000001", "run_otherRUN1234")));
 
     try {
-      service.linkGitHubPr(
+      service.linkPullRequest(
           RUN_ID, "octo/hello#42", "octo/hello", "feature/x", "abc1234", ACTOR, "k");
     } catch (DomainException expected) {
       // log assertion below
@@ -293,7 +296,7 @@ class IntegrationLoggingContractTest {
   @Test
   void assertArtifactPrLinkMatchesDriftEmitsWarn() {
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
-    IntegrationLinkService service = githubService(port, mock(GitHubAdapter.class));
+    IntegrationLinkService service = githubService(port, mock(RepositoryHostAdapter.class));
     when(port.findActiveByTypeAndWorkflowRunForUpdate("github_pr", RUN_ID))
         .thenReturn(Optional.of(sampleGithubLink("ilk_drift0000001")));
 
@@ -307,7 +310,7 @@ class IntegrationLoggingContractTest {
   }
 
   private static IntegrationLinkService githubService(
-      IntegrationLinkRecordPort port, GitHubAdapter gitHubAdapter) {
+      IntegrationLinkRecordPort port, RepositoryHostAdapter gitHubAdapter) {
     TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IdempotencyService idempotencyService = mock(IdempotencyService.class);
     RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
@@ -323,16 +326,17 @@ class IntegrationLoggingContractTest {
   }
 
   @SuppressWarnings("unchecked")
-  private static ObjectProvider<GitHubAdapter> gitHubAdapterProvider(GitHubAdapter adapter) {
-    ObjectProvider<GitHubAdapter> provider = mock(ObjectProvider.class);
+  private static ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider(
+      RepositoryHostAdapter adapter) {
+    ObjectProvider<RepositoryHostAdapter> provider = mock(ObjectProvider.class);
     when(provider.getIfAvailable()).thenReturn(adapter);
     return provider;
   }
 
-  private static GitHubPullRequest samplePullRequest(String state) {
-    return new GitHubPullRequest(
-        "octo/hello#42",
-        "octo/hello",
+  private static PullRequest samplePullRequest(String state) {
+    return new PullRequest(
+        PullRequestRef.of("octo/hello#42"),
+        RepositoryRef.of("octo/hello"),
         42,
         "feature/x",
         state,

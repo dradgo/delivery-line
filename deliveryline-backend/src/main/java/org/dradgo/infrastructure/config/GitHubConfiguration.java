@@ -2,6 +2,7 @@ package org.dradgo.infrastructure.config;
 
 import java.util.Objects;
 import org.dradgo.application.integration.github.GitHubProperties;
+import org.dradgo.application.integration.repohost.RepositoryHostProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,6 +20,11 @@ import org.springframework.web.client.RestClient;
  *       (profile-neutral with safe defaults — see {@link GitHubProperties} Decision D6),
  *   <li>defines the {@code gitHubRestClient} bean under the {@code github-real} profile only,
  *   <li>asserts that {@code github-mock} and {@code github-real} are mutually exclusive.
+ *   <li>binds {@link RepositoryHostProperties} ({@code deliveryline.integration.repo-host.kind})
+ *       and fail-fasts at boot when the configured kind has no implementation on the classpath
+ *       (story 3.33 AC5 / OQ-4 — the {@code kind} key is the documented selector; the load-bearing
+ *       bean gating remains the mutually-exclusive {@code github-mock}/{@code github-real}
+ *       profiles).
  * </ul>
  *
  * <p>The exclusivity guard reads only the active profile names so it has worked since story 3.13
@@ -27,14 +33,34 @@ import org.springframework.web.client.RestClient;
  * {@code github-mock} (story 3.13 AC6 — no GitHub network call under the mock).
  */
 @Configuration
-@EnableConfigurationProperties(GitHubProperties.class)
+@EnableConfigurationProperties({GitHubProperties.class, RepositoryHostProperties.class})
 public class GitHubConfiguration {
 
   static final String MOCK_PROFILE = "github-mock";
   static final String REAL_PROFILE = "github-real";
 
-  public GitHubConfiguration(Environment environment) {
+  public GitHubConfiguration(
+      Environment environment, RepositoryHostProperties repositoryHostProperties) {
     assertExclusiveGitHubProfile(environment);
+    assertSupportedRepositoryHostKind(repositoryHostProperties);
+  }
+
+  /**
+   * Story 3.33 AC5 / OQ-4 — only the {@code github} kind has an implementation on the classpath
+   * today. A configured {@code kind=bitbucket|gitlab|gitea|azure-devops} would silently leave the
+   * port unbacked; fail fast at boot with a clear message instead. The {@code kind} defaults to
+   * {@code github} when unset, so this never trips a context that does not configure the selector.
+   */
+  private static void assertSupportedRepositoryHostKind(RepositoryHostProperties properties) {
+    if (!properties.isGithub()) {
+      throw new IllegalStateException(
+          "deliveryline.integration.repo-host.kind="
+              + properties.kind()
+              + " has no implementation on the classpath. The only supported kind today is '"
+              + RepositoryHostProperties.KIND_GITHUB
+              + "'. Add a RepositoryHostAdapter implementation + profile entry for the new kind, or"
+              + " correct the configured kind.");
+    }
   }
 
   /**

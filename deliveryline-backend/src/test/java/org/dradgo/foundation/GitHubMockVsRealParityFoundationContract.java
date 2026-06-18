@@ -9,16 +9,18 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import org.dradgo.adapters.integration.github.GitHubMockAdapter;
-import org.dradgo.adapters.integration.github.GitHubMockScenarioRegistry;
-import org.dradgo.adapters.integration.github.GitHubRealAdapter;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubAdapterException;
+import org.dradgo.adapters.integration.repohost.github.GitHubMockAdapter;
+import org.dradgo.adapters.integration.repohost.github.GitHubMockScenarioRegistry;
+import org.dradgo.adapters.integration.repohost.github.GitHubRealAdapter;
 import org.dradgo.application.integration.github.GitHubProperties;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -31,10 +33,11 @@ import org.springframework.web.client.RestClient;
 /**
  * Foundation contract #11 (story 3.14 AC8, reciprocal of story 3.13 AC10) — mock-vs-real GitHub
  * adapter parity. The {@code GitHubMockAdapter} and {@code GitHubRealAdapter} implement the same
- * {@link GitHubAdapter} port; this contract drives equivalent scenarios against both (the real one
- * against {@code MockRestServiceServer}-stubbed HTTP) and asserts <strong>domain-result
- * equivalence</strong>: the DTO content differs (mock fixtures vs stubbed octo/hello), but the
- * typed shape and {@link IntegrationFailureCategory} outcomes match.
+ * {@link RepositoryHostAdapter} port (extracted from the GitHub-shaped port by story 3.33); this
+ * contract drives equivalent scenarios against both (the real one against {@code
+ * MockRestServiceServer}-stubbed HTTP) and asserts <strong>domain-result equivalence</strong>: the
+ * DTO content differs (mock fixtures vs stubbed octo/hello), but the typed shape and {@link
+ * IntegrationFailureCategory} outcomes match.
  *
  * <p>Read 404s are intentionally NOT compared head-to-head: the mock's adversarial refs throw on
  * reads by design (3.13 D2), while the real adapter's read-404 contract is {@link
@@ -59,45 +62,50 @@ class GitHubMockVsRealParityFoundationContract {
        "html_url":"https://github.com/octo/hello/pull/7","created_at":"2026-05-01T10:00:00Z"}
       """;
 
-  private final GitHubAdapter mock = new GitHubMockAdapter(new GitHubMockScenarioRegistry());
+  private final RepositoryHostAdapter mock =
+      new GitHubMockAdapter(new GitHubMockScenarioRegistry());
 
   @Test
   void bothAdaptersImplementTheSamePortMethodSet() {
-    // The compiler already guarantees both implement GitHubAdapter; this assertion makes the
-    // parity premise explicit and fails loudly if either type stops implementing the port.
+    // The compiler already guarantees both implement RepositoryHostAdapter; this assertion makes
+    // the parity premise explicit and fails loudly if either type stops implementing the port.
     assertTrue(
-        GitHubAdapter.class.isAssignableFrom(GitHubMockAdapter.class),
-        FoundationGateAssertions.tagged("3.14", "GitHubMockAdapter must implement GitHubAdapter"));
+        RepositoryHostAdapter.class.isAssignableFrom(GitHubMockAdapter.class),
+        FoundationGateAssertions.tagged(
+            "3.14", "GitHubMockAdapter must implement RepositoryHostAdapter"));
     assertTrue(
-        GitHubAdapter.class.isAssignableFrom(GitHubRealAdapter.class),
-        FoundationGateAssertions.tagged("3.14", "GitHubRealAdapter must implement GitHubAdapter"));
+        RepositoryHostAdapter.class.isAssignableFrom(GitHubRealAdapter.class),
+        FoundationGateAssertions.tagged(
+            "3.14", "GitHubRealAdapter must implement RepositoryHostAdapter"));
   }
 
   @Test
   void happyRepositoryReadReturnsPresentTypedResultInBoth() {
-    var present = mock.getRepositoryByRef(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK);
+    var present =
+        mock.getRepositoryByRef(RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK));
     assertTrue(present.isPresent(), parity("mock repo read present"));
-    assertInstanceOf(GitHubRepository.class, present.get());
+    assertInstanceOf(Repository.class, present.get());
 
     RealHarness harness = realHarness();
     harness.server.expect(requestTo(BASE_URL + "/repos/octo/hello")).andRespond(repoOk());
-    var realPresent = harness.adapter.getRepositoryByRef("octo/hello");
+    var realPresent = harness.adapter.getRepositoryByRef(RepositoryRef.of("octo/hello"));
     assertTrue(realPresent.isPresent(), parity("real repo read present"));
-    assertInstanceOf(GitHubRepository.class, realPresent.get());
+    assertInstanceOf(Repository.class, realPresent.get());
     harness.server.verify();
   }
 
   @Test
   void happyPullRequestReadReturnsPresentTypedResultInBoth() {
-    var present = mock.getPullRequestByRef(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK);
+    var present =
+        mock.getPullRequestByRef(PullRequestRef.of(GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK));
     assertTrue(present.isPresent(), parity("mock PR read present"));
-    assertInstanceOf(GitHubPullRequest.class, present.get());
+    assertInstanceOf(PullRequest.class, present.get());
 
     RealHarness harness = realHarness();
     harness.server.expect(requestTo(BASE_URL + "/repos/octo/hello/pulls/7")).andRespond(prOk());
-    var realPresent = harness.adapter.getPullRequestByRef("octo/hello#7");
+    var realPresent = harness.adapter.getPullRequestByRef(PullRequestRef.of("octo/hello#7"));
     assertTrue(realPresent.isPresent(), parity("real PR read present"));
-    assertInstanceOf(GitHubPullRequest.class, realPresent.get());
+    assertInstanceOf(PullRequest.class, realPresent.get());
     harness.server.verify();
   }
 
@@ -105,8 +113,10 @@ class GitHubMockVsRealParityFoundationContract {
   void permissionDeniedSurfacesSameCategoryInBoth() {
     IntegrationFailureCategory mockCategory =
         assertThrows(
-                GitHubAdapterException.class,
-                () -> mock.getPullRequestByRef(GitHubMockScenarioRegistry.REF_PR_PERMISSION_DENIED))
+                RepositoryHostAdapterException.class,
+                () ->
+                    mock.getPullRequestByRef(
+                        PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_PERMISSION_DENIED)))
             .failureCategory();
 
     RealHarness harness = realHarness();
@@ -116,8 +126,8 @@ class GitHubMockVsRealParityFoundationContract {
         .andRespond(withStatus(HttpStatus.FORBIDDEN).header("X-RateLimit-Remaining", "50"));
     IntegrationFailureCategory realCategory =
         assertThrows(
-                GitHubAdapterException.class,
-                () -> harness.adapter.getPullRequestByRef("octo/hello#7"))
+                RepositoryHostAdapterException.class,
+                () -> harness.adapter.getPullRequestByRef(PullRequestRef.of("octo/hello#7")))
             .failureCategory();
 
     assertParityCategory(
@@ -129,10 +139,11 @@ class GitHubMockVsRealParityFoundationContract {
   void rateLimitedSurfacesSameCategoryInBoth() {
     IntegrationFailureCategory mockCategory =
         assertThrows(
-                GitHubAdapterException.class,
+                RepositoryHostAdapterException.class,
                 () ->
                     mock.commentOnPullRequest(
-                        GitHubMockScenarioRegistry.REF_PR_RATE_LIMITED, "summary"))
+                        PullRequestRef.of(GitHubMockScenarioRegistry.REF_PR_RATE_LIMITED),
+                        "summary"))
             .failureCategory();
 
     RealHarness harness = realHarness();
@@ -143,8 +154,10 @@ class GitHubMockVsRealParityFoundationContract {
         .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
     IntegrationFailureCategory realCategory =
         assertThrows(
-                GitHubAdapterException.class,
-                () -> harness.adapter.commentOnPullRequest("octo/hello#7", "summary"))
+                RepositoryHostAdapterException.class,
+                () ->
+                    harness.adapter.commentOnPullRequest(
+                        PullRequestRef.of("octo/hello#7"), "summary"))
             .failureCategory();
 
     assertParityCategory(
@@ -156,11 +169,12 @@ class GitHubMockVsRealParityFoundationContract {
   void branchProtectedSurfacesSameCategoryInBoth() {
     IntegrationFailureCategory mockCategory =
         assertThrows(
-                GitHubAdapterException.class,
+                RepositoryHostAdapterException.class,
                 () ->
                     mock.createPullRequest(
-                        GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK,
+                        RepositoryRef.of(GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK),
                         GitHubMockScenarioRegistry.REF_BRANCH_PROTECTED,
+                        null,
                         "title",
                         "body"))
             .failureCategory();
@@ -179,8 +193,10 @@ class GitHubMockVsRealParityFoundationContract {
         .andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY));
     IntegrationFailureCategory realCategory =
         assertThrows(
-                GitHubAdapterException.class,
-                () -> harness.adapter.createPullRequest("octo/hello", "feature/x", "title", "body"))
+                RepositoryHostAdapterException.class,
+                () ->
+                    harness.adapter.createPullRequest(
+                        RepositoryRef.of("octo/hello"), "feature/x", null, "title", "body"))
             .failureCategory();
 
     assertParityCategory(
@@ -192,8 +208,8 @@ class GitHubMockVsRealParityFoundationContract {
   void pullRequestNotFoundSurfacesSameCategoryInBoth() {
     IntegrationFailureCategory mockCategory =
         assertThrows(
-                GitHubAdapterException.class,
-                () -> mock.updatePullRequest("PR-NEVER-SEEDED", "body"))
+                RepositoryHostAdapterException.class,
+                () -> mock.updatePullRequest(PullRequestRef.of("PR-NEVER-SEEDED"), "body"))
             .failureCategory();
 
     RealHarness harness = realHarness();
@@ -204,8 +220,9 @@ class GitHubMockVsRealParityFoundationContract {
         .andRespond(withStatus(HttpStatus.NOT_FOUND));
     IntegrationFailureCategory realCategory =
         assertThrows(
-                GitHubAdapterException.class,
-                () -> harness.adapter.updatePullRequest("octo/hello#999", "body"))
+                RepositoryHostAdapterException.class,
+                () ->
+                    harness.adapter.updatePullRequest(PullRequestRef.of("octo/hello#999"), "body"))
             .failureCategory();
 
     assertParityCategory(

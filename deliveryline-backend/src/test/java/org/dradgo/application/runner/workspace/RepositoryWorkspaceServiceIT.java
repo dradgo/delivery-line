@@ -3,6 +3,7 @@ package org.dradgo.application.runner.workspace;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -23,9 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.dradgo.adapters.files.LocalRunnerWorkspaceStore;
 import org.dradgo.adapters.git.CliGitAdapter;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.github.GitHubRepository;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
@@ -35,6 +34,10 @@ import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowProperties;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.Repository;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -71,7 +74,7 @@ class RepositoryWorkspaceServiceIT {
 
   private LocalRunnerWorkspaceStore store;
   private CliGitAdapter git;
-  private GitHubAdapter gitHubAdapter;
+  private RepositoryHostAdapter gitHubAdapter;
   private RunnerSecretsService secrets;
   private RunnerExecutionRecordPort recordPort;
   private IntegrationLinkRecordPort links;
@@ -96,16 +99,26 @@ class RepositoryWorkspaceServiceIT {
 
     store = new LocalRunnerWorkspaceStore(home.toString());
     git = new CliGitAdapter(new RedactionPolicyService(new DataClassificationService()));
-    gitHubAdapter = Mockito.mock(GitHubAdapter.class);
+    gitHubAdapter = Mockito.mock(RepositoryHostAdapter.class);
     secrets = Mockito.mock(RunnerSecretsService.class);
     recordPort = Mockito.mock(RunnerExecutionRecordPort.class);
     links = Mockito.mock(IntegrationLinkRecordPort.class);
 
-    when(gitHubAdapter.getRepositoryByRef(REPO_REF))
-        .thenReturn(Optional.of(new GitHubRepository(REPO_REF, "owner/repo", "main", remoteUrl)));
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of(REPO_REF)))
+        .thenReturn(
+            Optional.of(
+                new Repository(RepositoryRef.of(REPO_REF), "owner/repo", "main", remoteUrl)));
     lenient()
-        .when(gitHubAdapter.createPullRequest(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(new GitHubPullRequest("PR-1", REPO_REF, 1, "b", "open", "u", Instant.now()));
+        .when(gitHubAdapter.createPullRequest(any(), anyString(), any(), anyString(), anyString()))
+        .thenReturn(
+            new PullRequest(
+                PullRequestRef.of("PR-1"),
+                RepositoryRef.of(REPO_REF),
+                1,
+                "b",
+                "open",
+                "u",
+                Instant.now()));
     when(secrets.resolveHostSecret("GITHUB_TOKEN")).thenReturn(Optional.of(TOKEN));
     when(links.findActiveByWorkflowRun(anyString())).thenReturn(Optional.empty());
     lenient().when(recordPort.findByPublicId(REX)).thenReturn(Optional.of(snapshot()));
@@ -209,7 +222,8 @@ class RepositoryWorkspaceServiceIT {
 
   @Test
   void repositoryRefThatDoesNotResolveRaisesMismatchBeforeAnyClone() {
-    when(gitHubAdapter.getRepositoryByRef("GH-unknown")).thenReturn(Optional.empty());
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of("GH-unknown")))
+        .thenReturn(Optional.empty());
 
     assertThatThrownBy(
             () ->

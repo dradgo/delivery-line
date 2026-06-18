@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.RunnerBroker;
@@ -836,14 +837,14 @@ final class ArchitectureRuleCatalog {
               .should()
               .resideInAPackage("org.dradgo.adapters.integration.ticketsource.."));
 
-  static final ArchRule GITHUB_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
+  static final ArchRule REPOSITORY_HOST_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
       namedRule(
-          "GitHub-specific REST/SDK types must not leak through the application.integration.github port",
-          "Remediation: keep GitHub REST DTOs, the org.kohsuke.github SDK, and HTTP-client surface inside adapters.integration.github; the application port "
-              + "may only depend on domain-shaped records (GitHubRepository, GitHubPullRequest, GitHubBranch). Story 3.13 AC1/AC11 invariant.",
+          "host-specific REST/SDK types must not leak through the application.integration.repohost port",
+          "Remediation: keep GitHub REST DTOs, the org.kohsuke.github SDK, and HTTP-client surface inside adapters.integration.repohost.{kind}; the application port "
+              + "may only depend on neutral domain-shaped records (Repository, PullRequest, Branch, RepositoryRef, PullRequestRef, CommentResult, RepositoryHostCapabilities). Story 3.13 AC1/AC11 / story 3.33 AC7 invariant.",
           noClasses()
               .that()
-              .resideInAPackage("org.dradgo.application.integration..")
+              .resideInAPackage("org.dradgo.application.integration.repohost..")
               .should()
               .dependOnClassesThat()
               .resideInAnyPackage(
@@ -851,6 +852,30 @@ final class ArchitectureRuleCatalog {
                   "com.github..",
                   "org.springframework.web.client..",
                   "org.springframework.http.client.."));
+
+  static final ArchRule REPOSITORY_HOST_ADAPTER_PORT_RESIDES_IN_APPLICATION =
+      namedRule(
+          "the RepositoryHostAdapter port resides in application.integration.repohost",
+          "Remediation: keep the vendor-neutral RepositoryHostAdapter port (story 3.33 AC7) in org.dradgo.application.integration.repohost; host implementations live under adapters.integration.repohost.{kind}.",
+          classes()
+              .that()
+              .areAssignableTo(RepositoryHostAdapter.class)
+              .and()
+              .areInterfaces()
+              .should()
+              .resideInAPackage("org.dradgo.application.integration.repohost.."));
+
+  static final ArchRule REPOSITORY_HOST_IMPLS_RESIDE_IN_ADAPTERS_REPOHOST =
+      namedRule(
+          "concrete RepositoryHostAdapter implementations reside in adapters.integration.repohost",
+          "Remediation: keep host RepositoryHostAdapter implementations (GitHubMockAdapter/GitHubRealAdapter and future kinds) under org.dradgo.adapters.integration.repohost.{kind} (story 3.33 AC7).",
+          classes()
+              .that()
+              .areAssignableTo(RepositoryHostAdapter.class)
+              .and()
+              .areNotInterfaces()
+              .should()
+              .resideInAPackage("org.dradgo.adapters.integration.repohost.."));
 
   static final ArchRule REPOSITORY_WORKSPACE_SERVICE_SCOPE =
       namedRule(

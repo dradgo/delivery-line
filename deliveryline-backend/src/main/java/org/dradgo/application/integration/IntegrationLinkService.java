@@ -17,10 +17,8 @@ import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubAdapterException;
-import org.dradgo.application.integration.github.GitHubBranch;
-import org.dradgo.application.integration.github.GitHubPullRequest;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
@@ -32,6 +30,9 @@ import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.DataClassification;
@@ -78,12 +79,12 @@ public class IntegrationLinkService {
   private final TicketSourceAdapter linearAdapter;
   private final IdempotencyService idempotencyService;
   private final RedactionPolicyService redactionPolicyService;
-  // Story 3.15 (Decision D3) — GitHubAdapter is @Profile(github-mock|github-real)-gated while this
-  // service is an unconditional @Service; injecting it directly would red every @SpringBootTest
-  // lacking the profile ([[unconditional-service-needs-profile-gate]]). Resolve getIfAvailable()
-  // lazily at the github-only call site; absent at a real link attempt → a typed failure, never
-  // NPE.
-  private final ObjectProvider<GitHubAdapter> gitHubAdapterProvider;
+  // Story 3.15 (Decision D3) — the RepositoryHostAdapter is @Profile(github-mock|github-real)-gated
+  // while this service is an unconditional @Service; injecting it directly would red every
+  // @SpringBootTest lacking the profile ([[unconditional-service-needs-profile-gate]]). Resolve
+  // getIfAvailable() lazily at the github-only call site; absent at a real link attempt → a typed
+  // failure, never NPE.
+  private final ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final TransactionTemplate failureCompletionTemplate;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -94,7 +95,7 @@ public class IntegrationLinkService {
       TicketSourceAdapter linearAdapter,
       IdempotencyService idempotencyService,
       RedactionPolicyService redactionPolicyService,
-      ObjectProvider<GitHubAdapter> gitHubAdapterProvider,
+      ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider,
       WorkflowEventWritePort workflowEventWritePort,
       PlatformTransactionManager transactionManager) {
     this(
@@ -112,7 +113,7 @@ public class IntegrationLinkService {
       TicketSourceAdapter linearAdapter,
       IdempotencyService idempotencyService,
       RedactionPolicyService redactionPolicyService,
-      ObjectProvider<GitHubAdapter> gitHubAdapterProvider,
+      ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider,
       WorkflowEventWritePort workflowEventWritePort,
       TransactionTemplate failureCompletionTemplate) {
     this.integrationLinkRecordPort =
@@ -364,12 +365,13 @@ public class IntegrationLinkService {
    * #linkTicketWithinTransaction}: same lock → fetch → compat → conflict → redact → insert spine,
    * plus the AC9 supersede branch and an AC2 {@code integration.linked} event.
    *
-   * <p>{@code prReference} MUST be the canonical GitHubAdapter ref ({@code owner/repo#number}) —
-   * the authoritative {@code RepositoryPushOutcome.prRef()}, never the untrusted runner-reported
-   * {@code PR-<n>} (Trap T1 / [[proutput-prref-validator-rejects-real-adapter]]). PR metadata
-   * ({@code prNumber}/{@code prState}/{@code prUrl}/{@code repositoryFullName}) is resolved via
-   * {@link GitHubAdapter#getPullRequestByRef(String)} (Decision D2), which also verifies existence
-   * ({@code GITHUB_PR_NOT_FOUND}).
+   * <p>{@code prReference} MUST be the canonical RepositoryHostAdapter ref ({@code
+   * owner/repo#number}) — the authoritative {@code RepositoryPushOutcome.prRef()}, never the
+   * untrusted runner-reported {@code PR-<n>} (Trap T1 /
+   * [[proutput-prref-validator-rejects-real-adapter]]). PR metadata ({@code prNumber}/{@code
+   * prState}/{@code prUrl}/{@code repositoryFullName}) is resolved via {@link
+   * RepositoryHostAdapter#getPullRequestByRef(PullRequestRef)} (Decision D2), which also verifies
+   * existence ({@code GITHUB_PR_NOT_FOUND}).
    *
    * <p>Transactional semantics (AC2): compat-check → cross-run conflict →
    * supersede-prior-different- PR → insert → append {@code integration.linked} — all in the
@@ -380,7 +382,7 @@ public class IntegrationLinkService {
    *     {@link IdempotencyService}.
    */
   @Transactional
-  public IntegrationLink linkGitHubPr(
+  public IntegrationLink linkPullRequest(
       String workflowRunPublicId,
       String prReference,
       String repositoryRef,
@@ -403,20 +405,20 @@ public class IntegrationLinkService {
           actor.actorIdentity(),
           MdcKeys.sanitizeForLog(prReference));
 
-      GitHubPullRequest pr = resolvePullRequest(workflowRunPublicId, prReference, "linkGitHubPr");
+      PullRequest pr = resolvePullRequest(workflowRunPublicId, prReference, "linkGitHubPr");
 
       // AC4 — defense-in-depth: the PR's repository must match the run's established repository
       // linkage (story 3.9 verifyRepositoryIsConsistent already blocks the workspace from being
       // prepared against a conflicting repo, so this can only fire on a code-path bug).
       if (repositoryRef != null
           && !repositoryRef.isBlank()
-          && !repositoryRef.equals(pr.repoRef())) {
+          && !repositoryRef.equals(pr.repoRef().value())) {
         log.warn(
             "linkGitHubPr repo_mismatch workflowRunId={} runRepoRef={} prRepoRef={}",
             workflowRunPublicId,
             MdcKeys.sanitizeForLog(repositoryRef),
-            MdcKeys.sanitizeForLog(pr.repoRef()));
-        throw repoMismatch(workflowRunPublicId, repositoryRef, pr.repoRef());
+            MdcKeys.sanitizeForLog(pr.repoRef().value()));
+        throw repoMismatch(workflowRunPublicId, repositoryRef, pr.repoRef().value());
       }
 
       // AC2 — cross-run conflict (pessimistic lock + the V6 DB backstop). Same ref + same run is an
@@ -495,12 +497,12 @@ public class IntegrationLinkService {
 
   /**
    * Refresh the active {@code github_pr} link for a run: re-query the PR via {@link
-   * GitHubAdapter#getPullRequestByRef(String)}, rebuild + re-redact {@code external_metadata} with
-   * the fresh {@code prState}, and persist alongside the {@code → synced} transition and a
-   * refreshed {@code last_sync_at} (story 3.15 AC6). A vanished PR or a classified adapter failure
-   * routes the link to {@code failed} via {@link #markFailed} (Trap T13) rather than throwing — the
-   * caller (orchestration verifying a PR is mergeable before {@code Completed}) treats {@code
-   * failed} as a non-mergeable signal.
+   * RepositoryHostAdapter#getPullRequestByRef(PullRequestRef)}, rebuild + re-redact {@code
+   * external_metadata} with the fresh {@code prState}, and persist alongside the {@code → synced}
+   * transition and a refreshed {@code last_sync_at} (story 3.15 AC6). A vanished PR or a classified
+   * adapter failure routes the link to {@code failed} via {@link #markFailed} (Trap T13) rather
+   * than throwing — the caller (orchestration verifying a PR is mergeable before {@code Completed})
+   * treats {@code failed} as a non-mergeable signal.
    */
   @Transactional
   public IntegrationLink syncGitHubPr(String workflowRunPublicId) {
@@ -518,13 +520,14 @@ public class IntegrationLinkService {
           active.publicId(),
           MdcKeys.sanitizeForLog(active.externalRef()));
 
-      GitHubAdapter adapter = gitHubAdapterProvider.getIfAvailable();
+      RepositoryHostAdapter adapter = gitHubAdapterProvider.getIfAvailable();
       if (adapter == null) {
         throw gitHubAdapterUnavailable(active.externalRef());
       }
-      GitHubPullRequest pr;
+      PullRequest pr;
       try {
-        Optional<GitHubPullRequest> fetched = adapter.getPullRequestByRef(active.externalRef());
+        Optional<PullRequest> fetched =
+            adapter.getPullRequestByRef(PullRequestRef.of(active.externalRef()));
         if (fetched.isEmpty()) {
           log.warn(
               "syncGitHubPr pr_not_found workflowRunId={} integrationLinkPublicId={}",
@@ -533,7 +536,7 @@ public class IntegrationLinkService {
           return markFailed(active.publicId(), IntegrationFailureCategory.GITHUB_PR_NOT_FOUND);
         }
         pr = fetched.get();
-      } catch (GitHubAdapterException error) {
+      } catch (RepositoryHostAdapterException error) {
         log.warn(
             "syncGitHubPr adapter_failure workflowRunId={} integrationLinkPublicId={} category={}",
             workflowRunPublicId,
@@ -829,19 +832,19 @@ public class IntegrationLinkService {
   // GitHub PR linkage helpers (story 3.15)
   // =====================================================================
 
-  private GitHubPullRequest resolvePullRequest(String runId, String prReference, String op) {
-    GitHubAdapter adapter = gitHubAdapterProvider.getIfAvailable();
+  private PullRequest resolvePullRequest(String runId, String prReference, String op) {
+    RepositoryHostAdapter adapter = gitHubAdapterProvider.getIfAvailable();
     if (adapter == null) {
       throw gitHubAdapterUnavailable(prReference);
     }
     try {
-      Optional<GitHubPullRequest> fetched = adapter.getPullRequestByRef(prReference);
+      Optional<PullRequest> fetched = adapter.getPullRequestByRef(PullRequestRef.of(prReference));
       if (fetched.isEmpty()) {
         log.warn("{} pr_not_found workflowRunId={}", op, runId);
         throw gitHubPrNotFound(prReference);
       }
       return fetched.get();
-    } catch (GitHubAdapterException error) {
+    } catch (RepositoryHostAdapterException error) {
       log.warn(
           "{} adapter_failure workflowRunId={} category={}",
           op,
@@ -851,22 +854,22 @@ public class IntegrationLinkService {
     }
   }
 
-  private static String resolveHeadSha(GitHubAdapter adapter, GitHubPullRequest pr) {
+  private static String resolveHeadSha(RepositoryHostAdapter adapter, PullRequest pr) {
     try {
       return adapter
           .getBranchByRef(pr.repoRef(), pr.sourceBranch())
-          .map(GitHubBranch::headSha)
+          .map(Branch::headSha)
           .orElse(null);
-    } catch (GitHubAdapterException error) {
+    } catch (RepositoryHostAdapterException error) {
       // Best-effort commitSha refresh; the prState refresh is the AC6 contract, not the SHA.
       return null;
     }
   }
 
   private static Map<String, Object> buildGitHubExternalMetadata(
-      GitHubPullRequest pr, String branchName, String commitSha) {
+      PullRequest pr, String branchName, String commitSha) {
     Map<String, Object> metadata = new LinkedHashMap<>();
-    metadata.put("repositoryFullName", pr.repoRef());
+    metadata.put("repositoryFullName", pr.repoRef().value());
     metadata.put(
         "branch", (branchName == null || branchName.isBlank()) ? pr.sourceBranch() : branchName);
     // Omit (rather than store JSON null) when absent — mirrors appendIntegrationLinkedEvent's
@@ -886,14 +889,14 @@ public class IntegrationLinkService {
   private void appendIntegrationLinkedEvent(
       String runId,
       IntegrationLink link,
-      GitHubPullRequest pr,
+      PullRequest pr,
       String branchName,
       String commitSha,
       ActorContext actor,
       Instant at) {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put(WorkflowEventDetailKeys.GITHUB_PR_REFERENCE, link.externalRef());
-    details.put(WorkflowEventDetailKeys.REPOSITORY_FULL_NAME, pr.repoRef());
+    details.put(WorkflowEventDetailKeys.REPOSITORY_FULL_NAME, pr.repoRef().value());
     details.put(
         WorkflowEventDetailKeys.BRANCH,
         (branchName == null || branchName.isBlank()) ? pr.sourceBranch() : branchName);
@@ -969,7 +972,7 @@ public class IntegrationLinkService {
   }
 
   private static DomainException gitHubAdapterFailure(
-      String prReference, GitHubAdapterException cause) {
+      String prReference, RepositoryHostAdapterException cause) {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("integrationType", GITHUB_PR_INTEGRATION_TYPE);
     details.put("externalRef", prReference);

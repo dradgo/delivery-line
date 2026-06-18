@@ -20,8 +20,7 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubPullRequest;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
@@ -31,6 +30,9 @@ import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.ActorType;
@@ -69,7 +71,7 @@ class IntegrationLinkServiceUnitTest {
   private TicketSourceAdapter linearAdapter;
   private IdempotencyService idempotencyService;
   private RedactionPolicyService redactionService;
-  private GitHubAdapter gitHubAdapter;
+  private RepositoryHostAdapter gitHubAdapter;
   private WorkflowEventWritePort workflowEventWritePort;
   private IntegrationLinkService service;
 
@@ -79,7 +81,7 @@ class IntegrationLinkServiceUnitTest {
     linearAdapter = org.mockito.Mockito.mock(TicketSourceAdapter.class);
     idempotencyService = org.mockito.Mockito.mock(IdempotencyService.class);
     redactionService = org.mockito.Mockito.mock(RedactionPolicyService.class);
-    gitHubAdapter = org.mockito.Mockito.mock(GitHubAdapter.class);
+    gitHubAdapter = org.mockito.Mockito.mock(RepositoryHostAdapter.class);
     workflowEventWritePort = org.mockito.Mockito.mock(WorkflowEventWritePort.class);
     service =
         new IntegrationLinkService(
@@ -93,8 +95,9 @@ class IntegrationLinkServiceUnitTest {
   }
 
   @SuppressWarnings("unchecked")
-  private static ObjectProvider<GitHubAdapter> gitHubAdapterProvider(GitHubAdapter adapter) {
-    ObjectProvider<GitHubAdapter> provider = org.mockito.Mockito.mock(ObjectProvider.class);
+  private static ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider(
+      RepositoryHostAdapter adapter) {
+    ObjectProvider<RepositoryHostAdapter> provider = org.mockito.Mockito.mock(ObjectProvider.class);
     when(provider.getIfAvailable()).thenReturn(adapter);
     return provider;
   }
@@ -351,7 +354,8 @@ class IntegrationLinkServiceUnitTest {
 
   @Test
   void linkGitHubPrHappyPathInsertsGithubRowAndAppendsIntegrationLinkedEvent() {
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
+        .thenReturn(Optional.of(samplePullRequest()));
     when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
         .thenReturn(Optional.empty());
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
@@ -362,7 +366,7 @@ class IntegrationLinkServiceUnitTest {
         .thenReturn(sampleGithubLink("ilk_gh00000000001", RUN_ID, IntegrationSyncStatus.LINKED));
 
     IntegrationLink result =
-        service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+        service.linkPullRequest(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
 
     assertEquals("ilk_gh00000000001", result.publicId());
     ArgumentCaptor<NewIntegrationLink> captor = ArgumentCaptor.forClass(NewIntegrationLink.class);
@@ -382,7 +386,8 @@ class IntegrationLinkServiceUnitTest {
 
   @Test
   void linkGitHubPrPassesShareableRedactedMetadataWithAllReconstructionFields() {
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
+        .thenReturn(Optional.of(samplePullRequest()));
     when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
         .thenReturn(Optional.empty());
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
@@ -392,7 +397,7 @@ class IntegrationLinkServiceUnitTest {
     when(port.insert(any(NewIntegrationLink.class)))
         .thenReturn(sampleGithubLink("ilk_gh00000000001", RUN_ID, IntegrationSyncStatus.LINKED));
 
-    service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+    service.linkPullRequest(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
 
     ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
     verify(redactionService)
@@ -408,7 +413,8 @@ class IntegrationLinkServiceUnitTest {
 
   @Test
   void linkGitHubPrCrossRunDoubleLinkRaisesIntegrationLinkConflict() {
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
+        .thenReturn(Optional.of(samplePullRequest()));
     when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
         .thenReturn(
             Optional.of(
@@ -418,7 +424,8 @@ class IntegrationLinkServiceUnitTest {
         assertThrows(
             DomainException.class,
             () ->
-                service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
+                service.linkPullRequest(
+                    RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
 
     assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
     assertEquals(OTHER_RUN_ID, error.details().get("existingRunPublicId"));
@@ -428,13 +435,14 @@ class IntegrationLinkServiceUnitTest {
 
   @Test
   void linkGitHubPrRepoMismatchRaisesLinearGithubRepoMismatch() {
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
+        .thenReturn(Optional.of(samplePullRequest()));
 
     DomainException error =
         assertThrows(
             DomainException.class,
             () ->
-                service.linkGitHubPr(
+                service.linkPullRequest(
                     RUN_ID, PR_REF, "other/repo", BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
 
     assertEquals(DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH, error.errorCode());
@@ -445,12 +453,13 @@ class IntegrationLinkServiceUnitTest {
   void linkGitHubPrSamePrSameRunIsIdempotentNoOp() {
     IntegrationLink existing =
         sampleGithubLink("ilk_existing00001", RUN_ID, IntegrationSyncStatus.LINKED);
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
+        .thenReturn(Optional.of(samplePullRequest()));
     when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
         .thenReturn(Optional.of(existing));
 
     IntegrationLink result =
-        service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+        service.linkPullRequest(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
 
     assertEquals("ilk_existing00001", result.publicId());
     verify(port, never()).insert(any());
@@ -461,7 +470,8 @@ class IntegrationLinkServiceUnitTest {
   void linkGitHubPrDifferentPrSameRunSupersedesPriorThenInserts() {
     IntegrationLink prior =
         sampleGithubLink("ilk_prior00000001", RUN_ID, OTHER_PR_REF, IntegrationSyncStatus.LINKED);
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.of(samplePullRequest()));
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
+        .thenReturn(Optional.of(samplePullRequest()));
     when(port.findActiveByTypeAndExternalRefForUpdate(GITHUB_TYPE, PR_REF))
         .thenReturn(Optional.empty());
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
@@ -472,7 +482,7 @@ class IntegrationLinkServiceUnitTest {
         .thenReturn(sampleGithubLink("ilk_new000000001", RUN_ID, IntegrationSyncStatus.LINKED));
 
     IntegrationLink result =
-        service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
+        service.linkPullRequest(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY);
 
     assertEquals("ilk_new000000001", result.publicId());
     verify(port).updateSyncStatus("ilk_prior00000001", IntegrationSyncStatus.SUPERSEDED, null);
@@ -481,13 +491,14 @@ class IntegrationLinkServiceUnitTest {
 
   @Test
   void linkGitHubPrPrNotFoundRaisesConflictCarryingCategory() {
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.empty());
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF))).thenReturn(Optional.empty());
 
     DomainException error =
         assertThrows(
             DomainException.class,
             () ->
-                service.linkGitHubPr(RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
+                service.linkPullRequest(
+                    RUN_ID, PR_REF, REPO_REF, BRANCH, COMMIT_SHA, ACTOR, GH_KEY));
 
     assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
     assertEquals(
@@ -502,9 +513,10 @@ class IntegrationLinkServiceUnitTest {
         sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.LINKED);
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
         .thenReturn(Optional.of(active));
-    when(gitHubAdapter.getPullRequestByRef(PR_REF))
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
         .thenReturn(Optional.of(samplePullRequest("merged")));
-    when(gitHubAdapter.getBranchByRef(REPO_REF, BRANCH)).thenReturn(Optional.empty());
+    when(gitHubAdapter.getBranchByRef(RepositoryRef.of(REPO_REF), BRANCH))
+        .thenReturn(Optional.empty());
     when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
         .thenReturn(sampleRedactionResult());
     when(port.updateExternalMetadataAndSync(
@@ -526,7 +538,7 @@ class IntegrationLinkServiceUnitTest {
         sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.LINKED);
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
         .thenReturn(Optional.of(active));
-    when(gitHubAdapter.getPullRequestByRef(PR_REF)).thenReturn(Optional.empty());
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF))).thenReturn(Optional.empty());
     when(port.updateSyncStatus("ilk_sync00000001", IntegrationSyncStatus.FAILED, null))
         .thenReturn(sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.FAILED));
 
@@ -548,9 +560,10 @@ class IntegrationLinkServiceUnitTest {
         sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.FAILED);
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
         .thenReturn(Optional.of(active));
-    when(gitHubAdapter.getPullRequestByRef(PR_REF))
+    when(gitHubAdapter.getPullRequestByRef(PullRequestRef.of(PR_REF)))
         .thenReturn(Optional.of(samplePullRequest("open")));
-    when(gitHubAdapter.getBranchByRef(REPO_REF, BRANCH)).thenReturn(Optional.empty());
+    when(gitHubAdapter.getBranchByRef(RepositoryRef.of(REPO_REF), BRANCH))
+        .thenReturn(Optional.empty());
     when(port.updateSyncStatus("ilk_sync00000001", IntegrationSyncStatus.LINKED, null))
         .thenReturn(sampleGithubLink("ilk_sync00000001", RUN_ID, IntegrationSyncStatus.LINKED));
     when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
@@ -608,14 +621,14 @@ class IntegrationLinkServiceUnitTest {
     assertEquals("no_active_github_pr_link", error.details().get("reason"));
   }
 
-  private static GitHubPullRequest samplePullRequest() {
+  private static PullRequest samplePullRequest() {
     return samplePullRequest("open");
   }
 
-  private static GitHubPullRequest samplePullRequest(String state) {
-    return new GitHubPullRequest(
-        PR_REF,
-        REPO_REF,
+  private static PullRequest samplePullRequest(String state) {
+    return new PullRequest(
+        PullRequestRef.of(PR_REF),
+        RepositoryRef.of(REPO_REF),
         42,
         BRANCH,
         state,

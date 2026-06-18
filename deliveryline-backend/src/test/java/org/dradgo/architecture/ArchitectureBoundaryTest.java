@@ -173,8 +173,16 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.TICKET_SOURCE_IMPLS_RESIDE_IN_ADAPTERS_TICKETSOURCE;
 
   @ArchTest
-  static final ArchRule github_types_must_not_leak_through_port =
-      ArchitectureRuleCatalog.GITHUB_TYPES_MUST_NOT_LEAK_THROUGH_PORT;
+  static final ArchRule repohost_types_must_not_leak_through_port =
+      ArchitectureRuleCatalog.REPOSITORY_HOST_TYPES_MUST_NOT_LEAK_THROUGH_PORT;
+
+  @ArchTest
+  static final ArchRule repository_host_adapter_port_resides_in_application =
+      ArchitectureRuleCatalog.REPOSITORY_HOST_ADAPTER_PORT_RESIDES_IN_APPLICATION;
+
+  @ArchTest
+  static final ArchRule repository_host_impls_reside_in_adapters_repohost =
+      ArchitectureRuleCatalog.REPOSITORY_HOST_IMPLS_RESIDE_IN_ADAPTERS_REPOHOST;
 
   @ArchTest
   static final ArchRule repository_workspace_service_scope =

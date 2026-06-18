@@ -12,14 +12,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.Optional;
-import org.dradgo.adapters.integration.github.GitHubMockAdapter;
-import org.dradgo.adapters.integration.github.GitHubMockScenarioRegistry;
+import org.dradgo.adapters.integration.repohost.github.GitHubMockAdapter;
+import org.dradgo.adapters.integration.repohost.github.GitHubMockScenarioRegistry;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
-import org.dradgo.application.integration.github.GitHubAdapter;
-import org.dradgo.application.integration.github.GitHubPullRequest;
+import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
@@ -27,6 +26,8 @@ import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
+import org.dradgo.domain.integration.repohost.PullRequest;
+import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -38,8 +39,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Foundation contract (story 3.15 AC8) — widens the foundation gate (story 1.23) to assert {@link
- * IntegrationLinkService#linkGitHubPr} works end-to-end against the {@code github-mock} adapter: it
- * resolves the PR via the real {@link GitHubMockAdapter}, writes a {@code github_pr} {@code
+ * IntegrationLinkService#linkPullRequest} works end-to-end against the {@code github-mock} adapter:
+ * it resolves the PR via the real {@link GitHubMockAdapter}, writes a {@code github_pr} {@code
  * integration_links} row through the SPI, and appends an {@code integration.linked} workflow event
  * — with REAL redaction (NFR17 reconstruction fields survive the {@code shareable-redacted} pass).
  *
@@ -59,7 +60,7 @@ class IntegrationLinkGitHubPrFoundationContract {
   @Test
   void linkGitHubPrWritesGithubRowAndEmitsIntegrationLinkedEventAgainstMockAdapter()
       throws Exception {
-    GitHubAdapter mockAdapter = new GitHubMockAdapter(new GitHubMockScenarioRegistry());
+    RepositoryHostAdapter mockAdapter = new GitHubMockAdapter(new GitHubMockScenarioRegistry());
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
     WorkflowEventWritePort eventPort = mock(WorkflowEventWritePort.class);
     IntegrationLinkService service = service(port, mockAdapter, eventPort);
@@ -67,7 +68,7 @@ class IntegrationLinkGitHubPrFoundationContract {
     // The mock seeds PR-101 against repo GH-101 (github-feature-low-risk fixture).
     String prRef = GitHubMockScenarioRegistry.PR_FEATURE_LOW_RISK;
     String repoRef = GitHubMockScenarioRegistry.REPO_FEATURE_LOW_RISK;
-    GitHubPullRequest seeded = mockAdapter.getPullRequestByRef(prRef).orElseThrow();
+    PullRequest seeded = mockAdapter.getPullRequestByRef(PullRequestRef.of(prRef)).orElseThrow();
 
     when(port.findActiveByTypeAndExternalRefForUpdate("github_pr", prRef))
         .thenReturn(Optional.empty());
@@ -77,7 +78,7 @@ class IntegrationLinkGitHubPrFoundationContract {
         .thenAnswer(invocation -> linkFrom(invocation.getArgument(0)));
 
     IntegrationLink linked =
-        service.linkGitHubPr(
+        service.linkPullRequest(
             RUN_ID,
             prRef,
             repoRef,
@@ -112,7 +113,9 @@ class IntegrationLinkGitHubPrFoundationContract {
   }
 
   private static IntegrationLinkService service(
-      IntegrationLinkRecordPort port, GitHubAdapter adapter, WorkflowEventWritePort eventPort) {
+      IntegrationLinkRecordPort port,
+      RepositoryHostAdapter adapter,
+      WorkflowEventWritePort eventPort) {
     return new IntegrationLinkService(
         port,
         mock(TicketSourceAdapter.class),
@@ -137,8 +140,9 @@ class IntegrationLinkGitHubPrFoundationContract {
   }
 
   @SuppressWarnings("unchecked")
-  private static ObjectProvider<GitHubAdapter> gitHubAdapterProvider(GitHubAdapter adapter) {
-    ObjectProvider<GitHubAdapter> provider = mock(ObjectProvider.class);
+  private static ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider(
+      RepositoryHostAdapter adapter) {
+    ObjectProvider<RepositoryHostAdapter> provider = mock(ObjectProvider.class);
     when(provider.getIfAvailable()).thenReturn(adapter);
     return provider;
   }
