@@ -273,7 +273,8 @@ class WorkflowInspectionServiceArtifactDetailTest {
         .isEqualTo(DomainErrorCode.INVALID_ID_PREFIX);
   }
 
-  // ===== Story 3b-5 — structured prOutput projection + co-present prState from the github_pr link =
+  // ===== Story 3b-5 — structured prOutput projection + co-present prState from the github_pr link
+  // =
 
   private static final String PR_OUTPUT_PAYLOAD =
       "{\"artifactId\":\"art_pr00000001\",\"artifactType\":\"prOutput\","
@@ -290,9 +291,7 @@ class WorkflowInspectionServiceArtifactDetailTest {
         .thenReturn(Optional.of(PR_OUTPUT_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
     when(links.findActiveGitHubPrLinkView(RUN))
         .thenReturn(
-            Optional.of(
-                new IntegrationLinkService.GitHubPrLinkView(
-                    "acme/app#42", "open")));
+            Optional.of(new IntegrationLinkService.GitHubPrLinkView("acme/app#42", "open")));
 
     ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
 
@@ -303,7 +302,8 @@ class WorkflowInspectionServiceArtifactDetailTest {
     // prReference + prState co-present from the github_pr link (the authoritative source).
     assertThat(view.prReference()).isEqualTo("acme/app#42");
     assertThat(view.prState()).isEqualTo("open");
-    // body is blanked for a prOutput — the diff travels in the typed field, never the markdown body.
+    // body is blanked for a prOutput — the diff travels in the typed field, never the markdown
+    // body.
     assertThat(view.body()).isEmpty();
   }
 
@@ -333,10 +333,7 @@ class WorkflowInspectionServiceArtifactDetailTest {
     when(payloadStore.readBytes("pr/ref"))
         .thenReturn(Optional.of(PR_OUTPUT_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
     when(links.findActiveGitHubPrLinkView(RUN))
-        .thenReturn(
-            Optional.of(
-                new IntegrationLinkService.GitHubPrLinkView(
-                    "acme/app#42", null)));
+        .thenReturn(Optional.of(new IntegrationLinkService.GitHubPrLinkView("acme/app#42", null)));
 
     ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
 

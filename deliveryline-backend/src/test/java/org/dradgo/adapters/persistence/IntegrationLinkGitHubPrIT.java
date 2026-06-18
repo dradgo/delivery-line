@@ -129,7 +129,8 @@ class IntegrationLinkGitHubPrIT {
   @Test
   void findActiveTicketSummaryByTypeAndWorkflowRunReturnsGitHubMetadataNonLocking() {
     // Story 3b-5 — the NON-locking typed projection the artifact-read path uses to surface prState.
-    // Resolves the github_pr row's external ref + metadata (NOT the linear-convention first row) and
+    // Resolves the github_pr row's external ref + metadata (NOT the linear-convention first row)
+    // and
     // excludes superseded rows.
     String run = seedRun();
     port.insert(githubLink(run, PR_REF));
@@ -139,7 +140,8 @@ class IntegrationLinkGitHubPrIT {
 
     assertTrue(projection.isPresent());
     assertEquals(PR_REF, projection.get().externalRef());
-    String metadata = new String(projection.get().externalMetadata(), java.nio.charset.StandardCharsets.UTF_8);
+    String metadata =
+        new String(projection.get().externalMetadata(), java.nio.charset.StandardCharsets.UTF_8);
     assertTrue(metadata.contains("\"prState\""), "metadata must carry prState: " + metadata);
     assertTrue(metadata.contains("open"), "metadata must carry the prState value: " + metadata);
   }

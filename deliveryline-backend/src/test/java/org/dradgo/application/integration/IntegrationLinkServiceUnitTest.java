@@ -647,7 +647,8 @@ class IntegrationLinkServiceUnitTest {
             Optional.of(
                 new IntegrationLinkRecordPort.TicketSummaryProjection(
                     PR_REF,
-                    "{\"prState\":\"open\",\"prNumber\":42}".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+                    "{\"prState\":\"open\",\"prNumber\":42}"
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8))));
 
     Optional<IntegrationLinkService.GitHubPrLinkView> view =
         service.findActiveGitHubPrLinkView(RUN_ID);
@@ -663,7 +664,8 @@ class IntegrationLinkServiceUnitTest {
         .thenReturn(
             Optional.of(
                 new IntegrationLinkRecordPort.TicketSummaryProjection(
-                    PR_REF, "{\"prNumber\":42}".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+                    PR_REF,
+                    "{\"prNumber\":42}".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
 
     Optional<IntegrationLinkService.GitHubPrLinkView> view =
         service.findActiveGitHubPrLinkView(RUN_ID);

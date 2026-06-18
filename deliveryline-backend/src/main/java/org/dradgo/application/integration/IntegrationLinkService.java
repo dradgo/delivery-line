@@ -669,8 +669,8 @@ public class IntegrationLinkService {
    * PESSIMISTIC_WRITE} lock {@link #findActiveGitHubPrLink} holds) and typed to {@code github_pr}
    * (never the Linear variant). {@code prState} is parsed from the link's {@code external_metadata}
    * (the {@code prState} key written by {@code buildGitHubExternalMetadata}); empty/malformed
-   * metadata yields a {@code null} state. Empty Optional when the run has no active {@code github_pr}
-   * link (⇒ the panel renders "No linked pull request").
+   * metadata yields a {@code null} state. Empty Optional when the run has no active {@code
+   * github_pr} link (⇒ the panel renders "No linked pull request").
    */
   @Transactional(readOnly = true)
   public Optional<GitHubPrLinkView> findActiveGitHubPrLinkView(String workflowRunPublicId) {

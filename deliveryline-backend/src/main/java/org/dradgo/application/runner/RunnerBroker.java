@@ -2033,7 +2033,8 @@ public class RunnerBroker {
       if (actual.prRef() != null) {
         enriched.put("prReference", actual.prRef());
       }
-      // Story 3b-5 (AC3) — carry the diff resolved at ingest onto the enriched v2 head (prRef itself
+      // Story 3b-5 (AC3) — carry the diff resolved at ingest onto the enriched v2 head (prRef
+      // itself
       // holds only the diffReference pointer), so the highest-version artifact the reviewer reads
       // never loses the diff. Null (absent scratch / no-push) leaves the v2 payload diff-less.
       if (resolvedDiff != null) {
@@ -2164,8 +2165,8 @@ public class RunnerBroker {
   }
 
   /**
-   * Story 3b-5 (AC1) — when {@code resolvedPrOutputDiff} is non-null (a prOutput whose diff resolved
-   * in scratch), embed it as a {@code diff} field in the serialized payload alongside the
+   * Story 3b-5 (AC1) — when {@code resolvedPrOutputDiff} is non-null (a prOutput whose diff
+   * resolved in scratch), embed it as a {@code diff} field in the serialized payload alongside the
    * runner-reported refs. The runner ref carries only the ephemeral {@code diffReference} pointer,
    * so this is the one place the diff bytes enter the persisted v1 payload. Null leaves the payload
    * byte-identical to the pre-3b-5 behaviour (spec/plan, and any prOutput with no resolvable diff).
@@ -2206,7 +2207,8 @@ public class RunnerBroker {
 
   // Story 3b-5 (AC2) — storage guardrails for the embedded prOutput diff. The line cap mirrors the
   // frontend PR_DIFF_MAX_LINES (5000); the byte ceiling is an absolute backstop against a
-  // pathological single-line mega-diff. The frontend caps AGAIN at render (SafeUnifiedDiffRenderer),
+  // pathological single-line mega-diff. The frontend caps AGAIN at render
+  // (SafeUnifiedDiffRenderer),
   // so this is purely the storage guardrail.
   private static final int PR_OUTPUT_DIFF_MAX_LINES = 5000;
   private static final int PR_OUTPUT_DIFF_MAX_BYTES = 1_000_000;
@@ -2217,9 +2219,9 @@ public class RunnerBroker {
    * Story 3b-5 (AC1/AC2) — resolve the runner-reported {@code diffReference} to unified-diff bytes
    * in scratch, cap it to the storage guardrails, and return it for embedding in the persisted
    * prOutput payload. Returns {@link Optional#empty()} (graceful — never fails ingest) when the
-   * reference is blank or the scratch file is absent/evicted; today's runners emit only the pointer,
-   * not the file (OQ-1), so the absent case is the common one until the runner two-phase contract
-   * writes the diff. Never logs diff CONTENT — sizes/counts only.
+   * reference is blank or the scratch file is absent/evicted; today's runners emit only the
+   * pointer, not the file (OQ-1), so the absent case is the common one until the runner two-phase
+   * contract writes the diff. Never logs diff CONTENT — sizes/counts only.
    */
   private Optional<String> resolvePrOutputDiff(
       String runnerExecutionId, String workflowRunId, String artifactId, JsonNode prRef) {
@@ -2264,9 +2266,7 @@ public class RunnerBroker {
     }
     if (diff.getBytes(StandardCharsets.UTF_8).length > PR_OUTPUT_DIFF_MAX_BYTES) {
       diff =
-          truncateToBytes(diff, PR_OUTPUT_DIFF_MAX_BYTES)
-              + "\n"
-              + PR_OUTPUT_DIFF_TRUNCATION_MARKER;
+          truncateToBytes(diff, PR_OUTPUT_DIFF_MAX_BYTES) + "\n" + PR_OUTPUT_DIFF_TRUNCATION_MARKER;
       truncated = true;
     }
     int storedBytes = diff.getBytes(StandardCharsets.UTF_8).length;

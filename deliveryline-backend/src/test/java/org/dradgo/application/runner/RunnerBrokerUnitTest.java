@@ -2330,8 +2330,10 @@ class RunnerBrokerUnitTest {
 
   @Test
   void prOutputEnrichedHeadCarriesResolvedDiff() {
-    // Story 3b-5 (AC3 — the dual-write trap): a real push enriches the prOutput via a v2 UPDATE that
-    // resolveImplementationArtifact selects as the highest version. The diff resolved at ingest must
+    // Story 3b-5 (AC3 — the dual-write trap): a real push enriches the prOutput via a v2 UPDATE
+    // that
+    // resolveImplementationArtifact selects as the highest version. The diff resolved at ingest
+    // must
     // ride that enriched head too, or the reviewer's resolved target loses it.
     org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
         mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
@@ -2370,7 +2372,8 @@ class RunnerBrokerUnitTest {
 
   @Test
   void prOutputIngestOmitsDiffWhenScratchAbsentWithoutFailingIngest() {
-    // Story 3b-5 (AC1) — the OQ-1 reality: today's runners write only the diffReference pointer, not
+    // Story 3b-5 (AC1) — the OQ-1 reality: today's runners write only the diffReference pointer,
+    // not
     // the file, so the scratch read is empty. The diff field is omitted and ingest still succeeds
     // (the read path then degrades to an empty-diff panel).
     org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =

@@ -1118,7 +1118,8 @@ public class WorkflowInspectionService {
       // from the active github_pr link, and blank the markdown body (the diff travels in the typed
       // `diff` field, never duplicated into the body that a markdown renderer would receive). A
       // malformed payload JSON must NOT 500 the read — it falls back to null structured fields and
-      // an empty body. spec / implementationPlan reads are byte-identical to pre-3b-5 (all five null,
+      // an empty body. spec / implementationPlan reads are byte-identical to pre-3b-5 (all five
+      // null,
       // body intact).
       String responseBody = body;
       String branch = null;
@@ -1687,7 +1688,8 @@ public class WorkflowInspectionService {
       String checksumShortForm,
       String body,
       // Story 3b-5 — structured prOutput fields (all null for spec/implementationPlan). branch /
-      // commitSha / diff are parsed from the stored prOutput payload JSON; prReference / prState are
+      // commitSha / diff are parsed from the stored prOutput payload JSON; prReference / prState
+      // are
       // sourced co-presently from the active github_pr integration link (both null ⇒ no linked PR).
       String branch,
       String commitSha,

@@ -35,7 +35,8 @@ public record ArtifactDetailResponse(
             example = "# Specification\n\n...")
         String body,
     @Schema(
-            description = "prOutput only: the pushed branch name; null for spec/implementationPlan.",
+            description =
+                "prOutput only: the pushed branch name; null for spec/implementationPlan.",
             example = "feature/x",
             nullable = true)
         String branch,
