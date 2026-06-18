@@ -169,9 +169,17 @@
             "type" : "string"
           },
           "body" : {
-            "description" : "Redacted artifact payload as a UTF-8 markdown string (not base64).",
+            "description" : "Redacted artifact payload as a UTF-8 markdown string (not base64). Empty for a prOutput (its content travels in the structured fields below).",
             "example" : "# Specification\n\n...",
             "type" : "string"
+          },
+          "branch" : {
+            "description" : "prOutput only: the pushed branch name; null for spec/implementationPlan.",
+            "example" : "feature/x",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "checksum" : {
             "description" : "Short-form checksum (<algorithm>:<first 12 hex>); null when unset.",
@@ -182,9 +190,40 @@
             "example" : "shareable-redacted",
             "type" : "string"
           },
+          "commitSha" : {
+            "description" : "prOutput only: the pushed commit SHA; null otherwise.",
+            "example" : "abcdef1234567890abcdef1234567890abcdef12",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "createdAt" : {
             "format" : "date-time",
             "type" : "string"
+          },
+          "diff" : {
+            "description" : "prOutput only: the unified diff (size-capped) resolved at ingest; null when the runner produced no resolvable diff.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "prReference" : {
+            "description" : "prOutput only: the canonical PR reference (org/repo#n) from the active github_pr link (co-present with prState); null when no linked PR.",
+            "example" : "octo/hello#42",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "prState" : {
+            "description" : "prOutput only: the PR state from the active github_pr link (draft/open/merged/closed), co-present with prReference; null when no linked PR.",
+            "example" : "open",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "status" : {
             "example" : "available",

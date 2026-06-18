@@ -120,6 +120,17 @@ public interface IntegrationLinkRecordPort {
       String workflowRunPublicId);
 
   /**
+   * Story 3b-5 — project the active link for a SPECIFIC {@code (integrationType, workflowRun)} as a
+   * {@link TicketSummaryProjection} (external ref + raw redacted {@code external_metadata} bytes).
+   * Unlike {@link #findActiveTicketSummaryByWorkflowRun} (which returns the {@code linear} variant
+   * by convention), this resolves the typed {@code github_pr} row so the artifact-read path can
+   * surface its {@code prState}. NON-locking — a read must not take the {@code PESSIMISTIC_WRITE}
+   * lock the enrich/sync writers hold. Empty when no active row of that type exists for the run.
+   */
+  Optional<TicketSummaryProjection> findActiveTicketSummaryByTypeAndWorkflowRun(
+      String integrationType, String workflowRunPublicId);
+
+  /**
    * Narrow projection over the active {@code integration_links} row carrying the bytes the
    * application layer needs to render a {@code TicketSummary}. {@code externalMetadata} is the raw
    * redacted JSON; the application reads it via Jackson without ever touching JPA types.

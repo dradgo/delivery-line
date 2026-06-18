@@ -368,12 +368,17 @@ export interface components {
             /** @example spec */
             artifactType?: string;
             /**
-             * @description Redacted artifact payload as a UTF-8 markdown string (not base64).
+             * @description Redacted artifact payload as a UTF-8 markdown string (not base64). Empty for a prOutput (its content travels in the structured fields below).
              * @example # Specification
              *
              *     ...
              */
             body?: string;
+            /**
+             * @description prOutput only: the pushed branch name; null for spec/implementationPlan.
+             * @example feature/x
+             */
+            branch?: string | null;
             /**
              * @description Short-form checksum (<algorithm>:<first 12 hex>); null when unset.
              * @example SHA-256:9f86d081884c
@@ -381,8 +386,25 @@ export interface components {
             checksum?: string;
             /** @example shareable-redacted */
             classification?: string;
+            /**
+             * @description prOutput only: the pushed commit SHA; null otherwise.
+             * @example abcdef1234567890abcdef1234567890abcdef12
+             */
+            commitSha?: string | null;
             /** Format: date-time */
             createdAt?: string;
+            /** @description prOutput only: the unified diff (size-capped) resolved at ingest; null when the runner produced no resolvable diff. */
+            diff?: string | null;
+            /**
+             * @description prOutput only: the canonical PR reference (org/repo#n) from the active github_pr link (co-present with prState); null when no linked PR.
+             * @example octo/hello#42
+             */
+            prReference?: string | null;
+            /**
+             * @description prOutput only: the PR state from the active github_pr link (draft/open/merged/closed), co-present with prReference; null when no linked PR.
+             * @example open
+             */
+            prState?: string | null;
             /** @example available */
             status?: string;
             /**

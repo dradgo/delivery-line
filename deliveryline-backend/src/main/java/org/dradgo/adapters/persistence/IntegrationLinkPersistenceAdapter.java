@@ -205,6 +205,23 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
                     entity.getExternalRef(), encodeMetadata(entity.getExternalMetadata())));
   }
 
+  @Override
+  public Optional<TicketSummaryProjection> findActiveTicketSummaryByTypeAndWorkflowRun(
+      String integrationType, String workflowRunPublicId) {
+    if (integrationType == null || integrationType.isBlank()) {
+      throw new IllegalArgumentException("integrationType must be non-blank");
+    }
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    return integrationLinkRepository
+        .findActiveByTypeAndWorkflowRunPublicId(integrationType, workflowRunPublicId)
+        .stream()
+        .findFirst()
+        .map(
+            entity ->
+                new TicketSummaryProjection(
+                    entity.getExternalRef(), encodeMetadata(entity.getExternalMetadata())));
+  }
+
   private byte[] encodeMetadata(Map<String, Object> metadata) {
     if (metadata == null || metadata.isEmpty()) {
       return new byte[0];

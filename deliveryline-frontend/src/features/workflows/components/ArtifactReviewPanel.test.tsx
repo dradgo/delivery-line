@@ -27,6 +27,7 @@ import {
   specArtifactViewXss,
 } from '@/test/fixtures/artifact/artifactViewFixtures';
 import type { ArtifactView } from '../artifactView';
+import { isArtifactView } from '../artifactView';
 
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
   useReturnToRunContext: () => vi.fn(),
@@ -217,6 +218,97 @@ describe('ArtifactReviewPanelContainer — data seam (AC4, AC9, logging)', () =>
     render(<ArtifactReviewPanelContainer workflowRunId="run_1" artifactId="art_live0001" />);
     expect(panel()).toHaveAttribute('data-artifact-panel-state', 'default');
     expect(screen.getByTestId('spec-artifact-renderer')).toBeInTheDocument();
+  });
+
+  // Story 3b-5 — the prOutput arm now consumes the live structured wire fields.
+  const prOutputWireBase = {
+    artifactId: 'art_pr0001',
+    artifactType: 'prOutput' as const,
+    version: 2,
+    status: 'available',
+    classification: 'shareable-redacted',
+    createdAt: '2026-06-17T10:00:00Z',
+    body: '',
+  };
+
+  it('3b-5 — maps live prOutput wire fields → a PrOutputArtifactView satisfying isArtifactView', () => {
+    const view = toArtifactView(
+      {
+        ...prOutputWireBase,
+        branch: 'feature/x',
+        commitSha: 'abcdef1234567890abcdef1234567890abcdef12',
+        diff: 'diff --git a/x b/x\n+hello\n',
+        prReference: 'acme/app#42',
+        prState: 'open',
+      },
+      'art_pr0001',
+    );
+    expect(isArtifactView(view)).toBe(true);
+    if (view.artifactType !== 'prOutput') throw new Error('expected prOutput');
+    expect(view.branch).toBe('feature/x');
+    expect(view.diff).toContain('diff --git');
+    expect(view.prLinkage).toEqual({
+      prReference: 'acme/app#42',
+      prState: 'open',
+    });
+  });
+
+  it('3b-5 — null prReference/prState → prLinkage null (no linked PR)', () => {
+    const view = toArtifactView(
+      {
+        ...prOutputWireBase,
+        branch: 'feature/x',
+        commitSha: 'abcdef1',
+        diff: 'd',
+        prReference: null,
+        prState: null,
+      },
+      'art_pr0001',
+    );
+    if (view.artifactType !== 'prOutput') throw new Error('expected prOutput');
+    expect(view.prLinkage).toBeNull();
+  });
+
+  it('3b-5 — null branch/commit/diff map to empty strings (graceful empty-state)', () => {
+    const view = toArtifactView(
+      {
+        ...prOutputWireBase,
+        branch: null,
+        commitSha: null,
+        diff: null,
+        prReference: null,
+        prState: null,
+      },
+      'art_pr0001',
+    );
+    expect(isArtifactView(view)).toBe(true);
+    if (view.artifactType !== 'prOutput') throw new Error('expected prOutput');
+    expect(view.branch).toBe('');
+    expect(view.commitSha).toBe('');
+    expect(view.diff).toBe('');
+  });
+
+  it('3b-5/AC9 — a live prOutput (post-mapper) renders the PR link + badge + parsed diff', () => {
+    const live = toArtifactView(
+      {
+        ...prOutputWireBase,
+        artifactId: 'art_prlive',
+        branch: 'feature/x',
+        commitSha: 'abcdef1234567890abcdef1234567890abcdef12',
+        diff: 'diff --git a/x b/x\nindex 000..111 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n',
+        prReference: 'acme/app#42',
+        prState: 'open',
+      },
+      'art_prlive',
+    );
+    render(<ArtifactReviewPanel state="default" artifact={live} />);
+    expect(screen.getByTestId('pr-output-artifact-renderer')).toBeInTheDocument();
+    // Linkage rendered (NOT the "No linked pull request" empty-state).
+    expect(screen.getByTestId('pr-reference-link')).toBeInTheDocument();
+    expect(screen.queryByTestId('pr-reference-unlinked')).toBeNull();
+    // The unified diff rendered (NOT the "No diff content was produced." empty-state).
+    expect(screen.getByTestId('pr-diff')).toBeInTheDocument();
+    expect(screen.queryByTestId('pr-diff-empty')).toBeNull();
   });
 
   it('AC9 — Compare enables when allowed-actions reports compare AND a comparable revision exists', () => {

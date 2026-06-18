@@ -638,6 +638,49 @@ class IntegrationLinkServiceUnitTest {
         publicId, workflowRunPublicId, "github_pr", externalRef, status, now, now, null);
   }
 
+  // ===== Story 3b-5 — github_pr link view for the artifact-read prState projection =====
+
+  @Test
+  void findActiveGitHubPrLinkViewParsesPrStateFromMetadata() {
+    when(port.findActiveTicketSummaryByTypeAndWorkflowRun(GITHUB_TYPE, RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkRecordPort.TicketSummaryProjection(
+                    PR_REF,
+                    "{\"prState\":\"open\",\"prNumber\":42}".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+
+    Optional<IntegrationLinkService.GitHubPrLinkView> view =
+        service.findActiveGitHubPrLinkView(RUN_ID);
+
+    assertTrue(view.isPresent());
+    assertEquals(PR_REF, view.get().prReference());
+    assertEquals("open", view.get().prState());
+  }
+
+  @Test
+  void findActiveGitHubPrLinkViewNullStateWhenMetadataLacksPrState() {
+    when(port.findActiveTicketSummaryByTypeAndWorkflowRun(GITHUB_TYPE, RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkRecordPort.TicketSummaryProjection(
+                    PR_REF, "{\"prNumber\":42}".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+
+    Optional<IntegrationLinkService.GitHubPrLinkView> view =
+        service.findActiveGitHubPrLinkView(RUN_ID);
+
+    assertTrue(view.isPresent());
+    assertEquals(PR_REF, view.get().prReference());
+    org.junit.jupiter.api.Assertions.assertNull(view.get().prState());
+  }
+
+  @Test
+  void findActiveGitHubPrLinkViewEmptyWhenNoActiveGitHubLink() {
+    when(port.findActiveTicketSummaryByTypeAndWorkflowRun(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.empty());
+
+    assertTrue(service.findActiveGitHubPrLinkView(RUN_ID).isEmpty());
+  }
+
   private static Ticket sampleTicket() {
     return new Ticket(
         TicketRef.of(TICKET_REF),

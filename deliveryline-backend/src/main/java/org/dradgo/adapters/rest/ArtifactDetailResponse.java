@@ -29,9 +29,42 @@ public record ArtifactDetailResponse(
             example = "SHA-256:9f86d081884c")
         String checksum,
     @Schema(
-            description = "Redacted artifact payload as a UTF-8 markdown string (not base64).",
+            description =
+                "Redacted artifact payload as a UTF-8 markdown string (not base64). Empty for a"
+                    + " prOutput (its content travels in the structured fields below).",
             example = "# Specification\n\n...")
-        String body) {
+        String body,
+    @Schema(
+            description = "prOutput only: the pushed branch name; null for spec/implementationPlan.",
+            example = "feature/x",
+            nullable = true)
+        String branch,
+    @Schema(
+            description = "prOutput only: the pushed commit SHA; null otherwise.",
+            example = "abcdef1234567890abcdef1234567890abcdef12",
+            nullable = true)
+        String commitSha,
+    @Schema(
+            description =
+                "prOutput only: the canonical PR reference (org/repo#n) from the active github_pr"
+                    + " link (co-present with prState); null when no linked PR.",
+            example = "octo/hello#42",
+            nullable = true)
+        String prReference,
+    @Schema(
+            description =
+                "prOutput only: the PR state from the active github_pr link"
+                    + " (draft/open/merged/closed), co-present with prReference; null when no linked"
+                    + " PR.",
+            example = "open",
+            nullable = true)
+        String prState,
+    @Schema(
+            description =
+                "prOutput only: the unified diff (size-capped) resolved at ingest; null when the"
+                    + " runner produced no resolvable diff.",
+            nullable = true)
+        String diff) {
 
   public static ArtifactDetailResponse from(ArtifactDetailView view) {
     return new ArtifactDetailResponse(
@@ -42,7 +75,12 @@ public record ArtifactDetailResponse(
         view.classification(),
         toUtc(view.createdAt()),
         view.checksumShortForm(),
-        view.body());
+        view.body(),
+        view.branch(),
+        view.commitSha(),
+        view.prReference(),
+        view.prState(),
+        view.diff());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

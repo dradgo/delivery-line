@@ -90,6 +90,11 @@ public class WorkflowInspectionService {
   // in the test profile); the stale/lease window from RunnerProperties.staleThresholdFor(stage).
   private final RunnerProperties runnerProperties;
   private final RunnerWorkerPoolProperties runnerWorkerPoolProperties;
+  // Story 3b-5 — parses the structured prOutput payload (branch/commitSha/diff) for the
+  // artifact-read projection. A plain instance field, not a constructor dependency, so the ~7 `new
+  // WorkflowInspectionService(...)` test sites are untouched ([[runnerproperties-record-fanout]]).
+  private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+      new com.fasterxml.jackson.databind.ObjectMapper();
 
   public WorkflowInspectionService(
       WorkflowRunReadPort workflowRunReadPort,
@@ -1107,6 +1112,45 @@ public class WorkflowInspectionService {
       }
 
       String body = new String(payloadBytes.get(), java.nio.charset.StandardCharsets.UTF_8);
+
+      // Story 3b-5 — for a prOutput the structured fields are the source of truth: parse
+      // branch/commitSha/diff from the stored payload JSON, co-presently source prReference+prState
+      // from the active github_pr link, and blank the markdown body (the diff travels in the typed
+      // `diff` field, never duplicated into the body that a markdown renderer would receive). A
+      // malformed payload JSON must NOT 500 the read — it falls back to null structured fields and
+      // an empty body. spec / implementationPlan reads are byte-identical to pre-3b-5 (all five null,
+      // body intact).
+      String responseBody = body;
+      String branch = null;
+      String commitSha = null;
+      String prReference = null;
+      String prState = null;
+      String diff = null;
+      if (artifact.artifactType() == ArtifactType.PR_OUTPUT) {
+        responseBody = "";
+        try {
+          com.fasterxml.jackson.databind.JsonNode payload =
+              objectMapper.readTree(payloadBytes.get());
+          branch = textOrNull(payload, "branch");
+          commitSha = textOrNull(payload, "commitSha");
+          diff = textOrNull(payload, "diff");
+        } catch (java.io.IOException malformed) {
+          log.warn(
+              "getArtifactDetail malformed prOutput payload (null structured fields)"
+                  + " workflowRunId={} artifactId={}",
+              workflowRunPublicId,
+              artifactPublicId);
+        }
+        var prLink = integrationLinkService.findActiveGitHubPrLinkView(workflowRunPublicId);
+        if (prLink.isPresent() && prLink.get().prState() != null) {
+          // DD3 — prReference and prState are co-present (both from the same github_pr row); when
+          // the link lacks a state we treat it as no-linkage so the frontend's isValidPrLinkage
+          // (a present prLinkage must carry a valid prState) never sees a half-populated linkage.
+          prReference = prLink.get().prReference();
+          prState = prLink.get().prState();
+        }
+      }
+
       ArtifactDetailView view =
           new ArtifactDetailView(
               artifact.publicId(),
@@ -1116,7 +1160,12 @@ public class WorkflowInspectionService {
               artifact.classification().value(),
               artifact.createdAt(),
               shortChecksum(artifact.checksumAlgorithm(), artifact.checksumValue()),
-              body);
+              responseBody,
+              branch,
+              commitSha,
+              prReference,
+              prState,
+              diff);
       log.info(
           "getArtifactDetail success workflowRunId={} artifactId={} artifactType={} version={}"
               + " status={} bodyLength={}",
@@ -1149,6 +1198,12 @@ public class WorkflowInspectionService {
     String canonical = ArtifactChecksum.canonicalAlgorithm(algorithm);
     String head = value.length() <= 12 ? value : value.substring(0, 12);
     return canonical + ":" + head;
+  }
+
+  /** Story 3b-5 — non-blank textual value of {@code field} on {@code node}, else {@code null}. */
+  private static String textOrNull(JsonNode node, String field) {
+    String value = node.path(field).asText(null);
+    return (value == null || value.isBlank()) ? null : value;
   }
 
   private static DomainException artifactRecordNotFound(String artifactPublicId) {
@@ -1630,7 +1685,15 @@ public class WorkflowInspectionService {
       String classification,
       OffsetDateTime createdAt,
       String checksumShortForm,
-      String body) {}
+      String body,
+      // Story 3b-5 — structured prOutput fields (all null for spec/implementationPlan). branch /
+      // commitSha / diff are parsed from the stored prOutput payload JSON; prReference / prState are
+      // sourced co-presently from the active github_pr integration link (both null ⇒ no linked PR).
+      String branch,
+      String commitSha,
+      String prReference,
+      String prState,
+      String diff) {}
 
   public record LinkedTicketView(String integrationType, String externalRef, String syncStatus) {}
 

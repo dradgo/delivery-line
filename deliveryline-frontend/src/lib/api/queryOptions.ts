@@ -21,7 +21,12 @@ import { QueryCache, QueryClient, queryOptions } from '@tanstack/react-query';
 import { apiClient, unwrap } from './client';
 import { isProblemDetailsError, type ProblemDetailsError } from './problemDetails';
 import type { components } from './schema';
-import { artifactTypeLabel, type ArtifactView } from '@/features/workflows/artifactView';
+import {
+  artifactTypeLabel,
+  isPrState,
+  type ArtifactView,
+  type PrLinkage,
+} from '@/features/workflows/artifactView';
 import { workflowKeys, type WorkflowListFilters } from '../queryKeys/workflowKeys';
 
 export type WorkflowDetail = components['schemas']['WorkflowDetail'];
@@ -151,18 +156,25 @@ export function toArtifactView(dto: ArtifactDetail, artifactId: string): Artifac
     return { ...base, artifactType: 'implementationPlan' };
   }
   if (artifactType === 'prOutput') {
-    // Story 3.27 — the prOutput view requires the runner-emitted branch/commit/diff + the
-    // backend-truth prLinkage. The live 3a-9 `ArtifactDetail` wire carries NONE of these
-    // yet (no live prOutput read model — the renderer is fixture-driven), so map empty
-    // defaults; the renderer degrades gracefully (empty diff → "No diff content",
-    // null prLinkage → "No linked pull request"). A future read-model story populates them.
+    // Story 3b-5 — the live read model now carries the structured prOutput fields. branch/commitSha/
+    // diff are the runner-emitted (UNTRUSTED) values (`?? ''` — nullable wire fields serialize as
+    // JSON null, [[workflowdetail-wire-sends-null-not-undefined]]); prLinkage is built ONLY when
+    // BOTH prReference and prState are present (backend surfaces them co-presently from the
+    // github_pr link, else both null → "No linked pull request"). prState is an untyped string on
+    // the wire (`prState?: string | null`); narrow it with `isPrState` BEFORE building the linkage so
+    // an out-of-enum value degrades to `null` ("No linked pull request") rather than producing an
+    // invalid linkage that fails `isValidPrLinkage` and reds the ENTIRE artifact view.
+    const prReference = dto.prReference;
+    const prState = dto.prState;
+    const prLinkage: PrLinkage | null =
+      prReference != null && isPrState(prState) ? { prReference, prState } : null;
     return {
       ...base,
       artifactType: 'prOutput',
-      branch: '',
-      commitSha: '',
-      diff: '',
-      prLinkage: null,
+      branch: dto.branch ?? '',
+      commitSha: dto.commitSha ?? '',
+      diff: dto.diff ?? '',
+      prLinkage,
     };
   }
   // Default to the spec variant (the only fully-rendered type and this story's scope); an

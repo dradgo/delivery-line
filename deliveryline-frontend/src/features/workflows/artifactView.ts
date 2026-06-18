@@ -129,6 +129,16 @@ export interface ImplementationPlanArtifactView extends ArtifactViewBase {
 export type PrState = 'draft' | 'open' | 'merged' | 'closed';
 
 /**
+ * Whether `value` is one of the four valid {@link PrState} lifecycle values. Use this to narrow an
+ * untyped wire value (`prState?: string | null`) before building a {@link PrLinkage} — an unexpected
+ * value must degrade to "no linkage" (`null`), never be cast straight into a `PrLinkage` where it
+ * would fail `isValidPrLinkage` and red the ENTIRE artifact view instead of degrading gracefully.
+ */
+export function isPrState(value: unknown): value is PrState {
+  return value === 'draft' || value === 'open' || value === 'merged' || value === 'closed';
+}
+
+/**
  * BACKEND-TRUTH PR linkage (story 3.27 AC3 — the metadata-spoofing boundary). Sourced
  * from `integration_links` (NOT runner-emitted): the displayed PR reference + state come
  * from HERE, never from the runner-emitted artifact. `null` when the run has no linked PR
@@ -233,10 +243,7 @@ function isValidPrLinkage(value: unknown): boolean {
   }
   return (
     typeof value.prReference === 'string' &&
-    (value.prState === 'draft' ||
-      value.prState === 'open' ||
-      value.prState === 'merged' ||
-      value.prState === 'closed') &&
+    isPrState(value.prState) &&
     (value.prUrl === undefined || typeof value.prUrl === 'string') &&
     (value.lastSyncedAt === undefined || typeof value.lastSyncedAt === 'string') &&
     (value.githubReachable === undefined || typeof value.githubReachable === 'boolean')

@@ -2296,6 +2296,151 @@ class RunnerBrokerUnitTest {
         .markAvailable(eq("art_prv1_000001"), any(), eq("store/prOutput-v1.json"), any());
   }
 
+  // ===== Story 3b-5 — resolve + cap + embed the prOutput diff at ingest (both write sites) =====
+
+  private static final String PR_OUTPUT_DIFF_REFERENCE = "diffs/" + RUN_ID + "/pr-1.diff";
+
+  @Test
+  void prOutputIngestEmbedsResolvedDiffInPayloadWhenScratchPresent() {
+    // Story 3b-5 (AC1) — the no-push (mock-runner) path: the diff resolved from scratch is embedded
+    // in the in-loop v1 CREATE payload (enrich is skipped, so this is the only write — and the only
+    // diff coverage ITs get).
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq(PR_OUTPUT_DIFF_REFERENCE)))
+        .thenReturn(Optional.of("diff --git a/x b/x\n+hello\n".getBytes(StandardCharsets.UTF_8)));
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<RecordArtifactOperationCommand> command =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService).recordOperation(command.capture());
+    String payload = new String(command.getValue().payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(payload.contains("\"diff\""), () -> "v1 payload missing diff field: " + payload);
+    assertTrue(
+        payload.contains("diff --git a/x b/x"),
+        () -> "v1 payload missing diff content: " + payload);
+  }
+
+  @Test
+  void prOutputEnrichedHeadCarriesResolvedDiff() {
+    // Story 3b-5 (AC3 — the dual-write trap): a real push enriches the prOutput via a v2 UPDATE that
+    // resolveImplementationArtifact selects as the highest version. The diff resolved at ingest must
+    // ride that enriched head too, or the reviewer's resolved target loses it.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true)));
+    RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq(PR_OUTPUT_DIFF_REFERENCE)))
+        .thenReturn(Optional.of("diff --git a/x b/x\n+hello\n".getBytes(StandardCharsets.UTF_8)));
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<RecordArtifactOperationCommand> commands =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService, times(2)).recordOperation(commands.capture());
+    RecordArtifactOperationCommand update =
+        commands.getAllValues().stream()
+            .filter(
+                c -> c.operationType() == org.dradgo.domain.registry.ArtifactOperationType.UPDATE)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected an enrichment UPDATE operation"));
+    String enriched = new String(update.payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(enriched.contains("\"diff\""), () -> "v2 payload missing diff field: " + enriched);
+    assertTrue(
+        enriched.contains("diff --git a/x b/x"),
+        () -> "v2 payload missing diff content: " + enriched);
+  }
+
+  @Test
+  void prOutputIngestOmitsDiffWhenScratchAbsentWithoutFailingIngest() {
+    // Story 3b-5 (AC1) — the OQ-1 reality: today's runners write only the diffReference pointer, not
+    // the file, so the scratch read is empty. The diff field is omitted and ingest still succeeds
+    // (the read path then degrades to an empty-diff panel).
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    // tryReadArtifactContent is NOT stubbed → Mockito returns Optional.empty() (absent scratch).
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordCompleted(REX_ID);
+    ArgumentCaptor<RecordArtifactOperationCommand> command =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService).recordOperation(command.capture());
+    String payload = new String(command.getValue().payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(
+        !payload.contains("\"diff\""),
+        () -> "absent-scratch payload must not carry a diff field: " + payload);
+  }
+
+  @Test
+  void prOutputOversizeDiffTruncatedAndWarnLogged() {
+    // Story 3b-5 (AC2) — a diff exceeding the 5000-line storage cap is truncated with a marker line
+    // and a WARN (no silent truncation). The frontend caps again at render.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    String oversize = "x\n".repeat(6000); // 6000 lines > 5000-line cap
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq(PR_OUTPUT_DIFF_REFERENCE)))
+        .thenReturn(Optional.of(oversize.getBytes(StandardCharsets.UTF_8)));
+    stubArtifactRecordSuccess();
+
+    Logger brokerLog = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    brokerLog.addAppender(appender);
+    try {
+      orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+    } finally {
+      brokerLog.detachAppender(appender);
+    }
+
+    ArgumentCaptor<RecordArtifactOperationCommand> command =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService).recordOperation(command.capture());
+    String payload = new String(command.getValue().payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(
+        payload.contains("diff truncated by deliveryline storage cap"),
+        () -> "oversize payload must carry the truncation marker: " + payload);
+    assertTrue(
+        appender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel() == Level.WARN
+                        && e.getFormattedMessage().contains("prOutput diff truncated")),
+        "expected a WARN log for the diff truncation");
+    // No diff CONTENT may appear in any log line — sizes/counts only.
+    assertTrue(
+        appender.list.stream().noneMatch(e -> e.getFormattedMessage().contains("\nx\nx")),
+        "diff content must never be logged");
+  }
+
   private static String implementationPlanResultPayload() {
     // Mirrors runner-result.v1.implementation-plan.valid.json (steps + contextReferences, NOT
     // contentReference — the broker's artifactPayload serializes the ref JSON in that case).

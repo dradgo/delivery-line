@@ -126,6 +126,33 @@ class IntegrationLinkGitHubPrIT {
         "refreshed prState must be persisted; got: " + storedMetadata);
   }
 
+  @Test
+  void findActiveTicketSummaryByTypeAndWorkflowRunReturnsGitHubMetadataNonLocking() {
+    // Story 3b-5 — the NON-locking typed projection the artifact-read path uses to surface prState.
+    // Resolves the github_pr row's external ref + metadata (NOT the linear-convention first row) and
+    // excludes superseded rows.
+    String run = seedRun();
+    port.insert(githubLink(run, PR_REF));
+
+    Optional<IntegrationLinkRecordPort.TicketSummaryProjection> projection =
+        port.findActiveTicketSummaryByTypeAndWorkflowRun(GITHUB_TYPE, run);
+
+    assertTrue(projection.isPresent());
+    assertEquals(PR_REF, projection.get().externalRef());
+    String metadata = new String(projection.get().externalMetadata(), java.nio.charset.StandardCharsets.UTF_8);
+    assertTrue(metadata.contains("\"prState\""), "metadata must carry prState: " + metadata);
+    assertTrue(metadata.contains("open"), "metadata must carry the prState value: " + metadata);
+  }
+
+  @Test
+  void findActiveTicketSummaryByTypeAndWorkflowRunEmptyWhenOnlySupersededRow() {
+    String run = seedRun();
+    IntegrationLink linked = port.insert(githubLink(run, PR_REF));
+    port.updateSyncStatus(linked.publicId(), IntegrationSyncStatus.SUPERSEDED, null);
+
+    assertTrue(port.findActiveTicketSummaryByTypeAndWorkflowRun(GITHUB_TYPE, run).isEmpty());
+  }
+
   private NewIntegrationLink githubLink(String runPublicId, String externalRef) {
     return new NewIntegrationLink(
         PublicIdPrefixes.INTEGRATION_LINK.next(),

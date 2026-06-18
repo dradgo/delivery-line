@@ -79,6 +79,24 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
       @Param("integrationType") String integrationType,
       @Param("workflowRunPublicId") String workflowRunPublicId);
 
+  // Story 3b-5 — NON-locking twin of findActiveByTypeAndWorkflowRunForUpdate, typed to a single
+  // integration type (github_pr) for the artifact-read projection: a read path must not take the
+  // PESSIMISTIC_WRITE lock the enrich/sync writers hold. Returns a List (adapter takes the first by
+  // createdAt) so a transient supersede race never surfaces as NonUniqueResultException.
+  @Query(
+      """
+		select integrationLink
+		from IntegrationLinkEntity integrationLink
+		where integrationLink.integrationType = :integrationType
+		  and integrationLink.workflowRun.publicId = :workflowRunPublicId
+		  and integrationLink.archivedAt is null
+		  and integrationLink.syncStatus <> 'superseded'
+		order by integrationLink.createdAt asc
+		""")
+  java.util.List<IntegrationLinkEntity> findActiveByTypeAndWorkflowRunPublicId(
+      @Param("integrationType") String integrationType,
+      @Param("workflowRunPublicId") String workflowRunPublicId);
+
   @Query(
       """
 		select max(integrationLink.lastSyncAt)

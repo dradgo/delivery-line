@@ -1285,11 +1285,30 @@ public class RunnerBroker {
     // keyed by artifact id; does not reorder the shared spec/plan ingest path). Stays null on every
     // non-pr-output result.
     String prOutputArtifactId = null;
+    // Story 3b-5 (AC1/AC3) — the prOutput unified diff resolved from scratch ONCE in the loop and
+    // re-used at the enrich (v2) write site, so the highest-version artifact the reviewer reads
+    // carries it without a second scratch read. Stays null for non-pr-output results.
+    String prOutputResolvedDiff = null;
     for (JsonNode ref : artifactRefs) {
       String typeValue = ref.path("artifactType").asText();
       ArtifactType artifactType =
           ArtifactType.fromValue(typeValue, "runner_result.artifactReferences.artifactType");
-      Optional<ArtifactPayload> maybePayload = artifactPayload(runnerExecutionId, ref);
+      // Story 3b-5 (AC1/AC3) — resolve the prOutput unified diff from scratch HERE (the scratch dir
+      // is ephemeral; read-time resolution is impossible) and embed it in the persisted payload at
+      // BOTH write sites (this in-loop v1 + the enriched v2 UPDATE). resolveImplementationArtifact
+      // reads the highest version, so the diff must be in both. Empty/absent scratch omits the diff
+      // gracefully (today's runners emit only the diffReference pointer, not the file — OQ-1), and
+      // the read path degrades to an empty-diff panel.
+      String resolvedDiff = null;
+      if (artifactType == ArtifactType.PR_OUTPUT) {
+        resolvedDiff =
+            resolvePrOutputDiff(
+                    runnerExecutionId, workflowRunId, ref.path("artifactId").asText(null), ref)
+                .orElse(null);
+        prOutputResolvedDiff = resolvedDiff;
+      }
+      Optional<ArtifactPayload> maybePayload =
+          artifactPayload(runnerExecutionId, ref, resolvedDiff);
       if (maybePayload.isEmpty()) {
         String contentReference = ref.path("contentReference").asText(null);
         handleFailedValidation(
@@ -1547,6 +1566,7 @@ public class RunnerBroker {
             parsed,
             pushOutcome,
             prOutputArtifactId,
+            prOutputResolvedDiff,
             correlationId)) {
       return; // already drove the run to Failed via the contract-violation path
     }
@@ -1732,6 +1752,7 @@ public class RunnerBroker {
       JsonNode parsed,
       Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome,
       String prOutputArtifactId,
+      String resolvedDiff,
       String correlationId) {
     JsonNode prRef = prOutputArtifactReference(parsed);
     String reportedBranch = textOrNull(prRef, "branch");
@@ -1791,7 +1812,13 @@ public class RunnerBroker {
       // Decision D3 — enrich the ingested prOutput artifact with the ACTUAL refs (follow-on
       // UPDATE).
       enrichPrOutputArtifact(
-          runnerExecutionId, workflowRunId, prOutputArtifactId, prRef, actual, correlationId);
+          runnerExecutionId,
+          workflowRunId,
+          prOutputArtifactId,
+          prRef,
+          actual,
+          resolvedDiff,
+          correlationId);
       // Story 3.15 (Task 7) — promote the dormant linkage seam: write the durable github_pr
       // integration_links row + integration.linked event from the AUTHORITATIVE captureAndPush refs
       // (never the untrusted runner-reported string — Trap T1). Best-effort: a linkage-only failure
@@ -1982,6 +2009,7 @@ public class RunnerBroker {
       String prOutputArtifactId,
       JsonNode prRef,
       RepositoryWorkspaceService.RepositoryPushOutcome actual,
+      String resolvedDiff,
       String correlationId) {
     if (prOutputArtifactId == null || !prRef.isObject()) {
       log.warn(
@@ -2004,6 +2032,12 @@ public class RunnerBroker {
       }
       if (actual.prRef() != null) {
         enriched.put("prReference", actual.prRef());
+      }
+      // Story 3b-5 (AC3) — carry the diff resolved at ingest onto the enriched v2 head (prRef itself
+      // holds only the diffReference pointer), so the highest-version artifact the reviewer reads
+      // never loses the diff. Null (absent scratch / no-push) leaves the v2 payload diff-less.
+      if (resolvedDiff != null) {
+        enriched.put("diff", resolvedDiff);
       }
       byte[] enrichedBytes = objectMapper.writeValueAsBytes(enriched);
       String payloadRef = prRef.path("artifactId").asText("prOutput") + ".json";
@@ -2126,6 +2160,18 @@ public class RunnerBroker {
   }
 
   private Optional<ArtifactPayload> artifactPayload(String runnerExecutionId, JsonNode ref) {
+    return artifactPayload(runnerExecutionId, ref, null);
+  }
+
+  /**
+   * Story 3b-5 (AC1) — when {@code resolvedPrOutputDiff} is non-null (a prOutput whose diff resolved
+   * in scratch), embed it as a {@code diff} field in the serialized payload alongside the
+   * runner-reported refs. The runner ref carries only the ephemeral {@code diffReference} pointer,
+   * so this is the one place the diff bytes enter the persisted v1 payload. Null leaves the payload
+   * byte-identical to the pre-3b-5 behaviour (spec/plan, and any prOutput with no resolvable diff).
+   */
+  private Optional<ArtifactPayload> artifactPayload(
+      String runnerExecutionId, JsonNode ref, String resolvedPrOutputDiff) {
     String contentReference = ref.path("contentReference").asText(null);
     if (contentReference != null && !contentReference.isBlank()) {
       return scratchStore
@@ -2137,8 +2183,15 @@ public class RunnerBroker {
       return Optional.empty();
     }
     try {
+      JsonNode payloadNode = ref;
+      if (resolvedPrOutputDiff != null) {
+        com.fasterxml.jackson.databind.node.ObjectNode withDiff = ref.deepCopy();
+        withDiff.put("diff", resolvedPrOutputDiff);
+        payloadNode = withDiff;
+      }
       return Optional.of(
-          new ArtifactPayload(artifactId.asText() + ".json", objectMapper.writeValueAsBytes(ref)));
+          new ArtifactPayload(
+              artifactId.asText() + ".json", objectMapper.writeValueAsBytes(payloadNode)));
     } catch (java.io.IOException error) {
       log.warn(
           "artifact payload serialization failed runnerExecutionId={} artifactId={} cause={}",
@@ -2150,6 +2203,140 @@ public class RunnerBroker {
   }
 
   private record ArtifactPayload(String payloadRef, byte[] bytes) {}
+
+  // Story 3b-5 (AC2) — storage guardrails for the embedded prOutput diff. The line cap mirrors the
+  // frontend PR_DIFF_MAX_LINES (5000); the byte ceiling is an absolute backstop against a
+  // pathological single-line mega-diff. The frontend caps AGAIN at render (SafeUnifiedDiffRenderer),
+  // so this is purely the storage guardrail.
+  private static final int PR_OUTPUT_DIFF_MAX_LINES = 5000;
+  private static final int PR_OUTPUT_DIFF_MAX_BYTES = 1_000_000;
+  private static final String PR_OUTPUT_DIFF_TRUNCATION_MARKER =
+      "... diff truncated by deliveryline storage cap ...";
+
+  /**
+   * Story 3b-5 (AC1/AC2) — resolve the runner-reported {@code diffReference} to unified-diff bytes
+   * in scratch, cap it to the storage guardrails, and return it for embedding in the persisted
+   * prOutput payload. Returns {@link Optional#empty()} (graceful — never fails ingest) when the
+   * reference is blank or the scratch file is absent/evicted; today's runners emit only the pointer,
+   * not the file (OQ-1), so the absent case is the common one until the runner two-phase contract
+   * writes the diff. Never logs diff CONTENT — sizes/counts only.
+   */
+  private Optional<String> resolvePrOutputDiff(
+      String runnerExecutionId, String workflowRunId, String artifactId, JsonNode prRef) {
+    String diffReference = textOrNull(prRef, "diffReference");
+    if (diffReference == null) {
+      return Optional.empty();
+    }
+    Optional<byte[]> maybeBytes =
+        scratchStore.tryReadArtifactContent(runnerExecutionId, diffReference);
+    if (maybeBytes.isEmpty()) {
+      log.warn(
+          "onResult prOutput diffReference not found in scratch (graceful skip) "
+              + "runnerExecutionId={} workflowRunId={} artifactId={} diffReference={}",
+          runnerExecutionId,
+          workflowRunId,
+          artifactId,
+          diffReference);
+      return Optional.empty();
+    }
+    byte[] raw = maybeBytes.get();
+    int originalBytes = raw.length;
+    String diff = new String(raw, StandardCharsets.UTF_8);
+    if (diff.isBlank()) {
+      // A present-but-empty/whitespace-only scratch file carries no diff to render. Treat it
+      // identically to an absent scratch read (return empty, embed no `diff` field) so the two
+      // "no diff" paths persist identical payload bytes/checksum — the read path would blank an
+      // embedded "" back to null anyway, so embedding it only diverges the stored bytes.
+      log.warn(
+          "onResult prOutput diffReference resolved to blank content (graceful skip) "
+              + "runnerExecutionId={} workflowRunId={} artifactId={} diffReference={}",
+          runnerExecutionId,
+          workflowRunId,
+          artifactId,
+          diffReference);
+      return Optional.empty();
+    }
+    int originalLines = countLines(diff);
+    boolean truncated = false;
+    if (originalLines > PR_OUTPUT_DIFF_MAX_LINES) {
+      diff = firstLines(diff, PR_OUTPUT_DIFF_MAX_LINES) + "\n" + PR_OUTPUT_DIFF_TRUNCATION_MARKER;
+      truncated = true;
+    }
+    if (diff.getBytes(StandardCharsets.UTF_8).length > PR_OUTPUT_DIFF_MAX_BYTES) {
+      diff =
+          truncateToBytes(diff, PR_OUTPUT_DIFF_MAX_BYTES)
+              + "\n"
+              + PR_OUTPUT_DIFF_TRUNCATION_MARKER;
+      truncated = true;
+    }
+    int storedBytes = diff.getBytes(StandardCharsets.UTF_8).length;
+    if (truncated) {
+      log.warn(
+          "onResult prOutput diff truncated runnerExecutionId={} workflowRunId={} artifactId={} "
+              + "originalLines={} originalBytes={} storedBytes={}",
+          runnerExecutionId,
+          workflowRunId,
+          artifactId,
+          originalLines,
+          originalBytes,
+          storedBytes);
+    }
+    log.info(
+        "onResult prOutput diff resolved runnerExecutionId={} workflowRunId={} artifactId={} "
+            + "diffReference={} lineCount={} byteSize={}",
+        runnerExecutionId,
+        workflowRunId,
+        artifactId,
+        diffReference,
+        Math.min(originalLines, PR_OUTPUT_DIFF_MAX_LINES),
+        storedBytes);
+    return Optional.of(diff);
+  }
+
+  private static int countLines(String value) {
+    if (value.isEmpty()) {
+      return 0;
+    }
+    int lines = 1;
+    for (int i = 0; i < value.length(); i++) {
+      if (value.charAt(i) == '\n') {
+        lines++;
+      }
+    }
+    return lines;
+  }
+
+  /** First {@code maxLines} lines of {@code value}, terminators stripped from the cut point. */
+  private static String firstLines(String value, int maxLines) {
+    int count = 0;
+    for (int idx = 0; idx < value.length(); idx++) {
+      if (value.charAt(idx) == '\n') {
+        count++;
+        if (count == maxLines) {
+          return value.substring(0, idx);
+        }
+      }
+    }
+    return value;
+  }
+
+  /** UTF-8 byte-bounded prefix of {@code value}, dropping any partial trailing multibyte char. */
+  private static String truncateToBytes(String value, int maxBytes) {
+    byte[] utf8 = value.getBytes(StandardCharsets.UTF_8);
+    if (utf8.length <= maxBytes) {
+      return value;
+    }
+    java.nio.charset.CharsetDecoder decoder =
+        StandardCharsets.UTF_8
+            .newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.IGNORE)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.IGNORE);
+    java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(utf8, 0, maxBytes);
+    java.nio.CharBuffer decoded = java.nio.CharBuffer.allocate(maxBytes);
+    decoder.decode(buffer, decoded, true);
+    decoded.flip();
+    return decoded.toString();
+  }
 
   /**
    * A result arriving for a row that is already in a non-result-bearing terminal state ({@code

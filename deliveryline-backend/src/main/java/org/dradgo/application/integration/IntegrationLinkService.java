@@ -663,6 +663,46 @@ public class IntegrationLinkService {
         GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
   }
 
+  /**
+   * Story 3b-5 — the active {@code github_pr} link's PR reference + state for the artifact-read
+   * projection (prOutput review panel). NON-locking (a read path must not take the {@code
+   * PESSIMISTIC_WRITE} lock {@link #findActiveGitHubPrLink} holds) and typed to {@code github_pr}
+   * (never the Linear variant). {@code prState} is parsed from the link's {@code external_metadata}
+   * (the {@code prState} key written by {@code buildGitHubExternalMetadata}); empty/malformed
+   * metadata yields a {@code null} state. Empty Optional when the run has no active {@code github_pr}
+   * link (⇒ the panel renders "No linked pull request").
+   */
+  @Transactional(readOnly = true)
+  public Optional<GitHubPrLinkView> findActiveGitHubPrLinkView(String workflowRunPublicId) {
+    return integrationLinkRecordPort
+        .findActiveTicketSummaryByTypeAndWorkflowRun(
+            GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId)
+        .map(
+            projection ->
+                new GitHubPrLinkView(
+                    projection.externalRef(), extractPrState(projection.externalMetadata())));
+  }
+
+  private String extractPrState(byte[] externalMetadata) {
+    if (externalMetadata == null || externalMetadata.length == 0) {
+      return null;
+    }
+    try {
+      com.fasterxml.jackson.databind.JsonNode state =
+          objectMapper.readTree(externalMetadata).path("prState");
+      return (state.isTextual() && !state.asText().isBlank()) ? state.asText() : null;
+    } catch (java.io.IOException error) {
+      log.warn("findActiveGitHubPrLinkView prState parse failed (treating as null)");
+      return null;
+    }
+  }
+
+  /**
+   * Story 3b-5 — the github_pr link's externally-authoritative PR reference + state for the
+   * artifact-read wire. {@code prState} is {@code null} when the link's metadata omits it.
+   */
+  public record GitHubPrLinkView(String prReference, String prState) {}
+
   /** Transition {@code sync_status} {@code linked → synced} and refresh {@code last_sync_at}. */
   @Transactional
   public IntegrationLink markSynced(String integrationLinkPublicId, Instant syncedAt) {

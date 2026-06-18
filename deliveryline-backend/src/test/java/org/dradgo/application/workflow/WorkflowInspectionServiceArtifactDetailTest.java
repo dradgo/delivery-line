@@ -273,7 +273,138 @@ class WorkflowInspectionServiceArtifactDetailTest {
         .isEqualTo(DomainErrorCode.INVALID_ID_PREFIX);
   }
 
+  // ===== Story 3b-5 — structured prOutput projection + co-present prState from the github_pr link =
+
+  private static final String PR_OUTPUT_PAYLOAD =
+      "{\"artifactId\":\"art_pr00000001\",\"artifactType\":\"prOutput\","
+          + "\"branch\":\"feature/x\","
+          + "\"commitSha\":\"abcdef1234567890abcdef1234567890abcdef12\","
+          + "\"prReference\":\"PR-1\",\"diffReference\":\"diffs/run/pr-1.diff\","
+          + "\"diff\":\"diff --git a/x b/x\\n+hello\\n\"}";
+
+  @Test
+  void prOutputReturnsStructuredFieldsWithPrStateFromGitHubLink() {
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT)).thenReturn(Optional.of(prOutputSnapshot("pr/ref")));
+    when(payloadStore.readBytes("pr/ref"))
+        .thenReturn(Optional.of(PR_OUTPUT_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
+    when(links.findActiveGitHubPrLinkView(RUN))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkService.GitHubPrLinkView(
+                    "acme/app#42", "open")));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.artifactType()).isEqualTo(ArtifactType.PR_OUTPUT.value());
+    assertThat(view.branch()).isEqualTo("feature/x");
+    assertThat(view.commitSha()).isEqualTo("abcdef1234567890abcdef1234567890abcdef12");
+    assertThat(view.diff()).isEqualTo("diff --git a/x b/x\n+hello\n");
+    // prReference + prState co-present from the github_pr link (the authoritative source).
+    assertThat(view.prReference()).isEqualTo("acme/app#42");
+    assertThat(view.prState()).isEqualTo("open");
+    // body is blanked for a prOutput — the diff travels in the typed field, never the markdown body.
+    assertThat(view.body()).isEmpty();
+  }
+
+  @Test
+  void prOutputWithNoGitHubLinkHasNullPrReferenceAndState() {
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT)).thenReturn(Optional.of(prOutputSnapshot("pr/ref")));
+    when(payloadStore.readBytes("pr/ref"))
+        .thenReturn(Optional.of(PR_OUTPUT_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
+    // links.findActiveGitHubPrLinkView is unstubbed → Optional.empty() (no linked PR).
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.branch()).isEqualTo("feature/x");
+    assertThat(view.prReference()).isNull();
+    assertThat(view.prState()).isNull();
+    assertThat(view.diff()).isEqualTo("diff --git a/x b/x\n+hello\n");
+    assertThat(view.body()).isEmpty();
+  }
+
+  @Test
+  void prOutputLinkPresentButStateMissingTreatedAsNoLinkage() {
+    // DD3 — a link with a null state is treated as no-linkage so the wire never carries a
+    // half-populated linkage (prReference present, prState null) the frontend can't validate.
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT)).thenReturn(Optional.of(prOutputSnapshot("pr/ref")));
+    when(payloadStore.readBytes("pr/ref"))
+        .thenReturn(Optional.of(PR_OUTPUT_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
+    when(links.findActiveGitHubPrLinkView(RUN))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkService.GitHubPrLinkView(
+                    "acme/app#42", null)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.prReference()).isNull();
+    assertThat(view.prState()).isNull();
+  }
+
+  @Test
+  void prOutputMalformedPayloadFallsBackToNullStructuredFieldsWithoutError() {
+    ListAppender<ILoggingEvent> appender = attachListAppender();
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT)).thenReturn(Optional.of(prOutputSnapshot("pr/ref")));
+    when(payloadStore.readBytes("pr/ref"))
+        .thenReturn(Optional.of("not valid json {{{".getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.branch()).isNull();
+    assertThat(view.commitSha()).isNull();
+    assertThat(view.diff()).isNull();
+    assertThat(view.body()).isEmpty();
+    assertThat(warnMessages(appender)).anyMatch(m -> m.contains("malformed prOutput payload"));
+  }
+
+  @Test
+  void specReadIsUnchangedAllStructuredFieldsNullAndBodyIntact() {
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT))
+        .thenReturn(
+            Optional.of(
+                snapshot(
+                    RUN,
+                    DataClassification.SHAREABLE_REDACTED,
+                    "spec/ref",
+                    ArtifactStatus.AVAILABLE)));
+    when(payloadStore.readBytes("spec/ref"))
+        .thenReturn(Optional.of(SPEC_BODY.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.body()).isEqualTo(SPEC_BODY);
+    assertThat(view.branch()).isNull();
+    assertThat(view.commitSha()).isNull();
+    assertThat(view.prReference()).isNull();
+    assertThat(view.prState()).isNull();
+    assertThat(view.diff()).isNull();
+  }
+
   // --- helpers --------------------------------------------------------------
+
+  private static ArtifactRecordSnapshot prOutputSnapshot(String storageRef) {
+    return new ArtifactRecordSnapshot(
+        ARTIFACT,
+        RUN,
+        ArtifactType.PR_OUTPUT,
+        2,
+        null,
+        DataClassification.SHAREABLE_REDACTED,
+        storageRef,
+        "sha-256",
+        "0123456789abcdeffedcba9876543210",
+        null,
+        null,
+        ArtifactStatus.AVAILABLE,
+        null,
+        false,
+        CREATED);
+  }
 
   private static WorkflowRunSnapshot runSnapshot(String runId) {
     return new WorkflowRunSnapshot(
