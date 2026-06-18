@@ -12,16 +12,16 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import org.dradgo.application.idempotency.UuidV7Generator;
-import org.dradgo.application.integration.linear.LinearAdapter;
-import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
-import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.registry.ActorType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,12 +48,16 @@ import org.springframework.stereotype.Component;
  * <p><strong>Story 3a.5 — opt-in auto-ingest.</strong> When {@code
  * deliveryline.linear.auto-ingest.enabled=true}, the watcher additionally auto-creates a governed
  * run (via the same {@link WorkflowCommandService#submit} the CLI/REST use) for each polled ticket
- * whose Linear issue workflow-state id ({@link LinearTicket#statusId()}) is in the configured
+ * whose opaque source workflow-state id ({@link Ticket#sourceStatusId()}) is in the configured
  * allow-list <em>and</em> that has no existing active link (AR18). The created run lands in {@code
  * Inbox} and feeds story 3a-1's spec auto-dispatch. Default OFF ⇒ the poll behaves byte-identically
  * to the Epic-1 watcher (no {@code submit} call, no new log lines). Auto-ingest is layered on top
  * of the best-effort per-ticket touch loop with per-ticket failure isolation; the watermark
  * advances exactly as before, independent of ingest outcomes.
+ *
+ * <p>Story 3.32 — the host depends on the vendor-neutral {@link TicketSourceAdapter} port (the
+ * Linear kind is the only implementation today). The opaque {@code sourceStatusId} is a Linear-
+ * specific concern that only this Linear-specific host interprets (OQ-1).
  *
  * <p>Watermark management (story 1.14 review finding 2):
  *
@@ -64,8 +68,8 @@ import org.springframework.stereotype.Component;
  *       from forgetting prior progress (the cursor was previously held in JVM heap only). When no
  *       active linear links exist, the seed falls back to {@code Instant.now(clock)}.
  *   <li><strong>Advancement:</strong> {@link #pollLinear()} drains all pages in the current poll
- *       window via {@link LinearAdapter#pollNewTickets(Instant)} (the real adapter walks GraphQL
- *       cursor pagination internally). The cursor advances to {@code max(updatedAt)} of the
+ *       window via {@link TicketSourceAdapter#pollNewTickets(Instant)} (the real adapter walks
+ *       GraphQL cursor pagination internally). The cursor advances to {@code max(updatedAt)} of the
  *       returned set, which is monotonic because the adapter sorts ascending. No advancement on
  *       error.
  *   <li><strong>Per-ticket touch:</strong> Every observed ticket triggers {@link
@@ -89,7 +93,7 @@ public class LinearPollingHost {
   /** Stable system actor identity for auto-ingested runs (Story 3a.5). */
   private static final String AUTO_INGEST_ACTOR_IDENTITY = "linear-auto-ingest";
 
-  private final LinearAdapter linearAdapter;
+  private final TicketSourceAdapter linearAdapter;
   private final IntegrationLinkRecordPort integrationLinkRecordPort;
   private final UuidV7Generator uuidV7Generator;
   private final WorkflowCommandService workflowCommandService;
@@ -100,7 +104,7 @@ public class LinearPollingHost {
 
   @Autowired
   public LinearPollingHost(
-      LinearAdapter linearAdapter,
+      TicketSourceAdapter linearAdapter,
       IntegrationLinkRecordPort integrationLinkRecordPort,
       UuidV7Generator uuidV7Generator,
       WorkflowCommandService workflowCommandService,
@@ -115,7 +119,7 @@ public class LinearPollingHost {
   }
 
   LinearPollingHost(
-      LinearAdapter linearAdapter,
+      TicketSourceAdapter linearAdapter,
       IntegrationLinkRecordPort integrationLinkRecordPort,
       UuidV7Generator uuidV7Generator,
       WorkflowCommandService workflowCommandService,
@@ -181,10 +185,10 @@ public class LinearPollingHost {
 
   private void pollLinearInternal() {
     Instant since = lastPollAt.get();
-    List<LinearTicket> tickets;
+    List<Ticket> tickets;
     try {
       tickets = linearAdapter.pollNewTickets(since);
-    } catch (LinearAdapterException error) {
+    } catch (TicketSourceAdapterException error) {
       log.warn(
           "linear_real polling_failed since={} category={} message={}",
           since,
@@ -197,7 +201,7 @@ public class LinearPollingHost {
       log.info("linear_real polling_batch since={} count=0", since);
       return;
     }
-    LinearTicket newest = tickets.get(tickets.size() - 1);
+    Ticket newest = tickets.get(tickets.size() - 1);
     boolean autoIngestEnabled = autoIngestProperties.enabled();
     if (autoIngestEnabled && statusIdAllowList.isEmpty()) {
       // AC2 fail-safe — enabled but no eligibility ids configured ⇒ nothing is ingested (never the
@@ -216,11 +220,12 @@ public class LinearPollingHost {
     int ingested = 0;
     int autoIngestSkipped = 0;
     int ineligible = 0;
-    for (LinearTicket ticket : tickets) {
+    for (Ticket ticket : tickets) {
+      String ticketRef = ticket.ticketRef().value();
       try {
         boolean updated =
             integrationLinkRecordPort.touchLastSyncAtByTypeAndExternalRef(
-                INTEGRATION_TYPE_LINEAR, ticket.ticketRef(), ticket.updatedAt());
+                INTEGRATION_TYPE_LINEAR, ticketRef, ticket.updatedAt());
         if (updated) {
           touched++;
         } else {
@@ -232,7 +237,7 @@ public class LinearPollingHost {
         // subsequent cycle if its updatedAt > the new watermark.
         log.warn(
             "linear_real polling_touch_failed ticketRef={} cause={}",
-            ticket.ticketRef(),
+            ticketRef,
             error.getClass().getSimpleName());
         skipped++;
         touchFailures++;
@@ -245,9 +250,9 @@ public class LinearPollingHost {
           ineligible++;
           log.debug(
               "linear_real auto_ingest_ineligible ticketRef={} statusName={} statusId={}",
-              ticket.ticketRef(),
-              ticket.status(),
-              ticket.statusId());
+              ticketRef,
+              ticket.sourceStatus(),
+              ticket.sourceStatusId());
         } else {
           // The active-link pre-check and the submit are both DB-backed and BOTH must sit inside
           // the
@@ -255,7 +260,7 @@ public class LinearPollingHost {
           // ticket — never propagate out of the loop and abort the batch / skip watermark advance.
           try {
             if (integrationLinkRecordPort
-                .findActiveByTypeAndExternalRef(INTEGRATION_TYPE_LINEAR, ticket.ticketRef())
+                .findActiveByTypeAndExternalRef(INTEGRATION_TYPE_LINEAR, ticketRef)
                 .isPresent()) {
               // AR18 — already linked (CLI/REST/prior auto-ingest); touch-only, do not re-submit.
               autoIngestSkipped++;
@@ -265,9 +270,9 @@ public class LinearPollingHost {
               ingested++;
               log.info(
                   "linear_real auto_ingest_created ticketRef={} statusName={} statusId={} runId={} state={} actorType={}",
-                  ticket.ticketRef(),
-                  ticket.status(),
-                  ticket.statusId(),
+                  ticketRef,
+                  ticket.sourceStatus(),
+                  ticket.sourceStatusId(),
                   result.workflowRunId(),
                   result.currentState().value(),
                   ActorType.SYSTEM.value());
@@ -275,14 +280,14 @@ public class LinearPollingHost {
           } catch (DomainException de) {
             log.warn(
                 "linear_real auto_ingest_failed ticketRef={} code={}",
-                ticket.ticketRef(),
+                ticketRef,
                 de.errorCode().value());
           } catch (RuntimeException re) {
             // Includes a failure of the active-link pre-check read above — per-ticket isolation
             // (AC4): the batch continues and watermark advancement is unaffected.
             log.warn(
                 "linear_real auto_ingest_failed ticketRef={} cause={}",
-                ticket.ticketRef(),
+                ticketRef,
                 re.getClass().getSimpleName());
           }
         }
@@ -328,14 +333,14 @@ public class LinearPollingHost {
 
   /**
    * AC2 — a ticket is eligible iff auto-ingest is enabled, the allow-list is non-empty, and the
-   * ticket's issue workflow-state id is in the allow-list. A {@code null} state id (state absent
-   * from the response) is ineligible. Gating is on the id only — the name is for logs.
+   * ticket's opaque source workflow-state id is in the allow-list. A {@code null} state id (state
+   * absent from the response) is ineligible. Gating is on the id only — the name is for logs.
    */
-  private boolean isEligible(LinearTicket ticket) {
+  private boolean isEligible(Ticket ticket) {
     return autoIngestProperties.enabled()
         && !statusIdAllowList.isEmpty()
-        && ticket.statusId() != null
-        && statusIdAllowList.contains(ticket.statusId());
+        && ticket.sourceStatusId() != null
+        && statusIdAllowList.contains(ticket.sourceStatusId());
   }
 
   /**
@@ -343,13 +348,10 @@ public class LinearPollingHost {
    * idempotency key, and {@code correlationId=null} (T-FINGERPRINT-DRIFT: the per-poll correlation
    * must NOT enter the fingerprint, else a re-poll mints a fingerprint mismatch).
    */
-  private SubmitWorkflowCommand buildAutoIngestCommand(LinearTicket ticket) {
+  private SubmitWorkflowCommand buildAutoIngestCommand(Ticket ticket) {
+    String ticketRef = ticket.ticketRef().value();
     return new SubmitWorkflowCommand(
-        AUTO_INGEST_ACTOR_IDENTITY,
-        ActorType.SYSTEM,
-        autoIngestKey(ticket.ticketRef()),
-        null,
-        ticket.ticketRef());
+        AUTO_INGEST_ACTOR_IDENTITY, ActorType.SYSTEM, autoIngestKey(ticketRef), null, ticketRef);
   }
 
   /**

@@ -25,8 +25,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
-import org.dradgo.application.integration.linear.GovernedRunComment;
-import org.dradgo.application.integration.linear.LinearAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.queue.RunnerExecutionQueue;
@@ -38,6 +37,8 @@ import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
+import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowState;
@@ -563,9 +564,9 @@ final class ArchitectureRuleCatalog {
               .doNotHaveFullyQualifiedName("org.dradgo.adapters.cli.WorkflowCommands")
               .should()
               .callMethod(
-                  LinearAdapter.class,
+                  TicketSourceAdapter.class,
                   "postGovernedRunComment",
-                  String.class,
+                  TicketRef.class,
                   GovernedRunComment.class));
 
   static final ArchRule ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE =
@@ -795,14 +796,14 @@ final class ArchitectureRuleCatalog {
                           org.dradgo.application.workflow.commands.TakeoverWorkflowCommand
                               .class))));
 
-  static final ArchRule LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
+  static final ArchRule TICKET_SOURCE_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
       namedRule(
-          "Linear-specific GraphQL types must not leak through the application.integration.linear port",
-          "Remediation: keep Linear GraphQL DTOs, Linear SDK types, and HTTP-client surface inside adapters.integration.linear; the application port "
-              + "may only depend on domain-shaped records (LinearTicket, GovernedRunComment, IntegrationLink). Story 1.14 AC1 invariant.",
+          "vendor-specific ticket-source types must not leak through the application.integration.ticketsource port",
+          "Remediation: keep Linear GraphQL DTOs, vendor SDK types, and HTTP-client surface inside adapters.integration.ticketsource.{kind}; the application port "
+              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment). Story 1.14 AC1 / story 3.32 AC7 invariant.",
           noClasses()
               .that()
-              .resideInAPackage("org.dradgo.application.integration..")
+              .resideInAPackage("org.dradgo.application.integration.ticketsource..")
               .should()
               .dependOnClassesThat()
               .resideInAnyPackage(
@@ -810,6 +811,30 @@ final class ArchitectureRuleCatalog {
                   "linear.api..",
                   "org.springframework.web.client..",
                   "org.springframework.http.client.."));
+
+  static final ArchRule TICKET_SOURCE_ADAPTER_PORT_RESIDES_IN_APPLICATION =
+      namedRule(
+          "the TicketSourceAdapter port resides in application.integration.ticketsource",
+          "Remediation: keep the vendor-neutral TicketSourceAdapter port (story 3.32 AC7) in org.dradgo.application.integration.ticketsource; vendor implementations live under adapters.integration.ticketsource.{kind}.",
+          classes()
+              .that()
+              .areAssignableTo(TicketSourceAdapter.class)
+              .and()
+              .areInterfaces()
+              .should()
+              .resideInAPackage("org.dradgo.application.integration.ticketsource.."));
+
+  static final ArchRule TICKET_SOURCE_IMPLS_RESIDE_IN_ADAPTERS_TICKETSOURCE =
+      namedRule(
+          "concrete TicketSourceAdapter implementations reside in adapters.integration.ticketsource",
+          "Remediation: keep vendor TicketSourceAdapter implementations (LinearMockAdapter/LinearRealAdapter and future kinds) under org.dradgo.adapters.integration.ticketsource.{kind} (story 3.32 AC7).",
+          classes()
+              .that()
+              .areAssignableTo(TicketSourceAdapter.class)
+              .and()
+              .areNotInterfaces()
+              .should()
+              .resideInAPackage("org.dradgo.adapters.integration.ticketsource.."));
 
   static final ArchRule GITHUB_TYPES_MUST_NOT_LEAK_THROUGH_PORT =
       namedRule(

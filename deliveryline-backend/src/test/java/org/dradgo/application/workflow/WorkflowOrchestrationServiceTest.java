@@ -51,9 +51,9 @@ class WorkflowOrchestrationServiceTest {
   private ContextBundleService contextBundleService;
   // Story 3.16 — completion-sync collaborators.
   private org.springframework.beans.factory.ObjectProvider<
-          org.dradgo.application.integration.linear.LinearAdapter>
+          org.dradgo.application.integration.ticketsource.TicketSourceAdapter>
       linearAdapterProvider;
-  private org.dradgo.application.integration.linear.LinearAdapter linearAdapter;
+  private org.dradgo.application.integration.ticketsource.TicketSourceAdapter linearAdapter;
   private org.dradgo.application.security.RedactionPolicyService redactionPolicyService;
   private org.dradgo.application.integration.IntegrationLinkService integrationLinkService;
   private org.dradgo.application.artifact.spi.ArtifactRecordPort artifactRecordPort;
@@ -72,8 +72,11 @@ class WorkflowOrchestrationServiceTest {
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
     contextBundleService = mock(ContextBundleService.class);
     linearAdapterProvider = mock(org.springframework.beans.factory.ObjectProvider.class);
-    linearAdapter = mock(org.dradgo.application.integration.linear.LinearAdapter.class);
+    linearAdapter = mock(org.dradgo.application.integration.ticketsource.TicketSourceAdapter.class);
     when(linearAdapterProvider.getIfAvailable()).thenReturn(linearAdapter);
+    when(linearAdapter.getCapabilities())
+        .thenReturn(
+            org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities.linearDefaults());
     redactionPolicyService = mock(org.dradgo.application.security.RedactionPolicyService.class);
     integrationLinkService = mock(org.dradgo.application.integration.IntegrationLinkService.class);
     artifactRecordPort = mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class);
@@ -783,10 +786,13 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).syncCompletionToLinear(RUN_ID);
 
-    ArgumentCaptor<org.dradgo.application.integration.linear.GovernedRunComment> captor =
-        ArgumentCaptor.forClass(org.dradgo.application.integration.linear.GovernedRunComment.class);
-    verify(linearAdapter).postGovernedRunComment(eq(TICKET), captor.capture());
-    org.dradgo.application.integration.linear.GovernedRunComment posted = captor.getValue();
+    ArgumentCaptor<org.dradgo.domain.integration.ticketsource.GovernedRunComment> captor =
+        ArgumentCaptor.forClass(
+            org.dradgo.domain.integration.ticketsource.GovernedRunComment.class);
+    verify(linearAdapter)
+        .postGovernedRunComment(
+            eq(org.dradgo.domain.integration.ticketsource.TicketRef.of(TICKET)), captor.capture());
+    org.dradgo.domain.integration.ticketsource.GovernedRunComment posted = captor.getValue();
     org.junit.jupiter.api.Assertions.assertEquals(RUN_ID, posted.runPublicId());
     assertSame(
         org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL, posted.classification());
@@ -815,9 +821,12 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).syncCompletionToLinear(RUN_ID);
 
-    ArgumentCaptor<org.dradgo.application.integration.linear.GovernedRunComment> captor =
-        ArgumentCaptor.forClass(org.dradgo.application.integration.linear.GovernedRunComment.class);
-    verify(linearAdapter).postGovernedRunComment(eq(TICKET), captor.capture());
+    ArgumentCaptor<org.dradgo.domain.integration.ticketsource.GovernedRunComment> captor =
+        ArgumentCaptor.forClass(
+            org.dradgo.domain.integration.ticketsource.GovernedRunComment.class);
+    verify(linearAdapter)
+        .postGovernedRunComment(
+            eq(org.dradgo.domain.integration.ticketsource.TicketRef.of(TICKET)), captor.capture());
     org.junit.jupiter.api.Assertions.assertEquals(
         "DeliveryLine governed run scrubbed completed.", captor.getValue().body());
     assertSame(
@@ -842,10 +851,11 @@ class WorkflowOrchestrationServiceTest {
     stubLinks(true);
     stubRedactionPassthrough();
     org.mockito.Mockito.doThrow(
-            new org.dradgo.application.integration.linear.LinearAdapterException(
+            new org.dradgo.application.integration.ticketsource.TicketSourceAdapterException(
                 org.dradgo.domain.registry.IntegrationFailureCategory.NETWORK_API_FAILURE, "boom"))
         .when(linearAdapter)
-        .postGovernedRunComment(eq(TICKET), any());
+        .postGovernedRunComment(
+            eq(org.dradgo.domain.integration.ticketsource.TicketRef.of(TICKET)), any());
 
     service(false).syncCompletionToLinear(RUN_ID); // best-effort: must not throw
 
@@ -888,11 +898,13 @@ class WorkflowOrchestrationServiceTest {
         .thenReturn(java.util.List.of(eventAt(first), eventAt(first.plusHours(3))));
     svc.syncCompletionToLinear(RUN_ID);
 
-    ArgumentCaptor<org.dradgo.application.integration.linear.GovernedRunComment> captor =
-        ArgumentCaptor.forClass(org.dradgo.application.integration.linear.GovernedRunComment.class);
+    ArgumentCaptor<org.dradgo.domain.integration.ticketsource.GovernedRunComment> captor =
+        ArgumentCaptor.forClass(
+            org.dradgo.domain.integration.ticketsource.GovernedRunComment.class);
     verify(linearAdapter, org.mockito.Mockito.times(2))
-        .postGovernedRunComment(eq(TICKET), captor.capture());
-    java.util.List<org.dradgo.application.integration.linear.GovernedRunComment> posts =
+        .postGovernedRunComment(
+            eq(org.dradgo.domain.integration.ticketsource.TicketRef.of(TICKET)), captor.capture());
+    java.util.List<org.dradgo.domain.integration.ticketsource.GovernedRunComment> posts =
         captor.getAllValues();
     // Precondition (guards against re-vacuum): the advanced timeline really changed the rendered
     // body's cycle time.
@@ -930,5 +942,26 @@ class WorkflowOrchestrationServiceTest {
 
     verify(workflowEventWritePort, never()).append(any());
     assertLoggedAt(Level.WARN, "linear_adapter_unavailable");
+  }
+
+  @Test
+  void syncCompletionSkippedWhenSourceLacksCommentCapability() {
+    // Story 3.32 AC3 — a ticket source declaring supportsCommentOnTicket=false degrades gracefully:
+    // no post, no event (R6 — log over a new WorkflowEventType), and the typed skip outcome.
+    stubLinks(true);
+    stubRedactionPassthrough();
+    when(linearAdapter.getCapabilities())
+        .thenReturn(
+            new org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities(
+                false, true, true));
+
+    WorkflowOrchestrationService.SyncCompletionOutcome outcome =
+        service(false).syncCompletionToLinear(RUN_ID);
+
+    assertSame(
+        WorkflowOrchestrationService.SyncCompletionOutcome.SKIPPED_NO_COMMENT_CAPABILITY, outcome);
+    verify(linearAdapter, never()).postGovernedRunComment(any(), any());
+    verify(workflowEventWritePort, never()).append(any());
+    assertLoggedAt(Level.WARN, "linear.completionSyncSkipped");
   }
 }

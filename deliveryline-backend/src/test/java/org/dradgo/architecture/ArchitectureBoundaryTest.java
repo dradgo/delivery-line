@@ -161,8 +161,16 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE;
 
   @ArchTest
-  static final ArchRule linear_types_must_not_leak_through_port =
-      ArchitectureRuleCatalog.LINEAR_TYPES_MUST_NOT_LEAK_THROUGH_PORT;
+  static final ArchRule ticket_source_types_must_not_leak_through_port =
+      ArchitectureRuleCatalog.TICKET_SOURCE_TYPES_MUST_NOT_LEAK_THROUGH_PORT;
+
+  @ArchTest
+  static final ArchRule ticket_source_adapter_port_resides_in_application =
+      ArchitectureRuleCatalog.TICKET_SOURCE_ADAPTER_PORT_RESIDES_IN_APPLICATION;
+
+  @ArchTest
+  static final ArchRule ticket_source_impls_reside_in_adapters_ticketsource =
+      ArchitectureRuleCatalog.TICKET_SOURCE_IMPLS_RESIDE_IN_ADAPTERS_TICKETSOURCE;
 
   @ArchTest
   static final ArchRule github_types_must_not_leak_through_port =

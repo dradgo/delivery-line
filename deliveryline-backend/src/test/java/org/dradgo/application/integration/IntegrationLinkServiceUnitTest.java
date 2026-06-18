@@ -22,16 +22,17 @@ import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
 import org.dradgo.application.integration.github.GitHubAdapter;
 import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.linear.LinearAdapter;
-import org.dradgo.application.integration.linear.LinearAdapterException;
-import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -65,7 +66,7 @@ class IntegrationLinkServiceUnitTest {
   private static final String GH_KEY = "linkGitHubPr:run_unit12345678:octo/hello#42";
 
   private IntegrationLinkRecordPort port;
-  private LinearAdapter linearAdapter;
+  private TicketSourceAdapter linearAdapter;
   private IdempotencyService idempotencyService;
   private RedactionPolicyService redactionService;
   private GitHubAdapter gitHubAdapter;
@@ -75,7 +76,7 @@ class IntegrationLinkServiceUnitTest {
   @BeforeEach
   void setUp() {
     port = org.mockito.Mockito.mock(IntegrationLinkRecordPort.class);
-    linearAdapter = org.mockito.Mockito.mock(LinearAdapter.class);
+    linearAdapter = org.mockito.Mockito.mock(TicketSourceAdapter.class);
     idempotencyService = org.mockito.Mockito.mock(IdempotencyService.class);
     redactionService = org.mockito.Mockito.mock(RedactionPolicyService.class);
     gitHubAdapter = org.mockito.Mockito.mock(GitHubAdapter.class);
@@ -103,8 +104,9 @@ class IntegrationLinkServiceUnitTest {
     when(idempotencyService.checkAndReserve(
             eq(IDEMPOTENCY_KEY), anyString(), eq(ACTOR.actorIdentity()), anyString()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
-    LinearTicket ticket = sampleTicket();
-    when(linearAdapter.fetchTicketByReference(TICKET_REF)).thenReturn(Optional.of(ticket));
+    Ticket ticket = sampleTicket();
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(ticket));
     when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
         .thenReturn(Optional.empty());
     when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
@@ -136,7 +138,7 @@ class IntegrationLinkServiceUnitTest {
     IntegrationLink result = service.linkTicket(RUN_ID, TICKET_REF, ACTOR, IDEMPOTENCY_KEY);
 
     assertEquals("ilk_prior00000001", result.publicId());
-    verify(linearAdapter, never()).fetchTicketByReference(anyString());
+    verify(linearAdapter, never()).fetchTicketByReference(any());
     verify(port, never()).insert(any());
     verify(idempotencyService, never()).complete(anyString(), anyString(), any());
   }
@@ -153,7 +155,7 @@ class IntegrationLinkServiceUnitTest {
 
     assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
     assertEquals("prior_attempt_failed_terminally", error.details().get("reason"));
-    verify(linearAdapter, never()).fetchTicketByReference(anyString());
+    verify(linearAdapter, never()).fetchTicketByReference(any());
   }
 
   @Test
@@ -174,7 +176,8 @@ class IntegrationLinkServiceUnitTest {
   void ticketNotFoundCompletesReservationAsFailedAndRaisesLinearTicketNotFound() {
     when(idempotencyService.checkAndReserve(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
-    when(linearAdapter.fetchTicketByReference(TICKET_REF)).thenReturn(Optional.empty());
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.empty());
 
     DomainException error =
         assertThrows(
@@ -184,6 +187,40 @@ class IntegrationLinkServiceUnitTest {
     assertEquals(DomainErrorCode.LINEAR_TICKET_NOT_FOUND, error.errorCode());
     verify(idempotencyService)
         .complete(eq(IDEMPOTENCY_KEY), eq(null), eq(IdempotencyRecordStatus.FAILED));
+    verify(port, never()).insert(any());
+  }
+
+  @Test
+  void blankTicketRefRejectedBeforeReservation() {
+    // Story 3.32 review finding — a blank (non-null) ticketRef must fail fast at method entry,
+    // BEFORE the idempotency reservation, so no RESERVED record is left dangling (mirrors
+    // linkGitHubPr's up-front non-blank guard). The old bare-String path passed blanks through to
+    // the adapter; TicketRef.of(...) now rejects them, so the guard must precede checkAndReserve.
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.linkTicket(RUN_ID, "   ", ACTOR, IDEMPOTENCY_KEY));
+
+    assertTrue(error.getMessage().contains("non-blank"));
+    verify(idempotencyService, never())
+        .checkAndReserve(anyString(), anyString(), anyString(), anyString());
+    verify(linearAdapter, never()).fetchTicketByReference(any());
+    verify(port, never()).findActiveByTypeAndExternalRefForUpdate(anyString(), anyString());
+  }
+
+  @Test
+  void blankTicketRefRejectedBeforePortLookupWithinTransaction() {
+    // Same up-front guard on the in-transaction variant — the guard must fire before the
+    // pessimistic-lock port lookup (and well before TicketRef.of(...)), so a blank input never
+    // touches the DB.
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.linkTicketWithinTransaction(RUN_ID, "", ACTOR));
+
+    assertTrue(error.getMessage().contains("non-blank"));
+    verify(port, never()).findActiveByTypeAndExternalRefForUpdate(anyString(), anyString());
+    verify(linearAdapter, never()).fetchTicketByReference(any());
     verify(port, never()).insert(any());
   }
 
@@ -198,7 +235,7 @@ class IntegrationLinkServiceUnitTest {
     IntegrationLink result = service.linkTicket(RUN_ID, TICKET_REF, ACTOR, IDEMPOTENCY_KEY);
 
     assertEquals("ilk_existing00001", result.publicId());
-    verify(linearAdapter, never()).fetchTicketByReference(anyString());
+    verify(linearAdapter, never()).fetchTicketByReference(any());
     verify(port, never()).insert(any());
     verify(idempotencyService)
         .complete(IDEMPOTENCY_KEY, "ilk_existing00001", IdempotencyRecordStatus.COMPLETED);
@@ -219,7 +256,7 @@ class IntegrationLinkServiceUnitTest {
 
     assertEquals(DomainErrorCode.INTEGRATION_LINK_CONFLICT, error.errorCode());
     assertEquals(OTHER_RUN_ID, error.details().get("existingRunPublicId"));
-    verify(linearAdapter, never()).fetchTicketByReference(anyString());
+    verify(linearAdapter, never()).fetchTicketByReference(any());
     verify(idempotencyService).complete(IDEMPOTENCY_KEY, null, IdempotencyRecordStatus.FAILED);
     verify(port, never()).insert(any());
   }
@@ -230,9 +267,9 @@ class IntegrationLinkServiceUnitTest {
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
     when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
         .thenReturn(Optional.empty());
-    when(linearAdapter.fetchTicketByReference(TICKET_REF))
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
         .thenThrow(
-            new LinearAdapterException(
+            new TicketSourceAdapterException(
                 IntegrationFailureCategory.NETWORK_API_FAILURE, "rate limited"));
 
     DomainException error =
@@ -251,7 +288,8 @@ class IntegrationLinkServiceUnitTest {
   void redactionAppliesShareableRedactedClassification() {
     when(idempotencyService.checkAndReserve(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
-    when(linearAdapter.fetchTicketByReference(TICKET_REF)).thenReturn(Optional.of(sampleTicket()));
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(sampleTicket()));
     when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
         .thenReturn(Optional.empty());
     when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
@@ -275,7 +313,8 @@ class IntegrationLinkServiceUnitTest {
   void insertPayloadContainsBytesAndPropagatesPublicId() {
     when(idempotencyService.checkAndReserve(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
-    when(linearAdapter.fetchTicketByReference(TICKET_REF)).thenReturn(Optional.of(sampleTicket()));
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(sampleTicket()));
     when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
         .thenReturn(Optional.empty());
     when(redactionService.redact(any(Map.class), anyString())).thenReturn(sampleRedactionResult());
@@ -599,9 +638,9 @@ class IntegrationLinkServiceUnitTest {
         publicId, workflowRunPublicId, "github_pr", externalRef, status, now, now, null);
   }
 
-  private static LinearTicket sampleTicket() {
-    return new LinearTicket(
-        TICKET_REF,
+  private static Ticket sampleTicket() {
+    return new Ticket(
+        TicketRef.of(TICKET_REF),
         "Add caching",
         "Bounded feature for the worker pool",
         "dev@example.com",

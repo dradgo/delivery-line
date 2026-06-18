@@ -310,4 +310,24 @@ class FoundationGateVerificationTest {
           "3.19", "org.dradgo.adapters.rest.RunnerQueuePrometheusScrapeIT");
     }
   }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName(
+      "Contract #14 — TicketSourceAdapter abstraction parity + capability skip (story 3.32)")
+  class Contract14TicketSourceAbstraction {
+
+    /**
+     * Story 3.32 AC9 — the Linear mock + real adapters satisfy the vendor-neutral {@code
+     * TicketSourceAdapter} port, return neutral {@code Ticket}s on a happy read, classify failures
+     * identically, and the completion sync skips gracefully when a source declares {@code
+     * supportsCommentOnTicket=false}.
+     */
+    @Test
+    @DisplayName("TicketSourceAdapter mock/real parity + capability-driven completion-sync skip")
+    void ticketSourceAbstractionContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3.32", "org.dradgo.foundation.TicketSourceAbstractionFoundationContract");
+    }
+  }
 }

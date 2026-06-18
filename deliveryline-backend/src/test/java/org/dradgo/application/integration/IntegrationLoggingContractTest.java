@@ -26,17 +26,18 @@ import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.github.GitHubAdapter;
 import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.linear.LinearAdapter;
-import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
-import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -69,7 +70,7 @@ class IntegrationLoggingContractTest {
   @Test
   void linkTicketHappyPathEmitsEntryAndSuccessLogsWithContext() {
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
-    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IdempotencyService idempotencyService = mock(IdempotencyService.class);
     RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
     IntegrationLinkService service =
@@ -87,7 +88,8 @@ class IntegrationLoggingContractTest {
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
     when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
         .thenReturn(Optional.empty());
-    when(linearAdapter.fetchTicketByReference(TICKET_REF)).thenReturn(Optional.of(sampleTicket()));
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(sampleTicket()));
     when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
         .thenReturn(sampleRedactionResult());
     when(port.insert(any(NewIntegrationLink.class)))
@@ -112,7 +114,7 @@ class IntegrationLoggingContractTest {
   @Test
   void linkTicketTicketNotFoundEmitsWarnWithoutInsert() {
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
-    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IdempotencyService idempotencyService = mock(IdempotencyService.class);
     RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
     IntegrationLinkService service =
@@ -130,7 +132,8 @@ class IntegrationLoggingContractTest {
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
     when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
         .thenReturn(Optional.empty());
-    when(linearAdapter.fetchTicketByReference(TICKET_REF)).thenReturn(Optional.empty());
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.empty());
 
     try {
       service.linkTicket(RUN_ID, TICKET_REF, ACTOR, IDEMPOTENCY_KEY);
@@ -147,7 +150,7 @@ class IntegrationLoggingContractTest {
 
   @Test
   void pollingFailureEmitsWarnWithCategoryAndPreservesCursor() {
-    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
     Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
     LinearPollingHost host =
@@ -160,7 +163,7 @@ class IntegrationLoggingContractTest {
             clock);
     when(linearAdapter.pollNewTickets(Instant.parse("2026-05-13T12:00:00Z")))
         .thenThrow(
-            new LinearAdapterException(
+            new TicketSourceAdapterException(
                 IntegrationFailureCategory.NETWORK_API_FAILURE, "rate limited"));
 
     host.pollLinear();
@@ -185,7 +188,7 @@ class IntegrationLoggingContractTest {
 
   @Test
   void pollingTouchFailurePreservesCursor() {
-    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
     Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
     LinearPollingHost host =
@@ -196,9 +199,9 @@ class IntegrationLoggingContractTest {
             mock(WorkflowCommandService.class),
             LinearAutoIngestProperties.defaults(),
             clock);
-    LinearTicket ticket =
-        new LinearTicket(
-            "LIN-102",
+    Ticket ticket =
+        new Ticket(
+            TicketRef.of("LIN-102"),
             "Add retry",
             "Persist touch path",
             "dev@example.com",
@@ -222,7 +225,7 @@ class IntegrationLoggingContractTest {
 
   @Test
   void seedWatermarkFallsBackToSafeFloorWhenLookupFails() {
-    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
     Clock clock = Clock.fixed(Instant.parse("2026-05-13T12:00:00Z"), ZoneOffset.UTC);
     LinearPollingHost host =
@@ -305,7 +308,7 @@ class IntegrationLoggingContractTest {
 
   private static IntegrationLinkService githubService(
       IntegrationLinkRecordPort port, GitHubAdapter gitHubAdapter) {
-    LinearAdapter linearAdapter = mock(LinearAdapter.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
     IdempotencyService idempotencyService = mock(IdempotencyService.class);
     RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
     when(redactionService.redact(any(Map.class), any())).thenReturn(sampleRedactionResult());
@@ -361,9 +364,9 @@ class IntegrationLoggingContractTest {
         "expected " + level + " log containing '" + fragment + "'; events=" + events);
   }
 
-  private static LinearTicket sampleTicket() {
-    return new LinearTicket(
-        TICKET_REF,
+  private static Ticket sampleTicket() {
+    return new Ticket(
+        TicketRef.of(TICKET_REF),
         "Add caching",
         "Bounded feature for the worker pool",
         "dev@example.com",

@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -9,14 +9,14 @@ import java.io.InputStream;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import org.dradgo.application.integration.linear.LinearTicket;
+import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.junit.jupiter.api.Test;
 
 /**
  * Deterministic Linear fixture library exit-gate (story 1.14 Task 7). Confirms every
- * production-classpath {@code linear-fixtures/*.json} loads and parses cleanly to a {@link
- * LinearTicket}, and that the three AC8-required ticket categories (feature, bug fix,
- * documentation) are represented exactly once each.
+ * production-classpath {@code linear-fixtures/*.json} loads and parses cleanly to a neutral {@link
+ * Ticket}, and that the three AC8-required ticket categories (feature, bug fix, documentation) are
+ * represented exactly once each.
  */
 class LinearScenarioContractTest {
 
@@ -52,13 +52,13 @@ class LinearScenarioContractTest {
   }
 
   @Test
-  void everyFixtureParsesToValidLinearTicket() {
+  void everyFixtureParsesToValidTicket() {
     LinearMockScenarioRegistry registry = new LinearMockScenarioRegistry();
     for (LinearMockScenario scenario : registry.all().values()) {
-      LinearTicket ticket = registry.loadHappyFixture(scenario);
+      Ticket ticket = registry.loadHappyFixture(scenario);
       assertEquals(
           scenario.ticketRef(),
-          ticket.ticketRef(),
+          ticket.ticketRef().value(),
           () -> "fixture ticketRef must match registry key for " + scenario.ticketRef());
       assertFalse(ticket.title().isBlank());
       assertFalse(ticket.summary().isBlank());
@@ -81,7 +81,7 @@ class LinearScenarioContractTest {
         .values()
         .forEach(
             scenario -> {
-              LinearTicket ticket = registry.loadHappyFixture(scenario);
+              Ticket ticket = registry.loadHappyFixture(scenario);
               String type = ticket.labels().get("type");
               if (type != null) {
                 types.add(type);

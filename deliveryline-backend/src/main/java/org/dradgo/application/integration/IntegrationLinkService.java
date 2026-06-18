@@ -21,11 +21,10 @@ import org.dradgo.application.integration.github.GitHubAdapter;
 import org.dradgo.application.integration.github.GitHubAdapterException;
 import org.dradgo.application.integration.github.GitHubBranch;
 import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.linear.LinearAdapter;
-import org.dradgo.application.integration.linear.LinearAdapterException;
-import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
@@ -33,6 +32,8 @@ import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
@@ -57,12 +58,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>{@link #linkTicket(String, String, ActorContext, String)} is the single entry point for
  * creating a link. It reserves an {@code ilk_} id under an idempotency key, fetches the source
- * ticket through {@link LinearAdapter}, takes a {@code SELECT … FOR UPDATE} on any existing active
- * link for the same {@code (linear, externalRef)}, and inserts a redacted row.
+ * ticket through {@link TicketSourceAdapter}, takes a {@code SELECT … FOR UPDATE} on any existing
+ * active link for the same {@code (linear, externalRef)}, and inserts a redacted row.
  *
- * <p>Only this service and the polling host bean may call {@link LinearAdapter} directly — CLI,
- * REST, and persistence layers must call this service (mirrors the "only {@code RunnerBroker} may
- * call {@code RunnerAdapter.dispatch}" rule from story 1.13).
+ * <p>Only this service and the polling host bean may call {@link TicketSourceAdapter} directly —
+ * CLI, REST, and persistence layers must call this service (mirrors the "only {@code RunnerBroker}
+ * may call {@code RunnerAdapter.dispatch}" rule from story 1.13).
  */
 @Service
 public class IntegrationLinkService {
@@ -74,7 +75,7 @@ public class IntegrationLinkService {
   static final String COMMAND_TYPE = "IntegrationLinkService.linkTicket";
 
   private final IntegrationLinkRecordPort integrationLinkRecordPort;
-  private final LinearAdapter linearAdapter;
+  private final TicketSourceAdapter linearAdapter;
   private final IdempotencyService idempotencyService;
   private final RedactionPolicyService redactionPolicyService;
   // Story 3.15 (Decision D3) — GitHubAdapter is @Profile(github-mock|github-real)-gated while this
@@ -90,7 +91,7 @@ public class IntegrationLinkService {
   @Autowired
   public IntegrationLinkService(
       IntegrationLinkRecordPort integrationLinkRecordPort,
-      LinearAdapter linearAdapter,
+      TicketSourceAdapter linearAdapter,
       IdempotencyService idempotencyService,
       RedactionPolicyService redactionPolicyService,
       ObjectProvider<GitHubAdapter> gitHubAdapterProvider,
@@ -108,7 +109,7 @@ public class IntegrationLinkService {
 
   public IntegrationLinkService(
       IntegrationLinkRecordPort integrationLinkRecordPort,
-      LinearAdapter linearAdapter,
+      TicketSourceAdapter linearAdapter,
       IdempotencyService idempotencyService,
       RedactionPolicyService redactionPolicyService,
       ObjectProvider<GitHubAdapter> gitHubAdapterProvider,
@@ -139,7 +140,13 @@ public class IntegrationLinkService {
       ActorContext actor,
       String idempotencyKey) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
-    Objects.requireNonNull(linearTicketRef, "linearTicketRef");
+    // Reject a blank ref up front — BEFORE the idempotency reservation — so a malformed input never
+    // leaves a dangling RESERVED record (story 3.32 review). TicketRef.of(...) would otherwise
+    // throw
+    // only at the fetch call site, after checkAndReserve. Mirrors linkGitHubPr's non-blank guard.
+    if (linearTicketRef == null || linearTicketRef.isBlank()) {
+      throw new IllegalArgumentException("linearTicketReference must be non-blank");
+    }
     Objects.requireNonNull(actor, "actor");
     Objects.requireNonNull(idempotencyKey, "idempotencyKey");
 
@@ -196,16 +203,17 @@ public class IntegrationLinkService {
       }
 
       String publicId = PublicIdPrefixes.INTEGRATION_LINK.next();
-      LinearTicket ticket;
+      Ticket ticket;
       try {
-        Optional<LinearTicket> fetched = linearAdapter.fetchTicketByReference(linearTicketRef);
+        Optional<Ticket> fetched =
+            linearAdapter.fetchTicketByReference(TicketRef.of(linearTicketRef));
         if (fetched.isEmpty()) {
           completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
           log.warn("linkTicket ticket_not_found workflowRunId={}", workflowRunPublicId);
           throw linearTicketNotFound(linearTicketRef);
         }
         ticket = fetched.get();
-      } catch (LinearAdapterException error) {
+      } catch (TicketSourceAdapterException error) {
         completeInIndependentTransaction(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
         log.warn(
             "linkTicket adapter_failure workflowRunId={} category={}",
@@ -270,14 +278,18 @@ public class IntegrationLinkService {
    *
    * <p>Throws {@code LINEAR_TICKET_NOT_FOUND} when the adapter returns empty for the supplied ref,
    * {@code INTEGRATION_LINK_CONFLICT} when another active row exists for the same ticket but a
-   * different run, and propagates {@link LinearAdapterException} as a typed {@code
+   * different run, and propagates {@link TicketSourceAdapterException} as a typed {@code
    * INTEGRATION_LINK_CONFLICT} carrying {@code failureCategory}.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public IntegrationLink linkTicketWithinTransaction(
       String workflowRunPublicId, String linearTicketRef, ActorContext actor) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
-    Objects.requireNonNull(linearTicketRef, "linearTicketRef");
+    // Up-front non-blank guard (story 3.32 review) — fail fast before the pessimistic-lock port
+    // lookup / TicketRef.of(...), mirroring linkTicket + linkGitHubPr.
+    if (linearTicketRef == null || linearTicketRef.isBlank()) {
+      throw new IllegalArgumentException("linearTicketReference must be non-blank");
+    }
     Objects.requireNonNull(actor, "actor");
     log.info(
         "linkTicketWithinTransaction entry workflowRunId={} actorIdentity={}",
@@ -304,16 +316,17 @@ public class IntegrationLinkService {
     }
 
     String publicId = PublicIdPrefixes.INTEGRATION_LINK.next();
-    LinearTicket ticket;
+    Ticket ticket;
     try {
-      Optional<LinearTicket> fetched = linearAdapter.fetchTicketByReference(linearTicketRef);
+      Optional<Ticket> fetched =
+          linearAdapter.fetchTicketByReference(TicketRef.of(linearTicketRef));
       if (fetched.isEmpty()) {
         log.warn(
             "linkTicketWithinTransaction ticket_not_found workflowRunId={}", workflowRunPublicId);
         throw linearTicketNotFound(linearTicketRef);
       }
       ticket = fetched.get();
-    } catch (LinearAdapterException error) {
+    } catch (TicketSourceAdapterException error) {
       log.warn(
           "linkTicketWithinTransaction adapter_failure workflowRunId={} category={}",
           workflowRunPublicId,
@@ -697,7 +710,7 @@ public class IntegrationLinkService {
     }
   }
 
-  private static Map<String, Object> buildExternalMetadata(LinearTicket ticket) {
+  private static Map<String, Object> buildExternalMetadata(Ticket ticket) {
     Map<String, Object> metadata = new LinkedHashMap<>();
     metadata.put("title", ticket.title());
     metadata.put("summary", ticket.summary());
@@ -749,7 +762,8 @@ public class IntegrationLinkService {
         details);
   }
 
-  private static DomainException adapterFailure(String externalRef, LinearAdapterException cause) {
+  private static DomainException adapterFailure(
+      String externalRef, TicketSourceAdapterException cause) {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("externalRef", externalRef);
     details.put("failureCategory", cause.failureCategory().value());

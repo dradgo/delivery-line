@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,10 +20,11 @@ import java.net.SocketTimeoutException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import org.dradgo.application.integration.linear.GovernedRunComment;
-import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearProperties;
-import org.dradgo.application.integration.linear.LinearTicket;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.junit.jupiter.api.BeforeEach;
@@ -73,7 +74,7 @@ class LinearRealAdapterUnitTest {
   }
 
   @Test
-  void fetchHappyPathParsesIssueIntoLinearTicket() {
+  void fetchHappyPathParsesIssueIntoTicket() {
     mockServer
         .expect(requestTo(BASE_URL))
         .andExpect(method(HttpMethod.POST))
@@ -99,17 +100,18 @@ class LinearRealAdapterUnitTest {
 				""",
                 MediaType.APPLICATION_JSON));
 
-    Optional<LinearTicket> ticket = adapter.fetchTicketByReference("LIN-501");
+    Optional<Ticket> ticket = adapter.fetchTicketByReference(TicketRef.of("LIN-501"));
 
     assertTrue(ticket.isPresent());
-    assertEquals("LIN-501", ticket.get().ticketRef());
+    assertEquals("LIN-501", ticket.get().ticketRef().value());
     assertEquals("Add caching layer", ticket.get().title());
     assertEquals("dev@example.com", ticket.get().authorIdentity());
     assertEquals(Instant.parse("2026-05-02T12:30:00Z"), ticket.get().updatedAt());
     assertTrue(ticket.get().labels().containsKey("feature"));
-    // Story 3a.5 — the issue workflow-state id (gating key) + name (logs) are parsed from `state`.
-    assertEquals("state-ready-uuid", ticket.get().statusId());
-    assertEquals("Ready for Planning", ticket.get().status());
+    // Story 3a.5 / 3.32 — the opaque source workflow-state id (gating key) + name (logs) are parsed
+    // from `state` onto the neutral Ticket's sourceStatusId/sourceStatus.
+    assertEquals("state-ready-uuid", ticket.get().sourceStatusId());
+    assertEquals("Ready for Planning", ticket.get().sourceStatus());
     mockServer.verify();
   }
 
@@ -121,7 +123,7 @@ class LinearRealAdapterUnitTest {
         .andRespond(
             withSuccess("{\"data\":{\"issues\":{\"nodes\":[]}}}", MediaType.APPLICATION_JSON));
 
-    Optional<LinearTicket> ticket = adapter.fetchTicketByReference("LIN-404");
+    Optional<Ticket> ticket = adapter.fetchTicketByReference(TicketRef.of("LIN-404"));
 
     assertTrue(ticket.isEmpty());
     mockServer.verify();
@@ -129,9 +131,10 @@ class LinearRealAdapterUnitTest {
 
   @Test
   void fetchOnMalformedRefRaisesSyncFailureWithoutCallingLinear() {
-    LinearAdapterException error =
+    TicketSourceAdapterException error =
         assertThrows(
-            LinearAdapterException.class, () -> adapter.fetchTicketByReference("not-a-valid-ref"));
+            TicketSourceAdapterException.class,
+            () -> adapter.fetchTicketByReference(TicketRef.of("not-a-valid-ref")));
     assertEquals(IntegrationFailureCategory.SYNC_FAILURE, error.failureCategory());
     // mockServer received no expectations and no calls — implicit verification of "no network".
     mockServer.verify();
@@ -144,8 +147,10 @@ class LinearRealAdapterUnitTest {
         .andExpect(method(HttpMethod.POST))
         .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
-    LinearAdapterException error =
-        assertThrows(LinearAdapterException.class, () -> adapter.fetchTicketByReference("LIN-401"));
+    TicketSourceAdapterException error =
+        assertThrows(
+            TicketSourceAdapterException.class,
+            () -> adapter.fetchTicketByReference(TicketRef.of("LIN-401")));
     assertEquals(IntegrationFailureCategory.LINK_FAILURE, error.failureCategory());
     mockServer.verify();
   }
@@ -157,8 +162,10 @@ class LinearRealAdapterUnitTest {
         .andExpect(method(HttpMethod.POST))
         .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
-    LinearAdapterException error =
-        assertThrows(LinearAdapterException.class, () -> adapter.fetchTicketByReference("LIN-429"));
+    TicketSourceAdapterException error =
+        assertThrows(
+            TicketSourceAdapterException.class,
+            () -> adapter.fetchTicketByReference(TicketRef.of("LIN-429")));
     assertEquals(IntegrationFailureCategory.NETWORK_API_FAILURE, error.failureCategory());
     mockServer.verify();
   }
@@ -170,8 +177,10 @@ class LinearRealAdapterUnitTest {
         .andExpect(method(HttpMethod.POST))
         .andRespond(withException(new SocketTimeoutException("read timed out")));
 
-    LinearAdapterException error =
-        assertThrows(LinearAdapterException.class, () -> adapter.fetchTicketByReference("LIN-504"));
+    TicketSourceAdapterException error =
+        assertThrows(
+            TicketSourceAdapterException.class,
+            () -> adapter.fetchTicketByReference(TicketRef.of("LIN-504")));
     assertEquals(IntegrationFailureCategory.NETWORK_API_FAILURE, error.failureCategory());
     mockServer.verify();
   }
@@ -190,8 +199,10 @@ class LinearRealAdapterUnitTest {
 				""",
                 MediaType.APPLICATION_JSON));
 
-    LinearAdapterException error =
-        assertThrows(LinearAdapterException.class, () -> adapter.fetchTicketByReference("LIN-430"));
+    TicketSourceAdapterException error =
+        assertThrows(
+            TicketSourceAdapterException.class,
+            () -> adapter.fetchTicketByReference(TicketRef.of("LIN-430")));
     assertEquals(IntegrationFailureCategory.NETWORK_API_FAILURE, error.failureCategory());
     mockServer.verify();
   }
@@ -210,8 +221,10 @@ class LinearRealAdapterUnitTest {
 				""",
                 MediaType.APPLICATION_JSON));
 
-    LinearAdapterException error =
-        assertThrows(LinearAdapterException.class, () -> adapter.fetchTicketByReference("LIN-400"));
+    TicketSourceAdapterException error =
+        assertThrows(
+            TicketSourceAdapterException.class,
+            () -> adapter.fetchTicketByReference(TicketRef.of("LIN-400")));
     assertEquals(IntegrationFailureCategory.SYNC_FAILURE, error.failureCategory());
     mockServer.verify();
   }
@@ -228,7 +241,7 @@ class LinearRealAdapterUnitTest {
 				""",
                 MediaType.APPLICATION_JSON));
 
-    List<LinearTicket> tickets = adapter.pollNewTickets(Instant.parse("2026-05-01T00:00:00Z"));
+    List<Ticket> tickets = adapter.pollNewTickets(Instant.parse("2026-05-01T00:00:00Z"));
     assertTrue(tickets.isEmpty());
     mockServer.verify();
   }
@@ -281,17 +294,17 @@ class LinearRealAdapterUnitTest {
 				""",
                 MediaType.APPLICATION_JSON));
 
-    List<LinearTicket> tickets = adapter.pollNewTickets(Instant.parse("2026-04-30T00:00:00Z"));
+    List<Ticket> tickets = adapter.pollNewTickets(Instant.parse("2026-04-30T00:00:00Z"));
 
     assertEquals(2, tickets.size());
     // Adapter sorts ASC by updatedAt — older item first, newer item last (the watermark).
-    assertEquals("LIN-300", tickets.get(0).ticketRef());
-    assertEquals("LIN-301", tickets.get(1).ticketRef());
-    // Story 3a.5 — LIN-301 carries `state`; LIN-300 omits it ⇒ null statusId/status (no NPE).
-    assertEquals("state-ready-uuid", tickets.get(1).statusId());
-    assertEquals("Ready for Planning", tickets.get(1).status());
-    assertNull(tickets.get(0).statusId());
-    assertNull(tickets.get(0).status());
+    assertEquals("LIN-300", tickets.get(0).ticketRef().value());
+    assertEquals("LIN-301", tickets.get(1).ticketRef().value());
+    // Story 3a.5 — LIN-301 carries `state`; LIN-300 omits it ⇒ null sourceStatusId/sourceStatus.
+    assertEquals("state-ready-uuid", tickets.get(1).sourceStatusId());
+    assertEquals("Ready for Planning", tickets.get(1).sourceStatus());
+    assertNull(tickets.get(0).sourceStatusId());
+    assertNull(tickets.get(0).sourceStatus());
     mockServer.verify();
   }
 
@@ -321,9 +334,9 @@ class LinearRealAdapterUnitTest {
           .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
     }
 
-    LinearAdapterException error =
+    TicketSourceAdapterException error =
         assertThrows(
-            LinearAdapterException.class,
+            TicketSourceAdapterException.class,
             () -> adapter.pollNewTickets(Instant.parse("2026-04-30T00:00:00Z")));
 
     assertEquals(IntegrationFailureCategory.SYNC_FAILURE, error.failureCategory());
@@ -452,7 +465,7 @@ class LinearRealAdapterUnitTest {
         new GovernedRunComment(
             "run_abc", "fp-7", "Body for the run.", DataClassification.SHAREABLE_REDACTED);
 
-    adapter.postGovernedRunComment("LIN-IDEMP", summary);
+    adapter.postGovernedRunComment(TicketRef.of("LIN-IDEMP"), summary);
 
     mockServer.verify();
   }
@@ -484,7 +497,7 @@ class LinearRealAdapterUnitTest {
         new GovernedRunComment(
             "run_xyz", "fp-new", "Body to post.", DataClassification.SHAREABLE_REDACTED);
 
-    adapter.postGovernedRunComment("LIN-POST", summary);
+    adapter.postGovernedRunComment(TicketRef.of("LIN-POST"), summary);
 
     mockServer.verify();
   }
@@ -526,7 +539,7 @@ class LinearRealAdapterUnitTest {
             "Body the adapter must skip.",
             DataClassification.SHAREABLE_REDACTED);
 
-    adapter.postGovernedRunComment("LIN-PAGED", summary);
+    adapter.postGovernedRunComment(TicketRef.of("LIN-PAGED"), summary);
 
     mockServer.verify();
   }

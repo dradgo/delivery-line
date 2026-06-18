@@ -59,7 +59,8 @@ class LoggingForbiddenPayloadContractTest {
     converter = new RedactingMessageConverter();
     converter.start();
     brokerAppender = attach("org.dradgo.application.runner.RunnerBroker");
-    linearAppender = attach("org.dradgo.adapters.integration.linear.LinearRealAdapter");
+    linearAppender =
+        attach("org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter");
     doctorAppender = attach("org.dradgo.adapters.diagnostics.DoctorProbeAdapter");
     artifactAppender = attach("org.dradgo.adapters.files.LocalArtifactStore");
   }
@@ -67,7 +68,7 @@ class LoggingForbiddenPayloadContractTest {
   @AfterEach
   void tearDown() {
     detach("org.dradgo.application.runner.RunnerBroker", brokerAppender);
-    detach("org.dradgo.adapters.integration.linear.LinearRealAdapter", linearAppender);
+    detach("org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter", linearAppender);
     detach("org.dradgo.adapters.diagnostics.DoctorProbeAdapter", doctorAppender);
     detach("org.dradgo.adapters.files.LocalArtifactStore", artifactAppender);
     converter.stop();
@@ -86,7 +87,10 @@ class LoggingForbiddenPayloadContractTest {
   @Test
   void linearRealAdapterDoesNotEmitAuthorizationHeaderAfterRedaction() {
     String forbidden = "Authorization: Bearer sk-AABBCCDDEEFF112233445566778899";
-    emit("org.dradgo.adapters.integration.linear.LinearRealAdapter", "http request {}", forbidden);
+    emit(
+        "org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter",
+        "http request {}",
+        forbidden);
     assertRenderedScrubsForbiddenSubstring(linearAppender, forbidden, "Bearer sk-AABBCCDDEEFF");
   }
 

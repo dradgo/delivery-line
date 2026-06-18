@@ -129,6 +129,17 @@ deliveryline:
     # blank. Mirrors the localhost-only safe-by-default REST binding posture (architecture lines
     # 256-257, audit-only RBAC). Production deployments MUST override.
     local-actor-identity: local-operator
+  # Story 3.32 — ticket-source selector (deliveryline.integration.ticket-source.kind). `kind` names
+  # the vendor implementation backing the vendor-neutral TicketSourceAdapter port. `linear` (the
+  # default when unset) is the only kind shipped today; future kinds (jira, github-issues,
+  # gitlab-issues) plug in by adding an implementation + a profile entry. The load-bearing bean
+  # gating remains the linear-mock/linear-real Spring profiles; LinearConfiguration fail-fasts at
+  # boot if `kind` names a kind with no implementation on the classpath. (Renaming the
+  # deliveryline.linear.* keys to deliveryline.integration.ticket-source.linear.* is an ops-breaking
+  # change intentionally out of scope — see docs/adr/0007-ticket-source-abstraction.md.)
+  # integration:
+  #   ticket-source:
+  #     kind: linear
   linear:
     # Story 1.14 — the API token is supplied at runtime via the LINEAR_API_TOKEN env var (.env /
     # process env) — NEVER committed here. Blank is allowed at bind time and is fatal only when the

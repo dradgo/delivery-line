@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -6,13 +6,16 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.dradgo.application.integration.linear.LinearTicket;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 
 /**
  * Wire-form of a Linear mock fixture JSON file (kept project-internal — not shared with the runner
  * contracts module). Conforms to {@code schemas/linear-ticket-mock.v1.schema.json}.
  *
- * <p>Adapter-only translation type: not exposed through the {@link LinearTicket port} surface.
+ * <p>Adapter-only translation type: not exposed through the {@link Ticket} port surface. Maps the
+ * fixture's {@code status}/{@code statusId} onto the neutral {@code Ticket}'s opaque {@code
+ * sourceStatus}/{@code sourceStatusId} (story 3.32 OQ-1).
  */
 final class LinearTicketFixtureDocument {
 
@@ -49,9 +52,9 @@ final class LinearTicketFixtureDocument {
     this.statusId = statusId;
   }
 
-  LinearTicket toLinearTicket() {
-    return new LinearTicket(
-        ticketRef,
+  Ticket toTicket() {
+    return new Ticket(
+        TicketRef.of(ticketRef),
         title,
         summary,
         authorIdentity,

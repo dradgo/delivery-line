@@ -18,9 +18,8 @@ import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
-import org.dradgo.application.integration.linear.GovernedRunComment;
-import org.dradgo.application.integration.linear.LinearAdapter;
-import org.dradgo.application.integration.linear.LinearAdapterException;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.ContextBundleService;
 import org.dradgo.application.runner.ExecutionSubStage;
@@ -39,6 +38,10 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.integration.ticketsource.CommentResult;
+import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
+import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
@@ -144,11 +147,12 @@ public class WorkflowOrchestrationService {
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final RunnerProperties runnerProperties;
   private final ContextBundleService contextBundleService;
-  // Story 3.16 — completion-sync collaborators. LinearAdapter is @Profile(linear-mock|linear-real)-
-  // gated while this service is an unconditional @Service; injecting it directly would red every
-  // @SpringBootTest lacking the profile ([[unconditional-service-needs-profile-gate]]). Resolve
-  // getIfAvailable() lazily at the post site; absent ⇒ a WARN no-op, never an NPE (T11).
-  private final ObjectProvider<LinearAdapter> linearAdapterProvider;
+  // Story 3.16 — completion-sync collaborators. The TicketSourceAdapter (Linear kind) is
+  // @Profile(linear-mock|linear-real)-gated while this service is an unconditional @Service;
+  // injecting it directly would red every @SpringBootTest lacking the profile
+  // ([[unconditional-service-needs-profile-gate]]). Resolve getIfAvailable() lazily at the post
+  // site; absent ⇒ a WARN no-op, never an NPE (T11).
+  private final ObjectProvider<TicketSourceAdapter> linearAdapterProvider;
   private final RedactionPolicyService redactionPolicyService;
   private final WorkflowProperties workflowProperties;
   private final IntegrationLinkService integrationLinkService;
@@ -164,7 +168,7 @@ public class WorkflowOrchestrationService {
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       RunnerProperties runnerProperties,
       ContextBundleService contextBundleService,
-      ObjectProvider<LinearAdapter> linearAdapterProvider,
+      ObjectProvider<TicketSourceAdapter> linearAdapterProvider,
       RedactionPolicyService redactionPolicyService,
       WorkflowProperties workflowProperties,
       IntegrationLinkService integrationLinkService,
@@ -1058,6 +1062,11 @@ public class WorkflowOrchestrationService {
     SKIPPED_NO_TICKET_LINK,
     /** No {@code linear-mock|linear-real} profile active — no adapter to post with. */
     SKIPPED_NO_LINEAR_PROFILE,
+    /**
+     * The active ticket source declares {@code supportsCommentOnTicket=false} (story 3.32 AC3) —
+     * the write-back is gracefully skipped with a {@code linear.completionSyncSkipped} WARN log.
+     */
+    SKIPPED_NO_COMMENT_CAPABILITY,
     /** The Linear post threw; recorded as a {@code linear.completionSyncFailed} event. */
     POST_FAILED
   }
@@ -1131,7 +1140,7 @@ public class WorkflowOrchestrationService {
       }
       String body = redaction.sanitizedText();
 
-      LinearAdapter adapter = linearAdapterProvider.getIfAvailable();
+      TicketSourceAdapter adapter = linearAdapterProvider.getIfAvailable();
       if (adapter == null) {
         log.warn(
             "syncCompletionToLinear linear_adapter_unavailable workflowRunId={} (no linear profile "
@@ -1140,18 +1149,49 @@ public class WorkflowOrchestrationService {
         return SyncCompletionOutcome.SKIPPED_NO_LINEAR_PROFILE;
       }
 
+      // Story 3.32 AC3 — gate the optional write-back on the source's declared capability. A source
+      // that cannot post comments degrades gracefully with a structured WARN (no new
+      // WorkflowEventType — R6) and the SKIPPED_NO_COMMENT_CAPABILITY outcome. The capability probe
+      // is guarded so a misbehaving future adapter (null or throwing getCapabilities()) cannot
+      // break
+      // this method's best-effort, never-throws contract: a thrown probe is recorded as POST_FAILED
+      // and a null declaration is treated conservatively as "no comment capability" (skip).
+      TicketSourceCapabilities capabilities;
       try {
-        adapter.postGovernedRunComment(
-            ticketRef,
-            new GovernedRunComment(
-                workflowRunId, fingerprint, body, DataClassification.SHAREABLE_FULL));
+        capabilities = adapter.getCapabilities();
+      } catch (TicketSourceAdapterException error) {
+        recordSyncFailure(
+            workflowRunId, ticketRef, correlationId, error.failureCategory().value(), error);
+        return SyncCompletionOutcome.POST_FAILED;
+      } catch (RuntimeException error) {
+        recordSyncFailure(workflowRunId, ticketRef, correlationId, "unknown", error);
+        return SyncCompletionOutcome.POST_FAILED;
+      }
+      if (capabilities == null || !capabilities.supportsCommentOnTicket()) {
+        log.warn(
+            "event=linear.completionSyncSkipped reason=ticket_source_does_not_support_comments "
+                + "workflowRunId={} ticketRef={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef));
+        return SyncCompletionOutcome.SKIPPED_NO_COMMENT_CAPABILITY;
+      }
+
+      try {
+        CommentResult result =
+            adapter.postGovernedRunComment(
+                TicketRef.of(ticketRef),
+                new GovernedRunComment(
+                    workflowRunId, fingerprint, body, DataClassification.SHAREABLE_FULL));
+        // SKIPPED_DUPLICATE is an idempotent replay (the summary is already on the ticket) — log at
+        // INFO, still report POSTED to the caller since the write-back is durably present.
         log.info(
-            "syncCompletionToLinear posted workflowRunId={} ticketRef={} fingerprint={}",
+            "syncCompletionToLinear posted workflowRunId={} ticketRef={} fingerprint={} result={}",
             workflowRunId,
             MdcKeys.sanitizeForLog(ticketRef),
-            fingerprint);
+            fingerprint,
+            result);
         return SyncCompletionOutcome.POSTED;
-      } catch (LinearAdapterException error) {
+      } catch (TicketSourceAdapterException error) {
         recordSyncFailure(
             workflowRunId, ticketRef, correlationId, error.failureCategory().value(), error);
         return SyncCompletionOutcome.POST_FAILED;

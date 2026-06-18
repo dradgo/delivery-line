@@ -27,14 +27,15 @@ import java.util.Map;
 import java.util.Optional;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.integration.IntegrationLink;
-import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
-import org.dradgo.application.integration.linear.LinearTicket;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
@@ -57,7 +58,7 @@ class LinearPollingHostTest {
   private static final Instant NOW = Instant.parse("2026-06-01T00:00:00Z");
   private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
-  private final LinearAdapter linearAdapter = mock(LinearAdapter.class);
+  private final TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
   private final IntegrationLinkRecordPort recordPort = mock(IntegrationLinkRecordPort.class);
   private final WorkflowCommandService commandService = mock(WorkflowCommandService.class);
   private final ListAppender<ILoggingEvent> appender = attachAppender();
@@ -71,7 +72,7 @@ class LinearPollingHostTest {
 
   @Test
   void eligibleTicketWithNoActiveLinkSubmitsOnce() {
-    LinearTicket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(ticket));
     stubNoActiveLink("LIN-1");
@@ -96,7 +97,7 @@ class LinearPollingHostTest {
 
   @Test
   void rePollWithActiveLinkDoesNotResubmit() {
-    LinearTicket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(any())).thenReturn(List.of(ticket));
     stubSubmitReturns("run_1");
@@ -115,7 +116,7 @@ class LinearPollingHostTest {
 
   @Test
   void deterministicKeyIsStableAcrossPollCycles() {
-    LinearTicket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(any())).thenReturn(List.of(ticket));
     stubNoActiveLink("LIN-1");
@@ -138,7 +139,7 @@ class LinearPollingHostTest {
 
   @Test
   void ineligibleStatusIdIsTouchOnly() {
-    LinearTicket ticket = ticket("LIN-9", NOW.plusSeconds(60), "Backlog", INELIGIBLE_STATUS_ID);
+    Ticket ticket = ticket("LIN-9", NOW.plusSeconds(60), "Backlog", INELIGIBLE_STATUS_ID);
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(ticket));
 
@@ -154,7 +155,7 @@ class LinearPollingHostTest {
 
   @Test
   void disabledFlagKeepsLegacyWatcherPath() {
-    LinearTicket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
     LinearPollingHost host = host(LinearAutoIngestProperties.defaults());
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(ticket));
 
@@ -172,9 +173,9 @@ class LinearPollingHostTest {
 
   @Test
   void oneSubmitFailureDoesNotAbortTheBatch() {
-    LinearTicket t1 = eligibleTicket("LIN-1", NOW.plusSeconds(10));
-    LinearTicket t2 = eligibleTicket("LIN-2", NOW.plusSeconds(20));
-    LinearTicket t3 = eligibleTicket("LIN-3", NOW.plusSeconds(30));
+    Ticket t1 = eligibleTicket("LIN-1", NOW.plusSeconds(10));
+    Ticket t2 = eligibleTicket("LIN-2", NOW.plusSeconds(20));
+    Ticket t3 = eligibleTicket("LIN-3", NOW.plusSeconds(30));
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(t1, t2, t3));
     stubNoActiveLink("LIN-1");
@@ -200,8 +201,8 @@ class LinearPollingHostTest {
   @Test
   void watermarkAdvancesToNewestRegardlessOfIngestOutcome() {
     Instant newest = NOW.plusSeconds(120);
-    LinearTicket t1 = eligibleTicket("LIN-1", NOW.plusSeconds(60));
-    LinearTicket t2 = eligibleTicket("LIN-2", newest);
+    Ticket t1 = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket t2 = eligibleTicket("LIN-2", newest);
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(t1, t2));
     stubNoActiveLink("LIN-1");
@@ -215,7 +216,7 @@ class LinearPollingHostTest {
 
   @Test
   void watermarkPreservedOnTouchFailureEvenWhenIngestSucceeds() {
-    LinearTicket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(ticket));
     when(recordPort.touchLastSyncAtByTypeAndExternalRef(
@@ -235,7 +236,7 @@ class LinearPollingHostTest {
 
   @Test
   void enabledWithEmptyStatusIdsIngestsNothingAndWarnsOnce() {
-    LinearTicket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
+    Ticket ticket = eligibleTicket("LIN-1", NOW.plusSeconds(60));
     LinearPollingHost host = host(new LinearAutoIngestProperties(true, List.of()));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(ticket));
 
@@ -254,7 +255,7 @@ class LinearPollingHostTest {
 
   @Test
   void nullStatusIdIsIneligible() {
-    LinearTicket ticket = ticket("LIN-0", NOW.plusSeconds(60), null, null);
+    Ticket ticket = ticket("LIN-0", NOW.plusSeconds(60), null, null);
     LinearPollingHost host = host(enabled(ELIGIBLE_STATUS_ID));
     when(linearAdapter.pollNewTickets(NOW)).thenReturn(List.of(ticket));
 
@@ -285,14 +286,13 @@ class LinearPollingHostTest {
         .thenReturn(new SubmitWorkflowResult(runId, WorkflowState.INBOX, null));
   }
 
-  private static LinearTicket eligibleTicket(String ref, Instant updatedAt) {
+  private static Ticket eligibleTicket(String ref, Instant updatedAt) {
     return ticket(ref, updatedAt, "Ready for Planning", ELIGIBLE_STATUS_ID);
   }
 
-  private static LinearTicket ticket(
-      String ref, Instant updatedAt, String statusName, String statusId) {
-    return new LinearTicket(
-        ref,
+  private static Ticket ticket(String ref, Instant updatedAt, String statusName, String statusId) {
+    return new Ticket(
+        TicketRef.of(ref),
         "title-" + ref,
         "summary",
         "dev@example.com",

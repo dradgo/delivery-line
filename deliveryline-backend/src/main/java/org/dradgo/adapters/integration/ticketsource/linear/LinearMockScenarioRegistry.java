@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -8,7 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import org.dradgo.application.integration.linear.LinearTicket;
+import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,10 +90,10 @@ public class LinearMockScenarioRegistry {
 
   /**
    * Loads the fixture JSON for a {@link LinearMockScenario.Behaviour#HAPPY} scenario and returns
-   * the deserialized {@link LinearTicket}. Throws {@link IllegalStateException} for scenarios
+   * the deserialized neutral {@link Ticket}. Throws {@link IllegalStateException} for scenarios
    * without a fixture (callers must check the behaviour first).
    */
-  public LinearTicket loadHappyFixture(LinearMockScenario scenario) {
+  public Ticket loadHappyFixture(LinearMockScenario scenario) {
     Objects.requireNonNull(scenario, "scenario");
     if (scenario.behaviour() != LinearMockScenario.Behaviour.HAPPY) {
       throw new IllegalStateException(
@@ -109,7 +109,7 @@ public class LinearMockScenarioRegistry {
       }
       LinearTicketFixtureDocument document =
           objectMapper.readValue(stream, LinearTicketFixtureDocument.class);
-      return document.toLinearTicket();
+      return document.toTicket();
     } catch (IOException error) {
       throw new IllegalStateException("Failed to parse Linear mock fixture " + resource, error);
     }

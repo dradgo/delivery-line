@@ -1680,6 +1680,8 @@ public class WorkflowCommands {
       case SKIPPED_DISABLED -> "completion-sync skipped (linear-completion-sync disabled)";
       case SKIPPED_NO_TICKET_LINK -> "completion-sync skipped (no linked Linear ticket)";
       case SKIPPED_NO_LINEAR_PROFILE -> "completion-sync skipped (no Linear profile active)";
+      case SKIPPED_NO_COMMENT_CAPABILITY ->
+          "completion-sync skipped (ticket source does not support comments)";
       case POST_FAILED -> "completion-sync failed (recorded as an event)";
     };
   }

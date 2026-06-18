@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import java.util.Objects;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -38,7 +38,7 @@ public record LinearMockScenario(
   }
 
   public enum Behaviour {
-    /** Loads the fixture JSON and returns it as a {@link LinearTicket}. */
+    /** Loads the fixture JSON and returns it as a neutral {@code Ticket}. */
     HAPPY,
 
     /** {@code fetchTicketByReference} returns {@link java.util.Optional#empty()} (AC7 path). */

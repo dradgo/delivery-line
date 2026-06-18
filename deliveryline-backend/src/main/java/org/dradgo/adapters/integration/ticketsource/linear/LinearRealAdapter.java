@@ -1,4 +1,4 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,11 +19,14 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.dradgo.application.integration.linear.GovernedRunComment;
-import org.dradgo.application.integration.linear.LinearAdapter;
-import org.dradgo.application.integration.linear.LinearAdapterException;
 import org.dradgo.application.integration.linear.LinearProperties;
-import org.dradgo.application.integration.linear.LinearTicket;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.domain.integration.ticketsource.CommentResult;
+import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketRef;
+import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,8 +40,9 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
- * Production {@link LinearAdapter} backed by the Linear GraphQL API. Activated under Spring profile
- * {@code linear-real} (opt-in only; never in any default profile group per AC3).
+ * Production {@link TicketSourceAdapter} backed by the Linear GraphQL API (the Linear kind).
+ * Activated under Spring profile {@code linear-real} (opt-in only; never in any default profile
+ * group per AC3).
  *
  * <p>Idempotency contract for {@link #postGovernedRunComment}: a fingerprint marker {@code <!--
  * deliveryline:run=<runPublicId> fp=<fingerprint> -->} is embedded in every comment body so
@@ -63,7 +67,7 @@ import org.springframework.web.client.RestClientResponseException;
  */
 @Component
 @Profile("linear-real")
-public class LinearRealAdapter implements LinearAdapter {
+public class LinearRealAdapter implements TicketSourceAdapter {
 
   private static final Logger log = LoggerFactory.getLogger(LinearRealAdapter.class);
 
@@ -120,8 +124,9 @@ public class LinearRealAdapter implements LinearAdapter {
   }
 
   @Override
-  public Optional<LinearTicket> fetchTicketByReference(String ticketRef) {
-    Objects.requireNonNull(ticketRef, "ticketRef");
+  public Optional<Ticket> fetchTicketByReference(TicketRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    String ticketRef = ref.value();
     // Story 3a.4 — single-ticket resolution is authoritatively scoped by the reference's OWN team
     // key (parsed below into the fetch query's `team.key.eq`). Do NOT layer the poll-scope config
     // (properties.teamKey()/projectId()) onto this path — that scope is a poll-only concern.
@@ -138,11 +143,11 @@ public class LinearRealAdapter implements LinearAdapter {
       log.info("linear_real fetch ticketRef={} resolution=not_found", ticketRef);
       return Optional.empty();
     }
-    return Optional.of(toLinearTicket(nodes.get(0)));
+    return Optional.of(toTicket(nodes.get(0)));
   }
 
   @Override
-  public List<LinearTicket> pollNewTickets(Instant since) {
+  public List<Ticket> pollNewTickets(Instant since) {
     Objects.requireNonNull(since, "since");
     int batchSize = Math.max(1, properties.pollBatchSize());
     long startedAt = System.nanoTime();
@@ -150,7 +155,7 @@ public class LinearRealAdapter implements LinearAdapter {
     // team/project keys must be OMITTED when unconfigured (emitting `eq: null` would filter FOR
     // null); building the map here keeps absent scope byte-identical to the original poll.
     Map<String, Object> filter = buildPollFilter(since);
-    List<LinearTicket> collected = new ArrayList<>();
+    List<Ticket> collected = new ArrayList<>();
     String afterCursor = null;
     int pages = 0;
     boolean hasNextPage = false;
@@ -166,7 +171,7 @@ public class LinearRealAdapter implements LinearAdapter {
       JsonNode nodes = issuesNode.path("nodes");
       if (nodes.isArray()) {
         for (JsonNode node : nodes) {
-          collected.add(toLinearTicket(node));
+          collected.add(toTicket(node));
         }
       }
       pages++;
@@ -182,7 +187,7 @@ public class LinearRealAdapter implements LinearAdapter {
           pages,
           POLL_MAX_PAGES,
           collected.size());
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Linear poll exceeded page cap for since="
               + since
@@ -192,7 +197,7 @@ public class LinearRealAdapter implements LinearAdapter {
               + POLL_MAX_PAGES
               + ")");
     }
-    collected.sort(Comparator.comparing(LinearTicket::updatedAt));
+    collected.sort(Comparator.comparing(Ticket::updatedAt));
     log.info(
         "linear_real poll since={} teamKey={} projectId={} returned={} tickets pages={} durationMs={}",
         since,
@@ -231,9 +236,10 @@ public class LinearRealAdapter implements LinearAdapter {
   }
 
   @Override
-  public void postGovernedRunComment(String ticketRef, GovernedRunComment summary) {
-    Objects.requireNonNull(ticketRef, "ticketRef");
+  public CommentResult postGovernedRunComment(TicketRef ref, GovernedRunComment summary) {
+    Objects.requireNonNull(ref, "ref");
     Objects.requireNonNull(summary, "summary");
+    String ticketRef = ref.value();
     String marker = fingerprintMarker(summary);
     CommentLockState lockState = acquireCommentLock(ticketRef);
     synchronized (lockState.monitor()) {
@@ -243,7 +249,7 @@ public class LinearRealAdapter implements LinearAdapter {
               "linear_real comment skipped ticketRef={} fingerprint={} reason=already_posted",
               ticketRef,
               summary.fingerprint());
-          return;
+          return CommentResult.SKIPPED_DUPLICATE;
         }
         String body = marker + System.lineSeparator() + summary.body();
         Map<String, Object> variables = Map.of("issueId", ticketRef, "body", body);
@@ -258,14 +264,20 @@ public class LinearRealAdapter implements LinearAdapter {
             success,
             elapsedMs(startedAt));
         if (!success) {
-          throw new LinearAdapterException(
+          throw new TicketSourceAdapterException(
               IntegrationFailureCategory.SYNC_FAILURE,
               "Linear commentCreate returned success=false for ticketRef=" + ticketRef);
         }
+        return CommentResult.POSTED;
       } finally {
         releaseCommentLock(ticketRef, lockState);
       }
     }
+  }
+
+  @Override
+  public TicketSourceCapabilities getCapabilities() {
+    return TicketSourceCapabilities.linearDefaults();
   }
 
   private CommentLockState acquireCommentLock(String ticketRef) {
@@ -339,7 +351,7 @@ public class LinearRealAdapter implements LinearAdapter {
     try {
       body = objectMapper.writeValueAsString(payload);
     } catch (IOException error) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Failed to serialize GraphQL payload for " + operation,
           error);
@@ -350,13 +362,13 @@ public class LinearRealAdapter implements LinearAdapter {
     } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden auth) {
       log.warn(
           "linear_real {} failed status={} category=link_failure", operation, auth.getStatusCode());
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.LINK_FAILURE,
           "Linear " + operation + " auth failed: " + auth.getStatusCode(),
           auth);
     } catch (HttpClientErrorException.TooManyRequests rateLimit) {
       log.warn("linear_real {} failed status=429 category=network_api_failure", operation);
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.NETWORK_API_FAILURE,
           "Linear " + operation + " rate-limited (429)",
           rateLimit);
@@ -365,7 +377,7 @@ public class LinearRealAdapter implements LinearAdapter {
           "linear_real {} failed status={} category=network_api_failure",
           operation,
           server.getStatusCode());
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.NETWORK_API_FAILURE,
           "Linear " + operation + " server error: " + server.getStatusCode(),
           server);
@@ -374,7 +386,7 @@ public class LinearRealAdapter implements LinearAdapter {
           "linear_real {} failed cause={} category=network_api_failure",
           operation,
           io.getMostSpecificCause().getClass().getSimpleName());
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.NETWORK_API_FAILURE,
           "Linear "
               + operation
@@ -386,20 +398,20 @@ public class LinearRealAdapter implements LinearAdapter {
           "linear_real {} failed status={} category=state_conflict",
           operation,
           other.getStatusCode());
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.STATE_CONFLICT,
           "Linear " + operation + " unexpected status: " + other.getStatusCode(),
           other);
     }
     if (responseBody == null || responseBody.isBlank()) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE, "Linear " + operation + " returned empty body");
     }
     JsonNode root;
     try {
       root = objectMapper.readTree(responseBody);
     } catch (IOException error) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Linear " + operation + " returned non-JSON body",
           error);
@@ -413,7 +425,7 @@ public class LinearRealAdapter implements LinearAdapter {
           operation,
           firstCode,
           category.value());
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           category,
           "Linear " + operation + " returned GraphQL errors[0].extensions.code=" + firstCode);
     }
@@ -429,7 +441,7 @@ public class LinearRealAdapter implements LinearAdapter {
     };
   }
 
-  private LinearTicket toLinearTicket(JsonNode issue) {
+  private Ticket toTicket(JsonNode issue) {
     String identifier = requireText(issue, "identifier");
     String title = requireText(issue, "title");
     String summary = issue.path("description").asText("");
@@ -445,8 +457,8 @@ public class LinearRealAdapter implements LinearAdapter {
     // response omits `state` (the gate then treats the ticket as ineligible — never NPE).
     String statusName = textOrNull(issue.path("state").path("name"));
     String statusId = textOrNull(issue.path("state").path("id"));
-    return new LinearTicket(
-        identifier,
+    return new Ticket(
+        TicketRef.of(identifier),
         title,
         summary,
         authorIdentity,
@@ -468,7 +480,7 @@ public class LinearRealAdapter implements LinearAdapter {
   private static String requireText(JsonNode node, String field) {
     JsonNode value = node.path(field);
     if (value.isMissingNode() || value.isNull() || value.asText().isBlank()) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Linear GraphQL response missing required field: " + field);
     }
@@ -479,7 +491,7 @@ public class LinearRealAdapter implements LinearAdapter {
     try {
       return Instant.parse(raw);
     } catch (DateTimeParseException error) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Linear GraphQL response has non-ISO-8601 " + field + ": " + raw,
           error);
@@ -516,7 +528,7 @@ public class LinearRealAdapter implements LinearAdapter {
   private static ParsedTicketRef parseTicketRef(String ticketRef) {
     Matcher matcher = TICKET_REF_PATTERN.matcher(ticketRef);
     if (!matcher.matches()) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Linear ticket reference must match team-key/number shape (e.g. LIN-123): " + ticketRef);
     }
@@ -525,7 +537,7 @@ public class LinearRealAdapter implements LinearAdapter {
     try {
       number = Long.parseLong(matcher.group(2));
     } catch (NumberFormatException error) {
-      throw new LinearAdapterException(
+      throw new TicketSourceAdapterException(
           IntegrationFailureCategory.SYNC_FAILURE,
           "Linear ticket reference carries a non-numeric ticket number: " + ticketRef,
           error);

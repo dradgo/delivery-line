@@ -1,15 +1,15 @@
-package org.dradgo.application.integration.linear;
+package org.dradgo.domain.integration.ticketsource;
 
 import java.util.Objects;
 import org.dradgo.domain.registry.DataClassification;
 
 /**
- * Domain-shaped governed-run comment payload destined for write-back to the source ticket system
- * (Linear). The {@code body} is expected to have already been through {@link
+ * Vendor-neutral governed-run comment payload destined for write-back to a source ticket system.
+ * The {@code body} is expected to have already been through {@link
  * org.dradgo.application.security.RedactionPolicyService RedactionPolicyService}; the adapter does
  * not redact. {@code fingerprint} is the idempotency marker — adapters embed it in the comment body
- * so re-posting the same fingerprint on the same {@code runPublicId} is a no-op (AC3 idempotency
- * requirement).
+ * so re-posting the same fingerprint on the same {@code runPublicId} is a no-op (story 3.16 AC3
+ * idempotency requirement, preserved verbatim across the story 3.32 abstraction).
  */
 public record GovernedRunComment(
     String runPublicId, String fingerprint, String body, DataClassification classification) {

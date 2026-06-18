@@ -1,9 +1,9 @@
-package org.dradgo.adapters.integration.linear;
+package org.dradgo.adapters.integration.ticketsource.linear;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.linear.LinearProperties;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.infrastructure.config.LinearConfiguration;
 import org.dradgo.infrastructure.config.LinearPollingHost;
 import org.junit.jupiter.api.Test;
@@ -17,7 +17,8 @@ import org.springframework.web.client.RestClient;
  * Pins story 1.14 AC10 ("no network call under linear-mock") and the linear-mock vs linear-real
  * fail-fast invariant from Task 6. Uses {@link ApplicationContextRunner} so the slice is isolated
  * from the persistence stack and full Spring Boot auto-config — only the linear adapter slice +
- * {@link LinearConfiguration} are scanned.
+ * {@link LinearConfiguration} are scanned. Story 3.32 — beans are typed by the vendor-neutral
+ * {@link TicketSourceAdapter} port.
  */
 class IntegrationProfileWiringContractTest {
 
@@ -45,8 +46,8 @@ class IntegrationProfileWiringContractTest {
         .run(
             context -> {
               assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(LinearAdapter.class);
-              assertThat(context.getBean(LinearAdapter.class))
+              assertThat(context).hasSingleBean(TicketSourceAdapter.class);
+              assertThat(context.getBean(TicketSourceAdapter.class))
                   .isInstanceOf(LinearMockAdapter.class);
               // AC10: no network capability under linear-mock — the dedicated linearRestClient bean
               // must not exist.
@@ -63,8 +64,8 @@ class IntegrationProfileWiringContractTest {
         .run(
             context -> {
               assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(LinearAdapter.class);
-              assertThat(context.getBean(LinearAdapter.class))
+              assertThat(context).hasSingleBean(TicketSourceAdapter.class);
+              assertThat(context.getBean(TicketSourceAdapter.class))
                   .isInstanceOf(LinearRealAdapter.class);
               assertThat(context).hasBean("linearRestClient");
               assertThat(context.getBean("linearRestClient")).isInstanceOf(RestClient.class);
@@ -91,7 +92,7 @@ class IntegrationProfileWiringContractTest {
     contextRunner.run(
         context -> {
           assertThat(context).hasNotFailed();
-          assertThat(context).doesNotHaveBean(LinearAdapter.class);
+          assertThat(context).doesNotHaveBean(TicketSourceAdapter.class);
           assertThat(context).doesNotHaveBean(LinearMockAdapter.class);
           assertThat(context).doesNotHaveBean(LinearMockScenarioRegistry.class);
         });

@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.dradgo.TestcontainersConfiguration;
-import org.dradgo.adapters.integration.linear.LinearMockAdapter;
+import org.dradgo.adapters.integration.ticketsource.linear.LinearMockAdapter;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.registry.ActorType;

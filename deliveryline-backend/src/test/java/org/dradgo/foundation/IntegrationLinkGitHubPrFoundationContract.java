@@ -20,9 +20,9 @@ import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.github.GitHubAdapter;
 import org.dradgo.application.integration.github.GitHubPullRequest;
-import org.dradgo.application.integration.linear.LinearAdapter;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.NewIntegrationLink;
+import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
@@ -115,7 +115,7 @@ class IntegrationLinkGitHubPrFoundationContract {
       IntegrationLinkRecordPort port, GitHubAdapter adapter, WorkflowEventWritePort eventPort) {
     return new IntegrationLinkService(
         port,
-        mock(LinearAdapter.class),
+        mock(TicketSourceAdapter.class),
         mock(IdempotencyService.class),
         new RedactionPolicyService(new DataClassificationService()),
         gitHubAdapterProvider(adapter),

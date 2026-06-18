@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.Objects;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
 import org.dradgo.application.integration.linear.LinearProperties;
+import org.dradgo.application.integration.ticketsource.TicketSourceProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +22,11 @@ import org.springframework.web.client.RestClient;
  *   <li>defines the {@code linearRestClient} bean under the {@code linear-real} profile only,
  *   <li>asserts that {@code linear-mock} and {@code linear-real} are mutually exclusive (mirrors
  *       the {@code RunnerConfiguration} fail-fast pattern from story 1.13).
+ *   <li>binds {@link TicketSourceProperties} ({@code deliveryline.integration.ticket-source.kind})
+ *       and fail-fasts at boot when the configured kind has no implementation on the classpath
+ *       (story 3.32 AC5 / OQ-2 — the {@code kind} key is the documented selector; the load-bearing
+ *       bean gating remains the mutually-exclusive {@code linear-mock}/{@code linear-real}
+ *       profiles).
  * </ul>
  *
  * <p>The Linear polling host bean lives in {@link LinearPollingHost} (separate class so the
@@ -28,14 +34,38 @@ import org.springframework.web.client.RestClient;
  * scheduling concern, not the wiring concern).
  */
 @Configuration
-@EnableConfigurationProperties({LinearProperties.class, LinearAutoIngestProperties.class})
+@EnableConfigurationProperties({
+  LinearProperties.class,
+  LinearAutoIngestProperties.class,
+  TicketSourceProperties.class
+})
 public class LinearConfiguration {
 
   static final String MOCK_PROFILE = "linear-mock";
   static final String REAL_PROFILE = "linear-real";
 
-  public LinearConfiguration(Environment environment) {
+  public LinearConfiguration(
+      Environment environment, TicketSourceProperties ticketSourceProperties) {
     assertExclusiveLinearProfile(environment);
+    assertSupportedTicketSourceKind(ticketSourceProperties);
+  }
+
+  /**
+   * Story 3.32 AC5 / OQ-2 — only the {@code linear} kind has an implementation on the classpath
+   * today. A configured {@code kind=jira|github-issues|gitlab-issues} would silently leave the port
+   * unbacked; fail fast at boot with a clear message instead. The {@code kind} defaults to {@code
+   * linear} when unset, so this never trips a context that does not configure the selector.
+   */
+  private static void assertSupportedTicketSourceKind(TicketSourceProperties properties) {
+    if (!properties.isLinear()) {
+      throw new IllegalStateException(
+          "deliveryline.integration.ticket-source.kind="
+              + properties.kind()
+              + " has no implementation on the classpath. The only supported kind today is '"
+              + TicketSourceProperties.KIND_LINEAR
+              + "'. Add a TicketSourceAdapter implementation + profile entry for the new kind, or"
+              + " correct the configured kind.");
+    }
   }
 
   /**
