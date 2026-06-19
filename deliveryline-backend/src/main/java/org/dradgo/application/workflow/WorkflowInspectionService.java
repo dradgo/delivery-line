@@ -1127,6 +1127,7 @@ public class WorkflowInspectionService {
       String prReference = null;
       String prState = null;
       String diff = null;
+      List<String> steps = null;
       if (artifact.artifactType() == ArtifactType.PR_OUTPUT) {
         responseBody = "";
         try {
@@ -1150,6 +1151,26 @@ public class WorkflowInspectionService {
           prReference = prLink.get().prReference();
           prState = prLink.get().prState();
         }
+      } else if (artifact.artifactType() == ArtifactType.IMPLEMENTATION_PLAN) {
+        // Story 3b-6 — the ordered steps are the source of truth for an implementationPlan: parse
+        // them from the stored payload JSON and blank the markdown body (the raw JSON must never
+        // reach SafeMarkdownRenderer). A malformed payload must NOT 500 — fall back to null steps
+        // and keep the original body (degraded but safe) with a WARN. Never log the step text
+        // (reviewer-authored plan content) — log the parsed count only.
+        responseBody = "";
+        try {
+          com.fasterxml.jackson.databind.JsonNode payload =
+              objectMapper.readTree(payloadBytes.get());
+          steps = parseSteps(payload);
+        } catch (java.io.IOException malformed) {
+          responseBody = body;
+          steps = null;
+          log.warn(
+              "getArtifactDetail malformed implementationPlan payload (null steps)"
+                  + " workflowRunId={} artifactId={}",
+              workflowRunPublicId,
+              artifactPublicId);
+        }
       }
 
       ArtifactDetailView view =
@@ -1166,7 +1187,8 @@ public class WorkflowInspectionService {
               commitSha,
               prReference,
               prState,
-              diff);
+              diff,
+              steps);
       log.info(
           "getArtifactDetail success workflowRunId={} artifactId={} artifactType={} version={}"
               + " status={} bodyLength={}",
@@ -1205,6 +1227,31 @@ public class WorkflowInspectionService {
   private static String textOrNull(JsonNode node, String field) {
     String value = node.path(field).asText(null);
     return (value == null || value.isBlank()) ? null : value;
+  }
+
+  /**
+   * Story 3b-6 — the implementationPlan ordered steps as a {@code List<String>} parsed from the
+   * stored payload's {@code steps} array (each element's non-blank text; non-textual / blank
+   * elements skipped). Returns {@code null} when the payload carries no usable {@code steps} array
+   * so the read DTO stays null-clean for a step-less plan (degrading to the renderer's
+   * empty-state).
+   */
+  private static List<String> parseSteps(JsonNode payload) {
+    JsonNode stepsNode = payload.path("steps");
+    if (!stepsNode.isArray() || stepsNode.isEmpty()) {
+      return null;
+    }
+    List<String> steps = new ArrayList<>();
+    for (JsonNode element : stepsNode) {
+      if (!element.isTextual()) {
+        continue;
+      }
+      String value = element.asText();
+      if (!value.isBlank()) {
+        steps.add(value);
+      }
+    }
+    return steps.isEmpty() ? null : steps;
   }
 
   private static DomainException artifactRecordNotFound(String artifactPublicId) {
@@ -1695,7 +1742,10 @@ public class WorkflowInspectionService {
       String commitSha,
       String prReference,
       String prState,
-      String diff) {}
+      String diff,
+      // Story 3b-6 — the implementationPlan ordered steps, parsed from the stored payload JSON at
+      // read time; null for spec/prOutput (never co-populated with the prOutput fields above).
+      List<String> steps) {}
 
   public record LinkedTicketView(String integrationType, String externalRef, String syncStatus) {}
 

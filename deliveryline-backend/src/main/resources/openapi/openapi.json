@@ -229,6 +229,16 @@
             "example" : "available",
             "type" : "string"
           },
+          "steps" : {
+            "description" : "implementationPlan only: the ordered plan steps parsed from the payload; null for spec/prOutput.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : [
+              "array",
+              "null"
+            ]
+          },
           "version" : {
             "example" : 3,
             "format" : "int32",

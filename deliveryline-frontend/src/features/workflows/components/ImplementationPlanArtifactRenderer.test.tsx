@@ -208,6 +208,30 @@ describe('ImplementationPlanArtifactRenderer', () => {
     expect(screen.getByTestId('artifact-context-references-empty')).toBeInTheDocument();
   });
 
+  it('3b-6/AC6 — a blank body (live read model) renders no MetadataChrome prose shell, only the steps', () => {
+    const { container } = render(
+      <ImplementationPlanArtifactRenderer
+        artifact={{
+          artifactType: 'implementationPlan',
+          artifactId: 'art_plan_blank_body',
+          title: 'Implementation Plan — v2',
+          version: 2,
+          classification: 'shareable-redacted',
+          createdAt: '2026-06-18T12:30:00Z',
+          body: '',
+          steps: [{ summary: 'First step' }, { summary: 'Second step' }],
+        }}
+      />,
+    );
+    // The empty-body guard: no MetadataChrome / SafeMarkdownRenderer prose shell when body="".
+    expect(container.querySelector('[data-component="metadata-chrome"]')).toBeNull();
+    expect(container.querySelector('[data-component="safe-markdown"]')).toBeNull();
+    expect(screen.queryByText('Generated content')).toBeNull();
+    // The steps still render (the source of truth for a live plan).
+    expect(screen.getByTestId('artifact-plan-step-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('artifact-plan-steps-empty')).toBeNull();
+  });
+
   it('a step with no detail still renders a content panel when expanded', () => {
     render(<ImplementationPlanArtifactRenderer artifact={implementationPlanArtifactView} />);
     // Step 3 has neither detail nor complexity.

@@ -311,6 +311,87 @@ describe('ArtifactReviewPanelContainer — data seam (AC4, AC9, logging)', () =>
     expect(screen.queryByTestId('pr-diff-empty')).toBeNull();
   });
 
+  // Story 3b-6 — the implementationPlan arm now consumes the live typed `steps` wire field.
+  const implPlanWireBase = {
+    artifactId: 'art_plan0001',
+    artifactType: 'implementationPlan' as const,
+    version: 2,
+    status: 'available',
+    classification: 'shareable-redacted',
+    createdAt: '2026-06-18T10:00:00Z',
+    body: '',
+  };
+
+  it('3b-6 — maps live implementationPlan wire steps → an ImplementationPlanArtifactView satisfying isArtifactView', () => {
+    const view = toArtifactView(
+      {
+        ...implPlanWireBase,
+        steps: ['Add the read DTO field', 'Populate getArtifactDetail', 'Map the wire steps'],
+      },
+      'art_plan0001',
+    );
+    expect(isArtifactView(view)).toBe(true);
+    if (view.artifactType !== 'implementationPlan') throw new Error('expected implementationPlan');
+    expect(view.steps).toEqual([
+      { summary: 'Add the read DTO field' },
+      { summary: 'Populate getArtifactDetail' },
+      { summary: 'Map the wire steps' },
+    ]);
+    // The view never carries raw JSON in body (backend blanks it for an implementationPlan).
+    expect(view.body).toBe('');
+  });
+
+  it('3b-6 — null wire steps → steps absent (renders the empty-state), body never raw JSON', () => {
+    const view = toArtifactView({ ...implPlanWireBase, steps: null }, 'art_plan0001');
+    expect(isArtifactView(view)).toBe(true);
+    if (view.artifactType !== 'implementationPlan') throw new Error('expected implementationPlan');
+    expect(view.steps).toBeUndefined();
+    expect(view.body).toBe('');
+  });
+
+  it('3b-6 — blank/whitespace wire steps are filtered; an all-blank array → steps absent', () => {
+    const view = toArtifactView(
+      { ...implPlanWireBase, steps: ['  ', '', 'Real step'] },
+      'art_plan0001',
+    );
+    if (view.artifactType !== 'implementationPlan') throw new Error('expected implementationPlan');
+    expect(view.steps).toEqual([{ summary: 'Real step' }]);
+
+    const allBlank = toArtifactView({ ...implPlanWireBase, steps: ['  ', ''] }, 'art_plan0001');
+    if (allBlank.artifactType !== 'implementationPlan')
+      throw new Error('expected implementationPlan');
+    expect(allBlank.steps).toBeUndefined();
+  });
+
+  it('3b-6/AC6 — a live implementationPlan (post-mapper) renders the ordered step accordion, not raw JSON or an empty-steps shell', () => {
+    const live = toArtifactView(
+      {
+        ...implPlanWireBase,
+        artifactId: 'art_planlive',
+        steps: ['First step', 'Second step'],
+      },
+      'art_planlive',
+    );
+    render(<ArtifactReviewPanel state="default" artifact={live} />);
+    expect(screen.getByTestId('implementation-plan-artifact-renderer')).toBeInTheDocument();
+    // The numbered step accordion rendered (NOT the "no steps" empty-state).
+    expect(screen.getByTestId('artifact-plan-step-1')).toBeInTheDocument();
+    expect(screen.getByTestId('artifact-plan-step-2')).toBeInTheDocument();
+    expect(screen.queryByTestId('artifact-plan-steps-empty')).toBeNull();
+    // body="" → no empty "Generated content" prose shell.
+    expect(screen.queryByText('Generated content')).toBeNull();
+  });
+
+  it('3b-6/AC6 — a live implementationPlan with no steps renders the empty-state, no raw-JSON body shell', () => {
+    const live = toArtifactView(
+      { ...implPlanWireBase, artifactId: 'art_planempty', steps: null },
+      'art_planempty',
+    );
+    render(<ArtifactReviewPanel state="default" artifact={live} />);
+    expect(screen.getByTestId('artifact-plan-steps-empty')).toBeInTheDocument();
+    expect(screen.queryByText('Generated content')).toBeNull();
+  });
+
   it('AC9 — Compare enables when allowed-actions reports compare AND a comparable revision exists', () => {
     mockUseArtifact.mockReturnValue(fakeArtifactQuery({ data: specArtifactView })); // spec v2
     mockUseAllowedActions.mockReturnValue(fakeAllowedActionsQuery(['compare']));

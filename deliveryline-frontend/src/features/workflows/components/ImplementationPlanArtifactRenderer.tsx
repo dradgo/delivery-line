@@ -163,14 +163,38 @@ export function ImplementationPlanArtifactRenderer({
         </span>
       </div>
 
-      {/* Trusted metadata + the untrusted markdown body, via the sanctioned chrome (T2). */}
-      <MetadataChrome
-        title={artifact.title}
-        version={artifact.version}
-        classification={artifact.classification}
-      >
-        <SafeMarkdownRenderer source={artifact.body} className="prose" />
-      </MetadataChrome>
+      {/* Trusted metadata + the untrusted markdown body, via the sanctioned chrome (T2).
+          Story 3b-6 — a live implementationPlan read carries a BLANK body (the ordered steps are
+          the source of truth, surfaced in the typed `steps` field), so skip the chrome entirely
+          when the body is blank rather than render an empty "Generated content" prose shell. A
+          fixture-driven plan that still carries body prose renders it unchanged. */}
+      {artifact.body.trim() !== '' ? (
+        <MetadataChrome
+          title={artifact.title}
+          version={artifact.version}
+          classification={artifact.classification}
+        >
+          <SafeMarkdownRenderer source={artifact.body} className="prose" />
+        </MetadataChrome>
+      ) : (
+        // 3b-6 review patch — skipping the full MetadataChrome (which renders a "Generated
+        // content" shell) on a blank body would also drop the trusted `classification` badge,
+        // which the live read path always carries. Surface it on its own so it is not lost.
+        // Title/version are already shown in the revision chrome above; only the classification
+        // is re-surfaced here.
+        <div
+          data-region="trusted-metadata"
+          aria-label="Trusted artifact metadata"
+          className="flex flex-wrap items-center gap-2"
+        >
+          <span className="text-meta uppercase tracking-wide text-text-tertiary">
+            Classification
+          </span>
+          <Badge variant="outline" data-field="classification" data-value={artifact.classification}>
+            {artifact.classification}
+          </Badge>
+        </div>
+      )}
 
       {/* Structured-steps section (AC2 / AC8 / D4) — a numbered list via the Radix
           accordion. `role="list"`/`role="listitem"` give ordered semantics without the

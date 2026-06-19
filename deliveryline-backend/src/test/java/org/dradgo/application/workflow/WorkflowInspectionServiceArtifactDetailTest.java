@@ -380,9 +380,132 @@ class WorkflowInspectionServiceArtifactDetailTest {
     assertThat(view.prReference()).isNull();
     assertThat(view.prState()).isNull();
     assertThat(view.diff()).isNull();
+    // Story 3b-6 — steps stays null for a spec read (never co-populated with prOutput fields).
+    assertThat(view.steps()).isNull();
+  }
+
+  // ===== Story 3b-6 — implementationPlan ordered-steps projection ===========
+
+  private static final String IMPL_PLAN_PAYLOAD =
+      "{\"artifactId\":\"art_plan00000001\",\"artifactType\":\"implementationPlan\","
+          + "\"steps\":[\"Add the read DTO field\",\"Populate it in getArtifactDetail\","
+          + "\"Map the wire steps in the frontend\"],"
+          + "\"contextReferences\":[]}";
+
+  @Test
+  void implementationPlanReturnsParsedStepsWithBlankBody() {
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT))
+        .thenReturn(Optional.of(implementationPlanSnapshot("plan/ref")));
+    when(payloadStore.readBytes("plan/ref"))
+        .thenReturn(Optional.of(IMPL_PLAN_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.artifactType()).isEqualTo(ArtifactType.IMPLEMENTATION_PLAN.value());
+    assertThat(view.steps())
+        .containsExactly(
+            "Add the read DTO field",
+            "Populate it in getArtifactDetail",
+            "Map the wire steps in the frontend");
+    // body is blanked — the steps are the source of truth; the raw JSON never reaches a renderer.
+    assertThat(view.body()).isEmpty();
+    // The five prOutput fields stay null for an implementationPlan (never co-populated).
+    assertThat(view.branch()).isNull();
+    assertThat(view.commitSha()).isNull();
+    assertThat(view.prReference()).isNull();
+    assertThat(view.prState()).isNull();
+    assertThat(view.diff()).isNull();
+  }
+
+  @Test
+  void implementationPlanSkipsBlankAndNonTextualStepElements() {
+    String payload =
+        "{\"artifactType\":\"implementationPlan\","
+            + "\"steps\":[\"Real step\",\"  \",42,null,\"Another step\"],"
+            + "\"contextReferences\":[]}";
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT))
+        .thenReturn(Optional.of(implementationPlanSnapshot("plan/ref")));
+    when(payloadStore.readBytes("plan/ref"))
+        .thenReturn(Optional.of(payload.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.steps()).containsExactly("Real step", "Another step");
+    assertThat(view.body()).isEmpty();
+  }
+
+  @Test
+  void implementationPlanWithNoStepsArrayHasNullStepsAndBlankBody() {
+    String payload = "{\"artifactType\":\"implementationPlan\",\"contextReferences\":[]}";
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT))
+        .thenReturn(Optional.of(implementationPlanSnapshot("plan/ref")));
+    when(payloadStore.readBytes("plan/ref"))
+        .thenReturn(Optional.of(payload.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    // No usable steps array → null steps (renderer degrades to its empty-state); body still blank.
+    assertThat(view.steps()).isNull();
+    assertThat(view.body()).isEmpty();
+  }
+
+  @Test
+  void implementationPlanMalformedPayloadFallsBackToNullStepsAndBodyWithoutError() {
+    ListAppender<ILoggingEvent> appender = attachListAppender();
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT))
+        .thenReturn(Optional.of(implementationPlanSnapshot("plan/ref")));
+    String malformed = "not valid json {{{";
+    when(payloadStore.readBytes("plan/ref"))
+        .thenReturn(Optional.of(malformed.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    // Malformed JSON must NOT 500 — steps null, body falls back to the raw payload (degraded safe).
+    assertThat(view.steps()).isNull();
+    assertThat(view.body()).isEqualTo(malformed);
+    assertThat(warnMessages(appender))
+        .anyMatch(m -> m.contains("malformed implementationPlan payload"));
+    // The parsed step text must never appear in any log line.
+    assertThat(logMessages(appender)).noneMatch(m -> m.contains("Add the read DTO field"));
+  }
+
+  @Test
+  void prOutputReadHasNullStepsField() {
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    when(artifacts.findByPublicId(ARTIFACT)).thenReturn(Optional.of(prOutputSnapshot("pr/ref")));
+    when(payloadStore.readBytes("pr/ref"))
+        .thenReturn(Optional.of(PR_OUTPUT_PAYLOAD.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    // steps stays null for a prOutput (never co-populated with the prOutput structured fields).
+    assertThat(view.steps()).isNull();
   }
 
   // --- helpers --------------------------------------------------------------
+
+  private static ArtifactRecordSnapshot implementationPlanSnapshot(String storageRef) {
+    return new ArtifactRecordSnapshot(
+        ARTIFACT,
+        RUN,
+        ArtifactType.IMPLEMENTATION_PLAN,
+        2,
+        null,
+        DataClassification.SHAREABLE_REDACTED,
+        storageRef,
+        "sha-256",
+        "0123456789abcdeffedcba9876543210",
+        null,
+        null,
+        ArtifactStatus.AVAILABLE,
+        null,
+        false,
+        CREATED);
+  }
 
   private static ArtifactRecordSnapshot prOutputSnapshot(String storageRef) {
     return new ArtifactRecordSnapshot(

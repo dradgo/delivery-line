@@ -153,7 +153,29 @@ export function toArtifactView(dto: ArtifactDetail, artifactId: string): Artifac
     createdAt: dto.createdAt ?? '',
   };
   if (artifactType === 'implementationPlan') {
-    return { ...base, artifactType: 'implementationPlan' };
+    // Story 3b-6 — the live read model now carries the ordered plan `steps` as a typed nullable
+    // `string[]` (the backend parses them from the payload and blanks `body`). Map each non-blank
+    // runner-emitted (UNTRUSTED) string to a `{ summary }` step (the 3.26 R2 string[]→structured
+    // mapping; `detail`/`estimatedComplexity` stay absent — the runner emits flat strings). Build
+    // `steps` CONDITIONALLY (only when the wire array is present and has at least one usable entry)
+    // so the view's OPTIONAL `steps?` slot is respected under exactOptionalPropertyTypes — a
+    // step-less plan omits it and degrades to the renderer's empty-state. Guard `!= null` because a
+    // nullable wire field serializes as JSON null ([[workflowdetail-wire-sends-null-not-undefined]]).
+    // `contextReferences` is NOT mapped (the runner always emits `[]` — dormant, out of scope).
+    const wireSteps = dto.steps;
+    // Guard `Array.isArray` (not just `!= null`) so a contract-drifted non-array wire value
+    // degrades to the empty-state rather than throwing `TypeError` inside the queryFn (which
+    // would surface as a panel `error` before `isArtifactView` can reject the shape).
+    const steps = Array.isArray(wireSteps)
+      ? wireSteps
+          .filter((step): step is string => typeof step === 'string' && step.trim() !== '')
+          .map((step) => ({ summary: step }))
+      : [];
+    return {
+      ...base,
+      artifactType: 'implementationPlan',
+      ...(steps.length > 0 ? { steps } : {}),
+    };
   }
   if (artifactType === 'prOutput') {
     // Story 3b-5 — the live read model now carries the structured prOutput fields. branch/commitSha/

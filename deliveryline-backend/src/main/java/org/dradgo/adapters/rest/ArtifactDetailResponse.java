@@ -65,7 +65,13 @@ public record ArtifactDetailResponse(
                 "prOutput only: the unified diff (size-capped) resolved at ingest; null when the"
                     + " runner produced no resolvable diff.",
             nullable = true)
-        String diff) {
+        String diff,
+    @Schema(
+            description =
+                "implementationPlan only: the ordered plan steps parsed from the payload; null for"
+                    + " spec/prOutput.",
+            nullable = true)
+        java.util.List<String> steps) {
 
   public static ArtifactDetailResponse from(ArtifactDetailView view) {
     return new ArtifactDetailResponse(
@@ -81,7 +87,8 @@ public record ArtifactDetailResponse(
         view.commitSha(),
         view.prReference(),
         view.prState(),
-        view.diff());
+        view.diff(),
+        view.steps());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

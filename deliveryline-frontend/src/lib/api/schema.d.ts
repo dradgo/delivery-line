@@ -407,6 +407,8 @@ export interface components {
             prState?: string | null;
             /** @example available */
             status?: string;
+            /** @description implementationPlan only: the ordered plan steps parsed from the payload; null for spec/prOutput. */
+            steps?: string[] | null;
             /**
              * Format: int32
              * @example 3
