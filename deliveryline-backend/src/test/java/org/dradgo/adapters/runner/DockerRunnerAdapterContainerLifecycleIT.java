@@ -80,7 +80,8 @@ class DockerRunnerAdapterContainerLifecycleIT {
             Duration.ofSeconds(30L),
             Duration.ofSeconds(30L),
             120L,
-            "none");
+            "none",
+            java.util.List.of());
     RunnerProperties properties =
         new RunnerProperties(
             2.0d,

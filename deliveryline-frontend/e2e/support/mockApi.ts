@@ -114,6 +114,176 @@ function artifactDetail(runId: string, artifactId: string, stream: EventStream) 
   };
 }
 
+// ---------------------------------------------------------------------------
+// Story 3.35 (AC7, Task 4) — synthetic EXECUTION-STAGE runs for the developer
+// journeys (accept-implementation / reject-implementation / takeover / recovery
+// retry). The five story-1.23 streams are all SPEC-stage (their decision surface
+// is the spec approval bar at WaitingForSpecApproval), so the developer-review
+// loop needs dedicated fixtures: a `WaitingForReview` run carrying an
+// implementation artifact (drives the Decision Bar's `implementation_review`
+// mode — see ImplementationReviewDecisionBarContainer) and a `Failed` run (drives
+// the `recovery_operator` mode). Modelled as first-class synthetic runs, checked
+// BEFORE the stream matchers, so the spec-stage streams stay byte-for-byte intact.
+// ---------------------------------------------------------------------------
+export const DEV_REVIEW_RUN_ID = 'run_devreview0001';
+export const RECOVERY_RUN_ID = 'run_recovery0001';
+/** The prOutput artifact the impl-review bar resolves accept/reject against (highest version). */
+const IMPL_PR_ARTIFACT_ID = 'art_impl_pr_0001';
+const IMPL_PLAN_ARTIFACT_ID = 'art_impl_plan_0001';
+const SYNTH_NOW = '2026-06-19T12:00:00.000Z';
+
+/** A minimal markdown-bodied ArtifactDetail (satisfies the frontend `isArtifactView` guard). */
+function syntheticArtifactDetail(artifactId: string, artifactType: string, version: number) {
+  return {
+    artifactId,
+    artifactType,
+    status: 'available',
+    version,
+    classification: 'shareable-redacted',
+    checksum: 'SHA-256:9f86d081884c',
+    createdAt: SYNTH_NOW,
+    title: artifactType === 'prOutput' ? 'PR output' : 'Implementation plan',
+    body: `# ${artifactType}\n\nSynthetic redacted ${artifactType} body for ${artifactId} (E2E journey).\n`,
+  };
+}
+
+// Type inferred from the literal (no explicit interface): the e2e files lint without a
+// type-aware project, and the base no-unused-vars rule misfires on named params in a
+// function-type signature. The handlers index this with a runtime run-id string.
+const SYNTHETIC_RUNS = {
+  [DEV_REVIEW_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: DEV_REVIEW_RUN_ID,
+      currentState: 'WaitingForReview',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'artifact.ingested',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: DEV_REVIEW_RUN_ID,
+      currentState: 'WaitingForReview',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'artifact.ingested',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'codex-runner',
+      // The impl-review bar resolves the HIGHEST-version prOutput (then falls back to plan);
+      // both ids carry a `version` so `deriveImplementationExpectedVersions` yields the ints
+      // that make the Accept control `ready` (not `blocked`).
+      latestArtifacts: [
+        {
+          artifactId: IMPL_PLAN_ARTIFACT_ID,
+          artifactType: 'implementationPlan',
+          status: 'available',
+          version: 1,
+        },
+        {
+          artifactId: IMPL_PR_ARTIFACT_ID,
+          artifactType: 'prOutput',
+          status: 'available',
+          version: 2,
+        },
+      ],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: DEV_REVIEW_RUN_ID,
+        ticketRef: 'LIN-901',
+        createdAt: SYNTH_NOW,
+        terminalState: 'WaitingForReview',
+      },
+      events: [
+        { publicId: 'evt_devreview_1', eventType: 'artifact.ingested', createdAt: SYNTH_NOW },
+      ],
+    }),
+    // Story 3b-4: the impl-review container requests as `developer`, which returns the
+    // accept/reject/takeover trio; the default product_reviewer gets only view_only.
+    allowedActions: (actorRole) => ({
+      actions:
+        actorRole === 'developer'
+          ? ['accept_implementation', 'reject_implementation', 'takeover_workflow']
+          : ['view_only'],
+      versionStamp: {
+        workflowState: 'WaitingForReview',
+        lastEventId: 'evt_devreview_1',
+        currentSpecArtifactVersion: 1,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) =>
+      syntheticArtifactDetail(
+        artifactId,
+        artifactId === IMPL_PR_ARTIFACT_ID ? 'prOutput' : 'implementationPlan',
+        artifactId === IMPL_PR_ARTIFACT_ID ? 2 : 1,
+      ),
+  },
+  [RECOVERY_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: RECOVERY_RUN_ID,
+      currentState: 'Failed',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'runner.failed',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: RECOVERY_RUN_ID,
+      currentState: 'Failed',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'runner.failed',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'codex-runner',
+      failureCategory: 'transient_infrastructure',
+      nextSafeAction: 'retry',
+      latestArtifacts: [],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: RECOVERY_RUN_ID,
+        ticketRef: 'LIN-902',
+        createdAt: SYNTH_NOW,
+        terminalState: 'Failed',
+      },
+      events: [{ publicId: 'evt_recovery_1', eventType: 'runner.failed', createdAt: SYNTH_NOW }],
+    }),
+    // The recovery bar fires only when currentState === 'Failed' AND actions includes 'retry'
+    // (canRetry). The recovery container requests with no developer role, so return retry for all.
+    allowedActions: () => ({
+      actions: ['retry'],
+      versionStamp: {
+        workflowState: 'Failed',
+        lastEventId: 'evt_recovery_1',
+        currentSpecArtifactVersion: 1,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) => syntheticArtifactDetail(artifactId, 'spec', 1),
+  },
+};
+
+/** Build the workflow-state-change/takeover mutation response for a modelled developer endpoint. */
+function developerMutationResponse(path: string, runId: string): unknown {
+  if (path.endsWith('/takeover')) {
+    // The RICH TakeoverResponse (story 3.25): drives the AC7 "Continue work in PR {ref}" affordance.
+    return {
+      currentState: 'TakenOver',
+      correlationId: 'corr_e2e_takeover',
+      recoveryActionId: 'rcv_e2e_0001',
+      replayed: false,
+      cancelledInFlightCount: 1,
+      cancelledQueuedCount: 0,
+      preservedPrReference: 'octo/widgets#7',
+    };
+  }
+  if (path.endsWith('/retry-workflow')) {
+    return { workflowRunId: runId, currentState: 'Executing', correlationId: 'corr_e2e_retry' };
+  }
+  // accept-implementation / reject-implementation both re-enter Executing.
+  return { workflowRunId: runId, currentState: 'Executing', correlationId: 'corr_e2e_impl' };
+}
+
 const ACTIONS_BY_STATE: Record<string, string[]> = {
   WaitingForSpecApproval: ['approve_spec', 'reject_spec', 'answer_clarification'],
   WaitingForReview: ['answer_clarification'],
@@ -202,6 +372,17 @@ export async function mockBackend(page: Page): Promise<void> {
     // tripwire (review PA1), symmetric with the unmodelled-GET guard below — so a
     // mis-wired/new mutation endpoint reds E2E instead of passing on a benign 200.
     if (method !== 'GET') {
+      // Story 3.35 (Task 4) — the developer-journey mutations (accept/reject/takeover/retry)
+      // join the modelled set; each returns its real response shape (takeover is the rich
+      // TakeoverResponse). An UNMODELLED non-GET still falls through to the loud 501 tripwire.
+      const developerMutation =
+        /\/api\/v1\/workflows\/[^/]+\/(accept-implementation|reject-implementation|takeover|retry-workflow)$/.exec(
+          path,
+        );
+      if (developerMutation) {
+        const runId = /\/api\/v1\/workflows\/([^/]+)\//.exec(path)?.[1] ?? DEV_REVIEW_RUN_ID;
+        return json(route, developerMutationResponse(path, runId));
+      }
       const isModelledMutation =
         /\/api\/v1\/workflows\/[^/]+\/(approve-spec|reject-spec)$/.test(path) ||
         /\/api\/v1\/workflows\/[^/]+\/clarifications\/[^/]+\/answer$/.test(path) ||
@@ -214,21 +395,31 @@ export async function mockBackend(page: Page): Promise<void> {
       return json(route, { workflowRunId: runId, currentState: 'Executing' });
     }
 
-    // GET /api/v1/workflows — the run queue.
+    // GET /api/v1/workflows — the run queue (spec-stage streams + the synthetic
+    // execution-stage developer-journey runs, story 3.35).
     if (/\/api\/v1\/workflows\/?$/.test(path)) {
-      return json(route, STREAMS.map(summary));
+      return json(route, [
+        ...STREAMS.map(summary),
+        ...Object.values(SYNTHETIC_RUNS).map((run) => run.summary()),
+      ]);
     }
 
     const eventsMatch = /\/api\/v1\/workflows\/([^/]+)\/events$/.exec(path);
     if (eventsMatch) {
-      const stream = streamByRunId(eventsMatch[1]!);
-      return stream ? json(route, stream) : notFound(route, eventsMatch[1]!, path);
+      const runId = eventsMatch[1]!;
+      const synth = SYNTHETIC_RUNS[runId];
+      if (synth) return json(route, synth.events());
+      const stream = streamByRunId(runId);
+      return stream ? json(route, stream) : notFound(route, runId, path);
     }
 
     const actionsMatch = /\/api\/v1\/workflows\/([^/]+)\/allowed-actions$/.exec(path);
     if (actionsMatch) {
-      const stream = streamByRunId(actionsMatch[1]!);
-      return stream ? json(route, allowedActions(stream)) : notFound(route, actionsMatch[1]!, path);
+      const runId = actionsMatch[1]!;
+      const synth = SYNTHETIC_RUNS[runId];
+      if (synth) return json(route, synth.allowedActions(url.searchParams.get('actorRole')));
+      const stream = streamByRunId(runId);
+      return stream ? json(route, allowedActions(stream)) : notFound(route, runId, path);
     }
 
     // Story 3a-9 (Gate 3) — the live artifact-read endpoint. Must precede the bare
@@ -236,16 +427,22 @@ export async function mockBackend(page: Page): Promise<void> {
     // loud-501 fallthrough, since `useArtifact` is now live and fetches this.
     const artifactMatch = /\/api\/v1\/workflows\/([^/]+)\/artifacts\/([^/]+)$/.exec(path);
     if (artifactMatch) {
-      const stream = streamByRunId(artifactMatch[1]!);
+      const runId = artifactMatch[1]!;
+      const synth = SYNTHETIC_RUNS[runId];
+      if (synth) return json(route, synth.artifact(artifactMatch[2]!));
+      const stream = streamByRunId(runId);
       return stream
-        ? json(route, artifactDetail(artifactMatch[1]!, artifactMatch[2]!, stream))
-        : notFound(route, artifactMatch[1]!, path);
+        ? json(route, artifactDetail(runId, artifactMatch[2]!, stream))
+        : notFound(route, runId, path);
     }
 
     const detailMatch = /\/api\/v1\/workflows\/([^/]+)$/.exec(path);
     if (detailMatch) {
-      const stream = streamByRunId(detailMatch[1]!);
-      return stream ? json(route, detail(stream)) : notFound(route, detailMatch[1]!, path);
+      const runId = detailMatch[1]!;
+      const synth = SYNTHETIC_RUNS[runId];
+      if (synth) return json(route, synth.detail());
+      const stream = streamByRunId(runId);
+      return stream ? json(route, detail(stream)) : notFound(route, runId, path);
     }
 
     // Every read the J1/J2 journeys legitimately make is modelled above; anything

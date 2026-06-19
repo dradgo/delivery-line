@@ -73,3 +73,108 @@ describe('SafeUnifiedDiffRenderer', () => {
     expect(container.querySelector('ins, del')).toBeNull();
   });
 });
+
+/**
+ * Story 3.35 (AC8, Task 5) — adversarial diff-content XSS fixture sweep, the diff-renderer
+ * analogue of `SafeMarkdownRenderer.test.tsx`'s `xss-fixtures/` loop. Each `.diff` under
+ * `diff-xss-fixtures/` carries an attack payload in a hunk line and/or the hunk header (the two
+ * untrusted surfaces `SafeUnifiedDiffRenderer` routes through `renderTextWithRedactions`); the
+ * paired `.expected.json` asserts the payload renders inert (no `<script>`/`<iframe>`/`<style>`/
+ * `<a>`, no `on*` handlers) while its literal text is preserved. A single payload that survives
+ * as live markup reds the build (AC8: one failing fixture is build-blocking).
+ */
+interface DiffExpectedContract {
+  renderedTextContains?: string[];
+  renderedTextDoesNotContain?: string[];
+  noScriptElements?: boolean;
+  noIframeElements?: boolean;
+  noStyleElements?: boolean;
+  noActiveElements?: boolean;
+  noAnchorElements?: boolean;
+}
+
+const diffFixtures: Record<string, string> = import.meta.glob('./diff-xss-fixtures/*.diff', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+const diffExpectedFixtures: Record<string, DiffExpectedContract> = import.meta.glob(
+  './diff-xss-fixtures/*.expected.json',
+  { import: 'default', eager: true },
+);
+
+describe('SafeUnifiedDiffRenderer — diff-content XSS fixture loop (AC8)', () => {
+  const fixtureNames = Object.keys(diffFixtures)
+    .map((path) => path.replace(/^.*\//, '').replace(/\.diff$/, ''))
+    .sort();
+
+  // AC8 floor — the diff sanitization sweep must keep at least five attack-class fixtures
+  // (script-in-line, img-onerror, javascript: URL, entity-encoded, polyglot header+line). Story
+  // 2.27's regression block is EXPANDED here, not duplicated (the markdown loop keeps its own floor).
+  expect(
+    fixtureNames.length,
+    'Diff XSS fixture set must not shrink — at least five attack-class fixtures required (AC8)',
+  ).toBeGreaterThanOrEqual(5);
+
+  for (const name of fixtureNames) {
+    const diffPath = `./diff-xss-fixtures/${name}.diff`;
+    const expectedPath = `./diff-xss-fixtures/${name}.expected.json`;
+
+    it(`renders diff fixture "${name}" inert and matches its expected.json contract`, () => {
+      const source = diffFixtures[diffPath];
+      const expected = diffExpectedFixtures[expectedPath];
+      expect(source, `fixture ${name} missing`).toBeDefined();
+      expect(expected, `${name}.expected.json missing`).toBeDefined();
+
+      const hunks = parseUnifiedDiff(source!).flatMap((file) => file.hunks);
+      const { container } = render(<SafeUnifiedDiffRenderer hunks={hunks} />);
+      const renderedText = container.textContent ?? '';
+
+      for (const needle of expected!.renderedTextContains ?? []) {
+        expect(
+          renderedText,
+          `${name}: rendered text should contain ${JSON.stringify(needle)}`,
+        ).toContain(needle);
+      }
+      for (const banned of expected!.renderedTextDoesNotContain ?? []) {
+        expect(
+          renderedText,
+          `${name}: rendered text must NOT contain ${JSON.stringify(banned)}`,
+        ).not.toContain(banned);
+      }
+      if (expected!.noScriptElements === true) {
+        expect(
+          container.querySelectorAll('script'),
+          `${name}: must not emit <script>`,
+        ).toHaveLength(0);
+      }
+      if (expected!.noIframeElements === true) {
+        expect(
+          container.querySelectorAll('iframe'),
+          `${name}: must not emit <iframe>`,
+        ).toHaveLength(0);
+      }
+      if (expected!.noStyleElements === true) {
+        expect(container.querySelectorAll('style'), `${name}: must not emit <style>`).toHaveLength(
+          0,
+        );
+      }
+      if (expected!.noAnchorElements === true) {
+        expect(
+          container.querySelectorAll('a'),
+          `${name}: diff text must never become an <a>`,
+        ).toHaveLength(0);
+      }
+      if (expected!.noActiveElements === true) {
+        for (const el of container.querySelectorAll('*')) {
+          for (const attr of el.attributes) {
+            expect(
+              attr.name.startsWith('on'),
+              `${name}: <${el.tagName}> retained event handler "${attr.name}"`,
+            ).toBe(false);
+          }
+        }
+      }
+    });
+  }
+});

@@ -309,7 +309,13 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     // API and set "bridge" (or an egress-allowlisted network) in application.yml.
     String networkMode = runnerProperties.docker().networkMode();
     CreateContainerSpec spec =
-        new CreateContainerSpec(image, List.copyOf(mounts), networkMode, labels, containerEnv);
+        new CreateContainerSpec(
+            image,
+            List.copyOf(mounts),
+            networkMode,
+            labels,
+            containerEnv,
+            runnerProperties.docker().securityOpts());
 
     String containerId = null;
     try {

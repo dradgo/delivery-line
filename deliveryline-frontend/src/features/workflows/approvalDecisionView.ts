@@ -97,6 +97,16 @@ export type DeveloperTaggedFeedback =
  */
 export const DEVELOPER_REVIEWER_ROLE = 'developer';
 
+/**
+ * The actor role the `recovery_operator` bar requests its allowed-actions as. The backend FAILED
+ * matrix (WorkflowInspectionService.getAllowedActions) returns `retry` ONLY for `workflow_owner`;
+ * every other role gets `[view_only, view_diagnostics]`. The recovery bar must therefore request
+ * `workflow_owner` or it renders "View only" even when the run is retryable (the header's
+ * `nextSafeAction=retry` comes from the role-agnostic RecoveryService.describe, so the two
+ * disagreed). One constant, mirroring {@link DEVELOPER_REVIEWER_ROLE}.
+ */
+export const RECOVERY_OPERATOR_ROLE = 'workflow_owner';
+
 /** The live `AllowedActions.versionStamp` parts the bar consumes (AC6). */
 export interface ApprovalVersionStamp {
   readonly currentContextBundleVersion?: number | null;

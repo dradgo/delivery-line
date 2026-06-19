@@ -59,6 +59,13 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
     }
     HostConfig hostConfig =
         HostConfig.newHostConfig().withBinds(binds).withNetworkMode(spec.networkMode());
+    // Apply configured Docker security options (e.g. "seccomp=unconfined") so a real Codex
+    // read-only stage's bubblewrap sandbox can create a user namespace (Docker's default seccomp
+    // profile blocks it). Empty list → omit the call, preserving the locked-down default for
+    // mock/contract runs.
+    if (!spec.securityOpts().isEmpty()) {
+      hostConfig.withSecurityOpts(List.copyOf(spec.securityOpts()));
+    }
     try (CreateContainerCmd cmd = client.createContainerCmd(spec.image())) {
       cmd.withHostConfig(hostConfig).withLabels(spec.labels());
       // Story 3.5 AC3 + Trap T8: apply env via docker-java withEnv (NOT the docker CLI), so secret

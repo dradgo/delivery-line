@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["Step 1 — wire the adapter.", "Then run the tests."],
+  "renderedTextDoesNotContain": ["window.__planStepXss = 1;"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

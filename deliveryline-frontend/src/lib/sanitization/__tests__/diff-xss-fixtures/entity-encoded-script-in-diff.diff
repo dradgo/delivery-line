@@ -1,0 +1,6 @@
+diff --git a/notes.md b/notes.md
+--- a/notes.md
++++ b/notes.md
+@@ -1,1 +1,2 @@
+ plain context
++&lt;script&gt;window.__diffXss=4&lt;/script&gt;

@@ -1,0 +1,8 @@
+{
+  "renderedTextContains": ["Step 2 — render the preview.", "End of step detail."],
+  "renderedTextDoesNotContain": ["window.__planStepXss = 2;"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true,
+  "noDataUriImages": true
+}

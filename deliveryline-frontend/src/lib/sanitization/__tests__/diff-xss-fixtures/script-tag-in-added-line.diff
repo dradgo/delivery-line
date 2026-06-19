@@ -1,0 +1,7 @@
+diff --git a/app.ts b/app.ts
+--- a/app.ts
++++ b/app.ts
+@@ -1,2 +1,3 @@
+ const safe = 1;
++const evil = "<script>window.__diffXss = 1;</script>";
+ const after = 2;

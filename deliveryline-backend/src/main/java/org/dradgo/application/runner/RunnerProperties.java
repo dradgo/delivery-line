@@ -471,7 +471,16 @@ public record RunnerProperties(
       // deliveryline.runner.docker.network-mode
       // to "bridge" (default NAT egress) or a pre-created egress-allowlisted network name. A
       // null/blank value falls back to "none" so every existing context binds unchanged.
-      String networkMode) {
+      String networkMode,
+      // Docker security options applied at container create (HostConfig.withSecurityOpts). Codex's
+      // read-only sandbox (spec/implementationPlan stages) wraps every command in bubblewrap, which
+      // must create an unprivileged USER NAMESPACE; Docker's DEFAULT seccomp profile blocks that
+      // syscall, so real read-only-stage runs die with "bwrap: No permissions to create a new
+      // namespace" and the agent never reads the repo. Setting ["seccomp=unconfined"] permits it
+      // (the container is still non-root with backend-controlled network + read-only input mount).
+      // OPTIONAL + UNVALIDATED: a null/absent value normalizes to an empty list, keeping the
+      // locked-down mock/contract posture (and needing no shared-test-yaml mirror).
+      List<String> securityOpts) {
 
     /** Upper bound (1 day) for the dangling-container grace window; guards against overflow. */
     private static final long MAX_DANGLING_CONTAINER_MIN_AGE_SECONDS = 86_400L;
@@ -524,6 +533,7 @@ public record RunnerProperties(
                 + danglingContainerMinAgeSeconds);
       }
       networkMode = (networkMode == null || networkMode.isBlank()) ? "none" : networkMode;
+      securityOpts = securityOpts == null ? List.of() : List.copyOf(securityOpts);
     }
 
     public static Docker defaults() {
@@ -539,7 +549,8 @@ public record RunnerProperties(
           Duration.ofSeconds(30L),
           Duration.ofSeconds(30L),
           120L,
-          "none");
+          "none",
+          List.of());
     }
 
     public String imageTagFor(RunnerKind kind) {

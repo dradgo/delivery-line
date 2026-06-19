@@ -56,6 +56,16 @@ public class ContextBundleService {
 
   private static final Logger log = LoggerFactory.getLogger(ContextBundleService.class);
   private static final int CONTEXT_BUNDLE_SCHEMA_VERSION = 1;
+  // ValidationContext.DEFAULT_MAX_PAYLOAD_BYTES (2 KB) is far too small for a real context bundle:
+  // the execution (pr-output) bundle carries the approved-spec ref + approved-plan ref + one
+  // artifactReferences entry per available artifact + the repo tree summary (capped at
+  // RepositoryWorkspaceService.TREE_ENTRY_CAP=200 entries with mount-relative paths). Such bundles
+  // routinely exceed 2 KB and were rejected FILE_TOO_LARGE -> RUNNER_CONTRACT_VIOLATION -> run
+  // Failed. Raise the produce-time cap to 256 KB — the bundle is reference-by-id and NEVER embeds
+  // artifact bodies, so it stays well-bounded (the twin of
+  // RunnerBroker.RUNNER_RESULT_MAX_PAYLOAD_BYTES,
+  // which raised the runner-RESULT cap for the same reason).
+  private static final int CONTEXT_BUNDLE_MAX_PAYLOAD_BYTES = 256 * 1024;
 
   private final TicketSummaryProvider ticketSummaryProvider;
   private final ArtifactRecordPort artifactRecordPort;
@@ -369,17 +379,19 @@ public class ContextBundleService {
             redaction.effectiveClassification());
     byte[] redactedBytes = serialize(redactedJson);
 
-    ValidationContext validationContext = ValidationContext.defaults();
+    ValidationContext validationContext =
+        ValidationContext.builder().maxPayloadBytes(CONTEXT_BUNDLE_MAX_PAYLOAD_BYTES).build();
     ValidationResult result =
         contractValidator.validate(
             ValidationTarget.CONTEXT_BUNDLE, redactedBytes, validationContext);
     if (!result.valid()) {
       log.warn(
-          "create context-bundle rejected workflowRunId={} runnerExecutionId={} subStage={} errorCount={}",
+          "create context-bundle rejected workflowRunId={} runnerExecutionId={} subStage={} errorCount={} errors={}",
           workflowRunPublicId,
           reservedRunnerExecutionId,
           subStage,
-          result.errors().size());
+          result.errors().size(),
+          result.errors());
       Map<String, Object> details = new LinkedHashMap<>();
       details.put("workflowRunId", workflowRunPublicId);
       details.put("runnerExecutionId", reservedRunnerExecutionId);
@@ -525,7 +537,8 @@ public class ContextBundleService {
             DataClassification.SHAREABLE_REDACTED);
     byte[] redactedBytes = serialize(redactedJson);
 
-    ValidationContext validationContext = ValidationContext.defaults();
+    ValidationContext validationContext =
+        ValidationContext.builder().maxPayloadBytes(CONTEXT_BUNDLE_MAX_PAYLOAD_BYTES).build();
     ValidationResult result =
         contractValidator.validate(
             ValidationTarget.CONTEXT_BUNDLE, redactedBytes, validationContext);

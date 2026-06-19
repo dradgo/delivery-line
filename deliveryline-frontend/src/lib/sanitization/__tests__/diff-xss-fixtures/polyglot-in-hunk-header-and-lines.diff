@@ -1,0 +1,7 @@
+diff --git a/poly.ts b/poly.ts
+--- a/poly.ts
++++ b/poly.ts
+@@ -1,2 +1,3 @@ function <script>alert('hdr')</script>() {
+ const before = 1;
++const poly = `"><script>window.__diffXss=5</script><iframe src=javascript:alert(6)></iframe>`;
+ const after = 2;

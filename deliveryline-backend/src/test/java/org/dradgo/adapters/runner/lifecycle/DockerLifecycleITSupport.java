@@ -67,7 +67,8 @@ abstract class DockerLifecycleITSupport {
             Duration.ofSeconds(30L),
             Duration.ofSeconds(30L),
             /* danglingContainerMinAgeSeconds= */ 0L,
-            "none");
+            "none",
+            java.util.List.of());
     properties =
         new RunnerProperties(
             2.0d,

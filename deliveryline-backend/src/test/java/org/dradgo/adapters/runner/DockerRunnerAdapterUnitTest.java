@@ -136,6 +136,75 @@ class DockerRunnerAdapterUnitTest {
         .containsEntry("deliveryline.workflowRunId", RUN_ID)
         .containsEntry("deliveryline.runnerKind", "codex")
         .containsKey("deliveryline.dispatchedAt");
+    // Default posture (no configured opts) carries no security options.
+    assertThat(spec.securityOpts()).isEmpty();
+  }
+
+  @Test
+  void dispatchForwardsConfiguredDockerSecurityOptsToContainerSpec() {
+    // Real read-only-stage Codex runs use bubblewrap, which needs an unprivileged user namespace;
+    // Docker's default seccomp blocks it. The adapter must forward the configured
+    // deliveryline.runner.docker.security-opts onto the container spec so the gateway can relax it.
+    RunnerProperties withSeccomp = withDockerSecurityOpts(List.of("seccomp=unconfined"));
+    DockerRunnerAdapter seccompAdapter =
+        new DockerRunnerAdapter(
+            scratchStore,
+            workspaceStore,
+            gateway,
+            withSeccomp,
+            new RunnerSecretsService(
+                new MockEnvironment().withProperty("CODEX_API_KEY", "sk-codex-unit-test-value"),
+                withSeccomp),
+            logCaptureService,
+            executionService,
+            CLOCK);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID))
+        .thenReturn(Optional.of("bundle-bytes".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    seccompAdapter.dispatch(dispatchRequest());
+
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    assertThat(specCaptor.getValue().securityOpts()).containsExactly("seccomp=unconfined");
+  }
+
+  /** Rebuild the default properties swapping ONLY the docker security-opts (via accessors). */
+  private static RunnerProperties withDockerSecurityOpts(List<String> securityOpts) {
+    RunnerProperties b = RunnerProperties.defaults();
+    RunnerProperties.Docker d = b.docker();
+    RunnerProperties.Docker docker =
+        new RunnerProperties.Docker(
+            d.defaultKind(),
+            d.imageTags(),
+            d.workspaceRoot(),
+            d.workspaceRetentionHours(),
+            d.workspaceCleanupIntervalMs(),
+            d.containerCreateTimeout(),
+            d.containerStartTimeout(),
+            d.danglingContainerMinAgeSeconds(),
+            d.networkMode(),
+            securityOpts);
+    return new RunnerProperties(
+        b.staleThresholdMultiplier(),
+        b.stageTimeouts(),
+        b.timeoutScanIntervalMs(),
+        b.timeoutScanBatchSize(),
+        b.staleScanIntervalMs(),
+        b.pollIntervalMs(),
+        b.recovery(),
+        b.mock(),
+        b.scheduling(),
+        docker,
+        b.secretEnvNames(),
+        b.allowShareableLogs(),
+        b.specStage(),
+        b.planStage(),
+        b.implementationStage(),
+        b.openspec(),
+        b.queueMaxDepth());
   }
 
   @Test
@@ -411,7 +480,8 @@ class DockerRunnerAdapterUnitTest {
             Duration.ofSeconds(30L),
             Duration.ofSeconds(30L),
             120L,
-            "none");
+            "none",
+            List.of());
     properties =
         new RunnerProperties(
             2.0d,

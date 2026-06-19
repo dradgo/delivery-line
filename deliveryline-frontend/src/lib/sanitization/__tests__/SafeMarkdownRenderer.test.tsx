@@ -41,10 +41,15 @@ describe('SafeMarkdownRenderer — XSS fixture loop (AC7, AC12)', () => {
     .map((path) => path.replace(/^.*\//, '').replace(/\.md$/, ''))
     .sort();
 
+  // Floor bumped from 11 (story 2.24/2.27) to 14 by story 3.35 (AC8): three implementation-plan
+  // step-detail fixtures (`plan-step-detail-*`) join the build-blocking sweep, since a plan step's
+  // `detail` renders through THIS renderer (ImplementationPlanArtifactRenderer routes step.detail →
+  // SafeMarkdownRenderer). The diff-content fixtures live in their own loop in
+  // SafeUnifiedDiffRenderer.test.tsx (a different renderer).
   expect(
     fixtureNames.length,
-    'Fixture set must not be empty — at least eleven attack-class fixtures required per AC7',
-  ).toBeGreaterThanOrEqual(11);
+    'Fixture set must not shrink — at least fourteen attack-class fixtures required (AC7 + story 3.35 AC8 plan-step fixtures)',
+  ).toBeGreaterThanOrEqual(14);
 
   for (const name of fixtureNames) {
     const mdPath = `./xss-fixtures/${name}.md`;

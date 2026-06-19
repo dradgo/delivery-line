@@ -18,7 +18,8 @@ public record CreateContainerSpec(
     List<BindMount> binds,
     String networkMode,
     Map<String, String> labels,
-    Map<String, String> environment) {
+    Map<String, String> environment,
+    List<String> securityOpts) {
 
   public CreateContainerSpec {
     if (image == null || image.isBlank()) {
@@ -33,16 +34,33 @@ public record CreateContainerSpec(
     // bundle (Trap T8/T3). ContainerState deliberately carries NO env field, so reading container
     // state back never re-exposes a secret.
     environment = environment == null ? Map.of() : Map.copyOf(new LinkedHashMap<>(environment));
+    // Docker security options (e.g. "seccomp=unconfined") applied to the HostConfig by the gateway.
+    // Defaults to empty (the locked-down posture); a non-empty list is required for real Codex
+    // read-only stages whose bubblewrap sandbox must create an unprivileged user namespace.
+    securityOpts = securityOpts == null ? List.of() : List.copyOf(securityOpts);
   }
 
   /**
    * Back-compat constructor for the lifecycle/label call sites that inject no environment (the mock
    * path and the pre-3.5 lifecycle tests). Delegates to the canonical constructor with an empty env
-   * map.
+   * map and no security options.
    */
   public CreateContainerSpec(
       String image, List<BindMount> binds, String networkMode, Map<String, String> labels) {
-    this(image, binds, networkMode, labels, Map.of());
+    this(image, binds, networkMode, labels, Map.of(), List.of());
+  }
+
+  /**
+   * Back-compat constructor for the story-3.5 call sites that inject env but no security options.
+   * Delegates to the canonical constructor with an empty security-opts list.
+   */
+  public CreateContainerSpec(
+      String image,
+      List<BindMount> binds,
+      String networkMode,
+      Map<String, String> labels,
+      Map<String, String> environment) {
+    this(image, binds, networkMode, labels, environment, List.of());
   }
 
   /** Single bind-mount entry. {@code readOnly} maps directly to Docker's bind {@code :ro} flag. */

@@ -24,6 +24,7 @@ import { useCallback, useEffect } from 'react';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
 
 import {
+  RECOVERY_OPERATOR_ROLE,
   buildRecoveryContextLabel,
   canRetry,
   normalizeActions,
@@ -58,7 +59,9 @@ export function RecoveryDecisionBarContainer({
   layout = 'sticky_footer',
   retry: retryProp,
 }: RecoveryDecisionBarContainerProps) {
-  const allowedActionsQuery = useAllowedActions(workflowRunId);
+  // Request the workflow_owner action set — the backend FAILED matrix gates `retry` on this role
+  // (a default product_reviewer request returns only view_only/view_diagnostics → "View only").
+  const allowedActionsQuery = useAllowedActions(workflowRunId, RECOVERY_OPERATOR_ROLE);
   const detailQuery = useWorkflowDetail(workflowRunId);
   // Use the lifted instance when the route owns it (P3); otherwise an internal one. The
   // internal hook is always called (hooks rule) and stays idle when a prop is supplied.

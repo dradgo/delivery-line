@@ -500,6 +500,31 @@
 										</limit>
 									</limits>
 								</rule>
+									<!-- Story 3.35 (AC11, OQ-1) - additive per-PACKAGE line floors for Epic-3 net-new
+									     packages, on top of the BUNDLE rule (which still counts them). 0.80 is AC11's named
+									     floor and sits under each package's measured line coverage on the merged
+									     unit+integration run (queue 0.90, workspace 0.84, ticketsource 1.0, repohost 1.0,
+									     recovery 0.98 as of 2026-06-19), guarding each against silent regression without
+									     reddening the green build. PACKAGE element names are JaCoCo DOTTED form (slash form
+									     silently matches nothing - verified); one rule with multiple includes applies the
+									     limit to EACH matched package independently. -->
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.runner.queue</include>
+											<include>org.dradgo.application.runner.workspace</include>
+											<include>org.dradgo.application.integration.ticketsource</include>
+											<include>org.dradgo.application.integration.repohost</include>
+											<include>org.dradgo.application.recovery</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.80</minimum>
+											</limit>
+										</limits>
+									</rule>
 							</rules>
 						</configuration>
 					</execution>
@@ -682,6 +707,44 @@
 								<include>**/IT*.java</include>
 								<include>**/*ITCase.java</include>
 							</includes>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<!-- Story 3.35 (AC3, Task 2) - opt-in tier for the live-GitHub drift canary,
+		     GitHubRealLiveIntegrationTest (@Tag("gh-real-tests")). NEVER run in PR CI or the
+		     foundation gate (the deterministic GitHubMockVsRealParityFoundationContract is the
+		     every-PR guard); the workflow_dispatch-only .github/workflows/nightly-gh-real.yml is
+		     the only path that exercises the real adapter against api.github.com. Mirrors the
+		     docker-runner-it profile shape but selects the tag and opens the test's
+		     @EnabledIfSystemProperty(deliveryline.github.live-tests) gate by declaring the
+		     property on the forked Failsafe JVM (a bare -D does NOT propagate to the fork).
+		     deliveryline.github.live.repo flows through from the CLI; when unset it stays the
+		     literal placeholder, which the test's assumeTrue regex rejects so the test aborts
+		     cleanly. The class name ends in IntegrationTest (not *IT), so the include list is
+		     widened. jacoco.check.skip=true: a single live smoke is not representative coverage. -->
+		<profile>
+			<id>gh-real-tests</id>
+			<properties>
+				<jacoco.check.skip>true</jacoco.check.skip>
+			</properties>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<excludedGroups>known-failure</excludedGroups>
+							<groups>gh-real-tests</groups>
+							<includes>
+								<include>**/*IntegrationTest.java</include>
+							</includes>
+							<systemPropertyVariables>
+								<deliveryline.github.live-tests>true</deliveryline.github.live-tests>
+								<deliveryline.github.live.repo>${deliveryline.github.live.repo}</deliveryline.github.live.repo>
+							</systemPropertyVariables>
 						</configuration>
 					</plugin>
 				</plugins>

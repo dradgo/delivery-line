@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["<script>window.__diffXss = 1;</script>"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noStyleElements": true,
+  "noActiveElements": true
+}

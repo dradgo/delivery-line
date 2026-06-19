@@ -1,0 +1,96 @@
+# =============================================================================
+# Story 3.35 (AC3, Task 2) — live-GitHub drift canary.
+#
+# Runs GitHubRealLiveIntegrationTest (@Tag("gh-real-tests")) against the REAL
+# api.github.com via the `-Pgh-real-tests` Maven profile. This is the ONLY path
+# that exercises the real GitHub adapter end-to-end; its job is to catch DRIFT
+# between GitHub's actual API responses and the assumptions encoded in the
+# every-PR deterministic guard, GitHubMockVsRealParityFoundationContract
+# (MockRestServiceServer-stubbed, zero network).
+#
+# DELIBERATELY workflow_dispatch ONLY — no `schedule:` cron (story 3.35 OQ-3
+# resolution: ship the profile + a manual-trigger job, not an automatic nightly).
+#   * NEVER runs on pull_request and is NOT in ci.yml's foundation-gate.needs
+#     (story 3.35 S3) — it costs GitHub rate-limit budget and reaches the network,
+#     so it must never gate a merge. The PR guard stays the deterministic parity
+#     contract.
+#   * Mirrors ci.yml's runner-contract-real heavy side-tier posture (3.34): a
+#     standalone job, not woven into the PR tier order.
+#
+# Infra: with the default `live_repo` (octocat/Hello-World, a stable public repo)
+# the job runs immediately using the Actions-provided GITHUB_TOKEN — no secret or
+# throwaway repo needs to exist first. Point `live_repo` at any repo the token can
+# read; for a private/write-scope canary, set the optional GH_LIVE_TOKEN secret.
+# =============================================================================
+name: nightly-gh-real
+
+on:
+  workflow_dispatch:
+    inputs:
+      live_repo:
+        description: 'owner/repo the live GitHub read test should target (must be readable by the token).'
+        required: false
+        default: 'octocat/Hello-World'
+
+permissions:
+  contents: read
+
+jobs:
+  gh-real:
+    name: gh-real (live GitHub drift canary)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run GitHubRealLiveIntegrationTest (-Pgh-real-tests)
+        env:
+          # GitHubRealLiveIntegrationTest reads System.getenv("GITHUB_TOKEN").
+          # Prefer a dedicated GH_LIVE_TOKEN secret (e.g. a PAT scoped to a
+          # throwaway test repo) when present; otherwise fall back to the
+          # Actions-provided token, which can read the default public repo.
+          GITHUB_TOKEN: ${{ secrets.GH_LIVE_TOKEN || secrets.GITHUB_TOKEN }}
+          LIVE_REPO: ${{ github.event.inputs.live_repo || 'octocat/Hello-World' }}
+        run: |
+          # AC12: NO blanket retry. A transient GitHub API hiccup is re-run by an
+          # operator (this is a manual canary), never auto-retried around the test.
+          #
+          # -Pgh-real-tests selects the @Tag("gh-real-tests") test and opens its
+          #   @EnabledIfSystemProperty(deliveryline.github.live-tests) gate on the
+          #   forked Failsafe JVM (pom.xml profile systemPropertyVariables).
+          # -am keeps the freshest deliveryline-runner-contracts jar on the
+          #   classpath (runner-contracts-schema-stale-in-m2).
+          # -Dit.test pins the single live test; failIfNoSpecifiedTests=false keeps
+          #   the -am reactor (runner-contracts has no such test) from failing.
+          # -Dtest=Zzz + surefire.failIfNoSpecifiedTests=false skips the unit tier
+          #   (the canary is the only thing we want to run) without -Dsurefire.skip
+          #   (maven-arglineation-goal-crash: a no-match -Dtest, not a blanket skip).
+          # -Dfrontend-maven-plugin.skip=true skips the SPA build + the AR32
+          #   require-frontend-dist enforcer (this job builds no frontend).
+          # -Djacoco.check.skip=true: a single live smoke is not representative
+          #   coverage (the -Pgh-real-tests profile also sets this).
+          ./mvnw -B -ntp -Pgh-real-tests -pl deliveryline-backend -am verify \
+            -Dit.test=GitHubRealLiveIntegrationTest \
+            -Dfailsafe.failIfNoSpecifiedTests=false \
+            -Dtest=Zzz \
+            -Dsurefire.failIfNoSpecifiedTests=false \
+            -Ddeliveryline.github.live.repo="${LIVE_REPO}" \
+            -Dfrontend-maven-plugin.skip=true \
+            -Djacoco.check.skip=true
+
+      - name: Upload failsafe reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gh-real-reports
+          path: deliveryline-backend/target/failsafe-reports/
+          if-no-files-found: ignore
+          retention-days: 14

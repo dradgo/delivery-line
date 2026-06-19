@@ -303,6 +303,15 @@ deliveryline:
       # default NAT egress (simplest); for tighter control, pre-create an egress-allowlisted Docker
       # network and name it here instead. Tests/contract tiers omit this key → bind the "none" default.
       network-mode: bridge
+      # Docker security options applied at container create (HostConfig.withSecurityOpts). Codex's
+      # read-only sandbox (spec/implementationPlan stages) runs every command through bubblewrap,
+      # which must create an unprivileged USER NAMESPACE; Docker's default seccomp profile blocks
+      # that syscall, so real read-only-stage runs fail with "bwrap: No permissions to create a new
+      # namespace" and the agent can never read /workspace/repo. seccomp=unconfined permits it (the
+      # container is still non-root, with backend-controlled network + read-only input mount). Omit
+      # the key (empty default) to keep the locked-down posture for mock/contract tiers.
+      security-opts:
+        - seccomp=unconfined
       # Story 3.2a AC4 — grace window during which a labelled-but-rowless container is preserved by
       # the dangling-container sweep, so a container in the dispatch→row-insert window is never
       # destroyed. 0 disables the guard.

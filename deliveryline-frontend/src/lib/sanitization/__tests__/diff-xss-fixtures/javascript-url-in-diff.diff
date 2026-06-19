@@ -1,0 +1,7 @@
+diff --git a/links.ts b/links.ts
+--- a/links.ts
++++ b/links.ts
+@@ -1,2 +1,3 @@
+ const ok = "https://example.com";
++const bad = '<a href="javascript:window.__diffXss=3">click</a>';
+ const trailing = 0;

@@ -405,7 +405,7 @@ class ContextBundleServiceExecutionStageTest {
               JsonNode input = invocation.getArgument(0);
               com.fasterxml.jackson.databind.node.ObjectNode inflated = input.deepCopy();
               ((com.fasterxml.jackson.databind.node.ObjectNode) inflated.get("ticketSummary"))
-                  .put("summary", "x".repeat(3000));
+                  .put("summary", "x".repeat(300_000));
               return redactionPassthrough(inflated);
             });
 
@@ -741,6 +741,87 @@ class ContextBundleServiceExecutionStageTest {
     assertEquals(ART_PLAN_ID, planRef.get("artifactId").asText());
     assertFalse(planRef.get("referenceAvailable").asBoolean());
     assertEquals("artifact_status_pending", planRef.get("unavailableReason").asText());
+  }
+
+  // REPRO (throwaway) — real redaction stack + real run_6887266 data values for the PR_OUTPUT
+  // bundle that failed in prod. Prints the actual schema validation errors.
+  // Regression: the PR_OUTPUT execution bundle carries the approved-spec ref + approved-plan ref +
+  // an artifactReferences entry per available artifact + the repo tree summary (capped at
+  // TREE_ENTRY_CAP=200). With ValidationContext.defaults() (maxPayloadBytes=2048) a realistic repo
+  // tree pushed the bundle past 2 KB and it was rejected FILE_TOO_LARGE ->
+  // RUNNER_CONTRACT_VIOLATION
+  // -> run Failed (twin of the runner-result RUNNER_RESULT_MAX_PAYLOAD_BYTES fix in RunnerBroker).
+  @Test
+  void prOutputSubStage_withRealisticRepoTree_doesNotExceedPayloadCap() throws Exception {
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ApprovalReadPort approvalReadPort = mock(ApprovalReadPort.class);
+    ClarificationReadPort clarificationReadPort = mock(ClarificationReadPort.class);
+    RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
+
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("DL-310", "Export pipeline", "Open the PR."));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(Optional.of(availableArtifact(ART_SPEC_ID, ArtifactType.SPEC, "spec/v1.json")));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "implementationPlan"))
+        .thenReturn(
+            Optional.of(
+                availableArtifact(ART_PLAN_ID, ArtifactType.IMPLEMENTATION_PLAN, "plan/v1.json")));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "prOutput"))
+        .thenReturn(Optional.empty());
+    when(approvalReadPort.listByWorkflowRunAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of(approval("apr_specapprove1", true)));
+    when(approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(RUN_ID, "implementationPlan"))
+        .thenReturn(List.of());
+    when(approvalReadPort.findLatestApprovedForArtifactLineage(RUN_ID, "implementationPlan"))
+        .thenReturn(Optional.of(planApproval("apr_planapprove1")));
+    when(artifactRecordPort.findByPublicId(ART_PLAN_ID))
+        .thenReturn(
+            Optional.of(
+                availableArtifact(ART_PLAN_ID, ArtifactType.IMPLEMENTATION_PLAN, "plan/v1.json")));
+    when(clarificationReadPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of());
+    when(redactionPolicyService.redact(any(JsonNode.class), eq("shareable-redacted")))
+        .thenAnswer(invocation -> redactionPassthrough(invocation.getArgument(0)));
+
+    ContextBundleService service =
+        new ContextBundleService(
+            ticketProvider,
+            artifactRecordPort,
+            approvalReadPort,
+            clarificationReadPort,
+            redactionPolicyService,
+            new RunnerContractValidator());
+
+    // A realistic top-level repo tree (60 entries) — well within TREE_ENTRY_CAP=200, but more than
+    // enough to push the serialized bundle past the old 2 KB cap.
+    java.util.List<RepoTreeEntry> tree = new java.util.ArrayList<>();
+    for (int i = 0; i < 60; i++) {
+      tree.add(
+          new RepoTreeEntry(
+              "src/main/java/com/example/module" + i + "/File.java", RepoTreeEntry.Type.FILE));
+    }
+    RepositoryContextSummary largeRepo =
+        new RepositoryContextSummary(
+            "/workspace/repo",
+            tree,
+            null,
+            List.of(new RepoManifestRef("pom.xml", "pom.xml")),
+            "config:GH-101@1");
+
+    // Must NOT throw FILE_TOO_LARGE — a content-bounded bundle is always valid.
+    ContextBundle bundle =
+        service.create(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            REX_ID,
+            2,
+            CONSTRAINTS,
+            DataClassification.SHAREABLE_REDACTED,
+            ACTOR,
+            ExecutionSubStage.PR_OUTPUT,
+            largeRepo,
+            BRANCH);
+    assertTrue(bundle.redactedPayload().length > 2048, "bundle must exceed the old 2 KB cap");
   }
 
   // =============================================================================================

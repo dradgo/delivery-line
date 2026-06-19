@@ -331,7 +331,7 @@ class ContextBundleServiceUnitTest {
               JsonNode input = invocation.getArgument(0);
               com.fasterxml.jackson.databind.node.ObjectNode inflated = input.deepCopy();
               ((com.fasterxml.jackson.databind.node.ObjectNode) inflated.get("ticketSummary"))
-                  .put("summary", "x".repeat(3000));
+                  .put("summary", "x".repeat(300_000));
               return redactionPassthrough(inflated);
             });
 

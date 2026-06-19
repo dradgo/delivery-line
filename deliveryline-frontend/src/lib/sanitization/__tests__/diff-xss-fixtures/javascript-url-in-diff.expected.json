@@ -1,0 +1,8 @@
+{
+  "renderedTextContains": ["<a href=\"javascript:window.__diffXss=3\">click</a>"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noStyleElements": true,
+  "noActiveElements": true,
+  "noAnchorElements": true
+}

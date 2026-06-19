@@ -1,0 +1,10 @@
+{
+  "renderedTextContains": [
+    "<script>window.__diffXss=5</script>",
+    "<iframe src=javascript:alert(6)></iframe>"
+  ],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noStyleElements": true,
+  "noActiveElements": true
+}

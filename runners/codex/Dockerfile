@@ -84,8 +84,13 @@ RUN set -eu; \
       # The real Codex CLI (Rust) needs a system trust store for TLS to the OpenAI /
       # ChatGPT endpoints; node:22-slim ships none ("no native root CA certificates
       # found"). The mock build needs no egress, so it stays cert-free + offline.
+      # Agent-side exploration tooling: `ripgrep` (Codex's default file/content search —
+      # it reaches for `rg` first, falling back to slow, non-.gitignore-aware `find`/`grep`
+      # without it) and `git` (the cloned /workspace/repo carries a real `.git`, so
+      # status/diff/log/ls-files/grep work — notably `git diff` for self-review at
+      # pr-output). Real build only; the mock/echo agent does not explore.
       apt-get update; \
-      apt-get install -y --no-install-recommends ca-certificates; \
+      apt-get install -y --no-install-recommends ca-certificates git ripgrep; \
       update-ca-certificates; \
       npm install -g "@openai/codex@${CODEX_CLI_VERSION}"; \
       # Story 3a-6 — agent-side tooling: pure-JS OpenSpec CLI, pinned, same layer.

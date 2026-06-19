@@ -91,6 +91,29 @@ describe('RecoveryDecisionBarContainer', () => {
     );
   });
 
+  it('requests allowed-actions as workflow_owner so a Failed run can retry (backend matrix gate)', async () => {
+    // The backend FAILED matrix returns RETRY only for actorRole=workflow_owner; every other
+    // role gets [view_only, view_diagnostics]. The recovery bar must request workflow_owner or it
+    // shows "View only" despite the run being retryable (the production bug this pins).
+    server.use(
+      http.get(ALLOWED_URL, ({ request }) => {
+        const role = new URL(request.url).searchParams.get('actorRole');
+        return role === 'workflow_owner'
+          ? allowed(['retry', 'view_diagnostics'])
+          : allowed(['view_only', 'view_diagnostics']);
+      }),
+      http.get(DETAIL_URL, () => failedDetail()),
+    );
+    renderContainer();
+    await waitFor(() =>
+      expect(screen.getByTestId('approval-decision-bar')).toHaveAttribute(
+        'data-approval-bar-state',
+        'ready',
+      ),
+    );
+    expect(screen.getByRole('button', { name: 'Retry failed step' })).toBeInTheDocument();
+  });
+
   it('renders View only for a Failed run whose allowed-actions omit retry', async () => {
     server.use(
       http.get(ALLOWED_URL, () => allowed(['view_diagnostics'])),

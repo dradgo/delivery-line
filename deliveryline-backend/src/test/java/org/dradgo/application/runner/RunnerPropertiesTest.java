@@ -326,6 +326,7 @@ class RunnerPropertiesTest {
         Duration.ofSeconds(30L),
         Duration.ofSeconds(30L),
         danglingContainerMinAgeSeconds,
-        "none");
+        "none",
+        java.util.List.of());
   }
 }
