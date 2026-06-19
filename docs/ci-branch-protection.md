@@ -12,6 +12,7 @@ blocked until the foundation gate is green.
 | Check | Required | Notes |
 | --- | --- | --- |
 | `foundation-gate` | **required** | Aggregate Epic-1 contract verification (story 1.23). MUST be a required status check on `main`. |
+| `runner-contract-real-gate` | **required** | Real-runner image tier gate (story 3.34). Always runs; PASSES on a docs-only / unrelated PR (the heavy `runner-image-build`/`runner-image-self-test`/`runner-contract-real` jobs legitimately skip) and on a runner-path PR only when all three are green. MUST be a required status check on `main` so a runner-path change cannot merge with a red real-runner contract run. NOT folded into `foundation-gate` (a path-skipped job there would red every docs-only PR). |
 | `format-static-checks (ubuntu-latest)` | recommended | Implicit via `foundation-gate` `needs:`. Listing explicitly improves PR-page UI signal. |
 | `format-static-checks (windows-latest)` | recommended | Same — explicit listing surfaces the per-OS pass in the PR UI. |
 | `frontend-build-tests (ubuntu-latest)` | recommended | Implicit dependency after story 2.1. Listing explicitly surfaces the Linux leg of the frontend matrix. |
@@ -78,6 +79,7 @@ gh api \
   /repos/<OWNER>/<REPO>/branches/main/protection \
   -F required_status_checks[strict]=true \
   -F 'required_status_checks[contexts][]=foundation-gate' \
+  -F 'required_status_checks[contexts][]=runner-contract-real-gate' \
   -F 'required_status_checks[contexts][]=format-static-checks (ubuntu-latest)' \
   -F 'required_status_checks[contexts][]=format-static-checks (windows-latest)' \
   -F 'required_status_checks[contexts][]=frontend-build-tests (ubuntu-latest)' \
@@ -117,6 +119,29 @@ foundation-gate
 
 `bundled-jar-smoke` is intentionally NOT a foundation-gate dependency — it runs only on
 `push: refs/heads/main` for release-readiness and would otherwise block all PR merges.
+
+## The `runner-contract-real-gate` required check (story 3.34)
+
+Story 3.34 adds a **path-triggered** real-runner-image tier (`runner-image-build` →
+`runner-image-self-test` + `runner-contract-real`) that really builds the Codex + Claude images,
+runs each image's `--self-test`, and runs `RealRunnerContractIT`. Those three jobs run only when a
+PR touches `runners/**`, `deliveryline-runner-contracts/**`, or
+`deliveryline-backend/src/main/java/org/dradgo/adapters/runner/**` (or on `push: main`).
+
+They are **not** added to `foundation-gate`'s `needs:`. `foundation-gate` converts a `skipped`
+dependency into a hard fail, so adding a path-skipped job there would red **every** docs-only PR.
+Instead, an always-runs aggregator job — **`runner-contract-real-gate`** — encodes the merge rule:
+
+- On a **docs-only / unrelated PR** (no runner paths changed) the three heavy jobs legitimately
+  skip and the gate **passes** — docs-only PRs are never blocked.
+- On a **runner-path PR** the gate **passes only when** `runner-image-build`, `runner-image-self-test`,
+  and `runner-contract-real` are all green — a red real-runner contract run hard-blocks the merge.
+
+Register `runner-contract-real-gate` as a required status check exactly like `foundation-gate`
+(it is already in the `REQUIRED_CHECKS` source-of-truth array in
+`scripts/ci/configure-branch-protection.{sh,ps1}`, so the helper scripts wire it automatically).
+`foundation-gate` is left unchanged, and `RealRunnerContractIT` is deliberately NOT added to
+`FoundationGateVerificationTest`.
 
 ## Related
 

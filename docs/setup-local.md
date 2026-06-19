@@ -449,6 +449,66 @@ schema. Use it when switching between incompatible schema versions or starting a
 
 ---
 
+## Reproduce the runner-image CI locally
+
+The CI `runner-image-build`, `runner-image-self-test`, and `runner-contract-real`
+jobs (story 3.34) build the **real** Codex + Claude runner images, run each
+image's `--self-test`, and run the end-to-end `RealRunnerContractIT`. Run the
+exact same commands locally on **Linux / Docker** (WSL2 works — see
+[Install Docker](#install-docker)) to reproduce a CI failure without pushing.
+
+> **Network:** the real build does a network `npm install` of `@openai/codex`,
+> `@anthropic-ai/claude-code`, and `@fission-ai/openspec` at their pinned
+> versions. A transient npm-registry failure is an infrastructure flake, not a
+> contract break — retry the build.
+
+### 1. Build both REAL runner images
+
+The runner services live behind the `runners` Compose profile, so a **bare**
+`docker compose build` builds **neither** of them. You must activate the profile:
+
+```bash
+docker compose --profile runners build
+```
+
+This builds `deliveryline/codex-runner:latest` and
+`deliveryline/claude-runner:latest` with the production toolchain
+(`INSTALL_*_CLI=true`). The CI job runs this same command; it additionally
+layers a cache-only override ([`docker-compose.ci.yml`](../docker-compose.ci.yml))
+that does not change the build graph, so your local build is byte-identical.
+
+### 2. Run each image's `--self-test`
+
+```bash
+docker compose run --rm codex-runner --self-test
+docker compose run --rm claude-runner --self-test
+```
+
+Each prints a structured `OK` block and exits `0` when `node`, the runner
+helper, the agent CLI version pin, the OpenSpec CLI pin, and the vendored
+superpowers skills are all present. Any miss prints `SELF-TEST FAIL: …` and
+exits `1`. (`docker compose run` auto-activates the `runners` profile for a
+named service, so no `--profile` flag is needed here.)
+
+### 3. Run the real-runner contract integration test
+
+```bash
+./mvnw -Pdocker-runner-it -pl deliveryline-backend -am verify -Dit.test=RealRunnerContractIT
+```
+
+The `-Pdocker-runner-it` profile clears the default Failsafe exclusion that
+hides `docker-runner-it`-tagged tests; `-am` keeps the freshest
+`deliveryline-runner-contracts` jar on the classpath. `RealRunnerContractIT`
+builds its own offline mock images and drives the broker → adapter →
+contract-validator → persistence path against them.
+
+See [`scripts/start-all.ps1`](../scripts/start-all.ps1) /
+[`scripts/start-all.sh`](../scripts/start-all.sh) for the full local-stack
+bring-up and [`docker-compose.yml`](../docker-compose.yml) for the runner
+service definitions.
+
+---
+
 ## Troubleshooting
 
 Most-likely first-run failures and their fixes. If none of these match, run

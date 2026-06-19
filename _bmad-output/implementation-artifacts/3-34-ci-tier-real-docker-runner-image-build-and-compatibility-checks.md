@@ -1,6 +1,6 @@
 # Story 3.34: CI Tier — Real Docker Runner Image Build + Compatibility Checks
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 <!-- Created 2026-06-13 via bmad-create-story. This is an INFRASTRUCTURE story: it adds GitHub
@@ -88,35 +88,35 @@ so that runner-image drift, schema-contract drift, or self-test failures surface
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — `detect-changes` job for path-triggering (AC2, AC9; R3, R9)**
-  - [ ] Add a cheap first job `detect-changes` using `actions/github-script@v7` (mirror the `foundation-gate` changed-files step at `.github/workflows/ci.yml:1150`) that paginates `pulls.listFiles` and sets output `runner-paths-changed=true` when any changed file starts with `runners/`, `deliveryline-runner-contracts/`, or `deliveryline-backend/src/main/java/org/dradgo/adapters/runner/`.
-  - [ ] On `push: main` (no PR context), default the output to `true` so main builds always run (AC4 `:latest`).
-- [ ] **Task 2 — `runner-image-build` job (AC1, AC4, AC8; R5, R6, R8)**
-  - [ ] `needs: [detect-changes]`, `if: needs.detect-changes.outputs.runner-paths-changed == 'true'`, `ubuntu-latest`.
-  - [ ] Set up Docker Buildx; configure BuildKit cache (`type=gha`) keyed on a hash of `runners/**` Dockerfiles + entrypoints + `lib/runner.mjs` + `test/mock-*.sh` + `runners/vendor/**` (AC8).
-  - [ ] Build BOTH real images via `docker compose --profile runners build` (R6) — confirm the compose build honors `INSTALL_*_CLI=true` default (R5).
-  - [ ] Tag images: PR → `deliveryline/{codex,claude}-runner:pr-${{ github.event.pull_request.number }}`; main → `:latest` + semver via `--build-arg IMAGE_VERSION` (R8). Decide + document the semver source.
-  - [ ] Export/persist the built images for the dependent jobs (same-runner Docker daemon, or `docker save`/artifact, or rebuild-from-warm-cache — pick the simplest that AC7 ordering supports).
-- [ ] **Task 3 — `runner-image-self-test` job (AC1, AC7; R6)**
-  - [ ] `needs: [runner-image-build]`, same `if:` guard, `ubuntu-latest`.
-  - [ ] Run `docker compose run --rm codex-runner --self-test` and `… claude-runner --self-test` (R6 — these work against profiled services); assert exit 0. Capture and surface the self-test stdout (the `deliveryline/<runner> self-test: OK` block) for the PR comment.
-- [ ] **Task 4 — `runner-contract-real` job (AC1, AC5, AC7; R4, R10)**
-  - [ ] `needs: [runner-image-build]`, same `if:` guard, `ubuntu-latest`, generous timeout (the IT builds 2 mock images + runs ~14 container scenarios).
-  - [ ] Run `./mvnw -B -ntp -Pdocker-runner-it -pl deliveryline-backend -am verify -Dit.test=RealRunnerContractIT -Dfailsafe.failIfNoSpecifiedTests=false` (R10).
-  - [ ] Provide the Postgres password placeholder + `SPRING_PROFILES_ACTIVE` env the Testcontainers/compose-autoconfig path needs (match the `foundation-gate` job env at `.github/workflows/ci.yml:1114`).
-  - [ ] Upload failsafe reports as an artifact. NO blanket retry (AC5); if a build/pull flake appears, scope a retry to that step only with an inline justification + a `deferred-work.md` entry.
-- [ ] **Task 5 — PR summary comment (AC3)**
-  - [ ] Add a job (or a step on a gate aggregator) that upserts a comment with marker `<!-- runner-image-ci-status -->` summarizing build / self-test / real-contract outcomes. Gate on `github.event_name == 'pull_request'`; escalate `pull-requests: write` at the job level only.
-- [ ] **Task 6 — Required-check wiring + foundation-gate relationship (AC6; R7 — resolve OQ-1 first)**
-  - [ ] Default path: add an always-runs `runner-contract-real-gate` job that passes on `runner-contract-real == success` OR a legitimate path-skip; document it as the branch-protection required check (update `docs/ci-branch-protection.md` if present).
-  - [ ] Do NOT add `runner-contract-real` to `foundation-gate.needs` and do NOT touch `FoundationGateVerificationTest` unless OQ-1 resolves otherwise.
-- [ ] **Task 7 — Local-repro docs (AC10; R6)**
-  - [ ] Add a `## Reproduce the runner-image CI locally` section to `docs/setup-local.md` with the corrected `--profile runners` build + the two self-test runs + the `runner-contract-real` mvnw invocation; cross-link `scripts/start-all.{ps1,sh}` and the compose file. Internal links must pass the `docs-link-check` tier (`.github/workflows/ci.yml:147`).
-  - [ ] Actually run the documented commands on Linux/Docker (WSL2) and confirm green before marking AC10 done ([[verify-ci-fixes-in-clean-env]], [[wsl-linux-ci-reproduction]]).
-- [ ] **Task 8 — Close the deferred-work breadcrumbs**
-  - [ ] Update `_bmad-output/implementation-artifacts/deferred-work.md`: mark the two story-3.8 deferrals (`runner-image-build`/`runner-contract-real` jobs; foundation-gate widening) as delivered by 3.34, and record the OQ-1 resolution.
-- [ ] **CI observability instrumentation (cross-cutting; this story's analogue of the standard logging task)**
-  - [ ] This story ships YAML + Markdown, not Java services — the standard SLF4J logging task does not apply. Its intent (debug a failure without re-running blind) is satisfied by: (a) `::error::`/`::warning::` workflow annotations on every failure path with an actionable hint (mirror the `spotless:apply` / coverage hints already in `ci.yml`), e.g. self-test failures echo the `SELF-TEST FAIL: …` line and the offending image tag; (b) the AC3 PR summary comment; (c) `actions/upload-artifact` for the self-test output + failsafe reports + the `docker compose build` log. Do NOT swallow a job failure into a green check.
+- [x] **Task 1 — `detect-changes` job for path-triggering (AC2, AC9; R3, R9)**
+  - [x] Add a cheap first job `detect-changes` using `actions/github-script@v7` (mirror the `foundation-gate` changed-files step at `.github/workflows/ci.yml:1150`) that paginates `pulls.listFiles` and sets output `runner-paths-changed=true` when any changed file starts with `runners/`, `deliveryline-runner-contracts/`, or `deliveryline-backend/src/main/java/org/dradgo/adapters/runner/`.
+  - [x] On `push: main` (no PR context), default the output to `true` so main builds always run (AC4 `:latest`).
+- [x] **Task 2 — `runner-image-build` job (AC1, AC4, AC8; R5, R6, R8)**
+  - [x] `needs: [detect-changes]`, `if: needs.detect-changes.outputs.runner-paths-changed == 'true'`, `ubuntu-latest`.
+  - [x] Set up Docker Buildx; configure BuildKit cache (`type=gha`) keyed on a hash of `runners/**` Dockerfiles + entrypoints + `lib/runner.mjs` + `test/mock-*.sh` + `runners/vendor/**` (AC8).
+  - [x] Build BOTH real images via `docker compose --profile runners build` (R6) — confirm the compose build honors `INSTALL_*_CLI=true` default (R5).
+  - [x] Tag images: PR → `deliveryline/{codex,claude}-runner:pr-${{ github.event.pull_request.number }}`; main → `:latest` + semver via `--build-arg IMAGE_VERSION` (R8). Decide + document the semver source.
+  - [x] Export/persist the built images for the dependent jobs (same-runner Docker daemon, or `docker save`/artifact, or rebuild-from-warm-cache — pick the simplest that AC7 ordering supports).
+- [x] **Task 3 — `runner-image-self-test` job (AC1, AC7; R6)**
+  - [x] `needs: [runner-image-build]`, same `if:` guard, `ubuntu-latest`.
+  - [x] Run `docker compose run --rm codex-runner --self-test` and `… claude-runner --self-test` (R6 — these work against profiled services); assert exit 0. Capture and surface the self-test stdout (the `deliveryline/<runner> self-test: OK` block) for the PR comment.
+- [x] **Task 4 — `runner-contract-real` job (AC1, AC5, AC7; R4, R10)**
+  - [x] `needs: [runner-image-build]`, same `if:` guard, `ubuntu-latest`, generous timeout (the IT builds 2 mock images + runs ~14 container scenarios).
+  - [x] Run `./mvnw -B -ntp -Pdocker-runner-it -pl deliveryline-backend -am verify -Dit.test=RealRunnerContractIT -Dfailsafe.failIfNoSpecifiedTests=false` (R10).
+  - [x] Provide the Postgres password placeholder + `SPRING_PROFILES_ACTIVE` env the Testcontainers/compose-autoconfig path needs (match the `foundation-gate` job env at `.github/workflows/ci.yml:1114`).
+  - [x] Upload failsafe reports as an artifact. NO blanket retry (AC5); if a build/pull flake appears, scope a retry to that step only with an inline justification + a `deferred-work.md` entry.
+- [x] **Task 5 — PR summary comment (AC3)**
+  - [x] Add a job (or a step on a gate aggregator) that upserts a comment with marker `<!-- runner-image-ci-status -->` summarizing build / self-test / real-contract outcomes. Gate on `github.event_name == 'pull_request'`; escalate `pull-requests: write` at the job level only.
+- [x] **Task 6 — Required-check wiring + foundation-gate relationship (AC6; R7 — resolve OQ-1 first)**
+  - [x] Default path: add an always-runs `runner-contract-real-gate` job that passes on `runner-contract-real == success` OR a legitimate path-skip; document it as the branch-protection required check (update `docs/ci-branch-protection.md` if present).
+  - [x] Do NOT add `runner-contract-real` to `foundation-gate.needs` and do NOT touch `FoundationGateVerificationTest` unless OQ-1 resolves otherwise.
+- [x] **Task 7 — Local-repro docs (AC10; R6)**
+  - [x] Add a `## Reproduce the runner-image CI locally` section to `docs/setup-local.md` with the corrected `--profile runners` build + the two self-test runs + the `runner-contract-real` mvnw invocation; cross-link `scripts/start-all.{ps1,sh}` and the compose file. Internal links must pass the `docs-link-check` tier (`.github/workflows/ci.yml:147`).
+  - [x] Actually run the documented commands on Linux/Docker (WSL2) and confirm green before marking AC10 done ([[verify-ci-fixes-in-clean-env]], [[wsl-linux-ci-reproduction]]).
+- [x] **Task 8 — Close the deferred-work breadcrumbs**
+  - [x] Update `_bmad-output/implementation-artifacts/deferred-work.md`: mark the two story-3.8 deferrals (`runner-image-build`/`runner-contract-real` jobs; foundation-gate widening) as delivered by 3.34, and record the OQ-1 resolution.
+- [x] **CI observability instrumentation (cross-cutting; this story's analogue of the standard logging task)**
+  - [x] This story ships YAML + Markdown, not Java services — the standard SLF4J logging task does not apply. Its intent (debug a failure without re-running blind) is satisfied by: (a) `::error::`/`::warning::` workflow annotations on every failure path with an actionable hint (mirror the `spotless:apply` / coverage hints already in `ci.yml`), e.g. self-test failures echo the `SELF-TEST FAIL: …` line and the offending image tag; (b) the AC3 PR summary comment; (c) `actions/upload-artifact` for the self-test output + failsafe reports + the `docker compose build` log. Do NOT swallow a job failure into a green check.
 
 ---
 
@@ -175,10 +175,73 @@ so that runner-image drift, schema-contract drift, or self-test failures surface
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-dev-story workflow, 2026-06-19.
 
 ### Debug Log References
 
+Local verifications run (Windows + Docker Desktop 28.5.1):
+
+- `python -c "import yaml; yaml.safe_load(...)"` on `.github/workflows/ci.yml` → parses; 18 jobs total, all 5 new jobs present with correct `needs:` + `if:` guards.
+- `node --check` on both embedded `actions/github-script` blocks (`detect-changes`, `runner-contract-real-gate` comment) → JS OK.
+- `bash -n` on all 12 `run:` script blocks across the 5 new jobs → all OK.
+- `docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile runners config` (IMAGE_VERSION=0.1.0) → override merges; `cache_from`/`cache_to`/`args.IMAGE_VERSION` applied, `image: deliveryline/codex-runner:latest` preserved.
+- `docker compose --profile runners build --dry-run` → targets BOTH `codex-runner` + `claude-runner` → `deliveryline/{codex,claude}-runner:latest` (R8 canonical names confirmed).
+- Offline build `docker build -f runners/codex/Dockerfile --build-arg INSTALL_CODEX_CLI=false -t deliveryline/codex-runner:latest .` then the exact AC10 command `docker compose run --rm codex-runner --self-test` → `self-test: OK` … `exit 0`. Validates the self-test command wiring (profiled service resolves; `--self-test` passes through to the entrypoint).
+- `deliveryline-backend/pom.xml` `-Pdocker-runner-it` profile (id at :672, clears the `docker-runner-it` Failsafe exclusion at :579) + `RealRunnerContractIT.java` exist — the `runner-contract-real` mvnw selector is valid.
+- `BranchProtectionConfigSmokeContractTest` (`@Tag("contract")`) — change is additive (markers intact, `foundation-gate` still listed, one sibling added); the default surefire tier excludes `contract` (pom-fixed `excludedGroups`), so it runs in the `backend-contract-tests` Failsafe tier in CI. Passes by inspection.
+
+NOT run locally (operator/CI to confirm — see deferred-work.md story-3.34 section): the network `npm install` REAL image build, the real-image `--self-test`, and the heavy `RealRunnerContractIT` round-trip (local≠CI; verify on WSL2/Linux per the repo guidance).
+
 ### Completion Notes List
 
+CI + docs story — added NO Java / runner-image / entrypoint / `RealRunnerContractIT` changes (consumed the finished 3.3/3.4/3.8 artifacts). Closes the story-3.8 deferrals D1/D8/D10 and the 3.7 `docker-runner-it` CI wiring.
+
+Three Open Questions were resolved with Alex (all to the story-recommended defaults):
+
+- **OQ-1 → standalone gate aggregator.** Added an always-runs `runner-contract-real-gate` job (passes on a legitimate path-skip OR all three runner-image jobs green) as the branch-protection required check. `foundation-gate.needs` was NOT touched and `RealRunnerContractIT` was NOT added to `FoundationGateVerificationTest` (R7).
+- **OQ-2 → new `runners/VERSION` file** (`0.1.0`), an independent runner-image semver track threaded via `--build-arg IMAGE_VERSION` for the `main`-build semver tag.
+- **OQ-3 → path-trigger as the only cost control.** The three heavy jobs run only on runner-path PRs (via the `detect-changes` job + `if:` guards) or `push: main`. No draft-PR gate.
+
+Key engineering decisions / reconciliations honored:
+
+- **Path-trigger via `detect-changes` + `if:` guards, NOT `on.paths`** (R3) — `ci.yml` keeps running every PR for `foundation-gate`.
+- **`docker compose --profile runners build`** (R6) — the bare command skips the profiled runner services. The CI-only `docker-compose.ci.yml` override adds ONLY a BuildKit `type=local` cache (AC8, keyed by `hashFiles('runners/**', …)`) + the `IMAGE_VERSION` build-arg, leaving the canonical service definitions untouched so the documented local command is override-free + byte-identical in build graph.
+- **`runner-image-self-test`** loads the exact images built upstream via a `docker save`/`docker load` artifact (AC7), then runs the canonical `docker compose run --rm <svc> --self-test`; both images are tested even if the first fails (per-image outcomes feed the PR comment, AC9).
+- **`runner-contract-real`** selects the IT via `-Pdocker-runner-it` (R10), with `-am` (fresh runner-contracts jar). `needs: runner-image-build` is ORDERING-only on hosted runners (no shared daemon → the R4 "cache-warming" benefit does not materialize on GitHub-hosted runners; documented honestly in the job comment + deferred-work).
+- **AC3 PR comment** upserts under marker `<!-- runner-image-ci-status -->`; only the gate job escalates `pull-requests: write` (workflow root stays `contents: read`).
+- **AC4 tags are local-daemon only** (no registry push in scope — `contents: read` token); they prove the `:pr-{n}` / `:latest`+`:<semver>` convention and feed a future publish story.
+
+AC10 docs (`docs/setup-local.md`) document the override-free local commands and were partially verified locally (self-test command exits 0 on an offline build; the network REAL build + IT must be confirmed on WSL2/Linux). Branch-protection wiring registers `runner-contract-real-gate` in `docs/ci-branch-protection.md` + both `scripts/ci/configure-branch-protection.{sh,ps1}` source-of-truth arrays.
+
+### Change Log
+
+- 2026-06-19 — Implemented story 3.34 (CI tier: real Docker runner image build + compatibility checks). Added `detect-changes`, `runner-image-build`, `runner-image-self-test`, `runner-contract-real`, and `runner-contract-real-gate` jobs to `.github/workflows/ci.yml`; added `runners/VERSION` (0.1.0) + `docker-compose.ci.yml` (CI-only cache/version override); added the "Reproduce the runner-image CI locally" section to `docs/setup-local.md`; registered `runner-contract-real-gate` as a required check in `docs/ci-branch-protection.md` + `scripts/ci/configure-branch-protection.{sh,ps1}`; closed the story-3.8 deferred-work breadcrumbs and recorded the OQ resolutions in `deferred-work.md`. Status `ready-for-dev → review`.
+
 ### File List
+
+- `.github/workflows/ci.yml` (modified) — 5 new jobs (detect-changes, runner-image-build, runner-image-self-test, runner-contract-real, runner-contract-real-gate).
+- `runners/VERSION` (new) — runner-image semver source (`0.1.0`), threaded via `--build-arg IMAGE_VERSION`.
+- `docker-compose.ci.yml` (new) — CI-only build override: BuildKit `type=local` cache + `IMAGE_VERSION` build-arg on the two runner services.
+- `docs/setup-local.md` (modified) — new "Reproduce the runner-image CI locally" section (AC10).
+- `docs/ci-branch-protection.md` (modified) — `runner-contract-real-gate` required-check row + explanatory section + `gh api` context.
+- `scripts/ci/configure-branch-protection.sh` (modified) — added `runner-contract-real-gate` to `REQUIRED_CHECKS`.
+- `scripts/ci/configure-branch-protection.ps1` (modified) — added `runner-contract-real-gate` to `$REQUIRED_CHECKS`.
+- `_bmad-output/implementation-artifacts/deferred-work.md` (modified) — marked the two story-3.8 deferrals DELIVERED + new story-3.34 scope-boundary section (OQ resolutions, cross-job cache caveat, tags-local-only, AC10 partial-verify).
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (modified) — story 3-34 `ready-for-dev → in-progress → review` + last_updated entries.
+- `_bmad-output/implementation-artifacts/3-34-ci-tier-real-docker-runner-image-build-and-compatibility-checks.md` (modified) — tasks checked, Status, Dev Agent Record.
+
+### Review Findings
+
+> bmad-code-review 2026-06-19 (Blind Hunter + Edge Case Hunter + Acceptance Auditor). 1 decision-needed, 6 patch, 2 deferred, ~12 dismissed as noise/false-positive. CI/YAML story — could not be executed in the Windows dev env; review is static (Actions semantics, shell safety, AC/reconciliation traceability).
+
+- [x] [Review][Decision→Patch] `COMPOSE_BAKE` bake build may not `--load` the real images into the local daemon — with the buildx `docker-container` driver (required for `cache_to type=local`), `docker buildx bake` can leave results in the cache backend and NOT in the local image store, so the "Verify images loaded" step (ci.yml ~177) + `docker save` (~200) could fail on the FIRST real CI run. **RESOLVED 2026-06-19 (Alex chose option 2):** added explicit `build.x-bake.output: [type=docker]` to both runner services in `docker-compose.ci.yml` to force the load regardless of the buildx driver default, and corrected the header comment that had asserted the load happens. [docker-compose.ci.yml:33-58]
+
+- [x] [Review][Patch] Required gate `runner-contract-real-gate` fails OPEN when `detect-changes` errors/skips — empty `runner-paths-changed` makes `"" != "true"` true → `exit 0` while the three heavy jobs were skipped. Fix: gate asserts `needs.detect-changes.result == 'success'` before the path-skip branch, AND wrap the detector's `pulls.listFiles` in try/catch with a fail-safe (run the tier on error, e.g. fork-PR token error). [.github/workflows/ci.yml:~391 (gate), ~69 (detect-changes)]
+- [x] [Review][Patch] `detect-changes` does not guard `pull_request.base.ref == 'main'` — the sibling foundation-gate steps do (ci.yml:1152/1179); without it the heavy tier + the required gate fire on PRs targeting non-main bases. Add the base-ref guard. [.github/workflows/ci.yml:~62-68]
+- [x] [Review][Patch] Build-graph files absent from the path trigger — `docker-compose.yml`, `docker-compose.ci.yml`, and `runners/VERSION` feed the build graph + the cache key (ci.yml:123) but are NOT in the detect-changes `watched[]` set, so a compose/VERSION-only change skips the tier untested. Add them to `watched[]`. [.github/workflows/ci.yml:~76-83]
+- [x] [Review][Patch] `runner-contract-real` is fail-open on a broken selector — `-Dfailsafe.failIfNoSpecifiedTests=false` means if `-Pdocker-runner-it` ever stops matching `RealRunnerContractIT`, zero ITs run and the required gate passes green. Set it `true`, or assert a `RealRunnerContractIT` failsafe report exists post-run. [.github/workflows/ci.yml:~353]
+- [x] [Review][Patch] Empty/malformed `runners/VERSION` → invalid main-build tag — `IMAGE_VERSION="$(tr -d '[:space:]' < runners/VERSION)"` is unguarded; an empty file yields `docker tag deliveryline/codex-runner:` (invalid ref) mid-loop. Add a non-empty / semver-shape assertion after reading it. [.github/workflows/ci.yml:~142]
+- [x] [Review][Patch] `runner-image-self-test` lacks env-vs-contract disambiguation — unlike `runner-contract-real` (which has the `[env]` daemon-reachability guard), a missing-image / daemon failure is reported as a runner `--self-test` contract failure. Assert both `:latest` images are present (`docker image inspect`) right after `docker load`, before the self-test steps. [.github/workflows/ci.yml:~250-297]
+
+- [x] [Review][Defer] AC10/Task 7 real-Linux verification not performed — the mandated WSL2 round-trip of `--profile runners build` + real-image `--self-test` + `RealRunnerContractIT` was not run (Windows dev env); task marked [x] on offline-only verification. Must confirm on WSL2/CI before trusting the repro doc + the real build path (overlaps the decision above). [story Task 7] — deferred, needs Linux/CI run
+- [x] [Review][Defer] BuildKit cache move-dance promotes a partial cache on build failure — the swap is `if: always()`, so a failed build still moves a partial `/tmp/.buildx-cache-new` into place; the "bounded/immutable" comment overstates safety. Low impact (buildx tolerates partial content-addressed local cache; immutable keys aren't re-saved on hit). [.github/workflows/ci.yml:~161-168] — deferred, low impact

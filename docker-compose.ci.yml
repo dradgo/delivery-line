@@ -1,0 +1,66 @@
+# docker-compose.ci.yml — CI-ONLY build override (story 3.34).
+#
+# Layered ON TOP of docker-compose.yml in the `runner-image-build` CI job ONLY:
+#
+#     COMPOSE_BAKE=true \
+#     docker compose -f docker-compose.yml -f docker-compose.ci.yml \
+#                    --profile runners build
+#
+# It exists purely to (a) attach a BuildKit layer cache (AC8) so a PR that does
+# not touch the runner image gets a cache hit and skips the heavy network
+# npm-install rebuild, and (b) thread the IMAGE_VERSION build-arg used for the
+# `main`-build semver tag (AC4, sourced from runners/VERSION).
+#
+# It deliberately does NOT change the canonical runner-service definitions: the
+# build context, Dockerfile, default build-args (INSTALL_*_CLI=true → REAL
+# images), and `image:` tags all stay exactly as docker-compose.yml declares.
+# A developer reproducing CI locally runs the documented, override-free
+#
+#     docker compose --profile runners build
+#
+# and gets a byte-identical build graph — just without a shared cache backend
+# (see docs/setup-local.md "Reproduce the runner-image CI locally"). This keeps
+# "CI == local" true for the build *graph* and exactly true for the --self-test
+# and runner-contract-real commands.
+#
+# Requires the buildx docker-container driver (docker/setup-buildx-action) for
+# `cache_to`. type=local is keyed by the actions/cache step in the CI job on a
+# hash of the runner Dockerfiles + entrypoints + runner.mjs + vendored
+# superpowers + mock scripts (AC8). COMPOSE_BAKE routes `docker compose build`
+# through `docker buildx bake`, which honors these cache directives.
+#
+# `x-bake.output: [type=docker]` FORCES the built image into the local docker
+# image store. The docker-container driver (required above for `cache_to
+# type=local`) does NOT load into the local store by default — without this
+# explicit output, a bake build can leave the result in the cache/builder only,
+# and the CI job's subsequent `docker image inspect …:latest` + `docker save`
+# would find no image (story 3.34 code-review D1). Making the load explicit keeps
+# the build → save → self-test hand-off (AC7) correct regardless of the buildx
+# driver's default behavior.
+
+services:
+  codex-runner:
+    build:
+      args:
+        # Defaults to "latest" so an accidental override-only invocation without
+        # IMAGE_VERSION in the env still builds (matches the Dockerfile default).
+        IMAGE_VERSION: ${IMAGE_VERSION:-latest}
+      x-bake:
+        output:
+          - type=docker
+      cache_from:
+        - type=local,src=/tmp/.buildx-cache/codex-runner
+      cache_to:
+        - type=local,dest=/tmp/.buildx-cache-new/codex-runner,mode=max
+
+  claude-runner:
+    build:
+      args:
+        IMAGE_VERSION: ${IMAGE_VERSION:-latest}
+      x-bake:
+        output:
+          - type=docker
+      cache_from:
+        - type=local,src=/tmp/.buildx-cache/claude-runner
+      cache_to:
+        - type=local,dest=/tmp/.buildx-cache-new/claude-runner,mode=max

@@ -1207,3 +1207,518 @@ jobs:
               });
               core.info('Created new foundation-gate comment.');
             }
+
+  # ===========================================================================
+  # Side-tier: REAL runner-image build + self-test + real-runner contract IT
+  # Story 3.34. Closes the story-3.8 deferrals D1/D8/D10 (the dedicated
+  # `runner-image-build` + `runner-contract-real` CI jobs and the foundation-gate
+  # widening) and the 3.7 `docker-runner-it` Maven-profile CI wiring.
+  #
+  # These three jobs are a PATH-TRIGGERED side-tier hanging off `detect-changes`;
+  # they are intentionally NOT in `foundation-gate.needs` (R7/OQ-1 — adding a
+  # path-skipped job there would red every docs-only PR because the gate converts
+  # skip→fail). Merge-blocking is realized by the always-runs
+  # `runner-contract-real-gate` aggregator + a branch-protection required check
+  # (see docs/ci-branch-protection.md).
+  #
+  # Division of labor vs the EXISTING every-PR `runner-image-compat` tier (kept,
+  # complementary): compat builds OFFLINE mock images (INSTALL_*_CLI=false) and
+  # re-validates the schema-v1 contract, cheaply, on every PR. This tier builds
+  # the REAL images (INSTALL_*_CLI=true → network npm install of @openai/codex,
+  # @anthropic-ai/claude-code, @fission-ai/openspec) via compose, runs the REAL
+  # image `--self-test`, and runs the heavy end-to-end RealRunnerContractIT — only
+  # when runner paths change (or on push:main). See story 3.34 Reconciliation 11.
+  #
+  # Linux-only (Docker-backed; story 1.21 AC3). Least-privilege token: only the
+  # detect-changes / gate jobs touch the PR API, and only the gate escalates
+  # `pull-requests: write` (at job level). All build/test jobs stay read-only.
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # detect-changes — cheap path-trigger gate (AC2, AC9; R3, R9)
+  # Mirrors the foundation-gate "Detect non-docs changed files on PR" step but
+  # emits a single `runner-paths-changed` output the three heavy jobs guard on.
+  # NOT `on.paths` — ci.yml must keep running every PR (it carries foundation-gate),
+  # so per-job `if:` guards are the only correct path filter here.
+  # ---------------------------------------------------------------------------
+  detect-changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Read-only PR-files listing. Root token is `contents: read`; listing PR
+    # files needs `pull-requests: read`.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      runner-paths-changed: ${{ steps.detect.outputs.runner-paths-changed }}
+    steps:
+      - name: Detect runner-path changes
+        id: detect
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // push:main (and any non-PR event) → always eligible so main builds
+            // always run and publish :latest + semver tags (AC4 / R3). The only
+            // non-PR trigger for this workflow is `push: branches:[main]` (see
+            // `on:`), so this is the main-build path.
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('runner-paths-changed', 'true');
+              core.info(`event=${context.eventName} — runner-image tier always eligible (push:main / AC4).`);
+              return;
+            }
+            // Only main-targeted PRs run the heavy tier + feed the required gate,
+            // mirroring the foundation-gate base-ref guard (.github/workflows/ci.yml
+            // ~1152/1179). A PR onto a feature/release branch skips the tier; the
+            // gate passes on a legitimate skip (code-review P2).
+            const baseRef = context.payload.pull_request.base.ref;
+            if (baseRef !== 'main') {
+              core.setOutput('runner-paths-changed', 'false');
+              core.info(`PR base is '${baseRef}' (not main) — runner-image tier skipped.`);
+              return;
+            }
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            let files;
+            try {
+              files = await github.paginate(
+                github.rest.pulls.listFiles,
+                { owner, repo, pull_number, per_page: 100 }
+              );
+            } catch (err) {
+              // Fail SAFE, not open: if the file listing fails (API hiccup,
+              // fork-PR token scope), run the tier rather than silently skip it.
+              // The gate also independently fails on a non-success detect-changes
+              // result, so a broken detector can never wave a runner-path PR
+              // through (code-review P1).
+              core.warning(`pulls.listFiles failed (${err.message}) — running the runner-image tier to fail safe.`);
+              core.setOutput('runner-paths-changed', 'true');
+              return;
+            }
+            // Watched path set (R9 — real module-prefixed paths). Includes the
+            // compose build-graph files (they feed the AC8 cache key + the actual
+            // build) and runners/VERSION (already under runners/). A PR touching
+            // deliveryline-runner-contracts/**/schemas/** is included here, so a
+            // schema change triggers BOTH images (AC9) with no extra job
+            // (code-review P3).
+            const watched = [
+              'runners/',
+              'deliveryline-runner-contracts/',
+              'deliveryline-backend/src/main/java/org/dradgo/adapters/runner/',
+              'docker-compose.yml',
+              'docker-compose.ci.yml',
+            ];
+            const changed = files.some(f =>
+              watched.some(p => f.filename.startsWith(p))
+            );
+            core.setOutput('runner-paths-changed', changed ? 'true' : 'false');
+            core.info(`runner-paths-changed=${changed} (${files.length} files inspected).`);
+
+  # ---------------------------------------------------------------------------
+  # runner-image-build — REAL Codex + Claude images via compose (AC1, AC4, AC8;
+  # R5, R6, R8). Builds with INSTALL_*_CLI=true (compose default = real npm
+  # install). `docker compose --profile runners build` (R6 — a BARE
+  # `docker compose build` skips the profiled runner services and builds
+  # NEITHER). The CI-only docker-compose.ci.yml override attaches a BuildKit
+  # local cache + threads IMAGE_VERSION; it does not change the build graph (the
+  # documented local repro runs the override-free command — docs/setup-local.md).
+  # ---------------------------------------------------------------------------
+  runner-image-build:
+    name: runner-image-build
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.runner-paths-changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      image-version: ${{ steps.meta.outputs.image-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        # docker-container driver — required for the override's `cache_to type=local`.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore BuildKit layer cache
+        # AC8 — keyed on a hash of the runner Dockerfiles + entrypoints +
+        # lib/runner.mjs + test/mock-*.sh + vendored superpowers (all under
+        # runners/**) plus the compose build wiring. A PR that doesn't touch the
+        # runner image gets a full cache hit and skips the heavy npm-install build.
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: runner-buildx-${{ hashFiles('runners/**', 'docker-compose.yml', 'docker-compose.ci.yml') }}
+          restore-keys: |
+            runner-buildx-
+
+      - name: Compute image tags + version
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # PR builds — pr-{n} tag + label (R8; prNumber = pull_request.number).
+            IMAGE_VERSION="pr-${PR_NUMBER}"
+            EXTRA_TAGS="pr-${PR_NUMBER}"
+          else
+            # main builds — :latest (added below by the re-tag) + a semver tag
+            # sourced from runners/VERSION (OQ-2 resolution), passed through the
+            # override as --build-arg IMAGE_VERSION (AC4).
+            IMAGE_VERSION="$(tr -d '[:space:]' < runners/VERSION)"
+            # Guard a missing/empty/malformed VERSION so we fail loudly here
+            # rather than emit an invalid `docker tag deliveryline/...-runner:`
+            # mid-loop later (code-review P5).
+            if ! printf '%s' "$IMAGE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+              echo "::error::runners/VERSION is empty or not semver-shaped ('${IMAGE_VERSION}') — cannot tag the main build."
+              exit 1
+            fi
+            EXTRA_TAGS="latest ${IMAGE_VERSION}"
+          fi
+          echo "image-version=${IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tags=${EXTRA_TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Resolved IMAGE_VERSION=${IMAGE_VERSION}; extra tags: ${EXTRA_TAGS}"
+
+      - name: Build REAL runner images (compose + profile runners)
+        env:
+          COMPOSE_BAKE: "true"
+          IMAGE_VERSION: ${{ steps.meta.outputs.image-version }}
+        run: |
+          set -euo pipefail
+          # R6: --profile runners (bare `docker compose build` builds neither
+          # profiled service). R5: compose default INSTALL_*_CLI=true → REAL images.
+          # The ci override adds ONLY the BuildKit cache + IMAGE_VERSION arg.
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml \
+            --profile runners build 2>&1 | tee /tmp/runner-image-build.log
+
+      - name: Swap BuildKit cache (bound growth)
+        if: always()
+        run: |
+          # Classic move dance: build wrote fresh cache to .buildx-cache-new; on a
+          # cache MISS actions/cache saves the swapped dir post-job. On a HIT the
+          # key is immutable so nothing is re-saved (cache stays bounded).
+          rm -rf /tmp/.buildx-cache
+          if [ -d /tmp/.buildx-cache-new ]; then mv /tmp/.buildx-cache-new /tmp/.buildx-cache; fi
+
+      - name: Verify images loaded + apply tag pins (AC4)
+        env:
+          EXTRA_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          # Fail loudly if compose/bake did not load the built images into the
+          # local store (observability — don't let a silent no-load slip through).
+          for img in deliveryline/codex-runner deliveryline/claude-runner; do
+            if ! docker image inspect "${img}:latest" >/dev/null 2>&1; then
+              echo "::error::${img}:latest not present after build — compose/bake did not --load the image."
+              exit 1
+            fi
+          done
+          # Apply the AC4 tag pins. PR → pr-{n}; main → latest (already) + semver.
+          # NOTE: tags are local-daemon only — there is no registry push in scope
+          # (workflow token is contents:read). They prove the tag convention and
+          # feed a future publish story; the PR comment records them.
+          for runner in codex claude; do
+            for t in ${EXTRA_TAGS}; do
+              docker tag "deliveryline/${runner}-runner:latest" "deliveryline/${runner}-runner:${t}"
+              echo "Tagged deliveryline/${runner}-runner:${t}"
+            done
+          done
+
+      - name: Save built images for the self-test job (AC7)
+        run: |
+          set -euo pipefail
+          # AC7 ordering: self-test runs the EXACT images built here. Hosted-runner
+          # jobs do NOT share a Docker daemon, so hand them over via a saved tar
+          # (compose run in the self-test job uses the :latest tag).
+          docker save deliveryline/codex-runner:latest deliveryline/claude-runner:latest \
+            | gzip > /tmp/runner-images.tar.gz
+          ls -lh /tmp/runner-images.tar.gz
+
+      - name: Upload built images artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-images
+          path: /tmp/runner-images.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-image-build-log
+          path: /tmp/runner-image-build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # runner-image-self-test — `--self-test` exit 0 on the REAL images (AC1, AC7;
+  # R6). Loads the images built upstream and runs each entrypoint's --self-test
+  # (verifies node + runner.mjs + the agent CLI version pin + the OpenSpec pin +
+  # the vendored superpowers skills, then exit 0). Both images are tested even if
+  # the first fails, so the PR comment reports both outcomes (AC9).
+  # ---------------------------------------------------------------------------
+  runner-image-self-test:
+    name: runner-image-self-test
+    needs: [detect-changes, runner-image-build]
+    if: ${{ needs.detect-changes.outputs.runner-paths-changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      codex-selftest: ${{ steps.codex.outcome }}
+      claude-selftest: ${{ steps.claude.outcome }}
+    steps:
+      - name: Checkout
+        # Needed so `docker compose run` can resolve the runner service definitions.
+        uses: actions/checkout@v4
+
+      - name: Download built images
+        uses: actions/download-artifact@v4
+        with:
+          name: runner-images
+          path: /tmp/images
+
+      - name: Load built images
+        run: |
+          set -euo pipefail
+          gunzip -c /tmp/images/runner-images.tar.gz | docker load
+          docker image ls 'deliveryline/*-runner'
+          # [env] disambiguation (code-review P6): if the images did not load,
+          # fail HERE as an infra/env problem rather than letting the downstream
+          # `docker compose run --self-test` surface it as a runner CONTRACT
+          # failure. Mirrors the runner-contract-real Docker-reachability guard.
+          for img in deliveryline/codex-runner deliveryline/claude-runner; do
+            if ! docker image inspect "${img}:latest" >/dev/null 2>&1; then
+              echo "::error::[env] ${img}:latest did not load from the runner-images artifact — infrastructure issue, NOT a --self-test contract failure. Re-run; if it persists, inspect the runner-image-build save/upload steps."
+              exit 1
+            fi
+          done
+
+      - name: Self-test codex runner (REAL image)
+        id: codex
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          # R6: `docker compose run --rm <svc> --self-test` auto-activates the
+          # service's "runners" profile and passes --self-test to the entrypoint.
+          # The image is already loaded, so compose does not rebuild.
+          docker compose run --rm codex-runner --self-test 2>&1 | tee /tmp/codex-self-test.log
+
+      - name: Self-test claude runner (REAL image)
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          docker compose run --rm claude-runner --self-test 2>&1 | tee /tmp/claude-self-test.log
+
+      - name: Upload self-test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-image-self-test-logs
+          path: |
+            /tmp/codex-self-test.log
+            /tmp/claude-self-test.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Assert both self-tests passed
+        run: |
+          set -euo pipefail
+          fail=0
+          if [ "${{ steps.codex.outcome }}" != "success" ]; then
+            echo "::error::codex runner --self-test FAILED — see the SELF-TEST FAIL line in the runner-image-self-test-logs artifact (deliveryline/codex-runner:latest)."
+            fail=1
+          fi
+          if [ "${{ steps.claude.outcome }}" != "success" ]; then
+            echo "::error::claude runner --self-test FAILED — see the SELF-TEST FAIL line in the runner-image-self-test-logs artifact (deliveryline/claude-runner:latest)."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "Both runner images passed --self-test."
+          exit $fail
+
+  # ---------------------------------------------------------------------------
+  # runner-contract-real — end-to-end RealRunnerContractIT (AC1, AC5, AC7; R4,
+  # R10). `needs: runner-image-build` is for ORDERING only — the IT REBUILDS its
+  # own offline mock images (deliveryline/{codex,claude}-runner:real-contract-it,
+  # INSTALL_*_CLI=false) in @BeforeAll and does NOT consume the :pr-{n}/:latest
+  # images this tier builds (AC7's "consumes the built images" parenthetical is
+  # inaccurate — R4). On GitHub-hosted runners each job gets a CLEAN daemon, so
+  # there is no cross-job layer reuse; the dependency just fails fast before the
+  # ~15-min IT if the real build is broken. The IT is selected via the
+  # `-Pdocker-runner-it` profile (clears the default Failsafe docker-runner-it
+  # exclusion — R10), NOT a raw tag filter.
+  # ---------------------------------------------------------------------------
+  runner-contract-real:
+    name: runner-contract-real
+    needs: [detect-changes, runner-image-build]
+    if: ${{ needs.detect-changes.outputs.runner-paths-changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Verify Docker daemon is reachable (env-vs-contract disambiguation)
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::[env] Docker daemon not reachable — RealRunnerContractIT cannot build its mock images. Infrastructure issue, NOT a contract regression. Re-run; if it persists, escalate to CI ops."
+            exit 1
+          fi
+          echo "[env] Docker daemon reachable: $(docker version --format '{{.Server.Version}}')"
+
+      - name: Run RealRunnerContractIT (-Pdocker-runner-it)
+        env:
+          # Match the foundation-gate env shape (.github/workflows/ci.yml foundation-gate)
+          # — Spring docker-compose autoconfig + Flyway want a Postgres password
+          # placeholder; the IT's own @ActiveProfiles drives the profile set.
+          POSTGRES_PASSWORD: deliveryline-ci
+          SPRING_PROFILES_ACTIVE: test
+        run: |
+          # AC5: NO blanket retry. If a container-cold-start / base-layer-pull
+          # flake is observed, scope a retry to a pull/build step ONLY with an
+          # inline justification + a deferred-work.md entry — never wrap the test.
+          # -am keeps the freshest deliveryline-runner-contracts jar on the
+          # classpath (runner-contracts-schema-stale-in-m2).
+          ./mvnw -B -ntp -Pdocker-runner-it -pl deliveryline-backend -am verify \
+            -Dit.test=RealRunnerContractIT \
+            -Dfailsafe.failIfNoSpecifiedTests=false
+
+      - name: Assert RealRunnerContractIT actually ran (no silent fail-open)
+        run: |
+          set -euo pipefail
+          # failIfNoSpecifiedTests=false (above) is REQUIRED: `-am` runs Failsafe
+          # across the reactor and only deliveryline-backend carries this IT, so
+          # `true` would falsely fail the runner-contracts module ("no tests
+          # match"). The trade-off is that a broken -Pdocker-runner-it selection
+          # could pass green with the IT never executing — for a required merge
+          # gate that is a fail-open. Guard it explicitly (code-review P4).
+          report="deliveryline-backend/target/failsafe-reports/TEST-org.dradgo.integration.runners.RealRunnerContractIT.xml"
+          if [ ! -f "$report" ]; then
+            echo "::error::No failsafe report for RealRunnerContractIT — the IT did not run (broken -Pdocker-runner-it selection?). Failing rather than passing a gate where the contract test never executed."
+            exit 1
+          fi
+          tests="$(grep -oE 'tests="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)"
+          if [ -z "${tests:-}" ] || [ "$tests" -lt 1 ]; then
+            echo "::error::RealRunnerContractIT report shows ${tests:-0} tests — the IT executed nothing."
+            exit 1
+          fi
+          echo "RealRunnerContractIT ran ${tests} test(s)."
+
+      - name: Upload failsafe reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-contract-real-reports
+          path: deliveryline-backend/target/failsafe-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # runner-contract-real-gate — always-runs aggregator + PR summary comment
+  # (AC3, AC6; R7/OQ-1). PASSES when the runner-image tier legitimately skipped
+  # (no runner paths changed → docs-only PRs NOT blocked) OR all three jobs
+  # succeeded. This is the branch-protection REQUIRED check (docs/ci-branch-
+  # protection.md), so a runner-path PR is hard-blocked on a red real-contract
+  # run while foundation-gate stays untouched (NOT widened — R7).
+  # ---------------------------------------------------------------------------
+  runner-contract-real-gate:
+    name: runner-contract-real-gate
+    needs: [detect-changes, runner-image-build, runner-image-self-test, runner-contract-real]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Escalate ONLY pull-requests: write for the upsert; workflow root stays read.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Assert runner-image tier outcome
+        env:
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          RUNNER_PATHS_CHANGED: ${{ needs.detect-changes.outputs.runner-paths-changed }}
+          BUILD_RESULT: ${{ needs.runner-image-build.result }}
+          SELFTEST_RESULT: ${{ needs.runner-image-self-test.result }}
+          CONTRACT_RESULT: ${{ needs.runner-contract-real.result }}
+        run: |
+          set -euo pipefail
+          # Fail CLOSED if the detector itself did not succeed (code-review P1):
+          # otherwise a failed/skipped detect-changes leaves RUNNER_PATHS_CHANGED
+          # empty, the "!= true" branch below would exit 0, and a runner-path PR
+          # would merge with the three heavy jobs skipped and never validated.
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "::error::detect-changes did not succeed (result=${DETECT_RESULT}) — cannot determine runner-path eligibility. Failing the gate rather than waving the PR through. Re-run; if it persists, check the detect-changes job log."
+            exit 1
+          fi
+          if [ "$RUNNER_PATHS_CHANGED" != "true" ]; then
+            echo "No runner paths changed — runner-image tier legitimately skipped. Gate PASSES (docs-only / unrelated PR is not blocked)."
+            exit 0
+          fi
+          fail=0
+          for pair in "runner-image-build=$BUILD_RESULT" "runner-image-self-test=$SELFTEST_RESULT" "runner-contract-real=$CONTRACT_RESULT"; do
+            name="${pair%%=*}"; res="${pair#*=}"
+            if [ "$res" != "success" ]; then
+              echo "::error::${name} did not succeed (result=${res}) — runner-path PRs are blocked until the runner-image tier is green."
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "All runner-image tier jobs succeeded on a runner-path PR."
+
+      - name: Upsert runner-image CI status comment (AC3)
+        if: ${{ github.event_name == 'pull_request' && needs.detect-changes.outputs.runner-paths-changed == 'true' && always() }}
+        uses: actions/github-script@v7
+        env:
+          BUILD_RESULT: ${{ needs.runner-image-build.result }}
+          SELFTEST_RESULT: ${{ needs.runner-image-self-test.result }}
+          CONTRACT_RESULT: ${{ needs.runner-contract-real.result }}
+          CODEX_SELFTEST: ${{ needs.runner-image-self-test.outputs.codex-selftest }}
+          CLAUDE_SELFTEST: ${{ needs.runner-image-self-test.outputs.claude-selftest }}
+          IMAGE_TAGS: ${{ needs.runner-image-build.outputs.tags }}
+        with:
+          script: |
+            // Deterministic marker (AC3) — upsert in place rather than spam.
+            const marker = '<!-- runner-image-ci-status -->';
+            const icon = (r) => r === 'success' ? '✅' : (r === 'skipped' ? '⏭️' : '❌');
+            const env = process.env;
+            const tags = env.IMAGE_TAGS ? env.IMAGE_TAGS.trim().split(/\s+/).join(', ') : '(n/a)';
+            const body = [
+              marker,
+              '### Runner-image CI (story 3.34)',
+              '',
+              `- **Build (real Codex + Claude images):** ${icon(env.BUILD_RESULT)} \`${env.BUILD_RESULT}\` — tags: \`${tags}\``,
+              `- **\`--self-test\` codex:** ${icon(env.CODEX_SELFTEST)} \`${env.CODEX_SELFTEST || 'n/a'}\``,
+              `- **\`--self-test\` claude:** ${icon(env.CLAUDE_SELFTEST)} \`${env.CLAUDE_SELFTEST || 'n/a'}\``,
+              `- **RealRunnerContractIT (\`runner-contract-real\`):** ${icon(env.CONTRACT_RESULT)} \`${env.CONTRACT_RESULT}\``,
+              '',
+              'Self-test stdout + failsafe reports are attached as job artifacts. This comment updates in place on each run.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              core.info(`Updated existing runner-image-ci comment ${existing.id}.`);
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              core.info('Created new runner-image-ci comment.');
+            }

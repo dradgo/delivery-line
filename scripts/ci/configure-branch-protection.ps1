@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 # REQUIRED_CHECKS_START
 $REQUIRED_CHECKS = @(
     'foundation-gate'
+    'runner-contract-real-gate'
     'format-static-checks (ubuntu-latest)'
     'format-static-checks (windows-latest)'
     'frontend-build-tests (ubuntu-latest)'
