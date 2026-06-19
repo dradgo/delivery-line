@@ -25,6 +25,7 @@ const IMPL_CONTAINER = readFileSync(
   join(HERE, 'ImplementationReviewDecisionBarContainer.tsx'),
   'utf8',
 );
+const RECOVERY_CONTAINER = readFileSync(join(HERE, 'RecoveryDecisionBarContainer.tsx'), 'utf8');
 
 /** Patterns that would indicate frontend-side eligibility inference (UX-DR12 violation). */
 const FORBIDDEN_PATTERNS: ReadonlyArray<RegExp> = [
@@ -47,11 +48,20 @@ describe('AC11 — the bar consumes only backend-reported allowed actions', () =
     expect(IMPL_CONTAINER).toContain('useAllowedActions(workflowRunId, DEVELOPER_REVIEWER_ROLE)');
   });
 
+  it('the recovery container sources eligibility from useAllowedActions as workflow_owner', () => {
+    expect(RECOVERY_CONTAINER).toContain("from '../hooks/useAllowedActions'");
+    // The FAILED matrix gates `retry` on workflow_owner; the bar must request that role.
+    expect(RECOVERY_CONTAINER).toContain(
+      'useAllowedActions(workflowRunId, RECOVERY_OPERATOR_ROLE)',
+    );
+  });
+
   it('neither the bar nor the containers import a permission-inference helper', () => {
     for (const pattern of FORBIDDEN_PATTERNS) {
       expect(BAR).not.toMatch(pattern);
       expect(CONTAINER).not.toMatch(pattern);
       expect(IMPL_CONTAINER).not.toMatch(pattern);
+      expect(RECOVERY_CONTAINER).not.toMatch(pattern);
     }
   });
 
