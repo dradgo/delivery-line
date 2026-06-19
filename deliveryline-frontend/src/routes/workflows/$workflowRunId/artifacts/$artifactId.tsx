@@ -2,7 +2,8 @@ import { Link, createFileRoute } from '@tanstack/react-router';
 
 import { Stack } from '@/components/layout';
 import { ArtifactReviewPanelContainer } from '@/features/workflows/components/ArtifactReviewPanel';
-import { ApprovalDecisionBarContainer } from '@/features/workflows/components/ApprovalDecisionBarContainer';
+import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
+import { useArtifact } from '@/features/workflows/hooks/useArtifact';
 import {
   InvalidRouteParamError,
   assertValidArtifactRouteParams,
@@ -71,9 +72,16 @@ function ArtifactViewerRoute() {
   const { workflowRunId, artifactId } = Route.useParams();
   const data = Route.useLoaderData();
 
+  // The LIVE artifact type (story 3a-9 enabled `useArtifact`). This shares the cache key
+  // with the panel's own read (deduped — no second request), so the route can drive the
+  // subtitle + the AC8b guard from real data instead of the story-2.6 `spec` loader stub.
+  // Falls back to the loader stub until the read resolves.
+  const { data: artifact } = useArtifact(workflowRunId, artifactId);
+  const artifactType = artifact?.artifactType ?? data.artifactType;
+
   // AC8b — an artifact type the current Artifact Review Panel can't render yet.
-  if (!RENDERABLE_ARTIFACT_TYPES.has(data.artifactType)) {
-    return <UnrenderableArtifactState artifactType={data.artifactType} />;
+  if (!RENDERABLE_ARTIFACT_TYPES.has(artifactType)) {
+    return <UnrenderableArtifactState artifactType={artifactType} />;
   }
 
   return (
@@ -87,7 +95,7 @@ function ArtifactViewerRoute() {
       </Link>
       <h1 className="text-page-title">Artifact</h1>
       <p className="text-meta text-text-tertiary">
-        <code>{artifactId}</code> &middot; type <code>{data.artifactType}</code> &middot; run{' '}
+        <code>{artifactId}</code> &middot; type <code>{artifactType}</code> &middot; run{' '}
         <code>{workflowRunId}</code>
       </p>
       {/* Story 2.17 — the generalized Artifact Review Panel. The container reads the
@@ -95,11 +103,13 @@ function ArtifactViewerRoute() {
           state today; it flips to the rendered artifact with no route change when the
           artifact-read story enables the hook + endpoint. */}
       <ArtifactReviewPanelContainer workflowRunId={workflowRunId} artifactId={artifactId} />
-      {/* Story 2.19 (AC4) — the inline-section Approval Decision Bar, rendered in-flow
-          beneath the Artifact Review Panel for the spec artifact. Same container, the
-          `inline_section` layout; live it renders `blocked` until an artifactId source
-          ships (T-ARTIFACTID). */}
-      <ApprovalDecisionBarContainer workflowRunId={workflowRunId} layout="inline_section" />
+      {/* The in-flow decision bar, rendered beneath the Artifact Review Panel. The
+          state-driven `WorkflowDecisionBar` selector (the same one the run-detail pane
+          uses) picks the right mode for the run's current state — `implementation_review`
+          (accept / reject / take over) at `WaitingForReview`, `recovery_operator` at
+          `Failed`, `spec_approval` otherwise — rather than always mounting the spec bar
+          (which read "No decision available" for an implementation-plan artifact). */}
+      <WorkflowDecisionBar workflowRunId={workflowRunId} layout="inline_section" />
     </Stack>
   );
 }

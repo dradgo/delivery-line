@@ -2224,6 +2224,63 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
+  void largeImplementationPlanResultIsNotRejectedAsContractViolation() {
+    // Regression: the runner-result ValidationContext defaulted to maxPayloadBytes=2048, so a real
+    // implementationPlan result (the full plan embedded as a steps[] array) routinely exceeded 2 KB
+    // and was rejected as FILE_TOO_LARGE -> RUNNER_CONTRACT_VIOLATION, failing the execution stage.
+    // buildResultValidationContext now sets a 2 MB cap; a >2 KB plan must validate and ingest.
+    StringBuilder steps = new StringBuilder();
+    for (int i = 0; i < 40; i++) {
+      if (i > 0) {
+        steps.append(", ");
+      }
+      steps.append(
+          "\"Step "
+              + i
+              + ": analyse a module, enumerate its technologies, and document the findings under docs/\"");
+    }
+    String payload =
+        ("""
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "implementationPlan",
+             "steps": [%s],
+             "contextReferences": ["spec/v1.json"]}
+          ],
+          "normalizedOutput": {"summary": "ok", "outcome": "success"},
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000002"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """)
+            .formatted(RUN_ID, REX_ID, steps.toString());
+    byte[] payloadBytes = payload.getBytes(StandardCharsets.UTF_8);
+    assertTrue(
+        payloadBytes.length > 2048,
+        () -> "fixture must exceed the old 2048-byte cap, was " + payloadBytes.length);
+
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
+    stubArtifactRecordSuccessAvailable();
+
+    orchBroker.onResult(REX_ID, payloadBytes);
+
+    // The oversized-but-valid plan passes contract validation and ingests to completion.
+    verify(executionService, never())
+        .recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(executionService).recordCompleted(REX_ID);
+    verify(artifactOperationService).recordOperation(any());
+  }
+
+  @Test
   void prOutputIngestMarksArtifactAvailableWhenNoPushOutcome() {
     // Story 3b-3 (AC1): the no-push prOutput path (the mock runner — captureAndPush empty, no
     // enrich) promotes the v1 ingested artifact to `available` directly in the ingest loop.

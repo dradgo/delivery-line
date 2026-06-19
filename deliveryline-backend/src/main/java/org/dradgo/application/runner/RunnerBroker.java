@@ -80,6 +80,14 @@ public class RunnerBroker {
   // plan / pr-output) to `available` (must be one of ArtifactChecksum.ALLOWED_ALGORITHMS).
   private static final String ARTIFACT_CHECKSUM_ALGORITHM = "SHA-256";
 
+  // The runner-result contract's default cap (ValidationContext.DEFAULT_MAX_PAYLOAD_BYTES = 2 KB)
+  // is far too small for real result payloads: an implementationPlan result embeds the full plan
+  // as a steps[] array, and a pr-output result carries branch/commit/PR metadata — both routinely
+  // exceed 2 KB and were being rejected as FILE_TOO_LARGE -> RUNNER_CONTRACT_VIOLATION. Raise the
+  // result cap to 2 MB (the largest single embedded payload is the pr-output diff, itself bounded
+  // to PR_OUTPUT_DIFF_MAX_BYTES = 1 MB, so 2 MB leaves comfortable headroom for surrounding JSON).
+  private static final int RUNNER_RESULT_MAX_PAYLOAD_BYTES = 2 * 1_048_576;
+
   private static final List<RunnerExecutionStatus> ACTIVE_STATUSES =
       List.of(RunnerExecutionStatus.PENDING, RunnerExecutionStatus.RUNNING);
 
@@ -2498,7 +2506,8 @@ public class RunnerBroker {
    */
   private ValidationContext buildResultValidationContext(
       String workflowRunId, String runnerExecutionId) {
-    ValidationContext.Builder builder = ValidationContext.builder();
+    ValidationContext.Builder builder =
+        ValidationContext.builder().maxPayloadBytes(RUNNER_RESULT_MAX_PAYLOAD_BYTES);
     builder.addKnownRunnerExecutionId(runnerExecutionId);
     List<RunnerExecutionSnapshot> peers =
         recordPort.findByWorkflowRunPublicIdAndStatusIn(workflowRunId, ALL_STATUSES);

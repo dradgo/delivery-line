@@ -21,15 +21,25 @@ import { useRejectImplementation } from '../hooks/useRejectImplementation';
 import { useRetryWorkflow } from '../hooks/useRetryWorkflow';
 import { useTakeoverWorkflow } from '../hooks/useTakeoverWorkflow';
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
+import type { ApprovalBarLayout } from '../approvalDecisionView';
 import { ApprovalDecisionBarContainer } from './ApprovalDecisionBarContainer';
 import { ImplementationReviewDecisionBarContainer } from './ImplementationReviewDecisionBarContainer';
 import { RecoveryDecisionBarContainer } from './RecoveryDecisionBarContainer';
 
 export interface WorkflowDecisionBarProps {
   workflowRunId: string;
+  /**
+   * AC4 — the bar's chrome. The run-detail pane uses the default bottom-of-pane
+   * `sticky_footer`; the artifact viewer mounts it `inline_section` in-flow beneath the
+   * panel. The layout is threaded UNCHANGED into whichever container the run state selects.
+   */
+  layout?: ApprovalBarLayout | undefined;
 }
 
-export function WorkflowDecisionBar({ workflowRunId }: WorkflowDecisionBarProps) {
+export function WorkflowDecisionBar({
+  workflowRunId,
+  layout = 'sticky_footer',
+}: WorkflowDecisionBarProps) {
   const { data } = useWorkflowDetail(workflowRunId);
   const retry = useRetryWorkflow(workflowRunId);
   const accept = useAcceptImplementation(workflowRunId);
@@ -53,7 +63,7 @@ export function WorkflowDecisionBar({ workflowRunId }: WorkflowDecisionBarProps)
     return (
       <ImplementationReviewDecisionBarContainer
         workflowRunId={workflowRunId}
-        layout="sticky_footer"
+        layout={layout}
         accept={accept}
         reject={reject}
         takeover={takeover}
@@ -62,12 +72,8 @@ export function WorkflowDecisionBar({ workflowRunId }: WorkflowDecisionBarProps)
   }
   if (showRecovery) {
     return (
-      <RecoveryDecisionBarContainer
-        workflowRunId={workflowRunId}
-        layout="sticky_footer"
-        retry={retry}
-      />
+      <RecoveryDecisionBarContainer workflowRunId={workflowRunId} layout={layout} retry={retry} />
     );
   }
-  return <ApprovalDecisionBarContainer workflowRunId={workflowRunId} layout="sticky_footer" />;
+  return <ApprovalDecisionBarContainer workflowRunId={workflowRunId} layout={layout} />;
 }
