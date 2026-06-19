@@ -35,10 +35,12 @@ import org.springframework.test.context.TestPropertySource;
  *
  * <p>No repo workspace is wired here (no {@code github-mock} profile), so {@code captureAndPush}
  * returns empty and the happy path exercises AC9 ref-format validation on the mock's (well-formed)
- * reported refs without a drift check or enrichment. The drift ({@code RUNNER_PR_REF_DRIFT}),
- * ref-format-failure ({@code RUNNER_OUTPUT_VALIDATION_FAILED}), and enrichment shapes are covered
- * deterministically by {@code RunnerBrokerUnitTest}; the dispatch key / sub-stage-aware in-flight
- * no-op / idempotent-replay shapes by {@code WorkflowOrchestrationServiceTest}.
+ * reported refs without enrichment. The ref-format-failure ({@code
+ * RUNNER_OUTPUT_VALIDATION_FAILED}, no-push path) and the authoritative-push enrichment shapes (a
+ * present {@code captureAndPush} outcome is trusted over the runner's placeholder refs — no
+ * format/drift gate) are covered deterministically by {@code RunnerBrokerUnitTest}; the dispatch
+ * key / sub-stage-aware in-flight no-op / idempotent-replay shapes by {@code
+ * WorkflowOrchestrationServiceTest}.
  *
  * <p>Opts into the implementation-stage auto-dispatch master switch + overrides the EXECUTION mock
  * scenario to {@code happy-pr-output} via {@link TestPropertySource} (the shared test profile keeps

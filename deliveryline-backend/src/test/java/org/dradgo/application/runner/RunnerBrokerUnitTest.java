@@ -2104,10 +2104,14 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
-  void prOutputRefDriftFromActualGitStateRoutesToFailedAndDoesNotDelegate() {
-    // Story 3.12 (AC3) — the runner-reported branch disagrees with the actual captureAndPush
-    // branch:
-    // RUNNER_PR_REF_DRIFT routes to Failed and never delegates the success advance.
+  void prOutputRunnerRefsTrustedOverByAuthoritativeCaptureAndPush() {
+    // Real-run fix (2026-06-19): the runner never does git — the BACKEND owns it (workspace +
+    // branch prepared before the container, commit/push/PR after). The runner therefore reports
+    // PLACEHOLDER git refs it cannot know (a `codex/<rex>` branch it never created, a sha256-of-
+    // output "commit", and a `artifacts/<run>/pr.json` path for prReference). When captureAndPush
+    // produced an authoritative outcome, the broker MUST trust it (it already enriches + links from
+    // it) and NOT gate on the runner's self-reported refs — gating made the e2e run unsatisfiable
+    // (format-invalid prReference + branch/commit/prRef drift are guaranteed by construction).
     org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
         mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
     RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
@@ -2115,7 +2119,10 @@ class RunnerBrokerUnitTest {
         .thenReturn(
             Optional.of(
                 new RepositoryWorkspaceService.RepositoryPushOutcome(
-                    "abcdef1234567890abcdef1234567890abcdef12", "actual-branch", "PR-1", true)));
+                    "16f794959cf755886c6b4929db16940ae5440185",
+                    "deliveryline/FIN-30/stage-0a4c10f2",
+                    "dradgo/financemonitor.2019#3",
+                    true)));
     RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
     when(recordPort.findByPublicId(REX_ID))
         .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
@@ -2123,24 +2130,38 @@ class RunnerBrokerUnitTest {
         .thenReturn(ExecutionSubStage.PR_OUTPUT);
     stubArtifactRecordSuccess();
 
-    // Reported branch "feature/x" drifts from the actual "actual-branch".
-    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+    // Reproduce the real codex runner-result.v1: a path-style prReference (NOT the PR-<n>/URL
+    // format) and a `codex/` branch + sha256 "commit" that both drift from the actual push.
+    orchBroker.onResult(
+        REX_ID,
+        prOutputResultPayload(
+                "codex/" + REX_ID,
+                "d7a5793ca89d544457b9f5c02042ebbc44fdc55e",
+                "artifacts/" + RUN_ID + "/pr.json")
+            .getBytes(StandardCharsets.UTF_8));
 
-    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
-    verify(executionService, never()).recordCompleted(any());
-    verify(orchestration, never()).onPrOutputStageSucceeded(any(), any(), any());
-    ArgumentCaptor<java.util.Map<String, Object>> details =
-        ArgumentCaptor.forClass(java.util.Map.class);
-    verify(eventPort)
-        .append(
-            eq(RUN_ID),
-            eq(WorkflowEventType.RUNNER_FAILED),
-            any(),
-            eq("runner_pr_ref_drift"),
-            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
-            any(),
-            details.capture());
-    assertEquals(DomainErrorCode.RUNNER_PR_REF_DRIFT.value(), details.getValue().get("errorCode"));
+    // Authoritative push outcome present -> NEVER fails on the runner's placeholder refs.
+    verify(executionService, never()).recordFailed(any(), any());
+    verify(executionService).recordCompleted(REX_ID);
+    verify(orchestration)
+        .onPrOutputStageSucceeded(eq(RUN_ID), eq(REX_ID), org.mockito.ArgumentMatchers.anyString());
+    // The enrichment UPDATE carries the AUTHORITATIVE captureAndPush refs, not the runner's.
+    ArgumentCaptor<RecordArtifactOperationCommand> commands =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService, times(2)).recordOperation(commands.capture());
+    RecordArtifactOperationCommand update =
+        commands.getAllValues().stream()
+            .filter(
+                c -> c.operationType() == org.dradgo.domain.registry.ArtifactOperationType.UPDATE)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected an enrichment UPDATE operation"));
+    String enriched = new String(update.payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(
+        enriched.contains("deliveryline/FIN-30/stage-0a4c10f2"),
+        () -> "enriched payload missing actual branch: " + enriched);
+    assertTrue(
+        enriched.contains("dradgo/financemonitor.2019#3"),
+        () -> "enriched payload missing actual prReference: " + enriched);
   }
 
   @Test

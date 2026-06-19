@@ -11,6 +11,7 @@ dependencies.
 
 - **Pilot installer?** Start with → [`docs/quickstart.md`](docs/quickstart.md)
 - **Product Manager reviewing a spec?** → [`docs/pm-loop-walkthrough.md`](docs/pm-loop-walkthrough.md)
+- **Developer reviewing implementation output?** → [`docs/execution-walkthrough.md`](docs/execution-walkthrough.md)
 - **Run failed?** → [`docs/failure-recovery-walkthrough.md`](docs/failure-recovery-walkthrough.md)
 - **All CLI commands** → [`docs/cli/`](docs/cli/README.md) (start at the CLI index for
   exit-code bands, idempotency-key contract, and per-command references —

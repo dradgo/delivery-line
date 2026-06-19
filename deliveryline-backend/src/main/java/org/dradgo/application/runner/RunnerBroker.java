@@ -1742,13 +1742,22 @@ public class RunnerBroker {
           "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/\\d+$");
 
   /**
-   * Story 3.12 (AC3/AC9, Task 3) — for the pr-output sub-stage: validate the runner-reported
-   * branch/commitSha/prReference against the documented formats (AC9 — untrusted runner output),
-   * then against the actual {@code captureAndPush} state (AC3 drift), then enrich the ingested
-   * prOutput artifact with the actual refs (Decision D3 — follow-on UPDATE keyed by artifact id).
-   * Returns {@code true} to continue the success path; {@code false} when it has already driven the
-   * run to {@code Failed} via the existing contract-violation path (the caller then returns without
-   * completing the execution).
+   * Story 3.12 (AC3/AC9, Task 3) — for the pr-output sub-stage: enrich the ingested prOutput
+   * artifact with the AUTHORITATIVE refs (Decision D3 — follow-on UPDATE keyed by artifact id).
+   *
+   * <p>The BACKEND owns git, not the runner: {@code captureAndPush} prepares the workspace + branch
+   * before the container, then commits/pushes/opens the PR after it exits. The runner only edits
+   * files in the mount and reports PLACEHOLDER git refs it cannot know (a {@code codex/<rex>}
+   * branch it never created, a sha256-of-output "commit", and an {@code artifacts/<run>/pr.json}
+   * path for prReference). So when a push outcome is present it is authoritative — we enrich + link
+   * from it (the only consumers of these refs) and do NOT gate on the runner's self-report, which
+   * is guaranteed to differ in branch/commit/prRef and need not match the documented prReference
+   * format. The AC9 format check (untrusted runner output) is retained ONLY for the no-push path
+   * (e.g. the offline mock runner with no repo), where the runner's self-report is all we have.
+   *
+   * <p>Returns {@code true} to continue the success path; {@code false} when it has already driven
+   * the run to {@code Failed} via the existing contract-violation path (the caller then returns
+   * without completing the execution).
    *
    * <p>Never logs payload bytes or diffs; branch / commitSha / PR ref are non-secret git/GitHub
    * identifiers.
@@ -1763,62 +1772,13 @@ public class RunnerBroker {
       String resolvedDiff,
       String correlationId) {
     JsonNode prRef = prOutputArtifactReference(parsed);
-    String reportedBranch = textOrNull(prRef, "branch");
-    String reportedCommitSha = textOrNull(prRef, "commitSha");
-    String reportedPrReference = textOrNull(prRef, "prReference");
-
-    // AC9 — reject malformed runner-reported refs before trusting them for drift/enrichment.
-    String formatError =
-        prOutputFormatError(reportedBranch, reportedCommitSha, reportedPrReference);
-    if (formatError != null) {
-      log.warn(
-          "onResult pr-output ref format invalid runnerExecutionId={} workflowRunId={} field={} "
-              + "errorCode={}",
-          runnerExecutionId,
-          workflowRunId,
-          formatError,
-          DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED.value());
-      handlePrOutputContractFailure(
-          runnerExecutionId,
-          workflowRunId,
-          row,
-          DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED,
-          "runner_output_validation_failed",
-          "malformed runner-reported pr-output ref: " + formatError);
-      return false;
-    }
 
     if (pushOutcome.isPresent()) {
+      // captureAndPush is AUTHORITATIVE (the backend owns git) — trust it and ignore the runner's
+      // placeholder self-reported refs. Decision D3 — enrich the ingested prOutput artifact with
+      // the
+      // ACTUAL refs (follow-on UPDATE).
       RepositoryWorkspaceService.RepositoryPushOutcome actual = pushOutcome.get();
-      // AC3 — the runner-reported values MUST match the actual git/GitHub state captureAndPush
-      // produced (only compared when an actual value is present; prRef may be null — no repo ref).
-      String driftField =
-          prOutputDriftField(
-              reportedBranch,
-              reportedCommitSha,
-              reportedPrReference,
-              actual.branchRef(),
-              actual.commitSha(),
-              actual.prRef());
-      if (driftField != null) {
-        log.warn(
-            "onResult pr-output ref drift runnerExecutionId={} workflowRunId={} field={} "
-                + "errorCode={}",
-            runnerExecutionId,
-            workflowRunId,
-            driftField,
-            DomainErrorCode.RUNNER_PR_REF_DRIFT.value());
-        handlePrOutputContractFailure(
-            runnerExecutionId,
-            workflowRunId,
-            row,
-            DomainErrorCode.RUNNER_PR_REF_DRIFT,
-            "runner_pr_ref_drift",
-            "runner-reported pr-output ref drifted from actual git/GitHub state: " + driftField);
-        return false;
-      }
-      // Decision D3 — enrich the ingested prOutput artifact with the ACTUAL refs (follow-on
-      // UPDATE).
       enrichPrOutputArtifact(
           runnerExecutionId,
           workflowRunId,
@@ -1833,6 +1793,31 @@ public class RunnerBroker {
       // must not unwind the committed runner outcome or block WaitingForReview.
       linkGitHubPrBestEffort(runnerExecutionId, workflowRunId, actual, correlationId);
     } else {
+      // No authoritative push outcome (e.g. the offline mock runner, no repo): the runner's self-
+      // reported refs are all we have, so AC9 still validates their documented format before
+      // ingest.
+      String reportedBranch = textOrNull(prRef, "branch");
+      String reportedCommitSha = textOrNull(prRef, "commitSha");
+      String reportedPrReference = textOrNull(prRef, "prReference");
+      String formatError =
+          prOutputFormatError(reportedBranch, reportedCommitSha, reportedPrReference);
+      if (formatError != null) {
+        log.warn(
+            "onResult pr-output ref format invalid runnerExecutionId={} workflowRunId={} field={} "
+                + "errorCode={}",
+            runnerExecutionId,
+            workflowRunId,
+            formatError,
+            DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED.value());
+        handlePrOutputContractFailure(
+            runnerExecutionId,
+            workflowRunId,
+            row,
+            DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED,
+            "runner_output_validation_failed",
+            "malformed runner-reported pr-output ref: " + formatError);
+        return false;
+      }
       log.debug(
           "onResult pr-output enrichment skipped runnerExecutionId={} workflowRunId={} "
               + "reason=no_push_outcome",
@@ -1937,30 +1922,6 @@ public class RunnerBroker {
     if (prReference != null
         && !PR_OUTPUT_PR_REF_SHORTHAND_PATTERN.matcher(prReference).matches()
         && !PR_OUTPUT_PR_REF_URL_PATTERN.matcher(prReference).matches()) {
-      return "prReference";
-    }
-    return null;
-  }
-
-  /** AC3 — returns the first drifted field name, or {@code null} when reported == actual. */
-  private static String prOutputDriftField(
-      String reportedBranch,
-      String reportedCommitSha,
-      String reportedPrReference,
-      String actualBranch,
-      String actualCommitSha,
-      String actualPrRef) {
-    if (actualBranch != null && reportedBranch != null && !actualBranch.equals(reportedBranch)) {
-      return "branch";
-    }
-    if (actualCommitSha != null
-        && reportedCommitSha != null
-        && !actualCommitSha.equals(reportedCommitSha)) {
-      return "commitSha";
-    }
-    if (actualPrRef != null
-        && reportedPrReference != null
-        && !actualPrRef.equals(reportedPrReference)) {
       return "prReference";
     }
     return null;
