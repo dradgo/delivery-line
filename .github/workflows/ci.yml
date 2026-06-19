@@ -1334,6 +1334,12 @@ jobs:
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
       image-version: ${{ steps.meta.outputs.image-version }}
+    env:
+      # docker compose interpolates the ENTIRE root compose file at parse time
+      # (regardless of --profile), so the postgres service's
+      # ${POSTGRES_PASSWORD:?...} required-variable must resolve even though this
+      # job only builds the runner images. Mirror the foundation-gate placeholder.
+      POSTGRES_PASSWORD: deliveryline-ci
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -1473,6 +1479,11 @@ jobs:
     outputs:
       codex-selftest: ${{ steps.codex.outcome }}
       claude-selftest: ${{ steps.claude.outcome }}
+    env:
+      # `docker compose run` interpolates the root compose file at parse time, so
+      # the postgres service's ${POSTGRES_PASSWORD:?...} required-variable must
+      # resolve even though this job only runs the runner --self-test.
+      POSTGRES_PASSWORD: deliveryline-ci
     steps:
       - name: Checkout
         # Needed so `docker compose run` can resolve the runner service definitions.
