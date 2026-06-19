@@ -1606,9 +1606,18 @@ jobs:
           # inline justification + a deferred-work.md entry — never wrap the test.
           # -am keeps the freshest deliveryline-runner-contracts jar on the
           # classpath (runner-contracts-schema-stale-in-m2).
+          # -Djacoco.check.skip=true: this job runs ONLY RealRunnerContractIT, so
+          # the full-suite jacoco-check line threshold (0.75) can never be met and
+          # would fail the build on coverage, not on the contract. Skip ONLY the
+          # check (the jacoco-check execution binds <skip> to this property,
+          # pom.xml) — prepare-agent/report still run so Failsafe's `@{argLine}`
+          # stays substituted (a blanket -Djacoco.skip crashes the fork). Mirrors
+          # the foundation-gate profile, which skips the check for the same reason;
+          # coverage gating lives on backend-unit-tests / foundation-gate.
           ./mvnw -B -ntp -Pdocker-runner-it -pl deliveryline-backend -am verify \
             -Dit.test=RealRunnerContractIT \
-            -Dfailsafe.failIfNoSpecifiedTests=false
+            -Dfailsafe.failIfNoSpecifiedTests=false \
+            -Djacoco.check.skip=true
 
       - name: Assert RealRunnerContractIT actually ran (no silent fail-open)
         run: |
