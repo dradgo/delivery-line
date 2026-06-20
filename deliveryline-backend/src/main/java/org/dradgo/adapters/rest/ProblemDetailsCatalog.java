@@ -451,6 +451,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Unsupported connector kind",
         false);
+    // Story 3c-4 (AC3) — credential master-key fail-fast guard. 503 + non-retryable, mirroring the
+    // other infrastructure-missing startup faults (DOCTOR_GITHUB_TOKEN_MISSING /
+    // DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED). The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.CREDENTIAL_MASTER_KEY_UNCONFIGURED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Credential master key unconfigured",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

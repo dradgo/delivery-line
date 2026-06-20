@@ -143,7 +143,15 @@ public enum DomainErrorCode implements RegistryValue {
   // site is required here.
   PROJECT_NOT_FOUND("PROJECT_NOT_FOUND"),
   PROJECT_SLUG_CONFLICT("PROJECT_SLUG_CONFLICT"),
-  UNSUPPORTED_CONNECTOR_KIND("UNSUPPORTED_CONNECTOR_KIND");
+  UNSUPPORTED_CONNECTOR_KIND("UNSUPPORTED_CONNECTOR_KIND"),
+  // Story 3c-4 (AC3) — three-sites code (enum + ProblemDetailsCatalog + manifest). Thrown by
+  // CredentialMasterKeyGuard at startup (as a typed DomainException, precedent
+  // DOCTOR_REST_BIND_UNAVAILABLE) when the credential master key is missing AND at least one
+  // project_credentials row exists. SERVICE_UNAVAILABLE + non-retryable (an infrastructure-missing
+  // fail-fast, mirroring DOCTOR_GITHUB_TOKEN_MISSING / DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED). The
+  // cipher's decrypt faults (tamper/wrong-key/bad-algo) do NOT get a code — they throw
+  // CredentialCipherException; the REST/Problem-Details mapping of credential failures is 3c-8.
+  CREDENTIAL_MASTER_KEY_UNCONFIGURED("CREDENTIAL_MASTER_KEY_UNCONFIGURED");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

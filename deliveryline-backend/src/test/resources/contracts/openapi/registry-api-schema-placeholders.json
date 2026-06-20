@@ -156,6 +156,7 @@
     "INVALID_REJECTION_TAXONOMY": "https://deliveryline.local/problems/invalid-rejection-taxonomy",
     "PROJECT_NOT_FOUND": "https://deliveryline.local/problems/project-not-found",
     "PROJECT_SLUG_CONFLICT": "https://deliveryline.local/problems/project-slug-conflict",
-    "UNSUPPORTED_CONNECTOR_KIND": "https://deliveryline.local/problems/unsupported-connector-kind"
+    "UNSUPPORTED_CONNECTOR_KIND": "https://deliveryline.local/problems/unsupported-connector-kind",
+    "CREDENTIAL_MASTER_KEY_UNCONFIGURED": "https://deliveryline.local/problems/credential-master-key-unconfigured"
   }
 }

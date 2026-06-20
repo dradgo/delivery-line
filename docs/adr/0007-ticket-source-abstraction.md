@@ -64,4 +64,6 @@ Keep the governed method and add a raw-string sibling.
 - [Source: `_bmad-output/planning-artifacts/epic-03-agent-execution.md#Story 3.32`] — ACs 1–10 (and §3.33 for the symmetric GitHub sibling).
 - `docs/integrations/ticket-source-extension-contract.md` — the documented extension contract for new ticket sources.
 - `docs/integrations/linear-completion-sync.md` — the completion-sync flow this story must not regress.
+- `docs/adr/0008-repository-host-abstraction.md` — the symmetric repository-host sibling.
+- `docs/adr/0013-credential-encryption.md` — Epic-3c credential-encryption primitive that builds on this per-project connector abstraction (story 3c-4).
 - `docs/adr/0004-spec-stage-orchestration.md` — ADR format followed here.

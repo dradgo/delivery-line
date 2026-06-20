@@ -529,6 +529,25 @@
 											</limit>
 										</limits>
 									</rule>
+									<!-- Story 3c-4 (AC7) - net-new infrastructure.crypto package (the security-gated
+									     credential cipher + master-key guard). 0.90 LINE floor (credential/crypto code,
+									     per 3c-11 AC5) - higher than the 0.80 floor above because this is security-gated
+									     code that should self-protect the moment it lands; 3c-11 then widens coverage to
+									     the rest of the credential subsystem. EnvelopeCredentialCipherTest +
+									     CredentialMasterKeyGuardTest measure well above it. PACKAGE names are DOTTED. -->
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.infrastructure.crypto</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.90</minimum>
+											</limit>
+										</limits>
+									</rule>
 							</rules>
 						</configuration>
 					</execution>

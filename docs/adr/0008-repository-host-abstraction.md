@@ -72,4 +72,5 @@ Rip out `@Profile("github-mock")`/`@Profile("github-real")` and rename `delivery
 - `docs/integrations/repository-host-extension-contract.md` — the documented extension contract for new repository hosts.
 - `docs/adr/0007-ticket-source-abstraction.md` — the symmetric ticket-source ADR.
 - `docs/adr/0020-github-rest-vs-graphql.md`, `docs/adr/0021-github-write-scope.md`, `docs/adr/0022-git-cli-vs-jgit.md` — existing GitHub ADRs.
+- `docs/adr/0013-credential-encryption.md` — Epic-3c credential-encryption primitive that builds on this per-project connector abstraction (story 3c-4).
 - `docs/adr/0004-spec-stage-orchestration.md` — ADR format followed here.

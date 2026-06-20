@@ -150,6 +150,15 @@ deliveryline:
   #     kind: linear
   #   repo-host:
   #     kind: github
+  crypto:
+    # Story 3c-4 — the Base64-encoded 256-bit master key (KEK) that wraps per-credential data keys
+    # for the connector-credential cipher. Supplied at runtime via the DELIVERYLINE_MASTER_KEY env
+    # var (.env / process env) — NEVER committed here. Blank is allowed at bind time (the property is
+    # blank-tolerant, not @Validated); the fail-fast lives in CredentialMasterKeyGuard, which aborts
+    # boot ONLY when the key is missing AND at least one project_credentials row exists. With no
+    # credentials present (greenfield/test) the app boots key-less. Mirrors the linear.api-token /
+    # github.token env-var indirection pattern.
+    master-key: ${DELIVERYLINE_MASTER_KEY:}
   linear:
     # Story 1.14 — the API token is supplied at runtime via the LINEAR_API_TOKEN env var (.env /
     # process env) — NEVER committed here. Blank is allowed at bind time and is fatal only when the

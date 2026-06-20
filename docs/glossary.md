@@ -168,6 +168,39 @@ output").
 
 ---
 
+## Epic 3c vocabulary (multi-project credentials)
+
+These terms are registered here per glossary discipline; story 3c-12 adds the broader
+`project` / `connector` / `credential` vocabulary.
+
+### master key
+
+The single 256-bit **key-encryption key (KEK)** that wraps every per-credential
+[data key](#credential-encryption) in DeliveryLine's credential subsystem. It is resolved at
+startup from the `DELIVERYLINE_MASTER_KEY` host environment variable (Base64-encoded), is **never**
+persisted to the database or any file, and is identified by a stable, non-secret `keyId`
+(`mk_` + the first 12 hex of its SHA-256). Because the master key lives in the host environment, the
+credential subsystem defends against an at-rest database compromise but **not** a host compromise —
+an attacker who can read the host environment can read the master key. A startup guard refuses to
+boot if the master key is missing while encrypted credentials exist.
+
+**See also:** [`adr/0013-credential-encryption.md`](adr/0013-credential-encryption.md),
+[credential encryption](#credential-encryption).
+
+### credential encryption
+
+The **envelope-encryption** scheme that protects per-project connector credentials at rest. Each
+secret is encrypted under a fresh random 256-bit **data key (DEK)** with AES-256-GCM; the DEK is then
+wrapped by the [master key](#master-key). The stored form records the ciphertext, the wrapping
+`keyId`, and the cipher-suite tag (`algo` = `AES-256-GCM`) so both key and suite rotation are
+non-breaking. GCM authentication makes tampering with a stored ciphertext detectable on decryption
+rather than yielding silent partial plaintext.
+
+**See also:** [`adr/0013-credential-encryption.md`](adr/0013-credential-encryption.md),
+[master key](#master-key).
+
+---
+
 ## Linked from
 
 This glossary is referenced from:
