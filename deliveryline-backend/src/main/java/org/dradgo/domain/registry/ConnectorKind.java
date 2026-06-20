@@ -4,7 +4,13 @@ import java.util.Map;
 
 public enum ConnectorKind implements RegistryValue {
   LINEAR("linear"),
-  GITHUB("github");
+  GITHUB("github"),
+  // Story 3c-3 (AC8) — a documented stub kind that proves the per-project kind->adapter seam
+  // (always-on stub adapters declare connectorKind() == GITLAB and report a deliberately degraded
+  // capability set). Widening this enum fans out to V18 (both projects CHECK constraints) + the
+  // connectorKinds API placeholder; the 3c-2 RegistryContractTest drift gate enforces all three
+  // stay aligned. A full GitLab vendor implementation is post-pilot.
+  GITLAB("gitlab");
 
   private static final Map<String, ConnectorKind> LOOKUP = RegistryParsers.index(values());
 

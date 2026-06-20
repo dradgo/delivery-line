@@ -516,6 +516,10 @@
 											<include>org.dradgo.application.integration.ticketsource</include>
 											<include>org.dradgo.application.integration.repohost</include>
 											<include>org.dradgo.application.recovery</include>
+											<!-- Story 3c-3 (AC9) — net-new application.project package (ProjectConnectorResolver
+											     + ProjectCredentialSource seam). 0.80 named floor; ProjectConnectorResolverTest
+											     measures well above it. -->
+											<include>org.dradgo.application.project</include>
 										</includes>
 										<limits>
 											<limit>

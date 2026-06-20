@@ -15,9 +15,11 @@ import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -50,6 +52,7 @@ import org.springframework.stereotype.Component;
  * configured scope.
  */
 @Component
+@Primary
 @Profile("linear-mock")
 public class LinearMockAdapter implements TicketSourceAdapter {
 
@@ -132,6 +135,11 @@ public class LinearMockAdapter implements TicketSourceAdapter {
         summary.runPublicId(),
         summary.fingerprint());
     return CommentResult.POSTED;
+  }
+
+  @Override
+  public ConnectorKind connectorKind() {
+    return ConnectorKind.LINEAR;
   }
 
   @Override

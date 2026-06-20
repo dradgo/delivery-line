@@ -184,6 +184,24 @@ public class RepositoryWorkspaceService {
           stage.value(),
           repositoryRef);
 
+      // 3c-3 AC5 seam — project-scoped repo binding check (pre-clone). Today the expected ref falls
+      // back to the global single-repo config (resolveExpectedRepositoryRef -> the configured ref),
+      // so when the broker passes that same configured ref expected == requested and no new
+      // rejection occurs (byte-identical). 3c-6/3c-7 repoint resolveExpectedRepositoryRef at the
+      // run's Project so this becomes a genuine per-project guard. The requested ref is normalized
+      // and compared case-insensitively (mirrors ProjectConnectorResolver.assertRepositoryRefMatches
+      // Project) so a URL/.git/trailing-slash/case-variant form of the same repo is not falsely
+      // rejected; idempotent on an already-bare lowercase ref so parity holds.
+      Optional<String> expectedRepositoryRef = resolveExpectedRepositoryRef(workflowRunId);
+      String requestedRepositoryRef = RepositoryRef.normalizeRepositoryUrl(repositoryRef);
+      if (expectedRepositoryRef.isPresent()
+          && !expectedRepositoryRef.get().equalsIgnoreCase(requestedRepositoryRef)) {
+        throw repoMismatch(
+            workflowRunId,
+            repositoryRef,
+            "requested repo does not match expected binding " + expectedRepositoryRef.get());
+      }
+
       // AC9 guard FIRST — resolve the repo and reconcile against any existing github_pr link.
       Repository repository = resolveRepositoryOrMismatch(workflowRunId, repositoryRef);
       assertNoConflictingRepoLink(workflowRunId, repositoryRef);
@@ -401,6 +419,25 @@ public class RepositoryWorkspaceService {
    */
   public Optional<String> resolveConfiguredRepositoryRef() {
     return Optional.ofNullable(workflowProperties.repos().repositoryRef());
+  }
+
+  /**
+   * Story 3c-3 (AC5) — the single swap point for the expected repository binding used by the
+   * pre-clone mismatch guard in {@link #prepareWorkspace}. Today it delegates to {@link
+   * #resolveConfiguredRepositoryRef()} (the existing global single-repo source) so behavior is
+   * byte-identical; 3c-6/3c-7 repoint it at the run's {@code Project} repo binding (resolved
+   * through {@code ProjectConnectorResolver.assertRepositoryRefMatchesProject}) once
+   * run&harr;Project wiring exists. Keeping only the config fallback here preserves {@code
+   * REPOSITORY_WORKSPACE_SERVICE_SCOPE}.
+   */
+  // 3c-3 AC5 seam — global fallback until run<->Project wiring (3c-6/3c-7)
+  private Optional<String> resolveExpectedRepositoryRef(String workflowRunId) {
+    Optional<String> expected = resolveConfiguredRepositoryRef();
+    log.debug(
+        "resolveExpectedRepositoryRef workflowRunId={} expectedRepoRef={} source=global_config",
+        workflowRunId,
+        expected.orElse("none"));
+    return expected;
   }
 
   /**

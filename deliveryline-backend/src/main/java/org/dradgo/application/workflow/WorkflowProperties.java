@@ -150,30 +150,10 @@ public record WorkflowProperties(
      * git@host:owner/repo(.git)} forms; the actual clone transport stays HTTPS + PAT regardless.
      */
     public String repositoryRef() {
-      if (url == null) {
-        return null;
-      }
-      String ref = url;
-      if (ref.endsWith(".git")) {
-        ref = ref.substring(0, ref.length() - ".git".length());
-      }
-      int scheme = ref.indexOf("://");
-      if (scheme >= 0) {
-        // https://host/owner/repo or ssh://git@host/owner/repo — strip scheme + host.
-        String afterHost = ref.substring(scheme + 3);
-        int slash = afterHost.indexOf('/');
-        ref = slash >= 0 ? afterHost.substring(slash + 1) : afterHost;
-      } else {
-        int colon = ref.indexOf(':');
-        if (colon >= 0) {
-          // scp-like git@host:owner/repo — strip user@host.
-          ref = ref.substring(colon + 1);
-        }
-      }
-      while (ref.startsWith("/")) {
-        ref = ref.substring(1);
-      }
-      return ref.isBlank() ? null : ref;
+      // Story 3c-3 — the owner/repo normalization is shared with the per-project binding check
+      // (ProjectConnectorResolver, AC5) via RepositoryRef.normalizeRepositoryUrl. The url field is
+      // already trim/blank-normalized by the compact ctor, so delegating is byte-identical.
+      return org.dradgo.domain.integration.repohost.RepositoryRef.normalizeRepositoryUrl(url);
     }
   }
 }

@@ -24,4 +24,47 @@ public record RepositoryRef(String value) {
   public static RepositoryRef of(String value) {
     return new RepositoryRef(value);
   }
+
+  /**
+   * Normalize an {@code owner/repo} slug, an HTTPS clone URL ({@code
+   * https://host/owner/repo(.git)}), or an SSH SCP URL ({@code git@host:owner/repo(.git)}) to the
+   * bare {@code owner/repo} reference, or {@code null} when {@code url} is null/blank or normalizes
+   * to blank. Shared by {@code WorkflowProperties.RepoConfig.repositoryRef()} (the global
+   * single-repo config) and {@code ProjectConnectorResolver.assertRepositoryRefMatchesProject} (the
+   * per-project binding, story 3c-3 AC5) so both derive an identical ref from the same input shapes
+   * rather than duplicating the normalization.
+   *
+   * <p>The result is idempotent: a value already in bare {@code owner/repo} form normalizes to
+   * itself. Trailing slashes are trimmed (so {@code owner/repo/} and {@code owner/repo} agree); the
+   * AC5 guard pairs this with a case-insensitive compare since host repo identity is case-folding.
+   */
+  public static String normalizeRepositoryUrl(String url) {
+    if (url == null || url.isBlank()) {
+      return null;
+    }
+    String ref = url.trim();
+    if (ref.endsWith(".git")) {
+      ref = ref.substring(0, ref.length() - ".git".length());
+    }
+    int scheme = ref.indexOf("://");
+    if (scheme >= 0) {
+      // https://host/owner/repo or ssh://git@host/owner/repo — strip scheme + host.
+      String afterHost = ref.substring(scheme + 3);
+      int slash = afterHost.indexOf('/');
+      ref = slash >= 0 ? afterHost.substring(slash + 1) : afterHost;
+    } else {
+      int colon = ref.indexOf(':');
+      if (colon >= 0) {
+        // scp-like git@host:owner/repo — strip user@host.
+        ref = ref.substring(colon + 1);
+      }
+    }
+    while (ref.startsWith("/")) {
+      ref = ref.substring(1);
+    }
+    while (ref.endsWith("/")) {
+      ref = ref.substring(0, ref.length() - 1);
+    }
+    return ref.isBlank() ? null : ref;
+  }
 }

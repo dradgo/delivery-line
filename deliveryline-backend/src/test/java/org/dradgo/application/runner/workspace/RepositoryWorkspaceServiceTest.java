@@ -139,6 +139,99 @@ class RepositoryWorkspaceServiceTest {
     verify(git, never()).cloneRepository(any(), any());
   }
 
+  // ---- AC5 project-scoped repo-mismatch seam (3c-3) ----
+
+  @Test
+  void prepareWorkspaceIsByteIdenticalWhenConfiguredRefEqualsRequested() {
+    // Parity: today the broker passes the configured repo ref as repositoryRef, so the new
+    // expected==requested seam is a no-op and the happy path proceeds unchanged.
+    RepositoryWorkspaceService configured =
+        new RepositoryWorkspaceService(
+            git,
+            gitHubAdapter,
+            secrets,
+            store,
+            recordPort,
+            links,
+            new WorkflowProperties(
+                WorkflowProperties.Bot.empty(),
+                WorkflowProperties.RepoConfig.of("octo/hello"),
+                WorkflowProperties.LinearCompletionSync.defaults()));
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of("octo/hello")))
+        .thenReturn(
+            Optional.of(
+                new Repository(RepositoryRef.of("octo/hello"), "octo/hello", "main", "git://r")));
+    when(store.prepareRepositoryDir(REX)).thenReturn(REPO_DIR);
+    when(git.checkoutOrReuseBranch(eq(REPO_DIR), anyString(), any()))
+        .thenReturn(GitCommandPort.BranchOutcome.CREATED);
+
+    RepositoryWorkspaceService.RepositoryMount mount =
+        configured.prepareWorkspace(RUN_ID, RunnerStage.INVESTIGATION, REX, "DEL-9", "octo/hello");
+
+    assertThat(mount.defaultBranch()).isEqualTo("main");
+    verify(git).cloneRepository(any(GitCommandPort.CloneSpec.class), any());
+  }
+
+  @Test
+  void prepareWorkspaceRaisesMismatchWhenConfiguredRefDiffersFromRequested() {
+    RepositoryWorkspaceService configured =
+        new RepositoryWorkspaceService(
+            git,
+            gitHubAdapter,
+            secrets,
+            store,
+            recordPort,
+            links,
+            new WorkflowProperties(
+                WorkflowProperties.Bot.empty(),
+                WorkflowProperties.RepoConfig.of("octo/hello"),
+                WorkflowProperties.LinearCompletionSync.defaults()));
+
+    assertThatThrownBy(
+            () ->
+                configured.prepareWorkspace(
+                    RUN_ID, RunnerStage.INVESTIGATION, REX, "DEL-9", "octo/other"))
+        .isInstanceOf(DomainException.class)
+        .satisfies(
+            e ->
+                assertThat(((DomainException) e).errorCode())
+                    .isEqualTo(DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH));
+    // Seam runs before the existing AC9 resolve guard and before any clone.
+    verify(gitHubAdapter, never()).getRepositoryByRef(any());
+    verify(git, never()).cloneRepository(any(), any());
+  }
+
+  @Test
+  void prepareWorkspaceDoesNotMismatchOnACaseOrDotGitVariantOfTheConfiguredRef() {
+    // Review hardening: the seam normalizes + case-folds the requested ref, so a case-variant of
+    // the configured repo is accepted rather than falsely raising LINEAR_GITHUB_REPO_MISMATCH.
+    RepositoryWorkspaceService configured =
+        new RepositoryWorkspaceService(
+            git,
+            gitHubAdapter,
+            secrets,
+            store,
+            recordPort,
+            links,
+            new WorkflowProperties(
+                WorkflowProperties.Bot.empty(),
+                WorkflowProperties.RepoConfig.of("octo/hello"),
+                WorkflowProperties.LinearCompletionSync.defaults()));
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of("Octo/Hello")))
+        .thenReturn(
+            Optional.of(
+                new Repository(RepositoryRef.of("Octo/Hello"), "Octo/Hello", "main", "git://r")));
+    when(store.prepareRepositoryDir(REX)).thenReturn(REPO_DIR);
+    when(git.checkoutOrReuseBranch(eq(REPO_DIR), anyString(), any()))
+        .thenReturn(GitCommandPort.BranchOutcome.CREATED);
+
+    RepositoryWorkspaceService.RepositoryMount mount =
+        configured.prepareWorkspace(RUN_ID, RunnerStage.INVESTIGATION, REX, "DEL-9", "Octo/Hello");
+
+    assertThat(mount.defaultBranch()).isEqualTo("main");
+    verify(git).cloneRepository(any(GitCommandPort.CloneSpec.class), any());
+  }
+
   // ---- prepareWorkspace happy ----
 
   @Test

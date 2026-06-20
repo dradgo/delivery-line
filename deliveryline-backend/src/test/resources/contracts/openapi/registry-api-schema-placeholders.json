@@ -73,7 +73,8 @@
   ],
   "connectorKinds": [
     "linear",
-    "github"
+    "github",
+    "gitlab"
   ],
   "publicIdPrefixes": {
     "workflowRun": "run_",

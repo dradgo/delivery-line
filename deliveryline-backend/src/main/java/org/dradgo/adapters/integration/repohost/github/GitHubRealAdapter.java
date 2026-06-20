@@ -25,11 +25,13 @@ import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.repohost.Repository;
 import org.dradgo.domain.integration.repohost.RepositoryHostCapabilities;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -77,6 +79,7 @@ import org.springframework.web.util.UriComponentsBuilder;
  * RepositoryHostAdapterException}, never a generic unclassified error. This adapter does NOT retry.
  */
 @Component
+@Primary
 @Profile("github-real")
 public class GitHubRealAdapter implements RepositoryHostAdapter {
 
@@ -301,6 +304,11 @@ public class GitHubRealAdapter implements RepositoryHostAdapter {
         prRef,
         elapsedMs(startedAt));
     return CommentResult.POSTED;
+  }
+
+  @Override
+  public ConnectorKind connectorKind() {
+    return ConnectorKind.GITHUB;
   }
 
   @Override

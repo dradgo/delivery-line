@@ -8,6 +8,7 @@ import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.repohost.Repository;
 import org.dradgo.domain.integration.repohost.RepositoryHostCapabilities;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
+import org.dradgo.domain.registry.ConnectorKind;
 
 /**
  * Application-owned, vendor-neutral port for a repository-host integration (story 3.33 — extracted
@@ -31,6 +32,14 @@ import org.dradgo.domain.integration.repohost.RepositoryRef;
  * implementation parses their internal shape.
  */
 public interface RepositoryHostAdapter {
+
+  /**
+   * Declare which {@link ConnectorKind} this adapter serves — the key {@code
+   * ProjectConnectorResolver} selects on (story 3c-3). {@link ConnectorKind} is a {@code
+   * domain.registry} type, so returning it through the port introduces no vendor leak (satisfies
+   * {@code REPOSITORY_HOST_TYPES_MUST_NOT_LEAK_THROUGH_PORT}).
+   */
+  ConnectorKind connectorKind();
 
   /**
    * Look up a repository by its external reference. Returns empty when the repository is not seeded

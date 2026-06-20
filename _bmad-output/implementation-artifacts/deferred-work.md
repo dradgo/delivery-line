@@ -2,6 +2,11 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3c-3 (2026-06-20)
+
+- **AC9 "credential-adjacent code ≥90%" is not independently enforced.** The pom adds `org.dradgo.application.project` only to the per-package **0.80** JaCoCo floor, not a dedicated ≥0.90 limit for the credential-adjacent code the AC calls out. Measured coverage is effectively well above 90% (`ProjectCredentialSource` is a 0-executable-line interface; `resolveConnectorSecret` is covered by empty-path + delegating + no-secret-logging tests), so the AC intent is satisfied in practice. **Follow-up:** add a dedicated ≥0.90 JaCoCo limit if the standing AC is to be enforced literally, or fold the credential code into 3c-5's encrypted-store coverage gate. [`pom.xml:516-528`]
+- **ADR 0012 (per-project connector resolution) not authored.** `architecture.md` L390 anticipates `docs/adr/0012-per-project-connector-resolution.md`; it does not exist. Spec open-decision #3 flagged this **non-blocking** and asked to confirm whether ADRs are batched per-epic. **Follow-up:** PO to confirm ADR cadence — author the profile→kind-lift + stub-seam decision now, or batch per-epic. [`docs/adr/0012-per-project-connector-resolution.md` (absent)]
+
 ## Deferred from: code review of story-3c-1 (2026-06-20)
 
 - **No partial `archived_at` retention index on `projects`/`project_credentials`.** V1 establishes the convention `idx_<table>_archived_at ... where archived_at is not null` for retention sweeps; the two new V17 core tables carry the `archived_at` retention column but get no matching partial index. Not required by any AC and there is no retention consumer yet (Epic 5). **Follow-up:** add the partial archived_at indexes when the Epic 5 retention sweep over projects/credentials lands. [`V17__create_projects_and_credentials.sql`]

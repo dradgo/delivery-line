@@ -8,6 +8,7 @@ import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
+import org.dradgo.domain.registry.ConnectorKind;
 
 /**
  * Application-owned, vendor-neutral port for a ticket-source integration (story 3.32 — extracted
@@ -26,6 +27,14 @@ import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
  * the "only {@code RunnerBroker} may call {@code RunnerAdapter.dispatch}" pattern from story 1.13).
  */
 public interface TicketSourceAdapter {
+
+  /**
+   * Declare which {@link ConnectorKind} this adapter serves — the key {@code
+   * ProjectConnectorResolver} selects on (story 3c-3). {@link ConnectorKind} is a {@code
+   * domain.registry} type, so returning it through the port introduces no vendor leak (satisfies
+   * {@code TICKET_SOURCE_TYPES_MUST_NOT_LEAK_THROUGH_PORT}).
+   */
+  ConnectorKind connectorKind();
 
   /**
    * Look up a ticket by its external reference (e.g., {@code "LIN-123"}). Returns empty when the

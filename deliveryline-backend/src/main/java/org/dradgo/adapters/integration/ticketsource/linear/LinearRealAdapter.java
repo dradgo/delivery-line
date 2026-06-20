@@ -27,10 +27,12 @@ import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -66,6 +68,7 @@ import org.springframework.web.client.RestClientResponseException;
  * decide retry policy (story 1.14 Dev Notes anti-pattern list).
  */
 @Component
+@Primary
 @Profile("linear-real")
 public class LinearRealAdapter implements TicketSourceAdapter {
 
@@ -273,6 +276,11 @@ public class LinearRealAdapter implements TicketSourceAdapter {
         releaseCommentLock(ticketRef, lockState);
       }
     }
+  }
+
+  @Override
+  public ConnectorKind connectorKind() {
+    return ConnectorKind.LINEAR;
   }
 
   @Override

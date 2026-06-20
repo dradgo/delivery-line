@@ -19,9 +19,11 @@ import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.repohost.Repository;
 import org.dradgo.domain.integration.repohost.RepositoryHostCapabilities;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -49,6 +51,7 @@ import org.springframework.stereotype.Component;
  * port.
  */
 @Component
+@Primary
 @Profile("github-mock")
 public class GitHubMockAdapter implements RepositoryHostAdapter {
 
@@ -211,6 +214,11 @@ public class GitHubMockAdapter implements RepositoryHostAdapter {
         prRef,
         fingerprint);
     return CommentResult.POSTED;
+  }
+
+  @Override
+  public ConnectorKind connectorKind() {
+    return ConnectorKind.GITHUB;
   }
 
   @Override
