@@ -42,7 +42,6 @@ import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -155,11 +154,27 @@ class TicketSourceAbstractionFoundationContract {
 
   // -------- helpers ----------------------------------------------------------------------------
 
-  @SuppressWarnings("unchecked")
   private static WorkflowOrchestrationService serviceWith(
       TicketSourceAdapter adapter, WorkflowEventWritePort eventWritePort) {
-    ObjectProvider<TicketSourceAdapter> provider = mock(ObjectProvider.class);
-    when(provider.getIfAvailable()).thenReturn(adapter);
+    // Story 3c-7 — per-project ticket-source resolution replaces the global ObjectProvider seam.
+    org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver =
+        mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class);
+    org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver =
+        mock(org.dradgo.application.project.ProjectConnectorResolver.class);
+    org.dradgo.domain.project.Project project =
+        new org.dradgo.domain.project.Project(
+            "prj_default0001",
+            "Default",
+            "default",
+            org.dradgo.domain.registry.ProjectStatus.ACTIVE,
+            null,
+            org.dradgo.domain.registry.ConnectorKind.LINEAR,
+            org.dradgo.domain.registry.ConnectorKind.GITHUB,
+            false,
+            java.time.OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+            null);
+    when(projectRuntimeConfigResolver.resolveForRun(any())).thenReturn(project);
+    when(projectConnectorResolver.findTicketSource(any())).thenReturn(Optional.of(adapter));
 
     IntegrationLinkService integrationLinkService = mock(IntegrationLinkService.class);
     when(integrationLinkService.findActiveLinearTicketLink("run_foundation12"))
@@ -184,7 +199,8 @@ class TicketSourceAbstractionFoundationContract {
         mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class),
         org.dradgo.application.runner.RunnerProperties.defaults(),
         mock(org.dradgo.application.runner.ContextBundleService.class),
-        provider,
+        projectRuntimeConfigResolver,
+        projectConnectorResolver,
         redaction,
         WorkflowProperties.defaults(),
         integrationLinkService,

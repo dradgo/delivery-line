@@ -28,6 +28,16 @@ import org.dradgo.domain.registry.RunnerStage;
  * dispatch and for the legacy/recovery generic path (adapter falls back to {@code "execution"} →
  * {@code prOutput}, byte-identical to pre-3b behavior). It mirrors the nullable {@code
  * repositoryRef} seam: a plain record component, not a ctor dependency, so DI wiring is unaffected.
+ *
+ * <p>Story 3c-7 (AC2): {@code openspecEnabled} is added as a trailing {@code boolean} carrying the
+ * per-run OpenSpec opt-in <em>resolved in the broker</em> from the run's {@link
+ * org.dradgo.application.project.ProjectRuntimeConfigResolver} (default-project fallback) — so
+ * {@code DockerRunnerAdapter} emits {@code DELIVERYLINE_RUNNER_OPENSPEC} from {@code
+ * request.openspecEnabled()} rather than reading the global {@code
+ * RunnerProperties.openSpecEnabled()} on the hot path (R2: resolve-in-broker, pass-via-request — no
+ * adapter→application-service dependency). It defaults to {@code false} in every back-compat
+ * constructor, so existing construction sites (mock + no-repo dispatch + tests) stay byte-identical
+ * (no env var emitted).
  */
 public record RunnerDispatchRequest(
     String runnerExecutionId,
@@ -40,7 +50,8 @@ public record RunnerDispatchRequest(
     String repositoryRef,
     String linearTicketRef,
     String linearTicketSummary,
-    ExecutionSubStage subStage) {
+    ExecutionSubStage subStage,
+    boolean openspecEnabled) {
 
   public RunnerDispatchRequest {
     if (runnerExecutionId == null || runnerExecutionId.isBlank()) {
@@ -86,7 +97,41 @@ public record RunnerDispatchRequest(
         repositoryRef,
         linearTicketRef,
         linearTicketSummary,
-        null);
+        null,
+        false);
+  }
+
+  /**
+   * Story 3c-7 (AC2) — broker dispatch constructor: repository seam + ticket ref + resolved {@link
+   * ExecutionSubStage} + the per-run {@code openspecEnabled} flag resolved in {@code RunnerBroker}.
+   * Distinct from the pre-3b 10-arg {@code subStage} constructor by the trailing {@code boolean}
+   * (no overload ambiguity). Leaves {@code linearTicketSummary = null}, matching the broker sites.
+   */
+  public RunnerDispatchRequest(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerStage stage,
+      RunnerKind runnerKind,
+      Path contextBundlePath,
+      ExecutionConstraints executionConstraints,
+      DataClassification classification,
+      String repositoryRef,
+      String linearTicketRef,
+      ExecutionSubStage subStage,
+      boolean openspecEnabled) {
+    this(
+        runnerExecutionId,
+        workflowRunId,
+        stage,
+        runnerKind,
+        contextBundlePath,
+        executionConstraints,
+        classification,
+        repositoryRef,
+        linearTicketRef,
+        null,
+        subStage,
+        openspecEnabled);
   }
 
   /**
@@ -117,7 +162,8 @@ public record RunnerDispatchRequest(
         repositoryRef,
         linearTicketRef,
         null,
-        subStage);
+        subStage,
+        false);
   }
 
   /**
@@ -144,7 +190,8 @@ public record RunnerDispatchRequest(
         repositoryRef,
         linearTicketRef,
         null,
-        null);
+        null,
+        false);
   }
 
   /**
@@ -171,6 +218,7 @@ public record RunnerDispatchRequest(
         null,
         null,
         null,
-        null);
+        null,
+        false);
   }
 }

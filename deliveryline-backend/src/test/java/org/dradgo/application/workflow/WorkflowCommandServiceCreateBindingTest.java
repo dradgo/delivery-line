@@ -112,9 +112,86 @@ class WorkflowCommandServiceCreateBindingTest {
     verify(workflowRunCreatePort, org.mockito.Mockito.never()).create(any(), any(), any());
   }
 
+  @Test
+  void submitBindsToExplicitProjectResolvedBySlug() {
+    Project acme =
+        new Project(
+            "prj_acme0001",
+            "Acme",
+            "acme",
+            ProjectStatus.ACTIVE,
+            "acme/widgets",
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            true,
+            OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+            null);
+    when(projectStore.findBySlug("acme")).thenReturn(Optional.of(acme));
+    when(workflowRunCreatePort.create(anyString(), eq(WorkflowState.INBOX), eq("prj_acme0001")))
+        .thenAnswer(invocation -> snapshot(invocation.getArgument(0)));
+    when(workflowRunReadPort.findByPublicId(anyString())).thenReturn(Optional.empty());
+
+    ReflectionTestUtils.invokeMethod(service, "submitInternal", commandWithProject("acme"));
+
+    ArgumentCaptor<String> projectIdCaptor = ArgumentCaptor.forClass(String.class);
+    verify(workflowRunCreatePort)
+        .create(anyString(), eq(WorkflowState.INBOX), projectIdCaptor.capture());
+    assertThat(projectIdCaptor.getValue()).isEqualTo("prj_acme0001");
+    // Explicit reference takes the slug branch — the default slug is never consulted.
+    verify(projectStore, org.mockito.Mockito.never())
+        .findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG);
+  }
+
+  @Test
+  void submitBindsToExplicitProjectResolvedByPublicId() {
+    Project acme =
+        new Project(
+            "prj_acme0001",
+            "Acme",
+            "acme",
+            ProjectStatus.ACTIVE,
+            "acme/widgets",
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            true,
+            OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+            null);
+    when(projectStore.findByPublicId("prj_acme0001")).thenReturn(Optional.of(acme));
+    when(workflowRunCreatePort.create(anyString(), eq(WorkflowState.INBOX), eq("prj_acme0001")))
+        .thenAnswer(invocation -> snapshot(invocation.getArgument(0)));
+    when(workflowRunReadPort.findByPublicId(anyString())).thenReturn(Optional.empty());
+
+    ReflectionTestUtils.invokeMethod(service, "submitInternal", commandWithProject("prj_acme0001"));
+
+    verify(workflowRunCreatePort).create(anyString(), eq(WorkflowState.INBOX), eq("prj_acme0001"));
+    // The `prj_` prefix routes to findByPublicId, not findBySlug.
+    verify(projectStore, org.mockito.Mockito.never()).findBySlug("prj_acme0001");
+  }
+
+  @Test
+  void submitWithUnknownExplicitProjectReferenceRaisesProjectNotFound() {
+    when(projectStore.findBySlug("ghost")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                ReflectionTestUtils.invokeMethod(
+                    service, "submitInternal", commandWithProject("ghost")))
+        .isInstanceOf(DomainException.class)
+        .satisfies(
+            e ->
+                assertThat(((DomainException) e).errorCode())
+                    .isEqualTo(DomainErrorCode.PROJECT_NOT_FOUND));
+    verify(workflowRunCreatePort, org.mockito.Mockito.never()).create(any(), any(), any());
+  }
+
   private static SubmitWorkflowCommand command() {
     return new SubmitWorkflowCommand(
         "alex", ActorType.HUMAN, "idem-3c6-001", "corr-3c6-001", "DL-1");
+  }
+
+  private static SubmitWorkflowCommand commandWithProject(String projectReference) {
+    return new SubmitWorkflowCommand(
+        "alex", ActorType.HUMAN, "idem-3c7-001", "corr-3c7-001", "DL-1", projectReference);
   }
 
   private static WorkflowRunSnapshot snapshot(String publicId) {

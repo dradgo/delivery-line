@@ -29,4 +29,22 @@ public record SubmitBatchCommand(
     @NotBlank @Size(max = 128) String actorIdentity,
     @NotNull ActorType actorType,
     @NotBlank @Size(max = 256) String idempotencyKey,
-    @Size(max = 128) String correlationId) {}
+    @Size(max = 128) String correlationId,
+    @Size(max = 128) String projectReference) {
+
+  /**
+   * Story 3c-7 (AC1) — an optional {@code projectReference} (slug or {@code prj_} id) binds every
+   * ticket in the batch to the same explicit project; {@code WorkflowBatchSubmissionService}
+   * threads it into each per-ticket {@link SubmitWorkflowCommand}. Back-compat constructor
+   * (pre-3c-7 shape) leaves it null so every existing construction site (REST batch, tests) binds
+   * to {@code default}.
+   */
+  public SubmitBatchCommand(
+      List<String> linearTicketReferences,
+      String actorIdentity,
+      ActorType actorType,
+      String idempotencyKey,
+      String correlationId) {
+    this(linearTicketReferences, actorIdentity, actorType, idempotencyKey, correlationId, null);
+  }
+}

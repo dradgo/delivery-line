@@ -315,6 +315,134 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
+  void dispatchExecutionWithProjectResolver_threadsProjectRepoRefAndOpenspecIntoRequest() {
+    // Story 3c-7 (AC2) — when the ProjectRuntimeConfigResolver is wired, the bundle repo-ref comes
+    // from the run's Project (NOT the global resolveConfiguredRepositoryRef) and the per-run
+    // OpenSpec
+    // flag is resolved + threaded onto the dispatch request.
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    RunnerBroker repoBroker =
+        new RunnerBroker(
+            recordPort,
+            eventPort,
+            executionService,
+            contextBundleService,
+            idempotencyService,
+            workflowTransitionService,
+            artifactOperationService,
+            runnerAdapter,
+            scratchStore,
+            new RunnerContractValidator(),
+            runnerProperties,
+            secretScanService,
+            callthroughTemplate(),
+            callthroughTemplate(),
+            CLOCK,
+            repoService);
+    org.dradgo.application.project.ProjectRuntimeConfigResolver resolver =
+        mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class);
+    // Story 3c-7 review (P4) — the broker now resolves the run's Project once (so the dispatch
+    // decision logs carry project.publicId() for FR63) and derives the repo ref + OpenSpec flag
+    // from
+    // it, instead of calling resolveRepositoryRef/resolveOpenSpecEnabled separately.
+    org.dradgo.domain.project.Project project =
+        new org.dradgo.domain.project.Project(
+            org.dradgo.domain.id.PublicIdPrefixes.PROJECT.next(),
+            "Acme",
+            "acme",
+            org.dradgo.domain.registry.ProjectStatus.ACTIVE,
+            "acme/widgets",
+            org.dradgo.domain.registry.ConnectorKind.LINEAR,
+            org.dradgo.domain.registry.ConnectorKind.GITHUB,
+            true,
+            java.time.OffsetDateTime.now(CLOCK),
+            null);
+    when(resolver.resolveForRun(RUN_ID)).thenReturn(project);
+    repoBroker.setProjectRuntimeConfigResolver(resolver);
+
+    String branch = "deliveryline/DL-3c7/stage-12345678";
+    RepositoryWorkspaceService.RepositoryMount mount =
+        new RepositoryWorkspaceService.RepositoryMount(
+            Paths.get("/tmp/repo"), "/workspace/repo", "main", branch);
+    org.dradgo.application.runner.workspace.RepositoryContextSummary summary =
+        new org.dradgo.application.runner.workspace.RepositoryContextSummary(
+            "/workspace/repo", List.of(), "README.md", List.of(), "config:acme/widgets@1");
+
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(1);
+    when(idempotencyService.checkAndReserve(eq("idem-exec"), any(), any(), any()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(repoService.prepareWorkspace(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), any(), eq("acme/widgets")))
+        .thenReturn(mount);
+    when(repoService.summarize(eq(mount), any())).thenReturn(summary);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    ContextBundle bundle =
+        new ContextBundle(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            REX_ID,
+            1,
+            org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+            "{}".getBytes(StandardCharsets.UTF_8));
+    when(contextBundleService.create(
+            eq(RUN_ID),
+            eq(RunnerStage.EXECUTION),
+            any(),
+            eq(1),
+            any(),
+            any(),
+            eq(ACTOR),
+            eq(ExecutionSubStage.PR_OUTPUT),
+            eq(summary),
+            eq(branch)))
+        .thenReturn(bundle);
+    when(recordPort.insertPending(any(), eq(RUN_ID), eq(RunnerStage.EXECUTION), eq(1), any()))
+        .thenAnswer(
+            invocation -> snapshot(invocation.getArgument(0), RunnerExecutionStatus.PENDING));
+    when(scratchStore.writeContextBundle(any(), any()))
+        .thenReturn(Paths.get("/tmp/context-bundle.v1.json"));
+    when(runnerAdapter.dispatch(any())).thenReturn(new RunnerDispatchAck("mock:exec"));
+
+    // Story 3c-7 review (P5) — pin the new bundle/openspec INFO branches so the per-run resolution
+    // is observable in logs (the story requires one log assertion per new branch).
+    Logger brokerLog = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    brokerLog.addAppender(appender);
+    try {
+      repoBroker.dispatch(RUN_ID, RunnerStage.EXECUTION, "idem-exec", ACTOR);
+    } finally {
+      brokerLog.detachAppender(appender);
+    }
+
+    ArgumentCaptor<RunnerDispatchRequest> requestCaptor =
+        ArgumentCaptor.forClass(RunnerDispatchRequest.class);
+    verify(runnerAdapter).dispatch(requestCaptor.capture());
+    assertEquals("acme/widgets", requestCaptor.getValue().repositoryRef());
+    assertEquals(true, requestCaptor.getValue().openspecEnabled());
+    verify(resolver, org.mockito.Mockito.atLeastOnce()).resolveForRun(RUN_ID);
+    // The global single-repo config is NOT consulted on the per-run path when a resolver is wired.
+    verify(repoService, org.mockito.Mockito.never()).resolveConfiguredRepositoryRef();
+    assertTrue(
+        appender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel() == Level.INFO
+                        && e.getFormattedMessage().contains("bundle repo-ref resolved")
+                        && e.getFormattedMessage().contains("source=run_project")),
+        "expected an INFO log for the per-run bundle repo-ref resolution");
+    assertTrue(
+        appender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel() == Level.INFO
+                        && e.getFormattedMessage().contains("openspec resolved")
+                        && e.getFormattedMessage().contains("source=run_project")),
+        "expected an INFO log for the per-run openspec resolution");
+  }
+
+  @Test
   void dispatchExecutionWithProvider_threadsResolvedTicketRefIntoWorkspacePreparation() {
     // Story 3.10 (OQ-1) — the production path: a non-null TicketSummaryProvider resolves the run's
     // ticketRef, which drives the deterministic branch (story 3.9 AC2) and is threaded into

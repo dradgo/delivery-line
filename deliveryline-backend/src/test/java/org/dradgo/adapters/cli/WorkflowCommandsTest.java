@@ -41,7 +41,7 @@ class WorkflowCommandsTest {
         new WorkflowCommands(service, () -> true, () -> "01964c38-1c45-7000-8000-000000000000");
 
     String output =
-        commands.submit("LIN-123", "alex", ActorType.HUMAN, null, "corr-submit-1", true);
+        commands.submit("LIN-123", "alex", ActorType.HUMAN, null, "corr-submit-1", null, true);
 
     ArgumentCaptor<SubmitWorkflowCommand> captor =
         ArgumentCaptor.forClass(SubmitWorkflowCommand.class);
@@ -62,7 +62,7 @@ class WorkflowCommandsTest {
         new WorkflowCommands(service, () -> true, () -> "01964c38-1c45-7000-8000-000000000000");
 
     String output =
-        commands.submit("LIN-123", "alex", ActorType.HUMAN, null, "corr-submit-1", false);
+        commands.submit("LIN-123", "alex", ActorType.HUMAN, null, "corr-submit-1", null, false);
 
     assertEquals(
         "run_submit1234 submitted (state: Inbox) [generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]",
@@ -77,7 +77,7 @@ class WorkflowCommandsTest {
     WorkflowCommands commands =
         new WorkflowCommands(service, () -> true, () -> "01964c38-1c45-7000-8000-000000000000");
 
-    commands.submit("LIN-123", "alex", ActorType.HUMAN, null, null, false);
+    commands.submit("LIN-123", "alex", ActorType.HUMAN, null, null, null, false);
 
     ArgumentCaptor<SubmitWorkflowCommand> captor =
         ArgumentCaptor.forClass(SubmitWorkflowCommand.class);
@@ -95,7 +95,8 @@ class WorkflowCommandsTest {
         assertThrows(
             DomainException.class,
             () ->
-                commands.submit("LIN-123", "alex", ActorType.HUMAN, null, "corr-submit-1", false));
+                commands.submit(
+                    "LIN-123", "alex", ActorType.HUMAN, null, "corr-submit-1", null, false));
 
     assertEquals(DomainErrorCode.MISSING_IDEMPOTENCY_KEY, error.errorCode());
     verifyNoInteractions(service);

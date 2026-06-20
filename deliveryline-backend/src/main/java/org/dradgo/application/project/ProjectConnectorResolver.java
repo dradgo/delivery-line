@@ -95,6 +95,19 @@ public class ProjectConnectorResolver {
   }
 
   /**
+   * Story 3c-7 (AC4 / R3) — the {@link TicketSourceAdapter} for the project's kind <em>when one is
+   * registered in this context</em>, else empty. Unlike {@link #resolveTicketSource} this does NOT
+   * throw {@link DomainErrorCode#UNSUPPORTED_CONNECTOR_KIND} on a miss: the Linear completion-sync
+   * path runs in many profile-gated contexts with no ticket-source adapter active for the project's
+   * kind, and must <strong>preserve its {@code SKIPPED_NO_LINEAR_PROFILE} skip</strong> rather than
+   * surface a thrown error. Probe-before-resolve.
+   */
+  public Optional<TicketSourceAdapter> findTicketSource(Project project) {
+    Objects.requireNonNull(project, "project");
+    return Optional.ofNullable(ticketSourceByKind.get(project.ticketSourceKind()));
+  }
+
+  /**
    * AC1/AC2 — the {@link RepositoryHostAdapter} whose declared kind equals {@code
    * project.repoHostKind()}. Raises {@link DomainErrorCode#UNSUPPORTED_CONNECTOR_KIND} when no
    * adapter is registered for that kind (AC3).

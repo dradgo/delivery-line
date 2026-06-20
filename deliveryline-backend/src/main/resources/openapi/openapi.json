@@ -675,6 +675,11 @@
             "maxLength" : 128,
             "minLength" : 0,
             "type" : "string"
+          },
+          "projectReference" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
           }
         },
         "required" : [

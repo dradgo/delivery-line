@@ -15,6 +15,7 @@ import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.project.ProjectConnectorResolver;
 import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
@@ -30,6 +31,7 @@ import org.dradgo.domain.integration.repohost.PullRequest;
 import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.repohost.Repository;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.RunnerStage;
@@ -121,6 +123,13 @@ public class RepositoryWorkspaceService {
   // Project.
   // When null the seam falls back to the global single-repo config (byte-identical pre-3c-6).
   private final ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
+  // Story 3c-7 (AC3) — per-project repo-host adapter selection (run -> Project -> repoHostKind ->
+  // adapter). Nullable for the same reason as the runtime resolver: the git-focused service-level
+  // tests construct via the no-resolver ctor and keep the single @Primary-injected adapter. In
+  // PRODUCTION the @Autowired ctor injects the always-present application.project @Component, so
+  // the
+  // adapter is selected per the run's Project (default project => the same github adapter, parity).
+  private final ProjectConnectorResolver projectConnectorResolver;
   private final Clock clock;
 
   @org.springframework.beans.factory.annotation.Autowired
@@ -132,7 +141,8 @@ public class RepositoryWorkspaceService {
       RunnerExecutionRecordPort recordPort,
       IntegrationLinkRecordPort integrationLinkRecordPort,
       WorkflowProperties workflowProperties,
-      ProjectRuntimeConfigResolver projectRuntimeConfigResolver) {
+      ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
+      ProjectConnectorResolver projectConnectorResolver) {
     this(
         git,
         repositoryHostAdapter,
@@ -142,14 +152,16 @@ public class RepositoryWorkspaceService {
         integrationLinkRecordPort,
         workflowProperties,
         projectRuntimeConfigResolver,
+        projectConnectorResolver,
         Clock.systemUTC());
   }
 
   /**
-   * Test-facing constructor (no {@link ProjectRuntimeConfigResolver}): the git-focused
-   * service-level tests exercise clone/capture/push behavior, not project resolution, so they keep
-   * the pre-3c-6 global-config repo-ref behavior. Production always uses the {@code @Autowired}
-   * resolver ctor.
+   * Test-facing constructor (no {@link ProjectRuntimeConfigResolver}/{@link
+   * ProjectConnectorResolver}): the git-focused service-level tests exercise clone/capture/push
+   * behavior, not project resolution, so they keep the pre-3c-6 global-config repo-ref behavior +
+   * the single injected repo-host adapter. Production always uses the {@code @Autowired} resolver
+   * ctor.
    */
   public RepositoryWorkspaceService(
       GitCommandPort git,
@@ -168,6 +180,35 @@ public class RepositoryWorkspaceService {
         integrationLinkRecordPort,
         workflowProperties,
         null,
+        null,
+        Clock.systemUTC());
+  }
+
+  /**
+   * Back-compat constructor (story 3c-6 shape: runtime resolver, no connector resolver) — keeps the
+   * 3c-6 mismatch-guard tests that pass only a {@link ProjectRuntimeConfigResolver} unchanged. The
+   * repo-host adapter then falls back to the single injected adapter (no per-project selection),
+   * which is what those tests assert.
+   */
+  public RepositoryWorkspaceService(
+      GitCommandPort git,
+      RepositoryHostAdapter repositoryHostAdapter,
+      RunnerSecretsService runnerSecretsService,
+      RunnerWorkspaceStore workspaceStore,
+      RunnerExecutionRecordPort recordPort,
+      IntegrationLinkRecordPort integrationLinkRecordPort,
+      WorkflowProperties workflowProperties,
+      ProjectRuntimeConfigResolver projectRuntimeConfigResolver) {
+    this(
+        git,
+        repositoryHostAdapter,
+        runnerSecretsService,
+        workspaceStore,
+        recordPort,
+        integrationLinkRecordPort,
+        workflowProperties,
+        projectRuntimeConfigResolver,
+        null,
         Clock.systemUTC());
   }
 
@@ -180,6 +221,7 @@ public class RepositoryWorkspaceService {
       IntegrationLinkRecordPort integrationLinkRecordPort,
       WorkflowProperties workflowProperties,
       ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
+      ProjectConnectorResolver projectConnectorResolver,
       Clock clock) {
     this.git = Objects.requireNonNull(git, "git");
     this.repositoryHostAdapter =
@@ -193,6 +235,7 @@ public class RepositoryWorkspaceService {
     this.workflowProperties = Objects.requireNonNull(workflowProperties, "workflowProperties");
     // nullable by design (see field doc) — no requireNonNull.
     this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
+    this.projectConnectorResolver = projectConnectorResolver;
     this.clock = Objects.requireNonNull(clock, "clock");
   }
 
@@ -232,7 +275,11 @@ public class RepositoryWorkspaceService {
       // ProjectConnectorResolver.assertRepositoryRefMatches
       // Project) so a URL/.git/trailing-slash/case-variant form of the same repo is not falsely
       // rejected; idempotent on an already-bare lowercase ref so parity holds.
-      Optional<String> expectedRepositoryRef = resolveExpectedRepositoryRef(workflowRunId);
+      // Story 3c-7 review (P3) — resolve the run's Project ONCE here and share it with both the
+      // expected-ref guard and the repo-host selection (each previously re-resolved it). Null only
+      // when no runtime resolver is wired (the git-focused service-level tests).
+      Project project = resolveProjectOrNull(workflowRunId);
+      Optional<String> expectedRepositoryRef = resolveExpectedRepositoryRef(workflowRunId, project);
       String requestedRepositoryRef = RepositoryRef.normalizeRepositoryUrl(repositoryRef);
       if (expectedRepositoryRef.isPresent()
           && !expectedRepositoryRef.get().equalsIgnoreCase(requestedRepositoryRef)) {
@@ -242,9 +289,15 @@ public class RepositoryWorkspaceService {
             "requested repo does not match expected binding " + expectedRepositoryRef.get());
       }
 
+      // Story 3c-7 (AC3) — select the repo-host adapter for the run's Project (default => github,
+      // parity). Used for both the repo-resolve below and the capture-time PR ops in
+      // captureAndPush.
+      RepositoryHostAdapter hostAdapter = repositoryHostFor(workflowRunId, project);
+
       // AC9 guard FIRST — resolve the repo and reconcile against any existing github_pr link.
-      Repository repository = resolveRepositoryOrMismatch(workflowRunId, repositoryRef);
-      assertNoConflictingRepoLink(workflowRunId, repositoryRef);
+      Repository repository =
+          resolveRepositoryOrMismatch(workflowRunId, repositoryRef, hostAdapter);
+      assertNoConflictingRepoLink(workflowRunId, repositoryRef, hostAdapter);
 
       String token = runnerSecretsService.resolveHostSecret(GITHUB_TOKEN_ENV).orElse(null);
       Path repoDir = workspaceStore.prepareRepositoryDir(runnerExecutionId);
@@ -473,10 +526,23 @@ public class RepositoryWorkspaceService {
    * resolver is {@code application.project}, so {@code REPOSITORY_WORKSPACE_SERVICE_SCOPE} (forbids
    * {@code adapters..}/ {@code jgit}) still holds.
    */
-  // 3c-6 — repointed to run's Project (default-project fallback); remaining consumers wired in 3c-7
-  private Optional<String> resolveExpectedRepositoryRef(String workflowRunId) {
-    if (projectRuntimeConfigResolver != null) {
-      Optional<String> expected = projectRuntimeConfigResolver.resolveRepositoryRef(workflowRunId);
+  // Story 3c-7 review (P3) — resolve the run's effective Project once (null only when no runtime
+  // resolver is wired, i.e. the git-focused service-level tests); callers share it so a single
+  // prepareWorkspace no longer re-resolves the Project for the ref guard and the host selection.
+  private Project resolveProjectOrNull(String workflowRunId) {
+    return projectRuntimeConfigResolver == null
+        ? null
+        : projectRuntimeConfigResolver.resolveForRun(workflowRunId);
+  }
+
+  // 3c-6 — repointed to run's Project (default-project fallback); remaining consumers wired in
+  // 3c-7.
+  // Takes the already-resolved Project (P3) so it never re-resolves; identical to deriving the ref
+  // via ProjectRuntimeConfigResolver.resolveRepositoryRef for the same run.
+  private Optional<String> resolveExpectedRepositoryRef(String workflowRunId, Project project) {
+    if (project != null) {
+      Optional<String> expected =
+          Optional.ofNullable(RepositoryRef.normalizeRepositoryUrl(project.repositoryUrl()));
       log.debug(
           "resolveExpectedRepositoryRef workflowRunId={} expectedRepoRef={} source=run_project_default_fallback",
           workflowRunId,
@@ -489,6 +555,37 @@ public class RepositoryWorkspaceService {
         workflowRunId,
         expected.orElse("none"));
     return expected;
+  }
+
+  /**
+   * Story 3c-7 (AC3) — select the repo-host adapter for the run's Project (run &rarr; Project
+   * &rarr; {@code repoHostKind} &rarr; adapter via {@link
+   * ProjectConnectorResolver#resolveRepositoryHost}). For the {@code default} project (kind {@code
+   * github}) this returns the same {@code github} adapter the {@code @Primary}-injected {@link
+   * #repositoryHostAdapter} is, so a single-project deployment is byte-identical (AC7 parity).
+   * Falls back to the injected adapter only in the git-focused service-level tests that construct
+   * without the resolvers. Credentials are unaffected — the host-env {@code GITHUB_TOKEN} path is
+   * unchanged (R4).
+   */
+  private RepositoryHostAdapter repositoryHostFor(String workflowRunId) {
+    return repositoryHostFor(workflowRunId, resolveProjectOrNull(workflowRunId));
+  }
+
+  // Story 3c-7 review (P3) — overload taking the already-resolved Project so prepareWorkspace
+  // shares
+  // a single resolve across the ref guard + host selection. Falls back to the injected adapter when
+  // no project/connector resolver is wired (git-focused service-level tests).
+  private RepositoryHostAdapter repositoryHostFor(String workflowRunId, Project project) {
+    if (project == null || projectConnectorResolver == null) {
+      return repositoryHostAdapter;
+    }
+    RepositoryHostAdapter adapter = projectConnectorResolver.resolveRepositoryHost(project);
+    log.info(
+        "repo-host adapter resolved workflowRunId={} projectId={} connectorKind={}",
+        workflowRunId,
+        project.publicId(),
+        project.repoHostKind().value());
+    return adapter;
   }
 
   /**
@@ -548,10 +645,11 @@ public class RepositoryWorkspaceService {
   // AC9 guard helpers
   // =====================================================================
 
-  private Repository resolveRepositoryOrMismatch(String workflowRunId, String repositoryRef) {
+  private Repository resolveRepositoryOrMismatch(
+      String workflowRunId, String repositoryRef, RepositoryHostAdapter hostAdapter) {
     Optional<Repository> repo;
     try {
-      repo = repositoryHostAdapter.getRepositoryByRef(RepositoryRef.of(repositoryRef));
+      repo = hostAdapter.getRepositoryByRef(RepositoryRef.of(repositoryRef));
     } catch (RepositoryHostAdapterException adapterError) {
       throw repoMismatch(
           workflowRunId,
@@ -562,7 +660,8 @@ public class RepositoryWorkspaceService {
         () -> repoMismatch(workflowRunId, repositoryRef, "repository ref does not resolve"));
   }
 
-  private void assertNoConflictingRepoLink(String workflowRunId, String repositoryRef) {
+  private void assertNoConflictingRepoLink(
+      String workflowRunId, String repositoryRef, RepositoryHostAdapter hostAdapter) {
     if (workflowRunId == null || workflowRunId.isBlank()) {
       return;
     }
@@ -575,7 +674,7 @@ public class RepositoryWorkspaceService {
     String prRef = existing.get().externalRef();
     Optional<PullRequest> pr;
     try {
-      pr = repositoryHostAdapter.getPullRequestByRef(PullRequestRef.of(prRef));
+      pr = hostAdapter.getPullRequestByRef(PullRequestRef.of(prRef));
     } catch (RepositoryHostAdapterException adapterError) {
       // A linked PR we can no longer resolve is itself a reconciliation failure.
       throw repoMismatch(workflowRunId, repositoryRef, "linked PR unresolvable");
@@ -624,6 +723,12 @@ public class RepositoryWorkspaceService {
           branch);
       return null;
     }
+    // Story 3c-7 review (P2) — resolve the run's Project repo-host adapter only AFTER the
+    // no-repoRef
+    // early return, so a PR-less push never triggers per-project connector resolution (which could
+    // raise UNSUPPORTED_CONNECTOR_KIND for a non-default project whose kind has no registered
+    // adapter). Default project => the same github adapter, parity.
+    RepositoryHostAdapter hostAdapter = repositoryHostFor(workflowRunId);
     String body = pullRequestBody(workflowRunId, stage, commitSha);
     // D7 — if a github_pr link already exists, refresh its body; else rely on createPullRequest's
     // built-in head/base&state=open idempotency (story 3.14 AC4) — no separate existing-PR probe.
@@ -635,8 +740,7 @@ public class RepositoryWorkspaceService {
         && GITHUB_PR_INTEGRATION_TYPE.equals(existing.get().integrationType())) {
       try {
         PullRequest updated =
-            repositoryHostAdapter.updatePullRequest(
-                PullRequestRef.of(existing.get().externalRef()), body);
+            hostAdapter.updatePullRequest(PullRequestRef.of(existing.get().externalRef()), body);
         log.info(
             "captureAndPush PR updated workflowRunId={} prRef={}",
             workflowRunId,
@@ -649,7 +753,7 @@ public class RepositoryWorkspaceService {
     String title = pullRequestTitle(ticketRef, ticketSummary);
     try {
       PullRequest created =
-          repositoryHostAdapter.createPullRequest(
+          hostAdapter.createPullRequest(
               RepositoryRef.of(repoRef), branch, targetBranch, title, body);
       log.info(
           "captureAndPush PR created workflowRunId={} prRef={}",

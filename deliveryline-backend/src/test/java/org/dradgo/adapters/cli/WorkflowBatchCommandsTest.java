@@ -80,7 +80,7 @@ class WorkflowBatchCommandsTest {
 
     String output =
         commands(() -> true)
-            .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, false);
+            .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, null, false);
 
     assertThat(output).contains("Ticket | Run ID | Outcome | Reason");
     assertThat(output).contains("LIN-1 | run_aaa | queued | -");
@@ -98,7 +98,7 @@ class WorkflowBatchCommandsTest {
         .thenReturn(result(3, 0, List.of(TicketBatchResult.queued("LIN-1", "run_a"))));
 
     commands(() -> true)
-        .submitBatch(null, file.toString(), "alex", ActorType.HUMAN, KEY, null, false);
+        .submitBatch(null, file.toString(), "alex", ActorType.HUMAN, KEY, null, null, false);
 
     ArgumentCaptor<SubmitBatchCommand> captor = ArgumentCaptor.forClass(SubmitBatchCommand.class);
     verify(batchService).submitBatch(captor.capture());
@@ -110,7 +110,7 @@ class WorkflowBatchCommandsTest {
   void requiresExactlyOneOfTicketsOrFromFile() {
     WorkflowCommands neither = commands(() -> true);
     assertThatThrownBy(
-            () -> neither.submitBatch(null, null, "alex", ActorType.HUMAN, KEY, null, false))
+            () -> neither.submitBatch(null, null, "alex", ActorType.HUMAN, KEY, null, null, false))
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
@@ -118,7 +118,8 @@ class WorkflowBatchCommandsTest {
 
     WorkflowCommands both = commands(() -> true);
     assertThatThrownBy(
-            () -> both.submitBatch("LIN-1", "f.txt", "alex", ActorType.HUMAN, KEY, null, false))
+            () ->
+                both.submitBatch("LIN-1", "f.txt", "alex", ActorType.HUMAN, KEY, null, null, false))
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
@@ -137,7 +138,7 @@ class WorkflowBatchCommandsTest {
 
     String output =
         commands(() -> true)
-            .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, false);
+            .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, null, false);
 
     assertThat(output).contains("rejected 1");
   }
@@ -150,7 +151,8 @@ class WorkflowBatchCommandsTest {
     assertThatThrownBy(
             () ->
                 commands(() -> true)
-                    .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, true))
+                    .submitBatch(
+                        "LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, null, true))
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
@@ -163,7 +165,7 @@ class WorkflowBatchCommandsTest {
 
     String output =
         commands(() -> true)
-            .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, true);
+            .submitBatch("LIN-1,LIN-2", null, "alex", ActorType.HUMAN, KEY, null, null, true);
 
     assertThat(output).contains("rejected 0");
   }
@@ -173,7 +175,7 @@ class WorkflowBatchCommandsTest {
     assertThatThrownBy(
             () ->
                 commands(() -> false)
-                    .submitBatch("LIN-1", null, "alex", ActorType.HUMAN, null, null, false))
+                    .submitBatch("LIN-1", null, "alex", ActorType.HUMAN, null, null, null, false))
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.MISSING_IDEMPOTENCY_KEY);
@@ -185,7 +187,8 @@ class WorkflowBatchCommandsTest {
         .thenReturn(result(1, 0, List.of(TicketBatchResult.queued("LIN-1", "run_a"))));
 
     String output =
-        commands(() -> true).submitBatch("LIN-1", null, "alex", ActorType.HUMAN, null, null, false);
+        commands(() -> true)
+            .submitBatch("LIN-1", null, "alex", ActorType.HUMAN, null, null, null, false);
 
     assertThat(output)
         .contains("[generated-idempotency-key: 01964c38-1c45-7000-8000-000000000000]");
@@ -200,7 +203,8 @@ class WorkflowBatchCommandsTest {
             () -> "01964c38-1c45-7000-8000-000000000000");
 
     assertThatThrownBy(
-            () -> legacy.submitBatch("LIN-1", null, "alex", ActorType.HUMAN, KEY, null, false))
+            () ->
+                legacy.submitBatch("LIN-1", null, "alex", ActorType.HUMAN, KEY, null, null, false))
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.INTERNAL_ERROR);

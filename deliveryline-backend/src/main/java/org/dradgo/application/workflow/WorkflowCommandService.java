@@ -205,21 +205,13 @@ public class WorkflowCommandService {
   }
 
   private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
-    // Story 3c-6 (AC2) — resolve the project to bind this run to BEFORE create so the run row is
-    // never null at insert. 3c-6 binds every new run to the reserved `default` project (the only
-    // resolution available pre-3c-7, which generalizes to explicit-ref/ticket-source bindings). A
-    // create that cannot resolve a project is rejected with the registered PROJECT_NOT_FOUND (R8).
-    String projectId =
-        projectStore
-            .findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG)
-            .map(Project::publicId)
-            .orElseThrow(
-                () -> {
-                  log.warn("submit rejected: no default project resolved for run creation");
-                  return new DomainException(
-                      DomainErrorCode.PROJECT_NOT_FOUND,
-                      "no default project resolved for run creation");
-                });
+    // Story 3c-7 (AC1) — resolve the project to bind this run to BEFORE create so the run row is
+    // never null at insert. An explicit projectReference (slug or `prj_` id) resolves the named
+    // project (else PROJECT_NOT_FOUND); absent, the 3c-6 reserved `default` project stands. A
+    // create
+    // that cannot resolve a project is rejected with the registered PROJECT_NOT_FOUND (R8).
+    ProjectBinding projectBinding = resolveProjectBinding(command.projectReference());
+    String projectId = projectBinding.projectId();
 
     // The create path, initial event append, and integration_link creation must stay inside the
     // surrounding @Transactional boundary so they commit or roll back together. If linking the
@@ -235,7 +227,11 @@ public class WorkflowCommandService {
     }
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRun.publicId());
     try {
-      log.info("binding new run {} to project {}", workflowRun.publicId(), projectId);
+      log.info(
+          "binding new run {} to project {} source={}",
+          workflowRun.publicId(),
+          projectId,
+          projectBinding.source());
       Map<String, Object> details = baseDetails(command);
       details.put("linearTicketReference", command.linearTicketReference());
       workflowEventWritePort.append(
@@ -297,6 +293,51 @@ public class WorkflowCommandService {
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
+  }
+
+  /** The resolved project id bound at create + the resolution source (for the INFO bind log). */
+  private record ProjectBinding(String projectId, String source) {}
+
+  /**
+   * Story 3c-7 (AC1) — generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An explicit
+   * {@code projectReference} resolves the named project: a {@code prj_}-prefixed reference via
+   * {@link ProjectStore#findByPublicId}, otherwise via {@link ProjectStore#findBySlug}; an
+   * unresolvable explicit reference is rejected with the consume-only {@code PROJECT_NOT_FOUND}. An
+   * absent reference keeps the reserved {@code default}-project fallback (byte-identical to 3c-6).
+   */
+  private ProjectBinding resolveProjectBinding(String projectReference) {
+    if (projectReference != null && !projectReference.isBlank()) {
+      String reference = projectReference.trim();
+      java.util.Optional<Project> resolved =
+          reference.startsWith(PublicIdPrefixes.PROJECT.prefix())
+              ? projectStore.findByPublicId(reference)
+              : projectStore.findBySlug(reference);
+      String projectId =
+          resolved
+              .map(Project::publicId)
+              .orElseThrow(
+                  () -> {
+                    log.warn(
+                        "submit rejected: project reference did not resolve projectReference={}",
+                        MdcKeys.sanitizeForLog(reference));
+                    return new DomainException(
+                        DomainErrorCode.PROJECT_NOT_FOUND,
+                        "no project resolved for reference " + reference);
+                  });
+      return new ProjectBinding(projectId, "explicit");
+    }
+    String defaultProjectId =
+        projectStore
+            .findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG)
+            .map(Project::publicId)
+            .orElseThrow(
+                () -> {
+                  log.warn("submit rejected: no default project resolved for run creation");
+                  return new DomainException(
+                      DomainErrorCode.PROJECT_NOT_FOUND,
+                      "no default project resolved for run creation");
+                });
+    return new ProjectBinding(defaultProjectId, "default");
   }
 
   private WorkflowStateChangeResult approveSpecInternal(ApproveSpecCommand command) {

@@ -53,12 +53,12 @@ class CorrelationIdMdcLeakageTest {
 
   @Test
   void mdcIsEmptyBetweenSequentialCliInvocations() {
-    commands.submit("LIN-1", "actor@local", ActorType.HUMAN, null, null, false);
+    commands.submit("LIN-1", "actor@local", ActorType.HUMAN, null, null, null, false);
     assertThat(MDC.get(MdcKeys.CORRELATION_ID))
         .as("correlationId must not leak past the submit() entry-point's finally block")
         .isNull();
 
-    commands.submit("LIN-2", "actor@local", ActorType.HUMAN, null, null, false);
+    commands.submit("LIN-2", "actor@local", ActorType.HUMAN, null, null, null, false);
     assertThat(MDC.get(MdcKeys.CORRELATION_ID))
         .as("a second submit() must also clear correlationId")
         .isNull();
@@ -72,8 +72,8 @@ class CorrelationIdMdcLeakageTest {
     // keys remain set after two sequential CLI invocations, which is the AC2 leakage
     // contract at the CLI seam. The deeper application-service MDC stamping is verified by
     // JsonSchemaStabilityTest + the per-service logging contract tests.
-    commands.submit("LIN-A", "actor@local", ActorType.HUMAN, null, null, false);
-    commands.submit("LIN-B", "actor@local", ActorType.HUMAN, null, null, false);
+    commands.submit("LIN-A", "actor@local", ActorType.HUMAN, null, null, null, false);
+    commands.submit("LIN-B", "actor@local", ActorType.HUMAN, null, null, null, false);
 
     assertThat(MDC.getCopyOfContextMap())
         .as("no residual MDC keys between two sequential CLI invocations")

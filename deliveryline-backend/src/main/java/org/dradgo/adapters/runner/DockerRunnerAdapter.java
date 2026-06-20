@@ -262,10 +262,17 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
         runnerStageToken);
     // Story 3a-8 (AC1) — surface the opt-in OpenSpec authoring flag to the entrypoint the same way
     // as the stage. Emitted ONLY when enabled, so a flag-off dispatch is byte-identical at the
-    // container interior (no new env var at all). Reuses the already-injected runnerProperties — no
-    // new ctor dep (Trap [[docker-adapter-ctor-dep-fans-out]]). The mock adapter never reaches
-    // here.
-    if (runnerProperties.openSpecEnabled()) {
+    // container interior (no new env var at all). The mock adapter never reaches here.
+    //
+    // Story 3c-7 (AC2 / R2) — the flag is now PER-RUN: the broker resolves it from the run's
+    // Project
+    // via ProjectRuntimeConfigResolver.resolveOpenSpecEnabled(workflowRunId) (default-project
+    // fallback) and threads it on the dispatch request. The adapter stays a dumb executor reading
+    // request.openspecEnabled() — no ProjectRuntimeConfigResolver injection (avoids an
+    // adapter->application-service dep + the [[docker-adapter-ctor-dep-fans-out]] ctor fan-out),
+    // and
+    // the global runnerProperties.openSpecEnabled() is no longer read on the dispatch hot path.
+    if (request.openspecEnabled()) {
       containerEnv.put("DELIVERYLINE_RUNNER_OPENSPEC", "true");
     }
 

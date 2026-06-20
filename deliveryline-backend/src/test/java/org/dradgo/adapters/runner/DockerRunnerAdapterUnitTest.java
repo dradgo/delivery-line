@@ -293,6 +293,54 @@ class DockerRunnerAdapterUnitTest {
   }
 
   @Test
+  void dispatchEmitsOpenSpecEnvWhenRequestOpenspecEnabledIsTrue() {
+    // Story 3c-7 (AC2 / R2) — the OpenSpec env is now driven by the PER-RUN request flag (resolved
+    // in the broker from the run's Project), NOT the global runnerProperties.openSpecEnabled(). A
+    // request with openspecEnabled=true emits DELIVERYLINE_RUNNER_OPENSPEC=true.
+    RunnerDispatchRequest request =
+        new RunnerDispatchRequest(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.INVESTIGATION,
+            RunnerKind.CODEX,
+            Path.of("/scratch/context-bundle.v1.json"),
+            new ExecutionConstraints(Duration.ofSeconds(600L), false),
+            DataClassification.SHAREABLE_REDACTED,
+            null,
+            null,
+            (ExecutionSubStage) null,
+            true);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(request);
+
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    assertThat(specCaptor.getValue().environment())
+        .containsEntry("DELIVERYLINE_RUNNER_OPENSPEC", "true");
+  }
+
+  @Test
+  void dispatchOmitsOpenSpecEnvWhenRequestOpenspecEnabledIsFalse() {
+    // Story 3c-7 (AC7 parity) — a flag-off dispatch (the default-project case) emits NO
+    // DELIVERYLINE_RUNNER_OPENSPEC env at all (byte-identical container interior to pre-3c).
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(dispatchRequest()); // openspecEnabled defaults false (back-compat ctor)
+
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    assertThat(specCaptor.getValue().environment())
+        .doesNotContainKey("DELIVERYLINE_RUNNER_OPENSPEC");
+  }
+
+  @Test
   void dispatchInjectsProviderKeyIntoEnvButNeverIntoLabels() {
     // Story 3.5 AC3/AC11(e): the agent-provider key reaches the container ENV (Config.Env) but
     // NEVER the label set (docker inspect labels carry no secret — Trap T9).

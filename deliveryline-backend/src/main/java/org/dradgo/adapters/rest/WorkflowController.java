@@ -369,7 +369,8 @@ public class WorkflowController {
                 request.actorType(),
                 idempotencyKey,
                 request.correlationId(),
-                request.linearTicketReference())));
+                request.linearTicketReference(),
+                request.projectReference())));
   }
 
   @PostMapping(

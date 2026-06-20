@@ -21,6 +21,8 @@ import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.project.ProjectConnectorResolver;
+import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.ContextBundleService;
 import org.dradgo.application.runner.ExecutionSubStage;
 import org.dradgo.application.runner.RunnerDispatchResult;
@@ -42,6 +44,7 @@ import org.dradgo.domain.integration.ticketsource.CommentResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
@@ -52,7 +55,6 @@ import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -147,12 +149,16 @@ public class WorkflowOrchestrationService {
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final RunnerProperties runnerProperties;
   private final ContextBundleService contextBundleService;
-  // Story 3.16 — completion-sync collaborators. The TicketSourceAdapter (Linear kind) is
-  // @Profile(linear-mock|linear-real)-gated while this service is an unconditional @Service;
-  // injecting it directly would red every @SpringBootTest lacking the profile
-  // ([[unconditional-service-needs-profile-gate]]). Resolve getIfAvailable() lazily at the post
-  // site; absent ⇒ a WARN no-op, never an NPE (T11).
-  private final ObjectProvider<TicketSourceAdapter> linearAdapterProvider;
+  // Story 3.16 / 3c-7 (AC4) — completion-sync collaborators. The ticket-source adapter is now
+  // resolved PER-PROJECT: the run's Project (via projectRuntimeConfigResolver) selects the adapter
+  // by kind (via projectConnectorResolver.findTicketSource). R3 — findTicketSource returns
+  // Optional.empty() (NOT a thrown UNSUPPORTED_CONNECTOR_KIND) when no adapter is registered for
+  // the
+  // kind in this context (a profile-gated @SpringBootTest with no linear profile), preserving the
+  // SKIPPED_NO_LINEAR_PROFILE skip. Both resolvers are always-present application.project
+  // @Components depending only on ProjectStore/adapter lists — no DI cycle with this service.
+  private final ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
+  private final ProjectConnectorResolver projectConnectorResolver;
   private final RedactionPolicyService redactionPolicyService;
   private final WorkflowProperties workflowProperties;
   private final IntegrationLinkService integrationLinkService;
@@ -168,7 +174,8 @@ public class WorkflowOrchestrationService {
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       RunnerProperties runnerProperties,
       ContextBundleService contextBundleService,
-      ObjectProvider<TicketSourceAdapter> linearAdapterProvider,
+      ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
+      ProjectConnectorResolver projectConnectorResolver,
       RedactionPolicyService redactionPolicyService,
       WorkflowProperties workflowProperties,
       IntegrationLinkService integrationLinkService,
@@ -186,8 +193,10 @@ public class WorkflowOrchestrationService {
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
     this.contextBundleService =
         Objects.requireNonNull(contextBundleService, "contextBundleService");
-    this.linearAdapterProvider =
-        Objects.requireNonNull(linearAdapterProvider, "linearAdapterProvider");
+    this.projectRuntimeConfigResolver =
+        Objects.requireNonNull(projectRuntimeConfigResolver, "projectRuntimeConfigResolver");
+    this.projectConnectorResolver =
+        Objects.requireNonNull(projectConnectorResolver, "projectConnectorResolver");
     this.redactionPolicyService =
         Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
     this.workflowProperties = Objects.requireNonNull(workflowProperties, "workflowProperties");
@@ -1170,14 +1179,43 @@ public class WorkflowOrchestrationService {
       }
       String body = redaction.sanitizedText();
 
-      TicketSourceAdapter adapter = linearAdapterProvider.getIfAvailable();
-      if (adapter == null) {
+      // Story 3c-7 (AC4 / R3) — resolve the ticket-source adapter via the run's Project. R3:
+      // findTicketSource returns empty (NOT a thrown UNSUPPORTED_CONNECTOR_KIND) when no adapter is
+      // registered for the project's kind in this context (profile-gated), preserving the
+      // SKIPPED_NO_LINEAR_PROFILE skip exactly as the pre-3c-7 getIfAvailable()==null path did.
+      Project project;
+      Optional<TicketSourceAdapter> adapterOpt;
+      try {
+        project = projectRuntimeConfigResolver.resolveForRun(workflowRunId);
+        adapterOpt = projectConnectorResolver.findTicketSource(project);
+      } catch (DomainException error) {
+        // Story 3c-7 review (P1) — honor this method's best-effort, never-throws contract (it runs
+        // in
+        // a post-commit hook and must not roll back the already-committed Completed transition). An
+        // unresolvable project (e.g. the default project missing — PROJECT_NOT_FOUND) degrades to
+        // the
+        // same skip as a missing linear profile rather than propagating out of the sync.
         log.warn(
-            "syncCompletionToLinear linear_adapter_unavailable workflowRunId={} (no linear profile "
-                + "active); skipping post",
-            workflowRunId);
+            "syncCompletionToLinear project_resolution_failed workflowRunId={} reason={}; skipping post",
+            workflowRunId,
+            error.errorCode().value());
         return SyncCompletionOutcome.SKIPPED_NO_LINEAR_PROFILE;
       }
+      if (adapterOpt.isEmpty()) {
+        log.warn(
+            "syncCompletionToLinear linear_adapter_unavailable workflowRunId={} projectId={} "
+                + "ticketKind={} (no adapter registered for the project's kind); skipping post",
+            workflowRunId,
+            project.publicId(),
+            project.ticketSourceKind().value());
+        return SyncCompletionOutcome.SKIPPED_NO_LINEAR_PROFILE;
+      }
+      TicketSourceAdapter adapter = adapterOpt.get();
+      log.info(
+          "syncCompletionToLinear linear sync adapter resolved workflowRunId={} projectId={} ticketKind={}",
+          workflowRunId,
+          project.publicId(),
+          project.ticketSourceKind().value());
 
       // Story 3.32 AC3 — gate the optional write-back on the source's declared capability. A source
       // that cannot post comments degrades gracefully with a structured WARN (no new

@@ -170,7 +170,10 @@ public class WorkflowBatchSubmissionService {
                       command.actorType(),
                       deriveTicketKey(idempotencyKey, ticketRef),
                       childCorrelationId(batchCorrelationId, ticketRef),
-                      ticketRef));
+                      ticketRef,
+                      // Story 3c-7 (AC1) — bind every ticket in the batch to the batch's explicit
+                      // project (null => the per-run `default` fallback in submitInternal).
+                      command.projectReference()));
           outcomes.add(TicketBatchResult.queued(ticketRef, submitResult.workflowRunId()));
           stampBatchSubmissionId(submitResult.workflowRunId(), batchPublicId);
           log.info(
@@ -391,7 +394,8 @@ public class WorkflowBatchSubmissionService {
         command.actorIdentity(),
         command.actorType(),
         command.idempotencyKey(),
-        command.correlationId());
+        command.correlationId(),
+        command.projectReference());
   }
 
   private String normalizeOptional(String value) {

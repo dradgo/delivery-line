@@ -67,6 +67,29 @@ class ProjectConnectorResolverTest {
         .isSameAs(gitlabRh);
   }
 
+  // ---- Story 3c-7 (AC4 / R3) — findTicketSource: probe-before-resolve, never throws ----
+
+  @Test
+  void findTicketSourceReturnsAdapterWhenKindRegistered() {
+    FakeTicketSource linearTs = new FakeTicketSource(ConnectorKind.LINEAR);
+    ProjectConnectorResolver resolver = resolver(List.of(linearTs), List.of());
+
+    assertThat(resolver.findTicketSource(project(ConnectorKind.LINEAR, ConnectorKind.GITHUB)))
+        .contains(linearTs);
+  }
+
+  @Test
+  void findTicketSourceReturnsEmptyWhenKindUnregisteredInsteadOfThrowing() {
+    // R3 — the Linear completion-sync path relies on this NOT throwing UNSUPPORTED_CONNECTOR_KIND
+    // so
+    // a no-adapter context preserves the SKIPPED_NO_LINEAR_PROFILE skip.
+    ProjectConnectorResolver resolver =
+        resolver(List.of(new FakeTicketSource(ConnectorKind.GITLAB)), List.of());
+
+    assertThat(resolver.findTicketSource(project(ConnectorKind.LINEAR, ConnectorKind.GITHUB)))
+        .isEmpty();
+  }
+
   // ---- unsupported kind (AC3) ----
 
   @Test

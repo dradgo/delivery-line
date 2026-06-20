@@ -72,6 +72,21 @@ class RepositoryWorkspaceServiceTest {
             git, gitHubAdapter, secrets, store, recordPort, links, WorkflowProperties.defaults());
   }
 
+  /** Story 3c-7 review (P3) — a Project whose normalized repositoryUrl drives the expected ref. */
+  private static org.dradgo.domain.project.Project projectWithRepo(String repositoryUrl) {
+    return new org.dradgo.domain.project.Project(
+        org.dradgo.domain.id.PublicIdPrefixes.PROJECT.next(),
+        "Acme",
+        "acme",
+        org.dradgo.domain.registry.ProjectStatus.ACTIVE,
+        repositoryUrl,
+        org.dradgo.domain.registry.ConnectorKind.LINEAR,
+        org.dradgo.domain.registry.ConnectorKind.GITHUB,
+        false,
+        OffsetDateTime.now(),
+        null);
+  }
+
   // ---- AC9 guard ----
 
   @Test
@@ -241,7 +256,9 @@ class RepositoryWorkspaceServiceTest {
     // (default-project fallback). The seeded default's repositoryUrl == the global config url, so a
     // matching requested ref is byte-identical parity — no mismatch, clone proceeds.
     ProjectRuntimeConfigResolver resolver = Mockito.mock(ProjectRuntimeConfigResolver.class);
-    when(resolver.resolveRepositoryRef(RUN_ID)).thenReturn(Optional.of("octo/hello"));
+    // Story 3c-7 review (P3) — prepareWorkspace resolves the run's Project ONCE and shares it; the
+    // expected ref is derived from project.repositoryUrl (identical to resolveRepositoryRef).
+    when(resolver.resolveForRun(RUN_ID)).thenReturn(projectWithRepo("octo/hello"));
     RepositoryWorkspaceService wired =
         new RepositoryWorkspaceService(
             git,
@@ -264,14 +281,14 @@ class RepositoryWorkspaceServiceTest {
         wired.prepareWorkspace(RUN_ID, RunnerStage.INVESTIGATION, REX, "DEL-9", "octo/hello");
 
     assertThat(mount.defaultBranch()).isEqualTo("main");
-    verify(resolver).resolveRepositoryRef(RUN_ID);
+    verify(resolver).resolveForRun(RUN_ID);
     verify(git).cloneRepository(any(GitCommandPort.CloneSpec.class), any());
   }
 
   @Test
   void prepareWorkspaceRaisesMismatchWhenResolverRefDiffersFromRequested() {
     ProjectRuntimeConfigResolver resolver = Mockito.mock(ProjectRuntimeConfigResolver.class);
-    when(resolver.resolveRepositoryRef(RUN_ID)).thenReturn(Optional.of("octo/hello"));
+    when(resolver.resolveForRun(RUN_ID)).thenReturn(projectWithRepo("octo/hello"));
     RepositoryWorkspaceService wired =
         new RepositoryWorkspaceService(
             git,

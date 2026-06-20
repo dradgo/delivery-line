@@ -39,6 +39,8 @@ import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.integration.repohost.RepositoryRef;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
@@ -158,6 +160,23 @@ public class RunnerBroker {
     if (meterRegistry != null) {
       this.meterRegistry = meterRegistry;
     }
+  }
+
+  // Story 3c-7 (AC2/AC5) — the per-run config resolver, used to repoint the bundle repo-ref + the
+  // dispatch OpenSpec flag off the global config onto the run's Project (default-project fallback).
+  // Optional SETTER injection (mirroring meterRegistry above) so none of the five telescoping
+  // constructors — nor any of their unit-test call sites — change. In PRODUCTION Spring injects the
+  // always-present application.project @Component; where it is absent (the lean fast-tier broker
+  // unit ctors) the use sites fall back to the pre-3c global path, keeping those tests
+  // byte-identical
+  // (the resolver depends on ProjectStore, NOT on this broker — no DI cycle, contrast
+  // [[broker-orchestration-lazy-supplier]]).
+  private org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProjectRuntimeConfigResolver(
+      org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver) {
+    this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
   }
 
   // Story 3.19 (AC5) — count a dispatch + record its duration (histogram, tagged stage), on the
@@ -498,9 +517,11 @@ public class RunnerBroker {
       // fields, dormant seam).
       boolean repoContextStage =
           stage == RunnerStage.INVESTIGATION || stage == RunnerStage.EXECUTION;
+      // Story 3c-7 (AC2) — repoint to the run's Project (default-project fallback); byte-identical
+      // for a single-project deployment. Mirrors the queue path in composeQueuedBundle.
       String resolvedRepositoryRef =
           (repoContextStage && repositoryWorkspaceService != null)
-              ? repositoryWorkspaceService.resolveConfiguredRepositoryRef().orElse(null)
+              ? resolveBundleRepositoryRef(workflowRunId)
               : null;
 
       ContextBundle bundle;
@@ -710,7 +731,9 @@ public class RunnerBroker {
               bundle.effectiveClassification(),
               resolvedRepositoryRef,
               resolvedTicketRef,
-              executionSubStage);
+              executionSubStage,
+              // Story 3c-7 (AC2) — per-run OpenSpec opt-in resolved from the run's Project.
+              resolveDispatchOpenSpec(workflowRunId));
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
 
       // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy
@@ -933,7 +956,9 @@ public class RunnerBroker {
                 composed.bundle().effectiveClassification(),
                 composed.resolvedRepositoryRef(),
                 composed.resolvedTicketRef(),
-                composed.executionSubStage());
+                composed.executionSubStage(),
+                // Story 3c-7 (AC2) — per-run OpenSpec opt-in resolved from the run's Project.
+                resolveDispatchOpenSpec(workflowRunId));
         // Story 3.19 (AC5) — time the adapter dispatch (histogram, tagged stage) + count
         // dispatches.
         io.micrometer.core.instrument.Timer.Sample dispatchSample =
@@ -986,6 +1011,69 @@ public class RunnerBroker {
     }
   }
 
+  /**
+   * Story 3c-7 (AC2) — the bundle/clone repository ref for a run, read from the run's Project via
+   * {@link org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveRepositoryRef} (the
+   * {@code default}-project fallback returns the same {@code owner/repo} the global path returned,
+   * so a single-project deployment is byte-identical, AC7 parity). Falls back to the global
+   * single-repo config only in the lean broker unit contexts where no resolver is wired.
+   */
+  private String resolveBundleRepositoryRef(String workflowRunId) {
+    if (projectRuntimeConfigResolver == null) {
+      String ref = repositoryWorkspaceService.resolveConfiguredRepositoryRef().orElse(null);
+      log.info(
+          "bundle repo-ref resolved workflowRunId={} projectId={} repoRef={} source=global_fallback",
+          workflowRunId,
+          "none",
+          ref);
+      return ref;
+    }
+    // Story 3c-7 review (P4) — resolve the Project once so the dispatch-decision log carries
+    // project.publicId() for FR63 traceability (no extra resolve vs the prior resolveRepositoryRef
+    // call, which resolved the run's Project internally); the ref derivation is identical
+    // (normalizeRepositoryUrl of the project's repositoryUrl, exactly resolveRepositoryRef's body).
+    Project project = projectRuntimeConfigResolver.resolveForRun(workflowRunId);
+    String ref = RepositoryRef.normalizeRepositoryUrl(project.repositoryUrl());
+    log.info(
+        "bundle repo-ref resolved workflowRunId={} projectId={} repoRef={} source=run_project",
+        workflowRunId,
+        project.publicId(),
+        ref);
+    return ref;
+  }
+
+  /**
+   * Story 3c-7 (AC2 / R2) — the per-run OpenSpec opt-in resolved from the run's Project via {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveOpenSpecEnabled} and
+   * threaded onto the {@link RunnerDispatchRequest} so {@code DockerRunnerAdapter} emits {@code
+   * DELIVERYLINE_RUNNER_OPENSPEC} from the request, not the global property. The {@code default}
+   * project is seeded from {@code deliveryline.runner.openspec.enabled}, so a single-project
+   * deployment is byte-identical (flag off ⇒ no env var). Falls back to the global property only in
+   * the lean broker unit contexts where no resolver is wired.
+   */
+  private boolean resolveDispatchOpenSpec(String workflowRunId) {
+    if (projectRuntimeConfigResolver == null) {
+      boolean openspec = runnerProperties.openSpecEnabled();
+      log.info(
+          "openspec resolved workflowRunId={} projectId={} openspec={} source=global_fallback",
+          workflowRunId,
+          "none",
+          openspec);
+      return openspec;
+    }
+    // Story 3c-7 review (P4) — resolve the Project once so the log carries project.publicId()
+    // (FR63);
+    // openspec value is identical to resolveOpenSpecEnabled (project.openspecEnabled()).
+    Project project = projectRuntimeConfigResolver.resolveForRun(workflowRunId);
+    boolean openspec = project.openspecEnabled();
+    log.info(
+        "openspec resolved workflowRunId={} projectId={} openspec={} source=run_project",
+        workflowRunId,
+        project.publicId(),
+        openspec);
+    return openspec;
+  }
+
   /** Worker-dispatch composition result carried out of {@link #composeQueuedBundle}. */
   private record ComposedDispatch(
       ContextBundle bundle,
@@ -1009,7 +1097,7 @@ public class RunnerBroker {
     boolean repoContextStage = stage == RunnerStage.INVESTIGATION || stage == RunnerStage.EXECUTION;
     String resolvedRepositoryRef =
         (repoContextStage && repositoryWorkspaceService != null)
-            ? repositoryWorkspaceService.resolveConfiguredRepositoryRef().orElse(null)
+            ? resolveBundleRepositoryRef(workflowRunId)
             : null;
     ExecutionSubStage executionSubStage = null;
     RepositoryContextSummary repositoryContextSummary = null;

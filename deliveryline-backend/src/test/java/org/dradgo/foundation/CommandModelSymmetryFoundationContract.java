@@ -385,6 +385,7 @@ class CommandModelSymmetryFoundationContract {
             ActorType.HUMAN,
             "idem-submit-aaaaaaaaaaaaaaaa",
             "corr-submit-1",
+            null,
             false);
 
     ArgumentCaptor<SubmitWorkflowCommand> captor =

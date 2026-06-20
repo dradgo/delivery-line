@@ -49,10 +49,9 @@ class WorkflowOrchestrationServiceTest {
   private WorkflowRunReadPort readPort;
   private org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort;
   private ContextBundleService contextBundleService;
-  // Story 3.16 — completion-sync collaborators.
-  private org.springframework.beans.factory.ObjectProvider<
-          org.dradgo.application.integration.ticketsource.TicketSourceAdapter>
-      linearAdapterProvider;
+  // Story 3.16 / 3c-7 — completion-sync collaborators (per-project adapter resolution).
+  private org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
+  private org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver;
   private org.dradgo.application.integration.ticketsource.TicketSourceAdapter linearAdapter;
   private org.dradgo.application.security.RedactionPolicyService redactionPolicyService;
   private org.dradgo.application.integration.IntegrationLinkService integrationLinkService;
@@ -71,9 +70,26 @@ class WorkflowOrchestrationServiceTest {
     readPort = mock(WorkflowRunReadPort.class);
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
     contextBundleService = mock(ContextBundleService.class);
-    linearAdapterProvider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    projectRuntimeConfigResolver =
+        mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class);
+    projectConnectorResolver = mock(org.dradgo.application.project.ProjectConnectorResolver.class);
     linearAdapter = mock(org.dradgo.application.integration.ticketsource.TicketSourceAdapter.class);
-    when(linearAdapterProvider.getIfAvailable()).thenReturn(linearAdapter);
+    org.dradgo.domain.project.Project linearProject =
+        new org.dradgo.domain.project.Project(
+            "prj_default0001",
+            "Default",
+            "default",
+            org.dradgo.domain.registry.ProjectStatus.ACTIVE,
+            null,
+            org.dradgo.domain.registry.ConnectorKind.LINEAR,
+            org.dradgo.domain.registry.ConnectorKind.GITHUB,
+            false,
+            java.time.OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+            null);
+    when(projectRuntimeConfigResolver.resolveForRun(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(linearProject);
+    when(projectConnectorResolver.findTicketSource(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(java.util.Optional.of(linearAdapter));
     when(linearAdapter.getCapabilities())
         .thenReturn(
             org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities.linearDefaults());
@@ -152,7 +168,8 @@ class WorkflowOrchestrationServiceTest {
         recordPort,
         props,
         contextBundleService,
-        linearAdapterProvider,
+        projectRuntimeConfigResolver,
+        projectConnectorResolver,
         redactionPolicyService,
         workflowProperties,
         integrationLinkService,
@@ -856,6 +873,9 @@ class WorkflowOrchestrationServiceTest {
         () -> "expected reconstructed PR url in body but was: " + posted.body());
     assertTrue(posted.fingerprint() != null && !posted.fingerprint().isBlank());
     verify(workflowEventWritePort, never()).append(any());
+    // Story 3c-7 (AC4) — the per-project adapter resolution decision is logged at INFO.
+    verify(projectConnectorResolver).findTicketSource(org.mockito.ArgumentMatchers.any());
+    assertLoggedAt(Level.INFO, "linear sync adapter resolved");
   }
 
   @Test
@@ -989,7 +1009,8 @@ class WorkflowOrchestrationServiceTest {
 
   @Test
   void syncCompletionNoOpsWhenLinearAdapterUnavailable() {
-    when(linearAdapterProvider.getIfAvailable()).thenReturn(null);
+    when(projectConnectorResolver.findTicketSource(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(java.util.Optional.empty());
     stubLinks(true);
     stubRedactionPassthrough();
 

@@ -197,6 +197,12 @@ public class WorkflowCommands {
       @Option(longName = "correlation-id", description = "Correlation ID", required = false)
           String correlationId,
       @Option(
+              longName = "project",
+              description =
+                  "Project reference (slug or prj_ public id); default project if omitted",
+              required = false)
+          String projectReference,
+      @Option(
               longName = "verbose",
               description = "Print additional command metadata",
               required = false,
@@ -215,7 +221,8 @@ public class WorkflowCommands {
                   actorType,
                   resolvedIdempotencyKey,
                   correlationId,
-                  linearTicketReference));
+                  linearTicketReference,
+                  projectReference));
       runId = result.workflowRunId();
       String output =
           result.workflowRunId() + " submitted (state: " + result.currentState().value() + ")";
@@ -257,6 +264,12 @@ public class WorkflowCommands {
       @Option(longName = "correlation-id", description = "Batch correlation ID")
           String correlationId,
       @Option(
+              longName = "project",
+              description =
+                  "Project reference (slug or prj_ public id) bound to every ticket in the batch;"
+                      + " default project if omitted")
+          String projectReference,
+      @Option(
               longName = "exit-on-any-rejection",
               description = "Exit non-zero when any ticket is rejected",
               defaultValue = "false")
@@ -277,7 +290,8 @@ public class WorkflowCommands {
                   resolvedActorIdentity,
                   actorType,
                   resolvedIdempotencyKey,
-                  correlationId));
+                  correlationId,
+                  projectReference));
       batchId = result.batchId();
       String table = renderBatchTable(result);
       emitSuccess("workflow submit-batch", batchId, resolvedCorrelation, start);

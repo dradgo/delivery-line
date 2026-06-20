@@ -83,7 +83,13 @@ class WorkflowAdapterEquivalenceTest {
 
     String cliOutput =
         cli.submit(
-            "LIN-123", "alex", ActorType.HUMAN, "idem-submit-1234567890", "corr-submit-1", false);
+            "LIN-123",
+            "alex",
+            ActorType.HUMAN,
+            "idem-submit-1234567890",
+            "corr-submit-1",
+            null,
+            false);
 
     mockMvc
         .perform(
@@ -133,6 +139,7 @@ class WorkflowAdapterEquivalenceTest {
                     ActorType.HUMAN,
                     "idem-submit-1234567890",
                     "corr-submit-1",
+                    null,
                     false));
 
     assertEquals(DomainErrorCode.INVALID_COMMAND_PAYLOAD, cliError.errorCode());
@@ -209,6 +216,7 @@ class WorkflowAdapterEquivalenceTest {
                     ActorType.HUMAN,
                     "idem-submit-1234567890",
                     "corr-submit-1",
+                    null,
                     false));
 
     assertEquals(DomainErrorCode.INVALID_IDEMPOTENCY_KEY, cliError.errorCode());
@@ -257,6 +265,7 @@ class WorkflowAdapterEquivalenceTest {
                     ActorType.HUMAN,
                     "idem-submit-1234567890",
                     "corr-submit-1",
+                    null,
                     false));
 
     assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, cliError.errorCode());
@@ -299,10 +308,22 @@ class WorkflowAdapterEquivalenceTest {
 
     String firstCli =
         cli.submit(
-            "LIN-123", "alex", ActorType.HUMAN, "idem-replay-1234567890", "corr-submit-1", false);
+            "LIN-123",
+            "alex",
+            ActorType.HUMAN,
+            "idem-replay-1234567890",
+            "corr-submit-1",
+            null,
+            false);
     String secondCli =
         cli.submit(
-            "LIN-123", "alex", ActorType.HUMAN, "idem-replay-1234567890", "corr-submit-1", false);
+            "LIN-123",
+            "alex",
+            ActorType.HUMAN,
+            "idem-replay-1234567890",
+            "corr-submit-1",
+            null,
+            false);
     assertEquals(firstCli, secondCli);
 
     String body =
