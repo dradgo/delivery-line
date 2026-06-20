@@ -19,6 +19,8 @@ dependencies.
   [`doctor`](docs/cli/doctor.md))
 - **Supported environments** → [`docs/supported-environments.md`](docs/supported-environments.md)
 - **Glossary** → [`docs/glossary.md`](docs/glossary.md)
+- **Contributor — extending a governed registry?** → [`docs/patterns/registry-recipe.md`](docs/patterns/registry-recipe.md) (the mirror sites + foundation-gate test that go red together)
+- **Contributor — writing frontend tests?** → [`docs/testing/frontend-test-patterns.md`](docs/testing/frontend-test-patterns.md) and [`docs/testing/snapshots-vs-assertions.md`](docs/testing/snapshots-vs-assertions.md)
 - **Epic 1 close status** → [`docs/epic-1-close-checklist.md`](docs/epic-1-close-checklist.md)
 
 ## Project layout

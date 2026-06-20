@@ -51,6 +51,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
   private static final String RUN = "run_allowed_a";
   private static final String SPEC_ART = "art_spec_allowed_a";
+  private static final String PR_ART = "art_pr_allowed_a";
   private static final String LATEST_EVT = "evt_allowed_a";
   private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-05-27T12:00:00Z");
 
@@ -326,6 +327,25 @@ class WorkflowInspectionServiceAllowedActionsTest {
   }
 
   @Test
+  void versionStampBundleReflectsImplementationArtifactAtWaitingForReview() {
+    // At WaitingForReview the developer decides on the IMPLEMENTATION artifact (prOutput), whose
+    // producing runner-execution carries the EXECUTION context-bundle version — which diverges from
+    // the spec bundle after a retry (retry mints a fresh execution version). The stamp MUST report
+    // that execution bundle so the value the UI echoes back matches what the accept/reject binder
+    // (ApprovalVersionBinder) demands; reporting the spec bundle (the old, spec-centric behaviour)
+    // caused a PERMANENT APPROVAL_VERSION_MISMATCH 409 that no refresh could clear.
+    stubRunWithState(WorkflowState.WAITING_FOR_REVIEW, 0);
+    stubLatestSpec(1);
+    stubBundleAvailable(SPEC_ART, 1); // the OLD spec-centric stamp would have surfaced this (1).
+    stubLatestPrOutput(2, 3); // prOutput v2 produced by a retried EXECUTION → bundle version 3.
+    stubLatestEvent(LATEST_EVT);
+
+    AllowedActionsView view = service.getAllowedActions(RUN, "developer");
+
+    assertThat(view.versionStamp().currentContextBundleVersion()).isEqualTo(3);
+  }
+
+  @Test
   void versionStampLastEventIdIsLatestEventPublicId() {
     stubRunWithState(WorkflowState.COMPLETED, 0);
     stubNoLatestSpec();
@@ -560,6 +580,41 @@ class WorkflowInspectionServiceAllowedActionsTest {
     // assertion on `versionStamp().currentContextBundleVersion() == bundleVersion` flowed through
     // JSON parsing — it does not. A non-empty opaque payload is the contract.
     when(scratchStore.tryReadContextBundle(rexId)).thenReturn(Optional.of(new byte[] {0x00}));
+  }
+
+  private void stubLatestPrOutput(int version, int executionBundleVersion) {
+    ArtifactRecordSnapshot snapshot =
+        ArtifactRecordSnapshot.withoutFailureMetadata(
+            PR_ART,
+            RUN,
+            ArtifactType.PR_OUTPUT,
+            version,
+            null,
+            DataClassification.SHAREABLE_REDACTED,
+            "scratch://" + PR_ART,
+            "sha256",
+            "0".repeat(64),
+            ArtifactStatus.AVAILABLE,
+            null);
+    when(artifacts.findLatestByWorkflowRunIdAndArtifactType(RUN, ArtifactType.PR_OUTPUT.value()))
+        .thenReturn(Optional.of(snapshot));
+    String rexId = "rex_" + PR_ART;
+    when(artifacts.findRunnerExecutionIdForArtifact(PR_ART)).thenReturn(Optional.of(rexId));
+    when(runnerExecutions.findByPublicId(rexId))
+        .thenReturn(
+            Optional.of(
+                new RunnerExecutionSnapshot(
+                    rexId,
+                    RUN,
+                    RunnerStage.EXECUTION,
+                    RunnerExecutionStatus.COMPLETED,
+                    executionBundleVersion,
+                    NOW,
+                    NOW.plusMinutes(15),
+                    null,
+                    NOW,
+                    NOW,
+                    null)));
   }
 
   private void stubLatestEvent(String eventId) {

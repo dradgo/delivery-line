@@ -51,6 +51,13 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
   Optional<IntegrationLinkEntity> findActiveByTypeAndExternalRefForUpdate(
       @Param("integrationType") String integrationType, @Param("externalRef") String externalRef);
 
+  // A run can carry MORE THAN ONE active link (a `linear` ticket link + a `github_pr` link once the
+  // pr-output stage pushes a PR). The port contract is "return the LINEAR variant by convention",
+  // so
+  // order linear first (CASE) and return a List the adapter takes the first of — never an Optional
+  // from a no-LIMIT query, which throws NonUniqueResultException on the 2-link run (the 500 that
+  // hit
+  // `listRuns`). Mirrors the List-take-first pattern of findActiveByTypeAndWorkflowRunPublicId.
   @Query(
       """
 		select integrationLink
@@ -59,9 +66,10 @@ public interface IntegrationLinkRepository extends JpaRepository<IntegrationLink
 		where workflowRun.publicId = :workflowRunPublicId
 		  and integrationLink.archivedAt is null
 		  and integrationLink.syncStatus <> 'superseded'
-		order by integrationLink.integrationType asc, integrationLink.createdAt asc
+		order by case when integrationLink.integrationType = 'linear' then 0 else 1 end asc,
+		         integrationLink.createdAt asc
 		""")
-  Optional<IntegrationLinkEntity> findFirstActiveByWorkflowRunPublicId(
+  java.util.List<IntegrationLinkEntity> findActiveByWorkflowRunPublicIdLinearFirst(
       @Param("workflowRunPublicId") String workflowRunPublicId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)

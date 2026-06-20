@@ -142,7 +142,7 @@ output").
 
 The deterministic git branch a run's workspace is prepared on:
 `deliveryline/{ticketSlug}/stage-{runIdShort}` — the ticket reference slugified plus the run
-id's last 8 characters (e.g. `deliveryline/lin-123/stage-abc12345`). It is the branch the
+id's last 8 characters (e.g. `deliveryline/LIN-123/stage-abc12345`). It is the branch the
 developer continues work on after a [takeover](#takeover).
 
 **See also:** [`execution-walkthrough.md`](execution-walkthrough.md) ("What happens after spec

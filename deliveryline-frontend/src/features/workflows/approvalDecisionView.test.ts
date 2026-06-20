@@ -295,6 +295,16 @@ describe('story 3.30 — recovery_operator resolution + retry recognition', () =
     );
     expect(buildRecoveryContextLabel(undefined)).toBe('Recover the failed run');
   });
+
+  it('buildRecoveryContextLabel tolerates a null failedStage (wire sends null, not undefined)', () => {
+    // Once a run leaves Failed (e.g. a successful retry flips it to Executing) the wire
+    // serializes WorkflowDetail.failedStage as JSON `null`, but the generated type says
+    // `?: string`. A `!== undefined` guard would then call `.trim()` on null and crash the
+    // recovery bar that stays mounted through the post-retry success state. Guard accordingly.
+    expect(buildRecoveryContextLabel({ failedStage: null } as unknown as WorkflowDetail)).toBe(
+      'Recover the failed run',
+    );
+  });
 });
 
 describe('approvalDecisionView — implementation_review helpers (story 3.28)', () => {

@@ -576,6 +576,61 @@ class WorkflowOrchestrationServiceTest {
   }
 
   @Test
+  void redispatchAfterRetryReDispatchesPrOutputRunnerWhenSubStageIsPrOutput() {
+    // RC2 (rerun re-dispatch) — a run whose approved plan makes the sub-stage PR_OUTPUT must, on
+    // retry, re-enqueue the pr-output runner (via retryImplementation) so the Failed->Executing
+    // transition does not leave it wedged with nothing queued. NEVER transitions (the caller did).
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(7);
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(prOutputDispatched());
+
+    service(true).redispatchAfterRetry(RUN_ID, "corr-rr");
+
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any(), anyInt());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "pr-output-dispatch:" + RUN_ID + ":7", key.getValue());
+  }
+
+  @Test
+  void redispatchAfterRetryReDispatchesPlanRunnerWhenSubStageIsImplementationPlan() {
+    // RC2 — the converse: a run that failed before plan approval (sub-stage IMPLEMENTATION_PLAN)
+    // re-dispatches the plan runner via retryPlanGeneration.
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(4);
+    when(runnerExecutionQueue.enqueue(any(), any(), any(), any(), anyInt()))
+        .thenReturn(executionDispatched());
+
+    service(true).redispatchAfterRetry(RUN_ID, "corr-rr");
+
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.EXECUTION), key.capture(), any(), anyInt());
+    org.junit.jupiter.api.Assertions.assertEquals("plan-dispatch:" + RUN_ID + ":4", key.getValue());
+  }
+
+  @Test
+  void redispatchAfterRetryIsNoOpWhenExecutionAutoDispatchDisabled() {
+    // The shared test profile keeps auto-dispatch off; the retried run then stays Executing without
+    // a runner (the bare transition is observable) and the queue is never touched.
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+
+    assertNull(service(false).redispatchAfterRetry(RUN_ID, "c"));
+
+    verifyNoInteractions(runnerExecutionQueue);
+    verifyNoInteractions(transitionService);
+  }
+
+  @Test
   void dispatchImplementationIsNoOpWhenAPrOutputExecutionIsInFlight() {
     // AC6 / Task 2 — a pending/running pr-output execution (same sub-stage) is a no-op.
     stubRun(WorkflowState.EXECUTING, 0);

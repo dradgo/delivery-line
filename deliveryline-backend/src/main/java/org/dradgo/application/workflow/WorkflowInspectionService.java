@@ -544,6 +544,7 @@ public class WorkflowInspectionService {
           MdcKeys.sanitizeForLog(resolvedRole));
 
       WorkflowRunDetailedSummaryView summary = getRunSummary(workflowRunPublicId);
+      WorkflowState state = WorkflowState.fromValue(summary.currentState(), "currentState");
 
       // TRAP 2: use the LATEST spec artifact (any status), NOT the last approved one. The UI's
       // version stamp must match what the reviewer currently sees in the artifact panel; deriving
@@ -554,13 +555,21 @@ public class WorkflowInspectionService {
       Integer specVersion = latestSpecOpt.map(ArtifactRecordSnapshot::version).orElse(null);
       String latestSpecPublicId = latestSpecOpt.map(ArtifactRecordSnapshot::publicId).orElse(null);
 
-      Integer bundleVersion = null;
-      if (latestSpecPublicId != null) {
-        ContextBundleLookupResult lookup = getContextBundleLookupForArtifact(latestSpecPublicId);
-        if (lookup.available()) {
-          bundleVersion = lookup.bundle().contextBundleVersion();
-        }
-      }
+      // currentContextBundleVersion MUST reflect the artifact the reviewer is currently deciding
+      // on,
+      // so the value the UI echoes back matches what that decision's optimistic-concurrency check
+      // (ApprovalVersionBinder) compares against. At WaitingForReview the developer decides on the
+      // IMPLEMENTATION artifact (prOutput, else implementationPlan), whose producing
+      // runner-execution
+      // carries the EXECUTION context-bundle version — which diverges from the spec bundle (a retry
+      // mints a fresh execution version, e.g. 3, while the spec bundle stays 1). Every other state
+      // keeps the spec bundle (the spec-approval flow). Without this the implementation-review
+      // accept/reject PERMANENTLY 409s APPROVAL_VERSION_MISMATCH (stamp says spec=1, binder demands
+      // the execution bundle), unfixable by refresh.
+      Integer bundleVersion =
+          state == WorkflowState.WAITING_FOR_REVIEW
+              ? resolveImplementationContextBundleVersion(workflowRunPublicId)
+              : resolveSpecContextBundleVersion(latestSpecPublicId);
 
       String latestEventId =
           workflowEventReadPort
@@ -568,7 +577,6 @@ public class WorkflowInspectionService {
               .map(WorkflowEventRecord::publicId)
               .orElse(null);
 
-      WorkflowState state = WorkflowState.fromValue(summary.currentState(), "currentState");
       List<AllowedAction> actions =
           computeActionMatrix(
               state, resolvedRole, summary.pendingClarifications(), latestSpecPublicId);
@@ -1302,6 +1310,48 @@ public class WorkflowInspectionService {
   }
 
   @Transactional(readOnly = true)
+  /**
+   * The spec-stage version stamp's bundle version: the latest spec artifact's context-bundle
+   * version (or {@code null} when no spec / no resolvable bundle yet). Unchanged spec-approval-flow
+   * behaviour, extracted so {@link #getAllowedActions} can branch on the review state.
+   */
+  private Integer resolveSpecContextBundleVersion(String latestSpecPublicId) {
+    if (latestSpecPublicId == null) {
+      return null;
+    }
+    ContextBundleLookupResult lookup = getContextBundleLookupForArtifact(latestSpecPublicId);
+    return lookup.available() ? lookup.bundle().contextBundleVersion() : null;
+  }
+
+  /**
+   * The implementation-review version stamp's bundle version: the EXECUTION context-bundle version
+   * of the artifact under technical review — the highest-version {@code prOutput} (else {@code
+   * implementationPlan}, mirroring the frontend's {@code resolveImplementationArtifact}) — resolved
+   * via its producing runner-execution EXACTLY as {@code
+   * ApprovalVersionBinder.resolveCurrentContextBundleVersion} does, so the value the UI sends back
+   * matches what the accept/reject binder compares against. {@code null} when no implementation
+   * artifact exists yet (or its runner-execution link is missing) → the bar renders blocked rather
+   * than firing a request the binder would reject.
+   */
+  private Integer resolveImplementationContextBundleVersion(String workflowRunPublicId) {
+    Optional<ArtifactRecordSnapshot> implArtifact =
+        artifactRecordPort
+            .findLatestByWorkflowRunIdAndArtifactType(
+                workflowRunPublicId, ArtifactType.PR_OUTPUT.value())
+            .or(
+                () ->
+                    artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(
+                        workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value()));
+    if (implArtifact.isEmpty()) {
+      return null;
+    }
+    return artifactRecordPort
+        .findRunnerExecutionIdForArtifact(implArtifact.get().publicId())
+        .flatMap(runnerExecutionRecordPort::findByPublicId)
+        .map(RunnerExecutionSnapshot::contextBundleVersion)
+        .orElse(null);
+  }
+
   public ContextBundleLookupResult getContextBundleLookupForArtifact(String artifactId) {
     PublicIdPrefixes.require(artifactId, PublicIdPrefixes.ARTIFACT);
     String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactId);

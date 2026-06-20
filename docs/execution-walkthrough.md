@@ -76,12 +76,12 @@ The linear sequence, step by step:
 
 1. **What happens after spec approval** — queue → worker pickup → repository workspace
    prepared → runner dispatched → implementation plan generated.
-2. **Reviewing the implementation plan** — the implementation-plan artifact panel.
-3. **Accepting the plan** — the Decision Bar in `implementation_review` mode.
-4. **What happens after plan approval** — queue → runner produces the PR/output.
-5. **Reviewing the PR/output** — the diff display, branch + commit + PR references.
-6. **Accepting / rejecting / taking over.**
-7. **Completion + Linear sync.**
+2. **Reviewing the implementation plan** — the implementation-plan artifact panel, then
+   accepting via the Decision Bar in `implementation_review` mode.
+3. **What happens after plan approval** — queue → runner produces the PR/output.
+4. **Reviewing the PR/output** — the diff display, branch + commit + PR references.
+5. **Accept, reject, or take over the PR/output.**
+6. **Completion + Linear sync.**
 
 Each review gate parks the run in **`WaitingForReview`** and waits on you — exactly like the
 spec gate parked it in `WaitingForSpecApproval` for the PM.
@@ -118,9 +118,9 @@ run enqueued ──▶ worker picks up the job
 
 The branch the workspace is prepared on follows the shape
 **`deliveryline/{ticketSlug}/stage-{runIdShort}`** — the ticket reference is slugified
-(lowercased, non-alphanumerics collapsed to `-`) and the run id is shortened to its last 8
-characters. For ticket `LIN-123` and run `run_…abc12345` the branch is
-`deliveryline/lin-123/stage-abc12345`. You will see this branch again on the PR/output panel
+(characters outside `[A-Za-z0-9._-]` are replaced with `-` and runs collapsed; case is
+preserved) and the run id is shortened to its last 8 characters. For ticket `LIN-123` and run
+`run_…abc12345` the branch is `deliveryline/LIN-123/stage-abc12345`. You will see this branch again on the PR/output panel
 (Step 4) and when you take over (it is the branch you continue working on).
 
 When the run reaches `WaitingForReview`, open it from the queue at `/workflows` — same queue,
@@ -241,7 +241,7 @@ The PR/output artifact panel has two clearly separated regions: a **trusted refe
 │  [ pr-output ]   v1  history                                  │
 │                                                               │
 │  References          [ verified by DeliveryLine ]             │  ← trusted panel
-│   BRANCH       deliveryline/lin-123/stage-abc12345            │
+│   BRANCH       deliveryline/LIN-123/stage-abc12345            │
 │   COMMIT       abc1234  [ copy ]                              │  ← short SHA + copy-full-SHA
 │   PULL REQUEST org/repo#42   [ ⊙ Open ]                       │  ← PR ref + PrStateBadge
 │   (last synced 2 minutes ago)                                 │
@@ -258,7 +258,7 @@ The PR/output artifact panel has two clearly separated regions: a **trusted refe
 
 **Trusted reference panel** — badged *"verified by DeliveryLine"*:
 
-- **Branch** — the workspace branch (e.g. `deliveryline/lin-123/stage-abc12345`), linked to
+- **Branch** — the workspace branch (e.g. `deliveryline/LIN-123/stage-abc12345`), linked to
   GitHub when the repository identity is known.
 - **Commit** — the short commit SHA, with a **copy** button that copies the full SHA (it reads
   `copied` briefly after a successful copy), and a link to the commit.
@@ -300,7 +300,7 @@ flowchart LR
 ```
 
 - **Accept implementation** — accepting the PR/output advances the run to `Completed` and
-  triggers the Linear completion sync (Step 7 below).
+  triggers the Linear completion sync (Step 6 below).
 - **Reject with feedback** — sends the implementation back for rework with your reason + a
   rework tag (next section).
 - **Take over** — hands the run to you (the section after next).
@@ -502,7 +502,7 @@ expectations; it is not a recovery manual.
 
 ---
 
-## Step 7 — Completion + Linear sync
+## Step 6 — Completion + Linear sync
 
 Accepting the PR/output advances the run to `Completed`. On completion, DeliveryLine writes a
 **best-effort, after-the-fact, redaction-enforced completion comment** back to the source

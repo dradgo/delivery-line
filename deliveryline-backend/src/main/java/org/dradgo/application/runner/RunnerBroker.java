@@ -1792,10 +1792,50 @@ public class RunnerBroker {
       // (never the untrusted runner-reported string — Trap T1). Best-effort: a linkage-only failure
       // must not unwind the committed runner outcome or block WaitingForReview.
       linkGitHubPrBestEffort(runnerExecutionId, workflowRunId, actual, correlationId);
+    } else if (repositoryWorkspaceService != null) {
+      // Repo-backed run, but captureAndPush returned EMPTY — the backend owns git and found a CLEAN
+      // worktree, i.e. the runner produced NO committable changes. There is therefore no real
+      // branch/commit/PR; the runner only self-reported PLACEHOLDER refs (a {@code codex/<rex>}
+      // branch it never created, a sha256-of-output "commit", an {@code artifacts/<run>/pr.json}
+      // prReference). Format-validating those placeholders here yields a MISLEADING "malformed
+      // runner-reported pr-output ref: prReference" that points at the wrong thing — the real cause
+      // is "the agent changed nothing" (typically a mock/no-op runner image, or a task that
+      // genuinely produced no edits). Fail with that actual cause so the operator looks at the
+      // runner, not a phantom ref-format bug. Still a contract violation (a pr-output execution
+      // must
+      // produce a PR); reuses RUNNER_OUTPUT_VALIDATION_FAILED — no new error code.
+      //
+      // NOTE (code-review 2026-06-19, accept-as-benign): RepositoryWorkspaceService.captureAndPush
+      // returns a bare Optional.empty() for TWO reasons — reason=clean_worktree (the case above)
+      // AND
+      // reason=no_repo_workspace (resolveRepositoryDir empty — only on abnormal workspace loss,
+      // e.g.
+      // the run's temp workspace gone across a restart). For a repo-backed pr-output run the
+      // workspace is always present by the time captureAndPush runs, so in normal operation an
+      // empty
+      // outcome ⇒ clean worktree. If the no-workspace edge ever fires, captureAndPush has already
+      // logged "captureAndPush no-op reason=no_repo_workspace" at WARN
+      // (RepositoryWorkspaceService),
+      // which is the diagnostic that distinguishes the two empties during incident triage.
+      log.warn(
+          "onResult pr-output no changes produced runnerExecutionId={} workflowRunId={} "
+              + "reason=clean_worktree errorCode={}",
+          runnerExecutionId,
+          workflowRunId,
+          DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED.value());
+      handlePrOutputContractFailure(
+          runnerExecutionId,
+          workflowRunId,
+          row,
+          DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED,
+          "runner_output_no_changes",
+          "runner produced no repository changes (clean worktree); no pull request to create");
+      return false;
     } else {
-      // No authoritative push outcome (e.g. the offline mock runner, no repo): the runner's self-
-      // reported refs are all we have, so AC9 still validates their documented format before
-      // ingest.
+      // No repo workspace at all (the offline mock runner / no-repo unit context): the runner's
+      // self-reported refs are genuinely all we have, so AC9 still validates their documented
+      // format
+      // before ingest.
       String reportedBranch = textOrNull(prRef, "branch");
       String reportedCommitSha = textOrNull(prRef, "commitSha");
       String reportedPrReference = textOrNull(prRef, "prReference");

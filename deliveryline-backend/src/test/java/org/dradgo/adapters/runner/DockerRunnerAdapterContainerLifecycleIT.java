@@ -4,10 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.InspectContainerResponse;
+import com.github.dockerjava.api.model.AccessMode;
+import com.github.dockerjava.api.model.Bind;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.dradgo.adapters.files.LocalRunnerScratchStore;
 import org.dradgo.adapters.files.LocalRunnerWorkspaceStore;
@@ -221,5 +225,113 @@ class DockerRunnerAdapterContainerLifecycleIT {
     assertThat(Files.isDirectory(workspaceRoot)).isTrue();
     // No result file written by alpine:3.20 default entrypoint, so tryReadResult is empty.
     assertThat(readBack).isEmpty();
+  }
+
+  @Test
+  void resultPresentAtContainerExitIsClassifiedCompletedAndHarvestedByteIdentical()
+      throws Exception {
+    // AC10 (a) + (h): when a result file is present at container exit, poll classifies Completed
+    // and tryReadResult returns the bytes byte-identically (the adapter never validates — story
+    // 3-8 owns the real-runner content classification). Drives a real container exit via the
+    // adapter, simulating the runner image's write into the read-write output mount.
+    String rexId = PublicIdPrefixes.RUNNER_EXECUTION.next();
+    scratchStore.writeContextBundle(rexId, "{\"schemaVersion\":1}".getBytes());
+
+    RunnerDispatchRequest request =
+        new RunnerDispatchRequest(
+            rexId,
+            "run_it1234567890",
+            RunnerStage.INVESTIGATION,
+            RunnerKind.CODEX,
+            scratchStore.contextBundlePath(rexId),
+            new ExecutionConstraints(Duration.ofSeconds(600L), false),
+            DataClassification.SHAREABLE_REDACTED);
+
+    var ack = adapter.dispatch(request);
+    containerIdToCleanup = ack.adapterRef().substring("docker:".length());
+
+    byte[] resultBytes =
+        ("{\"schemaVersion\":1,\"workflowRunId\":\"run_it1234567890\",\"runnerExecutionId\":\""
+                + rexId
+                + "\",\"normalizedOutput\":{\"summary\":\"ok\",\"outcome\":\"success\"},"
+                + "\"artifactReferences\":[]}")
+            .getBytes();
+    Path outputResult =
+        tempHome
+            .resolve("runner-work")
+            .resolve(rexId)
+            .resolve("output")
+            .resolve("runner-result.v1.json");
+    Files.write(outputResult, resultBytes);
+
+    RunnerPollStatus status = awaitCompleted(rexId, Duration.ofSeconds(20L));
+    assertThat(status).isInstanceOf(RunnerPollStatus.Completed.class);
+
+    Optional<byte[]> harvested = adapter.tryReadResult(rexId);
+    assertThat(harvested).isPresent();
+    assertThat(harvested.get()).isEqualTo(resultBytes);
+    // AC7: the workspace survives the harvest for diagnostic inspection.
+    assertThat(Files.isDirectory(tempHome.resolve("runner-work").resolve(rexId))).isTrue();
+  }
+
+  @Test
+  void mountLayoutIsExactlyThreeBindsWithReadOnlyInputAndReadWriteOutputAndLogs() throws Exception {
+    // AC10 (j): docker inspect reports exactly three binds matching the three workspace subdirs;
+    // the input mount is read-only (the runner cannot mutate the context bundle); output + logs are
+    // read-write; no docker.sock mount; no host-secrets mount.
+    String rexId = PublicIdPrefixes.RUNNER_EXECUTION.next();
+    scratchStore.writeContextBundle(rexId, "{\"schemaVersion\":1}".getBytes());
+
+    RunnerDispatchRequest request =
+        new RunnerDispatchRequest(
+            rexId,
+            "run_it1234567890",
+            RunnerStage.INVESTIGATION,
+            RunnerKind.CODEX,
+            scratchStore.contextBundlePath(rexId),
+            new ExecutionConstraints(Duration.ofSeconds(600L), false),
+            DataClassification.SHAREABLE_REDACTED);
+
+    var ack = adapter.dispatch(request);
+    containerIdToCleanup = ack.adapterRef().substring("docker:".length());
+
+    InspectContainerResponse inspect =
+        dockerClient.inspectContainerCmd(containerIdToCleanup).exec();
+    Bind[] binds = inspect.getHostConfig().getBinds();
+    assertThat(binds).hasSize(3);
+
+    Map<String, AccessMode> modeByContainerPath = new LinkedHashMap<>();
+    for (Bind bind : binds) {
+      modeByContainerPath.put(bind.getVolume().getPath(), bind.getAccessMode());
+    }
+    assertThat(modeByContainerPath)
+        .containsKeys("/workspace/input", "/workspace/output", "/workspace/logs");
+    assertThat(modeByContainerPath.get("/workspace/input")).isEqualTo(AccessMode.ro);
+    assertThat(modeByContainerPath.get("/workspace/output")).isEqualTo(AccessMode.rw);
+    assertThat(modeByContainerPath.get("/workspace/logs")).isEqualTo(AccessMode.rw);
+    // No docker.sock mount, no host-secrets mount.
+    assertThat(modeByContainerPath.keySet())
+        .noneMatch(path -> path.contains("docker.sock") || path.contains("secret"));
+  }
+
+  /**
+   * Poll the adapter until the container has exited with a result present (Completed) or timeout.
+   */
+  private RunnerPollStatus awaitCompleted(String rexId, Duration timeout) {
+    long deadline = System.currentTimeMillis() + timeout.toMillis();
+    RunnerPollStatus last = adapter.poll(rexId);
+    while (System.currentTimeMillis() < deadline) {
+      last = adapter.poll(rexId);
+      if (last instanceof RunnerPollStatus.Completed) {
+        return last;
+      }
+      try {
+        Thread.sleep(200L);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        break;
+      }
+    }
+    return last;
   }
 }

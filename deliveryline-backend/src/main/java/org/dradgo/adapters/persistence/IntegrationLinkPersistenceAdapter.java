@@ -177,7 +177,9 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
   public Optional<IntegrationLink> findActiveByWorkflowRun(String workflowRunPublicId) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     return integrationLinkRepository
-        .findFirstActiveByWorkflowRunPublicId(workflowRunPublicId)
+        .findActiveByWorkflowRunPublicIdLinearFirst(workflowRunPublicId)
+        .stream()
+        .findFirst()
         .map(mapper::toDomain);
   }
 
@@ -198,7 +200,9 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
       String workflowRunPublicId) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     return integrationLinkRepository
-        .findFirstActiveByWorkflowRunPublicId(workflowRunPublicId)
+        .findActiveByWorkflowRunPublicIdLinearFirst(workflowRunPublicId)
+        .stream()
+        .findFirst()
         .map(
             entity ->
                 new TicketSummaryProjection(

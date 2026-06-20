@@ -155,6 +155,38 @@ class IntegrationLinkGitHubPrIT {
     assertTrue(port.findActiveTicketSummaryByTypeAndWorkflowRun(GITHUB_TYPE, run).isEmpty());
   }
 
+  @Test
+  void findActiveByWorkflowRunReturnsLinearVariantWhenRunCarriesBothLinearAndGitHubPrLinks() {
+    // Port contract (IntegrationLinkRecordPort#findActiveByWorkflowRun): once a run carries BOTH a
+    // linear ticket link AND a github_pr link, the type-agnostic lookup must return the LINEAR
+    // variant by convention — and must NEVER throw NonUniqueResultException. The bug: the @Query
+    // returned an Optional from a no-LIMIT, `integration_type asc` (github_pr-first) ordering, so a
+    // run with both links blew up `listRuns` with a 500 instead of surfacing the ticket ref. This
+    // became reachable once a retried run actually pushed a PR (run = ticket + PR).
+    String run = seedRun();
+    port.insert(linearLink(run, "FIN-29"));
+    port.insert(githubLink(run, PR_REF));
+
+    Optional<IntegrationLink> active = port.findActiveByWorkflowRun(run);
+
+    assertTrue(active.isPresent());
+    assertEquals("linear", active.get().integrationType());
+    assertEquals("FIN-29", active.get().externalRef());
+  }
+
+  private NewIntegrationLink linearLink(String runPublicId, String externalRef) {
+    // A linear ticket link is created BEFORE the github_pr link in production (ticket linked at
+    // submit; PR linked at pr-output success), so seed it with an earlier timestamp.
+    return new NewIntegrationLink(
+        PublicIdPrefixes.INTEGRATION_LINK.next(),
+        runPublicId,
+        "linear",
+        externalRef,
+        metadataBytes("open"),
+        Instant.parse("2026-06-10T09:00:00Z"),
+        Instant.parse("2026-06-10T09:00:00Z"));
+  }
+
   private NewIntegrationLink githubLink(String runPublicId, String externalRef) {
     return new NewIntegrationLink(
         PublicIdPrefixes.INTEGRATION_LINK.next(),

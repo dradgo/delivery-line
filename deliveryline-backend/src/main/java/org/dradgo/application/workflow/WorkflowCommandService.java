@@ -368,6 +368,14 @@ public class WorkflowCommandService {
           command,
           fallbackReason(command.reasonText(), "retry workflow"),
           Map.of());
+      // RC2 (rerun re-dispatch) — the transition above only flips Failed -> Executing; it enqueues
+      // NO runner, so without this the run wedges in Executing with nothing for the worker pool to
+      // dequeue. Re-dispatch the EXECUTION-stage runner so the retried run actually resumes. Shares
+      // this @Transactional boundary exactly like submitInternal's dispatchSpecGeneration (the
+      // enqueue opens a REQUIRED tx + afterCommit NOTIFY). No-op when implementation/plan
+      // auto-dispatch is off (the shared test profile), so the bare transition stays observable.
+      workflowOrchestrationService.redispatchAfterRetry(
+          command.workflowRunId(), normalizeOptional(command.correlationId()));
       return new WorkflowStateChangeResult(
           command.workflowRunId(),
           WorkflowState.EXECUTING,

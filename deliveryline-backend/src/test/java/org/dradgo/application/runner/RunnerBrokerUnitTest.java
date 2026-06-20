@@ -2015,6 +2015,45 @@ class RunnerBrokerUnitTest {
   }
 
   @Test
+  void prOutputCleanWorktreeFailsAsNoChangesNotMalformedRefAndDoesNotAdvance() {
+    // RC1 — a repo-backed run whose captureAndPush returns EMPTY (clean worktree: the runner edited
+    // nothing) must fail with the ACTUAL cause ("no repository changes") rather than format-
+    // validating the runner's placeholder self-report. Reported refs here are WELL-FORMED (PR-1),
+    // proving the new clean-worktree branch fires BEFORE the AC9 format check — and that such a run
+    // is failed, not silently advanced to WaitingForReview on a phantom "success".
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    RunnerBroker broker = brokerWithOrchestrationAndRepo(orchestration, repoService);
+
+    String branch = "feature/x";
+    String commitSha = "abcdef1234567890abcdef1234567890abcdef12";
+    String prRef = "PR-1";
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+    when(repoService.captureAndPush(REX_ID)).thenReturn(Optional.empty());
+
+    broker.onResult(
+        REX_ID, prOutputResultPayload(branch, commitSha, prRef).getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(executionService, never()).recordCompleted(any());
+    verify(orchestration, never()).onPrOutputStageSucceeded(any(), any(), any());
+    verify(eventPort)
+        .append(
+            eq(RUN_ID),
+            eq(WorkflowEventType.RUNNER_FAILED),
+            any(),
+            eq("runner_output_no_changes"),
+            eq(FailureCategory.RUNNER_CONTRACT_VIOLATION),
+            any(),
+            any());
+  }
+
+  @Test
   void prOutputLinkageFailureIsSwallowedAndDoesNotBlockCompletion() {
     // Story 3.15 (Task 7) — a linkage-only failure (e.g. cross-run conflict) must not unwind the
     // committed runner outcome or block the WaitingForReview advance (best-effort + swallow).

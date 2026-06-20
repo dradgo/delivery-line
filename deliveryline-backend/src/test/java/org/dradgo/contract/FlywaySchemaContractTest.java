@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 import org.dradgo.TestcontainersConfiguration;
 import org.flywaydb.core.Flyway;
@@ -38,7 +39,9 @@ class FlywaySchemaContractTest {
           "integration_links",
           "recovery_actions",
           "idempotency_records",
-          "batch_submissions");
+          "batch_submissions",
+          "projects",
+          "project_credentials");
 
   private static final Map<String, String> EXPECTED_PUBLIC_ID_PREFIX =
       Map.ofEntries(
@@ -52,13 +55,23 @@ class FlywaySchemaContractTest {
           Map.entry("integration_links", "ilk_"),
           Map.entry("recovery_actions", "rcv_"),
           Map.entry("idempotency_records", "idm_"),
-          Map.entry("batch_submissions", "bat_"));
+          Map.entry("batch_submissions", "bat_"),
+          Map.entry("projects", "prj_"),
+          Map.entry("project_credentials", "cred_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
   @Autowired private Flyway flyway;
 
   @Autowired private DataSource dataSource;
+
+  // Monotonic per-instance salt so repeated inserts within the same (possibly coarse-resolution)
+  // nanosecond tick still get distinct public_id/slug values — avoids spurious uq_* collisions.
+  private final AtomicLong rowSalt = new AtomicLong();
+
+  private String uniqueRowSuffix() {
+    return Math.abs(System.nanoTime()) + "_" + rowSalt.incrementAndGet();
+  }
 
   @Test
   void startupCreatesExactlyTheExpectedCoreTables() {
@@ -509,6 +522,152 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void projectsSchemaCarriesExpectedColumnsConstraintsAndIndexes() {
+    // Story 3c-1 / V17: projects is a core table (bigserial id + public_id prj_ + retention pair
+    // are
+    // asserted by the CORE_TABLES-driven tests above). Probe the project-specific columns + CHECKs.
+    assertColumnType("projects", "name", "text");
+    assertColumnType("projects", "slug", "text");
+    assertColumnType("projects", "status", "text");
+    assertColumnType("projects", "repository_url", "text");
+    assertColumnType("projects", "ticket_source_kind", "text");
+    assertColumnType("projects", "repo_host_kind", "text");
+    assertColumnType("projects", "openspec_enabled", "boolean");
+    assertColumnNullable("projects", "name", false);
+    assertColumnNullable("projects", "slug", false);
+    assertColumnNullable("projects", "status", false);
+    assertColumnNullable("projects", "repository_url", true);
+    assertColumnNullable("projects", "ticket_source_kind", false);
+    assertColumnNullable("projects", "repo_host_kind", false);
+    assertColumnNullable("projects", "openspec_enabled", false);
+
+    // uq_projects_slug enforces a unique slug.
+    assertTrue(
+        uniqueConstraintNames().contains("uq_projects_slug"),
+        "Missing unique constraint uq_projects_slug");
+
+    // openspec_enabled defaults to false.
+    String openspecDefault =
+        jdbcTemplate.queryForObject(
+            """
+				select column_default
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = 'projects'
+				  and column_name = 'openspec_enabled'
+				""",
+            String.class);
+    assertEquals(
+        "false",
+        openspecDefault,
+        () -> "projects.openspec_enabled must default to false but was: " + openspecDefault);
+
+    // ck_projects_status — 'active'/'disabled' accepted; 'archived'/'bogus' rejected.
+    assertProjectInsertAccepted("active", "linear", "github");
+    assertProjectInsertAccepted("disabled", "linear", "github");
+    assertProjectInsertRejected("ck_projects_status", "archived", "linear", "github");
+    assertProjectInsertRejected("ck_projects_status", "bogus", "linear", "github");
+
+    // ck_projects_ticket_source_kind / ck_projects_repo_host_kind — 'linear'/'github' accepted,
+    // 'bogus' rejected (the connector_kind value set).
+    assertProjectInsertAccepted("active", "github", "linear");
+    assertProjectInsertRejected("ck_projects_ticket_source_kind", "active", "bogus", "github");
+    assertProjectInsertRejected("ck_projects_repo_host_kind", "active", "linear", "bogus");
+  }
+
+  @Test
+  void projectCredentialsSchemaCarriesExpectedColumnsConstraintsAndIndexes() {
+    // Story 3c-1 / V17: credential storage is write-only ciphertext — no plaintext column ever.
+    assertColumnType("project_credentials", "project_id", "text");
+    assertColumnType("project_credentials", "connector_role", "text");
+    assertColumnType("project_credentials", "ciphertext", "bytea");
+    assertColumnType("project_credentials", "key_id", "text");
+    assertColumnType("project_credentials", "algo", "text");
+    assertColumnNullable("project_credentials", "project_id", false);
+    assertColumnNullable("project_credentials", "connector_role", false);
+    assertColumnNullable("project_credentials", "ciphertext", false);
+    assertColumnNullable("project_credentials", "key_id", false);
+    assertColumnNullable("project_credentials", "algo", false);
+
+    // Defense: no plaintext-bearing column ever exists on the credential table.
+    assertColumnAbsent("project_credentials", "plaintext");
+    assertColumnAbsent("project_credentials", "secret");
+    assertColumnAbsent("project_credentials", "value");
+
+    // uq_project_credentials_project_role is a PARTIAL unique index (active rows only): exactly one
+    // *active* secret per (project, role), so an archived credential frees the slot for rotation.
+    List<Map<String, Object>> projectRoleIndex =
+        jdbcTemplate.queryForList(
+            """
+				select indexname, indexdef
+				from pg_indexes
+				where schemaname = 'public'
+				  and tablename = 'project_credentials'
+				  and indexname = 'uq_project_credentials_project_role'
+				""");
+    assertEquals(
+        1,
+        projectRoleIndex.size(),
+        () -> "Missing partial unique index uq_project_credentials_project_role");
+    String projectRoleIndexDef = ((String) projectRoleIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(
+        projectRoleIndexDef.contains("unique"),
+        () -> "uq_project_credentials_project_role must be UNIQUE: " + projectRoleIndexDef);
+    assertTrue(
+        projectRoleIndexDef.contains("archived_at is null"),
+        () ->
+            "uq_project_credentials_project_role must be partial on archived_at IS NULL: "
+                + projectRoleIndexDef);
+
+    String projectPid = seedProject();
+    try {
+      // ck_project_credentials_connector_role — 'ticket_source'/'repo_host' accepted, 'bogus'
+      // rejected.
+      String accepted1 = insertCredentialRow(projectPid, "ticket_source");
+      jdbcTemplate.update("delete from project_credentials where public_id = ?", accepted1);
+      String accepted2 = insertCredentialRow(projectPid, "repo_host");
+      jdbcTemplate.update("delete from project_credentials where public_id = ?", accepted2);
+      assertThrows(
+          Exception.class,
+          () -> insertCredentialRow(projectPid, "bogus"),
+          "Expected CHECK violation for connector_role 'bogus'");
+
+      // One *active* per (project, role): a second active ticket_source secret violates the index.
+      String active = insertCredentialRow(projectPid, "ticket_source");
+      assertThrows(
+          Exception.class,
+          () -> insertCredentialRow(projectPid, "ticket_source"),
+          "Expected uq_project_credentials_project_role violation for a duplicate active (project, role)");
+
+      // Rotation: archiving the active secret frees the slot for a fresh one of the same role.
+      jdbcTemplate.update(
+          "update project_credentials set archived_at = now() where public_id = ?", active);
+      String rotated = insertCredentialRow(projectPid, "ticket_source");
+      assertNotNull(rotated, "Rotation must succeed once the prior secret is archived");
+    } finally {
+      jdbcTemplate.update("delete from project_credentials where project_id = ?", projectPid);
+      jdbcTemplate.update("delete from projects where public_id = ?", projectPid);
+    }
+  }
+
+  @Test
+  void runsAndLinksCarryNullableProjectIdForeignKeys() {
+    // Story 3c-1 / V17: workflow_runs + integration_links gain a nullable text project_id FK to
+    // projects.public_id (RESTRICT on delete). Nullable now; story 3c-6 backfills the default
+    // project.
+    assertColumnType("workflow_runs", "project_id", "text");
+    assertColumnNullable("workflow_runs", "project_id", true);
+    assertColumnType("integration_links", "project_id", "text");
+    assertColumnNullable("integration_links", "project_id", true);
+
+    assertProjectForeignKey("fk_workflow_runs_projects");
+    assertProjectForeignKey("fk_integration_links_projects");
+
+    assertIndexDefinitionContains("idx_workflow_runs_project_id", "project_id");
+    assertIndexDefinitionContains("idx_integration_links_project_id", "project_id");
+  }
+
+  @Test
   void malformedMigrationFailsFastWithSyntaxError() {
     // Reuse the @ServiceConnection-managed Postgres against an isolated schema instead of
     // spinning up a second container per test run.
@@ -681,5 +840,155 @@ class FlywaySchemaContractTest {
     } finally {
       jdbcTemplate.update("delete from workflow_runs where public_id = ?", runPid);
     }
+  }
+
+  private Set<String> uniqueConstraintNames() {
+    return new HashSet<>(
+        jdbcTemplate.queryForList(
+            """
+				select conname
+				from pg_constraint
+				where connamespace = 'public'::regnamespace
+				  and contype = 'u'
+				""",
+            String.class));
+  }
+
+  private void assertColumnAbsent(String tableName, String columnName) {
+    List<String> rows =
+        jdbcTemplate.queryForList(
+            """
+				select column_name
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = ?
+				  and column_name = ?
+				""",
+            String.class,
+            tableName,
+            columnName);
+    assertTrue(rows.isEmpty(), () -> "Column must not exist: " + tableName + "." + columnName);
+  }
+
+  private void assertProjectInsertAccepted(String status, String ticketKind, String repoKind) {
+    String publicId = insertProjectRow(status, ticketKind, repoKind);
+    jdbcTemplate.update("delete from projects where public_id = ?", publicId);
+  }
+
+  private void assertProjectInsertRejected(
+      String expectedConstraint, String status, String ticketKind, String repoKind) {
+    Throwable thrown =
+        assertThrows(
+            Exception.class,
+            () -> insertProjectRow(status, ticketKind, repoKind),
+            () ->
+                "Expected "
+                    + expectedConstraint
+                    + " violation for projects ("
+                    + status
+                    + ", "
+                    + ticketKind
+                    + ", "
+                    + repoKind
+                    + ")");
+    assertViolatesConstraint(thrown, expectedConstraint);
+  }
+
+  private void assertViolatesConstraint(Throwable thrown, String expectedConstraint) {
+    StringBuilder messages = new StringBuilder();
+    for (Throwable t = thrown; t != null; t = t.getCause()) {
+      messages.append(t.getMessage()).append('\n');
+    }
+    String combined = messages.toString();
+    assertTrue(
+        combined.contains(expectedConstraint),
+        () ->
+            "Failure should cite constraint "
+                + expectedConstraint
+                + " (guards against a spurious unique/format collision passing the test) but was: "
+                + combined);
+  }
+
+  private String insertProjectRow(String status, String ticketKind, String repoKind) {
+    String n = uniqueRowSuffix();
+    String publicId = "prj_test" + n;
+    jdbcTemplate.update(
+        "insert into projects (public_id, name, slug, status, ticket_source_kind, repo_host_kind) "
+            + "values (?, ?, ?, ?, ?, ?)",
+        publicId,
+        "Test Project",
+        "slug-" + n,
+        status,
+        ticketKind,
+        repoKind);
+    return publicId;
+  }
+
+  private String seedProject() {
+    String n = uniqueRowSuffix();
+    String publicId = "prj_seed" + n;
+    jdbcTemplate.update(
+        "insert into projects (public_id, name, slug, status, ticket_source_kind, repo_host_kind) "
+            + "values (?, 'Seed Project', ?, 'active', 'linear', 'github')",
+        publicId,
+        "seed-" + n);
+    return publicId;
+  }
+
+  private String insertCredentialRow(String projectPublicId, String connectorRole) {
+    String n = uniqueRowSuffix();
+    String publicId = "cred_test" + n;
+    jdbcTemplate.update(
+        "insert into project_credentials "
+            + "(public_id, project_id, connector_role, ciphertext, key_id, algo) "
+            + "values (?, ?, ?, ?, ?, ?)",
+        publicId,
+        projectPublicId,
+        connectorRole,
+        new byte[] {1, 2, 3},
+        "key-1",
+        "AES_GCM");
+    return publicId;
+  }
+
+  private void assertProjectForeignKey(String constraintName) {
+    List<Map<String, Object>> rows =
+        jdbcTemplate.queryForList(
+            """
+				select ccu.table_name as parent_table,
+				       ccu.column_name as parent_column,
+				       kcu.column_name as child_column,
+				       rc.delete_rule
+				from information_schema.table_constraints tc
+				join information_schema.key_column_usage kcu
+				  on tc.constraint_name = kcu.constraint_name
+				 and tc.table_schema = kcu.table_schema
+				join information_schema.referential_constraints rc
+				  on tc.constraint_name = rc.constraint_name
+				 and tc.table_schema = rc.constraint_schema
+				join information_schema.constraint_column_usage ccu
+				  on rc.unique_constraint_name = ccu.constraint_name
+				 and rc.unique_constraint_schema = ccu.constraint_schema
+				where tc.constraint_type = 'FOREIGN KEY'
+				  and tc.table_schema = 'public'
+				  and tc.constraint_name = ?
+				""",
+            constraintName);
+    assertEquals(1, rows.size(), () -> "Expected exactly one FK named " + constraintName);
+    Map<String, Object> row = rows.get(0);
+    assertEquals(
+        "projects",
+        row.get("parent_table"),
+        () -> constraintName + " must reference table projects");
+    assertEquals(
+        "public_id",
+        row.get("parent_column"),
+        () -> constraintName + " must reference projects.public_id");
+    assertEquals(
+        "project_id",
+        row.get("child_column"),
+        () -> constraintName + " must be on the project_id column");
+    assertEquals(
+        "RESTRICT", row.get("delete_rule"), () -> constraintName + " must be ON DELETE RESTRICT");
   }
 }

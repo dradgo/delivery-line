@@ -579,6 +579,36 @@ public class WorkflowOrchestrationService {
         "prOutput");
   }
 
+  /** Convenience overload — no originating correlationId threaded. */
+  public RunnerDispatchResult redispatchAfterRetry(String workflowRunId) {
+    return redispatchAfterRetry(workflowRunId, null);
+  }
+
+  /**
+   * RC2 (rerun re-dispatch) — re-dispatch the EXECUTION-stage runner for a run the REST/CLI {@code
+   * retry-workflow} command just transitioned {@code Failed -> Executing}. The bare {@code
+   * WorkflowCommandService.retryWorkflow} transition enqueues NOTHING, so without this hop the run
+   * sits in {@code Executing} with no queued/active runner and wedges forever (the worker pool
+   * keeps reporting "dequeue found no queued row"). Mirrors the recovery/retry baseline ({@code
+   * RecoveryService.retry} Step 6) but routes through the existing sub-stage-aware {@link
+   * #retryPlanGeneration} / {@link #retryImplementation} so the in-flight guard,
+   * fresh-bundle-version idempotency key, and auto-dispatch gate are all reused.
+   *
+   * <p>The EXECUTION sub-stage is the run-level discriminator ("does an approved
+   * implementation-plan exist"): a run that failed BEFORE plan approval re-dispatches the plan
+   * runner; one that failed at pr-output re-dispatches the pr-output runner. NEVER transitions
+   * (Trap T1) — the caller already did. No-op (returns {@code null}) when the relevant
+   * auto-dispatch gate is off (the shared test profile), so the bare {@code Failed -> Executing}
+   * transition stays observable without a runner.
+   */
+  public RunnerDispatchResult redispatchAfterRetry(String workflowRunId, String correlationId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    ExecutionSubStage subStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
+    return subStage == ExecutionSubStage.IMPLEMENTATION_PLAN
+        ? retryPlanGeneration(workflowRunId, correlationId)
+        : retryImplementation(workflowRunId, correlationId);
+  }
+
   /**
    * Shared body for the EXECUTION-stage dispatch entry points — {@link #dispatchPlanGeneration} /
    * {@link #retryPlanGeneration} (sub-stage {@code IMPLEMENTATION_PLAN}) and {@link

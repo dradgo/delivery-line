@@ -497,7 +497,13 @@ export function canRetry(view: ApprovalDecisionView): boolean {
 /** Compose the recovery decision-context line (AC3) from the live read model. */
 export function buildRecoveryContextLabel(detail: WorkflowDetail | undefined): string {
   const stage = detail?.failedStage;
-  const stagePart = stage !== undefined && stage.trim() !== '' ? ` at the ${stage} stage` : '';
+  // `failedStage` is typed `?: string`, but the wire serializes it as JSON `null` once the run
+  // leaves Failed (a successful retry flips it to Executing while the recovery bar stays mounted
+  // through its `success` state). A `!== undefined` guard misses null → `null.trim()` crashes the
+  // whole route (`[[workflowdetail-wire-sends-null-not-undefined]]`). `typeof === 'string'` covers
+  // null, undefined, AND non-strings.
+  const stagePart =
+    typeof stage === 'string' && stage.trim() !== '' ? ` at the ${stage} stage` : '';
   return `Recover the failed run${stagePart}`;
 }
 
@@ -543,7 +549,9 @@ export function buildDecisionContextLabel(
   const version = versionStamp?.currentSpecArtifactVersion;
   const versionPart = typeof version === 'number' ? ` v${version}` : '';
   const actor = detail?.currentActorIdentity;
-  const actorPart = actor !== undefined && actor.trim() !== '' ? ` by ${actor}` : '';
+  // `currentActorIdentity` is wire-nullable (`?: string` but serialized as JSON null) — guard with
+  // typeof so a null actor cannot `.trim()`-crash ([[workflowdetail-wire-sends-null-not-undefined]]).
+  const actorPart = typeof actor === 'string' && actor.trim() !== '' ? ` by ${actor}` : '';
   return `Approve specification${versionPart}${actorPart}`;
 }
 
@@ -637,6 +645,8 @@ export function buildImplementationContextLabel(detail: WorkflowDetail | undefin
   const version = resolveImplementationArtifact(detail)?.version;
   const versionPart = typeof version === 'number' ? ` v${version}` : '';
   const actor = detail?.currentActorIdentity;
-  const actorPart = actor !== undefined && actor.trim() !== '' ? ` by ${actor}` : '';
+  // `currentActorIdentity` is wire-nullable — typeof guard prevents a null `.trim()` crash
+  // ([[workflowdetail-wire-sends-null-not-undefined]]).
+  const actorPart = typeof actor === 'string' && actor.trim() !== '' ? ` by ${actor}` : '';
   return `Review implementation${versionPart}${actorPart}`;
 }
