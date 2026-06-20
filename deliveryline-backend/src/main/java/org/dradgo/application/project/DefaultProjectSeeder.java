@@ -161,10 +161,11 @@ public class DefaultProjectSeeder {
   }
 
   /**
-   * Parses a configured connector kind, failing startup with an actionable message when the value is
-   * unrecognized. Decision (2026-06-20 review): the seeder intentionally fails fast on a misconfigured
-   * kind rather than normalizing — but the abort must name the offending property, its bad value, and
-   * the accepted set instead of surfacing a bare {@code UNKNOWN_REGISTRY_VALUE} stack.
+   * Parses a configured connector kind, failing startup with an actionable message when the value
+   * is unrecognized. Decision (2026-06-20 review): the seeder intentionally fails fast on a
+   * misconfigured kind rather than normalizing — but the abort must name the offending property,
+   * its bad value, and the accepted set instead of surfacing a bare {@code UNKNOWN_REGISTRY_VALUE}
+   * stack.
    */
   private ConnectorKind parseSeedConnectorKind(String rawValue, String propertyKey) {
     try {
