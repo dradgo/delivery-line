@@ -20,7 +20,10 @@ public enum PublicIdPrefixes implements RegistryValue {
   INTEGRATION_LINK("integrationLink", "ilk_", "ck_integration_links_public_id_format"),
   RECOVERY_ACTION("recoveryAction", "rcv_", "ck_recovery_actions_public_id_format"),
   IDEMPOTENCY_RECORD("idempotencyRecord", "idm_", "ck_idempotency_records_public_id_format"),
-  BATCH_SUBMISSION("batchSubmission", "bat_", "ck_batch_submissions_public_id_format");
+  BATCH_SUBMISSION("batchSubmission", "bat_", "ck_batch_submissions_public_id_format"),
+  // Story 3c-2 (AC3) — public_id prefixes for the V17 projects / project_credentials tables.
+  PROJECT("project", "prj_", "ck_projects_public_id_format"),
+  PROJECT_CREDENTIAL("projectCredential", "cred_", "ck_project_credentials_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

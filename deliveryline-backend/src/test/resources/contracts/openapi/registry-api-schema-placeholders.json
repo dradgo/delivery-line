@@ -67,6 +67,14 @@
   "runnerSchemaVersions": [
     "1"
   ],
+  "projectStatuses": [
+    "active",
+    "disabled"
+  ],
+  "connectorKinds": [
+    "linear",
+    "github"
+  ],
   "publicIdPrefixes": {
     "workflowRun": "run_",
     "workflowEvent": "evt_",
@@ -78,7 +86,9 @@
     "integrationLink": "ilk_",
     "recoveryAction": "rcv_",
     "idempotencyRecord": "idm_",
-    "batchSubmission": "bat_"
+    "batchSubmission": "bat_",
+    "project": "prj_",
+    "projectCredential": "cred_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",
@@ -142,6 +152,9 @@
     "MISSING_REJECTION_TAXONOMY": "https://deliveryline.local/problems/missing-rejection-taxonomy",
     "RUNNER_QUEUE_FULL": "https://deliveryline.local/problems/runner-queue-full",
     "INVALID_REVIEWER_ROLE_FOR_ENDPOINT": "https://deliveryline.local/problems/invalid-reviewer-role-for-endpoint",
-    "INVALID_REJECTION_TAXONOMY": "https://deliveryline.local/problems/invalid-rejection-taxonomy"
+    "INVALID_REJECTION_TAXONOMY": "https://deliveryline.local/problems/invalid-rejection-taxonomy",
+    "PROJECT_NOT_FOUND": "https://deliveryline.local/problems/project-not-found",
+    "PROJECT_SLUG_CONFLICT": "https://deliveryline.local/problems/project-slug-conflict",
+    "UNSUPPORTED_CONNECTOR_KIND": "https://deliveryline.local/problems/unsupported-connector-kind"
   }
 }

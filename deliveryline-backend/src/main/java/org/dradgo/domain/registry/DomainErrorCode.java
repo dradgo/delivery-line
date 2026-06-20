@@ -135,7 +135,15 @@ public enum DomainErrorCode implements RegistryValue {
   // validation, not a domain decision (ArchUnit-safe); the service keeps its own defense-in-depth
   // subset guard (3.21, INVALID_COMMAND_PAYLOAD). BAD_REQUEST + non-retryable (mirrors
   // INVALID_COMMAND_PAYLOAD — a malformed reviewer decision, not a transient fault).
-  INVALID_REJECTION_TAXONOMY("INVALID_REJECTION_TAXONOMY");
+  INVALID_REJECTION_TAXONOMY("INVALID_REJECTION_TAXONOMY"),
+  // Story 3c-2 (AC5) — three-sites codes (enum + ProblemDetailsCatalog + manifest), registered
+  // ahead of their throw sites: PROJECT_NOT_FOUND / PROJECT_SLUG_CONFLICT land in the project
+  // REST/service layer (3c-8); UNSUPPORTED_CONNECTOR_KIND in the ProjectConnectorResolver (3c-3).
+  // The foundation gate round-trips every code through ProblemDetailsMapper, so no production throw
+  // site is required here.
+  PROJECT_NOT_FOUND("PROJECT_NOT_FOUND"),
+  PROJECT_SLUG_CONFLICT("PROJECT_SLUG_CONFLICT"),
+  UNSUPPORTED_CONNECTOR_KIND("UNSUPPORTED_CONNECTOR_KIND");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

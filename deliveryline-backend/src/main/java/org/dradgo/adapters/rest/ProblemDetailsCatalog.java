@@ -432,6 +432,25 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Invalid rejection taxonomy",
         false);
+    // Story 3c-2 (AC5) — project-domain codes registered ahead of their 3c-3/3c-8 throw sites.
+    register(
+        metadata,
+        DomainErrorCode.PROJECT_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        "Project not found",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.PROJECT_SLUG_CONFLICT,
+        HttpStatus.CONFLICT,
+        "Project slug conflict",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.UNSUPPORTED_CONNECTOR_KIND,
+        HttpStatus.BAD_REQUEST,
+        "Unsupported connector kind",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

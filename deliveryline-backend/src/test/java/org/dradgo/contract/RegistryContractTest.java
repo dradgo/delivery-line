@@ -32,6 +32,7 @@ import org.dradgo.domain.registry.ArtifactOperationStatus;
 import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
@@ -40,6 +41,7 @@ import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
+import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
@@ -112,6 +114,8 @@ class RegistryContractTest {
     assertEquals(registryValues(RunnerStage.values()), DomainRegistry.runnerStages());
     assertEquals(registryValues(RunnerKind.values()), DomainRegistry.runnerKinds());
     assertEquals(registryValues(WorkflowEventType.values()), DomainRegistry.workflowEventTypes());
+    assertEquals(registryValues(ProjectStatus.values()), DomainRegistry.projectStatuses());
+    assertEquals(registryValues(ConnectorKind.values()), DomainRegistry.connectorKinds());
     assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
   }
 
@@ -175,6 +179,27 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.integrationSyncStatuses(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "integrationSyncStatuses"));
+  }
+
+  @Test
+  void projectStatusAndConnectorKindStayAlignedWithSqlChecksAndApiManifest() throws IOException {
+    // Story 3c-2 (AC4) — drift gate for the two new project registries. ConnectorKind aligns with
+    // BOTH the ticket-source-kind and repo-host-kind CHECKs (R1: both are the {linear,github}
+    // value set; the {ticket_source,repo_host} role set is a 3c-5 credential concern, not here).
+    assertFalse(DomainRegistry.projectStatuses().isEmpty());
+    assertEquals(DomainRegistry.projectStatuses(), extractConstraintValues("ck_projects_status"));
+    assertEquals(
+        DomainRegistry.projectStatuses(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "projectStatuses"));
+
+    assertFalse(DomainRegistry.connectorKinds().isEmpty());
+    assertEquals(
+        DomainRegistry.connectorKinds(), extractConstraintValues("ck_projects_ticket_source_kind"));
+    assertEquals(
+        DomainRegistry.connectorKinds(), extractConstraintValues("ck_projects_repo_host_kind"));
+    assertEquals(
+        DomainRegistry.connectorKinds(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "connectorKinds"));
   }
 
   @Test
