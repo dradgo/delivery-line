@@ -33,6 +33,7 @@ import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.ConnectorKind;
+import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
@@ -185,7 +186,8 @@ class RegistryContractTest {
   void projectStatusAndConnectorKindStayAlignedWithSqlChecksAndApiManifest() throws IOException {
     // Story 3c-2 (AC4) — drift gate for the two new project registries. ConnectorKind aligns with
     // BOTH the ticket-source-kind and repo-host-kind CHECKs (R1: both are the {linear,github}
-    // value set; the {ticket_source,repo_host} role set is a 3c-5 credential concern, not here).
+    // value set; the {ticket_source,repo_host} role set is a 3c-5 credential concern, asserted
+    // separately by connectorRoleStaysAlignedWithProjectCredentialsCheck below).
     assertFalse(DomainRegistry.projectStatuses().isEmpty());
     assertEquals(DomainRegistry.projectStatuses(), extractConstraintValues("ck_projects_status"));
     assertEquals(
@@ -200,6 +202,16 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.connectorKinds(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "connectorKinds"));
+  }
+
+  @Test
+  void connectorRoleStaysAlignedWithProjectCredentialsCheck() {
+    // Story 3c-5 (AC7) — the {ticket_source,repo_host} connector-role set 3c-2 R1 deferred to this
+    // story. The V17 ck_project_credentials_connector_role CHECK value-set must equal
+    // ConnectorRole.values() (compared directly — no DomainRegistry accessor, OQ-1 default).
+    Set<String> connectorRoles = registryValues(ConnectorRole.values());
+    assertFalse(connectorRoles.isEmpty(), "ConnectorRole registry must not be empty");
+    assertEquals(connectorRoles, extractConstraintValues("ck_project_credentials_connector_role"));
   }
 
   @Test
@@ -440,6 +452,10 @@ class RegistryContractTest {
     registryBoundaries.put(
         "projects.ticket_source_kind", PersistedRegistryValues::projectTicketSourceKind);
     registryBoundaries.put("projects.repo_host_kind", PersistedRegistryValues::projectRepoHostKind);
+    // Story 3c-5 (AC7) — the project_credentials.connector_role boundary handed off from 3c-6.
+    registryBoundaries.put(
+        "project_credentials.connector_role",
+        PersistedRegistryValues::projectCredentialConnectorRole);
 
     List<DomainException> thrown = new ArrayList<>();
     for (Map.Entry<String, Function<String, ?>> entry : registryBoundaries.entrySet()) {

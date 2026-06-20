@@ -166,6 +166,27 @@
         "super-secret-password-123",
         "FAKE-RSA-PRIVATE-KEY-DO-NOT-USE-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
       ]
+    },
+    {
+      "file": "project-credential-linear-token.json",
+      "placeholder": "[REDACTED_LINEAR_API_KEY]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["lin_api_FAKEDONOTUSEaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "file": "project-credential-github-token.json",
+      "placeholder": "[REDACTED_GITHUB_TOKEN]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": [
+        "ghp_FAKEDONOTUSEbbbbbbbbbbbbbbbbbbbb",
+        "github_pat_FAKEDONOTUSE_cccccccccccccccccccc"
+      ]
+    },
+    {
+      "file": "project-credential-opaque-under-key.json",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["FAKE-OPAQUE-CREDENTIAL-DO-NOT-USE-Zk9wQ2pLmN7xR4tBvH"]
     }
   ]
 }

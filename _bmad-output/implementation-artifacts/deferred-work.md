@@ -2,6 +2,11 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3c-5 (2026-06-20)
+
+- **`ProjectCredentialEntity` ciphertext `byte[]` is not defensively cloned.** `getCiphertext()`/`setCiphertext()` return/store the live array while the `ProjectCredential` domain record meticulously clones in/out — an inconsistency with the stated secret-hostile posture. No live leak in 3c-5 (the entity never escapes the adapter; the mapper re-clones into the record). **Follow-up:** add a defensive clone (or revisit the secret-hostility surface) when 3c-8 introduces the credential REST/serialization surface. [`ProjectCredentialEntity.java:99-105`]
+- **Master-key rotation invalidates every stored credential read.** `EnvelopeCredentialCipher.decrypt` hard-rejects any row whose `keyId` is not the active master key, so after a `DELIVERYLINE_MASTER_KEY` rotation every `getDecrypted`/`resolveSecret` throws `CredentialCipherException` until each row is re-wrapped — and no re-wrap mechanism exists. The read path is per-spec for 3c-5; this is an epic-level gap. **Follow-up:** add a re-wrap-on-rotation story (re-encrypt active credentials under the new key). [`ProjectCredentialService.java` `getDecrypted`]
+
 ## Deferred from: code review of story-3c-6 (2026-06-20)
 
 - **`LINEAR_GITHUB_REPO_MISMATCH` is vendor-named on a now vendor-neutral seam.** The repointed `RepositoryWorkspaceService.resolveExpectedRepositoryRef` flows through the vendor-neutral `ProjectRuntimeConfigResolver`, yet a ref mismatch still raises the Linear/GitHub-named `LINEAR_GITHUB_REPO_MISMATCH` — a GitLab-kind project would throw a GitHub-named code. Error code predates 3c-6. **Follow-up:** rename/generalize when GitLab support is real. [`RepositoryWorkspaceService.java`]

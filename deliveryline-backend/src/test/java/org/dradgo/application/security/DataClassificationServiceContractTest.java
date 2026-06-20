@@ -76,6 +76,26 @@ class DataClassificationServiceContractTest {
   }
 
   @Test
+  void exportTimeRedactionStripsAnEmbeddedProjectCredentialValue() {
+    // Story 3c-5 (AC5) — a payload that EMBEDS a connector credential under a `credential` key must
+    // emit no secret material on the export path. There is no export pipeline yet (R4), so this
+    // proves the egress redaction layer the future epic-05 export will route through.
+    String opaqueCredential = "FAKE-OPAQUE-CREDENTIAL-DO-NOT-USE-Zk9wQ2pLmN7xR4tBvH";
+    String payload =
+        "{ \"projectId\": \"prj_demo01\", \"credential\": \"" + opaqueCredential + "\" }";
+
+    RedactionResult result =
+        redactionPolicyService.redactForExport(payload, DataClassification.SHAREABLE_FULL.value());
+
+    assertTrue(result.redacted());
+    assertEquals(DataClassification.SHAREABLE_REDACTED, result.effectiveClassification());
+    assertFalse(
+        result.sanitizedText().contains(opaqueCredential),
+        "export path must strip the embedded credential value");
+    assertTrue(result.sanitizedText().contains("[REDACTED_SECRET_FIELD]"));
+  }
+
+  @Test
   void metadataSpoofingCannotOverrideDetectedSecrets() {
     Map<String, Object> payload = new LinkedHashMap<>();
     payload.put("classification", DataClassification.SHAREABLE_FULL.value());

@@ -105,4 +105,12 @@ public final class PersistedRegistryValues {
   public static ConnectorKind projectRepoHostKind(String rawValue) {
     return ConnectorKind.fromValue(rawValue, "projects.repo_host_kind");
   }
+
+  // Story 3c-5 (AC7) — the project_credentials.connector_role persistence boundary that 3c-2 R1 /
+  // 3c-6 explicitly deferred to this story ("the {ticket_source,repo_host} role set is a 3c-5
+  // credential concern"). ProjectCredentialEntity stores connector_role as raw text and parses it
+  // at the getter through this wrapper; an unknown DB value fails fast with UNKNOWN_REGISTRY_VALUE.
+  public static ConnectorRole projectCredentialConnectorRole(String rawValue) {
+    return ConnectorRole.fromValue(rawValue, "project_credentials.connector_role");
+  }
 }

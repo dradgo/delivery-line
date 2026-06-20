@@ -119,6 +119,10 @@ class RedactionPolicyServiceContractTest {
             "pem-ec-private-key.pem",
             "pem-pkcs8-private-key.pem",
             "pem-rsa-private-key.pem",
+            // Story 3c-5 — the three AR10 project-credential adversarial fixtures.
+            "project-credential-github-token.json",
+            "project-credential-linear-token.json",
+            "project-credential-opaque-under-key.json",
             "query-secret.txt",
             "repo-context-readme-with-pem-and-path.md",
             "repo-context-tree-summary-with-secrets.json",
