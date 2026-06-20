@@ -189,7 +189,8 @@ public class RepositoryWorkspaceService {
       // so when the broker passes that same configured ref expected == requested and no new
       // rejection occurs (byte-identical). 3c-6/3c-7 repoint resolveExpectedRepositoryRef at the
       // run's Project so this becomes a genuine per-project guard. The requested ref is normalized
-      // and compared case-insensitively (mirrors ProjectConnectorResolver.assertRepositoryRefMatches
+      // and compared case-insensitively (mirrors
+      // ProjectConnectorResolver.assertRepositoryRefMatches
       // Project) so a URL/.git/trailing-slash/case-variant form of the same repo is not falsely
       // rejected; idempotent on an already-bare lowercase ref so parity holds.
       Optional<String> expectedRepositoryRef = resolveExpectedRepositoryRef(workflowRunId);

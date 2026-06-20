@@ -205,7 +205,8 @@ class ProjectConnectorResolverTest {
 
   @Test
   void assertRepositoryRefMatchesProjectIsCaseInsensitive() {
-    // Review hardening: host repo identity is case-folding (GitHub treats Octo/Hello == octo/hello),
+    // Review hardening: host repo identity is case-folding (GitHub treats Octo/Hello ==
+    // octo/hello),
     // so a case-variant request must not raise a mismatch.
     ProjectConnectorResolver resolver = resolver(List.of(), List.of());
     Project bound = projectWithRepo("https://github.com/Octo/Hello.git");
