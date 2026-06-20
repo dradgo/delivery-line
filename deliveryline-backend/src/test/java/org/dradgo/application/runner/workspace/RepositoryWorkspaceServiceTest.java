@@ -17,6 +17,7 @@ import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
+import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
@@ -230,6 +231,69 @@ class RepositoryWorkspaceServiceTest {
 
     assertThat(mount.defaultBranch()).isEqualTo("main");
     verify(git).cloneRepository(any(GitCommandPort.CloneSpec.class), any());
+  }
+
+  // ---- AC3/AC4 3c-6 repoint: expected ref resolves through ProjectRuntimeConfigResolver ----
+
+  @Test
+  void prepareWorkspaceRepointsExpectedRefThroughResolverAndIsByteIdenticalOnParity() {
+    // 3c-6: when the resolver is wired (production), the expected ref comes from the run's Project
+    // (default-project fallback). The seeded default's repositoryUrl == the global config url, so a
+    // matching requested ref is byte-identical parity — no mismatch, clone proceeds.
+    ProjectRuntimeConfigResolver resolver = Mockito.mock(ProjectRuntimeConfigResolver.class);
+    when(resolver.resolveRepositoryRef(RUN_ID)).thenReturn(Optional.of("octo/hello"));
+    RepositoryWorkspaceService wired =
+        new RepositoryWorkspaceService(
+            git,
+            gitHubAdapter,
+            secrets,
+            store,
+            recordPort,
+            links,
+            WorkflowProperties.defaults(),
+            resolver);
+    when(gitHubAdapter.getRepositoryByRef(RepositoryRef.of("octo/hello")))
+        .thenReturn(
+            Optional.of(
+                new Repository(RepositoryRef.of("octo/hello"), "octo/hello", "main", "git://r")));
+    when(store.prepareRepositoryDir(REX)).thenReturn(REPO_DIR);
+    when(git.checkoutOrReuseBranch(eq(REPO_DIR), anyString(), any()))
+        .thenReturn(GitCommandPort.BranchOutcome.CREATED);
+
+    RepositoryWorkspaceService.RepositoryMount mount =
+        wired.prepareWorkspace(RUN_ID, RunnerStage.INVESTIGATION, REX, "DEL-9", "octo/hello");
+
+    assertThat(mount.defaultBranch()).isEqualTo("main");
+    verify(resolver).resolveRepositoryRef(RUN_ID);
+    verify(git).cloneRepository(any(GitCommandPort.CloneSpec.class), any());
+  }
+
+  @Test
+  void prepareWorkspaceRaisesMismatchWhenResolverRefDiffersFromRequested() {
+    ProjectRuntimeConfigResolver resolver = Mockito.mock(ProjectRuntimeConfigResolver.class);
+    when(resolver.resolveRepositoryRef(RUN_ID)).thenReturn(Optional.of("octo/hello"));
+    RepositoryWorkspaceService wired =
+        new RepositoryWorkspaceService(
+            git,
+            gitHubAdapter,
+            secrets,
+            store,
+            recordPort,
+            links,
+            WorkflowProperties.defaults(),
+            resolver);
+
+    assertThatThrownBy(
+            () ->
+                wired.prepareWorkspace(
+                    RUN_ID, RunnerStage.INVESTIGATION, REX, "DEL-9", "octo/other"))
+        .isInstanceOf(DomainException.class)
+        .satisfies(
+            e ->
+                assertThat(((DomainException) e).errorCode())
+                    .isEqualTo(DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH));
+    verify(gitHubAdapter, never()).getRepositoryByRef(any());
+    verify(git, never()).cloneRepository(any(), any());
   }
 
   // ---- prepareWorkspace happy ----

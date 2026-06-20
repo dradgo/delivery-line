@@ -87,4 +87,22 @@ public final class PersistedRegistryValues {
   public static ActorType recoveryActorType(String rawValue) {
     return ActorType.fromValue(rawValue, "recovery_actions.actor_type");
   }
+
+  // Story 3c-6 (AC7) — the three project persistence boundaries 3c-2 (R7) deferred to "when rows
+  // are
+  // first read/written through the app", which is now: ProjectEntity stores
+  // status/ticket_source_kind
+  // /repo_host_kind as raw text and parses each at the getter through these wrappers, exactly like
+  // WorkflowRunEntity.getCurrentState(). Unknown DB values fail fast with UNKNOWN_REGISTRY_VALUE.
+  public static ProjectStatus projectStatus(String rawValue) {
+    return ProjectStatus.fromValue(rawValue, "projects.status");
+  }
+
+  public static ConnectorKind projectTicketSourceKind(String rawValue) {
+    return ConnectorKind.fromValue(rawValue, "projects.ticket_source_kind");
+  }
+
+  public static ConnectorKind projectRepoHostKind(String rawValue) {
+    return ConnectorKind.fromValue(rawValue, "projects.repo_host_kind");
+  }
 }

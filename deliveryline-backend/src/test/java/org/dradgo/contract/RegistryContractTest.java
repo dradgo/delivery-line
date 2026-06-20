@@ -434,6 +434,12 @@ class RegistryContractTest {
         "integration_links.sync_status", PersistedRegistryValues::integrationSyncStatus);
     registryBoundaries.put(
         "recovery_actions.actor_type", PersistedRegistryValues::recoveryActorType);
+    // Story 3c-6 (AC7) — the three project persistence boundaries introduced by ProjectEntity
+    // (3c-2 R7 hand-off). Each parses raw text -> enum at the entity getter and must fail fast.
+    registryBoundaries.put("projects.status", PersistedRegistryValues::projectStatus);
+    registryBoundaries.put(
+        "projects.ticket_source_kind", PersistedRegistryValues::projectTicketSourceKind);
+    registryBoundaries.put("projects.repo_host_kind", PersistedRegistryValues::projectRepoHostKind);
 
     List<DomainException> thrown = new ArrayList<>();
     for (Map.Entry<String, Function<String, ?>> entry : registryBoundaries.entrySet()) {

@@ -43,4 +43,22 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
       @Param("publicId") String publicId,
       @Param("currentState") String currentState,
       @Param("expectedVersion") Long expectedVersion);
+
+  // Story 3c-6 (AC2) — the run's project_id without widening WorkflowRunSnapshot (which fans out to
+  // every `new WorkflowRunSnapshot(...)`). Returns empty for a missing run AND for a run whose
+  // project_id is null — both collapse to "no binding" so the resolver falls back to the default
+  // project (Spring Data wraps a null scalar / NoResultException into Optional.empty()).
+  @Query(
+      "select workflowRun.projectId from WorkflowRunEntity workflowRun"
+          + " where workflowRun.publicId = :publicId")
+  Optional<String> findProjectIdByPublicId(@Param("publicId") String publicId);
+
+  // Story 3c-6 (AC2) — backfill every run with a null project_id to the seeded default project. A
+  // single @Modifying UPDATE, naturally idempotent (`where project_id is null`); returns the count.
+  // flush/clear so a later read in the same tx (the seeder's log line / tests) sees the new values.
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "update WorkflowRunEntity workflowRun set workflowRun.projectId = :projectId"
+          + " where workflowRun.projectId is null")
+  int backfillNullProjectIds(@Param("projectId") String projectId);
 }

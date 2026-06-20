@@ -23,6 +23,8 @@ import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.project.DefaultProjectSeeder;
+import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
@@ -40,10 +42,13 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -54,6 +59,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class WorkflowCommandService {
+
+  private static final Logger log = LoggerFactory.getLogger(WorkflowCommandService.class);
+
   /**
    * P10 — replay-ref separator switched from {@code "|"} (which is a legal char in workflow run
    * public ids and state names per a future regex relaxation) to ASCII Unit Separator {@code
@@ -90,6 +98,8 @@ public class WorkflowCommandService {
   private final ClarificationReadPort clarificationReadPort;
   // Story 3a-1 (Task 5 / AC1) — auto-dispatch the spec runner once a submitted run is created.
   private final WorkflowOrchestrationService workflowOrchestrationService;
+  // Story 3c-6 (AC2) — resolve the default project to bind every new run to at create time.
+  private final ProjectStore projectStore;
   private final TransactionTemplate failureCompletionTemplate;
   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
@@ -109,7 +119,8 @@ public class WorkflowCommandService {
       TechnicalApprovalService technicalApprovalService,
       ClarificationService clarificationService,
       ClarificationReadPort clarificationReadPort,
-      WorkflowOrchestrationService workflowOrchestrationService) {
+      WorkflowOrchestrationService workflowOrchestrationService,
+      ProjectStore projectStore) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -125,6 +136,7 @@ public class WorkflowCommandService {
     this.clarificationService = clarificationService;
     this.clarificationReadPort = clarificationReadPort;
     this.workflowOrchestrationService = workflowOrchestrationService;
+    this.projectStore = projectStore;
   }
 
   @Transactional
@@ -193,12 +205,29 @@ public class WorkflowCommandService {
   }
 
   private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
+    // Story 3c-6 (AC2) — resolve the project to bind this run to BEFORE create so the run row is
+    // never null at insert. 3c-6 binds every new run to the reserved `default` project (the only
+    // resolution available pre-3c-7, which generalizes to explicit-ref/ticket-source bindings). A
+    // create that cannot resolve a project is rejected with the registered PROJECT_NOT_FOUND (R8).
+    String projectId =
+        projectStore
+            .findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG)
+            .map(Project::publicId)
+            .orElseThrow(
+                () -> {
+                  log.warn("submit rejected: no default project resolved for run creation");
+                  return new DomainException(
+                      DomainErrorCode.PROJECT_NOT_FOUND,
+                      "no default project resolved for run creation");
+                });
+
     // The create path, initial event append, and integration_link creation must stay inside the
     // surrounding @Transactional boundary so they commit or roll back together. If linking the
     // source ticket fails (LINEAR_TICKET_NOT_FOUND / INTEGRATION_LINK_CONFLICT / adapter
     // failure), the workflow_run row is rolled back too — the run never existed.
     var workflowRun =
-        workflowRunCreatePort.create(PublicIdPrefixes.WORKFLOW_RUN.next(), WorkflowState.INBOX);
+        workflowRunCreatePort.create(
+            PublicIdPrefixes.WORKFLOW_RUN.next(), WorkflowState.INBOX, projectId);
     if (workflowRun.currentState() != WorkflowState.INBOX) {
       throw new IllegalStateException(
           "Workflow run create port must return an INBOX run, but returned "
@@ -206,6 +235,7 @@ public class WorkflowCommandService {
     }
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRun.publicId());
     try {
+      log.info("binding new run {} to project {}", workflowRun.publicId(), projectId);
       Map<String, Object> details = baseDetails(command);
       details.put("linearTicketReference", command.linearTicketReference());
       workflowEventWritePort.append(

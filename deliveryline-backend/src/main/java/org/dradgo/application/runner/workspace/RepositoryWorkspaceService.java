@@ -15,6 +15,7 @@ import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
@@ -113,9 +114,43 @@ public class RepositoryWorkspaceService {
   private final RunnerExecutionRecordPort recordPort;
   private final IntegrationLinkRecordPort integrationLinkRecordPort;
   private final WorkflowProperties workflowProperties;
+  // Story 3c-6 — the repoint target of resolveExpectedRepositoryRef (run -> Project repo binding,
+  // default-project fallback). Nullable ONLY for the git-focused service-level tests that construct
+  // via the no-resolver ctor below: in PRODUCTION the @Autowired ctor always injects it (it is an
+  // always-present application.project @Component), so the seam always resolves through the
+  // Project.
+  // When null the seam falls back to the global single-repo config (byte-identical pre-3c-6).
+  private final ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
   private final Clock clock;
 
   @org.springframework.beans.factory.annotation.Autowired
+  public RepositoryWorkspaceService(
+      GitCommandPort git,
+      RepositoryHostAdapter repositoryHostAdapter,
+      RunnerSecretsService runnerSecretsService,
+      RunnerWorkspaceStore workspaceStore,
+      RunnerExecutionRecordPort recordPort,
+      IntegrationLinkRecordPort integrationLinkRecordPort,
+      WorkflowProperties workflowProperties,
+      ProjectRuntimeConfigResolver projectRuntimeConfigResolver) {
+    this(
+        git,
+        repositoryHostAdapter,
+        runnerSecretsService,
+        workspaceStore,
+        recordPort,
+        integrationLinkRecordPort,
+        workflowProperties,
+        projectRuntimeConfigResolver,
+        Clock.systemUTC());
+  }
+
+  /**
+   * Test-facing constructor (no {@link ProjectRuntimeConfigResolver}): the git-focused
+   * service-level tests exercise clone/capture/push behavior, not project resolution, so they keep
+   * the pre-3c-6 global-config repo-ref behavior. Production always uses the {@code @Autowired}
+   * resolver ctor.
+   */
   public RepositoryWorkspaceService(
       GitCommandPort git,
       RepositoryHostAdapter repositoryHostAdapter,
@@ -132,6 +167,7 @@ public class RepositoryWorkspaceService {
         recordPort,
         integrationLinkRecordPort,
         workflowProperties,
+        null,
         Clock.systemUTC());
   }
 
@@ -143,6 +179,7 @@ public class RepositoryWorkspaceService {
       RunnerExecutionRecordPort recordPort,
       IntegrationLinkRecordPort integrationLinkRecordPort,
       WorkflowProperties workflowProperties,
+      ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
       Clock clock) {
     this.git = Objects.requireNonNull(git, "git");
     this.repositoryHostAdapter =
@@ -154,6 +191,8 @@ public class RepositoryWorkspaceService {
     this.integrationLinkRecordPort =
         Objects.requireNonNull(integrationLinkRecordPort, "integrationLinkRecordPort");
     this.workflowProperties = Objects.requireNonNull(workflowProperties, "workflowProperties");
+    // nullable by design (see field doc) — no requireNonNull.
+    this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
     this.clock = Objects.requireNonNull(clock, "clock");
   }
 
@@ -423,19 +462,30 @@ public class RepositoryWorkspaceService {
   }
 
   /**
-   * Story 3c-3 (AC5) — the single swap point for the expected repository binding used by the
-   * pre-clone mismatch guard in {@link #prepareWorkspace}. Today it delegates to {@link
-   * #resolveConfiguredRepositoryRef()} (the existing global single-repo source) so behavior is
-   * byte-identical; 3c-6/3c-7 repoint it at the run's {@code Project} repo binding (resolved
-   * through {@code ProjectConnectorResolver.assertRepositoryRefMatchesProject}) once
-   * run&harr;Project wiring exists. Keeping only the config fallback here preserves {@code
-   * REPOSITORY_WORKSPACE_SERVICE_SCOPE}.
+   * Story 3c-3 (AC5) / 3c-6 — the single swap point for the expected repository binding used by the
+   * pre-clone mismatch guard in {@link #prepareWorkspace}. As of 3c-6 it resolves through the
+   * {@link ProjectRuntimeConfigResolver} (run &rarr; Project {@code repositoryUrl}, default-project
+   * fallback). Because the {@code default} project's {@code repositoryUrl} is seeded from {@code
+   * deliveryline.workflow.repos.url}, this returns the same {@code owner/repo} the global path
+   * returned for a single-project deployment (byte-identical parity; expected == requested ⇒ no new
+   * mismatch). The remaining hot-path consumers are repointed in 3c-7. The git-focused
+   * service-level tests construct without a resolver and keep the global-config fallback. The
+   * resolver is {@code application.project}, so {@code REPOSITORY_WORKSPACE_SERVICE_SCOPE} (forbids
+   * {@code adapters..}/ {@code jgit}) still holds.
    */
-  // 3c-3 AC5 seam — global fallback until run<->Project wiring (3c-6/3c-7)
+  // 3c-6 — repointed to run's Project (default-project fallback); remaining consumers wired in 3c-7
   private Optional<String> resolveExpectedRepositoryRef(String workflowRunId) {
+    if (projectRuntimeConfigResolver != null) {
+      Optional<String> expected = projectRuntimeConfigResolver.resolveRepositoryRef(workflowRunId);
+      log.debug(
+          "resolveExpectedRepositoryRef workflowRunId={} expectedRepoRef={} source=run_project_default_fallback",
+          workflowRunId,
+          expected.orElse("none"));
+      return expected;
+    }
     Optional<String> expected = resolveConfiguredRepositoryRef();
     log.debug(
-        "resolveExpectedRepositoryRef workflowRunId={} expectedRepoRef={} source=global_config",
+        "resolveExpectedRepositoryRef workflowRunId={} expectedRepoRef={} source=global_config_no_resolver",
         workflowRunId,
         expected.orElse("none"));
     return expected;

@@ -8,8 +8,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class WorkflowRunEntityMapper {
 
-  public WorkflowRunEntity toNewEntity(String publicId, WorkflowState initialState) {
-    return WorkflowRunEntity.create(publicId, initialState);
+  public WorkflowRunEntity toNewEntity(
+      String publicId, WorkflowState initialState, String projectId) {
+    return WorkflowRunEntity.create(publicId, initialState, projectId);
   }
 
   public WorkflowRunSnapshot toSnapshot(WorkflowRunEntity entity) {

@@ -17,9 +17,19 @@ import org.dradgo.domain.registry.WorkflowState;
 public class WorkflowRunEntity {
 
   public static WorkflowRunEntity create(String publicId, WorkflowState currentState) {
+    return create(publicId, currentState, null);
+  }
+
+  // Story 3c-6 (AC2) — bind the run to a project at insert. projectId is nullable here only so the
+  // pre-3c-6 test fixtures (which never set it) keep compiling; the production create path
+  // (WorkflowCommandService.submitInternal) always resolves the default project first and passes a
+  // non-null prj_default.
+  public static WorkflowRunEntity create(
+      String publicId, WorkflowState currentState, String projectId) {
     WorkflowRunEntity entity = new WorkflowRunEntity();
     entity.publicId = publicId;
     entity.currentState = Objects.requireNonNull(currentState, "currentState").value();
+    entity.projectId = projectId;
     return entity;
   }
 
@@ -32,6 +42,13 @@ public class WorkflowRunEntity {
 
   @Column(name = "current_state", nullable = false)
   private String currentState;
+
+  // Story 3c-6 (AC2) — V17 added workflow_runs.project_id (nullable text FK -> projects.public_id).
+  // Mapped here so new runs bind to the resolved (default) project at insert and the backfill
+  // UPDATE
+  // can target it. Still nullable at the column level (legacy rows backfilled at startup).
+  @Column(name = "project_id")
+  private String projectId;
 
   @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
   private OffsetDateTime createdAt;
@@ -69,6 +86,14 @@ public class WorkflowRunEntity {
 
   public void setPublicId(String publicId) {
     this.publicId = publicId;
+  }
+
+  public String getProjectId() {
+    return projectId;
+  }
+
+  public void setProjectId(String projectId) {
+    this.projectId = projectId;
   }
 
   public WorkflowState getCurrentState() {

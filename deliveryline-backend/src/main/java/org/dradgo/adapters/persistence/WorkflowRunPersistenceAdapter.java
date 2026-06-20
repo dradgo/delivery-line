@@ -90,10 +90,10 @@ public class WorkflowRunPersistenceAdapter
   }
 
   @Override
-  public WorkflowRunSnapshot create(String publicId, WorkflowState initialState) {
+  public WorkflowRunSnapshot create(String publicId, WorkflowState initialState, String projectId) {
     return workflowRunEntityMapper.toSnapshot(
         workflowRunRepository.saveAndFlush(
-            workflowRunEntityMapper.toNewEntity(publicId, initialState)));
+            workflowRunEntityMapper.toNewEntity(publicId, initialState, projectId)));
   }
 
   @Override

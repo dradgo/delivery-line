@@ -50,7 +50,8 @@ class WorkflowCommandServiceReplayRefTest {
             mock(org.dradgo.application.approval.TechnicalApprovalService.class),
             mock(ClarificationService.class),
             clarificationReadPort,
-            mock(WorkflowOrchestrationService.class));
+            mock(WorkflowOrchestrationService.class),
+            mock(org.dradgo.application.project.ProjectStore.class));
   }
 
   @Test
