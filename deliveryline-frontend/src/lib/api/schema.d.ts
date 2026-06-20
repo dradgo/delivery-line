@@ -550,6 +550,7 @@ export interface components {
             actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
             correlationId?: string;
             linearTicketReference: string;
+            projectReference?: string;
         };
         SubmitWorkflowResponse: {
             correlationId?: string;
