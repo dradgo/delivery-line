@@ -4,6 +4,110 @@
  */
 
 export interface paths {
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List projects */
+        get: operations["listProjects"];
+        put?: never;
+        /** Create a project */
+        post: operations["createProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a project */
+        get: operations["getProject"];
+        /** Edit a project's mutable configuration */
+        put: operations["updateProject"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/credentials/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set or rotate a connector credential (write-only — never returned) */
+        put: operations["setProjectCredential"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Soft-disable a project (the default project cannot be disabled) */
+        post: operations["disableProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-enable a disabled project (status := ACTIVE) */
+        post: operations["enableProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/test-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run capability-aware connectivity probes (per-check results, HTTP 200) */
+        post: operations["testProjectConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner-queue/status": {
         parameters: {
             query?: never;
@@ -442,6 +546,58 @@ export interface components {
             currentState: string;
             workflowRunId: string;
         };
+        /** @description One connectivity check's tri-state result. */
+        ConnectionCheckResult: {
+            /**
+             * @description Which check.
+             * @example repository_reachable
+             * @enum {string}
+             */
+            check?: "repository_reachable" | "ticket_source_auth" | "repository_host_auth";
+            /**
+             * @description Secret-free human detail.
+             * @example authenticated
+             */
+            detail?: string;
+            /**
+             * @description Tri-state outcome.
+             * @example pass
+             * @enum {string}
+             */
+            status?: "pass" | "fail" | "skipped";
+        };
+        /** @description Create a new project. */
+        CreateProjectRequest: {
+            /** @example Acme Widgets */
+            name: string;
+            /**
+             * @description Whether OpenSpec is enabled.
+             * @example false
+             */
+            openspecEnabled?: boolean;
+            /** @example github */
+            repoHostKind: string;
+            /** @example https://github.com/acme/widgets */
+            repositoryUrl?: string | null;
+            /** @example acme-widgets */
+            slug: string;
+            /** @example linear */
+            ticketSourceKind: string;
+        };
+        /** @description Per-role credential presence (never the value). */
+        CredentialPresence: {
+            /**
+             * @description Connector role.
+             * @example ticket_source
+             */
+            role?: string;
+            /**
+             * @description Whether a credential is configured for this role.
+             * @example configured
+             * @enum {string}
+             */
+            status?: "configured" | "not_configured";
+        };
         LatestArtifact: {
             /**
              * @description Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).
@@ -492,6 +648,64 @@ export interface components {
              * @example https://deliveryline.local/problems/run-not-found
              */
             type: string;
+        };
+        /** @description A configured project (never carries a credential value). */
+        Project: {
+            /**
+             * @description Backend-derived actions valid for this project's current status. The UI must gracefully ignore unknown values for forward compatibility.
+             * @example [
+             *       "edit",
+             *       "disable",
+             *       "set_credential",
+             *       "test_connection"
+             *     ]
+             */
+            allowedActions?: string[];
+            /**
+             * Format: date-time
+             * @description Creation timestamp (UTC).
+             */
+            createdAt?: string;
+            /** @description Per-role credential presence (never the value). */
+            credentials?: components["schemas"]["CredentialPresence"][];
+            /**
+             * @description Project public id.
+             * @example prj_abc123
+             */
+            id?: string;
+            /**
+             * @description Human-readable project name.
+             * @example Acme Widgets
+             */
+            name?: string;
+            /** @description Whether OpenSpec is enabled for this project. */
+            openspecEnabled?: boolean;
+            /**
+             * @description Repository-host connector kind.
+             * @example github
+             */
+            repoHostKind?: string;
+            /**
+             * @description Repository URL (nullable).
+             * @example https://github.com/acme/widgets
+             */
+            repositoryUrl?: string | null;
+            /**
+             * @description Stable URL/CLI slug.
+             * @example acme-widgets
+             */
+            slug?: string;
+            /**
+             * @description Project status.
+             * @example active
+             * @enum {string}
+             */
+            status?: "active" | "disabled";
+            /**
+             * @description Ticket-source connector kind.
+             * @example linear
+             */
+            ticketSourceKind?: string;
         };
         RejectImplementationRequest: {
             artifactId: string;
@@ -544,6 +758,23 @@ export interface components {
             staleQueuedCount: number;
             workers: components["schemas"]["WorkerStatusResponse"][];
         };
+        /** @description Set or rotate a connector credential. */
+        SetCredentialRequest: {
+            /** @description The plaintext connector credential. Write-only — never returned. */
+            secret: string;
+        };
+        /** @description Non-secret credential-set confirmation. */
+        SetCredentialResponse: {
+            /**
+             * @description Non-secret credential public id.
+             * @example cred_abc123
+             */
+            credentialId?: string;
+            /** @example ticket_source */
+            role?: string;
+            /** @example configured */
+            status?: string;
+        };
         SubmitWorkflowRequest: {
             actorIdentity: string;
             /** @enum {string} */
@@ -580,6 +811,11 @@ export interface components {
             correlationId?: string;
             reasonText?: string;
         };
+        /** @description Per-check connectivity probe results (HTTP 200). */
+        TestConnection: {
+            /** @description One result per connectivity check. */
+            checks?: components["schemas"]["ConnectionCheckResult"][];
+        };
         TicketResult: {
             /** @enum {string} */
             queueResult: "queued" | "rejected";
@@ -587,6 +823,22 @@ export interface components {
             rejectionReason?: string;
             runId?: string;
             ticketRef: string;
+        };
+        /** @description Edit a project's mutable configuration. */
+        UpdateProjectRequest: {
+            /** @example Acme Widgets */
+            name: string;
+            /**
+             * @description Whether OpenSpec is enabled.
+             * @example false
+             */
+            openspecEnabled?: boolean;
+            /** @example github */
+            repoHostKind: string;
+            /** @example https://github.com/acme/widgets */
+            repositoryUrl?: string | null;
+            /** @example linear */
+            ticketSourceKind: string;
         };
         WorkerStatusResponse: {
             currentRunnerExecutionId?: string;
@@ -761,6 +1013,338 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Projects (direct array, no envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"][];
+                };
+            };
+        };
+    };
+    createProject: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+                "X-Actor-Identity"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Project created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description INVALID_COMMAND_PAYLOAD or UNKNOWN_REGISTRY_VALUE (bad connector kind). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_SLUG_CONFLICT or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    updateProject: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Project updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description INVALID_COMMAND_PAYLOAD or UNKNOWN_REGISTRY_VALUE (bad connector kind). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_SLUG_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    setProjectCredential: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                projectId: string;
+                /**
+                 * @description Connector role (underscored wire form).
+                 * @example ticket_source
+                 */
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Credential configured (non-secret id only). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetCredentialResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, or UNKNOWN_REGISTRY_VALUE (bad role). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description CREDENTIAL_MASTER_KEY_UNCONFIGURED (no master key configured). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    disableProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project disabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description INVALID_COMMAND_PAYLOAD (the default project cannot be disabled). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    enableProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project enabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    testProjectConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-check connectivity results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestConnection"];
+                };
+            };
+            /** @description UNSUPPORTED_CONNECTOR_KIND (a project kind has no registered adapter). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     getRunnerQueueStatus: {
         parameters: {
             query?: {
