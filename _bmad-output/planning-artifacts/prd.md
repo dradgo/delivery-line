@@ -721,6 +721,23 @@ These functional requirements define the Phase 1 capability contract for one gov
 - **FR62:** Existing single-project configuration migrates transparently to a default project so prior governed flows continue unchanged.
 - **FR63:** Authorized users can see which project a governed run, ticket, and artifact belong to.
 
+### Per-Step Execution Control, Observability & Manual Execution
+
+- **FR64:** Operators can configure a per-project reviewer model so each workflow step's
+  output is reviewed by a different LLM than produced it; the reviewer's verdict is advisory
+  (surfaced to the human reviewer) and the configuration supports per-project gating later.
+- **FR65:** Operators can view a step's container execution logs both while the step is
+  running and after it has finished.
+- **FR66:** Operators can execute a workflow step manually — the system emits the step's
+  context bundle, parks the run awaiting manual execution, and accepts the operator-produced
+  result back through the same validation and review pipeline as automated runners.
+- **FR67:** Operators can hide or archive obsolete executions (for example, when the source
+  ticket is removed) without erasing append-only audit history.
+- **FR68:** Operators can open a read-only diagnostic console into a running runner container;
+  console activity is recorded in governed history.
+- **FR69:** After a step executes, operators can see the agent provider's usage/limit status
+  (for example, the 5-hour rolling window and weekly limits) where the provider exposes it.
+
 ## Non-Functional Requirements
 
 The following non-functional requirements define the trust floor for the MVP: inspectability, recovery, identity integrity, safe local operation, and clear handoff context.

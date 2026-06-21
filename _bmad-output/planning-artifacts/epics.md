@@ -404,6 +404,18 @@ A single local-first operator can configure and govern **multiple projects** fro
 
 **FRs covered:** FR56, FR57, FR58, FR59, FR60, FR61, FR62, FR63
 
+### Epic 3d: Per-Step Execution Control, Observability & Manual Execution
+
+A single local-first operator gains finer control over how each workflow step is executed, reviewed, observed, and retired. Each project can configure a **reviewer model** so a second LLM reviews a step's output (advisory now, gating-capable per project later); steps can be run through a first-class **manual execution mode** when an agent's unattended/headless auth is unavailable; operators can watch a step's container logs live and after the fact, open a **read-only diagnostic console** into a running runner, see the agent provider's usage/limit status (5-hour/weekly windows) after a run, and soft **hide/archive** obsolete executions when their source ticket is removed. Builds on the Epic 3c `Project` aggregate + per-project credentials and the existing runner-contracts / runner-broker seams.
+
+**Deliberate scope-boundary reversal:** this epic **narrows** (does not remove) the runner sandbox / governed-access posture for one capability — a read-only diagnostic console attached to a live runner, with every session recorded in governed history (see PRD FR64–FR69 and the architecture *Per-Step Execution Control* scope amendment + ADRs 0024–0027). It does **not** introduce write-capable shells, host shells, multi-user authentication, RBAC, or tenant isolation. Obsolete-execution removal is **soft hide/archive only** — append-only audit history is preserved (FR47); any true purge remains an Epic 5 retention concern.
+
+**Positioning:** inserted between Epic 3c and Epic 4, sequenced after Epic 3c (it depends on per-project configuration + credentials). Manual execution (FR66) may be pulled forward within the epic if the automated Claude/Codex headless path is unavailable for the pilot. Epic 4 inherits two of these surfaces — its failure-diagnostics view (story 4.4) consumes the live-log viewer rather than re-deriving a separate log download, and its operator queue honors the archived/hidden state.
+
+**Spike gate:** post-execution provider limit status (FR69) ships only if the Claude CLI / Anthropic API and Codex expose the 5-hour/weekly windows programmatically in headless mode; the epic confirms the signal via a spike before committing the UI.
+
+**FRs covered:** FR64, FR65, FR66, FR67, FR68, FR69
+
 ### Epic 4: Failure Handling, Recovery & Reconciliation (Workflow Owner + Compare Mode)
 
 A Workflow Owner opens the run queue, selects a failed or stalled run, inspects container logs, current failed stage, artifact status, and integration conflict state — then retries, reruns, reconciles, or classifies the failure, with every recovery action appended to the same governed history. Reviewers gain Compare Mode to verify what changed between revisions before approving. Delivers the governed failure taxonomy, artifact reconciliation for DB/file drift, and integration conflict detection for Linear/GitHub.

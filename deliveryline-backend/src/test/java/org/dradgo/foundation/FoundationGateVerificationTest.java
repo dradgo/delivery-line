@@ -1,21 +1,36 @@
 package org.dradgo.foundation;
 
+import static org.junit.jupiter.api.Assertions.fail;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Aggregate verification that every Epic-1 foundation contract is live end-to-end.
+ * Aggregate verification that every foundation contract is live end-to-end.
  *
- * <p>This is the structural close of Epic 1 (story 1.23). It does <strong>not</strong> re-author
- * any per-contract assertion; instead each {@link Nested} class delegates via the JUnit Platform
- * Launcher API to the existing source-of-truth test class. Stronger-than-contract assertions
- * (cross-product legal-table check, exhaustive fixture sweeps, parameterized DomainErrorCode
- * mapper, structural CLI/REST symmetry) live in adjacent {@code *FoundationContract} classes that
- * are reached <strong>only</strong> through this aggregator — they are deliberately named with a
- * suffix that does not match Surefire's {@code **&#47;*Test.java} pattern nor Failsafe's include
- * list, so Maven discovery skips them; the Launcher API discovers them by FQN.
+ * <p>This is the structural close of Epic 1 (story 1.23), since widened to make Epic 3 (Contracts
+ * #11–#15) and Epic 3c (Contracts #16–#20, story 3c.11) named, enforced members of the same gate.
+ * It does <strong>not</strong> re-author any per-contract assertion; instead each {@link Nested}
+ * class delegates via the JUnit Platform Launcher API to the existing source-of-truth test class.
+ * Stronger-than-contract assertions (cross-product legal-table check, exhaustive fixture sweeps,
+ * parameterized DomainErrorCode mapper, structural CLI/REST symmetry) live in adjacent {@code
+ * *FoundationContract} classes that are reached <strong>only</strong> through this aggregator —
+ * they are deliberately named with a suffix that does not match Surefire's {@code
+ * **&#47;*Test.java} pattern nor Failsafe's include list, so Maven discovery skips them; the
+ * Launcher API discovers them by FQN. The Launcher discovers by FQN regardless of Maven tag, so
+ * plain {@code *Test} unit tests and Testcontainers {@code *IT}s can be aggregated here without
+ * retagging.
  *
  * <p><strong>Maven routing.</strong> Tagged {@code @Tag("foundation-gate")}. Both Surefire and
  * Failsafe in {@code deliveryline-backend/pom.xml} list {@code foundation-gate} under {@code
@@ -348,6 +363,198 @@ class FoundationGateVerificationTest {
     void repositoryHostAbstractionContract() {
       FoundationGateAssertions.delegateRunAssertGreen(
           "3.33", "org.dradgo.foundation.RepositoryHostAbstractionFoundationContract");
+    }
+  }
+
+  // ===========================================================================================
+  // Epic 3c — Multi-Project Configuration (story 3c.11). Contracts #16–#20 plug the multi-project
+  // test debt that stories 3c-1..3c-10 paid down incrementally into the named gate, so a
+  // regression in any of them fails `-Pfoundation-gate verify`. Each contract delegate-runs the
+  // existing source-of-truth test (no assertion re-authoring), mirroring Contracts #1–#15.
+  // ===========================================================================================
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName(
+      "Contract #16 — Epic 3c registries + prefixes + V17 project schema drift (story 3c.2)")
+  class Contract16ProjectRegistriesAndSchema {
+
+    /**
+     * Story 3c.2 — {@code RegistryContractTest} is already delegate-run by Contract #3, but re-run
+     * here keeps the Epic 3c registry assertions ({@code ProjectStatus} / {@code ConnectorKind} /
+     * {@code ConnectorRole} drift vs the {@code ck_projects_*} + {@code
+     * ck_project_credentials_connector_role} SQL CHECKs and the API placeholder manifest, plus the
+     * {@code prj_}/{@code cred_} prefix registration and persistence-boundary fail-fast parsing)
+     * legible at the Epic 3c site — mirroring how Contract #11 re-runs {@code
+     * ArchitectureBoundaryTest}.
+     */
+    @Test
+    @DisplayName("RegistryContractTest passes (project_status / connector_kind / prefixes drift)")
+    void projectRegistriesInLockstep() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.2", "org.dradgo.contract.RegistryContractTest");
+    }
+
+    /** Story 3c.2 — V17 {@code projects} + {@code project_credentials} schema shape. */
+    @Test
+    @DisplayName("FlywaySchemaContractTest passes (V17 projects + project_credentials shape)")
+    void projectSchemaShapeHolds() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.2", "org.dradgo.contract.FlywaySchemaContractTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #17 — Per-project connector resolution (story 3c.3)")
+  class Contract17ProjectConnectorResolution {
+
+    /**
+     * Story 3c.3 — {@code ProjectConnectorResolver} maps a project's {@code ConnectorKind} to the
+     * right adapter, raises {@code UNSUPPORTED_CONNECTOR_KIND} for unknown kinds, returns empty
+     * (not throw) from {@code findTicketSource} so the {@code SKIPPED_NO_LINEAR_PROFILE} path is
+     * preserved, keeps capability-degradation parity, raises the project-scoped {@code
+     * LINEAR_GITHUB_REPO_MISMATCH}, and never logs credential material. It is a Surefire unit test;
+     * the Launcher API discovers it by FQN regardless of Maven tag, so no retag is needed.
+     */
+    @Test
+    @DisplayName("ProjectConnectorResolverTest passes (kind→adapter, unsupported-kind, no-log)")
+    void perProjectConnectorResolutionContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.3", "org.dradgo.application.project.ProjectConnectorResolverTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #18 — Credential cipher tamper / round-trip / fail-fast (story 3c.4)")
+  class Contract18CredentialCipher {
+
+    /**
+     * Story 3c.4 AC6 — the envelope cipher round-trips ASCII/unicode/empty/large payloads, is
+     * non-deterministic, rejects GCM tampering without leaking partial plaintext, refuses wrong
+     * key-id / unsupported algo / malformed ciphertext, and stays silent on the secret hot path.
+     */
+    @Test
+    @DisplayName("EnvelopeCredentialCipherTest passes (round-trip + tamper rejection + no-log)")
+    void cipherTamperRoundTripContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.4", "org.dradgo.infrastructure.crypto.EnvelopeCredentialCipherTest");
+    }
+
+    /**
+     * Story 3c.4 — {@code CREDENTIAL_MASTER_KEY_UNCONFIGURED} fail-fast fires only when at least
+     * one credential exists (blank-tolerant otherwise).
+     */
+    @Test
+    @DisplayName("CredentialMasterKeyGuardTest passes (fail-fast only when credentials present)")
+    void masterKeyGuardContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.4", "org.dradgo.infrastructure.crypto.CredentialMasterKeyGuardTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #19 — Credential redaction across egress (story 3c.5)")
+  class Contract19CredentialRedaction {
+
+    /**
+     * Story 3c.5 AC3 — {@code RedactionAdversarialFoundationContract} is already delegate-run by
+     * Contract #9; re-running it here makes the project-credential AR10 coverage a named Epic 3c
+     * contract. The sweep strips every forbidden snippet declared by the manifest (including the
+     * three {@code project-credential-*.json} fixtures) across all egress surfaces.
+     */
+    @Test
+    @DisplayName(
+        "RedactionAdversarialFoundationContract passes (project-credential fixtures swept)")
+    void credentialRedactionSweepContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.5", "org.dradgo.foundation.RedactionAdversarialFoundationContract");
+    }
+
+    /**
+     * Direct short-circuit drift guard (mirrors the Contract #10 direct-assertion pattern). Proves
+     * the three project-credential fixtures are enumerated in {@code fixtures-manifest.json}
+     * independently of the delegate-run above, so a corrupted/emptied manifest cannot silently
+     * remove project-credential coverage from the AR10 sweep without failing this gate. See {@code
+     * redaction-fixtures/fixtures-manifest.json} (story 3c-5).
+     */
+    @Test
+    @DisplayName(
+        "Direct guard — the three project-credential-*.json fixtures are in the redaction manifest")
+    void projectCredentialFixturesEnumeratedInManifest() throws IOException {
+      Path manifest =
+          Path.of("src", "test", "resources", "redaction-fixtures", "fixtures-manifest.json");
+      if (!Files.isRegularFile(manifest)) {
+        fail(
+            FoundationGateAssertions.tagged(
+                "3c.5", "fixtures-manifest.json missing at " + manifest.toAbsolutePath()));
+        return;
+      }
+      JsonNode entries = new ObjectMapper().readTree(manifest.toFile()).path("fixtures");
+      if (!entries.isArray() || entries.isEmpty()) {
+        fail(
+            FoundationGateAssertions.tagged(
+                "3c.5", "fixtures-manifest.json fixtures array is missing or empty"));
+        return;
+      }
+      Set<String> manifestFiles = new LinkedHashSet<>();
+      for (JsonNode entry : entries) {
+        manifestFiles.add(entry.path("file").asText(""));
+      }
+      List<String> required =
+          List.of(
+              "project-credential-linear-token.json",
+              "project-credential-github-token.json",
+              "project-credential-opaque-under-key.json");
+      List<String> missing = new ArrayList<>();
+      for (String name : required) {
+        if (!manifestFiles.contains(name)) {
+          missing.add(name);
+        }
+      }
+      if (!missing.isEmpty()) {
+        fail(
+            FoundationGateAssertions.tagged(
+                "3c.5",
+                "project-credential redaction fixtures missing from fixtures-manifest.json: "
+                    + String.join(", ", missing)
+                    + " — project-credential secrets would silently drop out of the AR10 sweep"));
+      }
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #20 — Config-inversion parity + per-project dispatch (story 3c.6/3c.7)")
+  class Contract20ConfigInversionParity {
+
+    /**
+     * Story 3c.6/3c.7 AC2 — {@code RunProjectAssociationIT} drives real dispatches and asserts both
+     * single-project behavioral parity ({@code defaultProjectRunStaysByteIdenticalToPre3c}: global
+     * repo ref + global OpenSpec flag, no per-run OpenSpec env) and that a non-default project uses
+     * its own repo / connector / OpenSpec settings ({@code
+     * nonDefaultProjectRunDispatchesWithThatProjectsRepoOpenSpecAndConnectorSelection}). It is a
+     * Testcontainers IT; the gate tier has Docker up (Contract #13 already runs an IT here).
+     */
+    @Test
+    @DisplayName("RunProjectAssociationIT passes (default byte-parity + non-default dispatch)")
+    void configInversionAndPerProjectDispatchContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.7", "org.dradgo.application.workflow.RunProjectAssociationIT");
+    }
+
+    /**
+     * Story 3c.6 — {@code DefaultProjectSeederIT} proves the {@code default} project is seeded from
+     * today's global config (byte-parity) and is not duplicated on application restart.
+     */
+    @Test
+    @DisplayName(
+        "DefaultProjectSeederIT passes (seed-from-global parity + no-duplicate-on-restart)")
+    void defaultProjectSeederContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3c.6", "org.dradgo.application.project.DefaultProjectSeederIT");
     }
   }
 }

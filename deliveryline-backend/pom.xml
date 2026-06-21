@@ -548,6 +548,24 @@
 											</limit>
 										</limits>
 									</rule>
+									<!-- Story 3c-11 (AC5, decision D1) — project ADAPTER coverage is intentionally NOT
+									     given an isolated per-PACKAGE floor. ProjectController lives in the shared
+									     org.dradgo.adapters.rest package and ProjectPersistenceAdapter /
+									     ProjectCredentialPersistenceAdapter / the entity mappers live in
+									     org.dradgo.adapters.persistence(.mapper/.entity) — both packages hold the entire
+									     REST / persistence surface, so a per-PACKAGE rule here would govern every adapter in
+									     the module, not just the project ones. The shared org.dradgo.adapters.persistence
+									     package measures 74.7% LINE on the merged unit+IT run (below 0.80), so adding an
+									     0.80 PACKAGE floor would red the build for unrelated adapters; expressing a
+									     project-only floor would require a package split (out of scope). Project adapters are
+									     instead guarded by (a) the BUNDLE floor above (0.75 LINE / 0.55 BRANCH, which counts
+									     them) and (b) their dedicated ProjectControllerContractTest /
+									     ProjectPersistenceAdapterIT / ProjectCredentialPersistenceAdapterIT suites. Measured
+									     LINE coverage on the merged unit+IT report (2026-06-21): ProjectController 86.9%
+									     (133/153), ProjectPersistenceAdapter 80.0% (40/50), ProjectCredentialPersistenceAdapter
+									     85.1% (57/67), ProjectEntityMapper 100% (33/33) — all comfortably above the BUNDLE
+									     floor. The AC5 named coverage commitment is the application.project (0.80) +
+									     infrastructure.crypto (0.90) floors above. -->
 							</rules>
 						</configuration>
 					</execution>

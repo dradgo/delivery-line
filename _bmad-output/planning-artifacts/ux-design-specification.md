@@ -1359,6 +1359,15 @@ These deferred components are useful, but they are not required to make the prim
 
 These are configuration surfaces, not part of the review-and-decision loop; they live in a distinct settings/admin area (see Navigation Patterns) and follow the same backend-reported-allowed-actions, redaction, and WCAG 2.1 AA rules as the workflow composites.
 
+**Epic 3d additions (per-step execution control & observability):** Several run-loop-adjacent surfaces support per-step review, manual execution, and operator observability without changing the review-and-decision loop's authority model:
+- Reviewer Verdict Panel (advisory second-LLM verdict shown alongside the Approval / Decision Bar during WaitingForReview; never overrides the human decision)
+- Step Execution Log Viewer (live-follow while a step runs + full log after it finishes, in run detail)
+- Manual Execution Surface (for runs in WaitingForManualExecution: download/copy the step's context bundle and submit the operator-produced artifact back into the same validation/review pipeline)
+- Read-only Diagnostic Console (a read-only web terminal attached to a running runner, clearly badged read-only, with each session recorded in governed history)
+- Provider Limit Status indicator (post-execution 5-hour/weekly usage where the provider exposes it)
+
+A per-project Reviewer Model setting is added to the Project Configuration Surface (settings area), and the Run / Review Queue Item gains an archived/hidden state plus an "include archived" filter so obsolete executions (e.g. after a ticket is removed) can be soft-hidden without losing audit history. All Epic 3d surfaces follow the same backend-reported-allowed-actions, redaction, live-region announcement, color-independent signifier, and WCAG 2.1 AA rules as the existing workflow composites.
+
 ### Run / Review Queue Item
 
 **Purpose:** Represent one actionable run in a review queue with enough context to decide whether to open it now.
