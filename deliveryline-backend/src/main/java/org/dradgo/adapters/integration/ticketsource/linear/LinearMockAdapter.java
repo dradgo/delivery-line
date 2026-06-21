@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
@@ -145,6 +146,14 @@ public class LinearMockAdapter implements TicketSourceAdapter {
   @Override
   public TicketSourceCapabilities getCapabilities() {
     return TicketSourceCapabilities.linearDefaults();
+  }
+
+  @Override
+  public ConnectivityResult verifyConnectivity(String credentialOverride) {
+    // Deterministic, network-free probe (story 3c-8): the mock is always reachable + authenticated.
+    // The credential override is irrelevant to the mock (no real auth) and is never logged.
+    log.info("linear_mock verify_connectivity resolution=ok");
+    return ConnectivityResult.ok("linear-mock: deterministic reachable + authenticated");
   }
 
   /**

@@ -84,6 +84,18 @@ class GitLabStubAdaptersTest {
   }
 
   @Test
+  void stubsReturnDegradedButOkConnectivityProbe() {
+    // Story 3c-8 — verifyConnectivity is a deterministic degraded-but-OK no-op; the
+    // ProjectConnectivityService skips these checks from the degraded capability set, never
+    // failing.
+    assertThat(ticketSource.verifyConnectivity(null).reachable()).isTrue();
+    assertThat(ticketSource.verifyConnectivity(null).authenticated()).isTrue();
+    assertThat(repoHost.verifyConnectivity(RepositoryRef.of("octo/repo"), null).reachable())
+        .isTrue();
+    assertThat(repoHost.verifyConnectivity(null, null).authenticated()).isTrue();
+  }
+
+  @Test
   void stubLogsDocumentedNoOpSoMisroutedProjectIsObvious() {
     Logger logger = (Logger) LoggerFactory.getLogger(GitLabTicketSourceStubAdapter.class);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();

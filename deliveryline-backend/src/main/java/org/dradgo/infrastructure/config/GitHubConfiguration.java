@@ -88,8 +88,14 @@ public class GitHubConfiguration {
         .requestInterceptor(
             (request, body, execution) -> {
               // Read the token at request time so PAT rotation is observed without a context
-              // refresh. Never logged, never embedded in a URL (AC2).
-              String token = properties.token();
+              // refresh. Never logged, never embedded in a URL (AC2). Story 3c-8 (P1): a
+              // per-request
+              // credential override attribute (the project-scoped stored PAT, set by the
+              // connectivity probe) takes precedence over the host-env token when present.
+              Object override =
+                  request.getAttributes().get(GitHubProperties.CREDENTIAL_OVERRIDE_ATTRIBUTE);
+              String token =
+                  (override instanceof String s && !s.isBlank()) ? s : properties.token();
               if (token != null && !token.isBlank()) {
                 request.getHeaders().set("Authorization", "Bearer " + token);
               }

@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.security.CredentialCipherException;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -311,6 +312,32 @@ public class ProblemDetailsMapper {
         request.getRequestURI(),
         List.of(
             fieldError("Accept", String.valueOf(request.getHeader("Accept")), "notAcceptable")));
+  }
+
+  /**
+   * Story 3c-8 (AC4 / R5) — a {@link CredentialCipherException} on the credential path (tamper /
+   * wrong-key / unsupported-algo / malformed frame) maps to a <strong>generic,
+   * secret-hostile</strong> 500. It MUST pre-empt the {@code @ExceptionHandler(Exception.class)}
+   * catch-all so the opaque generic path never differs by cipher fault. The body carries a fixed
+   * title and NO message, cause, plaintext, ciphertext, or key id; the log records only the request
+   * method + path (sanitized) — never the exception message.
+   */
+  @ExceptionHandler(CredentialCipherException.class)
+  public ResponseEntity<ProblemDetail> handleCredentialCipherException(
+      CredentialCipherException exception, HttpServletRequest request) {
+    LOG.error(
+        "REST credential operation failed (cipher fault) method={} path={} correlationId={}",
+        MdcKeys.sanitizeForLog(request.getMethod()),
+        MdcKeys.sanitizeForLog(request.getRequestURI()),
+        MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID)));
+    ProblemDetailsCatalog.ProblemDetailsMetadata metadata =
+        ProblemDetailsCatalog.metadataFor(DomainErrorCode.INTERNAL_ERROR);
+    return problemResponse(
+        metadata,
+        DomainErrorCode.INTERNAL_ERROR,
+        "Credential operation failed.",
+        request.getRequestURI(),
+        null);
   }
 
   @ExceptionHandler(Exception.class)

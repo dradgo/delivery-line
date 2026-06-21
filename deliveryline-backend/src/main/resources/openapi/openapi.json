@@ -354,6 +354,105 @@
         ],
         "type" : "object"
       },
+      "ConnectionCheckResult" : {
+        "description" : "One connectivity check's tri-state result.",
+        "properties" : {
+          "check" : {
+            "description" : "Which check.",
+            "enum" : [
+              "repository_reachable",
+              "ticket_source_auth",
+              "repository_host_auth"
+            ],
+            "example" : "repository_reachable",
+            "type" : "string"
+          },
+          "detail" : {
+            "description" : "Secret-free human detail.",
+            "example" : "authenticated",
+            "type" : "string"
+          },
+          "status" : {
+            "description" : "Tri-state outcome.",
+            "enum" : [
+              "pass",
+              "fail",
+              "skipped"
+            ],
+            "example" : "pass",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "CreateProjectRequest" : {
+        "description" : "Create a new project.",
+        "properties" : {
+          "name" : {
+            "example" : "Acme Widgets",
+            "maxLength" : 256,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "openspecEnabled" : {
+            "description" : "Whether OpenSpec is enabled.",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "repoHostKind" : {
+            "example" : "github",
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "repositoryUrl" : {
+            "example" : "https://github.com/acme/widgets",
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "slug" : {
+            "example" : "acme-widgets",
+            "maxLength" : 256,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "ticketSourceKind" : {
+            "example" : "linear",
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "name",
+          "repoHostKind",
+          "slug",
+          "ticketSourceKind"
+        ],
+        "type" : "object"
+      },
+      "CredentialPresence" : {
+        "description" : "Per-role credential presence (never the value).",
+        "properties" : {
+          "role" : {
+            "description" : "Connector role.",
+            "example" : "ticket_source",
+            "type" : "string"
+          },
+          "status" : {
+            "description" : "Whether a credential is configured for this role.",
+            "enum" : [
+              "configured",
+              "not_configured"
+            ],
+            "example" : "configured",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "LatestArtifact" : {
         "properties" : {
           "artifactId" : {
@@ -457,6 +556,83 @@
           "title",
           "type"
         ],
+        "type" : "object"
+      },
+      "Project" : {
+        "description" : "A configured project (never carries a credential value).",
+        "properties" : {
+          "allowedActions" : {
+            "description" : "Backend-derived actions valid for this project's current status. The UI must gracefully ignore unknown values for forward compatibility.",
+            "example" : [
+              "edit",
+              "disable",
+              "set_credential",
+              "test_connection"
+            ],
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "createdAt" : {
+            "description" : "Creation timestamp (UTC).",
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "credentials" : {
+            "description" : "Per-role credential presence (never the value).",
+            "items" : {
+              "$ref" : "#/components/schemas/CredentialPresence"
+            },
+            "type" : "array"
+          },
+          "id" : {
+            "description" : "Project public id.",
+            "example" : "prj_abc123",
+            "type" : "string"
+          },
+          "name" : {
+            "description" : "Human-readable project name.",
+            "example" : "Acme Widgets",
+            "type" : "string"
+          },
+          "openspecEnabled" : {
+            "description" : "Whether OpenSpec is enabled for this project.",
+            "type" : "boolean"
+          },
+          "repoHostKind" : {
+            "description" : "Repository-host connector kind.",
+            "example" : "github",
+            "type" : "string"
+          },
+          "repositoryUrl" : {
+            "description" : "Repository URL (nullable).",
+            "example" : "https://github.com/acme/widgets",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "slug" : {
+            "description" : "Stable URL/CLI slug.",
+            "example" : "acme-widgets",
+            "type" : "string"
+          },
+          "status" : {
+            "description" : "Project status.",
+            "enum" : [
+              "active",
+              "disabled"
+            ],
+            "example" : "active",
+            "type" : "string"
+          },
+          "ticketSourceKind" : {
+            "description" : "Ticket-source connector kind.",
+            "example" : "linear",
+            "type" : "string"
+          }
+        },
         "type" : "object"
       },
       "RejectImplementationRequest" : {
@@ -650,6 +826,41 @@
         ],
         "type" : "object"
       },
+      "SetCredentialRequest" : {
+        "description" : "Set or rotate a connector credential.",
+        "properties" : {
+          "secret" : {
+            "description" : "The plaintext connector credential. Write-only — never returned.",
+            "maxLength" : 8192,
+            "minLength" : 0,
+            "type" : "string",
+            "writeOnly" : true
+          }
+        },
+        "required" : [
+          "secret"
+        ],
+        "type" : "object"
+      },
+      "SetCredentialResponse" : {
+        "description" : "Non-secret credential-set confirmation.",
+        "properties" : {
+          "credentialId" : {
+            "description" : "Non-secret credential public id.",
+            "example" : "cred_abc123",
+            "type" : "string"
+          },
+          "role" : {
+            "example" : "ticket_source",
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "configured",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "SubmitWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -791,6 +1002,19 @@
         ],
         "type" : "object"
       },
+      "TestConnection" : {
+        "description" : "Per-check connectivity probe results (HTTP 200).",
+        "properties" : {
+          "checks" : {
+            "description" : "One result per connectivity check.",
+            "items" : {
+              "$ref" : "#/components/schemas/ConnectionCheckResult"
+            },
+            "type" : "array"
+          }
+        },
+        "type" : "object"
+      },
       "TicketResult" : {
         "properties" : {
           "queueResult" : {
@@ -816,6 +1040,47 @@
         "required" : [
           "queueResult",
           "ticketRef"
+        ],
+        "type" : "object"
+      },
+      "UpdateProjectRequest" : {
+        "description" : "Edit a project's mutable configuration.",
+        "properties" : {
+          "name" : {
+            "example" : "Acme Widgets",
+            "maxLength" : 256,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "openspecEnabled" : {
+            "description" : "Whether OpenSpec is enabled.",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "repoHostKind" : {
+            "example" : "github",
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "repositoryUrl" : {
+            "example" : "https://github.com/acme/widgets",
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "ticketSourceKind" : {
+            "example" : "linear",
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "name",
+          "repoHostKind",
+          "ticketSourceKind"
         ],
         "type" : "object"
       },
@@ -1284,6 +1549,465 @@
   },
   "openapi" : "3.1.0",
   "paths" : {
+    "/api/v1/projects" : {
+      "get" : {
+        "operationId" : "listProjects",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "items" : {
+                    "$ref" : "#/components/schemas/Project"
+                  },
+                  "type" : "array"
+                }
+              }
+            },
+            "description" : "Projects (direct array, no envelope)."
+          }
+        },
+        "summary" : "List projects",
+        "tags" : [
+          "Projects"
+        ]
+      },
+      "post" : {
+        "operationId" : "createProject",
+        "parameters" : [
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreateProjectRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Project"
+                }
+              }
+            },
+            "description" : "Project created."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_COMMAND_PAYLOAD or UNKNOWN_REGISTRY_VALUE (bad connector kind)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_SLUG_CONFLICT or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Create a project",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}" : {
+      "get" : {
+        "operationId" : "getProject",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Project"
+                }
+              }
+            },
+            "description" : "Project."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND."
+          }
+        },
+        "summary" : "Get a project",
+        "tags" : [
+          "Projects"
+        ]
+      },
+      "put" : {
+        "operationId" : "updateProject",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UpdateProjectRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Project"
+                }
+              }
+            },
+            "description" : "Project updated."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_COMMAND_PAYLOAD or UNKNOWN_REGISTRY_VALUE (bad connector kind)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_SLUG_CONFLICT."
+          }
+        },
+        "summary" : "Edit a project's mutable configuration",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/credentials/{role}" : {
+      "put" : {
+        "operationId" : "setProjectCredential",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Connector role (underscored wire form).",
+            "example" : "ticket_source",
+            "in" : "path",
+            "name" : "role",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SetCredentialRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SetCredentialResponse"
+                }
+              }
+            },
+            "description" : "Credential configured (non-secret id only)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, or UNKNOWN_REGISTRY_VALUE (bad role)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "IDEMPOTENCY_KEY_CONFLICT."
+          },
+          "503" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "CREDENTIAL_MASTER_KEY_UNCONFIGURED (no master key configured)."
+          }
+        },
+        "summary" : "Set or rotate a connector credential (write-only — never returned)",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/disable" : {
+      "post" : {
+        "operationId" : "disableProject",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Project"
+                }
+              }
+            },
+            "description" : "Project disabled."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_COMMAND_PAYLOAD (the default project cannot be disabled)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND."
+          }
+        },
+        "summary" : "Soft-disable a project (the default project cannot be disabled)",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/enable" : {
+      "post" : {
+        "operationId" : "enableProject",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Project"
+                }
+              }
+            },
+            "description" : "Project enabled."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND."
+          }
+        },
+        "summary" : "Re-enable a disabled project (status := ACTIVE)",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/test-connection" : {
+      "post" : {
+        "operationId" : "testProjectConnection",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TestConnection"
+                }
+              }
+            },
+            "description" : "Per-check connectivity results."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "UNSUPPORTED_CONNECTOR_KIND (a project kind has no registered adapter)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND."
+          }
+        },
+        "summary" : "Run capability-aware connectivity probes (per-check results, HTTP 200)",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
     "/api/v1/runner-queue/status" : {
       "get" : {
         "operationId" : "getRunnerQueueStatus",
@@ -2396,6 +3120,10 @@
     {
       "description" : "Inspect and command governed workflow runs.",
       "name" : "Workflows"
+    },
+    {
+      "description" : "Manage projects: CRUD, write-only credentials, connectivity.",
+      "name" : "Projects"
     },
     {
       "description" : "Inspect the runner execution queue + worker pool.",

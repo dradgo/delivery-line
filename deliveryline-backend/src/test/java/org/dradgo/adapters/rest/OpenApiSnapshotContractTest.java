@@ -98,6 +98,16 @@ class OpenApiSnapshotContractTest {
         .contains("listWorkflows")
         .contains("getWorkflow")
         .contains("getWorkflowEvents");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 3c-8 project operations")
+        .contains("listProjects")
+        .contains("createProject")
+        .contains("getProject")
+        .contains("updateProject")
+        .contains("disableProject")
+        .contains("enableProject")
+        .contains("setProjectCredential")
+        .contains("testProjectConnection");
 
     JsonNode document = MAPPER.readTree(canonical);
     assertThat(document.at(pointer("servers")).isArray()).isTrue();

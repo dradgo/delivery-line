@@ -99,6 +99,22 @@ public class ProjectCredentialService implements ProjectCredentialSource {
   }
 
   /**
+   * Story 3c-8 (AC1/R5) — whether an active credential is configured for {@code (projectPublicId,
+   * role)}. A pure <strong>presence</strong> check: it returns a boolean and never decrypts,
+   * returns, or logs any secret material. Backs {@code ProjectResponse}'s {@code configured /
+   * not_configured} per-role presence field — the write-only contract has no read-back of the
+   * value, only of its existence.
+   */
+  @Transactional(readOnly = true)
+  public boolean isConfigured(String projectPublicId, ConnectorRole role) {
+    if (projectPublicId == null || projectPublicId.isBlank()) {
+      throw new IllegalArgumentException("projectPublicId must be non-blank");
+    }
+    Objects.requireNonNull(role, "role");
+    return recordPort.findActive(projectPublicId, role).isPresent();
+  }
+
+  /**
    * Resolve the active credential for {@code (projectPublicId, role)} and return its decrypted
    * plaintext <strong>for immediate in-memory use only</strong>, or {@link Optional#empty()} when
    * none is configured (not an error). The plaintext is never logged or retained.

@@ -1,6 +1,7 @@
 package org.dradgo.application.integration.repohost;
 
 import java.util.Optional;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.domain.integration.repohost.Branch;
 import org.dradgo.domain.integration.repohost.CommentResult;
 import org.dradgo.domain.integration.repohost.PullRequest;
@@ -97,4 +98,21 @@ public interface RepositoryHostAdapter {
    * services gate optional calls (e.g. comment posting) on the relevant capability flag.
    */
   RepositoryHostCapabilities getCapabilities();
+
+  /**
+   * Story 3c-8 (AC3 / R1) — a lightweight authenticated reachability probe for the project
+   * test-connection surface. Performs at most one cheap authenticated call: when {@code repo} is
+   * non-null it probes that repository's metadata (so {@link ConnectivityResult#reachable()}
+   * answers "is this repo reachable"); when {@code repo} is null it falls back to an authenticated
+   * "whoami" call (host reachability + credential validity only). Network/auth failures are
+   * classified into the returned secret-free {@link ConnectivityResult} — never thrown as a vendor
+   * exception across the port. Mock / stub adapters return a deterministic reachable +
+   * authenticated result.
+   *
+   * @param credentialOverride the project-scoped stored credential to authenticate the probe with;
+   *     when {@code null}/blank the adapter falls back to its host-env credential (AC3). The value
+   *     is a secret — it is used only for this one call and MUST NOT be logged, returned, or
+   *     persisted.
+   */
+  ConnectivityResult verifyConnectivity(RepositoryRef repo, String credentialOverride);
 }

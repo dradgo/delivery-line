@@ -22,6 +22,7 @@ import org.dradgo.adapters.integration.ticketsource.linear.LinearMockAdapter;
 import org.dradgo.adapters.integration.ticketsource.linear.LinearMockScenario;
 import org.dradgo.adapters.integration.ticketsource.linear.LinearMockScenarioRegistry;
 import org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.linear.LinearProperties;
@@ -150,6 +151,25 @@ class TicketSourceAbstractionFoundationContract {
     verify(incapable, never())
         .postGovernedRunComment(any(TicketRef.class), any(GovernedRunComment.class));
     verify(eventWritePort, never()).append(any());
+  }
+
+  @Test
+  void verifyConnectivityProbeIsReachableAndAuthenticatedInBoth() {
+    // Story 3c-8 (R1) — the net-new probe is present + deterministic on the mock and authenticates
+    // cleanly on the real adapter against a stubbed 200 viewer response.
+    ConnectivityResult mockResult = mock.verifyConnectivity(null);
+    assertTrue(mockResult.reachable() && mockResult.authenticated(), tag("mock probe ok"));
+
+    RealHarness harness = realHarness();
+    harness
+        .server
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withSuccess("{\"data\":{\"viewer\":{\"id\":\"u1\"}}}", MediaType.APPLICATION_JSON));
+    ConnectivityResult realResult = harness.adapter.verifyConnectivity(null);
+    assertTrue(realResult.reachable() && realResult.authenticated(), tag("real probe ok"));
+    harness.server.verify();
   }
 
   // -------- helpers ----------------------------------------------------------------------------

@@ -42,6 +42,15 @@ public record LinearProperties(
     String teamKey,
     String projectId) {
 
+  /**
+   * Story 3c-8 (P1) — per-request RestClient attribute key carrying a one-off credential override
+   * (the project-scoped stored API token) for the connectivity probe. When set on a request, the
+   * {@code linearRestClient} interceptor prefers it over the host-env {@link #apiToken()};
+   * otherwise the host-env token is used (the AC3 fallback). Never logged.
+   */
+  public static final String CREDENTIAL_OVERRIDE_ATTRIBUTE =
+      "deliveryline.linear.credentialOverride";
+
   public LinearProperties {
     baseUrl = baseUrl == null || baseUrl.isBlank() ? "https://api.linear.app/graphql" : baseUrl;
     if (pollIntervalMs <= 0L) {

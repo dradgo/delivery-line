@@ -11,6 +11,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import org.dradgo.adapters.integration.repohost.github.GitHubMockAdapter;
 import org.dradgo.adapters.integration.repohost.github.GitHubMockScenarioRegistry;
 import org.dradgo.adapters.integration.repohost.github.GitHubRealAdapter;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.github.GitHubProperties;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
@@ -116,6 +117,21 @@ class RepositoryHostAbstractionFoundationContract {
         expected,
         realHarness().adapter.getCapabilities(),
         tag("real declares the GitHub capability set"));
+  }
+
+  @Test
+  void verifyConnectivityProbeIsReachableAndAuthenticatedInBoth() {
+    // Story 3c-8 (R1) — the net-new probe is present + deterministic on the mock and authenticates
+    // cleanly on the real adapter against a stubbed 200 repository response.
+    ConnectivityResult mockResult = mock.verifyConnectivity(RepositoryRef.of("octo/hello"), null);
+    assertTrue(mockResult.reachable() && mockResult.authenticated(), tag("mock probe ok"));
+
+    RealHarness harness = realHarness();
+    harness.server.expect(requestTo(BASE_URL + "/repos/octo/hello")).andRespond(repoOk());
+    ConnectivityResult realResult =
+        harness.adapter.verifyConnectivity(RepositoryRef.of("octo/hello"), null);
+    assertTrue(realResult.reachable() && realResult.authenticated(), tag("real probe ok"));
+    harness.server.verify();
   }
 
   // -------- helpers ----------------------------------------------------------------------------

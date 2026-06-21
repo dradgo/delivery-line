@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.github.GitHubProperties;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
@@ -42,6 +43,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -314,6 +316,96 @@ public class GitHubRealAdapter implements RepositoryHostAdapter {
   @Override
   public RepositoryHostCapabilities getCapabilities() {
     return RepositoryHostCapabilities.githubDefaults();
+  }
+
+  /**
+   * Story 3c-8 (AC3 / R1) — a single authenticated GET probe: the repository's metadata when {@code
+   * repo} is supplied (so {@code reachable} answers "is this repo reachable"), else {@code /user}
+   * (host reachability + credential validity only). Every failure folds into a secret-free {@link
+   * ConnectivityResult} — the probe never throws across the port. A 404 on a repo probe means the
+   * credentials authenticated but that repository is absent.
+   *
+   * <p>When {@code credentialOverride} is non-blank it is attached as a per-request attribute the
+   * {@code gitHubRestClient} interceptor prefers over the host-env PAT (so the project-scoped
+   * stored token actually authenticates the probe); otherwise the host-env PAT is used (AC3
+   * fallback). The override is never logged.
+   */
+  @Override
+  public ConnectivityResult verifyConnectivity(RepositoryRef repo, String credentialOverride) {
+    long startedAt = System.nanoTime();
+    String repoRefLabel = repo == null ? "<whoami>" : repo.value();
+    ParsedRepoRef parsed = null;
+    if (repo != null) {
+      try {
+        parsed = parseRepoRef(repo.value());
+      } catch (RepositoryHostAdapterException malformed) {
+        log.warn("github_real verify_connectivity repoRef={} resolution=invalid_ref", repoRefLabel);
+        return new ConnectivityResult(false, false, "github: invalid repository reference");
+      }
+    }
+    try {
+      RestClient.RequestHeadersSpec<?> request =
+          (parsed == null
+                  ? gitHubRestClient.get().uri("/user")
+                  : gitHubRestClient
+                      .get()
+                      .uri("/repos/{owner}/{repo}", parsed.owner(), parsed.name()))
+              .attributes(
+                  attrs -> {
+                    if (credentialOverride != null && !credentialOverride.isBlank()) {
+                      attrs.put(GitHubProperties.CREDENTIAL_OVERRIDE_ATTRIBUTE, credentialOverride);
+                    }
+                  });
+      request.retrieve().toBodilessEntity();
+      log.info(
+          "github_real verify_connectivity repoRef={} resolution=ok durationMs={}",
+          repoRefLabel,
+          elapsedMs(startedAt));
+      return ConnectivityResult.ok(
+          parsed == null
+              ? "github: authenticated"
+              : "github: repository reachable + authenticated");
+    } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden auth) {
+      log.warn(
+          "github_real verify_connectivity repoRef={} status={} resolution=unauthenticated",
+          repoRefLabel,
+          auth.getStatusCode());
+      return ConnectivityResult.unauthenticated("github: authentication failed");
+    } catch (HttpClientErrorException.NotFound notFound) {
+      // Host + credentials are fine; the specific repository is absent.
+      log.warn(
+          "github_real verify_connectivity repoRef={} resolution=repo_not_found", repoRefLabel);
+      return new ConnectivityResult(false, true, "github: repository not found");
+    } catch (HttpClientErrorException.TooManyRequests rateLimited) {
+      // 429 — the host answered and the credential was NOT rejected; we simply cannot complete the
+      // probe right now. Report a non-misleading "could not verify" rather than an auth failure.
+      log.warn(
+          "github_real verify_connectivity repoRef={} status=429 resolution=rate_limited",
+          repoRefLabel);
+      return new ConnectivityResult(
+          true, false, "github: rate limited — could not verify, retry later");
+    } catch (HttpServerErrorException server) {
+      // 5xx — the host answered with a server error; not an auth verdict. Same "could not verify".
+      log.warn(
+          "github_real verify_connectivity repoRef={} status={} resolution=server_error",
+          repoRefLabel,
+          server.getStatusCode());
+      return new ConnectivityResult(
+          true, false, "github: server error — could not verify, retry later");
+    } catch (ResourceAccessException io) {
+      log.warn(
+          "github_real verify_connectivity repoRef={} resolution=unreachable cause={}",
+          repoRefLabel,
+          io.getMostSpecificCause().getClass().getSimpleName());
+      log.debug("github_real verify_connectivity network fault repoRef={}", repoRefLabel, io);
+      return ConnectivityResult.unreachable("github: host unreachable");
+    } catch (RestClientException other) {
+      log.warn(
+          "github_real verify_connectivity repoRef={} resolution=unexpected cause={}",
+          repoRefLabel,
+          other.getClass().getSimpleName());
+      return new ConnectivityResult(true, false, "github: unexpected response");
+    }
   }
 
   // ---------------------------------------------------------------------------------------------

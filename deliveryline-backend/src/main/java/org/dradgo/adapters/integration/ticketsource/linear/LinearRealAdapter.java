@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.linear.LinearProperties;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
@@ -79,6 +80,12 @@ public class LinearRealAdapter implements TicketSourceAdapter {
   private static final String POLL_QUERY_RESOURCE = "graphql/linear/poll-tickets-since.graphql";
   private static final String POST_COMMENT_QUERY_RESOURCE = "graphql/linear/post-comment.graphql";
   private static final String LIST_COMMENTS_QUERY_RESOURCE = "graphql/linear/list-comments.graphql";
+
+  /**
+   * Minimal authenticated probe query (story 3c-8). Inlined (not a resource file) because it
+   * carries no variables and is used only by {@link #verifyConnectivity()}.
+   */
+  private static final String VIEWER_QUERY = "query { viewer { id } }";
 
   /** Per-page size when scanning existing comments for the fingerprint marker. */
   private static final int IDEMPOTENCY_SCAN_PAGE_SIZE = 100;
@@ -288,6 +295,45 @@ public class LinearRealAdapter implements TicketSourceAdapter {
     return TicketSourceCapabilities.linearDefaults();
   }
 
+  /**
+   * Story 3c-8 (AC3 / R1) — a single authenticated {@code viewer} GraphQL call. A clean response is
+   * reachable + authenticated; an auth-classified failure is reachable-but-unauthenticated; a
+   * network-classified failure is unreachable. The probe never throws across the port — every
+   * {@link TicketSourceAdapterException} category folds into a secret-free {@link
+   * ConnectivityResult} (the message carries only the non-secret failure category).
+   *
+   * <p>When {@code credentialOverride} is non-blank it is attached as a per-request attribute the
+   * {@code linearRestClient} interceptor prefers over the host-env API token (so the project-scoped
+   * stored token actually authenticates the probe); otherwise the host-env token is used (AC3
+   * fallback). The override is never logged.
+   */
+  @Override
+  public ConnectivityResult verifyConnectivity(String credentialOverride) {
+    long startedAt = System.nanoTime();
+    try {
+      executeGraphQL(VIEWER_QUERY, Map.of(), "verifyConnectivity", credentialOverride);
+      log.info("linear_real verify_connectivity resolution=ok durationMs={}", elapsedMs(startedAt));
+      return ConnectivityResult.ok("linear: authenticated");
+    } catch (TicketSourceAdapterException failure) {
+      return switch (failure.failureCategory()) {
+        case LINK_FAILURE -> {
+          log.warn("linear_real verify_connectivity resolution=unauthenticated");
+          yield ConnectivityResult.unauthenticated("linear: authentication failed");
+        }
+        case NETWORK_API_FAILURE -> {
+          log.warn("linear_real verify_connectivity resolution=unreachable");
+          yield ConnectivityResult.unreachable("linear: host unreachable");
+        }
+        default -> {
+          log.warn(
+              "linear_real verify_connectivity resolution=unexpected category={}",
+              failure.failureCategory().value());
+          yield new ConnectivityResult(true, false, "linear: unexpected response");
+        }
+      };
+    }
+  }
+
   private CommentLockState acquireCommentLock(String ticketRef) {
     return commentLocks.compute(
         ticketRef,
@@ -352,6 +398,11 @@ public class LinearRealAdapter implements TicketSourceAdapter {
   }
 
   private JsonNode executeGraphQL(String query, Map<String, Object> variables, String operation) {
+    return executeGraphQL(query, variables, operation, null);
+  }
+
+  private JsonNode executeGraphQL(
+      String query, Map<String, Object> variables, String operation, String credentialOverride) {
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("query", query);
     payload.set("variables", objectMapper.valueToTree(variables));
@@ -366,7 +417,19 @@ public class LinearRealAdapter implements TicketSourceAdapter {
     }
     String responseBody;
     try {
-      responseBody = linearRestClient.post().uri("").body(body).retrieve().body(String.class);
+      responseBody =
+          linearRestClient
+              .post()
+              .uri("")
+              .attributes(
+                  attrs -> {
+                    if (credentialOverride != null && !credentialOverride.isBlank()) {
+                      attrs.put(LinearProperties.CREDENTIAL_OVERRIDE_ATTRIBUTE, credentialOverride);
+                    }
+                  })
+              .body(body)
+              .retrieve()
+              .body(String.class);
     } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden auth) {
       log.warn(
           "linear_real {} failed status={} category=link_failure", operation, auth.getStatusCode());

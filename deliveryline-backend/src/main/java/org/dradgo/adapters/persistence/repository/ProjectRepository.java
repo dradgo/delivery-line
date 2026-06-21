@@ -1,5 +1,6 @@
 package org.dradgo.adapters.persistence.repository;
 
+import java.util.List;
 import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.ProjectEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,4 +16,10 @@ public interface ProjectRepository extends JpaRepository<ProjectEntity, Long> {
   Optional<ProjectEntity> findBySlug(String slug);
 
   Optional<ProjectEntity> findByPublicId(String publicId);
+
+  /**
+   * Story 3c-8 (AC1) — stable creation-ordered listing for the REST {@code GET /projects} surface
+   * (and story 3c-10's doctor read). Includes disabled projects.
+   */
+  List<ProjectEntity> findAllByOrderByCreatedAtAsc();
 }

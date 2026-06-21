@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
@@ -70,5 +71,14 @@ public class GitLabTicketSourceStubAdapter implements TicketSourceAdapter {
   public TicketSourceCapabilities getCapabilities() {
     // Deliberately degraded — all optional operations unsupported (exercises AC4 degradation).
     return new TicketSourceCapabilities(false, false, false);
+  }
+
+  @Override
+  public ConnectivityResult verifyConnectivity(String credentialOverride) {
+    // Documented stub (story 3c-8): a degraded-but-OK deterministic result. The connection-test
+    // service marks this connector's check `skipped` from its degraded capability set before this
+    // is ever rendered as pass/fail.
+    log.info("gitlab stub: verifyConnectivity is a documented no-op (degraded connector)");
+    return ConnectivityResult.ok("gitlab stub: connectivity probe is a documented no-op");
   }
 }

@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.domain.integration.repohost.Branch;
@@ -224,6 +225,16 @@ public class GitHubMockAdapter implements RepositoryHostAdapter {
   @Override
   public RepositoryHostCapabilities getCapabilities() {
     return RepositoryHostCapabilities.githubDefaults();
+  }
+
+  @Override
+  public ConnectivityResult verifyConnectivity(RepositoryRef repo, String credentialOverride) {
+    // Deterministic, network-free probe (story 3c-8): the mock is always reachable + authenticated.
+    // The credential override is irrelevant to the mock (no real auth) and is never logged.
+    log.info(
+        "github_mock verify_connectivity repoRef={} resolution=ok",
+        repo == null ? "<none>" : repo.value());
+    return ConnectivityResult.ok("github-mock: deterministic reachable + authenticated");
   }
 
   /**

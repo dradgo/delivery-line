@@ -39,6 +39,15 @@ public record GitHubProperties(
   /** AC5: WARN when {@code X-RateLimit-Remaining} drops below this threshold. */
   public static final int DEFAULT_RATE_LIMIT_WARN_THRESHOLD = 100;
 
+  /**
+   * Story 3c-8 (P1) — per-request RestClient attribute key carrying a one-off credential override
+   * (the project-scoped stored PAT) for the connectivity probe. When set on a request, the {@code
+   * gitHubRestClient} interceptor prefers it over the host-env {@link #token()}; otherwise the
+   * host-env token is used (the AC3 fallback). Never logged.
+   */
+  public static final String CREDENTIAL_OVERRIDE_ATTRIBUTE =
+      "deliveryline.github.credentialOverride";
+
   public GitHubProperties {
     baseUrl = baseUrl == null || baseUrl.isBlank() ? DEFAULT_BASE_URL : baseUrl;
     apiVersion = apiVersion == null || apiVersion.isBlank() ? DEFAULT_API_VERSION : apiVersion;

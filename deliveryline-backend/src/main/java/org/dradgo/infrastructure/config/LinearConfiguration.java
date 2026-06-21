@@ -95,7 +95,13 @@ public class LinearConfiguration {
         .requestInterceptor(
             (request, body, execution) -> {
               // Read the token at request-time so rotation is observed without context refresh.
-              String token = properties.apiToken();
+              // Story 3c-8 (P1): a per-request credential override attribute (the project-scoped
+              // stored token, set by the connectivity probe) takes precedence over the host-env
+              // token when present. Never logged.
+              Object override =
+                  request.getAttributes().get(LinearProperties.CREDENTIAL_OVERRIDE_ATTRIBUTE);
+              String token =
+                  (override instanceof String s && !s.isBlank()) ? s : properties.apiToken();
               if (token != null && !token.isBlank()) {
                 request.getHeaders().set("Authorization", token);
               }

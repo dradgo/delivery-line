@@ -1,14 +1,18 @@
 package org.dradgo.adapters.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.project.ProjectStore;
+import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
+import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -127,6 +131,137 @@ class ProjectPersistenceAdapterIT {
     assertThat(projectStore.findProjectIdForRun(boundRun)).contains(publicId);
     assertThat(projectStore.findProjectIdForRun(nullRun)).isEmpty();
     assertThat(projectStore.findProjectIdForRun("run_doesnotexist01")).isEmpty();
+  }
+
+  @Test
+  void findAllReturnsInsertedProjectsCreationOrdered() {
+    String publicIdA = "prj_itfa" + suffix();
+    String publicIdB = "prj_itfb" + suffix();
+    projectStore.insert(
+        new Project(
+            publicIdA,
+            "IT FindAll A",
+            "it-findall-a-" + suffix(),
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            OffsetDateTime.now(ZoneOffset.UTC),
+            null));
+    projectStore.insert(
+        new Project(
+            publicIdB,
+            "IT FindAll B",
+            "it-findall-b-" + suffix(),
+            ProjectStatus.DISABLED,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            OffsetDateTime.now(ZoneOffset.UTC),
+            null));
+
+    List<String> ids = projectStore.findAll().stream().map(Project::publicId).toList();
+    assertThat(ids).contains(publicIdA, publicIdB);
+    // The two we inserted are creation-ordered relative to each other (A before B).
+    assertThat(ids.indexOf(publicIdA)).isLessThan(ids.indexOf(publicIdB));
+  }
+
+  @Test
+  void updateMutatesEditableColumnsAndPreservesCreatedAt() {
+    String publicId = "prj_itup" + suffix();
+    Project inserted =
+        projectStore.insert(
+            new Project(
+                publicId,
+                "IT Update",
+                "it-update-" + suffix(),
+                ProjectStatus.ACTIVE,
+                "octo/before",
+                ConnectorKind.LINEAR,
+                ConnectorKind.GITHUB,
+                false,
+                OffsetDateTime.now(ZoneOffset.UTC),
+                null));
+
+    Project mutated =
+        new Project(
+            publicId,
+            "IT Update Renamed",
+            inserted.slug(),
+            ProjectStatus.DISABLED,
+            "octo/after",
+            ConnectorKind.GITHUB,
+            ConnectorKind.LINEAR,
+            true,
+            inserted.createdAt(),
+            null);
+    projectStore.update(mutated);
+
+    Project loaded = projectStore.findByPublicId(publicId).orElseThrow();
+    assertThat(loaded.name()).isEqualTo("IT Update Renamed");
+    assertThat(loaded.status()).isEqualTo(ProjectStatus.DISABLED);
+    assertThat(loaded.repositoryUrl()).isEqualTo("octo/after");
+    assertThat(loaded.ticketSourceKind()).isEqualTo(ConnectorKind.GITHUB);
+    assertThat(loaded.repoHostKind()).isEqualTo(ConnectorKind.LINEAR);
+    assertThat(loaded.openspecEnabled()).isTrue();
+    assertThat(loaded.createdAt()).isEqualTo(inserted.createdAt());
+  }
+
+  @Test
+  void updateUnknownProjectThrowsProjectNotFound() {
+    Project ghost =
+        new Project(
+            "prj_itghost" + suffix(),
+            "Ghost",
+            "it-ghost-" + suffix(),
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            OffsetDateTime.now(ZoneOffset.UTC),
+            null);
+    assertThatThrownBy(() -> projectStore.update(ghost))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.PROJECT_NOT_FOUND);
+  }
+
+  @Test
+  void duplicateSlugInsertMapsToProjectSlugConflict() {
+    String slug = "it-dupe-" + suffix();
+    projectStore.insert(
+        new Project(
+            "prj_itd1" + suffix(),
+            "Dupe One",
+            slug,
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            OffsetDateTime.now(ZoneOffset.UTC),
+            null));
+
+    assertThatThrownBy(
+            () ->
+                projectStore.insert(
+                    new Project(
+                        "prj_itd2" + suffix(),
+                        "Dupe Two",
+                        slug,
+                        ProjectStatus.ACTIVE,
+                        null,
+                        ConnectorKind.LINEAR,
+                        ConnectorKind.GITHUB,
+                        false,
+                        OffsetDateTime.now(ZoneOffset.UTC),
+                        null)))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.PROJECT_SLUG_CONFLICT);
   }
 
   private static String suffix() {

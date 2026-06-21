@@ -46,4 +46,24 @@ public class ProjectEntityMapper {
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }
+
+  /**
+   * Story 3c-8 (AC1) — merge the editable columns of {@code project} onto an already-loaded {@code
+   * entity} for the update path. Deliberately does NOT touch {@code id} or {@code created_at}: the
+   * surrogate key and the immutable creation timestamp are authoritative on the persisted row (the
+   * domain {@code createdAt} is the value just read from it, so re-stamping it is a no-op — but we
+   * leave it untouched to honor the 3c-6 {@code created_at} no-refresh trap explicitly). The {@code
+   * publicId} is the lookup key and is never reassigned here.
+   */
+  public ProjectEntity applyEditableColumns(ProjectEntity entity, Project project) {
+    entity.setName(project.name());
+    entity.setSlug(project.slug());
+    entity.setStatus(project.status());
+    entity.setRepositoryUrl(project.repositoryUrl());
+    entity.setTicketSourceKind(project.ticketSourceKind());
+    entity.setRepoHostKind(project.repoHostKind());
+    entity.setOpenspecEnabled(project.openspecEnabled());
+    entity.setArchivedAt(project.archivedAt());
+    return entity;
+  }
 }

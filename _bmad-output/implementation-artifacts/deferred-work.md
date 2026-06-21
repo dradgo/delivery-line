@@ -887,3 +887,11 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 - **Disabled-project status not filtered at intake** — explicit `projectReference` resolving to a DISABLED project binds the run; `findByPublicId`/`findBySlug` never filter on status. Not reachable today (no project CRUD/disable; only `default` exists). AC1 doesn't require it; owned by 3c-8 project lifecycle. [WorkflowCommandService#resolveProjectBinding]
 - **Recovery/retry back-compat ctor defaults openspec=false** — `RunnerDispatchRequest` back-compat constructors default `openspecEnabled=false`; verify the recovery/retry path rebuilds via the broker's resolved-openspec build site. If recovery uses a back-compat ctor, a retry of an OpenSpec-enabled project dispatches OpenSpec-off (divergence from first dispatch). [RunnerDispatchRequest.java]
 - **Checkstyle suppression line-anchored** — `ForbiddenThreadSleep` suppression for WorkflowCommandService is pinned to an exact line (840→881), re-anchored on every edit. Pre-existing; identifier-anchoring is a cross-cutting cleanup. [config/checkstyle/suppressions.xml]
+
+## Deferred from: code review of 3c-8-project-rest-api-crud-and-connection-test (2026-06-21)
+
+- No optimistic-lock/version on `ProjectPersistenceAdapter.update` → lost-update under concurrent edits; the documented `409 PROJECT_SLUG_CONFLICT` on `PUT /{id}` is unreachable (slug preserved on update). Acceptable for single-operator deployment.
+- `ProjectController.setProjectCredential` master-key `catch (IllegalStateException)` maps any ISE to `CREDENTIAL_MASTER_KEY_UNCONFIGURED(503)`, not just master-key-absent. No other ISE source on the encrypt path today.
+- `ProjectController.listProjects` runs 2 credential-presence queries per project (N+1) and is unpaginated. Acceptable at expected project count.
+- Idempotency fingerprint joins fields with a literal `"|"` without escaping/length-prefixing → canonical strings not injective (collision e.g. `name="a|b",slug="c"` vs `name="a",slug="b|c"`). Theoretical, same-key-scoped.
+- Create idempotency REPLAY calls `getProject(resultRef)` and would surface a confusing 404 on `POST` if the prior project no longer resolves. Latent until a project-delete/purge API exists.

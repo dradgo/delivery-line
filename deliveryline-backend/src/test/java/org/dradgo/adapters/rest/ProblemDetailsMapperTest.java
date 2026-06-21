@@ -103,6 +103,35 @@ class ProblemDetailsMapperTest {
     Mockito.verify(controller, Mockito.never()).serveShell(Mockito.anyString());
   }
 
+  @Test
+  void credentialCipherExceptionMapsToSecretHostile500() {
+    StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+    beanFactory.addBean("objectMapper", new ObjectMapper());
+    ProblemDetailsMapper mapper =
+        new ProblemDetailsMapper(
+            beanFactory.getBeanProvider(RedactionPolicyService.class),
+            beanFactory.getBeanProvider(ObjectMapper.class),
+            beanFactory.getBeanProvider(SpaFallbackController.class));
+    HttpServletRequest request = Mockito.mock(HttpServletRequest.class);
+    Mockito.when(request.getMethod()).thenReturn("PUT");
+    Mockito.when(request.getRequestURI())
+        .thenReturn("/api/v1/projects/prj_x/credentials/ticket_source");
+
+    String secretBearingMessage = "tamper at offset 42 ciphertext=DEADBEEF keyId=mk_secret";
+    org.springframework.http.ResponseEntity<org.springframework.http.ProblemDetail> response =
+        mapper.handleCredentialCipherException(
+            new org.dradgo.application.security.CredentialCipherException(secretBearingMessage),
+            request);
+
+    assertEquals(500, response.getStatusCode().value());
+    org.springframework.http.ProblemDetail body = response.getBody();
+    assertEquals("INTERNAL_ERROR", body.getProperties().get("code"));
+    // Secret-hostile: the fixed generic detail, never the exception message / ciphertext / keyId.
+    assertEquals("Credential operation failed.", body.getDetail());
+    org.junit.jupiter.api.Assertions.assertFalse(
+        String.valueOf(body.getDetail()).contains("DEADBEEF"));
+  }
+
   /** A GET browser navigation (accepts HTML) so {@code shouldServeSpaShell} returns true. */
   private static HttpServletRequest navigationRequest() {
     HttpServletRequest request = Mockito.mock(HttpServletRequest.class);

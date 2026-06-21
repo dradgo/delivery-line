@@ -3,6 +3,7 @@ package org.dradgo.application.integration.ticketsource;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.Ticket;
@@ -73,4 +74,18 @@ public interface TicketSourceAdapter {
    * services gate optional calls (e.g. comment write-back) on the relevant capability flag.
    */
   TicketSourceCapabilities getCapabilities();
+
+  /**
+   * Story 3c-8 (AC3 / R1, P1) — a lightweight authenticated reachability probe for the project
+   * test-connection surface. Performs at most one cheap authenticated call (e.g. a {@code viewer}
+   * lookup) and returns a secret-free {@link ConnectivityResult} — it MUST classify network/auth
+   * failures into the result rather than throwing a vendor exception across the port. Mock / stub
+   * adapters return a deterministic reachable + authenticated result.
+   *
+   * @param credentialOverride the project-scoped stored credential to authenticate the probe with;
+   *     when {@code null}/blank the adapter falls back to its host-env credential (AC3). The value
+   *     is a secret — it is used only for this one call and MUST NOT be logged, returned, or
+   *     persisted.
+   */
+  ConnectivityResult verifyConnectivity(String credentialOverride);
 }

@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
@@ -428,6 +429,11 @@ class ProjectConnectorResolverTest {
     public TicketSourceCapabilities getCapabilities() {
       return capabilities;
     }
+
+    @Override
+    public ConnectivityResult verifyConnectivity(String credentialOverride) {
+      return ConnectivityResult.ok("fake: ok");
+    }
   }
 
   /** Minimal fake {@link RepositoryHostAdapter} declaring a kind + capabilities; ops are no-ops. */
@@ -486,6 +492,11 @@ class ProjectConnectorResolverTest {
     @Override
     public RepositoryHostCapabilities getCapabilities() {
       return capabilities;
+    }
+
+    @Override
+    public ConnectivityResult verifyConnectivity(RepositoryRef repo, String credentialOverride) {
+      return ConnectivityResult.ok("fake: ok");
     }
   }
 }

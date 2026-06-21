@@ -2,6 +2,7 @@ package org.dradgo.adapters.integration.repohost.gitlab;
 
 import java.util.Objects;
 import java.util.Optional;
+import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.domain.integration.repohost.Branch;
@@ -93,6 +94,17 @@ public class GitLabRepositoryHostStubAdapter implements RepositoryHostAdapter {
   public RepositoryHostCapabilities getCapabilities() {
     // Deliberately degraded — all optional features unsupported (exercises AC4 degradation).
     return new RepositoryHostCapabilities(false, false, false, false, false);
+  }
+
+  @Override
+  public ConnectivityResult verifyConnectivity(RepositoryRef repo, String credentialOverride) {
+    // Documented stub (story 3c-8): a degraded-but-OK deterministic result. The connection-test
+    // service marks this connector's check `skipped` from its degraded capability set before this
+    // is ever rendered as pass/fail.
+    log.info(
+        "gitlab stub: verifyConnectivity is a documented no-op (degraded connector) repoRef={}",
+        repo == null ? "<none>" : repo.value());
+    return ConnectivityResult.ok("gitlab stub: connectivity probe is a documented no-op");
   }
 
   private RepositoryHostAdapterException notImplemented(String operation, String ref) {
