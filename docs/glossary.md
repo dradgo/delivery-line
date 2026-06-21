@@ -170,8 +170,45 @@ output").
 
 ## Epic 3c vocabulary (multi-project credentials)
 
-These terms are registered here per glossary discipline; story 3c-12 adds the broader
-`project` / `connector` / `credential` vocabulary.
+These terms are registered here per glossary discipline; Epic 6 story 6.2 normalizes wording.
+
+### project
+
+The first-class aggregate every governed [run](#run) is scoped to. A project binds a repository,
+a pair of selectable [connector](#connector) kinds (a ticket source and a repository host), the
+encrypted per-role [credentials](#credential) those connectors use, and run options (e.g. the
+OpenSpec toggle). A project has a status — `active` or `disabled` — and advertises a
+status-derived `allowedActions` list (no role dimension; no RBAC). A seeded **`default`** project
+is migrated transparently from the prior single-host configuration and preserves single-project
+parity; it can never be disabled. Runs are associated with a project at submission / intake.
+
+**See also:** [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md),
+[connector](#connector), [credential](#credential).
+
+### connector
+
+The selectable, vendor-neutral adapter a [project](#project) binds for one of its two integration
+roles — a **ticket source** or a **repository host** — chosen by `ConnectorKind`. The registered
+kinds are `linear`, `github`, and a `gitlab` **proof-of-seam** stub (a documented demonstration of
+per-project resolution, not a full vendor implementation). Each project resolves its connectors
+**per project at run time**, so two projects can use different vendors. A connector authenticates
+with the project's per-role [credential](#credential).
+
+**See also:** [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md),
+[project](#project), [credential](#credential).
+
+### credential
+
+The **write-only**, envelope-encrypted per-role secret a [connector](#connector) uses at call
+time, keyed by connector role (`ticket_source` / `repo_host`). A credential is set or replaced but
+**never read back, never pre-filled into a form, never placed in the DOM, and never exported**;
+the API returns only an id (`cred_…`) and a `configured` status, never the secret. At rest it is
+protected by [credential encryption](#credential-encryption) under the host-supplied
+[master key](#master-key), and it is redacted from every egress.
+
+**See also:** [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md),
+[`adr/0013-credential-encryption.md`](adr/0013-credential-encryption.md),
+[credential encryption](#credential-encryption), [master key](#master-key).
 
 ### master key
 
@@ -208,6 +245,7 @@ This glossary is referenced from:
 - [`quickstart.md`](quickstart.md) — "Concepts you just used" footer.
 - [`pm-loop-walkthrough.md`](pm-loop-walkthrough.md) — "Concepts you just used" footer.
 - [`execution-walkthrough.md`](execution-walkthrough.md) — "Concepts you just used" footer (Epic 3 vocabulary).
+- [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md) — "Concepts you just used" footer (Epic 3c vocabulary).
 - [`setup-local.md`](setup-local.md) — "See also" footer.
 
 Epic 6 stories (6.1 / 6.2) will wire cross-links from `failure-recovery-walkthrough.md`
