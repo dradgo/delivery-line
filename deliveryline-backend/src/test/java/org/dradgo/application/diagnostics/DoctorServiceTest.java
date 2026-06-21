@@ -132,6 +132,7 @@ class DoctorServiceTest {
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
+    when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -183,6 +184,7 @@ class DoctorServiceTest {
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
+    when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -293,6 +295,7 @@ class DoctorServiceTest {
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
+    when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -320,6 +323,7 @@ class DoctorServiceTest {
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
+    when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -369,6 +373,8 @@ class DoctorServiceTest {
         .thenReturn(ProbeResult.skip("observability profile inactive"));
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
+    when(probes.probeProjects())
+        .thenReturn(ProbeResult.pass("All 1 active project(s) configured (1 total)"));
   }
 
   private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

@@ -151,7 +151,15 @@ public enum DomainErrorCode implements RegistryValue {
   // fail-fast, mirroring DOCTOR_GITHUB_TOKEN_MISSING / DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED). The
   // cipher's decrypt faults (tamper/wrong-key/bad-algo) do NOT get a code — they throw
   // CredentialCipherException; the REST/Problem-Details mapping of credential failures is 3c-8.
-  CREDENTIAL_MASTER_KEY_UNCONFIGURED("CREDENTIAL_MASTER_KEY_UNCONFIGURED");
+  CREDENTIAL_MASTER_KEY_UNCONFIGURED("CREDENTIAL_MASTER_KEY_UNCONFIGURED"),
+  // Story 3c-10 (AC3) — three-sites code (enum + ProblemDetailsCatalog + manifest). Raised (WARN,
+  // never FAIL) by the doctor `projects` probe when an ACTIVE project is misconfigured: a blank
+  // repository URL, a connector role's credential `missing`, or a ticket-source/repo-host kind the
+  // ProjectConnectorResolver cannot resolve. A misconfigured project is advisory, not a boot
+  // blocker — SERVICE_UNAVAILABLE + non-retryable, mirroring the other WARN-advisory DOCTOR_* codes
+  // (DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED / DOCTOR_OBSERVABILITY_LOW_MEMORY). The specific failing
+  // sub-check rides in `details`/`reason`, not in distinct codes.
+  DOCTOR_PROJECT_CONFIG_INCOMPLETE("DOCTOR_PROJECT_CONFIG_INCOMPLETE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

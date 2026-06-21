@@ -1,7 +1,9 @@
 package org.dradgo.adapters.diagnostics;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,8 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -23,7 +27,13 @@ import javax.sql.DataSource;
 import org.dradgo.application.diagnostics.DiagnosticsStatus;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
+import org.dradgo.application.project.ProjectConnectorResolver;
+import org.dradgo.application.project.ProjectStore;
+import org.dradgo.domain.DomainException;
+import org.dradgo.domain.project.Project;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectStatus;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.MigrationInfoService;
@@ -527,6 +537,239 @@ class DoctorProbeAdapterTest {
     assertThat(result.errorCode()).isEqualTo(DomainErrorCode.DOCTOR_DOCKER_MISSING.value());
   }
 
+  // ---- Story 3c-10 (AC1/AC2/AC3/AC6) — the `projects` probe ----
+
+  @Test
+  void projectsProbeSkipsWhenStoreUnavailable() {
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(
+            new MockEnvironment(), (ProjectStore) null, mock(ProjectConnectorResolver.class));
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.SKIP);
+    assertThat(result.details()).containsEntry("reason", "project_store_unavailable");
+  }
+
+  @Test
+  void projectsProbePassesWhenActiveProjectFullyConfigured() {
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll())
+        .thenReturn(List.of(activeProject("prj_default", "https://github.com/acme/repo")));
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(credEnv(), store, mock(ProjectConnectorResolver.class));
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+    assertThat(result.details())
+        .containsEntry("prj_default.status", "active")
+        .containsEntry("prj_default.ticketSourceKind", "linear")
+        .containsEntry("prj_default.repoHostKind", "github")
+        .containsEntry("prj_default.repositoryBound", "true")
+        .containsEntry("prj_default.openspec", "false")
+        .containsEntry("cred:prj_default:ticket_source", "present-via-host-env")
+        .containsEntry("cred:prj_default:repo_host", "present-via-host-env")
+        .containsEntry(
+            "connectionTest", "not-run (use the project testConnection endpoint, story 3c-8)");
+  }
+
+  @Test
+  void projectsProbeWarnsOnBlankRepositoryUrl() {
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll()).thenReturn(List.of(activeProject("prj_default", null)));
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(credEnv(), store, mock(ProjectConnectorResolver.class));
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.WARN);
+    assertThat(result.errorCode())
+        .isEqualTo(DomainErrorCode.DOCTOR_PROJECT_CONFIG_INCOMPLETE.value());
+    assertThat(result.details()).containsEntry("prj_default.reason", "blank_repo");
+  }
+
+  @Test
+  void projectsProbeWarnsOnMissingCredential() {
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll())
+        .thenReturn(List.of(activeProject("prj_default", "https://github.com/acme/repo")));
+    // No store secret (resolver default empty) and no host-env tokens → missing.
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(new MockEnvironment(), store, mock(ProjectConnectorResolver.class));
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.WARN);
+    assertThat(result.errorCode())
+        .isEqualTo(DomainErrorCode.DOCTOR_PROJECT_CONFIG_INCOMPLETE.value());
+    assertThat(result.details())
+        .containsEntry("prj_default.reason", "missing_credential")
+        .containsEntry("cred:prj_default:ticket_source", "missing")
+        .containsEntry("cred:prj_default:repo_host", "missing");
+  }
+
+  @Test
+  void projectsProbeWarnsOnUnsupportedKindWithoutThrowing() {
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll())
+        .thenReturn(List.of(activeProject("prj_default", "https://github.com/acme/repo")));
+    ProjectConnectorResolver resolver = mock(ProjectConnectorResolver.class);
+    when(resolver.resolveTicketSource(any(Project.class)))
+        .thenThrow(new DomainException(DomainErrorCode.UNSUPPORTED_CONNECTOR_KIND, "no adapter"));
+    DoctorProbeAdapter adapter = new DoctorProbeAdapter(credEnv(), store, resolver);
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.WARN);
+    assertThat(result.details())
+        .containsEntry("prj_default.kindsResolvable", "false")
+        .containsEntry("prj_default.reason", "unsupported_kind");
+  }
+
+  @Test
+  void projectsProbeListsDisabledProjectButExcludesItFromRollup() {
+    ProjectStore store = mock(ProjectStore.class);
+    // The disabled project carries a blank repo URL; it would WARN if active, but must NOT.
+    when(store.findAll())
+        .thenReturn(
+            List.of(
+                project("prj_disabled", ProjectStatus.DISABLED, null),
+                activeProject("prj_active", "https://github.com/acme/repo")));
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(credEnv(), store, mock(ProjectConnectorResolver.class));
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+    assertThat(result.details())
+        .containsEntry("prj_disabled.status", "disabled")
+        .doesNotContainKey("cred:prj_disabled:ticket_source")
+        .doesNotContainKey("prj_disabled.reason");
+  }
+
+  @Test
+  void projectsProbeReportsPresentViaStoreWithoutLeaking() {
+    String secret = "stored-secret-should-never-appear";
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll())
+        .thenReturn(List.of(activeProject("prj_default", "https://github.com/acme/repo")));
+    ProjectConnectorResolver resolver = mock(ProjectConnectorResolver.class);
+    when(resolver.resolveConnectorSecret(any(Project.class), anyString()))
+        .thenReturn(Optional.of(secret));
+    DoctorProbeAdapter adapter = new DoctorProbeAdapter(new MockEnvironment(), store, resolver);
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.status()).isEqualTo(DiagnosticsStatus.PASS);
+    assertThat(result.details())
+        .containsEntry("cred:prj_default:ticket_source", "present-via-store")
+        .containsEntry("cred:prj_default:repo_host", "present-via-store");
+    assertThat(result.details().values()).noneMatch(v -> v != null && v.contains(secret));
+  }
+
+  @Test
+  void projectsProbeNeverLeaksAHostEnvSecretValue() {
+    String secret = "super-secret-LINEAR-value-should-never-appear";
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll())
+        .thenReturn(List.of(activeProject("prj_default", "https://github.com/acme/repo")));
+    MockEnvironment env =
+        new MockEnvironment()
+            .withProperty("LINEAR_API_TOKEN", secret)
+            .withProperty("GITHUB_TOKEN", secret);
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(env, store, mock(ProjectConnectorResolver.class));
+
+    ProbeResult result = adapter.probeProjects();
+
+    assertThat(result.details().get("cred:prj_default:ticket_source"))
+        .isEqualTo("present-via-host-env");
+    assertThat(result.summary()).doesNotContain(secret);
+    assertThat(result.details().values()).noneMatch(v -> v != null && v.contains(secret));
+  }
+
+  @Test
+  void projectsProbeLogsPinBranchesAndNeverLeakASecret() {
+    String secret = "LINEAR-token-value-must-never-be-logged";
+    ProjectStore store = mock(ProjectStore.class);
+    when(store.findAll())
+        .thenReturn(List.of(activeProject("prj_default", "https://github.com/acme/repo")));
+    // ticket_source present-via-host-env (secret value), repo_host missing → WARN
+    // missing_credential.
+    MockEnvironment env = new MockEnvironment().withProperty("LINEAR_API_TOKEN", secret);
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(env, store, mock(ProjectConnectorResolver.class));
+
+    Logger logger = (Logger) LoggerFactory.getLogger(DoctorProbeAdapter.class);
+    Level previous = logger.getLevel();
+    logger.setLevel(Level.DEBUG);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      adapter.probeProjects();
+    } finally {
+      logger.detachAppender(appender);
+      logger.setLevel(previous);
+    }
+
+    List<String> messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+    // Entry/result branch (INFO) + per-misconfigured-active branch (WARN) are pinned.
+    assertThat(messages).anyMatch(m -> m.contains("doctor projects probe resolution=warn"));
+    assertThat(messages)
+        .anyMatch(
+            m ->
+                m.contains("doctor projects probe misconfigured")
+                    && m.contains("activeProjectId=prj_default")
+                    && m.contains("reason=missing_credential"));
+    // Leak-proof: the resolved secret never reaches a log line.
+    assertThat(messages).noneMatch(m -> m.contains(secret));
+  }
+
+  @Test
+  void projectsProbeSkipBranchIsLogged() {
+    DoctorProbeAdapter adapter =
+        new DoctorProbeAdapter(new MockEnvironment(), (ProjectStore) null, null);
+
+    Logger logger = (Logger) LoggerFactory.getLogger(DoctorProbeAdapter.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      adapter.probeProjects();
+    } finally {
+      logger.detachAppender(appender);
+    }
+
+    assertThat(appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList())
+        .anyMatch(m -> m.contains("doctor projects probe resolution=skip"));
+  }
+
+  private static MockEnvironment credEnv() {
+    return new MockEnvironment()
+        .withProperty("LINEAR_API_TOKEN", "lin-secret")
+        .withProperty("GITHUB_TOKEN", "gh-secret");
+  }
+
+  private static Project activeProject(String publicId, String repositoryUrl) {
+    return project(publicId, ProjectStatus.ACTIVE, repositoryUrl);
+  }
+
+  private static Project project(String publicId, ProjectStatus status, String repositoryUrl) {
+    return new Project(
+        publicId,
+        "Name " + publicId,
+        "slug-" + publicId,
+        status,
+        repositoryUrl,
+        ConnectorKind.LINEAR,
+        ConnectorKind.GITHUB,
+        false,
+        OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+        null);
+  }
+
   private DoctorProbeAdapter newAdapter(
       Environment env, Path workingDir, ProcessLauncher processLauncher) {
     return new DoctorProbeAdapter(
@@ -608,7 +851,9 @@ class DoctorProbeAdapterTest {
         null,
         null,
         org.dradgo.application.workflow.WorkflowProperties.defaults(),
-        () -> -1L);
+        () -> -1L,
+        null,
+        null);
   }
 
   private static ProcessLauncher failingFactory() {

@@ -68,6 +68,7 @@ class DoctorLoggingContractTest {
     when(probes.probeObservabilityMemory()).thenReturn(ProbeResult.skip("observability inactive"));
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
+    when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
     DoctorService service =
         new DoctorService(
             probes,
@@ -86,7 +87,7 @@ class DoctorLoggingContractTest {
     assertThat(infoEvents.get(1).getFormattedMessage())
         .contains("doctor diagnostics finished")
         .contains("overallStatus=PASS")
-        .contains("checksRun=17");
+        .contains("checksRun=18");
   }
 
   @Test

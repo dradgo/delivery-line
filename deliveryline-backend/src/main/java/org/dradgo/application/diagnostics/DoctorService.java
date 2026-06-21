@@ -49,6 +49,9 @@ public class DoctorService {
   public static final String CHECK_OBSERVABILITY_MEMORY = "observability-memory";
   // Story 3.16 (AC7) — reports the Linear completion-sync opt-out setting + template validity.
   public static final String CHECK_LINEAR_COMPLETION_SYNC = "linear-completion-sync";
+  // Story 3c-10 (AC1) — per-project configuration health (status/kinds/binding/credential-presence
+  // /kind-resolvability). Appended last in STATIC_ORDER.
+  public static final String CHECK_PROJECTS = "projects";
 
   public static final List<String> STATIC_ORDER =
       List.of(
@@ -68,7 +71,8 @@ public class DoctorService {
           CHECK_GIT_AVAILABLE,
           CHECK_GIT_BOT_IDENTITY,
           CHECK_OBSERVABILITY_MEMORY,
-          CHECK_LINEAR_COMPLETION_SYNC);
+          CHECK_LINEAR_COMPLETION_SYNC,
+          CHECK_PROJECTS);
 
   private static final Map<String, String> REMEDIATION =
       Map.ofEntries(
@@ -122,7 +126,13 @@ public class DoctorService {
               CHECK_LINEAR_COMPLETION_SYNC,
               "Fix the deliveryline.workflow.linear-completion-sync.template so every placeholder is one of the"
                   + " documented {runId}/{prUrl}/{specSummary}/{specVersion}/{pmReviewer}/{devReviewer}/{durationFormatted}"
-                  + " tokens and the required {runId} is present — see docs/integrations/linear-completion-sync.md."));
+                  + " tokens and the required {runId} is present — see docs/integrations/linear-completion-sync.md."),
+          Map.entry(
+              CHECK_PROJECTS,
+              "Fix the misconfigured project(s) named in details: set a repository URL, set the"
+                  + " missing connector credential via the project's set-credential endpoint (story"
+                  + " 3c-8), or register an adapter for the configured connector kind. Disabled"
+                  + " projects are reported but excluded from the advisory."));
 
   private static final String SHAREABLE_REDACTED = DataClassification.SHAREABLE_REDACTED.value();
 
@@ -238,6 +248,7 @@ public class DoctorService {
         case CHECK_GIT_BOT_IDENTITY -> probes.probeGitBotIdentity();
         case CHECK_OBSERVABILITY_MEMORY -> probes.probeObservabilityMemory();
         case CHECK_LINEAR_COMPLETION_SYNC -> probes.probeLinearCompletionSync();
+        case CHECK_PROJECTS -> probes.probeProjects();
         default -> ProbeResult.skip("Unknown check: " + name);
       };
     } catch (RuntimeException re) {

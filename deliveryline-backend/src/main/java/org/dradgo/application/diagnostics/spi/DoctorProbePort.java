@@ -67,4 +67,21 @@ public interface DoctorProbePort {
    * placeholders only — never a token or payload.
    */
   ProbeResult probeLinearCompletionSync();
+
+  /**
+   * Story 3c-10 (AC1/AC2/AC3) — per-project configuration health read-out. SKIP (not-applicable)
+   * when the {@code ProjectStore} read side is absent (lean / doctor-smoke contexts with no
+   * DataSource — symmetric with {@link #probePostgresConnectivity()}). Otherwise lists every
+   * non-archived project, reporting per project its status / connector kinds / repository binding /
+   * OpenSpec flag and, per active project per connector role, a PRESENCE-only credential verdict
+   * ({@code present-via-store} / {@code present-via-host-env} / {@code missing}). PASS when every
+   * active project is fully configured; WARN {@code DOCTOR_PROJECT_CONFIG_INCOMPLETE} when at least
+   * one active project is misconfigured (blank repository URL, a {@code missing} credential, or a
+   * connector kind the resolver cannot resolve — caught and rendered per-project, never
+   * propagated). Disabled projects are listed but excluded from the WARN roll-up. This is a fast,
+   * local, config-only read — NO live connectivity test (that is the project {@code testConnection}
+   * endpoint, story 3c-8). Reports PRESENCE only — never logs or returns a secret value or
+   * ciphertext.
+   */
+  ProbeResult probeProjects();
 }

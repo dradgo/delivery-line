@@ -11,6 +11,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -31,12 +32,17 @@ import org.dradgo.application.diagnostics.spi.DoctorProbePort;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.integration.github.GitHubProperties;
+import org.dradgo.application.project.ProjectConfigChecks;
+import org.dradgo.application.project.ProjectConnectorResolver;
+import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.workflow.LinearCompletionTemplate;
 import org.dradgo.application.workflow.WorkflowProperties;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.net.LoopbackAddressResolver;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
@@ -73,6 +79,16 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   private static final Pattern JDBC_HOST_PORT =
       Pattern.compile("^jdbc:[^:]+://([^:/?]+)(?::(\\d+))?(?:[/?].*)?$", Pattern.CASE_INSENSITIVE);
   private static final List<String> CONFIG_GLOBS = List.of(".env", "application-*.yml");
+  // Story 3c-10 (AC2) — connector roles + the PRESENCE-only credential verdict tokens. The host-env
+  // secret NAMES the default project's adapters already read (presence boolean only — the VALUE is
+  // never read into a detail/log). The typed ConnectorRole enum is 3c-5's; here role stays a
+  // String.
+  private static final String ROLE_TICKET_SOURCE = "ticket_source";
+  private static final String ROLE_REPO_HOST = "repo_host";
+  private static final List<String> CREDENTIAL_ROLES = List.of(ROLE_TICKET_SOURCE, ROLE_REPO_HOST);
+  private static final String CRED_PRESENT_VIA_STORE = "present-via-store";
+  private static final String CRED_PRESENT_VIA_HOST_ENV = "present-via-host-env";
+  private static final String CRED_MISSING = "missing";
 
   private final Environment environment;
   // Nullable so the adapter can be wired in lean Spring contexts (e.g. the
@@ -105,6 +121,13 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   // Story 3.7 AC10 — host total physical memory (bytes) for the observability-memory probe. Seam-
   // injected so tests can simulate a low/high-memory host; defaults to the OS MX bean.
   private final LongSupplier totalPhysicalMemoryBytesSupplier;
+  // Story 3c-10 (AC1) — the Project read side + per-project connector resolver for the `projects`
+  // probe. Both are ObjectProvider-injected and nullable: lean / doctor-smoke contexts omit the
+  // DataSource-backed ProjectStore (the probe SKIPs), and a context without the resolver bean still
+  // reports configuration health minus the kind-resolvability sub-check. The probe reads PRESENCE
+  // only — never a credential value.
+  @Nullable private final ProjectStore projectStore;
+  @Nullable private final ProjectConnectorResolver projectConnectorResolver;
 
   @Autowired
   public DoctorProbeAdapter(
@@ -130,6 +153,11 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       // ObjectProvider so the git-bot-identity probe (story 3.9 AC15) wires in every context;
       // absent (lean doctor-smoke boots) → defaults() (empty bot → probe WARNs as unconfigured).
       ObjectProvider<WorkflowProperties> workflowPropertiesProvider,
+      // ObjectProvider so the projects probe (story 3c-10 AC1) wires in every context — the
+      // ProjectStore is absent in lean doctor-smoke boots (no DataSource) → the probe SKIPs; the
+      // ProjectConnectorResolver may also be absent → the kind-resolvability sub-check is skipped.
+      ObjectProvider<ProjectStore> projectStoreProvider,
+      ObjectProvider<ProjectConnectorResolver> projectConnectorResolverProvider,
       @Value("${deliveryline.home}") String deliverylineHome,
       @Value("${deliveryline.rest.bind-address:${server.address:localhost}}") String serverAddress,
       @Value("${server.port:8080}") int serverPort) {
@@ -154,7 +182,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         gitHubRestClientProvider.getIfAvailable(),
         gitHubPropertiesProvider.getIfAvailable(),
         workflowPropertiesProvider.getIfAvailable(),
-        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
+        projectStoreProvider.getIfAvailable(),
+        projectConnectorResolverProvider.getIfAvailable());
   }
 
   // Public so tests in other packages can construct an adapter without the
@@ -191,7 +221,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         null,
         null,
         WorkflowProperties.defaults(),
-        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
+        null,
+        null);
   }
 
   /**
@@ -225,7 +257,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         gitHubRestClient,
         gitHubProperties,
         WorkflowProperties.defaults(),
-        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
+        null,
+        null);
   }
 
   /**
@@ -259,7 +293,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         null,
         null,
         workflowProperties,
-        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes);
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
+        null,
+        null);
   }
 
   /**
@@ -290,7 +326,47 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         null,
         null,
         WorkflowProperties.defaults(),
-        totalPhysicalMemoryBytesSupplier);
+        totalPhysicalMemoryBytesSupplier,
+        null,
+        null);
+  }
+
+  /**
+   * Story 3c-10 (AC1) test seam for the {@code projects} probe: {@code environment} (host-env
+   * credential-presence reads), the {@code projectStore} (project listing), and the {@code
+   * projectConnectorResolver} (kind-resolvability + the empty credential seam) are the load-bearing
+   * deps; everything else is a safe default the probe never touches. Pass a {@code null}
+   * projectStore to exercise the SKIP path, or a {@code null} resolver to exercise the
+   * resolver-absent degradation.
+   */
+  DoctorProbeAdapter(
+      Environment environment,
+      @Nullable ProjectStore projectStore,
+      @Nullable ProjectConnectorResolver projectConnectorResolver) {
+    this(
+        environment,
+        null,
+        null,
+        new UuidV7Generator(),
+        Path.of("."),
+        "localhost",
+        8080,
+        Path.of("."),
+        ProcessBuilder::start,
+        () -> System.getProperty("os.name", "unknown"),
+        () -> System.getProperty("os.version", "unknown"),
+        () -> System.getProperty("os.arch", "unknown"),
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultPowerShellVersion,
+        DoctorProbeAdapter::defaultShellValue,
+        RunnerProperties.defaults(),
+        null,
+        null,
+        WorkflowProperties.defaults(),
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
+        projectStore,
+        projectConnectorResolver);
   }
 
   DoctorProbeAdapter(
@@ -314,7 +390,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       @Nullable RestClient gitHubRestClient,
       @Nullable GitHubProperties gitHubProperties,
       @Nullable WorkflowProperties workflowProperties,
-      LongSupplier totalPhysicalMemoryBytesSupplier) {
+      LongSupplier totalPhysicalMemoryBytesSupplier,
+      @Nullable ProjectStore projectStore,
+      @Nullable ProjectConnectorResolver projectConnectorResolver) {
     this.environment = environment;
     this.dataSource = dataSource;
     this.flyway = flyway;
@@ -341,6 +419,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         totalPhysicalMemoryBytesSupplier == null
             ? DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes
             : totalPhysicalMemoryBytesSupplier;
+    this.projectStore = projectStore;
+    this.projectConnectorResolver = projectConnectorResolver;
   }
 
   /**
@@ -951,6 +1031,136 @@ public class DoctorProbeAdapter implements DoctorProbePort {
           DomainErrorCode.INVALID_COMPLETION_TEMPLATE.value(),
           details);
     }
+  }
+
+  /**
+   * Story 3c-10 (AC1/AC2/AC3) — per-project configuration health. SKIP when the {@link
+   * ProjectStore} read side is absent (lean / doctor-smoke contexts — symmetric with {@link
+   * #probePostgresConnectivity()}). Otherwise lists every non-archived project with its status /
+   * kinds / repository binding / OpenSpec flag, and per ACTIVE project per connector role a
+   * PRESENCE-only credential verdict. PASS when every active project is structurally configured +
+   * has its required credentials present; WARN {@link
+   * DomainErrorCode#DOCTOR_PROJECT_CONFIG_INCOMPLETE} when at least one active project is
+   * misconfigured (blank repository URL, a {@code missing} credential, or an unresolvable connector
+   * kind — caught per-project, never propagated). Disabled projects are listed but excluded from
+   * the roll-up. Reports PRESENCE only — never a secret value or ciphertext (the AC6 leak test pins
+   * this; {@code DoctorService} redaction is defense-in-depth).
+   */
+  @Override
+  public ProbeResult probeProjects() {
+    Map<String, String> details = new LinkedHashMap<>();
+    if (projectStore == null) {
+      details.put("reason", "project_store_unavailable");
+      log.info("doctor projects probe resolution=skip reason=project_store_unavailable");
+      return new ProbeResult(
+          DiagnosticsStatus.SKIP,
+          "Project read side unavailable; projects check not applicable",
+          null,
+          details);
+    }
+    List<Project> projects =
+        projectStore.findAll().stream().filter(p -> p.archivedAt() == null).toList();
+    long activeCount = projects.stream().filter(p -> p.status() == ProjectStatus.ACTIVE).count();
+    details.put("projectCount", String.valueOf(projects.size()));
+    details.put("activeProjectCount", String.valueOf(activeCount));
+    // R3 — doctor reports CONFIGURATION health only; live connectivity is the 3c-8 endpoint's job.
+    details.put("connectionTest", "not-run (use the project testConnection endpoint, story 3c-8)");
+
+    List<String> misconfiguredActive = new ArrayList<>();
+    for (Project project : projects) {
+      String id = project.publicId();
+      boolean repoBound = ProjectConfigChecks.repositoryBound(project);
+      boolean kindsResolvable =
+          ProjectConfigChecks.kindsResolvable(project, projectConnectorResolver);
+      details.put(id + ".status", project.status().value());
+      details.put(id + ".ticketSourceKind", project.ticketSourceKind().value());
+      details.put(id + ".repoHostKind", project.repoHostKind().value());
+      details.put(id + ".repositoryBound", String.valueOf(repoBound));
+      details.put(id + ".openspec", String.valueOf(project.openspecEnabled()));
+      details.put(id + ".kindsResolvable", String.valueOf(kindsResolvable));
+
+      if (project.status() != ProjectStatus.ACTIVE) {
+        // Disabled (or archived-but-listed) projects are reported but excluded from the WARN
+        // roll-up — a disabled project is intentionally not runnable (AC3).
+        continue;
+      }
+
+      boolean anyCredentialMissing = false;
+      for (String role : CREDENTIAL_ROLES) {
+        String verdict = credentialPresence(project, role);
+        details.put("cred:" + id + ":" + role, verdict);
+        if (CRED_MISSING.equals(verdict)) {
+          anyCredentialMissing = true;
+        }
+      }
+
+      String reason = null;
+      if (!repoBound) {
+        reason = "blank_repo";
+      } else if (!kindsResolvable) {
+        reason = "unsupported_kind";
+      } else if (anyCredentialMissing) {
+        reason = "missing_credential";
+      }
+      if (reason != null) {
+        misconfiguredActive.add(id);
+        details.put(id + ".reason", reason);
+        log.warn("doctor projects probe misconfigured activeProjectId={} reason={}", id, reason);
+      } else {
+        log.debug("doctor projects probe configured activeProjectId={}", id);
+      }
+    }
+
+    if (!misconfiguredActive.isEmpty()) {
+      log.info(
+          "doctor projects probe resolution=warn projectCount={} misconfiguredActiveCount={}",
+          projects.size(),
+          misconfiguredActive.size());
+      return ProbeResult.warn(
+          "Misconfigured active project(s): "
+              + misconfiguredActive
+              + " — set the repository URL, set the missing connector credential (project"
+              + " set-credential endpoint, story 3c-8), or register the connector kind",
+          DomainErrorCode.DOCTOR_PROJECT_CONFIG_INCOMPLETE.value(),
+          details);
+    }
+    log.info(
+        "doctor projects probe resolution=pass projectCount={} activeProjectCount={}",
+        projects.size(),
+        activeCount);
+    return ProbeResult.pass(
+        "All " + activeCount + " active project(s) configured (" + projects.size() + " total)",
+        details);
+  }
+
+  /**
+   * Story 3c-10 (AC2/R4) — PRESENCE-only credential verdict for {@code (project, role)}: {@code
+   * present-via-store} when the encrypted store seam resolves a secret (never reached today — empty
+   * until 3c-5), else {@code present-via-host-env} when the adapter's host-env secret NAME is set
+   * (presence boolean only), else {@code missing}. The resolved secret / env value is NEVER
+   * returned, logged, or interpolated — only one of the three literal tokens leaves this method.
+   */
+  private String credentialPresence(Project project, String role) {
+    if (projectConnectorResolver != null
+        && projectConnectorResolver.resolveConnectorSecret(project, role).isPresent()) {
+      return CRED_PRESENT_VIA_STORE;
+    }
+    String envName = hostEnvSecretNameFor(role);
+    if (envName != null) {
+      String value = environment.getProperty(envName);
+      if (value != null && !value.isBlank()) {
+        return CRED_PRESENT_VIA_HOST_ENV;
+      }
+    }
+    return CRED_MISSING;
+  }
+
+  private static String hostEnvSecretNameFor(String role) {
+    return switch (role) {
+      case ROLE_TICKET_SOURCE -> "LINEAR_API_TOKEN";
+      case ROLE_REPO_HOST -> "GITHUB_TOKEN";
+      default -> null;
+    };
   }
 
   private long safeTotalPhysicalMemoryBytes() {

@@ -460,6 +460,16 @@ public final class ProblemDetailsCatalog {
         HttpStatus.SERVICE_UNAVAILABLE,
         "Credential master key unconfigured",
         false);
+    // Story 3c-10 (AC3) — a misconfigured project surfaced by the doctor `projects` probe is a WARN
+    // advisory (never blocks normal operation); mirror the other doctor advisories'
+    // SERVICE_UNAVAILABLE + non-retryable mapping (DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED /
+    // DOCTOR_OBSERVABILITY_LOW_MEMORY). The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_PROJECT_CONFIG_INCOMPLETE,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Project configuration incomplete",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");
