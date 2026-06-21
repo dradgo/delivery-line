@@ -17,6 +17,8 @@ import org.dradgo.application.runner.spi.RunnerLogStore;
 import org.dradgo.application.runner.spi.RunnerLogStreamPort;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.application.workflow.LogStreamSink;
+import org.dradgo.application.workflow.StepLogStreamService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;

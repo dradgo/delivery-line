@@ -1,14 +1,14 @@
-package org.dradgo.application.runner;
+package org.dradgo.application.workflow;
 
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.runner.RedactedRunnerLog;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerLogStore;
 import org.dradgo.application.runner.spi.RunnerLogStreamPort;
 import org.dradgo.application.security.RedactionPolicyService;
-import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -27,6 +27,12 @@ import org.springframework.stereotype.Service;
  *   <li><b>Finished</b> (terminal, or no live container): replay the ALREADY-redacted persisted log
  *       from the story-3.6 store ({@link RunnerLogStore#readRedacted}) — NO re-redaction (Trap T4).
  * </ul>
+ *
+ * <p>Lives under {@code application.workflow} (alongside {@link WorkflowInspectionService}, the
+ * controller-facing service surface) rather than {@code application.runner} so the REST controller
+ * can call it without crossing the {@code
+ * rest_controllers_stay_thin_and_avoid_spi_or_persistence_or_runner} boundary into runner
+ * internals.
  *
  * <p><b>Persists nothing (ADR 0025 D4 / Trap T6).</b> This service reads only; it never writes to
  * {@code runner-logs/} nor mutates {@code runner_executions}. Raw live lines stay method-local

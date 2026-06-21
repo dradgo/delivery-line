@@ -11,7 +11,7 @@ import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Method;
 import java.util.List;
-import org.dradgo.application.runner.StepLogStreamService;
+import org.dradgo.application.workflow.StepLogStreamService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsVersionStamp;
 import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsView;

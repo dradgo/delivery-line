@@ -3,7 +3,7 @@ package org.dradgo.adapters.rest;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.dradgo.application.runner.LogStreamSink;
+import org.dradgo.application.workflow.LogStreamSink;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;

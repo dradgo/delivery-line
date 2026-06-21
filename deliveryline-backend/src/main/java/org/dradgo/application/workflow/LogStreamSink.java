@@ -1,10 +1,15 @@
-package org.dradgo.application.runner;
+package org.dradgo.application.workflow;
 
 /**
  * Story 3d-5 (FR65) — application-side sink the {@link StepLogStreamService} forwards a runner
  * execution's log lifecycle through. The REST controller implements this over an {@code
  * SseEmitter}, keeping the Spring streaming type OUT of the application layer (the FIRST streaming
  * surface; we keep {@code SseEmitter} strictly in {@code adapters.rest}).
+ *
+ * <p>Lives under {@code application.workflow} (the controller-facing service surface) rather than
+ * {@code application.runner} so the REST controller can depend on it without reaching past the
+ * application service surface into the runner internals the {@code
+ * rest_controllers_stay_thin_and_avoid_spi_or_persistence_or_runner} boundary rule forbids.
  *
  * <p>Lines reaching {@link #onLine} are ALREADY redacted — live lines best-effort ({@code
  * RedactionPolicyService}), finished lines authoritatively (story 3.6 persisted scan). Raw lines
