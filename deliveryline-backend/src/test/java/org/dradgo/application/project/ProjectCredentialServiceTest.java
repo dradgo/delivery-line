@@ -65,6 +65,28 @@ class ProjectCredentialServiceTest {
   }
 
   @Test
+  void reviewerRoleCredentialRoundTripsThroughTheExistingStoreEncryptedAtRest() {
+    // Story 3d-1 (AC8) — the `reviewer` connector role is a FIRST-CLASS credential role with NO new
+    // subsystem: a reviewer credential stores via the existing 3c-5 ProjectCredentialService and the
+    // 3c-4 AES-256-GCM cipher unchanged, persists ciphertext (never plaintext) at rest, and decrypts
+    // back to the original secret for immediate in-memory use.
+    when(recordPort.insert(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    String credentialId = service.setCredential(PROJECT_ID, ConnectorRole.REVIEWER, SECRET);
+    assertThat(credentialId).startsWith(PublicIdPrefixes.PROJECT_CREDENTIAL.prefix());
+
+    ProjectCredential stored = captureInserted();
+    assertThat(stored.role()).isEqualTo(ConnectorRole.REVIEWER);
+    assertThat(stored.algo()).isEqualTo(EnvelopeCredentialCipher.ALGORITHM);
+    // Encrypted at rest: the persisted ciphertext never contains the plaintext.
+    assertThat(new String(stored.ciphertext(), java.nio.charset.StandardCharsets.ISO_8859_1))
+        .doesNotContain(SECRET);
+
+    when(recordPort.findActive(PROJECT_ID, ConnectorRole.REVIEWER)).thenReturn(Optional.of(stored));
+    assertThat(service.getDecrypted(PROJECT_ID, ConnectorRole.REVIEWER)).contains(SECRET);
+  }
+
+  @Test
   void setCredentialArchivesActiveBeforeInserting() {
     when(recordPort.insert(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -189,6 +211,8 @@ class ProjectCredentialServiceTest {
         null,
         ConnectorKind.LINEAR,
         ConnectorKind.GITHUB,
+        false,
+        null,
         false,
         OffsetDateTime.now(ZoneOffset.UTC),
         null);

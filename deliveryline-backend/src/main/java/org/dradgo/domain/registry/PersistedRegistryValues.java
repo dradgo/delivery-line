@@ -113,4 +113,12 @@ public final class PersistedRegistryValues {
   public static ConnectorRole projectCredentialConnectorRole(String rawValue) {
     return ConnectorRole.fromValue(rawValue, "project_credentials.connector_role");
   }
+
+  // Story 3d-1 (AC3/AC5) — the step_reviews.outcome persistence boundary. The advisory verdict is
+  // stored as raw text and parsed to ReviewOutcome with fail-fast registry parsing; an unknown DB
+  // value fails fast with UNKNOWN_REGISTRY_VALUE. (No step_reviews.connector_role boundary exists —
+  // there is no such column; the reviewer role lives on project_credentials.connector_role.)
+  public static ReviewOutcome stepReviewOutcome(String rawValue) {
+    return ReviewOutcome.fromValue(rawValue, "step_reviews.outcome");
+  }
 }

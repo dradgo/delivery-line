@@ -64,6 +64,17 @@ public class ProjectEntity {
   @Column(name = "openspec_enabled", nullable = false)
   private boolean openspecEnabled;
 
+  // Story 3d-1 (AC4) — per-project reviewer-model binding. reviewer_model_kind is nullable opaque
+  // text (NULL = no reviewer); reviewer_gating_enabled defaults false and is read by no gating
+  // logic
+  // in Epic 3d. Neither column has a registry-parsed getter — reviewer_model_kind has no DB CHECK
+  // (DD-1) and is validated by the resolver at execution time (3d-2).
+  @Column(name = "reviewer_model_kind")
+  private String reviewerModelKind;
+
+  @Column(name = "reviewer_gating_enabled", nullable = false)
+  private boolean reviewerGatingEnabled;
+
   // Stamped from the domain createdAt at insert (updatable=false: created_at is immutable). NOT
   // insertable=false: Hibernate does not refresh an entity after saveAndFlush, so a DB-defaulted
   // column would read back null in-memory and trip the Project record's non-null createdAt guard.
@@ -140,6 +151,22 @@ public class ProjectEntity {
 
   public void setOpenspecEnabled(boolean openspecEnabled) {
     this.openspecEnabled = openspecEnabled;
+  }
+
+  public String getReviewerModelKind() {
+    return reviewerModelKind;
+  }
+
+  public void setReviewerModelKind(String reviewerModelKind) {
+    this.reviewerModelKind = reviewerModelKind;
+  }
+
+  public boolean isReviewerGatingEnabled() {
+    return reviewerGatingEnabled;
+  }
+
+  public void setReviewerGatingEnabled(boolean reviewerGatingEnabled) {
+    this.reviewerGatingEnabled = reviewerGatingEnabled;
   }
 
   public OffsetDateTime getCreatedAt() {

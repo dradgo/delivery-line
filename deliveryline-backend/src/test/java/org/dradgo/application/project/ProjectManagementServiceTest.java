@@ -34,6 +34,8 @@ class ProjectManagementServiceTest {
         ConnectorKind.LINEAR,
         ConnectorKind.GITHUB,
         false,
+        null,
+        false,
         OffsetDateTime.parse("2026-06-21T00:00:00Z"),
         null);
   }

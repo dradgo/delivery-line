@@ -470,6 +470,16 @@ public final class ProblemDetailsCatalog {
         HttpStatus.SERVICE_UNAVAILABLE,
         "Project configuration incomplete",
         false);
+    // Story 3d-1 (AC6) — a reviewer verdict requested for a project with no reviewer model bound is
+    // a config-absent advisory; mirror the other "config-absent advisory" codes'
+    // SERVICE_UNAVAILABLE
+    // + non-retryable mapping. The type URI auto-derives. Registered ahead of its 3d-2 throw site.
+    register(
+        metadata,
+        DomainErrorCode.REVIEWER_MODEL_NOT_CONFIGURED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Reviewer model not configured",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

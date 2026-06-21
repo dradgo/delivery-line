@@ -141,6 +141,9 @@ public class DefaultProjectSeeder {
             ticketSourceKind,
             repoHostKind,
             openspecEnabled,
+            // Story 3d-1 (AC4) — the seeded default has no reviewer (null kind, gating off).
+            null,
+            false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null);
     try {

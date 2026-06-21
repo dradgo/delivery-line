@@ -651,31 +651,48 @@ public class WorkflowInspectionService {
           return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
         }
       case EXECUTING:
-        return List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME);
+        // Story 3d-5 (AC6): a runner execution exists in EXECUTING, so the log viewer is offered
+        // (role-agnostic) alongside the passive views.
+        return List.of(
+            AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME, AllowedAction.VIEW_RUNNER_LOGS);
       case WAITING_FOR_REVIEW:
         // Story 3.20 (AC12) + Story 3.21 (AC9): the developer-review actor may accept OR reject the
         // implementation here. Story 3.22 (AC9) additively adds takeover_workflow for the developer
-        // role; all other roles keep view_only.
+        // role; all other roles keep view_only. Story 3d-5 (AC6) additively adds view_runner_logs
+        // for EVERY role (the producing runner execution's logs are reviewable here).
         if (ROLE_DEVELOPER.equals(actorRole)) {
           return List.of(
               AllowedAction.ACCEPT_IMPLEMENTATION,
               AllowedAction.REJECT_IMPLEMENTATION,
               AllowedAction.TAKEOVER_WORKFLOW,
-              AllowedAction.VIEW_ONLY);
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS);
         }
-        return List.of(AllowedAction.VIEW_ONLY);
+        return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
       case FAILED:
         {
+          // Story 3d-5 (AC6): the failed runner execution's logs are a primary diagnostic surface,
+          // so view_runner_logs is offered to every role here.
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
-            return List.of(AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS);
+            return List.of(
+                AllowedAction.RETRY,
+                AllowedAction.VIEW_DIAGNOSTICS,
+                AllowedAction.VIEW_RUNNER_LOGS);
           }
-          return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS);
+          return List.of(
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_DIAGNOSTICS,
+              AllowedAction.VIEW_RUNNER_LOGS);
         }
       case PAUSED:
         // SEAM (Epic 4): Epic 4 adds resume here for workflow_owner.
-        return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS);
+        // Story 3d-5 (AC6): the paused run's runner execution logs remain viewable.
+        return List.of(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_DIAGNOSTICS,
+            AllowedAction.VIEW_RUNNER_LOGS);
       case TAKEN_OVER:
         // SEAM (Epic 4): Epic 4 adds reconcile / clear_escalation_marker here for workflow_owner.
         return List.of(AllowedAction.VIEW_ONLY);

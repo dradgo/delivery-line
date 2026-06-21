@@ -97,6 +97,17 @@ export const implementationRejected = 'Implementation rejected. Decision recorde
 /** Announced once a developer takeover is recorded (success); the run is now taken over. */
 export const workflowTakenOver = 'Run taken over for developer continuation. Decision recorded.';
 
+// ---- Step execution log viewer (story 3d-5) ------------------------------------
+
+/** Announced when the runner-log stream attaches (live follow or finished replay begins). */
+export const logStreamStarted = 'Runner log stream started.';
+/** Announced once the runner-log stream ends (container exited or finished replay complete). */
+export const logStreamEnded = 'Runner log stream ended.';
+/** Announced when a transient transport drop is auto-reconnecting (the live follow will resume). */
+export const logStreamReconnecting = 'Runner log stream reconnecting.';
+/** Announced when the runner-log stream could not be served or dropped. */
+export const logStreamError = 'The runner log stream could not be loaded.';
+
 // ---- Project connection test (story 3c-9) --------------------------------------
 
 /** Announced while a project connectivity test is in flight. */

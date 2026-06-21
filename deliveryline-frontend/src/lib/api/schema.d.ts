@@ -361,6 +361,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/runner-logs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream a run's latest runner-execution logs (live + historical)
+         * @description Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 consumes this same viewer (no separate redacted-log download surface). Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.
+         */
+        get: operations["streamRunnerLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/takeover": {
         parameters: {
             query?: never;
@@ -774,6 +794,10 @@ export interface components {
             role?: string;
             /** @example configured */
             status?: string;
+        };
+        SseEmitter: {
+            /** Format: int64 */
+            timeout?: number;
         };
         SubmitWorkflowRequest: {
             actorIdentity: string;
@@ -2000,6 +2024,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+        };
+    };
+    streamRunnerLogs: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Actor role for action gating; defaults to product_reviewer when absent. view_runner_logs is role-agnostic in the runner-execution states, so the default resolves the gate for any operator.
+                 * @example product_reviewer
+                 */
+                actorRole?: "product_reviewer" | "workflow_owner" | "developer";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An event stream (text/event-stream). When view_runner_logs is not allowed for the run's state, the stream carries a single error+end event instead of log lines. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SseEmitter"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

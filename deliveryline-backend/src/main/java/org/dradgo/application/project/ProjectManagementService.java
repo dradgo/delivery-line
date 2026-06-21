@@ -97,6 +97,9 @@ public class ProjectManagementService {
             ticketSourceKind,
             repoHostKind,
             command.openspecEnabled(),
+            // Story 3d-1 (AC4) — a created project has no reviewer until 3d-2 wires the edit path.
+            null,
+            false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null);
     Project created = projectStore.insert(project);
@@ -132,6 +135,9 @@ public class ProjectManagementService {
             ticketSourceKind,
             repoHostKind,
             command.openspecEnabled(),
+            // Reviewer binding is not yet editable through this surface (3d-2 owns it); preserve.
+            existing.reviewerModelKind(),
+            existing.reviewerGatingEnabled(),
             existing.createdAt(),
             existing.archivedAt());
     Project updated = projectStore.update(mutated);
@@ -180,6 +186,8 @@ public class ProjectManagementService {
             existing.ticketSourceKind(),
             existing.repoHostKind(),
             existing.openspecEnabled(),
+            existing.reviewerModelKind(),
+            existing.reviewerGatingEnabled(),
             existing.createdAt(),
             existing.archivedAt());
     Project disabled = projectStore.update(mutated);
@@ -210,6 +218,8 @@ public class ProjectManagementService {
             existing.ticketSourceKind(),
             existing.repoHostKind(),
             existing.openspecEnabled(),
+            existing.reviewerModelKind(),
+            existing.reviewerGatingEnabled(),
             existing.createdAt(),
             existing.archivedAt());
     Project enabled = projectStore.update(mutated);

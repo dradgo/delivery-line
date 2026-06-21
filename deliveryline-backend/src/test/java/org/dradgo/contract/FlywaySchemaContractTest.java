@@ -41,7 +41,8 @@ class FlywaySchemaContractTest {
           "idempotency_records",
           "batch_submissions",
           "projects",
-          "project_credentials");
+          "project_credentials",
+          "step_reviews");
 
   private static final Map<String, String> EXPECTED_PUBLIC_ID_PREFIX =
       Map.ofEntries(
@@ -57,7 +58,8 @@ class FlywaySchemaContractTest {
           Map.entry("idempotency_records", "idm_"),
           Map.entry("batch_submissions", "bat_"),
           Map.entry("projects", "prj_"),
-          Map.entry("project_credentials", "cred_"));
+          Map.entry("project_credentials", "cred_"),
+          Map.entry("step_reviews", "rev_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -363,10 +365,10 @@ class FlywaySchemaContractTest {
                 })
             .count();
     assertEquals(
-        8,
+        9,
         workflowRunFks,
         () ->
-            "Expected 8 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions). Found "
+            "Expected 9 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews). Found "
                 + workflowRunFks);
 
     // recovery_actions soft event references: SET NULL.
@@ -648,6 +650,86 @@ class FlywaySchemaContractTest {
       jdbcTemplate.update("delete from project_credentials where project_id = ?", projectPid);
       jdbcTemplate.update("delete from projects where public_id = ?", projectPid);
     }
+  }
+
+  @Test
+  void stepReviewsSchemaCarriesExpectedColumnsConstraintsAndForeignKeys() {
+    // Story 3d-1 / V19 (AC3): step_reviews is a core table (bigserial id + public_id rev_ + the
+    // created_at/archived_at retention pair are asserted by the CORE_TABLES-driven tests above).
+    // Probe the advisory-verdict-specific columns + outcome CHECK + the three FKs.
+    assertColumnType("step_reviews", "workflow_run_id", "bigint");
+    assertColumnType("step_reviews", "runner_execution_id", "bigint");
+    assertColumnType("step_reviews", "reviewed_artifact_id", "bigint");
+    assertColumnType("step_reviews", "reviewed_artifact_version", "integer");
+    assertColumnType("step_reviews", "outcome", "text");
+    assertColumnType("step_reviews", "rationale", "text");
+    assertColumnType("step_reviews", "reviewer_model_identity", "text");
+    assertColumnType("step_reviews", "producer_model_identity", "text");
+    assertColumnNullable("step_reviews", "workflow_run_id", false);
+    assertColumnNullable("step_reviews", "runner_execution_id", false);
+    assertColumnNullable("step_reviews", "reviewed_artifact_id", false);
+    assertColumnNullable("step_reviews", "reviewed_artifact_version", false);
+    assertColumnNullable("step_reviews", "outcome", false);
+    assertColumnNullable("step_reviews", "rationale", true);
+    assertColumnNullable("step_reviews", "reviewer_model_identity", true);
+    assertColumnNullable("step_reviews", "producer_model_identity", true);
+
+    // ck_step_reviews_outcome — the 'pass'/'concern'/'fail' value set (drift-tested against the
+    // ReviewOutcome registry by RegistryContractTest.reviewOutcomeStaysAlignedWithSqlCheckAndApiManifest).
+    assertConstraintDefinitionContains("ck_step_reviews_outcome", "pass");
+    assertConstraintDefinitionContains("ck_step_reviews_outcome", "concern");
+    assertConstraintDefinitionContains("ck_step_reviews_outcome", "fail");
+
+    // The workflow_run_id FK is counted by foreignKeysReferenceExpectedTablesAndColumns (9 now).
+    // Probe the runner_execution_id FK and the composite (reviewed_artifact_id, version) -> artifacts
+    // FK that pins the verdict to the exact reviewed artifact version (the approvals precedent).
+    assertConstraintDefinitionContains("fk_step_reviews_runner_executions", "runner_execution_id");
+    assertConstraintDefinitionContains("fk_step_reviews_artifacts", "reviewed_artifact_id");
+    assertConstraintDefinitionContains("fk_step_reviews_artifacts", "reviewed_artifact_version");
+  }
+
+  @Test
+  void projectsCarryReviewerBindingColumnsWithGatingDefaultOff() {
+    // Story 3d-1 / V19 (AC4): reviewer_model_kind is nullable opaque text (no DB CHECK, DD-1);
+    // reviewer_gating_enabled defaults false and is read by NO gating logic in Epic 3d (ADR 0026 D3).
+    assertColumnType("projects", "reviewer_model_kind", "text");
+    assertColumnNullable("projects", "reviewer_model_kind", true);
+    assertColumnType("projects", "reviewer_gating_enabled", "boolean");
+    assertColumnNullable("projects", "reviewer_gating_enabled", false);
+
+    String gatingDefault =
+        jdbcTemplate.queryForObject(
+            """
+            select column_default
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'projects'
+              and column_name = 'reviewer_gating_enabled'
+            """,
+            String.class);
+    assertEquals(
+        "false",
+        gatingDefault,
+        () -> "projects.reviewer_gating_enabled must default false but was: " + gatingDefault);
+
+    // DD-1: deliberately NO CHECK constrains reviewer_model_kind to a value set (the
+    // ProjectConnectorResolver validates it at execution time in 3d-2).
+    Integer kindChecks =
+        jdbcTemplate.queryForObject(
+            "select count(*) from pg_constraint where conname like 'ck_projects_reviewer_model_kind%'",
+            Integer.class);
+    assertEquals(
+        0, kindChecks, () -> "reviewer_model_kind must have NO DB CHECK (DD-1) but found " + kindChecks);
+  }
+
+  @Test
+  void projectCredentialsConnectorRoleCheckAcceptsReviewer() {
+    // Story 3d-1 / V19 (AC2): the widened ck_project_credentials_connector_role adds 'reviewer'
+    // alongside 'ticket_source'/'repo_host'. The existing partial unique index already scopes "one
+    // active reviewer credential per project" — no index change was needed.
+    assertConstraintDefinitionContains("ck_project_credentials_connector_role", "reviewer");
+    assertConstraintDefinitionContains("ck_project_credentials_connector_role", "ticket_source");
+    assertConstraintDefinitionContains("ck_project_credentials_connector_role", "repo_host");
   }
 
   @Test

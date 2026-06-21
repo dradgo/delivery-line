@@ -29,6 +29,8 @@ class ProjectTest {
         ticketKind,
         ConnectorKind.GITHUB,
         false,
+        null,
+        false,
         CREATED_AT,
         null);
   }
@@ -46,6 +48,62 @@ class ProjectTest {
     assertEquals(ConnectorKind.GITHUB, project.repoHostKind());
     assertNull(project.repositoryUrl());
     assertNull(project.archivedAt());
+  }
+
+  @Test
+  void reviewerBindingDefaultsToNoReviewerAndGatingOff() {
+    // Story 3d-1 (AC4) — a project with no reviewer model bound: reviewerModelKind null = "no
+    // reviewer" (pre-3d parity, ADR 0026 D1); reviewerGatingEnabled false is created off and is read
+    // by NO progression/transition logic in Epic 3d (ADR 0026 D3 — advisory now, gating-capable
+    // later). The default-off DB column default is asserted by FlywaySchemaContractTest.
+    Project project =
+        newProject(VALID_PUBLIC_ID, "Demo", "demo", ProjectStatus.ACTIVE, ConnectorKind.LINEAR);
+    assertNull(project.reviewerModelKind());
+    assertEquals(false, project.reviewerGatingEnabled());
+  }
+
+  @Test
+  void acceptsANonBlankReviewerModelKindWhenBound() {
+    // Story 3d-1 (DD-1) — reviewerModelKind is a nullable opaque String validated only as
+    // non-blank-when-set; its value-set validation is the ProjectConnectorResolver's job at
+    // execution time (3d-2), so the domain stores it as opaque text and gating may be enabled.
+    Project bound =
+        new Project(
+            VALID_PUBLIC_ID,
+            "Demo",
+            "demo",
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            "claude",
+            true,
+            CREATED_AT,
+            null);
+    assertEquals("claude", bound.reviewerModelKind());
+    assertEquals(true, bound.reviewerGatingEnabled());
+  }
+
+  @Test
+  void rejectsBlankReviewerModelKindWhenSet() {
+    // A set-but-blank reviewer kind is a misconfiguration; only null is the valid "no reviewer".
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new Project(
+                VALID_PUBLIC_ID,
+                "Demo",
+                "demo",
+                ProjectStatus.ACTIVE,
+                null,
+                ConnectorKind.LINEAR,
+                ConnectorKind.GITHUB,
+                false,
+                "  ",
+                false,
+                CREATED_AT,
+                null));
   }
 
   @Test
@@ -91,6 +149,8 @@ class ProjectTest {
                 ConnectorKind.LINEAR,
                 null,
                 false,
+                null,
+                false,
                 CREATED_AT,
                 null));
   }
@@ -108,6 +168,8 @@ class ProjectTest {
                 null,
                 ConnectorKind.LINEAR,
                 ConnectorKind.GITHUB,
+                false,
+                null,
                 false,
                 null,
                 null));

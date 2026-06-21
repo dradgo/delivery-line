@@ -40,6 +40,7 @@ public final class DomainRegistry {
   private static final Set<String> WORKFLOW_EVENT_TYPES = valuesOf(WorkflowEventType.values());
   private static final Set<String> PROJECT_STATUSES = valuesOf(ProjectStatus.values());
   private static final Set<String> CONNECTOR_KINDS = valuesOf(ConnectorKind.values());
+  private static final Set<String> REVIEW_OUTCOMES = valuesOf(ReviewOutcome.values());
   private static final Map<String, String> PUBLIC_ID_PREFIXES = PublicIdPrefixes.prefixMap();
 
   private DomainRegistry() {}
@@ -122,6 +123,10 @@ public final class DomainRegistry {
 
   public static Set<String> connectorKinds() {
     return CONNECTOR_KINDS;
+  }
+
+  public static Set<String> reviewOutcomes() {
+    return REVIEW_OUTCOMES;
   }
 
   public static Map<String, String> publicIdPrefixes() {

@@ -18,6 +18,8 @@ import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
 import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
 import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
+import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
+import { useAllowedActions } from '@/features/workflows/hooks/useAllowedActions';
 import {
   GenericErrorState,
   InvalidLinkState,
@@ -126,6 +128,13 @@ function WorkflowDetailRoute() {
   // the highest-version `prOutput`, falls back to `implementationPlan`); `undefined` until the
   // execution stage produces an implementation artifact, which hides the implementation-output link.
   const implArtifactId = resolveImplementationArtifact(data)?.artifactId;
+  // Story 3d-5 (AC6) — the Step Execution Log Viewer is gated on the backend-reported
+  // `view_runner_logs` action ONLY (flowing through `useAllowedActions`, never role-inferred —
+  // eslint `local-rules/no-role-based-action-gating`). The action is offered in the
+  // runner-execution states (Executing / Failed / Paused / WaitingForReview); the stream itself
+  // resolves the latest runner execution and ends gracefully when none exists.
+  const allowedActions = useAllowedActions(workflowRunId);
+  const canViewRunnerLogs = allowedActions.data?.actions.includes('view_runner_logs') ?? false;
 
   // AC8a — a run reported in a state this build doesn't recognize.
   if (data?.currentState !== undefined && !RECOGNIZED_STATES.has(data.currentState)) {
@@ -141,6 +150,9 @@ function WorkflowDetailRoute() {
           Renders nothing unless the run's event stream carries failure / recovery
           events (scope discipline — Epic 4 owns the full timeline). */}
       <FailureEventSurface workflowRunId={workflowRunId} />
+      {/* Story 3d-5 (AC4/AC6) — the Step Execution Log Viewer: live-follow + finished replay of
+          the latest runner execution's logs, gated on the backend `view_runner_logs` action. */}
+      {canViewRunnerLogs ? <StepExecutionLogViewer workflowRunId={workflowRunId} /> : null}
       {/* Story 2.18 — the Clarification Region, projected into the right context
           panel via the AppShell slot (sidebar subregion, AC4). The main pane stays
           artifact-primary; today the region renders the calm `no open questions`

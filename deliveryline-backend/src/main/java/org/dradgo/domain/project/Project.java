@@ -28,6 +28,13 @@ public record Project(
     ConnectorKind ticketSourceKind,
     ConnectorKind repoHostKind,
     boolean openspecEnabled,
+    // Story 3d-1 (AC4/AC7) — per-project reviewer-model binding (ADR 0026). reviewerModelKind is a
+    // nullable opaque String (NULL = "no reviewer", current behavior); its authoritative validation
+    // is the ProjectConnectorResolver at execution time (3d-2, DD-1), so it carries no typed enum
+    // here — only the blank-if-set invariant below. reviewerGatingEnabled is created off and is read
+    // by NO progression logic in this epic (ADR 0026 Decision 3).
+    String reviewerModelKind, // nullable
+    boolean reviewerGatingEnabled,
     OffsetDateTime createdAt,
     OffsetDateTime archivedAt) { // nullable
 
@@ -42,6 +49,10 @@ public record Project(
     Objects.requireNonNull(status, "Project status must not be null");
     Objects.requireNonNull(ticketSourceKind, "Project ticketSourceKind must not be null");
     Objects.requireNonNull(repoHostKind, "Project repoHostKind must not be null");
+    // A set-but-blank reviewer kind is a misconfiguration; null is the valid "no reviewer" value.
+    if (reviewerModelKind != null && reviewerModelKind.isBlank()) {
+      throw new IllegalArgumentException("Project reviewerModelKind must be non-blank when set");
+    }
     Objects.requireNonNull(createdAt, "Project createdAt must not be null");
   }
 }

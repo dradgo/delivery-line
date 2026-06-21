@@ -68,6 +68,8 @@ class ProjectConnectorResolverWiringIT {
         ticketSourceKind,
         repoHostKind,
         false,
+        null,
+        false,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);
   }

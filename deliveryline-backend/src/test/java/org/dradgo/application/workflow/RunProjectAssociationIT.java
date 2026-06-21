@@ -93,6 +93,8 @@ class RunProjectAssociationIT {
                 ConnectorKind.LINEAR,
                 ConnectorKind.GITLAB,
                 true,
+                null,
+                false,
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null));
 

@@ -355,6 +355,8 @@ class RunnerBrokerUnitTest {
             org.dradgo.domain.registry.ConnectorKind.LINEAR,
             org.dradgo.domain.registry.ConnectorKind.GITHUB,
             true,
+            null,
+            false,
             java.time.OffsetDateTime.now(CLOCK),
             null);
     when(resolver.resolveForRun(RUN_ID)).thenReturn(project);

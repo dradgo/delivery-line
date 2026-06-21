@@ -250,8 +250,10 @@ const SYNTHETIC_RUNS = {
     }),
     // The recovery bar fires only when currentState === 'Failed' AND actions includes 'retry'
     // (canRetry). The recovery container requests with no developer role, so return retry for all.
+    // Story 3d-5 — a Failed run also advertises view_runner_logs (role-agnostic), so the run-detail
+    // route mounts the Step Execution Log Viewer here for the runner-log e2e journey.
     allowedActions: () => ({
-      actions: ['retry'],
+      actions: ['retry', 'view_runner_logs'],
       versionStamp: {
         workflowState: 'Failed',
         lastEventId: 'evt_recovery_1',
@@ -572,6 +574,21 @@ export async function mockBackend(page: Page): Promise<void> {
       return stream
         ? json(route, artifactDetail(runId, artifactMatch[2]!, stream))
         : notFound(route, runId, path);
+    }
+
+    // Story 3d-5 — the runner-log SSE stream. Fulfilled as a complete `text/event-stream` body
+    // (status → log → end); the viewer's EventSource parses the frames and `end` closes it (no
+    // reconnect). Modelled before the bare detail matcher + the loud-501 tripwire.
+    const streamMatch = /\/api\/v1\/workflows\/([^/]+)\/runner-logs\/stream$/.exec(path);
+    if (streamMatch) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body:
+          'event: status\ndata: {"phase":"finished","rex":"rex_e2e00000001"}\n\n' +
+          'event: log\ndata: {"stream":"stdout","line":"e2e runner log line","seq":0}\n\n' +
+          'event: end\ndata: {"reason":"finished-replay-complete"}\n\n',
+      });
     }
 
     const detailMatch = /\/api\/v1\/workflows\/([^/]+)$/.exec(path);

@@ -159,7 +159,14 @@ public enum DomainErrorCode implements RegistryValue {
   // blocker — SERVICE_UNAVAILABLE + non-retryable, mirroring the other WARN-advisory DOCTOR_* codes
   // (DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED / DOCTOR_OBSERVABILITY_LOW_MEMORY). The specific failing
   // sub-check rides in `details`/`reason`, not in distinct codes.
-  DOCTOR_PROJECT_CONFIG_INCOMPLETE("DOCTOR_PROJECT_CONFIG_INCOMPLETE");
+  DOCTOR_PROJECT_CONFIG_INCOMPLETE("DOCTOR_PROJECT_CONFIG_INCOMPLETE"),
+  // Story 3d-1 (AC6) — three-sites code (enum + ProblemDetailsCatalog + manifest), registered AHEAD
+  // of its throw site: the throw lands in 3d-2's ProjectConnectorResolver reviewer-resolution path
+  // when a reviewer verdict is requested for a project with no reviewer model bound. The foundation
+  // gate (ProblemDetailsCoverageFoundationContract) round-trips every registered code, so
+  // registration alone passes the gate — no production throw site is required in 3d-1.
+  // SERVICE_UNAVAILABLE + non-retryable mirrors the other "config-absent advisory" codes.
+  REVIEWER_MODEL_NOT_CONFIGURED("REVIEWER_MODEL_NOT_CONFIGURED");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

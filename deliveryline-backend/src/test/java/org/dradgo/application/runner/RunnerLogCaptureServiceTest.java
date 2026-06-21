@@ -45,6 +45,11 @@ class RunnerLogCaptureServiceTest {
       return Optional.empty();
     }
 
+    @Override
+    public Optional<RedactedRunnerLog> readRedacted(String rex) {
+      return Optional.empty();
+    }
+
     String stdoutText() {
       return new String(stdout, StandardCharsets.UTF_8);
     }

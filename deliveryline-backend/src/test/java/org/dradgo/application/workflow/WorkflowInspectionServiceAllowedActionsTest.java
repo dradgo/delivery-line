@@ -109,21 +109,32 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "workflow_owner",
             List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION)),
+        // Story 3d-5 (AC6) — view_runner_logs joins the runner-execution states, role-agnostic.
         Arguments.of(
             WorkflowState.EXECUTING,
             "product_reviewer",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.AWAIT_OUTCOME,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
             WorkflowState.EXECUTING,
             "workflow_owner",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.AWAIT_OUTCOME,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
-            WorkflowState.WAITING_FOR_REVIEW, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
+            WorkflowState.WAITING_FOR_REVIEW,
+            "product_reviewer",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
-            WorkflowState.WAITING_FOR_REVIEW, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+            WorkflowState.WAITING_FOR_REVIEW,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
         // Story 3.20 AC12 + Story 3.21 AC9 + Story 3.22 AC9 — the developer-review actor may
         // accept,
-        // reject, OR take over the implementation here.
+        // reject, OR take over the implementation here. Story 3d-5 (AC6) adds view_runner_logs.
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "developer",
@@ -131,7 +142,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.ACCEPT_IMPLEMENTATION,
                 AllowedAction.REJECT_IMPLEMENTATION,
                 AllowedAction.TAKEOVER_WORKFLOW,
-                AllowedAction.VIEW_ONLY)),
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
         // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
         // unintended action elsewhere.
@@ -142,25 +154,40 @@ class WorkflowInspectionServiceAllowedActionsTest {
         Arguments.of(
             WorkflowState.FAILED,
             "developer",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_DIAGNOSTICS,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(WorkflowState.COMPLETED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(WorkflowState.COMPLETED, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
             WorkflowState.FAILED,
             "product_reviewer",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_DIAGNOSTICS,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
             WorkflowState.FAILED,
             "workflow_owner",
-            List.of(AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS)),
+            List.of(
+                AllowedAction.RETRY,
+                AllowedAction.VIEW_DIAGNOSTICS,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
             WorkflowState.PAUSED,
             "product_reviewer",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_DIAGNOSTICS,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
             WorkflowState.PAUSED,
             "workflow_owner",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_DIAGNOSTICS,
+                AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
             WorkflowState.TAKEN_OVER, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(WorkflowState.TAKEN_OVER, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
@@ -263,7 +290,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
 
     assertThat(view.actions())
-        .containsExactly(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_DIAGNOSTICS);
+        .containsExactly(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_DIAGNOSTICS,
+            AllowedAction.VIEW_RUNNER_LOGS);
   }
 
   @Test
@@ -274,7 +304,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
     AllowedActionsView view = service.getAllowedActions(RUN, "workflow_owner");
 
-    assertThat(view.actions()).containsExactly(AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS);
+    assertThat(view.actions())
+        .containsExactly(
+            AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS, AllowedAction.VIEW_RUNNER_LOGS);
   }
 
   // ---------------------------------------------------------------------------

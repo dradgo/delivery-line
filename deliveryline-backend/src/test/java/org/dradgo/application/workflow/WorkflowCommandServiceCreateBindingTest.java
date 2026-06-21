@@ -124,6 +124,8 @@ class WorkflowCommandServiceCreateBindingTest {
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
             true,
+            null,
+            false,
             OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectStore.findBySlug("acme")).thenReturn(Optional.of(acme));
@@ -154,6 +156,8 @@ class WorkflowCommandServiceCreateBindingTest {
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
             true,
+            null,
+            false,
             OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectStore.findByPublicId("prj_acme0001")).thenReturn(Optional.of(acme));
@@ -207,6 +211,8 @@ class WorkflowCommandServiceCreateBindingTest {
         "octo/hello",
         ConnectorKind.LINEAR,
         ConnectorKind.GITHUB,
+        false,
+        null,
         false,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);

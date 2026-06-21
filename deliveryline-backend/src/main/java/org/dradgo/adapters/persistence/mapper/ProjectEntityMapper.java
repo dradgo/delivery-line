@@ -28,6 +28,13 @@ public class ProjectEntityMapper {
         entity.getTicketSourceKind(),
         entity.getRepoHostKind(),
         entity.isOpenspecEnabled(),
+        // Story 3d-1 review patch: DD-1 leaves reviewer_model_kind without a DB CHECK, so a blank
+        // (empty/whitespace) row value is persistable but would trip the Project record's
+        // non-blank-if-set invariant on read — making the project (and any findAll over it)
+        // un-readable. Coerce blank to null here: NULL is the canonical "no reviewer" value, so the
+        // read path is symmetric with that semantic and robust to a future bad write / direct SQL.
+        blankToNull(entity.getReviewerModelKind()),
+        entity.isReviewerGatingEnabled(),
         entity.getCreatedAt(),
         entity.getArchivedAt());
   }
@@ -42,6 +49,8 @@ public class ProjectEntityMapper {
     entity.setTicketSourceKind(project.ticketSourceKind());
     entity.setRepoHostKind(project.repoHostKind());
     entity.setOpenspecEnabled(project.openspecEnabled());
+    entity.setReviewerModelKind(project.reviewerModelKind());
+    entity.setReviewerGatingEnabled(project.reviewerGatingEnabled());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -63,7 +72,15 @@ public class ProjectEntityMapper {
     entity.setTicketSourceKind(project.ticketSourceKind());
     entity.setRepoHostKind(project.repoHostKind());
     entity.setOpenspecEnabled(project.openspecEnabled());
+    // Reviewer binding is editable project config (no REST surface yet in 3d-1; 3d-2 owns editing).
+    // Threading it through the update path keeps a read-modify-write round-trip lossless.
+    entity.setReviewerModelKind(project.reviewerModelKind());
+    entity.setReviewerGatingEnabled(project.reviewerGatingEnabled());
     entity.setArchivedAt(project.archivedAt());
     return entity;
+  }
+
+  private static String blankToNull(String value) {
+    return (value == null || value.isBlank()) ? null : value;
   }
 }

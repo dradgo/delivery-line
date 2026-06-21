@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import org.dradgo.application.runner.RedactedRunnerLog;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DataClassification;
@@ -79,6 +80,31 @@ class LocalRunnerLogStoreTest {
   @Test
   void writeRejectsANonRunnerExecutionPrefix() {
     assertThatThrownBy(() -> store().write("art_not_a_rex_id", new byte[0], new byte[0]))
+        .isInstanceOf(DomainException.class);
+  }
+
+  @Test
+  void readRedactedReturnsThePersistedRedactedTextAndEmptyWhenAbsent() {
+    LocalRunnerLogStore store = store();
+    // Story 3d-5 (AC1) — honest empty before anything is captured.
+    assertThat(store.readRedacted(REX)).isEmpty();
+
+    store.write(
+        REX,
+        "out line 1\n[REDACTED_AUTHORIZATION_HEADER]\n".getBytes(StandardCharsets.UTF_8),
+        "err line 1\n".getBytes(StandardCharsets.UTF_8));
+
+    Optional<RedactedRunnerLog> read = store.readRedacted(REX);
+    assertThat(read).isPresent();
+    // Already-redacted bytes are returned verbatim — NEVER re-redacted (Trap T4).
+    assertThat(read.get().stdout()).isEqualTo("out line 1\n[REDACTED_AUTHORIZATION_HEADER]\n");
+    assertThat(read.get().stderr()).isEqualTo("err line 1\n");
+    assertThat(read.get().truncated()).isFalse();
+  }
+
+  @Test
+  void readRedactedRejectsANonRunnerExecutionPrefix() {
+    assertThatThrownBy(() -> store().readRedacted("art_not_a_rex_id"))
         .isInstanceOf(DomainException.class);
   }
 

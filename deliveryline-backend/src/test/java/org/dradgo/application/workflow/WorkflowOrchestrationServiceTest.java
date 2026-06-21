@@ -84,6 +84,8 @@ class WorkflowOrchestrationServiceTest {
             org.dradgo.domain.registry.ConnectorKind.LINEAR,
             org.dradgo.domain.registry.ConnectorKind.GITHUB,
             false,
+            null,
+            false,
             java.time.OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectRuntimeConfigResolver.resolveForRun(org.mockito.ArgumentMatchers.any()))

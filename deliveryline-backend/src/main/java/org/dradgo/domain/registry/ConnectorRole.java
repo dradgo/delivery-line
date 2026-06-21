@@ -14,10 +14,18 @@ import java.util.Map;
  *
  * <p>Distinct from {@link ConnectorKind} ({@code linear}/{@code github}/{@code gitlab}): a
  * <em>kind</em> is the vendor, a <em>role</em> is what the connector does for a project.
+ *
+ * <p>Story 3d-1 (AC2) added {@code REVIEWER} — the per-project reviewer-model credential role,
+ * widening the V19 {@code ck_project_credentials_connector_role} CHECK. Its wire value is the
+ * underscored/lowercase {@code reviewer} (it joins {@code ticket_source}/{@code repo_host}); no
+ * hyphenated resolver constant exists. The reviewer adapter is resolved at execution time in 3d-2;
+ * in 3d-1 a {@code reviewer} credential row is inert (no consumer iterates {@code values()} over a
+ * closed two-value set).
  */
 public enum ConnectorRole implements RegistryValue {
   TICKET_SOURCE("ticket_source"),
-  REPO_HOST("repo_host");
+  REPO_HOST("repo_host"),
+  REVIEWER("reviewer");
 
   private static final Map<String, ConnectorRole> LOOKUP = RegistryParsers.index(values());
 

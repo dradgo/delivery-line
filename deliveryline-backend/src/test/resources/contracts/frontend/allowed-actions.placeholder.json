@@ -11,6 +11,7 @@
     "clear_escalation_marker",
     "accept_implementation",
     "reject_implementation",
-    "takeover_workflow"
+    "takeover_workflow",
+    "view_runner_logs"
   ]
 }

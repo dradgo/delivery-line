@@ -97,6 +97,8 @@ class ProjectHealthMetricsBinderTest {
         ConnectorKind.LINEAR,
         ConnectorKind.GITHUB,
         false,
+        null,
+        false,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);
   }

@@ -1,14 +1,21 @@
 package org.dradgo.adapters.runner.docker;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
+import com.github.dockerjava.api.command.LogContainerCmd;
 import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Container;
+import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.StreamType;
 import com.github.dockerjava.api.model.Volume;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -24,6 +31,7 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.dradgo.application.runner.spi.DockerHostPort;
+import org.dradgo.application.runner.spi.RunnerLogStreamPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +44,9 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
 
   private static final Logger log = LoggerFactory.getLogger(DefaultDockerEngineGateway.class);
   private static final Pattern WINDOWS_DRIVE_PATH = Pattern.compile("^([A-Za-z]):[/\\\\](.*)$");
+  // Story 3d-5 OQ-3 — seed the live follow with a small recent backlog so the viewer shows context
+  // on open rather than only lines emitted after subscribe. Small bound for a single local operator.
+  private static final String LIVE_FOLLOW_TAIL_LINES = "200";
 
   private final DockerClient client;
 
@@ -195,6 +206,132 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
         matches.size(),
         matches.get(0).getId());
     return Optional.of(matches.get(0).getId());
+  }
+
+  @Override
+  public AutoCloseable followContainerLogs(
+      String containerId, RunnerLogStreamPort.RawLogLineSink onLine, Runnable onEnd) {
+    Objects.requireNonNull(containerId, "containerId");
+    Objects.requireNonNull(onLine, "onLine");
+    Objects.requireNonNull(onEnd, "onEnd");
+    LineBuffer stdoutBuffer = new LineBuffer("stdout", onLine);
+    LineBuffer stderrBuffer = new LineBuffer("stderr", onLine);
+    LogContainerCmd cmd =
+        client
+            .logContainerCmd(containerId)
+            .withStdOut(true)
+            .withStdErr(true)
+            .withFollowStream(true)
+            .withTimestamps(false)
+            // OQ-3 — seed with a small recent backlog so the viewer shows context on open.
+            .withTail(Integer.parseInt(LIVE_FOLLOW_TAIL_LINES));
+    ResultCallback.Adapter<Frame> callback =
+        new ResultCallback.Adapter<>() {
+          @Override
+          public void onNext(Frame frame) {
+            if (frame == null || frame.getPayload() == null) {
+              return;
+            }
+            byte[] payload = frame.getPayload();
+            if (frame.getStreamType() == StreamType.STDERR) {
+              stderrBuffer.append(payload);
+            } else {
+              stdoutBuffer.append(payload);
+            }
+          }
+
+          @Override
+          public void onComplete() {
+            stdoutBuffer.flush();
+            stderrBuffer.flush();
+            onEnd.run();
+          }
+
+          @Override
+          public void onError(Throwable throwable) {
+            // Best-effort (Trap T3): a follow error degrades to "stream ended" — NEVER propagate
+            // into the SSE caller thread.
+            log.warn(
+                "docker logs --follow containerId={} error cause={}",
+                containerId,
+                throwable.toString());
+            stdoutBuffer.flush();
+            stderrBuffer.flush();
+            onEnd.run();
+          }
+        };
+    cmd.exec(callback);
+    log.info("docker logs --follow start containerId={}", containerId);
+    return () -> {
+      try {
+        callback.close();
+      } catch (IOException | RuntimeException closeFailure) {
+        log.warn(
+            "docker logs --follow close failed containerId={} cause={}",
+            containerId,
+            closeFailure.toString());
+      } finally {
+        cmd.close();
+        log.info("docker logs --follow stop containerId={}", containerId);
+      }
+    };
+  }
+
+  /**
+   * Splits a frame byte-stream into newline-terminated lines, buffering trailing partial BYTES
+   * across frames so (a) a line straddling two frames is emitted once, intact, and (b) a multi-byte
+   * UTF-8 codepoint split across two frames is decoded once at the line boundary rather than
+   * per-frame (decoding each frame independently would emit U+FFFD for the straddling char). {@link
+   * #flush()} emits any final unterminated line on stream completion.
+   */
+  private static final class LineBuffer {
+
+    private static final byte LF = (byte) '\n';
+    private static final byte CR = (byte) '\r';
+
+    private final String stream;
+    private final RunnerLogStreamPort.RawLogLineSink sink;
+    private final ByteArrayOutputStream pending = new ByteArrayOutputStream();
+
+    LineBuffer(String stream, RunnerLogStreamPort.RawLogLineSink sink) {
+      this.stream = stream;
+      this.sink = sink;
+    }
+
+    void append(byte[] payload) {
+      pending.write(payload, 0, payload.length);
+      byte[] buffered = pending.toByteArray();
+      int lineStart = 0;
+      int consumed = 0;
+      for (int i = 0; i < buffered.length; i++) {
+        if (buffered[i] == LF) {
+          int end = i;
+          if (end > lineStart && buffered[end - 1] == CR) {
+            end--;
+          }
+          sink.accept(stream, new String(buffered, lineStart, end - lineStart, StandardCharsets.UTF_8));
+          lineStart = i + 1;
+          consumed = lineStart;
+        }
+      }
+      pending.reset();
+      if (consumed < buffered.length) {
+        pending.write(buffered, consumed, buffered.length - consumed);
+      }
+    }
+
+    void flush() {
+      byte[] buffered = pending.toByteArray();
+      pending.reset();
+      if (buffered.length == 0) {
+        return;
+      }
+      int end = buffered.length;
+      if (end > 0 && buffered[end - 1] == CR) {
+        end--;
+      }
+      sink.accept(stream, new String(buffered, 0, end, StandardCharsets.UTF_8));
+    }
   }
 
   @Override

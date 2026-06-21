@@ -2,6 +2,7 @@ package org.dradgo.adapters.runner.docker;
 
 import java.time.Duration;
 import java.util.Optional;
+import org.dradgo.application.runner.spi.RunnerLogStreamPort;
 
 /**
  * Adapter-internal wrapper around the Docker client surface. The {@code DockerRunnerAdapter} never
@@ -48,4 +49,15 @@ public interface DockerEngineGateway {
    * {@link Optional#empty()} when no matching container survives on the host.
    */
   Optional<String> findContainerIdByRunnerExecutionId(String runnerExecutionId);
+
+  /**
+   * Story 3d-5 (FR65) — follow a container's stdout/stderr live ({@code docker logs --follow}). Each
+   * decoded line is delivered to {@code onLine} ({@code stream} = {@code "stdout"}/{@code
+   * "stderr"}); {@code onEnd} fires once when the stream completes (container exit). Returns an
+   * {@link AutoCloseable} whose {@code close()} stops the follow + releases the docker callback (no
+   * leaked follow threads — Trap T3). Docker-java types stay confined to the implementing gateway
+   * (Trap T8); callers only see the project-owned {@link RunnerLogStreamPort.RawLogLineSink}.
+   */
+  AutoCloseable followContainerLogs(
+      String containerId, RunnerLogStreamPort.RawLogLineSink onLine, Runnable onEnd);
 }

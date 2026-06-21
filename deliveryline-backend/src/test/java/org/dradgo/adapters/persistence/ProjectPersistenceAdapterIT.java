@@ -58,6 +58,8 @@ class ProjectPersistenceAdapterIT {
                 ConnectorKind.LINEAR,
                 ConnectorKind.GITHUB,
                 true,
+                null,
+                false,
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null));
 
@@ -89,6 +91,8 @@ class ProjectPersistenceAdapterIT {
             ConnectorKind.GITLAB,
             ConnectorKind.GITLAB,
             false,
+            null,
+            false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
 
@@ -112,6 +116,8 @@ class ProjectPersistenceAdapterIT {
             null,
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
+            false,
+            null,
             false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
@@ -147,6 +153,8 @@ class ProjectPersistenceAdapterIT {
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
             false,
+            null,
+            false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
     projectStore.insert(
@@ -158,6 +166,8 @@ class ProjectPersistenceAdapterIT {
             null,
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
+            false,
+            null,
             false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
@@ -182,6 +192,8 @@ class ProjectPersistenceAdapterIT {
                 ConnectorKind.LINEAR,
                 ConnectorKind.GITHUB,
                 false,
+                null,
+                false,
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null));
 
@@ -195,6 +207,8 @@ class ProjectPersistenceAdapterIT {
             ConnectorKind.GITHUB,
             ConnectorKind.LINEAR,
             true,
+            null,
+            false,
             inserted.createdAt(),
             null);
     projectStore.update(mutated);
@@ -221,6 +235,8 @@ class ProjectPersistenceAdapterIT {
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
             false,
+            null,
+            false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null);
     assertThatThrownBy(() -> projectStore.update(ghost))
@@ -242,6 +258,8 @@ class ProjectPersistenceAdapterIT {
             ConnectorKind.LINEAR,
             ConnectorKind.GITHUB,
             false,
+            null,
+            false,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
 
@@ -256,6 +274,8 @@ class ProjectPersistenceAdapterIT {
                         null,
                         ConnectorKind.LINEAR,
                         ConnectorKind.GITHUB,
+                        false,
+                        null,
                         false,
                         OffsetDateTime.now(ZoneOffset.UTC),
                         null)))

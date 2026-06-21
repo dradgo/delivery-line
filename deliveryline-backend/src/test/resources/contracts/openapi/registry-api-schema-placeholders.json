@@ -76,6 +76,11 @@
     "github",
     "gitlab"
   ],
+  "reviewOutcomes": [
+    "pass",
+    "concern",
+    "fail"
+  ],
   "publicIdPrefixes": {
     "workflowRun": "run_",
     "workflowEvent": "evt_",
@@ -89,7 +94,8 @@
     "idempotencyRecord": "idm_",
     "batchSubmission": "bat_",
     "project": "prj_",
-    "projectCredential": "cred_"
+    "projectCredential": "cred_",
+    "review": "rev_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",
@@ -158,6 +164,7 @@
     "PROJECT_SLUG_CONFLICT": "https://deliveryline.local/problems/project-slug-conflict",
     "UNSUPPORTED_CONNECTOR_KIND": "https://deliveryline.local/problems/unsupported-connector-kind",
     "CREDENTIAL_MASTER_KEY_UNCONFIGURED": "https://deliveryline.local/problems/credential-master-key-unconfigured",
-    "DOCTOR_PROJECT_CONFIG_INCOMPLETE": "https://deliveryline.local/problems/doctor-project-config-incomplete"
+    "DOCTOR_PROJECT_CONFIG_INCOMPLETE": "https://deliveryline.local/problems/doctor-project-config-incomplete",
+    "REVIEWER_MODEL_NOT_CONFIGURED": "https://deliveryline.local/problems/reviewer-model-not-configured"
   }
 }

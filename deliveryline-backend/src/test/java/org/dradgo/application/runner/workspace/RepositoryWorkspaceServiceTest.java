@@ -83,6 +83,8 @@ class RepositoryWorkspaceServiceTest {
         org.dradgo.domain.registry.ConnectorKind.LINEAR,
         org.dradgo.domain.registry.ConnectorKind.GITHUB,
         false,
+        null,
+        false,
         OffsetDateTime.now(),
         null);
   }

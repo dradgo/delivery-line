@@ -43,6 +43,7 @@ import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.ReviewOutcome;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
@@ -117,6 +118,7 @@ class RegistryContractTest {
     assertEquals(registryValues(WorkflowEventType.values()), DomainRegistry.workflowEventTypes());
     assertEquals(registryValues(ProjectStatus.values()), DomainRegistry.projectStatuses());
     assertEquals(registryValues(ConnectorKind.values()), DomainRegistry.connectorKinds());
+    assertEquals(registryValues(ReviewOutcome.values()), DomainRegistry.reviewOutcomes());
     assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
   }
 
@@ -202,6 +204,20 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.connectorKinds(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "connectorKinds"));
+  }
+
+  @Test
+  void reviewOutcomeStaysAlignedWithSqlCheckAndApiManifest() throws IOException {
+    // Story 3d-1 (AC5 / DD-2) — review_outcome is surfaced through the API (the 3d-2 Decision Bar
+    // verdict panel reads it), so it is drift-tested against BOTH the V19 ck_step_reviews_outcome
+    // CHECK and the reviewOutcomes API placeholder, exactly like artifactStatuses/connectorKinds.
+    // (The `reviewer` connector role is a credential-persistence value only — drift-tested against
+    // the DB CHECK alone by connectorRoleStaysAlignedWithProjectCredentialsCheck, no API leg.)
+    assertFalse(DomainRegistry.reviewOutcomes().isEmpty(), "ReviewOutcome registry must not be empty");
+    assertEquals(DomainRegistry.reviewOutcomes(), extractConstraintValues("ck_step_reviews_outcome"));
+    assertEquals(
+        DomainRegistry.reviewOutcomes(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "reviewOutcomes"));
   }
 
   @Test
@@ -456,6 +472,10 @@ class RegistryContractTest {
     registryBoundaries.put(
         "project_credentials.connector_role",
         PersistedRegistryValues::projectCredentialConnectorRole);
+    // Story 3d-1 (AC5/AC8) — the V19 step_reviews.outcome persistence boundary. There is NO
+    // step_reviews.connector_role boundary (no such column); the reviewer role lives on
+    // project_credentials.connector_role, already covered above.
+    registryBoundaries.put("step_reviews.outcome", PersistedRegistryValues::stepReviewOutcome);
 
     List<DomainException> thrown = new ArrayList<>();
     for (Map.Entry<String, Function<String, ?>> entry : registryBoundaries.entrySet()) {

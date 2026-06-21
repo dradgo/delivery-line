@@ -2,6 +2,7 @@ package org.dradgo.adapters.files;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -16,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.dradgo.application.runner.RedactedRunnerLog;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.runner.spi.RunnerLogStore;
 import org.dradgo.domain.DomainException;
@@ -49,6 +51,10 @@ public class LocalRunnerLogStore implements RunnerLogStore {
   static final String STDOUT_FILENAME = "runner.stdout";
   static final String STDERR_FILENAME = "runner.stderr";
   private static final String TEMP_SUFFIX = ".tmp";
+  // Story 3d-5 — cap a single finished-mode replay read so a large persisted log cannot OOM the SSE
+  // path. 8 MiB mirrors the capture-side cap (LocalRunnerWorkspaceStore); the overflow is truncated
+  // with a marker rather than dropped.
+  private static final int MAX_REDACTED_READ_BYTES = 8 * 1024 * 1024;
 
   private static final Set<PosixFilePermission> OWNER_ONLY_DIR_PERMS =
       EnumSet.of(
@@ -122,6 +128,65 @@ public class LocalRunnerLogStore implements RunnerLogStore {
     return Optional.of(
         new RunnerLogReference(dir.toString(), byteSize, DataClassification.LOCAL_ONLY, 0));
   }
+
+  @Override
+  public Optional<RedactedRunnerLog> readRedacted(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Path dir = resolveLogDir(runnerExecutionId);
+    if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+      return Optional.empty();
+    }
+    CappedRead stdout = readCappedLossy(dir, STDOUT_FILENAME, runnerExecutionId);
+    CappedRead stderr = readCappedLossy(dir, STDERR_FILENAME, runnerExecutionId);
+    boolean truncated = stdout.truncated() || stderr.truncated();
+    log.info(
+        "reading redacted runner logs runnerExecutionId={} stdoutChars={} stderrChars={} truncated={}",
+        runnerExecutionId,
+        stdout.text().length(),
+        stderr.text().length(),
+        truncated);
+    return Optional.of(new RedactedRunnerLog(stdout.text(), stderr.text(), truncated));
+  }
+
+  /**
+   * Story 3d-5 — read one redacted log file from the rex directory, capped at {@link
+   * #MAX_REDACTED_READ_BYTES} and lossy-UTF-8 decoded (the bytes are already redacted by story 3.6).
+   * Same containment + symlink guards as {@link #readableFileSize}. A missing / escaping / unreadable
+   * file reads as empty text — an honest empty stream, never an error.
+   */
+  private CappedRead readCappedLossy(Path dir, String filename, String runnerExecutionId) {
+    Path target = dir.resolve(filename).normalize();
+    if (!target.startsWith(dir) || !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+      return new CappedRead("", false);
+    }
+    try {
+      long size = Files.size(target);
+      try (java.io.InputStream in = Files.newInputStream(target)) {
+        byte[] bytes = in.readNBytes(MAX_REDACTED_READ_BYTES);
+        String text = new String(bytes, StandardCharsets.UTF_8);
+        if (size <= MAX_REDACTED_READ_BYTES) {
+          return new CappedRead(text, false);
+        }
+        log.warn(
+            "redacted runner log truncated on read runnerExecutionId={} filename={} sourceBytes={} cap={}",
+            runnerExecutionId,
+            filename,
+            size,
+            MAX_REDACTED_READ_BYTES);
+        return new CappedRead(
+            text + "\n[TRUNCATED " + (size - MAX_REDACTED_READ_BYTES) + " bytes over cap]\n", true);
+      }
+    } catch (IOException error) {
+      log.warn(
+          "redacted runner log read failure runnerExecutionId={} filename={} cause={}",
+          runnerExecutionId,
+          filename,
+          error.toString());
+      return new CappedRead("", false);
+    }
+  }
+
+  private record CappedRead(String text, boolean truncated) {}
 
   public Path runnerLogsRoot() {
     return runnerLogsRoot;

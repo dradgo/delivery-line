@@ -861,6 +861,15 @@
         },
         "type" : "object"
       },
+      "SseEmitter" : {
+        "properties" : {
+          "timeout" : {
+            "format" : "int64",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "SubmitWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -2967,6 +2976,75 @@
           }
         },
         "summary" : "Retry a failed workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/runner-logs/stream" : {
+      "get" : {
+        "description" : "Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 consumes this same viewer (no separate redacted-log download surface). Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.",
+        "operationId" : "streamRunnerLogs",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Actor role for action gating; defaults to product_reviewer when absent. view_runner_logs is role-agnostic in the runner-execution states, so the default resolves the gate for any operator.",
+            "example" : "product_reviewer",
+            "in" : "query",
+            "name" : "actorRole",
+            "required" : false,
+            "schema" : {
+              "enum" : [
+                "product_reviewer",
+                "workflow_owner",
+                "developer"
+              ],
+              "type" : "null"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "text/event-stream" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SseEmitter"
+                }
+              }
+            },
+            "description" : "An event stream (text/event-stream). When view_runner_logs is not allowed for the run's state, the stream carries a single error+end event instead of log lines."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Stream a run's latest runner-execution logs (live + historical)",
         "tags" : [
           "Workflows"
         ]
