@@ -44,12 +44,13 @@ public interface RunnerLogStore {
   Optional<RunnerLogReference> find(String runnerExecutionId);
 
   /**
-   * Story 3d-5 (FR65, AC1) — read the already-redacted stdout + stderr TEXT for a previously-written
-   * runner-log directory, capped + lossy-UTF-8 decoded, for the finished-mode Step Execution Log
-   * Viewer replay. Returns {@link Optional#empty()} when nothing was captured for the id (honest
-   * "not captured"). The bytes are the authoritative story-3.6 redacted output — callers MUST NOT
-   * re-redact (Trap T4). This reads the REDACTED store only, never the raw workspace store, so the
-   * {@code RAW_RUNNER_OUTPUT_READS_STAY_IN_RUNNER_ADAPTER} boundary is untouched.
+   * Story 3d-5 (FR65, AC1) — read the already-redacted stdout + stderr TEXT for a
+   * previously-written runner-log directory, capped + lossy-UTF-8 decoded, for the finished-mode
+   * Step Execution Log Viewer replay. Returns {@link Optional#empty()} when nothing was captured
+   * for the id (honest "not captured"). The bytes are the authoritative story-3.6 redacted output —
+   * callers MUST NOT re-redact (Trap T4). This reads the REDACTED store only, never the raw
+   * workspace store, so the {@code RAW_RUNNER_OUTPUT_READS_STAY_IN_RUNNER_ADAPTER} boundary is
+   * untouched.
    */
   Optional<RedactedRunnerLog> readRedacted(String runnerExecutionId);
 }

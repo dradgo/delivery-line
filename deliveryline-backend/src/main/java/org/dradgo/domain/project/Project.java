@@ -31,7 +31,8 @@ public record Project(
     // Story 3d-1 (AC4/AC7) — per-project reviewer-model binding (ADR 0026). reviewerModelKind is a
     // nullable opaque String (NULL = "no reviewer", current behavior); its authoritative validation
     // is the ProjectConnectorResolver at execution time (3d-2, DD-1), so it carries no typed enum
-    // here — only the blank-if-set invariant below. reviewerGatingEnabled is created off and is read
+    // here — only the blank-if-set invariant below. reviewerGatingEnabled is created off and is
+    // read
     // by NO progression logic in this epic (ADR 0026 Decision 3).
     String reviewerModelKind, // nullable
     boolean reviewerGatingEnabled,

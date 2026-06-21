@@ -119,7 +119,8 @@ class DefaultDockerEngineGatewayTest {
     ResultCallback<Frame> callback = callbackCaptor.getValue();
 
     callback.onNext(new Frame(StreamType.STDOUT, "hello ".getBytes(StandardCharsets.UTF_8)));
-    callback.onNext(new Frame(StreamType.STDOUT, "world\npartial".getBytes(StandardCharsets.UTF_8)));
+    callback.onNext(
+        new Frame(StreamType.STDOUT, "world\npartial".getBytes(StandardCharsets.UTF_8)));
     callback.onNext(new Frame(StreamType.STDERR, "err line\n".getBytes(StandardCharsets.UTF_8)));
     callback.onComplete();
 
@@ -155,7 +156,8 @@ class DefaultDockerEngineGatewayTest {
     ResultCallback<Frame> callback = callbackCaptor.getValue();
 
     // Frame 1 ends mid-codepoint (first byte of '€'); frame 2 carries the remaining two bytes.
-    callback.onNext(new Frame(StreamType.STDOUT, new byte[] {'p', 'r', 'i', 'c', 'e', ' ', (byte) 0xE2}));
+    callback.onNext(
+        new Frame(StreamType.STDOUT, new byte[] {'p', 'r', 'i', 'c', 'e', ' ', (byte) 0xE2}));
     callback.onNext(new Frame(StreamType.STDOUT, new byte[] {(byte) 0x82, (byte) 0xAC, '\n'}));
 
     assertThat(lines).containsExactly("price €");

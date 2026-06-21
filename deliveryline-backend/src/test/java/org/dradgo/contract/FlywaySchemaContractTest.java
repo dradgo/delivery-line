@@ -675,13 +675,15 @@ class FlywaySchemaContractTest {
     assertColumnNullable("step_reviews", "producer_model_identity", true);
 
     // ck_step_reviews_outcome — the 'pass'/'concern'/'fail' value set (drift-tested against the
-    // ReviewOutcome registry by RegistryContractTest.reviewOutcomeStaysAlignedWithSqlCheckAndApiManifest).
+    // ReviewOutcome registry by
+    // RegistryContractTest.reviewOutcomeStaysAlignedWithSqlCheckAndApiManifest).
     assertConstraintDefinitionContains("ck_step_reviews_outcome", "pass");
     assertConstraintDefinitionContains("ck_step_reviews_outcome", "concern");
     assertConstraintDefinitionContains("ck_step_reviews_outcome", "fail");
 
     // The workflow_run_id FK is counted by foreignKeysReferenceExpectedTablesAndColumns (9 now).
-    // Probe the runner_execution_id FK and the composite (reviewed_artifact_id, version) -> artifacts
+    // Probe the runner_execution_id FK and the composite (reviewed_artifact_id, version) ->
+    // artifacts
     // FK that pins the verdict to the exact reviewed artifact version (the approvals precedent).
     assertConstraintDefinitionContains("fk_step_reviews_runner_executions", "runner_execution_id");
     assertConstraintDefinitionContains("fk_step_reviews_artifacts", "reviewed_artifact_id");
@@ -691,7 +693,8 @@ class FlywaySchemaContractTest {
   @Test
   void projectsCarryReviewerBindingColumnsWithGatingDefaultOff() {
     // Story 3d-1 / V19 (AC4): reviewer_model_kind is nullable opaque text (no DB CHECK, DD-1);
-    // reviewer_gating_enabled defaults false and is read by NO gating logic in Epic 3d (ADR 0026 D3).
+    // reviewer_gating_enabled defaults false and is read by NO gating logic in Epic 3d (ADR 0026
+    // D3).
     assertColumnType("projects", "reviewer_model_kind", "text");
     assertColumnNullable("projects", "reviewer_model_kind", true);
     assertColumnType("projects", "reviewer_gating_enabled", "boolean");
@@ -719,7 +722,9 @@ class FlywaySchemaContractTest {
             "select count(*) from pg_constraint where conname like 'ck_projects_reviewer_model_kind%'",
             Integer.class);
     assertEquals(
-        0, kindChecks, () -> "reviewer_model_kind must have NO DB CHECK (DD-1) but found " + kindChecks);
+        0,
+        kindChecks,
+        () -> "reviewer_model_kind must have NO DB CHECK (DD-1) but found " + kindChecks);
   }
 
   @Test

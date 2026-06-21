@@ -51,8 +51,8 @@ public interface DockerEngineGateway {
   Optional<String> findContainerIdByRunnerExecutionId(String runnerExecutionId);
 
   /**
-   * Story 3d-5 (FR65) — follow a container's stdout/stderr live ({@code docker logs --follow}). Each
-   * decoded line is delivered to {@code onLine} ({@code stream} = {@code "stdout"}/{@code
+   * Story 3d-5 (FR65) — follow a container's stdout/stderr live ({@code docker logs --follow}).
+   * Each decoded line is delivered to {@code onLine} ({@code stream} = {@code "stdout"}/{@code
    * "stderr"}); {@code onEnd} fires once when the stream completes (container exit). Returns an
    * {@link AutoCloseable} whose {@code close()} stops the follow + releases the docker callback (no
    * leaked follow threads — Trap T3). Docker-java types stay confined to the implementing gateway

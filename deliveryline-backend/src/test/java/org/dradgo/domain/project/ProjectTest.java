@@ -53,7 +53,8 @@ class ProjectTest {
   @Test
   void reviewerBindingDefaultsToNoReviewerAndGatingOff() {
     // Story 3d-1 (AC4) — a project with no reviewer model bound: reviewerModelKind null = "no
-    // reviewer" (pre-3d parity, ADR 0026 D1); reviewerGatingEnabled false is created off and is read
+    // reviewer" (pre-3d parity, ADR 0026 D1); reviewerGatingEnabled false is created off and is
+    // read
     // by NO progression/transition logic in Epic 3d (ADR 0026 D3 — advisory now, gating-capable
     // later). The default-off DB column default is asserted by FlywaySchemaContractTest.
     Project project =

@@ -213,8 +213,10 @@ class RegistryContractTest {
     // CHECK and the reviewOutcomes API placeholder, exactly like artifactStatuses/connectorKinds.
     // (The `reviewer` connector role is a credential-persistence value only — drift-tested against
     // the DB CHECK alone by connectorRoleStaysAlignedWithProjectCredentialsCheck, no API leg.)
-    assertFalse(DomainRegistry.reviewOutcomes().isEmpty(), "ReviewOutcome registry must not be empty");
-    assertEquals(DomainRegistry.reviewOutcomes(), extractConstraintValues("ck_step_reviews_outcome"));
+    assertFalse(
+        DomainRegistry.reviewOutcomes().isEmpty(), "ReviewOutcome registry must not be empty");
+    assertEquals(
+        DomainRegistry.reviewOutcomes(), extractConstraintValues("ck_step_reviews_outcome"));
     assertEquals(
         DomainRegistry.reviewOutcomes(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "reviewOutcomes"));

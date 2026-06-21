@@ -67,8 +67,10 @@ class ProjectCredentialServiceTest {
   @Test
   void reviewerRoleCredentialRoundTripsThroughTheExistingStoreEncryptedAtRest() {
     // Story 3d-1 (AC8) — the `reviewer` connector role is a FIRST-CLASS credential role with NO new
-    // subsystem: a reviewer credential stores via the existing 3c-5 ProjectCredentialService and the
-    // 3c-4 AES-256-GCM cipher unchanged, persists ciphertext (never plaintext) at rest, and decrypts
+    // subsystem: a reviewer credential stores via the existing 3c-5 ProjectCredentialService and
+    // the
+    // 3c-4 AES-256-GCM cipher unchanged, persists ciphertext (never plaintext) at rest, and
+    // decrypts
     // back to the original secret for immediate in-memory use.
     when(recordPort.insert(any())).thenAnswer(invocation -> invocation.getArgument(0));
 

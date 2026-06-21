@@ -150,9 +150,9 @@ public class LocalRunnerLogStore implements RunnerLogStore {
 
   /**
    * Story 3d-5 — read one redacted log file from the rex directory, capped at {@link
-   * #MAX_REDACTED_READ_BYTES} and lossy-UTF-8 decoded (the bytes are already redacted by story 3.6).
-   * Same containment + symlink guards as {@link #readableFileSize}. A missing / escaping / unreadable
-   * file reads as empty text — an honest empty stream, never an error.
+   * #MAX_REDACTED_READ_BYTES} and lossy-UTF-8 decoded (the bytes are already redacted by story
+   * 3.6). Same containment + symlink guards as {@link #readableFileSize}. A missing / escaping /
+   * unreadable file reads as empty text — an honest empty stream, never an error.
    */
   private CappedRead readCappedLossy(Path dir, String filename, String runnerExecutionId) {
     Path target = dir.resolve(filename).normalize();

@@ -45,7 +45,8 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
   private static final Logger log = LoggerFactory.getLogger(DefaultDockerEngineGateway.class);
   private static final Pattern WINDOWS_DRIVE_PATH = Pattern.compile("^([A-Za-z]):[/\\\\](.*)$");
   // Story 3d-5 OQ-3 — seed the live follow with a small recent backlog so the viewer shows context
-  // on open rather than only lines emitted after subscribe. Small bound for a single local operator.
+  // on open rather than only lines emitted after subscribe. Small bound for a single local
+  // operator.
   private static final String LIVE_FOLLOW_TAIL_LINES = "200";
 
   private final DockerClient client;
@@ -309,7 +310,8 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
           if (end > lineStart && buffered[end - 1] == CR) {
             end--;
           }
-          sink.accept(stream, new String(buffered, lineStart, end - lineStart, StandardCharsets.UTF_8));
+          sink.accept(
+              stream, new String(buffered, lineStart, end - lineStart, StandardCharsets.UTF_8));
           lineStart = i + 1;
           consumed = lineStart;
         }
