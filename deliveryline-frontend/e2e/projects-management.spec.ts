@@ -8,6 +8,9 @@ import { test, expect, type Page } from '@playwright/test';
 
 import { mockBackend } from './support/mockApi';
 
+/** The mobile/tablet breakpoint floor (useResponsiveLayout.ts TABLET_MIN_PX). */
+const TABLET_MIN_PX = 768;
+
 async function tabUntilFocused(page: Page, selector: string, max = 50): Promise<boolean> {
   for (let i = 0; i < max; i++) {
     const focused = await page.evaluate(
@@ -68,8 +71,24 @@ test('AC8 — the Projects nav link and "New project" action are keyboard-reacha
   await page.goto('/projects');
   await expect(page.getByTestId('project-list-table')).toBeVisible();
 
-  // The nav landmark link is reachable by keyboard.
-  expect(await tabUntilFocused(page, 'a[href="/projects"]')).toBe(true);
+  // The nav landmark link is reachable by keyboard. On a phone-class viewport the
+  // nav rail collapses into a hamburger drawer (AppShell `MobileTopBar` → `Sheet`),
+  // so the keyboard path to the `/projects` link runs through the "Open workflow
+  // navigation" trigger; on desktop/tablet the inline rail link is tabbable directly.
+  const viewport = page.viewportSize();
+  const isMobile = viewport !== null && viewport.width < TABLET_MIN_PX;
+  if (isMobile) {
+    expect(await tabUntilFocused(page, '[aria-label="Open workflow navigation"]')).toBe(true);
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('nav-projects-link')).toBeVisible();
+    expect(await tabUntilFocused(page, 'a[href="/projects"]')).toBe(true);
+    // Reset to a clean, drawer-closed state before the in-page action check below so
+    // the open drawer's focus trap can't intercept the tab walk to "New project".
+    await page.goto('/projects');
+    await expect(page.getByTestId('project-list-table')).toBeVisible();
+  } else {
+    expect(await tabUntilFocused(page, 'a[href="/projects"]')).toBe(true);
+  }
 
   // The single primary "New project" action is reachable + activates by keyboard.
   expect(await tabUntilFocused(page, '[data-testid="project-new-button"]')).toBe(true);
