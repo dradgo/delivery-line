@@ -23,7 +23,7 @@
  */
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
-import { Circle, Inbox, Menu, PanelRight, X } from 'lucide-react';
+import { Circle, FolderCog, Inbox, Menu, PanelRight, X } from 'lucide-react';
 
 import { Stack } from '@/components/layout';
 import { Button } from '@/components/ui/button';
@@ -81,6 +81,26 @@ function QueueHomeLink({ onNavigate }: { onNavigate?: (() => void) | undefined }
   );
 }
 
+/** Story 3c-9 (AC1) — the projects management / configuration link. Mirrors `QueueHomeLink`. */
+function ProjectsLink({ onNavigate }: { onNavigate?: (() => void) | undefined }) {
+  return (
+    <Link
+      to="/projects"
+      onClick={onNavigate}
+      className={cn(
+        'flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-text-secondary',
+        'transition-colors hover:bg-surface-elevated hover:text-text-primary',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus',
+        'data-[status=active]:bg-state-selected data-[status=active]:text-state-selected-foreground',
+      )}
+      data-testid="nav-projects-link"
+    >
+      <FolderCog className="size-4 shrink-0" aria-hidden />
+      Projects
+    </Link>
+  );
+}
+
 /**
  * Global app-status indicator (AC3). A stable, labeled PLACEHOLDER — its live
  * content (backend connectivity / health) is a later concern; story 2.7 ships the
@@ -134,6 +154,7 @@ function NavRailContent({
   return (
     <Stack gap="4">
       <QueueHomeLink onNavigate={onNavigate} />
+      <ProjectsLink onNavigate={onNavigate} />
       {showRunIdentity && hasRun ? <RunIdentityRegion workflowRunId={workflowRunId} /> : null}
       <StatusIndicator />
     </Stack>

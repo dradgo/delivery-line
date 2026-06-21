@@ -19,6 +19,7 @@ import { http, HttpResponse } from 'msw';
 
 import { PROBLEM_JSON_CONTENT_TYPE } from '@/lib/api/problemDetails';
 import type {
+  Project,
   WorkflowDetail,
   WorkflowEventsResponse,
   WorkflowSummary,
@@ -30,6 +31,32 @@ type AllowedActions = components['schemas']['AllowedActions'];
 
 /** Same-origin base — matches the client's `window.location.origin` in jsdom. */
 const API = 'http://localhost/api/v1/workflows';
+
+/** Story 3c-9 — same-origin project base. */
+const PROJECTS_API = 'http://localhost/api/v1/projects';
+
+/**
+ * The seeded `default` project (story 3c-6). Active, never advertises `disable`
+ * (default-project guard); `ticket_source` credentialed, `repo_host` not — exercises
+ * both presence states. A realistic baseline so non-project tests that incidentally
+ * touch the list do not 404 under `onUnhandledRequest:'error'`.
+ */
+export const defaultProjectFixture: Project = {
+  id: 'prj_default',
+  name: 'Default project',
+  slug: 'default',
+  status: 'active',
+  repositoryUrl: 'https://github.com/acme/widgets',
+  ticketSourceKind: 'linear',
+  repoHostKind: 'github',
+  openspecEnabled: false,
+  createdAt: '2026-06-20T00:00:00Z',
+  credentials: [
+    { role: 'ticket_source', status: 'configured' },
+    { role: 'repo_host', status: 'not_configured' },
+  ],
+  allowedActions: ['edit', 'set_credential', 'test_connection'],
+};
 
 /** The last event in a stream (streams are non-empty by the 1.23 contract). */
 function lastEvent(stream: WorkflowEventsResponse): WorkflowEventsResponse['events'][number] {
@@ -144,5 +171,28 @@ export const defaultHandlers = [
     return stream
       ? HttpResponse.json(allowedActionsFromStream(stream))
       : runNotFound(workflowRunId, `/api/v1/workflows/${workflowRunId}/allowed-actions`);
+  }),
+
+  // Story 3c-9 — GET /projects (bare array, no envelope) — the single seeded project.
+  http.get(PROJECTS_API, () => HttpResponse.json([defaultProjectFixture])),
+
+  // Story 3c-9 — GET /projects/{id} — the default project, or a typed PROJECT_NOT_FOUND.
+  http.get(`${PROJECTS_API}/:projectId`, ({ params }) => {
+    const projectId = String(params.projectId);
+    if (projectId === defaultProjectFixture.id) {
+      return HttpResponse.json(defaultProjectFixture);
+    }
+    return HttpResponse.json(
+      {
+        type: 'about:blank',
+        title: 'Project not found',
+        status: 404,
+        detail: `Project not found: ${projectId}`,
+        instance: `/api/v1/projects/${projectId}`,
+        code: 'PROJECT_NOT_FOUND',
+        retryable: false,
+      },
+      { status: 404, headers: { 'content-type': PROBLEM_JSON_CONTENT_TYPE } },
+    );
   }),
 ];

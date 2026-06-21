@@ -55,6 +55,10 @@ export default defineConfig({
         'src/lib/sanitization/**': { lines: 86 },
         'src/lib/queryKeys/**': { lines: 90 },
         'src/features/workflows/**': { lines: 85 },
+        // Story 3c-9 (Task 9 / Open Decision #4) — match the features/workflows floor.
+        // The credential-handling surface is secret-hostile, so the suite drives it
+        // well above this guard-against-regression floor.
+        'src/features/projects/**': { lines: 85 },
       },
     },
   },

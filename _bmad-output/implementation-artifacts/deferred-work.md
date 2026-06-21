@@ -895,3 +895,7 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 - `ProjectController.listProjects` runs 2 credential-presence queries per project (N+1) and is unpaginated. Acceptable at expected project count.
 - Idempotency fingerprint joins fields with a literal `"|"` without escaping/length-prefixing → canonical strings not injective (collision e.g. `name="a|b",slug="c"` vs `name="a",slug="b|c"`). Theoretical, same-key-scoped.
 - Create idempotency REPLAY calls `getProject(resultRef)` and would surface a confusing 404 on `POST` if the prior project no longer resolves. Latent until a project-delete/purge API exists.
+
+## Deferred from: code review of 3c-9-projects-management-ui (2026-06-21)
+
+- Optional/undefined `project.id` edges in the Projects UI — a stale `ProjectSelector` value survives a list refetch that drops the selected project; two id-less projects collide on an empty `SelectItem` value and on the row React key; a connection test on an id-less project posts to a malformed `/projects//test-connection` and its session result is never read back. Latent: the selector is not yet wired to scope the queue (R3) and `Project.id` is always present in practice (schema-optional only). Revisit when the selector is wired to the queue query. [deliveryline-frontend/src/features/projects/components/ProjectSelector.tsx, ProjectList.tsx]

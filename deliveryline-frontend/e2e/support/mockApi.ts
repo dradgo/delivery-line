@@ -355,16 +355,154 @@ function unmodelled(route: Route, method: string, path: string) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Story 3c-9 — stateful `/api/v1/projects` mock for the project-management journey
+// (create → set-credential → test-connection). The store is seeded fresh per
+// `mockBackend` call (a closure, not module state) so tests never leak into each
+// other. `allowedActions` is status-derived (default project never advertises
+// `disable`), mirroring the backend `ProjectManagementService.allowedActionsFor`.
+// ---------------------------------------------------------------------------
+interface MockProject {
+  id: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'disabled';
+  repositoryUrl: string | null;
+  ticketSourceKind: string;
+  repoHostKind: string;
+  openspecEnabled: boolean;
+  createdAt: string;
+  credentials: { role: string; status: 'configured' | 'not_configured' }[];
+}
+
+function projectAllowedActions(project: MockProject): string[] {
+  if (project.status === 'disabled') {
+    return ['edit', 'enable', 'set_credential', 'test_connection'];
+  }
+  const actions = ['edit', 'set_credential', 'test_connection'];
+  if (project.slug !== 'default') {
+    actions.push('disable');
+  }
+  return actions;
+}
+
+function projectResponse(project: MockProject): unknown {
+  return { ...project, allowedActions: projectAllowedActions(project) };
+}
+
 /**
  * Install the fixture-backed `/api/v1` mock on a page. Call BEFORE navigation.
  * Reads resolve from the fixtures; mutations return a benign state-change success.
  */
 export async function mockBackend(page: Page): Promise<void> {
+  // Story 3c-9 — per-call project store (seeded with the `default` project, 3c-6).
+  const projects: MockProject[] = [
+    {
+      id: 'prj_default',
+      name: 'Default project',
+      slug: 'default',
+      status: 'active',
+      repositoryUrl: 'https://github.com/acme/widgets',
+      ticketSourceKind: 'linear',
+      repoHostKind: 'github',
+      openspecEnabled: false,
+      createdAt: '2026-06-20T00:00:00.000Z',
+      credentials: [
+        { role: 'ticket_source', status: 'configured' },
+        { role: 'repo_host', status: 'not_configured' },
+      ],
+    },
+  ];
+  let projectSeq = 0;
+
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+
+    // Story 3c-9 — the `/api/v1/projects` surface (stateful, handled before the
+    // workflow matchers + the loud-501 tripwire).
+    if (/\/api\/v1\/projects(\/|$)/.test(path)) {
+      // List.
+      if (method === 'GET' && /\/api\/v1\/projects\/?$/.test(path)) {
+        return json(route, projects.map(projectResponse));
+      }
+      // Create.
+      if (method === 'POST' && /\/api\/v1\/projects\/?$/.test(path)) {
+        const body = (await request.postDataJSON()) as Partial<MockProject>;
+        projectSeq += 1;
+        const created: MockProject = {
+          id: `prj_${projectSeq}`,
+          name: body.name ?? 'Project',
+          slug: body.slug ?? `project-${projectSeq}`,
+          status: 'active',
+          repositoryUrl: body.repositoryUrl ?? null,
+          ticketSourceKind: body.ticketSourceKind ?? 'linear',
+          repoHostKind: body.repoHostKind ?? 'github',
+          openspecEnabled: body.openspecEnabled ?? false,
+          createdAt: SYNTH_NOW,
+          credentials: [
+            { role: 'ticket_source', status: 'not_configured' },
+            { role: 'repo_host', status: 'not_configured' },
+          ],
+        };
+        projects.push(created);
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(projectResponse(created)),
+        });
+      }
+      const idMatch = /\/api\/v1\/projects\/([^/]+)/.exec(path);
+      const project = idMatch ? projects.find((p) => p.id === idMatch[1]) : undefined;
+      const credMatch = /\/api\/v1\/projects\/([^/]+)\/credentials\/([^/]+)$/.exec(path);
+      if (method === 'PUT' && credMatch && project) {
+        const role = credMatch[2]!;
+        const entry = project.credentials.find((c) => c.role === role);
+        if (entry) entry.status = 'configured';
+        else project.credentials.push({ role, status: 'configured' });
+        return json(route, { role, status: 'configured', credentialId: `cred_${projectSeq + 1}` });
+      }
+      if (method === 'POST' && /\/test-connection$/.test(path) && project) {
+        return json(route, {
+          checks: [
+            { check: 'repository_reachable', status: 'pass', detail: 'reachable' },
+            { check: 'ticket_source_auth', status: 'pass', detail: 'authenticated' },
+            {
+              check: 'repository_host_auth',
+              status: project.credentials.some(
+                (c) => c.role === 'repo_host' && c.status === 'configured',
+              )
+                ? 'pass'
+                : 'skipped',
+              detail: 'no credential',
+            },
+          ],
+        });
+      }
+      if (method === 'POST' && /\/disable$/.test(path) && project) {
+        project.status = 'disabled';
+        return json(route, projectResponse(project));
+      }
+      if (method === 'POST' && /\/enable$/.test(path) && project) {
+        project.status = 'active';
+        return json(route, projectResponse(project));
+      }
+      if (method === 'PUT' && project && /\/api\/v1\/projects\/[^/]+$/.test(path)) {
+        const body = (await request.postDataJSON()) as Partial<MockProject>;
+        project.name = body.name ?? project.name;
+        project.repositoryUrl = body.repositoryUrl ?? null;
+        project.ticketSourceKind = body.ticketSourceKind ?? project.ticketSourceKind;
+        project.repoHostKind = body.repoHostKind ?? project.repoHostKind;
+        project.openspecEnabled = body.openspecEnabled ?? false;
+        return json(route, projectResponse(project));
+      }
+      if (method === 'GET' && project) {
+        return json(route, projectResponse(project));
+      }
+      return unmodelled(route, method, path);
+    }
 
     // Mutations — a benign success for the MODELLED workflow commands; the journeys
     // assert reachability, the commit semantics are covered by the Vitest

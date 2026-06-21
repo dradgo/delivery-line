@@ -96,3 +96,22 @@ export const implementationAccepted = 'Implementation accepted. Decision recorde
 export const implementationRejected = 'Implementation rejected. Decision recorded.';
 /** Announced once a developer takeover is recorded (success); the run is now taken over. */
 export const workflowTakenOver = 'Run taken over for developer continuation. Decision recorded.';
+
+// ---- Project connection test (story 3c-9) --------------------------------------
+
+/** Announced while a project connectivity test is in flight. */
+export const connectionTestRunning = 'Testing the project connection.';
+/**
+ * Announced once a connectivity test settles, summarising the per-check tri-state
+ * outcome (`pass`/`fail`/`skipped`). Secret-free — counts only.
+ */
+export function connectionTestResult(
+  passCount: number,
+  failCount: number,
+  skipCount: number,
+): string {
+  return `Connection test complete: ${passCount} passed, ${failCount} failed, ${skipCount} skipped.`;
+}
+/** Announced when a connectivity test could not run (project not found / unsupported kind). */
+export const connectionTestFailed =
+  'The connection test could not run. Review the error and retry.';

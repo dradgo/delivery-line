@@ -27,6 +27,7 @@ import {
   type ArtifactView,
   type PrLinkage,
 } from '@/features/workflows/artifactView';
+import { projectKeys } from '../queryKeys/projectKeys';
 import { workflowKeys, type WorkflowListFilters } from '../queryKeys/workflowKeys';
 
 export type WorkflowDetail = components['schemas']['WorkflowDetail'];
@@ -34,6 +35,8 @@ export type WorkflowSummary = components['schemas']['WorkflowSummary'];
 export type WorkflowEventsResponse = components['schemas']['WorkflowEventsResponse'];
 /** The raw artifact-read DTO (story 3a-9 Gate 3) — adapted into `ArtifactView` below. */
 export type ArtifactDetail = components['schemas']['ArtifactDetail'];
+/** Story 3c-9 — a configured project (list item + create/edit/disable/enable response). */
+export type Project = components['schemas']['Project'];
 
 /** Cache-freshness defaults (ms). Centralized so every hook reads the same policy. */
 export const STALE_TIME = {
@@ -229,6 +232,41 @@ export function artifactQueryOptions(workflowRunId: string, artifactId: string) 
     queryKey: workflowKeys.artifact(artifactId),
     queryFn: () => fetchArtifact(workflowRunId, artifactId),
     staleTime: STALE_TIME.artifact,
+  });
+}
+
+/**
+ * Story 3c-9 (Task 2, AC2) — GET the project list (bare array, no envelope), throwing
+ * typed problem details on failure. `GET /api/v1/projects` takes no query params (R3).
+ */
+async function fetchProjectsList(): Promise<Project[]> {
+  return unwrap(await apiClient.GET('/api/v1/projects'));
+}
+
+/** GET a single project's detail (edit-form prefill), throwing typed problem details. */
+async function fetchProject(projectId: string): Promise<Project> {
+  return unwrap(
+    await apiClient.GET('/api/v1/projects/{projectId}', {
+      params: { path: { projectId } },
+    }),
+  );
+}
+
+/** Options for the project list (used by `useProjectsList` AND any route loader warm). */
+export function listProjectsOptions() {
+  return queryOptions({
+    queryKey: projectKeys.list(),
+    queryFn: fetchProjectsList,
+    staleTime: STALE_TIME.list,
+  });
+}
+
+/** Options for a single project's detail (used by `useProjectDetail` for edit prefill). */
+export function getProjectOptions(projectId: string) {
+  return queryOptions({
+    queryKey: projectKeys.detail(projectId),
+    queryFn: () => fetchProject(projectId),
+    staleTime: STALE_TIME.detail,
   });
 }
 
