@@ -50,10 +50,13 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED)),
           // Story 3a-1 (AC4 / AC8) — Investigating gains a Failed edge for spec-stage runner
           // failures.
+          // Story 3d-3 (AC2 / R4) — the spec-stage dispatching state parks in
+          // WaitingForManualExecution when the resolved runner kind is `manual`.
           Map.entry(
               WorkflowState.INVESTIGATING,
               EnumSet.of(
                   WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+                  WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
                   WorkflowState.FAILED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
@@ -64,10 +67,13 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.INVESTIGATING,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
+          // Story 3d-3 (AC2 / R4) — the execution-stage dispatching state parks in
+          // WaitingForManualExecution when the resolved runner kind is `manual`.
           Map.entry(
               WorkflowState.EXECUTING,
               EnumSet.of(
                   WorkflowState.WAITING_FOR_REVIEW,
+                  WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
                   WorkflowState.FAILED,
                   WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
@@ -77,6 +83,17 @@ class TransitionTableCrossProductFoundationContract {
               EnumSet.of(
                   WorkflowState.COMPLETED,
                   WorkflowState.EXECUTING,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
+          // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4
+          // picks the stage-appropriate target: spec → WaitingForSpecApproval, execution →
+          // WaitingForReview) or a recovery/safety edge (Failed / TakenOver / Reconciled).
+          Map.entry(
+              WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+              EnumSet.of(
+                  WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+                  WorkflowState.WAITING_FOR_REVIEW,
+                  WorkflowState.FAILED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.COMPLETED, EnumSet.noneOf(WorkflowState.class)),
