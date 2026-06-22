@@ -273,10 +273,7 @@ class RealRunnerContractIT {
   @ParameterizedTest(name = "spec happy-path — {0}")
   // Story 3d-3 — MANUAL launches no container (parks in WaitingForManualExecution), so it is
   // out of scope for the real-image container contract; exclude it from the launch-based cases.
-  @EnumSource(
-      value = RunnerKind.class,
-      names = "MANUAL",
-      mode = EnumSource.Mode.EXCLUDE)
+  @EnumSource(value = RunnerKind.class, names = "MANUAL", mode = EnumSource.Mode.EXCLUDE)
   void happyPathProducesValidSpecResult(RunnerKind kind) throws Exception {
     Scenario s =
         runRealRunner(
@@ -295,10 +292,7 @@ class RealRunnerContractIT {
   @ParameterizedTest(name = "implementationPlan happy-path — {0}")
   // Story 3d-3 — MANUAL launches no container (parks in WaitingForManualExecution), so it is
   // out of scope for the real-image container contract; exclude it from the launch-based cases.
-  @EnumSource(
-      value = RunnerKind.class,
-      names = "MANUAL",
-      mode = EnumSource.Mode.EXCLUDE)
+  @EnumSource(value = RunnerKind.class, names = "MANUAL", mode = EnumSource.Mode.EXCLUDE)
   void happyPathProducesValidImplementationPlanResult(RunnerKind kind) throws Exception {
     Scenario s =
         runRealRunner(kind, RunnerStage.EXECUTION, "Executing", "implementation-plan", null, false);
@@ -316,10 +310,7 @@ class RealRunnerContractIT {
   @ParameterizedTest(name = "prOutput happy-path — {0}")
   // Story 3d-3 — MANUAL launches no container (parks in WaitingForManualExecution), so it is
   // out of scope for the real-image container contract; exclude it from the launch-based cases.
-  @EnumSource(
-      value = RunnerKind.class,
-      names = "MANUAL",
-      mode = EnumSource.Mode.EXCLUDE)
+  @EnumSource(value = RunnerKind.class, names = "MANUAL", mode = EnumSource.Mode.EXCLUDE)
   void happyPathProducesValidPrOutputResult(RunnerKind kind) throws Exception {
     Scenario s = runRealRunner(kind, RunnerStage.EXECUTION, "Executing", "pr-output", null, false);
     assertThat(adapter.recoverHandle(s.rex()))
@@ -340,10 +331,7 @@ class RealRunnerContractIT {
   @ParameterizedTest(name = "crash — {0}")
   // Story 3d-3 — MANUAL launches no container (parks in WaitingForManualExecution), so it is
   // out of scope for the real-image container contract; exclude it from the launch-based cases.
-  @EnumSource(
-      value = RunnerKind.class,
-      names = "MANUAL",
-      mode = EnumSource.Mode.EXCLUDE)
+  @EnumSource(value = RunnerKind.class, names = "MANUAL", mode = EnumSource.Mode.EXCLUDE)
   void simulateCrashLandsRunnerCrash(RunnerKind kind) throws Exception {
     Scenario s = runRealRunner(kind, RunnerStage.EXECUTION, "Executing", null, "crash", false);
     assertThat(adapter.recoverHandle(s.rex()))
@@ -362,10 +350,7 @@ class RealRunnerContractIT {
   @ParameterizedTest(name = "contract_violation — {0}")
   // Story 3d-3 — MANUAL launches no container (parks in WaitingForManualExecution), so it is
   // out of scope for the real-image container contract; exclude it from the launch-based cases.
-  @EnumSource(
-      value = RunnerKind.class,
-      names = "MANUAL",
-      mode = EnumSource.Mode.EXCLUDE)
+  @EnumSource(value = RunnerKind.class, names = "MANUAL", mode = EnumSource.Mode.EXCLUDE)
   void simulateContractViolationLandsRunnerContractViolation(RunnerKind kind) throws Exception {
     Scenario s =
         runRealRunner(kind, RunnerStage.EXECUTION, "Executing", null, "contract_violation", false);
@@ -397,10 +382,7 @@ class RealRunnerContractIT {
   @ParameterizedTest(name = "timeout — {0}")
   // Story 3d-3 — MANUAL launches no container (parks in WaitingForManualExecution), so it is
   // out of scope for the real-image container contract; exclude it from the launch-based cases.
-  @EnumSource(
-      value = RunnerKind.class,
-      names = "MANUAL",
-      mode = EnumSource.Mode.EXCLUDE)
+  @EnumSource(value = RunnerKind.class, names = "MANUAL", mode = EnumSource.Mode.EXCLUDE)
   void simulateTimeoutLandsRunnerTimeoutAndKillsRealImage(RunnerKind kind) throws Exception {
     // Deadline already elapsed (timeoutSecondsFromNow = -5); the real entrypoint is sleeping
     // 86400s.
