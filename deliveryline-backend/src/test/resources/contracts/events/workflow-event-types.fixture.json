@@ -30,6 +30,7 @@
     "clarification.superseded",
     "clarification.rejectedInvalid",
     "clarification.noEffectReason",
-    "linear.completionSyncFailed"
+    "linear.completionSyncFailed",
+    "manual.executionRequested"
   ]
 }

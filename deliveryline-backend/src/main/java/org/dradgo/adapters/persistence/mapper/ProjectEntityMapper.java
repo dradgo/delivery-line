@@ -35,6 +35,9 @@ public class ProjectEntityMapper {
         // read path is symmetric with that semantic and robust to a future bad write / direct SQL.
         blankToNull(entity.getReviewerModelKind()),
         entity.isReviewerGatingEnabled(),
+        // Story 3d-3 (AC1) — nullable per-project runner-kind override (parsed through
+        // RunnerKind.fromValue in the entity getter; null round-trips as null).
+        entity.getRunnerKind(),
         entity.getCreatedAt(),
         entity.getArchivedAt());
   }
@@ -51,6 +54,7 @@ public class ProjectEntityMapper {
     entity.setOpenspecEnabled(project.openspecEnabled());
     entity.setReviewerModelKind(project.reviewerModelKind());
     entity.setReviewerGatingEnabled(project.reviewerGatingEnabled());
+    entity.setRunnerKind(project.runnerKind());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -76,6 +80,9 @@ public class ProjectEntityMapper {
     // Threading it through the update path keeps a read-modify-write round-trip lossless.
     entity.setReviewerModelKind(project.reviewerModelKind());
     entity.setReviewerGatingEnabled(project.reviewerGatingEnabled());
+    // Runner-kind override is editable project config (no REST surface yet in 3d-3; a future story
+    // owns editing). Threading it through update keeps a read-modify-write round-trip lossless.
+    entity.setRunnerKind(project.runnerKind());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }

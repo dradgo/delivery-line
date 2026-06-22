@@ -98,7 +98,8 @@ public class WorkflowOrchestrationService {
           java.util.List.of(
               org.dradgo.domain.registry.RunnerExecutionStatus.QUEUED,
               org.dradgo.domain.registry.RunnerExecutionStatus.PENDING,
-              org.dradgo.domain.registry.RunnerExecutionStatus.RUNNING);
+              org.dradgo.domain.registry.RunnerExecutionStatus.RUNNING,
+              org.dradgo.domain.registry.RunnerExecutionStatus.AWAITING_MANUAL);
 
   /**
    * Review finding P3 — states in which the spec-ready transition has already effectively been
@@ -144,6 +145,11 @@ public class WorkflowOrchestrationService {
   // service no longer depends on RunnerBroker at all, which also fully breaks the former
   // broker↔orchestration constructor coupling (the broker still calls back lazily via a Supplier).
   private final org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue;
+  // Story 3d-3 (AC3/AC6) — the manual-kind park sink. The enqueueDispatch chokepoint resolves the
+  // run's runner kind and, when it is `manual`, routes here instead of runnerExecutionQueue (no
+  // container, no queue row). Injected exactly as runnerExecutionQueue is; no DI cycle (the
+  // dispatcher's broker/transition deps are themselves lazy back-edges).
+  private final org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher;
   private final WorkflowTransitionService workflowTransitionService;
   private final WorkflowRunReadPort workflowRunReadPort;
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
@@ -169,6 +175,7 @@ public class WorkflowOrchestrationService {
 
   public WorkflowOrchestrationService(
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
+      org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
       WorkflowTransitionService workflowTransitionService,
       WorkflowRunReadPort workflowRunReadPort,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
@@ -185,6 +192,8 @@ public class WorkflowOrchestrationService {
       WorkflowEventWritePort workflowEventWritePort) {
     this.runnerExecutionQueue =
         Objects.requireNonNull(runnerExecutionQueue, "runnerExecutionQueue");
+    this.manualExecutionDispatcher =
+        Objects.requireNonNull(manualExecutionDispatcher, "manualExecutionDispatcher");
     this.workflowTransitionService =
         Objects.requireNonNull(workflowTransitionService, "workflowTransitionService");
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
@@ -1038,6 +1047,31 @@ public class WorkflowOrchestrationService {
       org.dradgo.domain.registry.RunnerStage stage,
       String idempotencyKey,
       ActorContext actor) {
+    // Story 3d-3 (AC1/AC3/AC6) — resolve the run's effective runner kind at THIS chokepoint (the
+    // single orchestration enqueue funnel). When it is `manual`, park the run (compose+write the
+    // bundle, record an awaiting_manual row, transition to WaitingForManualExecution) instead of
+    // enqueuing container work — no queue row, no worker slot, no adapter dispatch. A default
+    // (non-overridden) project resolves the global per-stage kind ⇒ the unchanged enqueue path
+    // below
+    // (R7 byte-identical parity).
+    org.dradgo.domain.registry.RunnerKind kind =
+        projectRuntimeConfigResolver.resolveRunnerKind(
+            workflowRunId,
+            stage,
+            stage == RunnerStage.EXECUTION
+                ? contextBundleService.deriveExecutionSubStage(workflowRunId)
+                : null);
+    if (kind == org.dradgo.domain.registry.RunnerKind.MANUAL) {
+      RunnerDispatchResult parked =
+          manualExecutionDispatcher.park(workflowRunId, stage, idempotencyKey, actor);
+      log.info(
+          "enqueueDispatch parked for manual execution workflowRunId={} stage={} runnerExecutionId={} idempotencyKey={}",
+          workflowRunId,
+          stage.value(),
+          parked.handle().runnerExecutionId(),
+          idempotencyKey);
+      return parked;
+    }
     org.dradgo.application.runner.queue.QueuedRunnerExecution queued =
         runnerExecutionQueue.enqueue(
             workflowRunId, stage, idempotencyKey, actor, DEFAULT_QUEUE_PRIORITY);
@@ -1062,6 +1096,15 @@ public class WorkflowOrchestrationService {
     if (result.isReplay()) {
       log.warn(
           "{} replay/in-flight no-op workflowRunId={} runnerExecutionId={} idempotencyKey={}",
+          op,
+          workflowRunId,
+          result.handle().runnerExecutionId(),
+          idempotencyKey);
+    } else if (result.isParked()) {
+      // Story 3d-3 — the run was parked for manual execution (no container/queue). Reporting
+      // "queued" here would misstate the run's progress (it never enqueued).
+      log.info(
+          "{} parked for manual execution workflowRunId={} runnerExecutionId={} idempotencyKey={}",
           op,
           workflowRunId,
           result.handle().runnerExecutionId(),

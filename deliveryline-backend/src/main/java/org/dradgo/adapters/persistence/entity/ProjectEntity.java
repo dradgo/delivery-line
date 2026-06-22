@@ -11,6 +11,7 @@ import java.util.Objects;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 
 /**
  * Story 3c-6 — JPA mapping for the V17 {@code projects} table; the FIRST occupant of project
@@ -74,6 +75,12 @@ public class ProjectEntity {
 
   @Column(name = "reviewer_gating_enabled", nullable = false)
   private boolean reviewerGatingEnabled;
+
+  // Story 3d-3 (AC1) — per-project runner-kind override. Nullable opaque text (NULL = no override);
+  // the V20 CHECK pins a non-null value to the RunnerKind value set, so the getter parses through
+  // RunnerKind.fromValue (fail fast on an unknown DB value, mirroring the status getter).
+  @Column(name = "runner_kind")
+  private String runnerKind;
 
   // Stamped from the domain createdAt at insert (updatable=false: created_at is immutable). NOT
   // insertable=false: Hibernate does not refresh an entity after saveAndFlush, so a DB-defaulted
@@ -167,6 +174,14 @@ public class ProjectEntity {
 
   public void setReviewerGatingEnabled(boolean reviewerGatingEnabled) {
     this.reviewerGatingEnabled = reviewerGatingEnabled;
+  }
+
+  public RunnerKind getRunnerKind() {
+    return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "projects.runner_kind");
+  }
+
+  public void setRunnerKind(RunnerKind runnerKind) {
+    this.runnerKind = runnerKind == null ? null : runnerKind.value();
   }
 
   public OffsetDateTime getCreatedAt() {

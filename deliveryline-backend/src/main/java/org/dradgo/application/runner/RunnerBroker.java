@@ -939,9 +939,12 @@ public class RunnerBroker {
         java.nio.file.Path bundlePath =
             scratchStore.writeContextBundle(runnerExecutionId, composed.bundle().redactedPayload());
         org.dradgo.domain.registry.RunnerKind dispatchKind =
-            stage == RunnerStage.EXECUTION
-                ? runnerProperties.kindForExecutionSubStage(composed.executionSubStage())
-                : runnerProperties.kindForStage(stage);
+            projectRuntimeConfigResolver != null
+                ? projectRuntimeConfigResolver.resolveRunnerKind(
+                    workflowRunId, stage, composed.executionSubStage())
+                : (stage == RunnerStage.EXECUTION
+                    ? runnerProperties.kindForExecutionSubStage(composed.executionSubStage())
+                    : runnerProperties.kindForStage(stage));
         // Story 3b.1 (AC1) — queue/production path: carry composed.executionSubStage() (null for
         // INVESTIGATION) so the adapter selects implementation-plan / pr-output. This is the exact
         // wire field that was wrong on run_ae258… (execution → always prOutput).
@@ -1072,6 +1075,49 @@ public class RunnerBroker {
         project.publicId(),
         openspec);
     return openspec;
+  }
+
+  /**
+   * Story 3d-3 (AC3 / R2) — compose the runner-contracts input bundle for a step parked under the
+   * {@code manual} runner kind and write it to the scratch store, returning the on-disk bundle path
+   * so {@code 3d-4} can serve it. This reuses the exact compose+write the deprecated synchronous
+   * {@code dispatch} body did (clone the workspace, build the redacted bundle, persist it), but
+   * stops BEFORE any adapter/image lookup — a {@code manual} kind never launches a container.
+   *
+   * <p>Runs EAGERLY in the caller's transaction (the dispatcher's {@code @Transactional} / the
+   * submit/approve tx), unlike the worker path's lazy compose — so a clone/compose failure
+   * propagates as a {@link DomainException} and rolls the whole park (row insert + event +
+   * transition) back. One-way edge: {@code ManualExecutionDispatcher → RunnerBroker} (compose
+   * only); the broker never depends back on the dispatcher (R2 — the broker↔orchestration cycle
+   * stays broken).
+   *
+   * @return the path to the written redacted context bundle
+   */
+  public java.nio.file.Path composeAndWriteManualBundle(
+      String workflowRunId,
+      RunnerStage stage,
+      String runnerExecutionId,
+      int contextBundleVersion,
+      ActorContext actor) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Objects.requireNonNull(stage, "stage");
+    Objects.requireNonNull(actor, "actor");
+    ExecutionConstraints constraints =
+        new ExecutionConstraints(runnerProperties.timeoutFor(stage), false);
+    ComposedDispatch composed =
+        composeQueuedBundle(
+            runnerExecutionId, workflowRunId, stage, contextBundleVersion, constraints, actor);
+    java.nio.file.Path bundlePath =
+        scratchStore.writeContextBundle(runnerExecutionId, composed.bundle().redactedPayload());
+    log.info(
+        "composeAndWriteManualBundle wrote bundle workflowRunId={} runnerExecutionId={} stage={} contextBundleVersion={} bundlePath={}",
+        workflowRunId,
+        runnerExecutionId,
+        stage.value(),
+        contextBundleVersion,
+        bundlePath);
+    return bundlePath;
   }
 
   /** Worker-dispatch composition result carried out of {@link #composeQueuedBundle}. */

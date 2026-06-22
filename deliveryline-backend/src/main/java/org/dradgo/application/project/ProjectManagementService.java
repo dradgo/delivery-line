@@ -12,6 +12,7 @@ import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -87,6 +88,7 @@ public class ProjectManagementService {
     ConnectorKind ticketSourceKind =
         ConnectorKind.fromValue(command.ticketSourceKind(), "ticketSourceKind");
     ConnectorKind repoHostKind = ConnectorKind.fromValue(command.repoHostKind(), "repoHostKind");
+    RunnerKind runnerKind = parseRunnerKind(command.runnerKind());
     Project project =
         new Project(
             PublicIdPrefixes.PROJECT.next(),
@@ -100,6 +102,8 @@ public class ProjectManagementService {
             // Story 3d-1 (AC4) — a created project has no reviewer until 3d-2 wires the edit path.
             null,
             false,
+            // Nullable per-project override; null delegates to stage/global runner defaults.
+            runnerKind,
             OffsetDateTime.now(ZoneOffset.UTC),
             null);
     Project created = projectStore.insert(project);
@@ -125,6 +129,7 @@ public class ProjectManagementService {
     ConnectorKind ticketSourceKind =
         ConnectorKind.fromValue(command.ticketSourceKind(), "ticketSourceKind");
     ConnectorKind repoHostKind = ConnectorKind.fromValue(command.repoHostKind(), "repoHostKind");
+    RunnerKind runnerKind = parseRunnerKind(command.runnerKind());
     Project mutated =
         new Project(
             existing.publicId(),
@@ -138,6 +143,8 @@ public class ProjectManagementService {
             // Reviewer binding is not yet editable through this surface (3d-2 owns it); preserve.
             existing.reviewerModelKind(),
             existing.reviewerGatingEnabled(),
+            // The update surface replaces or clears the nullable per-project runner override.
+            runnerKind,
             existing.createdAt(),
             existing.archivedAt());
     Project updated = projectStore.update(mutated);
@@ -188,6 +195,7 @@ public class ProjectManagementService {
             existing.openspecEnabled(),
             existing.reviewerModelKind(),
             existing.reviewerGatingEnabled(),
+            existing.runnerKind(),
             existing.createdAt(),
             existing.archivedAt());
     Project disabled = projectStore.update(mutated);
@@ -220,6 +228,7 @@ public class ProjectManagementService {
             existing.openspecEnabled(),
             existing.reviewerModelKind(),
             existing.reviewerGatingEnabled(),
+            existing.runnerKind(),
             existing.createdAt(),
             existing.archivedAt());
     Project enabled = projectStore.update(mutated);
@@ -259,5 +268,9 @@ public class ProjectManagementService {
     }
     String trimmed = repositoryUrl.trim();
     return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  private static RunnerKind parseRunnerKind(String runnerKind) {
+    return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "runnerKind");
   }
 }

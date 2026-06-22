@@ -12,6 +12,8 @@
     "accept_implementation",
     "reject_implementation",
     "takeover_workflow",
-    "view_runner_logs"
+    "view_runner_logs",
+    "obtain_manual_bundle",
+    "submit_manual_artifact"
   ]
 }

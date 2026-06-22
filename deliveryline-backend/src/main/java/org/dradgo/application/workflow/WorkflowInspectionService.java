@@ -669,6 +669,18 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_RUNNER_LOGS);
         }
         return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
+      case WAITING_FOR_MANUAL_EXECUTION:
+        // Story 3d-3 (AC7 / R6): a run parked for manual execution advertises the bundle-obtain +
+        // artifact-submit actions to the local operator (workflow_owner — the run owner); every
+        // other role gets view_only. The endpoints that honor these land in 3d-4; 3d-3 only
+        // registers + surfaces them so the run already advertises them when 3d-4 wires the routes.
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.OBTAIN_MANUAL_BUNDLE,
+              AllowedAction.SUBMIT_MANUAL_ARTIFACT,
+              AllowedAction.VIEW_ONLY);
+        }
+        return List.of(AllowedAction.VIEW_ONLY);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
       case FAILED:

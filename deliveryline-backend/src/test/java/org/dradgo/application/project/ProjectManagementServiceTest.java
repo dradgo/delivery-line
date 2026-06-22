@@ -15,6 +15,7 @@ import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -36,6 +37,7 @@ class ProjectManagementServiceTest {
         false,
         null,
         false,
+        null,
         OffsetDateTime.parse("2026-06-21T00:00:00Z"),
         null);
   }
@@ -77,6 +79,31 @@ class ProjectManagementServiceTest {
     ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
     verify(store).insert(captor.capture());
     assertThat(captor.getValue().repositoryUrl()).isNull();
+  }
+
+  @Test
+  void createProjectParsesRunnerKindOverride() {
+    when(store.insert(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    Project created =
+        service.createProject(
+            new CreateProjectCommand(
+                "Acme", "acme", null, "linear", "github", false, "manual", null, "alex"));
+
+    assertThat(created.runnerKind()).isEqualTo(RunnerKind.MANUAL);
+  }
+
+  @Test
+  void createProjectRejectsUnknownRunnerKind() {
+    assertThatThrownBy(
+            () ->
+                service.createProject(
+                    new CreateProjectCommand(
+                        "Acme", "acme", null, "linear", "github", false, "bogus", null, "alex")))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.UNKNOWN_REGISTRY_VALUE);
+    verify(store, never()).insert(any());
   }
 
   @Test
@@ -140,6 +167,20 @@ class ProjectManagementServiceTest {
     assertThat(mutated.ticketSourceKind()).isEqualTo(ConnectorKind.GITHUB);
     assertThat(mutated.repoHostKind()).isEqualTo(ConnectorKind.LINEAR);
     assertThat(mutated.openspecEnabled()).isTrue();
+  }
+
+  @Test
+  void updateProjectChangesRunnerKindOverride() {
+    Project existing = project("prj_acme0001", "acme", ProjectStatus.ACTIVE);
+    when(store.findByPublicId("prj_acme0001")).thenReturn(Optional.of(existing));
+    when(store.update(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    Project updated =
+        service.updateProject(
+            "prj_acme0001",
+            new UpdateProjectCommand("Acme", null, "linear", "github", false, "claude", "alex"));
+
+    assertThat(updated.runnerKind()).isEqualTo(RunnerKind.CLAUDE);
   }
 
   @Test

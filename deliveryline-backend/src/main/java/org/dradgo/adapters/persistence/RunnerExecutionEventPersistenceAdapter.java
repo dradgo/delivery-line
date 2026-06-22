@@ -41,7 +41,10 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
           WorkflowEventType.RUNNER_ORPHANED,
           WorkflowEventType.RUNNER_COMPLETED,
           // Story 3.17a — RunnerExecutionQueue.enqueue appends runner.queued through this port.
-          WorkflowEventType.RUNNER_QUEUED);
+          WorkflowEventType.RUNNER_QUEUED,
+          // Story 3d-3 — ManualExecutionDispatcher.park appends manual.executionRequested through
+          // this port when a step is parked under the `manual` runner kind.
+          WorkflowEventType.MANUAL_EXECUTION_REQUESTED);
 
   private final WorkflowEventWritePort workflowEventWritePort;
 

@@ -95,6 +95,8 @@ class RecoveryLoggingContractTest {
             artifactOperationPort,
             workflowCommandService,
             runnerExecutionQueue,
+            mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class),
+            mock(org.dradgo.application.runner.ManualExecutionDispatcher.class),
             eventWritePort,
             recoveryRecordPort,
             new IdempotencyKeyValidator(),

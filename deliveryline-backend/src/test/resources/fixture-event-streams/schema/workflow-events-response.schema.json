@@ -37,6 +37,7 @@
             "WaitingForSpecApproval",
             "Executing",
             "WaitingForReview",
+            "WaitingForManualExecution",
             "Completed",
             "Failed",
             "Paused",
@@ -63,6 +64,7 @@
         "WaitingForSpecApproval",
         "Executing",
         "WaitingForReview",
+        "WaitingForManualExecution",
         "Completed",
         "Failed",
         "Paused",
@@ -119,7 +121,8 @@
         "clarification.superseded",
         "clarification.rejectedInvalid",
         "clarification.noEffectReason",
-        "linear.completionSyncFailed"
+        "linear.completionSyncFailed",
+        "manual.executionRequested"
       ]
     },
     "artifactVariant": {

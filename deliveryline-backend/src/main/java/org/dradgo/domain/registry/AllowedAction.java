@@ -21,7 +21,13 @@ public enum AllowedAction implements RegistryValue {
   // logs). Role-agnostic: offered in every state where a runner execution exists (EXECUTING,
   // FAILED, PAUSED, WAITING_FOR_REVIEW). The stream endpoint resolves the latest rex and returns a
   // graceful "no-runner-execution" end when none exists, so broad state coverage is safe.
-  VIEW_RUNNER_LOGS("view_runner_logs");
+  VIEW_RUNNER_LOGS("view_runner_logs"),
+  // Story 3d-3 (AC7, ADR 0024) — actions a WaitingForManualExecution run advertises so the local
+  // operator can obtain the emitted input bundle and submit the hand-run artifact. Registered +
+  // surfaced in the action matrix here (gated to workflow_owner; other roles view_only); the
+  // endpoints that honor them (GET …/manual-bundle, POST …/manual-artifact) land in story 3d-4.
+  OBTAIN_MANUAL_BUNDLE("obtain_manual_bundle"),
+  SUBMIT_MANUAL_ARTIFACT("submit_manual_artifact");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

@@ -91,10 +91,10 @@ class RunnerApplicationSeamContractTest {
 
     Class<?>[] dispatchPermitted = dispatchResult.getPermittedSubclasses();
     assertEquals(
-        3,
+        4,
         dispatchPermitted.length,
-        "Dispatched + Replayed + Queued (story 3.17b) are the only permitted RunnerDispatchResult"
-            + " subtypes");
+        "Dispatched + Replayed + Queued (story 3.17b) + Parked (story 3d-3) are the only permitted"
+            + " RunnerDispatchResult subtypes");
   }
 
   private boolean hasSpringStereotype(Class<?> type) {

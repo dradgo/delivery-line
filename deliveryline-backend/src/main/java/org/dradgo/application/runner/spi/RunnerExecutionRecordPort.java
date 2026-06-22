@@ -75,6 +75,40 @@ public interface RunnerExecutionRecordPort {
       String actorType);
 
   /**
+   * Story 3d-3 (AC5) — insert a new {@code awaiting_manual} row for a step dispatched under the
+   * {@code manual} runner kind (parked, not enqueued). Must be called inside an active transaction;
+   * the row is inserted with {@code status = awaiting_manual}, {@code last_activity_at = now()},
+   * the supplied bundle version, and NO container/lease/worker/queue columns. {@code completed_at}
+   * stays null (the status is NON-TERMINAL — it must stay out of {@code
+   * ck_runner_executions_completed_correlation}). {@code timeout_at} is set to {@code
+   * last_activity_at} (a parked run has no real timeout — ADR 0024; the sentinel only satisfies
+   * {@code ck_runner_executions_timeout_after_activity}). Returns the inserted {@link
+   * RunnerExecutionSnapshot}. On 3d-4 submission the row finalizes to {@code completed}.
+   */
+  RunnerExecutionSnapshot insertAwaitingManual(
+      String publicId, String workflowRunPublicId, RunnerStage stage, int contextBundleVersion);
+
+  default RunnerExecutionSnapshot insertAwaitingManual(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      int contextBundleVersion,
+      String idempotencyKey) {
+    return insertAwaitingManual(publicId, workflowRunPublicId, stage, contextBundleVersion);
+  }
+
+  /** Allocates the context-bundle version while holding the workflow-run lock, then inserts. */
+  default RunnerExecutionSnapshot insertAwaitingManualAllocated(
+      String publicId, String workflowRunPublicId, RunnerStage stage, String idempotencyKey) {
+    return insertAwaitingManual(
+        publicId,
+        workflowRunPublicId,
+        stage,
+        nextContextBundleVersion(workflowRunPublicId, stage),
+        idempotencyKey);
+  }
+
+  /**
    * Story 3.17a (AC4) — count the rows currently in {@code status = queued}. Backs the
    * RunnerExecutionQueue backpressure cap; called under the enqueue write transaction so the count
    * reflects rows committed (or inserted-and-pending) at decision time.

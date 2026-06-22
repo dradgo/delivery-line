@@ -126,6 +126,7 @@ class WorkflowCommandServiceCreateBindingTest {
             true,
             null,
             false,
+            null,
             OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectStore.findBySlug("acme")).thenReturn(Optional.of(acme));
@@ -158,6 +159,7 @@ class WorkflowCommandServiceCreateBindingTest {
             true,
             null,
             false,
+            null,
             OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectStore.findByPublicId("prj_acme0001")).thenReturn(Optional.of(acme));
@@ -214,6 +216,7 @@ class WorkflowCommandServiceCreateBindingTest {
         false,
         null,
         false,
+        null,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);
   }

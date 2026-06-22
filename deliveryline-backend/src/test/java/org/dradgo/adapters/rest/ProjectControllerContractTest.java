@@ -24,6 +24,7 @@ import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
+import org.dradgo.application.project.CreateProjectCommand;
 import org.dradgo.application.project.ProjectConnectivityService;
 import org.dradgo.application.project.ProjectConnectivityService.CheckResult;
 import org.dradgo.application.project.ProjectConnectivityService.CheckStatus;
@@ -38,6 +39,7 @@ import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,6 +81,7 @@ class ProjectControllerContractTest {
         false,
         null,
         false,
+        null,
         OffsetDateTime.parse("2026-06-21T00:00:00Z"),
         null);
   }
@@ -126,6 +129,43 @@ class ProjectControllerContractTest {
         .andExpect(jsonPath("$.credentials[1].role").value("repo_host"))
         .andExpect(jsonPath("$.credentials[1].status").value("not_configured"))
         .andExpect(jsonPath("$.secret").doesNotExist());
+  }
+
+  @Test
+  void createProjectThreadsRunnerKindAndReturnsIt() throws Exception {
+    Project manualProject =
+        new Project(
+            PROJECT_ID,
+            "Acme Widgets",
+            "acme-widgets",
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            null,
+            false,
+            RunnerKind.MANUAL,
+            OffsetDateTime.parse("2026-06-21T00:00:00Z"),
+            null);
+    when(projectManagementService.createProject(any())).thenReturn(manualProject);
+    when(projectCredentialService.isConfigured(anyString(), any())).thenReturn(false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/projects")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
+                        + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
+                        + "\"openspecEnabled\":false,\"runnerKind\":\"manual\"}"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.runnerKind").value("manual"));
+
+    org.mockito.ArgumentCaptor<CreateProjectCommand> command =
+        org.mockito.ArgumentCaptor.forClass(CreateProjectCommand.class);
+    verify(projectManagementService).createProject(command.capture());
+    org.assertj.core.api.Assertions.assertThat(command.getValue().runnerKind()).isEqualTo("manual");
   }
 
   @Test

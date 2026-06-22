@@ -18,5 +18,27 @@ public record CreateProjectCommand(
     String ticketSourceKind,
     String repoHostKind,
     boolean openspecEnabled,
+    String runnerKind,
     String idempotencyKey,
-    String actorIdentity) {}
+    String actorIdentity) {
+  public CreateProjectCommand(
+      String name,
+      String slug,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String idempotencyKey,
+      String actorIdentity) {
+    this(
+        name,
+        slug,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        null,
+        idempotencyKey,
+        actorIdentity);
+  }
+}

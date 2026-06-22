@@ -2,10 +2,13 @@ package org.dradgo.application.project;
 
 import java.util.Objects;
 import java.util.Optional;
+import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RunnerKind;
+import org.dradgo.domain.registry.RunnerStage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -36,9 +39,16 @@ public class ProjectRuntimeConfigResolver {
   private static final Logger log = LoggerFactory.getLogger(ProjectRuntimeConfigResolver.class);
 
   private final ProjectStore projectStore;
+  // Story 3d-3 (AC1) — the global per-stage runner-kind fallback. RunnerProperties is a
+  // @ConfigurationProperties record (not an adapter), so injecting it here keeps the
+  // application.project → application.runner edge inside the application layer (no ArchUnit
+  // breach).
+  private final RunnerProperties runnerProperties;
 
-  public ProjectRuntimeConfigResolver(ProjectStore projectStore) {
+  public ProjectRuntimeConfigResolver(
+      ProjectStore projectStore, RunnerProperties runnerProperties) {
     this.projectStore = Objects.requireNonNull(projectStore, "projectStore");
+    this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
   }
 
   /**
@@ -96,5 +106,49 @@ public class ProjectRuntimeConfigResolver {
    */
   public boolean resolveOpenSpecEnabled(String workflowRunId) {
     return resolveForRun(workflowRunId).openspecEnabled();
+  }
+
+  /**
+   * Story 3d-3 (AC1) — the effective runner kind for a run at {@code stage}: the resolved project's
+   * per-project {@code runnerKind} override when present, else the existing global per-stage kind
+   * ({@link RunnerProperties#kindForStage}). The {@code default} project seeds a null override, so
+   * a single-project deployment is byte-identical to pre-3d (always the global per-stage kind —
+   * never {@code MANUAL}, so it always takes the normal enqueue path; R7 parity).
+   *
+   * <p>The override is a SINGLE per-project value applied across stages (R1 / Open Decision #1) —
+   * per-stage-per-project granularity is deferred. So a non-null override returns the same kind for
+   * every stage; only the global fallback is stage-sensitive.
+   */
+  public RunnerKind resolveRunnerKind(String workflowRunId, RunnerStage stage) {
+    return resolveRunnerKind(workflowRunId, stage, null);
+  }
+
+  public RunnerKind resolveRunnerKind(
+      String workflowRunId,
+      RunnerStage stage,
+      org.dradgo.application.runner.ExecutionSubStage executionSubStage) {
+    Objects.requireNonNull(stage, "stage");
+    Project project = resolveForRun(workflowRunId);
+    RunnerKind override = project.runnerKind();
+    if (override != null) {
+      log.debug(
+          "resolveRunnerKind workflowRunId={} projectId={} stage={} kind={} source=project_override",
+          workflowRunId,
+          project.publicId(),
+          stage.value(),
+          override.value());
+      return override;
+    }
+    RunnerKind global =
+        stage == RunnerStage.EXECUTION && executionSubStage != null
+            ? runnerProperties.kindForExecutionSubStage(executionSubStage)
+            : runnerProperties.kindForStage(stage);
+    log.debug(
+        "resolveRunnerKind workflowRunId={} projectId={} stage={} kind={} source=global",
+        workflowRunId,
+        project.publicId(),
+        stage.value(),
+        global.value());
+    return global;
   }
 }

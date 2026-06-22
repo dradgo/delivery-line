@@ -55,6 +55,9 @@ public final class WorkflowTransitionTable {
         rules,
         WorkflowState.INVESTIGATING,
         WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+        // Story 3d-3 (AC2 / R4) — the spec-stage dispatching state parks here when the run's
+        // resolved runner kind is `manual` (no container launched).
+        WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
         WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
@@ -69,6 +72,9 @@ public final class WorkflowTransitionTable {
         rules,
         WorkflowState.EXECUTING,
         WorkflowState.WAITING_FOR_REVIEW,
+        // Story 3d-3 (AC2 / R4) — the execution-stage (plan + pr-output) dispatching state parks
+        // here when the run's resolved runner kind is `manual`.
+        WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
         WorkflowState.FAILED,
         WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
@@ -78,6 +84,19 @@ public final class WorkflowTransitionTable {
         WorkflowState.WAITING_FOR_REVIEW,
         WorkflowState.COMPLETED,
         WorkflowState.EXECUTING,
+        WorkflowState.TAKEN_OVER,
+        WorkflowState.RECONCILED);
+    // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4 picks
+    // the stage-appropriate target: spec → WaitingForSpecApproval, execution → WaitingForReview) or
+    // a recovery/safety edge (Failed / TakenOver / Reconciled). A parked run has no timeout/
+    // auto-progress (ADR 0024 Consequences), so the recovery edges keep it from ever wedging. 3d-3
+    // declares all OUT edges (additive); 3d-4 triggers the submission ones.
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+        WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+        WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.COMPLETED);

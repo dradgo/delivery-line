@@ -16,6 +16,9 @@ public interface RunnerScratchStore {
 
   Path writeContextBundle(String runnerExecutionId, byte[] redactedBytes);
 
+  /** Best-effort removal used to compensate a failed manual park or cancel it on takeover. */
+  void deleteContextBundle(String runnerExecutionId);
+
   Path writeRunnerResult(String runnerExecutionId, byte[] payloadBytes);
 
   Optional<byte[]> tryReadRunnerResult(String runnerExecutionId);

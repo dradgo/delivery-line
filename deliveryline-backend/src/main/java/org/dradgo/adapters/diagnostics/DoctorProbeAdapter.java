@@ -746,6 +746,13 @@ public class DoctorProbeAdapter implements DoctorProbePort {
     Map<String, String> details = new LinkedHashMap<>();
     List<String> missingKinds = new java.util.ArrayList<>();
     for (RunnerKind kind : RunnerKind.values()) {
+      // Story 3d-3 — the `manual` kind launches no agent container; the operator runs the agent by
+      // hand with their own auth, so DeliveryLine holds NO provider secret for it. Excluded from
+      // the
+      // per-kind secret-presence check (it would always report "missing" and fail the probe).
+      if (kind == RunnerKind.MANUAL) {
+        continue;
+      }
       boolean present = false;
       for (String name : runnerProperties.secretEnvNamesFor(kind)) {
         String value = environment.getProperty(name);

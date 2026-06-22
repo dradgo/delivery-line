@@ -31,6 +31,7 @@ class ProjectTest {
         false,
         null,
         false,
+        null,
         CREATED_AT,
         null);
   }
@@ -80,6 +81,7 @@ class ProjectTest {
             false,
             "claude",
             true,
+            null,
             CREATED_AT,
             null);
     assertEquals("claude", bound.reviewerModelKind());
@@ -103,6 +105,7 @@ class ProjectTest {
                 false,
                 "  ",
                 false,
+                null,
                 CREATED_AT,
                 null));
   }
@@ -152,6 +155,7 @@ class ProjectTest {
                 false,
                 null,
                 false,
+                null,
                 CREATED_AT,
                 null));
   }
@@ -172,6 +176,7 @@ class ProjectTest {
                 false,
                 null,
                 false,
+                null,
                 null,
                 null));
   }

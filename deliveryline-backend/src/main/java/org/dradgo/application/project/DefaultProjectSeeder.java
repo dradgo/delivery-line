@@ -144,6 +144,10 @@ public class DefaultProjectSeeder {
             // Story 3d-1 (AC4) — the seeded default has no reviewer (null kind, gating off).
             null,
             false,
+            // Story 3d-3 (AC1/R7) — no per-project runner-kind override: the default project uses
+            // the global per-stage RunnerProperties kind, so a single-project deployment is
+            // byte-identical to pre-3d (never parks, never emits manual.executionRequested).
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null);
     try {

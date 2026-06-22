@@ -133,6 +133,7 @@ public class ProjectController {
             request.ticketSourceKind(),
             request.repoHostKind(),
             request.openspecEnabled(),
+            request.runnerKind(),
             idempotencyKey,
             actorIdentity);
     log.info(
@@ -232,6 +233,7 @@ public class ProjectController {
             request.ticketSourceKind(),
             request.repoHostKind(),
             request.openspecEnabled(),
+            request.runnerKind(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
   }
@@ -453,7 +455,8 @@ public class ProjectController {
             nullSafe(command.repositoryUrl()),
             nullSafe(command.ticketSourceKind()),
             nullSafe(command.repoHostKind()),
-            Boolean.toString(command.openspecEnabled()));
+            Boolean.toString(command.openspecEnabled()),
+            nullSafe(command.runnerKind()));
     return sha256Hex(canonical);
   }
 

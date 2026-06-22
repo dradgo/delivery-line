@@ -158,6 +158,23 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS)),
+        // Story 3d-3 (AC7) — a WaitingForManualExecution run offers the bundle-obtain + artifact-
+        // submit actions to the local operator (workflow_owner); every other role gets view_only.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            "workflow_owner",
+            List.of(
+                AllowedAction.OBTAIN_MANUAL_BUNDLE,
+                AllowedAction.SUBMIT_MANUAL_ARTIFACT,
+                AllowedAction.VIEW_ONLY)),
+        Arguments.of(
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            "product_reviewer",
+            List.of(AllowedAction.VIEW_ONLY)),
+        Arguments.of(
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            "developer",
+            List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(WorkflowState.COMPLETED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(WorkflowState.COMPLETED, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(

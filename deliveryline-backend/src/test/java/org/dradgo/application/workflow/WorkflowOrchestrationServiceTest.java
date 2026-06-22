@@ -45,6 +45,7 @@ class WorkflowOrchestrationServiceTest {
   private static final String REX_ID = "rex_orch12345678";
 
   private RunnerExecutionQueue runnerExecutionQueue;
+  private org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher;
   private WorkflowTransitionService transitionService;
   private WorkflowRunReadPort readPort;
   private org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort;
@@ -66,6 +67,7 @@ class WorkflowOrchestrationServiceTest {
   @SuppressWarnings("unchecked")
   void setUp() {
     runnerExecutionQueue = mock(RunnerExecutionQueue.class);
+    manualExecutionDispatcher = mock(org.dradgo.application.runner.ManualExecutionDispatcher.class);
     transitionService = mock(WorkflowTransitionService.class);
     readPort = mock(WorkflowRunReadPort.class);
     recordPort = mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
@@ -86,6 +88,7 @@ class WorkflowOrchestrationServiceTest {
             false,
             null,
             false,
+            null,
             java.time.OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectRuntimeConfigResolver.resolveForRun(org.mockito.ArgumentMatchers.any()))
@@ -165,6 +168,7 @@ class WorkflowOrchestrationServiceTest {
             100);
     return new WorkflowOrchestrationService(
         runnerExecutionQueue,
+        manualExecutionDispatcher,
         transitionService,
         readPort,
         recordPort,
@@ -573,6 +577,54 @@ class WorkflowOrchestrationServiceTest {
     org.junit.jupiter.api.Assertions.assertEquals("corr-i", actor.getValue().correlationId());
     assertLoggedAt(Level.INFO, "dispatchImplementation entry");
     assertLoggedAt(Level.INFO, "dispatchImplementation queued");
+  }
+
+  @Test
+  void dispatchImplementationParksWhenPrOutputRunnerKindIsManual() {
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(2);
+    when(projectRuntimeConfigResolver.resolveRunnerKind(
+            RUN_ID, RunnerStage.EXECUTION, ExecutionSubStage.PR_OUTPUT))
+        .thenReturn(org.dradgo.domain.registry.RunnerKind.MANUAL);
+    RunnerDispatchResult.Parked parked =
+        new RunnerDispatchResult.Parked(
+            new org.dradgo.application.runner.RunnerExecutionHandle(
+                REX_ID,
+                RUN_ID,
+                RunnerStage.EXECUTION,
+                RunnerExecutionStatus.AWAITING_MANUAL,
+                OffsetDateTime.now()),
+            "evt_manual0001");
+    when(manualExecutionDispatcher.park(eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any()))
+        .thenReturn(parked);
+
+    RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
+
+    assertSame(parked, result);
+    verify(manualExecutionDispatcher)
+        .park(
+            eq(RUN_ID),
+            eq(RunnerStage.EXECUTION),
+            eq("pr-output-dispatch:" + RUN_ID + ":2"),
+            any());
+    verifyNoInteractions(runnerExecutionQueue);
+  }
+
+  @Test
+  void awaitingManualExecutionIsTreatedAsInFlight() {
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
+        .thenReturn(java.util.List.of(executionSnapshot(RunnerExecutionStatus.AWAITING_MANUAL)));
+
+    RunnerDispatchResult result = service(true).dispatchImplementation(RUN_ID, "corr-i");
+
+    assertTrue(result.isReplay());
+    assertSame(RunnerExecutionStatus.AWAITING_MANUAL, result.handle().status());
+    verifyNoInteractions(runnerExecutionQueue, manualExecutionDispatcher);
   }
 
   @Test

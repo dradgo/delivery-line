@@ -39,7 +39,12 @@ public enum WorkflowEventType implements RegistryValue {
   // failure category rides the `failureCategory` detail key (the event record's typed
   // failureCategory field is runner-scoped FailureCategory, so the integration-scoped category is
   // carried as a detail, mirroring INTEGRATION_LINKED).
-  LINEAR_COMPLETION_SYNC_FAILED("linear.completionSyncFailed");
+  LINEAR_COMPLETION_SYNC_FAILED("linear.completionSyncFailed"),
+  // Story 3d-3 (AC4, ADR 0024 D3) — appended when a step dispatched under the `manual` runner kind
+  // is parked in WaitingForManualExecution (no container launched, no queue row). Carries the
+  // existing allow-listed detail keys runnerExecutionId / workflowRunId / runnerKind (= "manual").
+  // The submission-side `manual.artifactSubmitted` event belongs to story 3d-4, NOT here.
+  MANUAL_EXECUTION_REQUESTED("manual.executionRequested");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

@@ -602,6 +602,8 @@ class RealRunnerContractIT {
         switch (kind) {
           case CODEX -> CODEX_IMAGE;
           case CLAUDE -> CLAUDE_IMAGE;
+          case MANUAL ->
+              throw new IllegalArgumentException("MANUAL runner kind launches no container image");
         };
     boolean isTimeout = "timeout".equals(simulateMode);
 

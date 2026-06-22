@@ -48,4 +48,23 @@ class AllowedActionRegistryPinTest {
     // rename (lockstep with allowed-actions.placeholder.json + RegistryContractTest).
     assertThat(AllowedAction.TAKEOVER_WORKFLOW.value()).isEqualTo("takeover_workflow");
   }
+
+  @Test
+  void obtainManualBundleWireValueIsPinned() {
+    // Story 3d-3 AC7 — surfaced in the WAITING_FOR_MANUAL_EXECUTION matrix branch for
+    // workflow_owner;
+    // honored by the GET …/manual-bundle endpoint in 3d-4. Guard against a silent rename (lockstep
+    // with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.OBTAIN_MANUAL_BUNDLE.value()).isEqualTo("obtain_manual_bundle");
+  }
+
+  @Test
+  void submitManualArtifactWireValueIsPinned() {
+    // Story 3d-3 AC7 — surfaced in the WAITING_FOR_MANUAL_EXECUTION matrix branch for
+    // workflow_owner;
+    // honored by the POST …/manual-artifact endpoint in 3d-4. Guard against a silent rename
+    // (lockstep
+    // with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.SUBMIT_MANUAL_ARTIFACT.value()).isEqualTo("submit_manual_artifact");
+  }
 }

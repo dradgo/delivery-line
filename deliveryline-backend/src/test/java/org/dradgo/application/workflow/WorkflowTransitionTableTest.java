@@ -26,6 +26,8 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             WorkflowState.EXECUTING,
             WorkflowState.WAITING_FOR_REVIEW,
+            // Story 3d-3 — manual-execution park state.
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
             WorkflowState.PAUSED,
@@ -46,10 +48,12 @@ class WorkflowTransitionTableTest {
         WorkflowState.PLANNED,
         Set.of(WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
     // Story 3a-1: INVESTIGATING gains a FAILED edge (spec-stage runner failures, AC4/AC8).
+    // Story 3d-3: INVESTIGATING gains a WAITING_FOR_MANUAL_EXECUTION edge (spec-stage manual park).
     expectedTargets.put(
         WorkflowState.INVESTIGATING,
         Set.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             WorkflowState.FAILED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
@@ -60,10 +64,13 @@ class WorkflowTransitionTableTest {
             WorkflowState.INVESTIGATING,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
+    // Story 3d-3: EXECUTING gains a WAITING_FOR_MANUAL_EXECUTION edge (execution-stage manual
+    // park).
     expectedTargets.put(
         WorkflowState.EXECUTING,
         Set.of(
             WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             WorkflowState.FAILED,
             WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
@@ -73,6 +80,16 @@ class WorkflowTransitionTableTest {
         Set.of(
             WorkflowState.COMPLETED,
             WorkflowState.EXECUTING,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
+    // Story 3d-3: a parked manual run leaves only on operator submission (spec → SpecApproval,
+    // execution → Review) or a recovery/safety edge (Failed / TakenOver / Reconciled).
+    expectedTargets.put(
+        WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+        Set.of(
+            WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.FAILED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.COMPLETED, Set.of());

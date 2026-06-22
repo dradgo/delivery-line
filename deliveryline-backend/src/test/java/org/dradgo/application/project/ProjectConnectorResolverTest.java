@@ -375,6 +375,7 @@ class ProjectConnectorResolverTest {
         false,
         null,
         false,
+        null,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);
   }
@@ -391,6 +392,7 @@ class ProjectConnectorResolverTest {
         false,
         null,
         false,
+        null,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);
   }

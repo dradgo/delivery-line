@@ -19,6 +19,7 @@ import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
 import org.dradgo.application.runner.spi.RunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerTakeoverCancellation;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
@@ -91,7 +92,8 @@ public class DeveloperTakeoverService {
       List.of(
           RunnerExecutionStatus.QUEUED,
           RunnerExecutionStatus.PENDING,
-          RunnerExecutionStatus.RUNNING);
+          RunnerExecutionStatus.RUNNING,
+          RunnerExecutionStatus.AWAITING_MANUAL);
 
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
@@ -105,6 +107,7 @@ public class DeveloperTakeoverService {
   // otherwise). Reached via the application port, never the adapter
   // (application-cannot-import-adapters).
   private final RunnerAdapter runnerAdapter;
+  private final RunnerScratchStore runnerScratchStore;
   private final Clock clock;
   private final TransactionTemplate takeoverPrepTransactionTemplate;
   private final TransactionTemplate resultStatusTransactionTemplate;
@@ -119,6 +122,7 @@ public class DeveloperTakeoverService {
       IdempotencyKeyValidator idempotencyKeyValidator,
       IntegrationLinkService integrationLinkService,
       RunnerAdapter runnerAdapter,
+      RunnerScratchStore runnerScratchStore,
       PlatformTransactionManager transactionManager) {
     this(
         workflowRunReadPort,
@@ -129,6 +133,7 @@ public class DeveloperTakeoverService {
         idempotencyKeyValidator,
         integrationLinkService,
         runnerAdapter,
+        runnerScratchStore,
         Clock.systemUTC(),
         requiresNewTemplate(transactionManager),
         requiresNewTemplate(transactionManager));
@@ -143,6 +148,7 @@ public class DeveloperTakeoverService {
       IdempotencyKeyValidator idempotencyKeyValidator,
       IntegrationLinkService integrationLinkService,
       RunnerAdapter runnerAdapter,
+      RunnerScratchStore runnerScratchStore,
       Clock clock,
       TransactionTemplate takeoverPrepTransactionTemplate,
       TransactionTemplate resultStatusTransactionTemplate) {
@@ -160,6 +166,7 @@ public class DeveloperTakeoverService {
     this.integrationLinkService =
         Objects.requireNonNull(integrationLinkService, "integrationLinkService");
     this.runnerAdapter = Objects.requireNonNull(runnerAdapter, "runnerAdapter");
+    this.runnerScratchStore = Objects.requireNonNull(runnerScratchStore, "runnerScratchStore");
     this.clock = Objects.requireNonNull(clock, "clock");
     this.takeoverPrepTransactionTemplate =
         Objects.requireNonNull(takeoverPrepTransactionTemplate, "takeoverPrepTransactionTemplate");
@@ -275,6 +282,17 @@ public class DeveloperTakeoverService {
                 cancelError.getClass().getSimpleName());
           }
         }
+        for (String manualRexId : prep.manualRunnerExecutionIds) {
+          try {
+            runnerScratchStore.deleteContextBundle(manualRexId);
+          } catch (RuntimeException cleanupError) {
+            log.warn(
+                "developer takeover best-effort manual-bundle cleanup failed workflowRunId={} runnerExecutionId={} cause={}",
+                workflowRunId,
+                manualRexId,
+                cleanupError.toString());
+          }
+        }
 
         // Step 4 — flip the recovery_actions row to succeeded in a fresh REQUIRES_NEW tx. Leaving
         // it `pending` while reporting success would lie about audit terminality (mirror retry
@@ -367,6 +385,7 @@ public class DeveloperTakeoverService {
             workflowRunId, CANCEL_SCAN_STATUSES);
     OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
     List<String> runningRunnerExecutionIds = new ArrayList<>();
+    List<String> manualRunnerExecutionIds = new ArrayList<>();
     int cancelledQueuedCount = 0;
     int cancelledInFlightCount = 0;
     for (RunnerExecutionSnapshot row : dispatchable) {
@@ -392,6 +411,8 @@ public class DeveloperTakeoverService {
       }
       if (from == RunnerExecutionStatus.RUNNING) {
         runningRunnerExecutionIds.add(row.publicId());
+      } else if (from == RunnerExecutionStatus.AWAITING_MANUAL) {
+        manualRunnerExecutionIds.add(row.publicId());
       }
     }
 
@@ -423,6 +444,7 @@ public class DeveloperTakeoverService {
         resultingEventPublicId,
         txResult.currentState(),
         runningRunnerExecutionIds,
+        manualRunnerExecutionIds,
         cancelledInFlightCount,
         cancelledQueuedCount,
         preservedPrReference);
@@ -597,6 +619,7 @@ public class DeveloperTakeoverService {
       String resultingEventPublicId,
       WorkflowState resultingState,
       List<String> runningRunnerExecutionIds,
+      List<String> manualRunnerExecutionIds,
       int cancelledInFlightCount,
       int cancelledQueuedCount,
       String preservedPrReference) {}

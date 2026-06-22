@@ -14,7 +14,15 @@ import java.util.Map;
  */
 public enum RunnerKind implements RegistryValue {
   CODEX("codex"),
-  CLAUDE("claude");
+  CLAUDE("claude"),
+  // Story 3d-3 (AC1, ADR 0024) — the `manual` kind is a new PRODUCER, not a new runner-contracts
+  // schema: instead of launching a container the dispatch chokepoint composes the same input bundle
+  // and parks the run in WaitingForManualExecution for an operator to run the agent by hand. It
+  // must
+  // NEVER reach the Docker image lookup ({@code RunnerProperties.Docker.imageTagFor}) — the park
+  // path returns before any adapter/image resolution. Selectable per project via the nullable
+  // {@code Project.runnerKind} override (else the global per-stage kind applies).
+  MANUAL("manual");
 
   private static final Map<String, RunnerKind> LOOKUP = RegistryParsers.index(values());
 

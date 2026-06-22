@@ -70,6 +70,7 @@ class RecoveryServiceUnitTest {
   private ArtifactOperationPort artifactOperationPort;
   private WorkflowCommandService workflowCommandService;
   private RunnerExecutionQueue runnerExecutionQueue;
+  private org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
   private IdempotencyKeyValidator idempotencyKeyValidator;
@@ -83,6 +84,8 @@ class RecoveryServiceUnitTest {
     artifactOperationPort = mock(ArtifactOperationPort.class);
     workflowCommandService = mock(WorkflowCommandService.class);
     runnerExecutionQueue = mock(RunnerExecutionQueue.class);
+    projectRuntimeConfigResolver =
+        mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     idempotencyKeyValidator = new IdempotencyKeyValidator();
@@ -94,6 +97,8 @@ class RecoveryServiceUnitTest {
             artifactOperationPort,
             workflowCommandService,
             runnerExecutionQueue,
+            projectRuntimeConfigResolver,
+            mock(org.dradgo.application.runner.ManualExecutionDispatcher.class),
             eventWritePort,
             recoveryRecordPort,
             idempotencyKeyValidator,
@@ -666,6 +671,27 @@ class RecoveryServiceUnitTest {
     assertTrue(error.getMessage().contains("broker network failure"));
     verify(recoveryRecordPort, times(1)).markFailed(IDEMPOTENCY_KEY);
     verify(recoveryRecordPort, never()).markSucceeded(any());
+  }
+
+  @Test
+  void retryRunnerKindResolutionFailureIsCompensated() {
+    stubFailedRun();
+    stubFailureEventPresent();
+    stubLastFailedRunner(RunnerStage.INVESTIGATION);
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(recoveryActionSnapshot("rcv_recov-kind1", "pending"));
+    when(projectRuntimeConfigResolver.resolveRunnerKind(RUN, RunnerStage.INVESTIGATION))
+        .thenThrow(new IllegalStateException("project config unavailable"));
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> service.retry(RUN, IDEMPOTENCY_KEY, actor(), null));
+
+    assertTrue(error.getMessage().contains("project config unavailable"));
+    verify(recoveryRecordPort).markFailed(IDEMPOTENCY_KEY);
+    verify(recoveryRecordPort, never()).markSucceeded(any());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
   }
 
   @Test

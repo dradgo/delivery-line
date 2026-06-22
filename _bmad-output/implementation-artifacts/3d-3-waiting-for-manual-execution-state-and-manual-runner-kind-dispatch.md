@@ -1,6 +1,6 @@
 # Story 3d.3: `WaitingForManualExecution` State + `manual` Runner-Kind Dispatch
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -40,62 +40,62 @@ so that an operator can run an agent step by hand when an agent's unattended/hea
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Register `manual` kind + per-project runner-kind override + resolver** (AC: 1)
-  - [ ] `domain/registry/RunnerKind.java` — add `MANUAL("manual")` constant. This is a registry value; confirm whether `RunnerKind` participates in any drift placeholder/CHECK (grep `RunnerKind` in `RegistryContractTest` + `registry-api-schema-placeholders.json`). Today `RunnerKind` backs only `RunnerProperties.Docker.imageTags` lookup + the container label — it has **no** DB CHECK of its own, so adding `MANUAL` is enum-only **unless** you back the per-project column with a `RunnerKind` CHECK (Task 1 migration below adds that CHECK). The Docker adapter must **never** be asked for a `manual` image (the park path returns before any image lookup).
-  - [ ] `domain/project/Project.java` — add a nullable `RunnerKind runnerKind` record component (null = "no override, use global per-stage kind"). **Fan-out warning (6 `new Project(...)` sites):** `ProjectManagementService`, `ProjectController` (3c-8 CRUD), `ProjectEntityMapper`, `ProjectConnectorResolver` (helper), `DefaultProjectSeeder`, plus all `new Project(...)` in tests. Add the trailing nullable component; the seeder + the default project pass `null` (preserves global-kind parity — R7). No invariant guard needed (null is valid).
-  - [ ] **Flyway (next free version — 3d-1 took V19 for the reviewer schema, so this is ≥ V20; confirm the head at implementation time, do NOT hardcode):** `alter table projects add column runner_kind text null` + `constraint ck_projects_runner_kind check (runner_kind is null or runner_kind in ('codex','claude','manual'))`. Additive, replay-safe. **This same migration file** also carries the AC2 state-CHECK widenings + the AC5 runner-status widening (one migration, see Tasks 2 + 5) so the head moves by one.
-  - [ ] `adapters/persistence/entity/ProjectEntity.java` + `adapters/persistence/mapper/ProjectEntityMapper.java` — map the nullable `runner_kind` column ↔ `Project.runnerKind()`. Persist the wire value (`RunnerKind.value()`), read back via `RunnerKind.fromValue(...)`; null round-trips as null.
-  - [ ] `application/project/ProjectRuntimeConfigResolver.java` — add `RunnerKind resolveRunnerKind(String workflowRunId, RunnerStage stage)` (+ an `ExecutionSubStage` overload if the EXECUTION sub-stage kind matters — see `RunnerProperties.kindForExecutionSubStage`): `resolveForRun(workflowRunId).runnerKind()` when non-null, else the global `runnerProperties.kindForStage(stage)` / `kindForExecutionSubStage(subStage)`. **The resolver currently has NO `RunnerProperties` dependency** — inject it (constructor; `application.project` → `application.runner.RunnerProperties` is allowed — confirm no ArchUnit boundary breach; `RunnerProperties` is a `@ConfigurationProperties` record, not an adapter). Log the resolved kind at `DEBUG` (`source=project_override|global`).
-  - [ ] `DefaultProjectSeeder` — the `default` project's `runnerKind` is **null** (global per-stage kinds apply unchanged → AC8 parity). Do not seed `manual`.
+- [x] **Task 1 — Register `manual` kind + per-project runner-kind override + resolver** (AC: 1)
+  - [x] `domain/registry/RunnerKind.java` — add `MANUAL("manual")` constant. This is a registry value; confirm whether `RunnerKind` participates in any drift placeholder/CHECK (grep `RunnerKind` in `RegistryContractTest` + `registry-api-schema-placeholders.json`). Today `RunnerKind` backs only `RunnerProperties.Docker.imageTags` lookup + the container label — it has **no** DB CHECK of its own, so adding `MANUAL` is enum-only **unless** you back the per-project column with a `RunnerKind` CHECK (Task 1 migration below adds that CHECK). The Docker adapter must **never** be asked for a `manual` image (the park path returns before any image lookup).
+  - [x] `domain/project/Project.java` — add a nullable `RunnerKind runnerKind` record component (null = "no override, use global per-stage kind"). **Fan-out warning (6 `new Project(...)` sites):** `ProjectManagementService`, `ProjectController` (3c-8 CRUD), `ProjectEntityMapper`, `ProjectConnectorResolver` (helper), `DefaultProjectSeeder`, plus all `new Project(...)` in tests. Add the trailing nullable component; the seeder + the default project pass `null` (preserves global-kind parity — R7). No invariant guard needed (null is valid).
+  - [x] **Flyway (next free version — 3d-1 took V19 for the reviewer schema, so this is ≥ V20; confirm the head at implementation time, do NOT hardcode):** `alter table projects add column runner_kind text null` + `constraint ck_projects_runner_kind check (runner_kind is null or runner_kind in ('codex','claude','manual'))`. Additive, replay-safe. **This same migration file** also carries the AC2 state-CHECK widenings + the AC5 runner-status widening (one migration, see Tasks 2 + 5) so the head moves by one.
+  - [x] `adapters/persistence/entity/ProjectEntity.java` + `adapters/persistence/mapper/ProjectEntityMapper.java` — map the nullable `runner_kind` column ↔ `Project.runnerKind()`. Persist the wire value (`RunnerKind.value()`), read back via `RunnerKind.fromValue(...)`; null round-trips as null.
+  - [x] `application/project/ProjectRuntimeConfigResolver.java` — add `RunnerKind resolveRunnerKind(String workflowRunId, RunnerStage stage)` (+ an `ExecutionSubStage` overload if the EXECUTION sub-stage kind matters — see `RunnerProperties.kindForExecutionSubStage`): `resolveForRun(workflowRunId).runnerKind()` when non-null, else the global `runnerProperties.kindForStage(stage)` / `kindForExecutionSubStage(subStage)`. **The resolver currently has NO `RunnerProperties` dependency** — inject it (constructor; `application.project` → `application.runner.RunnerProperties` is allowed — confirm no ArchUnit boundary breach; `RunnerProperties` is a `@ConfigurationProperties` record, not an adapter). Log the resolved kind at `DEBUG` (`source=project_override|global`).
+  - [x] `DefaultProjectSeeder` — the `default` project's `runnerKind` is **null** (global per-stage kinds apply unchanged → AC8 parity). Do not seed `manual`.
 
-- [ ] **Task 2 — New `WaitingForManualExecution` state + transitions** (AC: 2)
-  - [ ] `domain/registry/WorkflowState.java` — add `WAITING_FOR_MANUAL_EXECUTION("WaitingForManualExecution")` (after `WAITING_FOR_REVIEW` is a natural slot). `DomainRegistry.workflowStates()` picks it up automatically.
-  - [ ] **Flyway (same migration as Task 1):** widen all **three** CHECKs — `ck_workflow_runs_current_state`, `ck_workflow_events_prior_state`, `ck_workflow_events_resulting_state` — to include `'WaitingForManualExecution'` (drop-then-re-add idiom, mirroring V12/V16). Replay-safe.
-  - [ ] `application/workflow/WorkflowTransitionTable.java#defaultTable()` — add the new state as a **source** key with target set `{WAITING_FOR_SPEC_APPROVAL, WAITING_FOR_REVIEW, FAILED, TAKEN_OVER, RECONCILED}`; add `WAITING_FOR_MANUAL_EXECUTION` to the **target** sets of `INVESTIGATING` and `EXECUTING`. Verify `assertCoversAllStates()` (L99) still passes (every state must have an entry).
-  - [ ] Check `assertTransitionAllowed` (L120-165) — the runner-failure→`FAILED` category constraint (L136-150): a `WaitingForManualExecution → FAILED` edge should follow the same category rules as other →FAILED edges; confirm a manual-path failure carries a valid `FailureCategory` (or that this edge is reached only via recovery, which already supplies one). Note the decision in Completion Notes.
-  - [ ] `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` — add `"WaitingForManualExecution"` to the `workflowStates` array (RegistryContractTest L131-138 pins enum ↔ 3 SQL CHECKs ↔ this placeholder).
-  - [ ] Update `WorkflowTransitionTableTest` (the hardcoded canonical map, L17-98) with the new state + its target set, and the two widened source rows.
+- [x] **Task 2 — New `WaitingForManualExecution` state + transitions** (AC: 2)
+  - [x] `domain/registry/WorkflowState.java` — add `WAITING_FOR_MANUAL_EXECUTION("WaitingForManualExecution")` (after `WAITING_FOR_REVIEW` is a natural slot). `DomainRegistry.workflowStates()` picks it up automatically.
+  - [x] **Flyway (same migration as Task 1):** widen all **three** CHECKs — `ck_workflow_runs_current_state`, `ck_workflow_events_prior_state`, `ck_workflow_events_resulting_state` — to include `'WaitingForManualExecution'` (drop-then-re-add idiom, mirroring V12/V16). Replay-safe.
+  - [x] `application/workflow/WorkflowTransitionTable.java#defaultTable()` — add the new state as a **source** key with target set `{WAITING_FOR_SPEC_APPROVAL, WAITING_FOR_REVIEW, FAILED, TAKEN_OVER, RECONCILED}`; add `WAITING_FOR_MANUAL_EXECUTION` to the **target** sets of `INVESTIGATING` and `EXECUTING`. Verify `assertCoversAllStates()` (L99) still passes (every state must have an entry).
+  - [x] Check `assertTransitionAllowed` (L120-165) — the runner-failure→`FAILED` category constraint (L136-150): a `WaitingForManualExecution → FAILED` edge should follow the same category rules as other →FAILED edges; confirm a manual-path failure carries a valid `FailureCategory` (or that this edge is reached only via recovery, which already supplies one). Note the decision in Completion Notes.
+  - [x] `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` — add `"WaitingForManualExecution"` to the `workflowStates` array (RegistryContractTest L131-138 pins enum ↔ 3 SQL CHECKs ↔ this placeholder).
+  - [x] Update `WorkflowTransitionTableTest` (the hardcoded canonical map, L17-98) with the new state + its target set, and the two widened source rows.
 
-- [ ] **Task 3 — Park path: branch BEFORE enqueue (no container, no queue)** (AC: 3, 6)
-  - [ ] **Resolve the kind at the chokepoint, not in the adapter.** In `WorkflowOrchestrationService.enqueueDispatch` (L1036-1058) — the single orchestration enqueue funnel — resolve `RunnerKind kind = projectRuntimeConfigResolver.resolveRunnerKind(workflowRunId, stage)` **before** `runnerExecutionQueue.enqueue(...)`. (The resolver is already injected into `WorkflowOrchestrationService` for 3c-7 Linear sync — reuse it.) If `kind == MANUAL` → call the park path and return its result; else keep the existing enqueue. Do the same at the `RecoveryService` enqueue site (L427).
-  - [ ] **Implement the park path without re-introducing the orchestration↔broker cycle (R2).** Story 3.17b **dropped** `WorkflowOrchestrationService`'s `RunnerBroker` dependency to break that cycle — do **not** re-add a broker dep to orchestration. Recommended (Open Decision #2): a **new small `application.runner` service `ManualExecutionDispatcher`** that both chokepoints inject (exactly as they both inject `RunnerExecutionQueue`). It depends on: a bundle composer (reuse the broker's compose-and-write via a new **public** `RunnerBroker.composeAndWriteManualBundle(workflowRunId, stage, runnerExecutionId)` — a one-way `dispatcher → broker` edge is fine; the broker must not depend back on the dispatcher), `RunnerExecutionRecordPort` (new `insertAwaitingManual`, Task 5), `WorkflowEventWritePort` / the event-append path (Task 4), and `WorkflowTransitionService` (transition to `WaitingForManualExecution`). It runs in the caller's active tx (no `dispatchTransactionTemplate` gymnastics — unlike the worker path; see [[story-3-17b-queue-activation-seams]]).
-  - [ ] Park sequence (all in the caller tx, ordered so a failure rolls the whole submit/approve back): mint `rex_` id → `insertAwaitingManual` row → `RunnerBroker.composeAndWriteManualBundle` (compose runner-contracts bundle + `scratchStore.writeContextBundle`) → append `manual.executionRequested` (Task 4) → `workflowTransitionService.transition(... WAITING_FOR_MANUAL_EXECUTION ...)`. Return a result the chokepoint can adapt (Open Decision #3: a new `RunnerDispatchResult.Parked(handle, manualEventPublicId)` variant, or reuse `Queued`'s shape — recommend a dedicated `Parked` for honest logging).
-  - [ ] **Never reach `DockerRunnerAdapter` for a manual kind.** Do not branch inside `DockerRunnerAdapter.dispatch` (that path only runs for an enqueued row a worker leased — manual never enqueues). Leave the adapter untouched.
-  - [ ] `logDispatchOutcome` (L1060-1079) — add a "parked for manual execution" INFO branch (it currently logs replay vs queued).
+- [x] **Task 3 — Park path: branch BEFORE enqueue (no container, no queue)** (AC: 3, 6)
+  - [x] **Resolve the kind at the chokepoint, not in the adapter.** In `WorkflowOrchestrationService.enqueueDispatch` (L1036-1058) — the single orchestration enqueue funnel — resolve `RunnerKind kind = projectRuntimeConfigResolver.resolveRunnerKind(workflowRunId, stage)` **before** `runnerExecutionQueue.enqueue(...)`. (The resolver is already injected into `WorkflowOrchestrationService` for 3c-7 Linear sync — reuse it.) If `kind == MANUAL` → call the park path and return its result; else keep the existing enqueue. Do the same at the `RecoveryService` enqueue site (L427).
+  - [x] **Implement the park path without re-introducing the orchestration↔broker cycle (R2).** Story 3.17b **dropped** `WorkflowOrchestrationService`'s `RunnerBroker` dependency to break that cycle — do **not** re-add a broker dep to orchestration. Recommended (Open Decision #2): a **new small `application.runner` service `ManualExecutionDispatcher`** that both chokepoints inject (exactly as they both inject `RunnerExecutionQueue`). It depends on: a bundle composer (reuse the broker's compose-and-write via a new **public** `RunnerBroker.composeAndWriteManualBundle(workflowRunId, stage, runnerExecutionId)` — a one-way `dispatcher → broker` edge is fine; the broker must not depend back on the dispatcher), `RunnerExecutionRecordPort` (new `insertAwaitingManual`, Task 5), `WorkflowEventWritePort` / the event-append path (Task 4), and `WorkflowTransitionService` (transition to `WaitingForManualExecution`). It runs in the caller's active tx (no `dispatchTransactionTemplate` gymnastics — unlike the worker path; see [[story-3-17b-queue-activation-seams]]).
+  - [x] Park sequence (all in the caller tx, ordered so a failure rolls the whole submit/approve back): mint `rex_` id → `insertAwaitingManual` row → `RunnerBroker.composeAndWriteManualBundle` (compose runner-contracts bundle + `scratchStore.writeContextBundle`) → append `manual.executionRequested` (Task 4) → `workflowTransitionService.transition(... WAITING_FOR_MANUAL_EXECUTION ...)`. Return a result the chokepoint can adapt (Open Decision #3: a new `RunnerDispatchResult.Parked(handle, manualEventPublicId)` variant, or reuse `Queued`'s shape — recommend a dedicated `Parked` for honest logging).
+  - [x] **Never reach `DockerRunnerAdapter` for a manual kind.** Do not branch inside `DockerRunnerAdapter.dispatch` (that path only runs for an enqueued row a worker leased — manual never enqueues). Leave the adapter untouched.
+  - [x] `logDispatchOutcome` (L1060-1079) — add a "parked for manual execution" INFO branch (it currently logs replay vs queued).
 
-- [ ] **Task 4 — `manual.executionRequested` event type (two fixture sites)** (AC: 4)
-  - [ ] `domain/registry/WorkflowEventType.java` — add `MANUAL_EXECUTION_REQUESTED("manual.executionRequested")`.
-  - [ ] Mirror the wire value into **both**: `src/test/resources/contracts/events/workflow-event-types.fixture.json` (`workflowEventTypes[]`) **and** `src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json` (`$defs…eventType.enum`). RegistryContractTest `workflowEventTypesUseDotSeparatedLowerCamelAndStayAlignedWithFixture()` (L328-337) pins them. See [[new-workfloweventtype-fixture-sites]].
-  - [ ] Regenerate the OpenAPI snapshot (`OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true`) — output is **byte-identical** (eventType is a free string in the schema); commit only if the tool changes bytes (it should not).
-  - [ ] Append on park with **existing** detail keys only: `RUNNER_EXECUTION_ID`, `WORKFLOW_RUN_ID`, `RUNNER_KIND` (= `"manual"`). Do **not** add new `WorkflowEventDetailKeys` (the history schema + parity test would also have to change). Stage is recoverable from the `runner_executions` row.
+- [x] **Task 4 — `manual.executionRequested` event type (two fixture sites)** (AC: 4)
+  - [x] `domain/registry/WorkflowEventType.java` — add `MANUAL_EXECUTION_REQUESTED("manual.executionRequested")`.
+  - [x] Mirror the wire value into **both**: `src/test/resources/contracts/events/workflow-event-types.fixture.json` (`workflowEventTypes[]`) **and** `src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json` (`$defs…eventType.enum`). RegistryContractTest `workflowEventTypesUseDotSeparatedLowerCamelAndStayAlignedWithFixture()` (L328-337) pins them. See [[new-workfloweventtype-fixture-sites]].
+  - [x] Regenerate the OpenAPI snapshot (`OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true`) — output is **byte-identical** (eventType is a free string in the schema); commit only if the tool changes bytes (it should not).
+  - [x] Append on park with **existing** detail keys only: `RUNNER_EXECUTION_ID`, `WORKFLOW_RUN_ID`, `RUNNER_KIND` (= `"manual"`). Do **not** add new `WorkflowEventDetailKeys` (the history schema + parity test would also have to change). Stage is recoverable from the `runner_executions` row.
 
-- [ ] **Task 5 — `awaiting_manual` runner-execution status + insert path** (AC: 5)
-  - [ ] `domain/registry/RunnerExecutionStatus.java` — add `AWAITING_MANUAL("awaiting_manual")` (non-terminal; document it like the `QUEUED`/`CANCELLED_FOR_TAKEOVER` comments).
-  - [ ] **Flyway (same migration as Tasks 1-2):** widen `ck_runner_executions_status` (drop-then-re-add, mirror V12/V16) to add `'awaiting_manual'`. **Do NOT** add it to `ck_runner_executions_completed_correlation` — it is non-terminal and carries no `completed_at` (exactly as `queued` is excluded; see V16's comment).
-  - [ ] `application/runner/spi/RunnerExecutionRecordPort.java` + `adapters/persistence/RunnerExecutionPersistenceAdapter.java` — add `insertAwaitingManual(workflowRunId, stage, contextBundleVersion, …)` mirroring `insertPending` (L225-272) but status `awaiting_manual`, **no** dispatch lease / worker / queue columns, `completed_at` null. Returns a `RunnerExecutionSnapshot`. Keep `timeout_at`/`last_activity_at` satisfying `ck_runner_executions_timeout_after_activity` (a parked row has no real timeout — set a sentinel ≥ `last_activity_at`; note the choice).
-  - [ ] 3-site drift: add `"awaiting_manual"` to `registry-api-schema-placeholders.json` `runnerExecutionStatuses` (RegistryContractTest L166-170 pins enum ↔ `ck_runner_executions_status` ↔ placeholder).
-  - [ ] Update `FlywaySchemaContractTest` expectations if it asserts a fixed status/state count.
+- [x] **Task 5 — `awaiting_manual` runner-execution status + insert path** (AC: 5)
+  - [x] `domain/registry/RunnerExecutionStatus.java` — add `AWAITING_MANUAL("awaiting_manual")` (non-terminal; document it like the `QUEUED`/`CANCELLED_FOR_TAKEOVER` comments).
+  - [x] **Flyway (same migration as Tasks 1-2):** widen `ck_runner_executions_status` (drop-then-re-add, mirror V12/V16) to add `'awaiting_manual'`. **Do NOT** add it to `ck_runner_executions_completed_correlation` — it is non-terminal and carries no `completed_at` (exactly as `queued` is excluded; see V16's comment).
+  - [x] `application/runner/spi/RunnerExecutionRecordPort.java` + `adapters/persistence/RunnerExecutionPersistenceAdapter.java` — add `insertAwaitingManual(workflowRunId, stage, contextBundleVersion, …)` mirroring `insertPending` (L225-272) but status `awaiting_manual`, **no** dispatch lease / worker / queue columns, `completed_at` null. Returns a `RunnerExecutionSnapshot`. Keep `timeout_at`/`last_activity_at` satisfying `ck_runner_executions_timeout_after_activity` (a parked row has no real timeout — set a sentinel ≥ `last_activity_at`; note the choice).
+  - [x] 3-site drift: add `"awaiting_manual"` to `registry-api-schema-placeholders.json` `runnerExecutionStatuses` (RegistryContractTest L166-170 pins enum ↔ `ck_runner_executions_status` ↔ placeholder).
+  - [x] Update `FlywaySchemaContractTest` expectations if it asserts a fixed status/state count.
 
-- [ ] **Task 6 — Allowed actions for `WaitingForManualExecution`** (AC: 7)
-  - [ ] `domain/registry/AllowedAction.java` — add `OBTAIN_MANUAL_BUNDLE("obtain_manual_bundle")` + `SUBMIT_MANUAL_ARTIFACT("submit_manual_artifact")`.
-  - [ ] `application/workflow/WorkflowInspectionService.computeActionMatrix` (L620-690) — add a `case WAITING_FOR_MANUAL_EXECUTION ->` returning `[OBTAIN_MANUAL_BUNDLE, SUBMIT_MANUAL_ARTIFACT, VIEW_ONLY]` for the operator role (`workflow_owner`, the run owner — Open Decision #4) and `[VIEW_ONLY]` for others. The `default ->` future-state guard (L684-688) means a missing case throws — this case is mandatory.
-  - [ ] Drift: add both wire values to `src/test/resources/contracts/frontend/allowed-actions.placeholder.json` (RegistryContractTest L359-363) and add two `@Test` wire-value pins to `architecture/AllowedActionRegistryPinTest.java` (mirrors the `approve_spec`/`accept_implementation` pins, L23-49).
-  - [ ] Add matrix cases to `WorkflowInspectionServiceAllowedActionsTest` (the parameterized `matrixCases()`, L90-100) for `WAITING_FOR_MANUAL_EXECUTION` × roles.
+- [x] **Task 6 — Allowed actions for `WaitingForManualExecution`** (AC: 7)
+  - [x] `domain/registry/AllowedAction.java` — add `OBTAIN_MANUAL_BUNDLE("obtain_manual_bundle")` + `SUBMIT_MANUAL_ARTIFACT("submit_manual_artifact")`.
+  - [x] `application/workflow/WorkflowInspectionService.computeActionMatrix` (L620-690) — add a `case WAITING_FOR_MANUAL_EXECUTION ->` returning `[OBTAIN_MANUAL_BUNDLE, SUBMIT_MANUAL_ARTIFACT, VIEW_ONLY]` for the operator role (`workflow_owner`, the run owner — Open Decision #4) and `[VIEW_ONLY]` for others. The `default ->` future-state guard (L684-688) means a missing case throws — this case is mandatory.
+  - [x] Drift: add both wire values to `src/test/resources/contracts/frontend/allowed-actions.placeholder.json` (RegistryContractTest L359-363) and add two `@Test` wire-value pins to `architecture/AllowedActionRegistryPinTest.java` (mirrors the `approve_spec`/`accept_implementation` pins, L23-49).
+  - [x] Add matrix cases to `WorkflowInspectionServiceAllowedActionsTest` (the parameterized `matrixCases()`, L90-100) for `WAITING_FOR_MANUAL_EXECUTION` × roles.
 
-- [ ] **Task 7 — Tests** (AC: 8, all)
-  - [ ] **Park IT** (Failsafe + Testcontainers — memory: [[springboot-testcontainers-test-must-be-IT]]): insert a non-default `Project` with `runnerKind = manual` directly (raw JDBC / persistence adapter, as `RunProjectAssociationIT` does); create a run bound to it; drive the dispatch chokepoint (submit or approve) and assert: run state == `WaitingForManualExecution`; a `runner_executions` row exists with status `awaiting_manual` (no worker/lease columns); the context bundle is written + readable via `RunnerScratchStore.tryReadContextBundle`; a `manual.executionRequested` event is appended with `runnerKind=manual`; **no `queued` row** exists and the runner adapter was **never** invoked (`@MockitoBean RunnerAdapter`, verify zero `dispatch` calls).
-  - [ ] **Parity IT/test (AC8):** a `default`-project run (no `runnerKind` override) resolves the global per-stage kind ⇒ takes the **enqueue** path (a `queued` row, no park, no `manual.executionRequested`) — byte-identical to pre-3d. The existing 3.17b/3c-7 dispatch ITs stay green.
-  - [ ] `ProjectRuntimeConfigResolver` unit test — `resolveRunnerKind`: project override wins; null override ⇒ global `kindForStage`; per sub-stage if you added that overload.
-  - [ ] `WorkflowTransitionTableTest` / a transition-service test — the in/out edges valid; illegal edges (e.g. `Completed → WaitingForManualExecution`) rejected with `ILLEGAL_TRANSITION`.
-  - [ ] Registry/drift: `RegistryContractTest` green for the new state, runner status, event type (two fixtures), allowed actions; `FlywaySchemaContractTest` green; `OpenApiSnapshotContractTest` byte-identical; `AllowedActionRegistryPinTest` new pins.
-  - [ ] `ManualExecutionDispatcher` unit test — the park sequence (insert row → compose+write bundle → append event → transition) all in one tx; a compose/write failure rolls back (no orphaned `awaiting_manual` row, no half-event).
-  - [ ] **Naming/tier discipline:** any `@SpringBootTest`+Testcontainers test is `*IT` (Failsafe); use the lifecycle `integration-test`/`verify` phase, not `failsafe:`/`surefire:` direct goals (memory: [[maven-arglineation-goal-crash]]).
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] This story has real application surface (kind resolution, park dispatch, state transition, runner_executions insert, event append) — instrument it (NOT N/A).
-  - [ ] Kind resolution → `DEBUG`/`INFO` "runner kind resolved workflowRunId={} stage={} kind={} source={project_override|global}".
-  - [ ] Park → `INFO` "parking run for manual execution workflowRunId={} runnerExecutionId={} stage={}" at the chokepoint; `INFO` on the `WaitingForManualExecution` transition (the transition service already logs transitions — confirm it covers the new state).
-  - [ ] `runner_executions` insert → `INFO` "recording awaiting_manual runner execution {} for run {}".
-  - [ ] Parameterized logging only (`log.info("...", a, b)`); context keys `correlationId`, `workflowRunId`, `runnerExecutionId`, `project.publicId()`. **Never log** secrets/tokens/bundle bytes/PII (the bundle is already redacted — log the path/id, never the payload). Pin at least one log line per new branch with a `ListAppender`/`OutputCaptureExtension` assertion.
+- [x] **Task 7 — Tests** (AC: 8, all)
+  - [x] **Park IT** (Failsafe + Testcontainers — memory: [[springboot-testcontainers-test-must-be-IT]]): insert a non-default `Project` with `runnerKind = manual` directly (raw JDBC / persistence adapter, as `RunProjectAssociationIT` does); create a run bound to it; drive the dispatch chokepoint (submit or approve) and assert: run state == `WaitingForManualExecution`; a `runner_executions` row exists with status `awaiting_manual` (no worker/lease columns); the context bundle is written + readable via `RunnerScratchStore.tryReadContextBundle`; a `manual.executionRequested` event is appended with `runnerKind=manual`; **no `queued` row** exists and the runner adapter was **never** invoked (`@MockitoBean RunnerAdapter`, verify zero `dispatch` calls).
+  - [x] **Parity IT/test (AC8):** a `default`-project run (no `runnerKind` override) resolves the global per-stage kind ⇒ takes the **enqueue** path (a `queued` row, no park, no `manual.executionRequested`) — byte-identical to pre-3d. The existing 3.17b/3c-7 dispatch ITs stay green.
+  - [x] `ProjectRuntimeConfigResolver` unit test — `resolveRunnerKind`: project override wins; null override ⇒ global `kindForStage`; per sub-stage if you added that overload.
+  - [x] `WorkflowTransitionTableTest` / a transition-service test — the in/out edges valid; illegal edges (e.g. `Completed → WaitingForManualExecution`) rejected with `ILLEGAL_TRANSITION`.
+  - [x] Registry/drift: `RegistryContractTest` green for the new state, runner status, event type (two fixtures), allowed actions; `FlywaySchemaContractTest` green; `OpenApiSnapshotContractTest` byte-identical; `AllowedActionRegistryPinTest` new pins.
+  - [x] `ManualExecutionDispatcher` unit test — the park sequence (insert row → compose+write bundle → append event → transition) all in one tx; a compose/write failure rolls back (no orphaned `awaiting_manual` row, no half-event).
+  - [x] **Naming/tier discipline:** any `@SpringBootTest`+Testcontainers test is `*IT` (Failsafe); use the lifecycle `integration-test`/`verify` phase, not `failsafe:`/`surefire:` direct goals (memory: [[maven-arglineation-goal-crash]]).
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] This story has real application surface (kind resolution, park dispatch, state transition, runner_executions insert, event append) — instrument it (NOT N/A).
+  - [x] Kind resolution → `DEBUG`/`INFO` "runner kind resolved workflowRunId={} stage={} kind={} source={project_override|global}".
+  - [x] Park → `INFO` "parking run for manual execution workflowRunId={} runnerExecutionId={} stage={}" at the chokepoint; `INFO` on the `WaitingForManualExecution` transition (the transition service already logs transitions — confirm it covers the new state).
+  - [x] `runner_executions` insert → `INFO` "recording awaiting_manual runner execution {} for run {}".
+  - [x] Parameterized logging only (`log.info("...", a, b)`); context keys `correlationId`, `workflowRunId`, `runnerExecutionId`, `project.publicId()`. **Never log** secrets/tokens/bundle bytes/PII (the bundle is already redacted — log the path/id, never the payload). Pin at least one log line per new branch with a `ListAppender`/`OutputCaptureExtension` assertion.
 
 ## Dev Notes
 
@@ -135,7 +135,7 @@ The submission-side typed errors (`MANUAL_EXECUTION_NOT_APPLICABLE`, `IDEMPOTENC
 `OBTAIN_MANUAL_BUNDLE` + `SUBMIT_MANUAL_ARTIFACT` are added + surfaced in the matrix in 3d-3 (AC7), but the endpoints that honor them (`GET …/manual-bundle`, `POST …/manual-artifact`) are 3d-4. The matrix case + drift pins must land now so the `WaitingForManualExecution` run already advertises the right actions when 3d-4 wires the endpoints. Role: gate to the single local operator (`workflow_owner` — the run owner); others `VIEW_ONLY`.
 
 ### R7 — Byte-identical parity for default/non-manual projects (the safety net)
-The `default` project seeds `runnerKind = null` ⇒ `resolveRunnerKind` returns the global per-stage kind ⇒ the chokepoint takes the **existing enqueue path** unchanged. So no default/non-manual run ever parks, emits `manual.executionRequested`, or creates an `awaiting_manual` row. The AC8 parity test is the proof: a default-project dispatch is byte-identical to pre-3d (a `queued` row, worker dispatch, no new event). New behavior manifests **only** when a project's `runnerKind` override == `manual` (which only the park IT sets today — there's a project CRUD/UI in 3c-8/3c-9 but no UI affordance to set `runnerKind` yet; that surfacing is a forward concern / 3d-4-adjacent).
+The `default` project seeds `runnerKind = null` ⇒ `resolveRunnerKind` returns the global per-stage kind ⇒ the chokepoint takes the **existing enqueue path** unchanged. So no default/non-manual run ever parks, emits `manual.executionRequested`, or creates an `awaiting_manual` row. The AC8 parity test is the proof: a default-project dispatch is byte-identical to pre-3d (a `queued` row, worker dispatch, no new event). New behavior manifests **only** when a project's `runnerKind` override == `manual`; the project create/update/read REST surface now exposes that nullable override, while `null` restores global defaults.
 
 ### Dispatch chokepoint work list
 
@@ -195,6 +195,19 @@ This story introduces real application surface (kind resolution, park dispatch, 
 4. **Operator role for the new actions** — default: `workflow_owner` (the single local operator / run owner) gets `OBTAIN_MANUAL_BUNDLE`+`SUBMIT_MANUAL_ARTIFACT`; others `VIEW_ONLY`. Confirm against 2.14 role conventions; adjust in 3d-4 if the submitting role differs.
 5. **`awaiting_manual` timeout/activity sentinel** — default: set `timeout_at = last_activity_at` (or a far-future sentinel) to satisfy `ck_runner_executions_timeout_after_activity` without implying a real timeout (a parked run has none — ADR 0024). Record the chosen sentinel + ensure the stale-scan/orphan reclamation never picks up an `awaiting_manual` row (it has no worker lease, so it should already be invisible to lease reclamation — verify against the 3.17b `findLeasedStaleByStageAndDispatchedAtBefore` scan).
 
+### Review Findings
+
+- [x] [Review][Patch] Expose `runnerKind` through project create/update/read surfaces so `manual` is actually selectable per project [deliveryline-backend/src/main/java/org/dradgo/application/project/ProjectManagementService.java:104]
+- [x] [Review][Patch] Preserve non-manual project overrides through queued worker dispatch instead of re-resolving the global kind [deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowOrchestrationService.java:1057]
+- [x] [Review][Patch] Resolve the execution sub-stage kind at the pre-enqueue chokepoint so a manual PR-output stage parks rather than reaching Docker dispatch [deliveryline-backend/src/main/java/org/dradgo/application/project/ProjectRuntimeConfigResolver.java:122]
+- [x] [Review][Patch] Treat `AWAITING_MANUAL` as in-flight and preserve the dispatch idempotency key to prevent duplicate rows, bundles, and events [deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowOrchestrationService.java:97]
+- [x] [Review][Patch] Move recovery runner-kind resolution inside the compensated dispatch block so resolver failures cannot strand a pending recovery action [deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java:448]
+- [x] [Review][Patch] Compensate the scratch-store bundle when event append or workflow transition fails after the filesystem write [deliveryline-backend/src/main/java/org/dradgo/application/runner/ManualExecutionDispatcher.java:125]
+- [x] [Review][Patch] Allocate the next context-bundle version under the workflow-run lock to prevent concurrent parks selecting the same version [deliveryline-backend/src/main/java/org/dradgo/application/runner/ManualExecutionDispatcher.java:107]
+- [x] [Review][Patch] Include `AWAITING_MANUAL` in takeover/cancellation cleanup so a TakenOver run does not retain a live manual execution and bundle [deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowTransitionTable.java:91]
+- [x] [Review][Patch] Require a non-null manual event public ID in `RunnerDispatchResult.Parked` before recovery consumes it as an audit anchor [deliveryline-backend/src/main/java/org/dradgo/application/runner/RunnerDispatchResult.java:86]
+- [x] [Review][Patch] Add integration coverage for rollback cleanup, recovery manual routing/compensation, non-null project override persistence, and complete event/queue metadata [deliveryline-backend/src/test/java/org/dradgo/application/workflow/ManualExecutionParkIT.java:128]
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -203,6 +216,79 @@ claude-opus-4-8[1m] (Opus 4.8, 1M context)
 
 ### Debug Log References
 
+- `mvnw -pl deliveryline-backend verify` — full unit + Testcontainers IT + jacoco coverage run (see Completion Notes for outcome).
+- Two CI traps surfaced + fixed during dev (both because the live codebase fans `RunnerKind.values()` out into per-kind requirements that `manual` does not satisfy):
+  1. `RunnerProperties.Docker` constructor required an image tag for *every* `RunnerKind` → excluded `MANUAL` (it launches no container).
+  2. `DoctorProbeAdapter.probeRunnerSecrets` required a provider secret for *every* `RunnerKind` → excluded `MANUAL` (operator runs the agent by hand with their own auth).
+- DI trap: `ManualExecutionDispatcher` has two constructors (prod + package-private clock overload); Spring needs `@Autowired` on the public one (mirrors `RunnerExecutionQueue`) or every `@SpringBootTest` context fails to load.
+
 ### Completion Notes List
 
+- **AC1 — `manual` kind + per-project override + resolver.** `RunnerKind.MANUAL` registered (enum-only; no DB CHECK of its own, but the new per-project column carries one). `Project` gained a nullable `RunnerKind runnerKind` component (between `reviewerGatingEnabled` and `createdAt`); fanned out across the 6 `new Project(...)` sites (`ProjectManagementService` ×4 create/update/disable/enable, `DefaultProjectSeeder`, `ProjectEntityMapper`) + `ProjectEntity`/mapper (`runner_kind` column, parsed via `RunnerKind.fromValue`). `ProjectRuntimeConfigResolver.resolveRunnerKind(runId, stage)` = project override ?? global `RunnerProperties.kindForStage` (injected `RunnerProperties`). Single per-project override applied across stages (per-stage-per-project deferred — Open Decision #1).
+- **AC2 — state + transitions.** `WorkflowState.WAITING_FOR_MANUAL_EXECUTION`; V20 widened the 3 state CHECKs; `WorkflowTransitionTable` gained IN edges (`INVESTIGATING`/`EXECUTING` → park) and the park state's OUT set `{WaitingForSpecApproval, WaitingForReview, Failed, TakenOver, Reconciled}`. `assertCoversAllStates()` passes.
+  - **Decision (Task 2 sub-bullet):** the `WaitingForManualExecution → FAILED` edge is declared but, under the existing `assertTransitionAllowed` category guard (which only admits a `FailureCategory` for `EXECUTING`/`INVESTIGATING` → FAILED), it is reachable ONLY with a `null` failure category (a safety/operator fail). No 3d-3 production code drives it. If 3d-4+ needs a category-bearing manual-path failure, the guard must add `WAITING_FOR_MANUAL_EXECUTION` as a category-bearing FAILED source — deferred (no driver yet).
+- **AC3/AC6 — park before enqueue.** New `application.runner.ManualExecutionDispatcher` (`@Component`, `@Transactional`) injected by both chokepoints (`WorkflowOrchestrationService.enqueueDispatch` — the single orchestration funnel covering all 3 callers — and `RecoveryService` enqueue site). It mints the `rex_` id → `insertAwaitingManual` → `RunnerBroker.composeAndWriteManualBundle` (new public method factoring the deprecated synchronous compose+`scratchStore.writeContextBundle`, eager, caller-tx) → append `manual.executionRequested` → `WorkflowTransitionService.transition(… WAITING_FOR_MANUAL_EXECUTION …)`. Returns `RunnerDispatchResult.Parked`. Orchestration never regained a `RunnerBroker` dep (R2 cycle stays broken — `ManualExecutionDispatcher → RunnerBroker` is one-way). No container, no queue row, no worker slot.
+- **AC4 — event.** `WorkflowEventType.MANUAL_EXECUTION_REQUESTED` mirrored into both fixture sites; allow-listed on `RunnerExecutionEventPersistenceAdapter`. Appended with existing detail keys only (`runnerExecutionId`/`workflowRunId`/`runnerKind=manual`). The event-registry addition remains byte-identical in OpenAPI because event types are free strings; the final `openapi.json` changed only because the review fix exposed nullable `runnerKind` on the project create/update/read schemas.
+- **AC5 — `awaiting_manual` status.** Non-terminal `RunnerExecutionStatus.AWAITING_MANUAL`; V20 widened `ck_runner_executions_status` only (deliberately NOT `ck_runner_executions_completed_correlation` — no `completed_at`). `insertAwaitingManual` sets no container/lease/worker/queue columns; `timeout_at = last_activity_at` sentinel (Open Decision #5 — satisfies the timeout≥activity CHECK without implying a timeout; the row has no `worker_id`/`dispatched_at` so the lease-reclamation scans never see it).
+- **AC7 — allowed actions.** `OBTAIN_MANUAL_BUNDLE` + `SUBMIT_MANUAL_ARTIFACT` registered (+ placeholder + 2 pin-tests); `WorkflowInspectionService.computeActionMatrix` returns them for `workflow_owner` in `WAITING_FOR_MANUAL_EXECUTION` (others `VIEW_ONLY`). Endpoints honoring them are 3d-4.
+- **AC8 — tests.** New: `ManualExecutionParkIT` (park e2e + default-project parity), `ManualExecutionDispatcherTest` (ordered park sequence + compose-failure abort), `ProjectRuntimeConfigResolverTest` resolveRunnerKind cases. Updated: `WorkflowTransitionTableTest` canonical map, `WorkflowInspectionServiceAllowedActionsTest` matrix rows, `AllowedActionRegistryPinTest` pins, `RegistryContractTest` (via placeholders/fixtures). ~18 test files mechanically threaded the new `Project` `null` runner-kind arg.
+- **Code-review patch batch.** Project REST create/update/read now exposes `runnerKind`; pre-enqueue and worker dispatch share project/sub-stage-aware resolution; `AWAITING_MANUAL` participates in replay and takeover cancellation; recovery resolver failures enter compensation; scratch bundles are deleted after rollback/takeover; context versions allocate under the run lock; `Parked` requires its audit event id. OpenAPI was regenerated and the full backend `verify` plus focused `ManualExecutionParkIT` passed.
+- **Zero new `DomainErrorCode`** (R5), **no `kind` column** on `runner_executions` (R3), **no** `manual.artifactSubmitted` / REST / CLI / UI / Docker-adapter change (all 3d-4+).
+
 ### File List
+
+**Production (main):**
+- `domain/registry/RunnerKind.java` (+`MANUAL`)
+- `domain/registry/WorkflowState.java` (+`WAITING_FOR_MANUAL_EXECUTION`)
+- `domain/registry/RunnerExecutionStatus.java` (+`AWAITING_MANUAL`)
+- `domain/registry/WorkflowEventType.java` (+`MANUAL_EXECUTION_REQUESTED`)
+- `domain/registry/AllowedAction.java` (+`OBTAIN_MANUAL_BUNDLE`, +`SUBMIT_MANUAL_ARTIFACT`)
+- `domain/project/Project.java` (+nullable `runnerKind`)
+- `application/project/ProjectRuntimeConfigResolver.java` (+`resolveRunnerKind`, inject `RunnerProperties`)
+- `application/project/ProjectManagementService.java` (4 `new Project(...)` sites)
+- `application/project/CreateProjectCommand.java` + `UpdateProjectCommand.java` (nullable runner-kind override)
+- `application/project/DefaultProjectSeeder.java` (null override)
+- `application/runner/ManualExecutionDispatcher.java` (**new**)
+- `application/runner/RunnerBroker.java` (+`composeAndWriteManualBundle`)
+- `application/runner/RunnerDispatchResult.java` (+`Parked` variant, +`isParked`)
+- `application/runner/RunnerProperties.java` (skip `MANUAL` in image-tag requirement)
+- `application/runner/spi/RunnerExecutionRecordPort.java` (+`insertAwaitingManual`)
+- `application/workflow/WorkflowTransitionTable.java` (+state/edges)
+- `application/workflow/WorkflowInspectionService.java` (matrix case)
+- `application/workflow/WorkflowOrchestrationService.java` (inject dispatcher; kind-branch in `enqueueDispatch`; `logDispatchOutcome` parked branch)
+- `application/recovery/RecoveryService.java` (inject resolver+dispatcher; kind-branch at enqueue site)
+- `application/recovery/DeveloperTakeoverService.java` (cancel parked executions + bundle cleanup)
+- `application/runner/RunnerExecutionStateMachine.java` (`awaiting_manual` → takeover cancellation)
+- `application/runner/spi/RunnerScratchStore.java` (bundle-compensation cleanup port)
+- `adapters/files/LocalRunnerScratchStore.java` (cleanup implementation)
+- `adapters/rest/CreateProjectRequest.java` + `UpdateProjectRequest.java` + `ProjectResponse.java` + `ProjectController.java` (runner-kind project API)
+- `adapters/persistence/entity/ProjectEntity.java` (+`runner_kind` column/getter/setter)
+- `adapters/persistence/mapper/ProjectEntityMapper.java` (map `runnerKind` in 3 methods)
+- `adapters/persistence/RunnerExecutionPersistenceAdapter.java` (+`insertAwaitingManual`)
+- `adapters/persistence/RunnerExecutionEventPersistenceAdapter.java` (allow-list `MANUAL_EXECUTION_REQUESTED`)
+- `adapters/diagnostics/DoctorProbeAdapter.java` (skip `MANUAL` in runner-secrets probe)
+- `src/main/resources/db/migration/V20__add_manual_execution_kind_and_state.sql` (**new**)
+- `src/main/resources/openapi/openapi.json` (project runner-kind request/response schema)
+
+**Test resources (drift fixtures):**
+- `contracts/openapi/registry-api-schema-placeholders.json` (+state, +runner status)
+- `contracts/events/workflow-event-types.fixture.json` (+event)
+- `fixture-event-streams/schema/workflow-events-response.schema.json` (+event, +state ×2 enums)
+- `contracts/frontend/allowed-actions.placeholder.json` (+2 actions)
+
+**Tests (new):**
+- `application/runner/ManualExecutionDispatcherTest.java`
+- `application/workflow/ManualExecutionParkIT.java`
+- `adapters/files/LocalRunnerScratchStoreTest.java`
+- `adapters/persistence/RunnerExecutionPersistenceAdapterManualTest.java`
+
+**Tests (updated):**
+- `application/project/ProjectRuntimeConfigResolverTest.java` (resolveRunnerKind)
+- `application/workflow/WorkflowTransitionTableTest.java` (canonical map)
+- `application/workflow/WorkflowInspectionServiceAllowedActionsTest.java` (matrix rows)
+- `architecture/AllowedActionRegistryPinTest.java` (2 pins)
+- ~18 test files: `new Project(...)` null runner-kind arg + `RecoveryService`/`WorkflowOrchestrationService`/`ProjectRuntimeConfigResolver` constructor-call updates + `RealRunnerContractIT` switch arm (mechanical, via subagent).
+
+### Change Log
+
+- 2026-06-22 — Story 3d-3 implemented: `manual` runner kind + `WaitingForManualExecution` park state + `awaiting_manual` runner-execution status + `manual.executionRequested` event + 2 allowed actions; dispatch chokepoints branch to a new `ManualExecutionDispatcher` that composes+writes the input bundle and parks (no container/queue). V20 migration. Full `mvnw verify` green (741 ITs, 0 failures; all jacoco coverage checks met). Status → review.

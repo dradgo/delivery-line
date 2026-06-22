@@ -60,6 +60,7 @@ class ProjectPersistenceAdapterIT {
                 true,
                 null,
                 false,
+                null,
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null));
 
@@ -93,6 +94,7 @@ class ProjectPersistenceAdapterIT {
             false,
             null,
             false,
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
 
@@ -119,6 +121,7 @@ class ProjectPersistenceAdapterIT {
             false,
             null,
             false,
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
 
@@ -155,6 +158,7 @@ class ProjectPersistenceAdapterIT {
             false,
             null,
             false,
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
     projectStore.insert(
@@ -169,6 +173,7 @@ class ProjectPersistenceAdapterIT {
             false,
             null,
             false,
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
 
@@ -194,6 +199,7 @@ class ProjectPersistenceAdapterIT {
                 false,
                 null,
                 false,
+                null,
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null));
 
@@ -209,6 +215,7 @@ class ProjectPersistenceAdapterIT {
             true,
             null,
             false,
+            org.dradgo.domain.registry.RunnerKind.MANUAL,
             inserted.createdAt(),
             null);
     projectStore.update(mutated);
@@ -220,6 +227,7 @@ class ProjectPersistenceAdapterIT {
     assertThat(loaded.ticketSourceKind()).isEqualTo(ConnectorKind.GITHUB);
     assertThat(loaded.repoHostKind()).isEqualTo(ConnectorKind.LINEAR);
     assertThat(loaded.openspecEnabled()).isTrue();
+    assertThat(loaded.runnerKind()).isEqualTo(org.dradgo.domain.registry.RunnerKind.MANUAL);
     assertThat(loaded.createdAt()).isEqualTo(inserted.createdAt());
   }
 
@@ -237,6 +245,7 @@ class ProjectPersistenceAdapterIT {
             false,
             null,
             false,
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null);
     assertThatThrownBy(() -> projectStore.update(ghost))
@@ -260,6 +269,7 @@ class ProjectPersistenceAdapterIT {
             false,
             null,
             false,
+            null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null));
 
@@ -277,6 +287,7 @@ class ProjectPersistenceAdapterIT {
                         false,
                         null,
                         false,
+                        null,
                         OffsetDateTime.now(ZoneOffset.UTC),
                         null)))
         .isInstanceOf(DomainException.class)

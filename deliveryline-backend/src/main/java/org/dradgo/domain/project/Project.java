@@ -5,6 +5,7 @@ import java.util.Objects;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 
 /**
  * Domain aggregate for a configured project, mirroring the V17 {@code projects} columns. This is a
@@ -36,6 +37,14 @@ public record Project(
     // by NO progression logic in this epic (ADR 0026 Decision 3).
     String reviewerModelKind, // nullable
     boolean reviewerGatingEnabled,
+    // Story 3d-3 (AC1, ADR 0024) — per-project runner-kind override. NULL = "no override, use the
+    // global per-stage RunnerProperties kind" (R7 parity: the default project seeds NULL). When set
+    // to MANUAL the dispatch chokepoint parks the run in WaitingForManualExecution instead of
+    // enqueuing a container. Resolved by ProjectRuntimeConfigResolver.resolveRunnerKind. No
+    // invariant
+    // guard — null is valid; a non-null value is one of the RunnerKind registry values (CHECK in
+    // V20).
+    RunnerKind runnerKind, // nullable
     OffsetDateTime createdAt,
     OffsetDateTime archivedAt) { // nullable
 

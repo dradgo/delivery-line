@@ -489,6 +489,12 @@ public record RunnerProperties(
       Objects.requireNonNull(defaultKind, "defaultKind");
       imageTags = imageTags == null ? Map.of() : Map.copyOf(new EnumMap<>(imageTags));
       for (RunnerKind kind : RunnerKind.values()) {
+        // Story 3d-3 — the `manual` kind launches NO container (the dispatch chokepoint parks the
+        // run and never reaches imageTagFor), so it requires no Docker image tag. Skip it here; an
+        // accidental imageTagFor(MANUAL) still fails loudly below.
+        if (kind == RunnerKind.MANUAL) {
+          continue;
+        }
         String tag = imageTags.get(kind);
         if (tag == null || tag.isBlank()) {
           throw new IllegalArgumentException(

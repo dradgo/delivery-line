@@ -34,6 +34,7 @@ import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
 import org.dradgo.application.runner.spi.RunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerTakeoverCancellation;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
@@ -81,6 +82,7 @@ class DeveloperTakeoverServiceTest {
   private RecoveryActionRecordPort recoveryRecordPort;
   private IntegrationLinkService integrationLinkService;
   private RunnerAdapter runnerAdapter;
+  private RunnerScratchStore runnerScratchStore;
   private DeveloperTakeoverService service;
   private ListAppender<ILoggingEvent> appender;
 
@@ -93,6 +95,7 @@ class DeveloperTakeoverServiceTest {
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     integrationLinkService = mock(IntegrationLinkService.class);
     runnerAdapter = mock(RunnerAdapter.class);
+    runnerScratchStore = mock(RunnerScratchStore.class);
     service =
         new DeveloperTakeoverService(
             runReadPort,
@@ -103,6 +106,7 @@ class DeveloperTakeoverServiceTest {
             new IdempotencyKeyValidator(),
             integrationLinkService,
             runnerAdapter,
+            runnerScratchStore,
             Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC),
             callthroughTemplate(),
             callthroughTemplate());
@@ -118,7 +122,7 @@ class DeveloperTakeoverServiceTest {
   }
 
   @Test
-  void takeoverCancelsInFlightAndQueuedInsertsRecoveryActionAndMarksSucceeded() {
+  void takeoverCancelsInFlightQueuedAndAwaitingManualAndRemovesManualBundle() {
     stubHappyTakeover();
 
     TakeoverResult result = service.takeoverWorkflow(command());
@@ -128,8 +132,8 @@ class DeveloperTakeoverServiceTest {
     assertEquals("rcv_take-aaaaa", result.recoveryActionPublicId());
     assertEquals(WorkflowState.TAKEN_OVER, result.resultingState());
     assertEquals("evt_takeover-bbbb", result.resultingEventPublicId());
-    // queued=1, pending+running=2 in-flight.
-    assertEquals(2, result.cancelledInFlightCount());
+    // queued=1, pending+running+awaiting_manual=3 in-flight.
+    assertEquals(3, result.cancelledInFlightCount());
     assertEquals(1, result.cancelledQueuedCount());
     assertEquals(PR_REF, result.preservedPrReference());
     assertEquals("corr-takeover-1", result.correlationId());
@@ -139,10 +143,13 @@ class DeveloperTakeoverServiceTest {
     verify(runnerRecordPort).markCancelledForTakeover(eq("rex_queued-1111"), eq(FIXED_NOW));
     verify(runnerRecordPort).markCancelledForTakeover(eq("rex_pending-2222"), eq(FIXED_NOW));
     verify(runnerRecordPort).markCancelledForTakeover(eq("rex_running-3333"), eq(FIXED_NOW));
+    verify(runnerRecordPort).markCancelledForTakeover(eq("rex_manual-4444"), eq(FIXED_NOW));
     // Best-effort container stop ONLY for the previously-running row.
     verify(runnerAdapter, times(1)).cancel("rex_running-3333");
     verify(runnerAdapter, never()).cancel("rex_queued-1111");
     verify(runnerAdapter, never()).cancel("rex_pending-2222");
+    verify(runnerAdapter, never()).cancel("rex_manual-4444");
+    verify(runnerScratchStore).deleteContextBundle("rex_manual-4444");
     verify(recoveryRecordPort).markSucceeded(IDEMPOTENCY_KEY);
 
     ArgumentCaptor<RecoveryActionWriteCommand> writeCaptor =
@@ -445,11 +452,11 @@ class DeveloperTakeoverServiceTest {
     List<String> success = logged(Level.INFO, "developer takeover success");
     assertFalse(success.isEmpty());
     assertTrue(success.get(0).contains("recoveryActionId=rcv_take-aaaaa"));
-    assertTrue(success.get(0).contains("cancelledInFlightCount=2"));
+    assertTrue(success.get(0).contains("cancelledInFlightCount=3"));
     assertTrue(success.get(0).contains("cancelledQueuedCount=1"));
     assertTrue(success.get(0).contains("resultingState=TakenOver"));
 
-    assertEquals(3, logged(Level.INFO, "developer takeover cancelled runner").size());
+    assertEquals(4, logged(Level.INFO, "developer takeover cancelled runner").size());
 
     // Forbidden: the reviewer reasonText must never appear in any log line.
     assertTrue(
@@ -548,7 +555,8 @@ class DeveloperTakeoverServiceTest {
             List.of(
                 runnerRow("rex_queued-1111", RunnerExecutionStatus.QUEUED),
                 runnerRow("rex_pending-2222", RunnerExecutionStatus.PENDING),
-                runnerRow("rex_running-3333", RunnerExecutionStatus.RUNNING)));
+                runnerRow("rex_running-3333", RunnerExecutionStatus.RUNNING),
+                runnerRow("rex_manual-4444", RunnerExecutionStatus.AWAITING_MANUAL)));
     when(runnerRecordPort.markCancelledForTakeover(any(), eq(FIXED_NOW)))
         .thenAnswer(
             invocation -> {
@@ -558,7 +566,9 @@ class DeveloperTakeoverServiceTest {
                       ? RunnerExecutionStatus.QUEUED
                       : id.contains("pending")
                           ? RunnerExecutionStatus.PENDING
-                          : RunnerExecutionStatus.RUNNING;
+                          : id.contains("manual")
+                              ? RunnerExecutionStatus.AWAITING_MANUAL
+                              : RunnerExecutionStatus.RUNNING;
               return Optional.of(new RunnerTakeoverCancellation(id, previous));
             });
     when(integrationLinkService.findActiveGitHubPrLink(RUN))

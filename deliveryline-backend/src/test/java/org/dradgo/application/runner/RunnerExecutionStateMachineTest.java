@@ -155,6 +155,16 @@ class RunnerExecutionStateMachineTest {
   }
 
   @Test
+  void awaitingManualCanBeCancelledForTakeover() {
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX,
+                RunnerExecutionStatus.AWAITING_MANUAL,
+                RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+  }
+
+  @Test
   void queuedAllowsRunningAndCancelledForTakeoverOnly() {
     assertDoesNotThrow(
         () ->

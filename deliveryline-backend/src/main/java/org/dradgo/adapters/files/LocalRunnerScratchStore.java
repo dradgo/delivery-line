@@ -79,6 +79,19 @@ public class LocalRunnerScratchStore implements RunnerScratchStore {
   }
 
   @Override
+  public void deleteContextBundle(String runnerExecutionId) {
+    Path target = contextBundlePath(runnerExecutionId);
+    try {
+      Files.deleteIfExists(target);
+    } catch (IOException error) {
+      log.warn(
+          "deleteContextBundle io failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          error.toString());
+    }
+  }
+
+  @Override
   public Path writeRunnerResult(String runnerExecutionId, byte[] payloadBytes) {
     return atomicWrite(runnerExecutionId, RUNNER_RESULT_FILENAME, payloadBytes);
   }

@@ -14,4 +14,15 @@ public record UpdateProjectCommand(
     String ticketSourceKind,
     String repoHostKind,
     boolean openspecEnabled,
-    String actorIdentity) {}
+    String runnerKind,
+    String actorIdentity) {
+  public UpdateProjectCommand(
+      String name,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String actorIdentity) {
+    this(name, repositoryUrl, ticketSourceKind, repoHostKind, openspecEnabled, null, actorIdentity);
+  }
+}

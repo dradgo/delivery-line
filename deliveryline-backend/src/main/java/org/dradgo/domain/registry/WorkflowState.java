@@ -9,6 +9,12 @@ public enum WorkflowState implements RegistryValue {
   WAITING_FOR_SPEC_APPROVAL("WaitingForSpecApproval"),
   EXECUTING("Executing"),
   WAITING_FOR_REVIEW("WaitingForReview"),
+  // Story 3d-3 (AC2, ADR 0024 D2) — a run dispatched under the `manual` runner kind parks HERE
+  // instead of launching a container. Reached from the two dispatching states (INVESTIGATING /
+  // EXECUTING); it has no timeout/auto-progress, so it leaves only on operator submission (3d-4 →
+  // WaitingForSpecApproval / WaitingForReview) or a recovery/safety edge (Failed / TakenOver /
+  // Reconciled).
+  WAITING_FOR_MANUAL_EXECUTION("WaitingForManualExecution"),
   COMPLETED("Completed"),
   FAILED("Failed"),
   PAUSED("Paused"),

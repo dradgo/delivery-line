@@ -193,6 +193,7 @@ class TicketSourceAbstractionFoundationContract {
             false,
             null,
             false,
+            null,
             java.time.OffsetDateTime.parse("2026-06-20T00:00:00Z"),
             null);
     when(projectRuntimeConfigResolver.resolveForRun(any())).thenReturn(project);
@@ -216,6 +217,7 @@ class TicketSourceAbstractionFoundationContract {
 
     return new WorkflowOrchestrationService(
         mock(org.dradgo.application.runner.queue.RunnerExecutionQueue.class),
+        mock(org.dradgo.application.runner.ManualExecutionDispatcher.class),
         mock(org.dradgo.application.workflow.WorkflowTransitionService.class),
         mock(org.dradgo.application.workflow.spi.WorkflowRunReadPort.class),
         mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class),

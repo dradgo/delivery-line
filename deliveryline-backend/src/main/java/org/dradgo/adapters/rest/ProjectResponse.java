@@ -31,6 +31,11 @@ public record ProjectResponse(
     @Schema(description = "Repository-host connector kind.", example = "github")
         String repoHostKind,
     @Schema(description = "Whether OpenSpec is enabled for this project.") boolean openspecEnabled,
+    @Schema(
+            description = "Per-project runner override; null uses defaults.",
+            nullable = true,
+            allowableValues = {"manual", "codex", "claude"})
+        String runnerKind,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -52,6 +57,7 @@ public record ProjectResponse(
         project.ticketSourceKind().value(),
         project.repoHostKind().value(),
         project.openspecEnabled(),
+        project.runnerKind() == null ? null : project.runnerKind().value(),
         project.createdAt(),
         credentials,
         allowedActions);

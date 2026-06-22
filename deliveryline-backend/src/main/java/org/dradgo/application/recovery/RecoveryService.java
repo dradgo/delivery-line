@@ -168,6 +168,12 @@ public class RecoveryService {
   // Story 3.17b (AC3/D1) — recovery retry now enqueues onto the RunnerExecutionQueue (the worker
   // pool runs the real dispatch later) instead of calling RunnerBroker.dispatch synchronously.
   private final org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue;
+  // Story 3d-3 (AC1/AC3/AC6) — the recovery enqueue site is the second dispatch chokepoint. It
+  // resolves the run's runner kind and, when `manual`, parks instead of enqueuing (no container, no
+  // queue row). Both collaborators are always-present application @Components (no DI cycle).
+  private final org.dradgo.application.project.ProjectRuntimeConfigResolver
+      projectRuntimeConfigResolver;
+  private final org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final RecoveryActionRecordPort recoveryActionRecordPort;
   private final IdempotencyKeyValidator idempotencyKeyValidator;
@@ -183,6 +189,8 @@ public class RecoveryService {
       ArtifactOperationPort artifactOperationPort,
       WorkflowCommandService workflowCommandService,
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
+      org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
+      org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       IdempotencyKeyValidator idempotencyKeyValidator,
@@ -194,6 +202,8 @@ public class RecoveryService {
         artifactOperationPort,
         workflowCommandService,
         runnerExecutionQueue,
+        projectRuntimeConfigResolver,
+        manualExecutionDispatcher,
         workflowEventWritePort,
         recoveryActionRecordPort,
         idempotencyKeyValidator,
@@ -209,6 +219,8 @@ public class RecoveryService {
       ArtifactOperationPort artifactOperationPort,
       WorkflowCommandService workflowCommandService,
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
+      org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
+      org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       IdempotencyKeyValidator idempotencyKeyValidator,
@@ -226,6 +238,10 @@ public class RecoveryService {
         Objects.requireNonNull(workflowCommandService, "workflowCommandService");
     this.runnerExecutionQueue =
         Objects.requireNonNull(runnerExecutionQueue, "runnerExecutionQueue");
+    this.projectRuntimeConfigResolver =
+        Objects.requireNonNull(projectRuntimeConfigResolver, "projectRuntimeConfigResolver");
+    this.manualExecutionDispatcher =
+        Objects.requireNonNull(manualExecutionDispatcher, "manualExecutionDispatcher");
     this.workflowEventWritePort =
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.recoveryActionRecordPort =
@@ -421,11 +437,31 @@ public class RecoveryService {
       // NOTIFY here). Namespace the broker key with ":runner" so the worker's idempotency_records
       // row cannot collide with the recovery action's idempotency_records row.
       String dispatchKey = validatedIdempotencyKey + ":runner";
-      org.dradgo.application.runner.queue.QueuedRunnerExecution dispatchResult;
+      // Story 3d-3 (AC1/AC3/AC6) — resolve the run's runner kind at the recovery chokepoint. When
+      // `manual`, park (compose+write bundle, awaiting_manual row, transition) instead of enqueuing
+      // a container; the manual.executionRequested event id is the retry audit anchor (replacing
+      // the
+      // runner.queued anchor). A default project resolves the global per-stage kind ⇒ the unchanged
+      // enqueue path (R7 parity). Unlike orchestration, recovery enqueues OUTSIDE a tx by design;
+      // ManualExecutionDispatcher.park is @Transactional, so it opens its own tx here.
+      String newRunnerExecutionId;
+      String runnerDispatchedEventPublicId;
       try {
-        dispatchResult =
-            runnerExecutionQueue.enqueue(
-                workflowRunId, failedStage, dispatchKey, actor, RECOVERY_QUEUE_PRIORITY);
+        org.dradgo.domain.registry.RunnerKind kind =
+            projectRuntimeConfigResolver.resolveRunnerKind(workflowRunId, failedStage);
+        if (kind == org.dradgo.domain.registry.RunnerKind.MANUAL) {
+          org.dradgo.application.runner.RunnerDispatchResult.Parked parked =
+              (org.dradgo.application.runner.RunnerDispatchResult.Parked)
+                  manualExecutionDispatcher.park(workflowRunId, failedStage, dispatchKey, actor);
+          newRunnerExecutionId = parked.handle().runnerExecutionId();
+          runnerDispatchedEventPublicId = parked.manualEventPublicId();
+        } else {
+          org.dradgo.application.runner.queue.QueuedRunnerExecution dispatchResult =
+              runnerExecutionQueue.enqueue(
+                  workflowRunId, failedStage, dispatchKey, actor, RECOVERY_QUEUE_PRIORITY);
+          newRunnerExecutionId = dispatchResult.runnerExecutionPublicId();
+          runnerDispatchedEventPublicId = dispatchResult.queuedEventPublicId();
+        }
       } catch (RuntimeException error) {
         boolean compensationFailed = false;
         try {
@@ -487,12 +523,13 @@ public class RecoveryService {
         throw error;
       }
 
-      String newRunnerExecutionId = dispatchResult.runnerExecutionPublicId();
       // Story 3.17b — the retry now ENQUEUES; the real adapter dispatch (and its runner.dispatched
       // event) happens later on a worker thread. The runner.queued event is the retry audit anchor
       // for the new enqueued execution (replaces the former runner.dispatched anchor, story 3.2a
-      // AC10 / Trap T13, which is no longer produced synchronously here).
-      String runnerDispatchedEventPublicId = dispatchResult.queuedEventPublicId();
+      // AC10 / Trap T13, which is no longer produced synchronously here). Story 3d-3 — for a
+      // `manual`
+      // kind the anchor is the manual.executionRequested event id instead. Both are resolved into
+      // newRunnerExecutionId / runnerDispatchedEventPublicId above.
       try {
         resultStatusTransactionTemplate.executeWithoutResult(
             status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));

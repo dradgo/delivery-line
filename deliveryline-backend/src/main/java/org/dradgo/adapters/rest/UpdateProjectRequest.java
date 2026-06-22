@@ -22,4 +22,9 @@ public record UpdateProjectRequest(
     @NotBlank @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "github")
         String repoHostKind,
     @Schema(description = "Whether OpenSpec is enabled.", example = "false")
-        boolean openspecEnabled) {}
+        boolean openspecEnabled,
+    @Schema(
+            description = "Optional per-project runner override; null uses defaults.",
+            nullable = true,
+            allowableValues = {"manual", "codex", "claude"})
+        String runnerKind) {}

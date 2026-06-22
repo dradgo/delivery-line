@@ -71,6 +71,9 @@ public final class RunnerExecutionStateMachine {
             RunnerExecutionStatus.TIMED_OUT,
             RunnerExecutionStatus.ORPHANED,
             RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+    rules.put(
+        RunnerExecutionStatus.AWAITING_MANUAL,
+        EnumSet.of(RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
     rules.put(RunnerExecutionStatus.COMPLETED, EnumSet.noneOf(RunnerExecutionStatus.class));
     rules.put(RunnerExecutionStatus.FAILED, EnumSet.noneOf(RunnerExecutionStatus.class));
     rules.put(RunnerExecutionStatus.TIMED_OUT, EnumSet.of(RunnerExecutionStatus.FAILED));

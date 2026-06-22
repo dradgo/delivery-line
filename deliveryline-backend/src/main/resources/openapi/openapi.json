@@ -413,6 +413,18 @@
               "null"
             ]
           },
+          "runnerKind" : {
+            "description" : "Optional per-project runner override; null uses defaults.",
+            "enum" : [
+              "manual",
+              "codex",
+              "claude"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "slug" : {
             "example" : "acme-widgets",
             "maxLength" : 256,
@@ -608,6 +620,18 @@
           "repositoryUrl" : {
             "description" : "Repository URL (nullable).",
             "example" : "https://github.com/acme/widgets",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "runnerKind" : {
+            "description" : "Per-project runner override; null uses defaults.",
+            "enum" : [
+              "manual",
+              "codex",
+              "claude"
+            ],
             "type" : [
               "string",
               "null"
@@ -1075,6 +1099,18 @@
             "example" : "https://github.com/acme/widgets",
             "maxLength" : 2048,
             "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "runnerKind" : {
+            "description" : "Optional per-project runner override; null uses defaults.",
+            "enum" : [
+              "manual",
+              "codex",
+              "claude"
+            ],
             "type" : [
               "string",
               "null"

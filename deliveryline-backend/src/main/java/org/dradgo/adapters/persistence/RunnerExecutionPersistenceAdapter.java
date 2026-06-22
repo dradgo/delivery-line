@@ -271,6 +271,90 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     return mapper.toSnapshot(saved);
   }
 
+  // Story 3d-3 (AC5) — insert an awaiting_manual row for a step parked under the `manual` runner
+  // kind. Mirrors insertPending's terminal-state guard + run lock, but sets the NON-TERMINAL
+  // awaiting_manual status with NO container/lease/worker/queue columns and completed_at null. The
+  // timeout_at sentinel == last_activity_at (a parked run has no real timeout — ADR 0024); it only
+  // satisfies ck_runner_executions_timeout_after_activity and keeps the row invisible to the
+  // lease-reclamation scans (which key on worker_id/dispatched_at, both null here). Relies on the
+  // caller's transaction (ManualExecutionDispatcher.park is @Transactional / runs in the
+  // submit/approve tx).
+  @Override
+  public RunnerExecutionSnapshot insertAwaitingManual(
+      String publicId, String workflowRunPublicId, RunnerStage stage, int contextBundleVersion) {
+    return insertAwaitingManual(publicId, workflowRunPublicId, stage, contextBundleVersion, null);
+  }
+
+  @Override
+  public RunnerExecutionSnapshot insertAwaitingManual(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      int contextBundleVersion,
+      String idempotencyKey) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(stage, "stage");
+    if (contextBundleVersion <= 0) {
+      throw new IllegalArgumentException("contextBundleVersion must be positive");
+    }
+    WorkflowRunEntity workflowRun =
+        workflowRunRepository
+            .findByPublicIdForUpdate(workflowRunPublicId)
+            .orElseThrow(() -> runNotFound(workflowRunPublicId));
+    requireManualParkable(workflowRunPublicId, workflowRun);
+
+    OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+    RunnerExecutionEntity entity = new RunnerExecutionEntity();
+    entity.setPublicId(publicId);
+    entity.setWorkflowRun(workflowRun);
+    entity.setStage(stage);
+    entity.setStatus(RunnerExecutionStatus.AWAITING_MANUAL);
+    entity.setContextBundleVersion(contextBundleVersion);
+    entity.setLastActivityAt(now);
+    // Parked rows have no real timeout (ADR 0024). Sentinel == last_activity_at satisfies the
+    // ck_runner_executions_timeout_after_activity (>=) CHECK without implying a timeout.
+    entity.setTimeoutAt(now);
+    entity.setFailureCategory(null);
+    entity.setCompletedAt(null);
+    entity.setIdempotencyKey(idempotencyKey);
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "insertAwaitingManual publicId={} workflowRunId={} stage={} contextBundleVersion={}",
+        publicId,
+        workflowRunPublicId,
+        stage.value(),
+        contextBundleVersion);
+    return mapper.toSnapshot(saved);
+  }
+
+  @Override
+  public RunnerExecutionSnapshot insertAwaitingManualAllocated(
+      String publicId, String workflowRunPublicId, RunnerStage stage, String idempotencyKey) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(stage, "stage");
+    WorkflowRunEntity workflowRun =
+        workflowRunRepository
+            .findByPublicIdForUpdate(workflowRunPublicId)
+            .orElseThrow(() -> runNotFound(workflowRunPublicId));
+    requireManualParkable(workflowRunPublicId, workflowRun);
+    int contextBundleVersion = nextContextBundleVersion(workflowRunPublicId, stage);
+    return insertAwaitingManual(
+        publicId, workflowRunPublicId, stage, contextBundleVersion, idempotencyKey);
+  }
+
+  private static void requireManualParkable(
+      String workflowRunPublicId, WorkflowRunEntity workflowRun) {
+    WorkflowState runState = workflowRun.getCurrentState();
+    if (runState != WorkflowState.INVESTIGATING && runState != WorkflowState.EXECUTING) {
+      throw new DomainException(
+          DomainErrorCode.ILLEGAL_TRANSITION,
+          "Cannot record manual runner execution from current workflow state",
+          Map.of("runId", workflowRunPublicId, "currentState", runState.value()));
+    }
+  }
+
   // Story 3.17a (AC2) — insert a queued row for the RunnerExecutionQueue substrate. Mirrors
   // insertPending but seeds the queue columns (priority + correlationId, no lease yet) and the
   // queued status. Relies on the caller's transaction (RunnerExecutionQueue.enqueue is
