@@ -44,7 +44,15 @@ public enum WorkflowEventType implements RegistryValue {
   // is parked in WaitingForManualExecution (no container launched, no queue row). Carries the
   // existing allow-listed detail keys runnerExecutionId / workflowRunId / runnerKind (= "manual").
   // The submission-side `manual.artifactSubmitted` event belongs to story 3d-4, NOT here.
-  MANUAL_EXECUTION_REQUESTED("manual.executionRequested");
+  MANUAL_EXECUTION_REQUESTED("manual.executionRequested"),
+  // Story 3d-6 (AC3, ADR 0025 D2) — governed read-only diagnostic-console session history. Appended
+  // when a console is opened against a LIVE runner execution (console.opened) and when the session
+  // closes (console.closed). Console I/O is NOT durably stored — only this session metadata. Both
+  // carry ONLY the already-allow-listed runnerExecutionId / workflowRunId detail keys (DD-4); they
+  // have no prior/resulting state (a console session is not a workflow-state change). They do NOT
+  // belong in any scenario stream fixture (happy-path etc.) — only the registry + fixture mirrors.
+  CONSOLE_OPENED("console.opened"),
+  CONSOLE_CLOSED("console.closed");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

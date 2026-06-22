@@ -19,6 +19,7 @@ import { ClarificationRegionContainer } from '@/features/workflows/components/Cl
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
 import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
+import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
 import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
 import { useAllowedActions } from '@/features/workflows/hooks/useAllowedActions';
 import {
@@ -136,6 +137,15 @@ function WorkflowDetailRoute() {
   // resolves the latest runner execution and ends gracefully when none exists.
   const allowedActions = useAllowedActions(workflowRunId);
   const canViewRunnerLogs = allowedActions.data?.actions.includes('view_runner_logs') ?? false;
+  // Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console is gated on the backend-reported
+  // `open_diagnostic_console` action ONLY (flowing through `useAllowedActions`, never role-inferred —
+  // eslint `local-rules/no-role-based-action-gating`). The action is offered ONLY in EXECUTING and
+  // ONLY to the run owner (workflow_owner), so we resolve the owner-scoped action set; the stream is
+  // opened with the same role so the backend resolves the SERVER-SIDE gate too. The endpoint
+  // re-checks liveness at attach and rejects a non-live execution with console-not-live (LIVE-ONLY).
+  const ownerActions = useAllowedActions(workflowRunId, 'workflow_owner');
+  const canOpenDiagnosticConsole =
+    ownerActions.data?.actions.includes('open_diagnostic_console') ?? false;
 
   // AC8a — a run reported in a state this build doesn't recognize.
   if (data?.currentState !== undefined && !RECOGNIZED_STATES.has(data.currentState)) {
@@ -154,6 +164,12 @@ function WorkflowDetailRoute() {
       {/* Story 3d-5 (AC4/AC6) — the Step Execution Log Viewer: live-follow + finished replay of
           the latest runner execution's logs, gated on the backend `view_runner_logs` action. */}
       {canViewRunnerLogs ? <StepExecutionLogViewer workflowRunId={workflowRunId} /> : null}
+      {/* Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console: a LIVE-ONLY, read-only attach to
+          the running runner container's stdio, gated on the backend `open_diagnostic_console` action
+          (EXECUTING + workflow_owner). Input is disabled end-to-end (no write path). */}
+      {canOpenDiagnosticConsole ? (
+        <ReadOnlyDiagnosticConsole workflowRunId={workflowRunId} actorRole="workflow_owner" />
+      ) : null}
       {/* Story 2.18 — the Clarification Region, projected into the right context
           panel via the AppShell slot (sidebar subregion, AC4). The main pane stays
           artifact-primary; today the region renders the calm `no open questions`

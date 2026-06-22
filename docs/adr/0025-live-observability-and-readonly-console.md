@@ -1,6 +1,6 @@
 # ADR 0025 — Live Execution Observability & Read-Only Diagnostic Console
 
-**Status:** Proposed (2026-06-21) — **security-review-gated** before any console wiring (mirrors the ADR 0013 sign-off pattern)
+**Status:** Accepted (signed off 2026-06-22, Alex — workflow owner / security reviewer; story 3d-6) — was Proposed (2026-06-21), **security-review-gated** before any console wiring (mirrors the ADR 0013 sign-off pattern)
 **Driver:** Epic 3d (PRD FR65, FR68). Operators need to watch a step's container logs while it runs and after it finishes, and to open a console into a running runner to diagnose a stuck step. Both reach **inside** the runner sandbox, which is deliberately closed today — so this ADR records exactly how far the posture is narrowed and the threat model that bounds it.
 
 ## Context
@@ -28,6 +28,21 @@ Epic 4's failure-diagnostics view (story 4.4) already planned a *post-hoc redact
 
 - **Defends:** **export / shareable-channel leakage.** Nothing the live view shows changes what is persisted or exported — the post-hoc scan still governs durable + shareable log content. Console access is audited, allowed-action-gated, and read-only, so it cannot mutate a run or the workspace.
 - **Does NOT defend:** **the local operator seeing a secret in-the-moment.** A secret may transiently appear in a live stream or a read-only console to the single local operator before post-hoc redaction would have masked it. This is the deliberate, recorded limit — it is the same trust boundary (host/local operator is trusted) that ADR 0013 and the localhost-only REST posture already accept. It does **not** extend that trust to remote/multi-user access, which remains out of scope.
+
+### Security-review sign-off (story 3d-6, AC1)
+
+Signed off **2026-06-22** by **Alex (workflow owner / security reviewer)**. No CI job enforces this; the sign-off is this recorded artifact (mirrors the ADR 0013 gate), also recorded in the story 3d-6 Completion Notes + PR description.
+
+The 3d-6 console implementation ships the **input-disabled** read-only design (DD-1 / OQ-1), which is **stronger** than the ADR's baseline "read-only inspection shell": the docker attach is opened **without stdin** (`attachContainerConsole` never calls `withStdIn`), and the frontend transport is a receive-only `EventSource` with **no input control** — so no input path exists end-to-end. Non-mutation is therefore *provable* (no write channel exists) rather than merely *policy-enforced*. The reviewed posture, as implemented and asserted by tests:
+
+- **Read-only + input-disabled (Decision 1):** no stdin at the docker layer, no input widget on the UI; asserted by `DefaultDockerEngineGatewayTest` (`withStdIn` never invoked) + `ReadOnlyDiagnosticConsole.test.tsx` (no `input`/`textarea`).
+- **LIVE-ONLY (Decision 1):** a terminal/absent runner execution is rejected with `console-not-live`; no attach engaged, no `console.opened` appended (DD-3) — asserted by `DiagnosticConsoleServiceTest`.
+- **Governed history (Decision 2):** `console.opened`/`console.closed` appended on open/close, carrying only allow-listed `runnerExecutionId`/`workflowRunId` keys; console I/O is **not** durably stored.
+- **Allowed-action gated (Decision 2):** `open_diagnostic_console`, offered only in `EXECUTING` to `workflow_owner`, enforced **server-side** on the endpoint (not just the UI) — asserted by `RunnerDiagnosticConsoleControllerTest`.
+- **Localhost-only (Decision 3):** served only over the existing `127.0.0.1` binding + `RestBindingGuard`; the endpoint adds no binding of its own — asserted by the no-own-binding test.
+- **Best-effort live redaction, export unchanged (Decision 3/4):** per-chunk best-effort redaction before chunks leave the server; nothing the console shows changes persisted/exported content (it never writes `runner-logs/` nor mutates `runner_executions`). The **accepted residual risk** — a secret may transiently flash to the single local operator before post-hoc redaction — is unchanged and remains bounded to the already-trusted localhost/host-operator boundary; remote/multi-user access stays out of scope.
+
+The interactive (write-forwarded) console of Alt 2 remains **deferred** to a future story; any move toward input forwarding requires a fresh review.
 
 ## Alternatives Considered
 

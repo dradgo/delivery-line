@@ -2,6 +2,7 @@ package org.dradgo.adapters.runner.docker;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
+import com.github.dockerjava.api.command.AttachContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
@@ -31,6 +32,7 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.dradgo.application.runner.spi.DockerHostPort;
+import org.dradgo.application.runner.spi.RunnerConsoleStreamPort;
 import org.dradgo.application.runner.spi.RunnerLogStreamPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -274,6 +276,78 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
       } finally {
         cmd.close();
         log.info("docker logs --follow stop containerId={}", containerId);
+      }
+    };
+  }
+
+  @Override
+  public AutoCloseable attachContainerConsole(
+      String containerId, RunnerConsoleStreamPort.RawConsoleSink onChunk, Runnable onEnd) {
+    Objects.requireNonNull(containerId, "containerId");
+    Objects.requireNonNull(onChunk, "onChunk");
+    Objects.requireNonNull(onEnd, "onEnd");
+    // Reuse the byte-buffered UTF-8 line splitter so a multi-byte codepoint split across two
+    // attach frames is decoded once at the boundary (no mojibake). The sink shape is identical to
+    // the log path's RawLogLineSink, so adapt by stream name.
+    LineBuffer stdoutBuffer = new LineBuffer("stdout", onChunk::accept);
+    LineBuffer stderrBuffer = new LineBuffer("stderr", onChunk::accept);
+    // Trap T6 / DD-1: open the attach for OUTPUT ONLY — withStdOut/withStdErr but NEVER withStdIn.
+    // No input channel is wired into the container; this is the provable read-only guarantee at the
+    // docker layer. withFollowStream(true) keeps the stream live until the container exits / close.
+    AttachContainerCmd cmd =
+        client
+            .attachContainerCmd(containerId)
+            .withStdOut(true)
+            .withStdErr(true)
+            .withFollowStream(true);
+    ResultCallback.Adapter<Frame> callback =
+        new ResultCallback.Adapter<>() {
+          @Override
+          public void onNext(Frame frame) {
+            if (frame == null || frame.getPayload() == null) {
+              return;
+            }
+            byte[] payload = frame.getPayload();
+            if (frame.getStreamType() == StreamType.STDERR) {
+              stderrBuffer.append(payload);
+            } else {
+              stdoutBuffer.append(payload);
+            }
+          }
+
+          @Override
+          public void onComplete() {
+            stdoutBuffer.flush();
+            stderrBuffer.flush();
+            onEnd.run();
+          }
+
+          @Override
+          public void onError(Throwable throwable) {
+            // Best-effort (Trap T3): an attach error degrades to "stream ended" — NEVER propagate
+            // into the SSE caller thread.
+            log.warn(
+                "docker attach (read-only) containerId={} error cause={}",
+                containerId,
+                throwable.toString());
+            stdoutBuffer.flush();
+            stderrBuffer.flush();
+            onEnd.run();
+          }
+        };
+    cmd.exec(callback);
+    log.info("docker attach (read-only, no-stdin) start containerId={}", containerId);
+    return () -> {
+      try {
+        callback.close();
+      } catch (IOException | RuntimeException closeFailure) {
+        log.warn(
+            "docker attach (read-only) close failed containerId={} cause={}",
+            containerId,
+            closeFailure.toString());
+      } finally {
+        cmd.close();
+        log.info("docker attach (read-only) stop containerId={}", containerId);
       }
     };
   }

@@ -290,6 +290,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/diagnostic-console/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Attach a read-only diagnostic console to a run's live runner execution
+         * @description Server-Sent Events stream of a READ-ONLY console attached to the run's latest runner execution while it is LIVE. The attach is opened WITHOUT stdin — input is disabled end-to-end (a pure streaming pty), which is the provable non-mutating guarantee (ADR 0025 D1). LIVE-ONLY: a finished/absent execution is rejected with a typed console-not-live end/error and no attach is engaged (the finished-state diagnostic surface is the runner-logs viewer). Live chunks are redacted BEST-EFFORT; nothing the console shows changes persisted/exported content (the console never writes to runner-logs/ nor mutates runner_executions — the story-3.6 persisted scan remains the authoritative redaction guarantee). Opening appends a console.opened governed event and closing appends console.closed (session metadata only; console I/O is not durably stored, ADR 0025 D4). Served only over the localhost-only binding to the single local operator; gated by the open_diagnostic_console allowed-action (EXECUTING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough for the console-safety posture. Events: console {stream,chunk,seq}, status {phase,rex}, end {reason}, error {reason}.
+         */
+        get: operations["streamDiagnosticConsole"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/events": {
         parameters: {
             query?: never;
@@ -1903,6 +1923,56 @@ export interface operations {
             };
             /** @description CLARIFICATION_ARTIFACT_VERSION_MISMATCH, CLARIFICATION_TERMINAL_STATE, ILLEGAL_CLARIFICATION_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    streamDiagnosticConsole: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Actor role for action gating; defaults to product_reviewer when absent. The diagnostic console is offered ONLY to workflow_owner (the run owner / local operator), so a caller must pass actorRole=workflow_owner to open it.
+                 * @example workflow_owner
+                 */
+                actorRole?: "product_reviewer" | "workflow_owner" | "developer";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An event stream (text/event-stream). When open_diagnostic_console is not allowed for the run's state/role, or the execution is not live, the stream carries a single error+end event instead of console chunks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SseEmitter"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

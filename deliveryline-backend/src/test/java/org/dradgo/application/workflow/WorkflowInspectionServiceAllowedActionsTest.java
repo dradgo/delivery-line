@@ -117,13 +117,17 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.AWAIT_OUTCOME,
                 AllowedAction.VIEW_RUNNER_LOGS)),
+        // Story 3d-6 (AC4) — the read-only diagnostic console is offered ONLY here (EXECUTING) and
+        // ONLY to the run owner (workflow_owner); product_reviewer above keeps the role-agnostic
+        // set.
         Arguments.of(
             WorkflowState.EXECUTING,
             "workflow_owner",
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.AWAIT_OUTCOME,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.OPEN_DIAGNOSTIC_CONSOLE)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "product_reviewer",

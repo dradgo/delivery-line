@@ -810,7 +810,18 @@ public class WorkflowInspectionService {
         }
       case EXECUTING:
         // Story 3d-5 (AC6): a runner execution exists in EXECUTING, so the log viewer is offered
-        // (role-agnostic) alongside the passive views.
+        // (role-agnostic) alongside the passive views. Story 3d-6 (AC4) additively offers the
+        // read-only diagnostic console — but ONLY to the run owner (workflow_owner, the single
+        // local
+        // operator), since EXECUTING is the only state where a container is live to attach. The
+        // endpoint re-checks liveness at attach time (LIVE-ONLY, DD-3).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.AWAIT_OUTCOME,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.OPEN_DIAGNOSTIC_CONSOLE);
+        }
         return List.of(
             AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME, AllowedAction.VIEW_RUNNER_LOGS);
       case WAITING_FOR_REVIEW:

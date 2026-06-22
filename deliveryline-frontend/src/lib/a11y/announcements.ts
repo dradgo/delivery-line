@@ -108,6 +108,19 @@ export const logStreamReconnecting = 'Runner log stream reconnecting.';
 /** Announced when the runner-log stream could not be served or dropped. */
 export const logStreamError = 'The runner log stream could not be loaded.';
 
+// ---- Read-only diagnostic console (story 3d-6) ---------------------------------
+
+/** Announced when the read-only diagnostic console attaches to the live runner container. */
+export const consoleSessionStarted = 'Read-only diagnostic console session started.';
+/** Announced once the diagnostic console session ends (container exited or session closed). */
+export const consoleSessionEnded = 'Read-only diagnostic console session ended.';
+/**
+ * Announced when the diagnostic console could not be served (not live / denied / dropped). The
+ * console is LIVE-ONLY: a finished or absent execution is reported as not live, not an error state
+ * the operator can recover from here (the finished-state surface is the runner-log viewer).
+ */
+export const consoleSessionError = 'The read-only diagnostic console could not be opened.';
+
 // ---- Project connection test (story 3c-9) --------------------------------------
 
 /** Announced while a project connectivity test is in flight. */

@@ -27,7 +27,14 @@ public enum AllowedAction implements RegistryValue {
   // surfaced in the action matrix here (gated to workflow_owner; other roles view_only); the
   // endpoints that honor them (GET …/manual-bundle, POST …/manual-artifact) land in story 3d-4.
   OBTAIN_MANUAL_BUNDLE("obtain_manual_bundle"),
-  SUBMIT_MANUAL_ARTIFACT("submit_manual_artifact");
+  SUBMIT_MANUAL_ARTIFACT("submit_manual_artifact"),
+  // Story 3d-6 (FR68, AC4, ADR 0025) — gate for the Read-only Diagnostic Console (attach a
+  // read-only console to a LIVE runner container). Offered ONLY in EXECUTING (the only state where
+  // a
+  // container is live) and ONLY to the run owner (workflow_owner) — the single local operator. The
+  // endpoint re-checks liveness at attach time and rejects a non-live/absent rex with
+  // console-not-live, so even this narrow gate cannot open a console into an absent container.
+  OPEN_DIAGNOSTIC_CONSOLE("open_diagnostic_console");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

@@ -918,3 +918,9 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 - Reviewer-specific redaction double-gate fixture (manifest + corpus) not delivered (Task 10 checked): coverage is an inline planted secret in ContextBundleServiceReviewRedactionTest, not the two-gate fixture the task specified.
 - No test pins that the reviewer rationale is never logged by the harvest/persistence path (AC9/Task 9): code is correct (logs outcome+ids only) but the no-leak guarantee is unasserted (only the credential is asserted-absent).
 - ContextBundleServiceReviewRedactionTest plants its secret in the ticket summary, not the reviewed-artifact content path: AC7 leg-1 for the artifact content rests on production-time redaction (bundle carries an artifact reference, not embedded content) and is not exercised by this test.
+
+## Deferred from: code review of 3d-6-read-only-diagnostic-console (2026-06-22)
+
+- OpenAPI `actorRole` query param serialized as `"type":"null"` with a string enum (openapi.json actorRole param) — pre-existing project-wide springdoc quirk; 3 identical occurrences across sibling endpoints (3d-5 log-stream + others). `schema.d.ts` is correct and the drift gate is green. Fix is a global springdoc-config concern, not this story.
+- EventSource native-error auto-reconnect re-opens a fresh backend attach → multiple `console.opened` events without matching `console.closed`; no client-side backoff/attempt cap (useDiagnosticConsole.ts:157-162). Mirrors the accepted 3d-5 `useRunnerLogStream` reconnect design; AC3 audit-pairing wrinkle acknowledged by DD-4's single-operator timestamp-pairing posture.
+- WARN-per-failing-chunk redaction logging can flood logs over a 30-min session (DiagnosticConsoleService.java:188-192). A consistently-failing redactor emits one WARN per chunk; no secret leak (content never logged), but could be rate-limited or counted-once.

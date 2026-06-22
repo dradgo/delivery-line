@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
+import com.github.dockerjava.api.command.AttachContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.LogContainerCmd;
@@ -161,5 +162,49 @@ class DefaultDockerEngineGatewayTest {
     callback.onNext(new Frame(StreamType.STDOUT, new byte[] {(byte) 0x82, (byte) 0xAC, '\n'}));
 
     assertThat(lines).containsExactly("price €");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void attachContainerConsoleSplitsFramesIntoChunksAndIsOpenedWithoutStdin() throws Exception {
+    // Story 3d-6 (Trap T6 / DD-1) — the read-only guarantee at the docker layer: the console attach
+    // is opened with stdout+stderr but NEVER with stdin (no input path is ever wired into the
+    // container). Also exercises frame→chunk splitting via the shared byte-buffered LineBuffer.
+    DockerClient client = mock(DockerClient.class);
+    AttachContainerCmd cmd = mock(AttachContainerCmd.class);
+    when(client.attachContainerCmd(anyString())).thenReturn(cmd);
+    when(cmd.withStdOut(anyBoolean())).thenReturn(cmd);
+    when(cmd.withStdErr(anyBoolean())).thenReturn(cmd);
+    when(cmd.withFollowStream(anyBoolean())).thenReturn(cmd);
+
+    DefaultDockerEngineGateway gateway = new DefaultDockerEngineGateway(client);
+    List<String> chunks = new ArrayList<>();
+    AtomicBoolean ended = new AtomicBoolean();
+
+    AutoCloseable handle =
+        gateway.attachContainerConsole(
+            "cid-console",
+            (stream, chunk) -> chunks.add(stream + ":" + chunk),
+            () -> ended.set(true));
+
+    ArgumentCaptor<ResultCallback<Frame>> callbackCaptor =
+        ArgumentCaptor.forClass(ResultCallback.class);
+    verify(cmd).exec(callbackCaptor.capture());
+    ResultCallback<Frame> callback = callbackCaptor.getValue();
+
+    callback.onNext(new Frame(StreamType.STDOUT, "agent ".getBytes(StandardCharsets.UTF_8)));
+    callback.onNext(new Frame(StreamType.STDOUT, "ready\n".getBytes(StandardCharsets.UTF_8)));
+    callback.onNext(new Frame(StreamType.STDERR, "warn\n".getBytes(StandardCharsets.UTF_8)));
+    callback.onComplete();
+
+    assertThat(chunks).containsExactly("stdout:agent ready", "stderr:warn");
+    assertThat(ended).isTrue();
+    // Output channels are enabled...
+    verify(cmd).withStdOut(true);
+    verify(cmd).withStdErr(true);
+    // ...but stdin is NEVER wired — the provable read-only guarantee (Trap T6). AttachContainerCmd
+    // exposes withStdIn(InputStream); assert it is never invoked with any argument.
+    verify(cmd, never()).withStdIn(any());
+    handle.close();
   }
 }

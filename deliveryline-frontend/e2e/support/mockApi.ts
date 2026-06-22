@@ -127,6 +127,8 @@ function artifactDetail(runId: string, artifactId: string, stream: EventStream) 
 // ---------------------------------------------------------------------------
 export const DEV_REVIEW_RUN_ID = 'run_devreview0001';
 export const RECOVERY_RUN_ID = 'run_recovery0001';
+/** Story 3d-6 — an EXECUTING run whose owner-scoped actions advertise open_diagnostic_console. */
+export const DIAGNOSTIC_CONSOLE_RUN_ID = 'run_console00001';
 /** The prOutput artifact the impl-review bar resolves accept/reject against (highest version). */
 const IMPL_PR_ARTIFACT_ID = 'art_impl_pr_0001';
 const IMPL_PLAN_ARTIFACT_ID = 'art_impl_plan_0001';
@@ -257,6 +259,51 @@ const SYNTHETIC_RUNS = {
       versionStamp: {
         workflowState: 'Failed',
         lastEventId: 'evt_recovery_1',
+        currentSpecArtifactVersion: 1,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) => syntheticArtifactDetail(artifactId, 'spec', 1),
+  },
+  [DIAGNOSTIC_CONSOLE_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: DIAGNOSTIC_CONSOLE_RUN_ID,
+      currentState: 'Executing',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'runner.started',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: DIAGNOSTIC_CONSOLE_RUN_ID,
+      currentState: 'Executing',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'runner.started',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'codex-runner',
+      latestArtifacts: [],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: DIAGNOSTIC_CONSOLE_RUN_ID,
+        ticketRef: 'LIN-903',
+        createdAt: SYNTH_NOW,
+        terminalState: 'Executing',
+      },
+      events: [{ publicId: 'evt_console_1', eventType: 'runner.started', createdAt: SYNTH_NOW }],
+    }),
+    // Story 3d-6 — open_diagnostic_console is offered ONLY to the run owner (workflow_owner) while
+    // EXECUTING; the default product_reviewer set omits it (so the route's owner-scoped read gates
+    // the console while the default read gates the log viewer).
+    allowedActions: (actorRole) => ({
+      actions:
+        actorRole === 'workflow_owner'
+          ? ['view_only', 'await_outcome', 'view_runner_logs', 'open_diagnostic_console']
+          : ['view_only', 'await_outcome', 'view_runner_logs'],
+      versionStamp: {
+        workflowState: 'Executing',
+        lastEventId: 'evt_console_1',
         currentSpecArtifactVersion: 1,
         currentContextBundleVersion: 1,
       },
@@ -588,6 +635,20 @@ export async function mockBackend(page: Page): Promise<void> {
           'event: status\ndata: {"phase":"finished","rex":"rex_e2e00000001"}\n\n' +
           'event: log\ndata: {"stream":"stdout","line":"e2e runner log line","seq":0}\n\n' +
           'event: end\ndata: {"reason":"finished-replay-complete"}\n\n',
+      });
+    }
+
+    // Story 3d-6 — the read-only diagnostic-console SSE stream. Fulfilled as a complete
+    // `text/event-stream` body (status:live → console chunk); the console's EventSource parses the
+    // frames. Modelled before the bare detail matcher + the loud-501 tripwire.
+    const consoleMatch = /\/api\/v1\/workflows\/([^/]+)\/diagnostic-console\/stream$/.exec(path);
+    if (consoleMatch) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body:
+          'event: status\ndata: {"phase":"live","rex":"rex_e2e00000001"}\n\n' +
+          'event: console\ndata: {"stream":"stdout","chunk":"e2e console output","seq":0}\n\n',
       });
     }
 

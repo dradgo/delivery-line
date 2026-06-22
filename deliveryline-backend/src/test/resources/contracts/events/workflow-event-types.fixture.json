@@ -31,6 +31,8 @@
     "clarification.rejectedInvalid",
     "clarification.noEffectReason",
     "linear.completionSyncFailed",
-    "manual.executionRequested"
+    "manual.executionRequested",
+    "console.opened",
+    "console.closed"
   ]
 }

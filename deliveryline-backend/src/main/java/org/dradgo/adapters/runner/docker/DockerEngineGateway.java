@@ -2,6 +2,7 @@ package org.dradgo.adapters.runner.docker;
 
 import java.time.Duration;
 import java.util.Optional;
+import org.dradgo.application.runner.spi.RunnerConsoleStreamPort;
 import org.dradgo.application.runner.spi.RunnerLogStreamPort;
 
 /**
@@ -60,4 +61,19 @@ public interface DockerEngineGateway {
    */
   AutoCloseable followContainerLogs(
       String containerId, RunnerLogStreamPort.RawLogLineSink onLine, Runnable onEnd);
+
+  /**
+   * Story 3d-6 (FR68, ADR 0025) — attach a READ-ONLY console to a live container's stdout/stderr
+   * stdio ({@code docker attach}). Each decoded chunk is delivered to {@code onChunk} ({@code
+   * stream} = {@code "stdout"}/{@code "stderr"}); {@code onEnd} fires once when the attach
+   * completes (container exit). Returns an {@link AutoCloseable} whose {@code close()} stops the
+   * attach + releases the docker callback (no leaked attach threads — Trap T3).
+   *
+   * <p><b>Read-only at the docker layer (DD-1 / Trap T6).</b> The attach is opened WITHOUT stdin —
+   * no input is ever forwarded into the container, which is the provable non-mutation guarantee.
+   * Docker-java types stay confined to the implementing gateway (Trap T8); callers only see the
+   * project-owned {@link RunnerConsoleStreamPort.RawConsoleSink}.
+   */
+  AutoCloseable attachContainerConsole(
+      String containerId, RunnerConsoleStreamPort.RawConsoleSink onChunk, Runnable onEnd);
 }
