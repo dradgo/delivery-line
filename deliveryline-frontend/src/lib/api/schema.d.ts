@@ -599,6 +599,11 @@ export interface components {
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
             repositoryUrl?: string | null;
+            /**
+             * @description Optional per-project runner override; null uses defaults.
+             * @enum {string|null}
+             */
+            runnerKind?: "manual" | "codex" | "claude" | null;
             /** @example acme-widgets */
             slug: string;
             /** @example linear */
@@ -710,6 +715,11 @@ export interface components {
              * @example https://github.com/acme/widgets
              */
             repositoryUrl?: string | null;
+            /**
+             * @description Per-project runner override; null uses defaults.
+             * @enum {string|null}
+             */
+            runnerKind?: "manual" | "codex" | "claude" | null;
             /**
              * @description Stable URL/CLI slug.
              * @example acme-widgets
@@ -861,6 +871,11 @@ export interface components {
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
             repositoryUrl?: string | null;
+            /**
+             * @description Optional per-project runner override; null uses defaults.
+             * @enum {string|null}
+             */
+            runnerKind?: "manual" | "codex" | "claude" | null;
             /** @example linear */
             ticketSourceKind: string;
         };
