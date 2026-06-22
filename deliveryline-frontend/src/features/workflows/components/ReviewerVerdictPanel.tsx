@@ -54,7 +54,9 @@ export function ReviewerVerdictPanel({ verdict, className }: ReviewerVerdictPane
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="font-medium">Advisory reviewer</h3>
-        <span className="text-xs text-muted-foreground">Advisory only — does not change your decision</span>
+        <span className="text-xs text-muted-foreground">
+          Advisory only — does not change your decision
+        </span>
       </div>
 
       {verdict.state === 'pending' && (
@@ -84,7 +86,9 @@ export function ReviewerVerdictPanel({ verdict, className }: ReviewerVerdictPane
         <div className="space-y-2">
           <StateSignifierChip
             stateName={OUTCOME_SIGNIFIER[verdict.outcome ?? '']?.stateName ?? 'informational'}
-            label={OUTCOME_SIGNIFIER[verdict.outcome ?? '']?.label ?? `Reviewer: ${verdict.outcome}`}
+            label={
+              OUTCOME_SIGNIFIER[verdict.outcome ?? '']?.label ?? `Reviewer: ${verdict.outcome}`
+            }
             testId="reviewer-verdict-outcome"
           />
 

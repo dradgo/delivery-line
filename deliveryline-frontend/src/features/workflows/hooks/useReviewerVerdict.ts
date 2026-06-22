@@ -35,7 +35,6 @@ export function useReviewerVerdict(workflowRunId: string) {
     queryFn: () => fetchReviewerVerdict(workflowRunId),
     staleTime: STALE_TIME.detail,
     // Poll only while the verdict is in flight; stop once it resolves (available/unavailable).
-    refetchInterval: (query) =>
-      query.state.data?.state === 'pending' ? PENDING_POLL_MS : false,
+    refetchInterval: (query) => (query.state.data?.state === 'pending' ? PENDING_POLL_MS : false),
   });
 }
