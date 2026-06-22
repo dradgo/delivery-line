@@ -19,6 +19,7 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerExecutionStateMachine;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
+import org.dradgo.application.runner.spi.RunnerExecutionRecordPort.ReviewedArtifactPin;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerTakeoverCancellation;
 import org.dradgo.domain.DomainException;
@@ -219,6 +220,18 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
             workflowRunPublicId, stage.value())
         .map(entity -> entity.getContextBundleVersion() + 1)
         .orElse(1);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<RunnerExecutionSnapshot> findLatestByWorkflowRunPublicIdAndStage(
+      String workflowRunPublicId, RunnerStage stage) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(stage, "stage");
+    return runnerExecutionRepository
+        .findFirstByWorkflowRunPublicIdAndStageOrderByContextBundleVersionDesc(
+            workflowRunPublicId, stage.value())
+        .map(mapper::toSnapshot);
   }
 
   @Override
@@ -829,6 +842,61 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         byteSize,
         redactionCount);
     return mapper.toSnapshot(saved);
+  }
+
+  // Story 3d-2 (code-review D1) — pin the reviewed artifact onto a REVIEW execution at enqueue.
+  // METADATA-ONLY (no state-machine guard, no status mutation): the pin is written on a `queued`
+  // reviewer row right after enqueue. enqueue and pin run as SEPARATE transactions (the
+  // orchestration calls them sequentially after the WaitingForReview transition has committed), so
+  // this opens its OWN (REQUIRED) transaction — findByPublicIdForUpdate needs the active one. A
+  // worker that leases the queued row before the pin commits simply finds no pin and the harvest
+  // re-derives; the pin is best-effort (AC6).
+  @Override
+  @Transactional
+  public void pinReviewedArtifact(
+      String publicId,
+      String reviewedArtifactPublicId,
+      int reviewedArtifactVersion,
+      String reviewedArtifactType) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Objects.requireNonNull(reviewedArtifactPublicId, "reviewedArtifactPublicId");
+    Objects.requireNonNull(reviewedArtifactType, "reviewedArtifactType");
+    if (reviewedArtifactVersion <= 0) {
+      throw new IllegalArgumentException("reviewedArtifactVersion must be positive");
+    }
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setReviewedArtifactId(reviewedArtifactPublicId);
+    entity.setReviewedArtifactVersion(reviewedArtifactVersion);
+    entity.setReviewedArtifactType(reviewedArtifactType);
+    runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "pinning reviewed artifact runnerExecutionId={} reviewedArtifactId={} version={} type={}",
+        publicId,
+        reviewedArtifactPublicId,
+        reviewedArtifactVersion,
+        reviewedArtifactType);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<ReviewedArtifactPin> findReviewedArtifactPin(String publicId) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    return runnerExecutionRepository
+        .findByPublicId(publicId)
+        .filter(
+            entity ->
+                entity.getReviewedArtifactId() != null
+                    && entity.getReviewedArtifactVersion() != null
+                    && entity.getReviewedArtifactType() != null)
+        .map(
+            entity ->
+                new ReviewedArtifactPin(
+                    entity.getReviewedArtifactId(),
+                    entity.getReviewedArtifactVersion(),
+                    entity.getReviewedArtifactType()));
   }
 
   private RunnerExecutionSnapshot mutateWithGuard(

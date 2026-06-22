@@ -24,6 +24,12 @@ public final class RunnerContractValidator {
       "https://deliveryline.local/runner-contracts/context-bundle.v1.schema.json";
   private static final String RUNNER_RESULT_ID =
       "https://deliveryline.local/runner-contracts/runner-result.v1.schema.json";
+  // Story 3d-2 (DD-3, OQ-2=dedicated schema) — the advisory reviewer's verdict travels in its own
+  // schema (pass/concern/fail + rationale + reviewerModelIdentity), NOT runner-result.v1 (which
+  // only knows spec/implementationPlan/prOutput + success/failure). This keeps runner-result.v1 +
+  // ArtifactType + the frontend ArtifactView union completely untouched.
+  private static final String REVIEW_RESULT_ID =
+      "https://deliveryline.local/runner-contracts/review-result.v1.schema.json";
   private static final Pattern PATH_TRAVERSAL_PATTERN =
       Pattern.compile("(^[A-Za-z]:\\\\)|(^/)|\\.\\./|\\.\\.\\\\");
   private static final Pattern SECRET_PATTERN =
@@ -191,7 +197,9 @@ public final class RunnerContractValidator {
 
   public enum ValidationTarget {
     CONTEXT_BUNDLE(CONTEXT_BUNDLE_ID),
-    RUNNER_RESULT(RUNNER_RESULT_ID);
+    RUNNER_RESULT(RUNNER_RESULT_ID),
+    // Story 3d-2 (DD-3) — the advisory reviewer's verdict contract.
+    REVIEW_RESULT(REVIEW_RESULT_ID);
 
     private final String schemaId;
 

@@ -228,6 +228,39 @@ class WorkflowInspectionServiceAllowedActionsTest {
   }
 
   // ---------------------------------------------------------------------------
+  // Story 3d-2 AC8 — the advisory Reviewer Verdict Panel adds NO governed action
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void waitingForReviewActionMatrixIsUnchangedByReviewerVerdictPanel() {
+    // Story 3d-2 AC8 / Task 7: the reviewer verdict is surfaced advisory-only in a presentational
+    // panel — it must NOT add, remove, or reorder any governed action in WaitingForReview. Pin the
+    // exact pre-3d-2 matrix for every recognized role so a future change that accidentally couples
+    // the verdict to allowed-actions fails here (byte-identical assertion the Task-7 text called
+    // for).
+    for (String role : new String[] {"product_reviewer", "workflow_owner", "developer"}) {
+      stubRunWithState(WorkflowState.WAITING_FOR_REVIEW, 0);
+      stubNoLatestSpec();
+      stubLatestEvent(LATEST_EVT);
+
+      AllowedActionsView view = service.getAllowedActions(RUN, role);
+
+      List<AllowedAction> expected =
+          role.equals("developer")
+              ? List.of(
+                  AllowedAction.ACCEPT_IMPLEMENTATION,
+                  AllowedAction.REJECT_IMPLEMENTATION,
+                  AllowedAction.TAKEOVER_WORKFLOW,
+                  AllowedAction.VIEW_ONLY,
+                  AllowedAction.VIEW_RUNNER_LOGS)
+              : List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
+      assertThat(view.actions())
+          .as("WaitingForReview matrix for role %s must be unchanged by 3d-2 (AC8)", role)
+          .containsExactlyElementsOf(expected);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // AC4 — clarification gating
   // ---------------------------------------------------------------------------
 

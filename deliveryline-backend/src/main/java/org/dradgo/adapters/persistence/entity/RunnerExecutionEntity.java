@@ -110,6 +110,18 @@ public class RunnerExecutionEntity {
   @Column(name = "redaction_count")
   private Integer redactionCount;
 
+  // Story 3d-2 (code-review D1) — reviewed-artifact pin (V22). REVIEW-only + nullable: the reviewer
+  // enqueue resolves the reviewed artifact ONCE and pins its (public id, version, type) here so the
+  // harvest reuses the exact artifact the reviewer saw instead of independently re-deriving it.
+  @Column(name = "reviewed_artifact_id")
+  private String reviewedArtifactId;
+
+  @Column(name = "reviewed_artifact_version")
+  private Integer reviewedArtifactVersion;
+
+  @Column(name = "reviewed_artifact_type")
+  private String reviewedArtifactType;
+
   public Long getId() {
     return id;
   }
@@ -302,6 +314,30 @@ public class RunnerExecutionEntity {
 
   public void setRedactionCount(Integer redactionCount) {
     this.redactionCount = redactionCount;
+  }
+
+  public String getReviewedArtifactId() {
+    return reviewedArtifactId;
+  }
+
+  public void setReviewedArtifactId(String reviewedArtifactId) {
+    this.reviewedArtifactId = reviewedArtifactId;
+  }
+
+  public Integer getReviewedArtifactVersion() {
+    return reviewedArtifactVersion;
+  }
+
+  public void setReviewedArtifactVersion(Integer reviewedArtifactVersion) {
+    this.reviewedArtifactVersion = reviewedArtifactVersion;
+  }
+
+  public String getReviewedArtifactType() {
+    return reviewedArtifactType;
+  }
+
+  public void setReviewedArtifactType(String reviewedArtifactType) {
+    this.reviewedArtifactType = reviewedArtifactType;
   }
 
   @PrePersist

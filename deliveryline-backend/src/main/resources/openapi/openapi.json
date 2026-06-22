@@ -788,6 +788,79 @@
         ],
         "type" : "object"
       },
+      "ReviewerVerdict" : {
+        "description" : "Advisory second-opinion verdict surfaced beside the WaitingForReview Decision Bar.",
+        "properties" : {
+          "createdAt" : {
+            "description" : "When the verdict was recorded; null unless state=available.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "outcome" : {
+            "description" : "Advisory outcome; null unless state=available.",
+            "enum" : [
+              "pass",
+              "concern",
+              "fail"
+            ],
+            "example" : "concern",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "producerModelIdentity" : {
+            "description" : "Model that produced the reviewed artifact; null when unknown.",
+            "example" : "codex:it-3d2",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "rationale" : {
+            "description" : "Redacted reviewer rationale; null unless state=available (or absent).",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "reviewerModelIdentity" : {
+            "description" : "Model that produced the review (kind + image tag); null when unknown.",
+            "example" : "claude:it-3d2",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "selfReview" : {
+            "description" : "True when the reviewer model equals the producer model (same-model self-review) — surfaced as a panel warning, never a refusal (AC4).",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "state" : {
+            "description" : "Verdict state.",
+            "enum" : [
+              "pending",
+              "available",
+              "unavailable"
+            ],
+            "example" : "available",
+            "type" : "string"
+          },
+          "unavailableReason" : {
+            "description" : "Why no verdict is available (e.g. a failure category, or no_reviewer_configured when the project has no reviewer binding); null unless state=unavailable.",
+            "example" : "runner_crash",
+            "type" : [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type" : "object"
+      },
       "RunnerQueueStatusResponse" : {
         "properties" : {
           "activeWorkers" : {
@@ -3012,6 +3085,60 @@
           }
         },
         "summary" : "Retry a failed workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/reviewer-verdict" : {
+      "get" : {
+        "description" : "Returns the second-opinion verdict a project-configured reviewer model produced over the run's WaitingForReview output artifact, or a pending/unavailable state. Advisory only (story 3d-2): never auto-approves/rejects and adds no governed action.",
+        "operationId" : "getReviewerVerdict",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ReviewerVerdict"
+                }
+              }
+            },
+            "description" : "Verdict state (+ verdict when available)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get the advisory reviewer verdict for a workflow run",
         "tags" : [
           "Workflows"
         ]

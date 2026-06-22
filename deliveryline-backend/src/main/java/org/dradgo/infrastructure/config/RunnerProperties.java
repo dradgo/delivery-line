@@ -49,6 +49,8 @@ public record RunnerProperties(
     Map<RunnerStage, Duration> timeouts = new LinkedHashMap<>();
     timeouts.put(RunnerStage.INVESTIGATION, Duration.ofSeconds(600));
     timeouts.put(RunnerStage.EXECUTION, Duration.ofSeconds(600));
+    // Story 3d-2 — the advisory reviewer rides the same queue; give it its own (default) budget.
+    timeouts.put(RunnerStage.REVIEW, Duration.ofSeconds(600));
     return new RunnerProperties(
         2.0d, timeouts, 10_000L, 50, Recovery.defaults(), Mock.defaults(), Scheduling.defaults());
   }
@@ -83,6 +85,8 @@ public record RunnerProperties(
       Map<RunnerStage, String> scenarios = new LinkedHashMap<>();
       scenarios.put(RunnerStage.INVESTIGATION, "happy-spec");
       scenarios.put(RunnerStage.EXECUTION, "happy-implementation-plan");
+      // Story 3d-2 (Task 6) — the offline reviewer scenario for the !runners.docker profile.
+      scenarios.put(RunnerStage.REVIEW, "happy-review");
       return new Mock(scenarios);
     }
 

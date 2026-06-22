@@ -246,6 +246,11 @@ map_stage() {
     prOutput | pr-output | execution)
       echo "prOutput"
       ;;
+    review)
+      # Story 3d-2 — advisory reviewer stage. Emits a review-result.v1 verdict (NOT a
+      # runner-result.v1 artifact); see the `review` arm in lib/runner.mjs commandBuild.
+      echo "review"
+      ;;
     *)
       return 1
       ;;
@@ -541,6 +546,13 @@ case "$ARTIFACT_TYPE" in
   implementationPlan)
     CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"
     PROMPT_INSTRUCTION="OPERATING MODE: IMPLEMENTATION PLAN (read-only). You are a planning stage of a governed delivery pipeline. Analyse the repository at ${CODEX_REPO_DIR} and produce a concrete, ordered IMPLEMENTATION PLAN (the steps required) for the ticket below. Do NOT modify, create, or delete any files. Output the plan as Markdown on standard output only."
+    ;;
+  review)
+    # Story 3d-2 — advisory reviewer (read-only). Reviews the produced output under /workspace/input
+    # against the approved spec and ends with a parseable verdict marker (lib/runner.mjs review arm
+    # reads `VERDICT: pass|concern|fail`; absent a marker defaults to `concern`). No repo changes.
+    CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"
+    PROMPT_INSTRUCTION="OPERATING MODE: ADVISORY REVIEW (read-only). You are an independent reviewer in a governed delivery pipeline. The output artifact produced for the ticket below is available under /workspace/input alongside the approved specification. Review it for correctness and completeness against the specification. Do NOT modify, create, or delete any files. After your assessment, end your response with EXACTLY one line and nothing after it: 'VERDICT: pass' (no blocking concerns), 'VERDICT: concern' (non-blocking concerns the human should weigh), or 'VERDICT: fail' (a blocking defect)."
     ;;
   *)
     CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"

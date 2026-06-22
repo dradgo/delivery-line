@@ -215,6 +215,56 @@ public class WorkflowController {
    * 404 {@code RUN_NOT_FOUND}; a malformed id returns 400 {@code INVALID_ID_PREFIX} at the
    * validation boundary — mirroring the detail endpoint.
    */
+  /**
+   * Story 3d-2 (AC3/AC4/AC6/AC8) — the advisory reviewer verdict for the run, surfaced beside the
+   * WaitingForReview Decision Bar. Presentational + advisory-only: it adds NO governed action (the
+   * allowed-actions matrix is unchanged) and never gates the human approve/reject decision. State
+   * is derived server-side ({@code pending|available|unavailable}); a no-binding project returns
+   * {@code unavailable} + {@code no_reviewer_configured} so the frontend renders nothing (AC5).
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/reviewer-verdict",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getReviewerVerdict",
+      summary = "Get the advisory reviewer verdict for a workflow run",
+      description =
+          "Returns the second-opinion verdict a project-configured reviewer model produced over the "
+              + "run's WaitingForReview output artifact, or a pending/unavailable state. Advisory "
+              + "only (story 3d-2): never auto-approves/rejects and adds no governed action.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Verdict state (+ verdict when available)."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ReviewerVerdictResponse getReviewerVerdict(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info(
+        "REST get reviewer-verdict received workflowRunId={}",
+        MdcKeys.sanitizeForLog(workflowRunId));
+    ReviewerVerdictResponse response =
+        ReviewerVerdictResponse.from(workflowInspectionService.getReviewerVerdict(workflowRunId));
+    log.info(
+        "REST get reviewer-verdict success workflowRunId={} state={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.state());
+    return response;
+  }
+
   @GetMapping(
       value = "/{workflowRunId}/artifacts/{artifactId}",
       produces = MediaType.APPLICATION_JSON_VALUE)

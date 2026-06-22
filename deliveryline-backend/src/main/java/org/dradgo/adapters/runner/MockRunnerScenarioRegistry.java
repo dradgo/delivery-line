@@ -50,6 +50,23 @@ public class MockRunnerScenarioRegistry {
         MockRunnerScenario.Behaviour.HAPPY,
         "happy-pr-output.json",
         null);
+    // Story 3d-2 (Task 6) — the offline advisory-reviewer scenarios. happy-review emits a verdict
+    // (review-result.v1) the harvest persists to step_reviews; review-fail self-reports a failure
+    // so
+    // the harvest degrades gracefully (markFailed, no verdict) without failing the run (AC6). Both
+    // ride the !runners.docker mock so the entire reviewer loop is testable offline.
+    registerDefault(
+        "happy-review",
+        RunnerStage.REVIEW,
+        MockRunnerScenario.Behaviour.HAPPY,
+        "happy-review.json",
+        null);
+    registerDefault(
+        "review-fail",
+        RunnerStage.REVIEW,
+        MockRunnerScenario.Behaviour.HAPPY,
+        "review-fail.json",
+        null);
     registerDefault(
         "timeout",
         null,

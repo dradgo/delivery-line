@@ -161,6 +161,15 @@ public record RunnerProperties(
     return switch (stage) {
       case INVESTIGATION -> specStage.kind();
       case EXECUTION -> planStage.kind();
+      // Story 3d-2 (DD-1/DD-7) — the reviewer kind is PER-PROJECT (Project.reviewerModelKind),
+      // resolved by ProjectRuntimeConfigResolver.resolveReviewerKind, never from these global
+      // per-stage props. The reviewer dispatch path special-cases REVIEW before reaching this
+      // resolver, so reaching here for REVIEW is a routing bug — fail loud rather than silently
+      // mis-resolve to a producer kind.
+      case REVIEW ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.REVIEW; the reviewer kind is "
+                  + "per-project — use ProjectRuntimeConfigResolver.resolveReviewerKind");
     };
   }
 
@@ -318,6 +327,8 @@ public record RunnerProperties(
       Map<RunnerStage, String> scenarios = new LinkedHashMap<>();
       scenarios.put(RunnerStage.INVESTIGATION, "happy-spec");
       scenarios.put(RunnerStage.EXECUTION, "happy-implementation-plan");
+      // Story 3d-2 (Task 6) — the offline reviewer scenario for the !runners.docker profile.
+      scenarios.put(RunnerStage.REVIEW, "happy-review");
       return new Mock(scenarios);
     }
 

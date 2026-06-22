@@ -135,6 +135,164 @@ public class WorkflowInspectionService {
         Objects.requireNonNull(runnerWorkerPoolProperties, "runnerWorkerPoolProperties");
   }
 
+  // Story 3d-2 (AC3, Task 7) — the advisory-verdict read port, backing getReviewerVerdict. Optional
+  // SETTER injection (mirroring RunnerBroker's resolver) so none of the ~10 `new
+  // WorkflowInspectionService(...)` test sites change; production Spring wires the
+  // application.review @Component. Absent in lean unit ctors that never call getReviewerVerdict.
+  private org.dradgo.application.review.spi.StepReviewReadPort stepReviewReadPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setStepReviewReadPort(
+      org.dradgo.application.review.spi.StepReviewReadPort stepReviewReadPort) {
+    this.stepReviewReadPort = stepReviewReadPort;
+  }
+
+  /**
+   * Story 3d-2 (AC3/AC4/AC6, Task 7) — the advisory reviewer verdict for a run, derived server-side
+   * so the frontend panel stays presentational. State machine (no governed action — the panel is
+   * advisory-only, AC8):
+   *
+   * <ul>
+   *   <li>a non-archived {@code step_reviews} row exists ⇒ {@code available} (+ outcome, redacted
+   *       rationale, model-identity pair, self-review flag);
+   *   <li>else the latest {@link RunnerStage#REVIEW} execution is queued/pending/running ⇒ {@code
+   *       pending} (the verdict is on its way);
+   *   <li>else that execution is terminal-failed ⇒ {@code unavailable} (+ the failure reason) — a
+   *       failed second opinion that never stranded the run (AC6);
+   *   <li>else there is NO reviewer execution at all ⇒ {@code unavailable} with reason {@code
+   *       no_reviewer_configured} so the frontend renders NOTHING (AC5 — panel absent for
+   *       no-binding projects).
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public ReviewerVerdictView getReviewerVerdict(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    workflowRunReadPort
+        .findByPublicId(workflowRunPublicId)
+        .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+    Optional<org.dradgo.application.review.StepReviewSnapshot> verdict =
+        stepReviewReadPort == null
+            ? Optional.empty()
+            : stepReviewReadPort.findLatestForRun(workflowRunPublicId);
+
+    // The latest verdict and the latest reviewer execution are read independently. Re-review
+    // reconciliation (code-review 2026-06-22): a prior verdict is stale whenever the LATEST
+    // reviewer
+    // execution is not the one that produced it — surface the latest execution's state instead so
+    // the panel never reports a settled verdict beside a superseded re-review. Two cases:
+    //   (1) the latest execution is still in flight (QUEUED/PENDING/RUNNING) — `pending`;
+    //   (2) the latest execution terminally FAILED over a newer artifact (3rd-round code-review) —
+    //       the `available` branch below requires the verdict to belong to the latest execution, so
+    //       a verdict from an OLDER execution falls through to the switch and surfaces the latest
+    //       execution's `unavailable` reason rather than the stale verdict.
+    // A verdict is written atomically with its reviewer execution's COMPLETED transition, so a
+    // verdict can only exist for an already-terminal execution; an in-flight or newer LATEST
+    // execution therefore always post-dates the verdict.
+    Optional<org.dradgo.application.runner.spi.RunnerExecutionSnapshot> reviewerExec =
+        runnerExecutionRecordPort.findLatestByWorkflowRunPublicIdAndStage(
+            workflowRunPublicId, org.dradgo.domain.registry.RunnerStage.REVIEW);
+    boolean latestReviewerInFlight =
+        reviewerExec
+            .map(
+                r ->
+                    switch (r.status()) {
+                      case QUEUED, PENDING, RUNNING -> true;
+                      default -> false;
+                    })
+            .orElse(false);
+    // The verdict is current only when it was produced by the latest reviewer execution. When no
+    // reviewer execution is resolvable (anomalous — a verdict implies an execution) we keep showing
+    // the verdict rather than hiding it.
+    boolean verdictIsForLatestExec =
+        verdict.isPresent()
+            && (reviewerExec.isEmpty()
+                || verdict.get().runnerExecutionId().equals(reviewerExec.get().publicId()));
+
+    if (verdict.isPresent() && verdictIsForLatestExec && !latestReviewerInFlight) {
+      org.dradgo.application.review.StepReviewSnapshot v = verdict.get();
+      log.info(
+          "getReviewerVerdict available workflowRunId={} reviewId={} outcome={} selfReview={}",
+          workflowRunPublicId,
+          v.publicId(),
+          v.outcome().value(),
+          v.selfReview());
+      return new ReviewerVerdictView(
+          "available",
+          v.outcome().value(),
+          v.rationale(),
+          v.reviewerModelIdentity(),
+          v.producerModelIdentity(),
+          v.selfReview(),
+          null,
+          v.createdAt());
+    }
+
+    if (reviewerExec.isEmpty()) {
+      log.debug(
+          "getReviewerVerdict no reviewer activity workflowRunId={} (panel absent)",
+          workflowRunPublicId);
+      return new ReviewerVerdictView(
+          "unavailable", null, null, null, null, false, "no_reviewer_configured", null);
+    }
+
+    org.dradgo.application.runner.spi.RunnerExecutionSnapshot rex = reviewerExec.get();
+    switch (rex.status()) {
+      case QUEUED, PENDING, RUNNING:
+        log.info(
+            "getReviewerVerdict pending workflowRunId={} reviewerExec={} status={}",
+            workflowRunPublicId,
+            rex.publicId(),
+            rex.status().value());
+        return new ReviewerVerdictView("pending", null, null, null, null, false, null, null);
+      default:
+        // FAILED / TIMED_OUT / ORPHANED / CANCELLED_FOR_TAKEOVER — a finished reviewer execution
+        // with no verdict row = the "review unavailable" state (AC6). A COMPLETED execution with no
+        // verdict row is NOT a normal degrade: the success path always persists the verdict BEFORE
+        // marking the execution completed, so this is an internal inconsistency — surface it loudly
+        // (distinct reason + WARN) rather than masking it as a generic "unavailable".
+        boolean completedWithoutVerdict =
+            rex.status() == org.dradgo.domain.registry.RunnerExecutionStatus.COMPLETED;
+        String reason =
+            completedWithoutVerdict
+                ? "reviewer_completed_without_verdict"
+                : (rex.failureCategory() != null
+                    ? rex.failureCategory().value()
+                    : "reviewer_unavailable");
+        if (completedWithoutVerdict) {
+          log.warn(
+              "getReviewerVerdict COMPLETED reviewer execution has no verdict row (internal"
+                  + " inconsistency) workflowRunId={} reviewerExec={}",
+              workflowRunPublicId,
+              rex.publicId());
+        } else {
+          log.info(
+              "getReviewerVerdict unavailable workflowRunId={} reviewerExec={} status={} reason={}",
+              workflowRunPublicId,
+              rex.publicId(),
+              rex.status().value(),
+              reason);
+        }
+        return new ReviewerVerdictView("unavailable", null, null, null, null, false, reason, null);
+    }
+  }
+
+  /**
+   * Story 3d-2 (Task 7) — server-derived advisory-verdict projection for the {@code GET
+   * …/reviewer-verdict} read leg. {@code state} ∈ {@code pending|available|unavailable}; the
+   * verdict fields are non-null only when {@code state == available}; {@code unavailableReason} is
+   * non-null only when {@code state == unavailable}.
+   */
+  public record ReviewerVerdictView(
+      String state,
+      String outcome,
+      String rationale,
+      String reviewerModelIdentity,
+      String producerModelIdentity,
+      boolean selfReview,
+      String unavailableReason,
+      OffsetDateTime createdAt) {}
+
   /**
    * Story 2.11 AC9: status-grouped clarifications for the supplied workflow run. Backs the UI
    * Clarification Region (story 2.18) via TanStack Query (story 2.6). Archived rows are filtered

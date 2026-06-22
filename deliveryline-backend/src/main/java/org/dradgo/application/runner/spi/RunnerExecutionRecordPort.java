@@ -24,6 +24,15 @@ public interface RunnerExecutionRecordPort {
       String workflowRunPublicId, List<RunnerExecutionStatus> statuses);
 
   /**
+   * Story 3d-2 (Task 7) — the latest execution for the run at {@code stage} (highest context-bundle
+   * version). Backs the reviewer-verdict read leg's state derivation: the latest {@link
+   * RunnerStage#REVIEW} execution's status decides {@code pending}/{@code unavailable} when no
+   * verdict row exists yet.
+   */
+  Optional<RunnerExecutionSnapshot> findLatestByWorkflowRunPublicIdAndStage(
+      String workflowRunPublicId, RunnerStage stage);
+
+  /**
    * Find pending/running rows whose {@code timeout_at < now()} server-side (no JVM clock). Bounded
    * by {@code limit}.
    */
@@ -239,4 +248,36 @@ public interface RunnerExecutionRecordPort {
       DataClassification classification,
       long byteSize,
       int redactionCount);
+
+  /**
+   * Story 3d-2 (code-review D1) — pin the reviewed artifact onto a {@link RunnerStage#REVIEW}
+   * execution at enqueue. The advisory reviewer's reviewed artifact is resolved ONCE (at enqueue,
+   * before any newer artifact can land) and stored here so both the dispatch-time compose and the
+   * result-time harvest reuse the SAME artifact instead of independently re-deriving it (which
+   * could drift the verdict's composite FK to an artifact the reviewer never saw). Metadata-only
+   * update (no state-machine guard). Default no-op so non-persistence fakes need not implement it.
+   *
+   * @param publicId the reviewer execution ({@code rex_…})
+   * @param reviewedArtifactPublicId the reviewed artifact's public id ({@code art_…})
+   * @param reviewedArtifactVersion the reviewed artifact's exact version
+   * @param reviewedArtifactType the reviewed artifact's wire type (e.g. {@code prOutput})
+   */
+  default void pinReviewedArtifact(
+      String publicId,
+      String reviewedArtifactPublicId,
+      int reviewedArtifactVersion,
+      String reviewedArtifactType) {}
+
+  /**
+   * Story 3d-2 (code-review D1) — read the reviewed-artifact pin a reviewer execution carries, or
+   * empty when none was stored (non-REVIEW row, a reviewer enqueued before V22, or an enqueue-time
+   * resolve failure). The harvest reuses the pin when present and falls back to re-deriving when
+   * absent. Default empty so non-persistence fakes need not implement it.
+   */
+  default Optional<ReviewedArtifactPin> findReviewedArtifactPin(String publicId) {
+    return Optional.empty();
+  }
+
+  /** The reviewed-artifact pin a {@link RunnerStage#REVIEW} execution carries (story 3d-2 D1). */
+  record ReviewedArtifactPin(String artifactPublicId, int version, String artifactType) {}
 }

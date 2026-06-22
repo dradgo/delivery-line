@@ -240,6 +240,11 @@ map_stage() {
     prOutput | pr-output | execution)
       echo "prOutput"
       ;;
+    review)
+      # Story 3d-2 — advisory reviewer stage. Emits a review-result.v1 verdict (NOT a
+      # runner-result.v1 artifact); see the `review` arm in lib/runner.mjs commandBuild.
+      echo "review"
+      ;;
     *)
       return 1
       ;;
@@ -535,6 +540,23 @@ if openspec_enabled; then
       fi
       ;;
   esac
+fi
+# Story 3d-2 — advisory review directive. Appended to the prepared prompt for a REVIEW dispatch so
+# the CLI acts as an independent reviewer over the produced output (referenced in /workspace/input
+# alongside the approved spec) and ends with a parseable verdict marker (lib/runner.mjs
+# commandBuild's `review` arm reads `VERDICT: pass|concern|fail`; absent a marker it defaults to
+# `concern`). Read-only: no repo changes, no push.
+if [ "$ARTIFACT_TYPE" = review ]; then
+  {
+    printf '\n\n--- ADVISORY REVIEW TASK ---\n'
+    printf 'Act as an independent reviewer. The output artifact produced for this ticket is\n'
+    printf 'available under /workspace/input alongside the approved specification. Review it for\n'
+    printf 'correctness and completeness against the specification. Do NOT modify any files.\n'
+    printf 'End your response with EXACTLY one line, nothing after it:\n'
+    printf 'VERDICT: pass   (no blocking concerns)\n'
+    printf 'VERDICT: concern (non-blocking concerns the human reviewer should weigh)\n'
+    printf 'VERDICT: fail   (a blocking defect)\n'
+  } >>"$PROMPT_FILE"
 fi
 log INFO "claude invocation start bin=$CLAUDE_CLI_BIN subcommand=$CLAUDE_SUBCOMMAND repoDir=$CLAUDE_REPO_DIR argCount=$#"
 set +e

@@ -80,6 +80,12 @@ export const workflowKeys = {
    */
   clarifications: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'clarifications'] as const,
+  /**
+   * A run's advisory reviewer verdict (story 3d-2). A PREFIX child of `detail(id)`, so a spec/
+   * approval mutation's `detail(id)` invalidation cascade refreshes it for free.
+   */
+  reviewerVerdict: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'reviewerVerdict'] as const,
 
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,

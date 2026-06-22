@@ -491,6 +491,54 @@ class WorkflowOrchestrationServiceTest {
   }
 
   @Test
+  void onPlanStageSucceededEnqueuesReviewerAndPinsReviewedArtifactWhenBindingPresent() {
+    // Story 3d-2 (AC2/AC9 create-leg + D1 pin): a reviewer-bound run enqueues a REVIEW execution on
+    // WaitingForReview entry AND pins the reviewed artifact (resolved once at enqueue) onto it.
+    when(projectRuntimeConfigResolver.hasReviewerBinding(RUN_ID)).thenReturn(true);
+    String reviewerRex = "rex_reviewer00001";
+    when(runnerExecutionQueue.enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), any(), any(), anyInt()))
+        .thenReturn(
+            new QueuedRunnerExecution(
+                reviewerRex, RUN_ID, RunnerStage.REVIEW, 100, "corr-p", 1L, "evt_q-review0001"));
+    when(contextBundleService.resolveReviewedArtifact(RUN_ID))
+        .thenReturn(
+            org.dradgo.application.artifact.ArtifactRecordSnapshot.withoutFailureMetadata(
+                "art_reviewed0001",
+                RUN_ID,
+                org.dradgo.domain.registry.ArtifactType.IMPLEMENTATION_PLAN,
+                4,
+                null,
+                org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                "artifacts/run/plan.json",
+                "SHA-256",
+                "abc123",
+                org.dradgo.domain.registry.ArtifactStatus.AVAILABLE,
+                null));
+
+    service(true).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    // AC2/AC9 — the reviewer runner_executions row is created via the enqueue trigger.
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), eq("review:" + REX_ID), any(), anyInt());
+    // D1 — the reviewed artifact is pinned on the reviewer execution (id+version+type).
+    verify(recordPort)
+        .pinReviewedArtifact(
+            eq(reviewerRex), eq("art_reviewed0001"), eq(4), eq("implementationPlan"));
+    assertLoggedAt(Level.INFO, "enqueuing reviewer review for run");
+  }
+
+  @Test
+  void onPlanStageSucceededEnqueuesNoReviewerForDefaultProjectParity() {
+    // Story 3d-2 (AC5 parity): no reviewer binding ⇒ NO REVIEW enqueue, NO pin — byte-identical to
+    // pre-3d. hasReviewerBinding defaults false (unstubbed) for the default project.
+    service(true).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    verify(runnerExecutionQueue, never())
+        .enqueue(any(), eq(RunnerStage.REVIEW), any(), any(), anyInt());
+    verify(recordPort, never()).pinReviewedArtifact(any(), any(), anyInt(), any());
+  }
+
+  @Test
   void onPlanStageSucceededSwallowsIllegalTransitionAsBenignReplayWhenAlreadyAtReview() {
     // AC3 — a duplicate/replayed result whose run already reached WaitingForReview is a benign
     // idempotent replay: swallowed, logged INFO (not the WARN anomaly line).

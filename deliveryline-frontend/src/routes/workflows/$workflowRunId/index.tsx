@@ -19,6 +19,7 @@ import { ClarificationRegionContainer } from '@/features/workflows/components/Cl
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
 import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
+import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
 import { useAllowedActions } from '@/features/workflows/hooks/useAllowedActions';
 import {
   GenericErrorState,
@@ -212,6 +213,12 @@ function WorkflowDetailRoute() {
           every other state gets the story-2.19 `spec_approval` bar. The selector owns the
           retry mutation so the recovery bar survives the post-retry Failed→Executing flip
           (success panel + AC7 announcement) — see `WorkflowDecisionBar`. */}
+      {/* Story 3d-2 (AC3) — the advisory Reviewer Verdict Panel, beside the Decision Bar at
+          WaitingForReview. Presentational + advisory-only (never gates the human decision); renders
+          nothing for a no-reviewer-binding project (AC5, self-hides via the endpoint state). */}
+      {data?.currentState === 'WaitingForReview' ? (
+        <ReviewerVerdictPanelContainer workflowRunId={workflowRunId} />
+      ) : null}
       <WorkflowDecisionBar workflowRunId={workflowRunId} />
     </Stack>
   );

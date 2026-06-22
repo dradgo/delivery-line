@@ -106,6 +106,17 @@ public class RunnerExecutionService {
   }
 
   /**
+   * Story 3d-2 (code-review D1) — the reviewed-artifact pin a {@link
+   * org.dradgo.domain.registry.RunnerStage#REVIEW} execution carries (set at enqueue), or empty
+   * when none was stored. The REVIEW harvest reuses the pin so the verdict references the exact
+   * artifact the reviewer saw, falling back to re-deriving when absent.
+   */
+  public Optional<RunnerExecutionRecordPort.ReviewedArtifactPin> findReviewedArtifactPin(
+      String runnerExecutionId) {
+    return recordPort.findReviewedArtifactPin(runnerExecutionId);
+  }
+
+  /**
    * Story 3.6 AC3/AC6 / Trap T10 — persist the durable redacted-log capture reference + metrics
    * onto the row. Metadata-only: never changes {@code status}, tolerates an already-terminal row.
    */

@@ -147,6 +147,76 @@ class ProjectRuntimeConfigResolverTest {
         .isEqualTo(RunnerKind.CLAUDE);
   }
 
+  // ---------------------------------------------------------------------------
+  // Story 3d-2 (AC1/AC5, Task 2) — resolveReviewerKind: null/blank = parity no-op (empty);
+  // a valid non-manual kind resolves; an unparseable kind or MANUAL is a graceful misconfiguration
+  // tagged REVIEWER_MODEL_NOT_CONFIGURED (caught by the dispatch trigger, never a 5xx into the
+  // run).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void resolveReviewerKindIsEmptyWhenNoBinding() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWithReviewerKind(null)));
+
+    assertThat(resolver.resolveReviewerKind(RUN_ID)).isEmpty();
+  }
+
+  @Test
+  void resolveReviewerKindResolvesValidNonManualKind() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWithReviewerKind("claude")));
+
+    assertThat(resolver.resolveReviewerKind(RUN_ID)).contains(RunnerKind.CLAUDE);
+  }
+
+  @Test
+  void resolveReviewerKindDegradesOnUnparseableKind() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWithReviewerKind("gpt-9000")));
+
+    assertThatThrownBy(() -> resolver.resolveReviewerKind(RUN_ID))
+        .isInstanceOf(DomainException.class)
+        .satisfies(
+            e ->
+                assertThat(((DomainException) e).errorCode())
+                    .isEqualTo(DomainErrorCode.REVIEWER_MODEL_NOT_CONFIGURED));
+  }
+
+  @Test
+  void resolveReviewerKindRejectsManualReviewer() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWithReviewerKind("manual")));
+
+    assertThatThrownBy(() -> resolver.resolveReviewerKind(RUN_ID))
+        .isInstanceOf(DomainException.class)
+        .satisfies(
+            e ->
+                assertThat(((DomainException) e).errorCode())
+                    .isEqualTo(DomainErrorCode.REVIEWER_MODEL_NOT_CONFIGURED));
+  }
+
+  private static Project projectWithReviewerKind(String reviewerModelKind) {
+    return new Project(
+        DefaultProjectSeeder.DEFAULT_PROJECT_PUBLIC_ID,
+        DefaultProjectSeeder.DEFAULT_PROJECT_NAME,
+        DefaultProjectSeeder.DEFAULT_PROJECT_SLUG,
+        ProjectStatus.ACTIVE,
+        "octo/hello",
+        ConnectorKind.LINEAR,
+        ConnectorKind.GITHUB,
+        false,
+        reviewerModelKind,
+        false,
+        null,
+        OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+        null);
+  }
+
   private static Project projectWithRunnerKind(RunnerKind runnerKind) {
     return new Project(
         DefaultProjectSeeder.DEFAULT_PROJECT_PUBLIC_ID,

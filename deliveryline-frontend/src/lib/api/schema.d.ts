@@ -361,6 +361,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/reviewer-verdict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the advisory reviewer verdict for a workflow run
+         * @description Returns the second-opinion verdict a project-configured reviewer model produced over the run's WaitingForReview output artifact, or a pending/unavailable state. Advisory only (story 3d-2): never auto-approves/rejects and adds no governed action.
+         */
+        get: operations["getReviewerVerdict"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/runner-logs/stream": {
         parameters: {
             query?: never;
@@ -765,6 +785,48 @@ export interface components {
             actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
             correlationId?: string;
             reasonText?: string;
+        };
+        /** @description Advisory second-opinion verdict surfaced beside the WaitingForReview Decision Bar. */
+        ReviewerVerdict: {
+            /**
+             * Format: date-time
+             * @description When the verdict was recorded; null unless state=available.
+             */
+            createdAt?: string | null;
+            /**
+             * @description Advisory outcome; null unless state=available.
+             * @example concern
+             * @enum {string|null}
+             */
+            outcome?: "pass" | "concern" | "fail" | null;
+            /**
+             * @description Model that produced the reviewed artifact; null when unknown.
+             * @example codex:it-3d2
+             */
+            producerModelIdentity?: string | null;
+            /** @description Redacted reviewer rationale; null unless state=available (or absent). */
+            rationale?: string | null;
+            /**
+             * @description Model that produced the review (kind + image tag); null when unknown.
+             * @example claude:it-3d2
+             */
+            reviewerModelIdentity?: string | null;
+            /**
+             * @description True when the reviewer model equals the producer model (same-model self-review) — surfaced as a panel warning, never a refusal (AC4).
+             * @example false
+             */
+            selfReview?: boolean;
+            /**
+             * @description Verdict state.
+             * @example available
+             * @enum {string}
+             */
+            state?: "pending" | "available" | "unavailable";
+            /**
+             * @description Why no verdict is available (e.g. a failure category, or no_reviewer_configured when the project has no reviewer binding); null unless state=unavailable.
+             * @example runner_crash
+             */
+            unavailableReason?: string | null;
         };
         RunnerQueueStatusResponse: {
             /** Format: int64 */
@@ -2039,6 +2101,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+        };
+    };
+    getReviewerVerdict: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verdict state (+ verdict when available). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewerVerdict"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

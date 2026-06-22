@@ -742,9 +742,102 @@ public class WorkflowOrchestrationService {
         }
         throw error;
       }
+      // Story 3d-2 (AC1/AC5/AC6, DD-4) — fire the advisory reviewer ASYNC + non-blocking on
+      // WaitingForReview entry. The human can review immediately; the verdict arrives later. This
+      // call shares the poller's per-item transaction with the transition above (the transition is
+      // NOT yet committed — see this method's javadoc); the enqueue is intentionally part of that
+      // same tx so a reviewer is enqueued iff the transition commits, and it never throws into this
+      // success path (faults degrade to "no verdict", logged WARN inside the helper).
+      enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 3d-2 (AC1/AC5/AC6, Task 4) — enqueue an advisory reviewer invocation ({@link
+   * RunnerStage#REVIEW}) over the just-produced output artifact when (and only when) the run's
+   * project carries a reviewer binding. No binding ⇒ no enqueue ⇒ byte-identical to pre-3d (AC5,
+   * the hot path). The reviewer rides the existing worker pool exactly like any runner; it is NOT a
+   * manual park. A set-but-invalid binding (misconfig / missing credential) is still enqueued so
+   * the WORKER records the failed reviewer execution (the panel "unavailable" state) — every
+   * reviewer failure mode funnels through that single graceful-degradation path. The enqueue itself
+   * can never block or fail the run's review entry (AC6): a fault here degrades to "no verdict",
+   * logged WARN.
+   */
+  private void enqueueReviewerIfConfigured(
+      String workflowRunId, String producingRunnerExecutionId, String correlationId) {
+    boolean hasBinding;
+    try {
+      hasBinding = projectRuntimeConfigResolver.hasReviewerBinding(workflowRunId);
+    } catch (RuntimeException resolveError) {
+      log.warn(
+          "reviewer binding resolution failed for run {} cause={} — no advisory review enqueued,"
+              + " run remains human-reviewable",
+          workflowRunId,
+          resolveError.toString());
+      return;
+    }
+    if (!hasBinding) {
+      log.debug(
+          "reviewer not configured for run {} — no advisory review enqueued (parity)",
+          workflowRunId);
+      return;
+    }
+    try {
+      String reviewIdempotencyKey = "review:" + producingRunnerExecutionId;
+      org.dradgo.application.runner.queue.QueuedRunnerExecution queued =
+          runnerExecutionQueue.enqueue(
+              workflowRunId,
+              RunnerStage.REVIEW,
+              reviewIdempotencyKey,
+              systemActor(correlationId),
+              DEFAULT_QUEUE_PRIORITY);
+      // Story 3d-2 (code-review D1) — resolve the reviewed artifact ONCE here and pin it on the
+      // reviewer execution so the harvest reuses the exact artifact the reviewer saw (the compose
+      // and harvest no longer independently re-derive `latestAvailable`, which could drift the
+      // verdict FK to a newer artifact). Best-effort: a pin failure leaves the row unpinned and the
+      // worker/harvest fall back to re-deriving — never blocks the review entry (AC6).
+      pinReviewedArtifactBestEffort(workflowRunId, queued.runnerExecutionPublicId());
+      log.info(
+          "enqueuing reviewer review for run {} producingRunnerExecutionId={} reviewerExec={}",
+          workflowRunId,
+          producingRunnerExecutionId,
+          queued.runnerExecutionPublicId());
+    } catch (RuntimeException enqueueError) {
+      log.warn(
+          "reviewer enqueue failed for run {} producingRunnerExecutionId={} cause={} — run remains"
+              + " human-reviewable",
+          workflowRunId,
+          producingRunnerExecutionId,
+          enqueueError.toString());
+    }
+  }
+
+  /**
+   * Story 3d-2 (code-review D1) — best-effort pin of the reviewed artifact (id+version+type) onto
+   * the freshly-enqueued reviewer execution. Resolved via the SAME derivation the compose uses
+   * ({@code latestAvailable(prOutput).or(implementationPlan)}), but ONCE, at enqueue, so the
+   * harvest reuses it. A resolve/pin fault never strands or blocks the run (AC6): the worker +
+   * harvest fall back to re-deriving when the pin is absent.
+   */
+  private void pinReviewedArtifactBestEffort(String workflowRunId, String reviewerExecutionId) {
+    try {
+      org.dradgo.application.artifact.ArtifactRecordSnapshot reviewed =
+          contextBundleService.resolveReviewedArtifact(workflowRunId);
+      runnerExecutionRecordPort.pinReviewedArtifact(
+          reviewerExecutionId,
+          reviewed.publicId(),
+          reviewed.version(),
+          reviewed.artifactType().value());
+    } catch (RuntimeException pinFailure) {
+      log.warn(
+          "reviewer reviewed-artifact pin skipped run={} reviewerExec={} cause={} — harvest will"
+              + " re-derive",
+          workflowRunId,
+          reviewerExecutionId,
+          pinFailure.getClass().getSimpleName());
     }
   }
 
@@ -855,6 +948,9 @@ public class WorkflowOrchestrationService {
         }
         throw error;
       }
+      // Story 3d-2 (AC1/AC5/AC6, DD-4) — advisory reviewer over the pr-output artifact, async +
+      // non-blocking on WaitingForReview entry (same contract as the plan-stage seam).
+      enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);

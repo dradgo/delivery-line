@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/runner-contracts/review-result.v1.schema.json",
+  "title": "DeliveryLine Reviewer Verdict v1",
+  "description": "Story 3d-2 (DD-3) — the advisory verdict an advisory-reviewer runner invocation emits over a WaitingForReview output artifact. Dedicated schema (NOT runner-result.v1) so the reviewer can carry pass/concern/fail + a rationale, leaving runner-result.v1 / ArtifactType / the frontend ArtifactView union untouched. The verdict is harvested into step_reviews (NOT the artifacts table); the backend computes model provenance and pins the reviewed-artifact FK, so this contract carries only what the runner authoritatively knows.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workflowRunId",
+    "runnerExecutionId",
+    "outcome",
+    "classification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "workflowRunId": {
+      "type": "string",
+      "pattern": "^run_[A-Za-z0-9_-]{4,64}$"
+    },
+    "runnerExecutionId": {
+      "type": "string",
+      "pattern": "^rex_[A-Za-z0-9_-]{4,64}$"
+    },
+    "outcome": {
+      "type": "string",
+      "description": "The advisory verdict. Mirrors the ReviewOutcome registry + the ck_step_reviews_outcome CHECK.",
+      "enum": [
+        "pass",
+        "concern",
+        "fail"
+      ]
+    },
+    "rationale": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL free-text justification for the outcome. Redacted by the backend harvest before persistence to step_reviews (AC7); never echoed to logs. Absent/null is valid (a bare verdict)."
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL one-line human summary of the review (parallels runner-result.v1 normalizedOutput.summary)."
+    },
+    "reviewerModelIdentity": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL self-reported reviewer model identity (kind + image/version). The backend independently derives the authoritative reviewer identity from the reviewer execution for provenance/self-review (AC4); this is advisory only."
+    },
+    "reviewedArtifactId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^art_[A-Za-z0-9_-]{4,64}$",
+      "description": "OPTIONAL echo of the reviewed artifact's public id (read from the bundle artifactReferences). The backend re-derives the reviewed artifact + version from the run to pin the step_reviews composite FK (it never trusts a runner-supplied FK); this echo is advisory/diagnostic only."
+    },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "local-only",
+        "shareable-redacted",
+        "shareable-full",
+        "derived-public-safe"
+      ]
+    },
+    "failureCategory": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL — a runner-self-reported failure (parallels runner-result.v1). When present and non-blank, the backend records the reviewer execution failed (graceful degrade, AC6) and writes NO verdict. Constrained to the FailureCategory wire values a reviewer can authoritatively self-report (provider/timeout/exit faults); backend-assigned categories (late/duplicate/secret-leak/orphan) are not runner-emittable and are excluded so a malformed taxonomy is rejected at the contract layer rather than silently collapsing to runner_contract_violation.",
+      "enum": [
+        "runner_timeout",
+        "runner_crash",
+        "runner_contract_violation",
+        "runner_non_zero_exit",
+        "runner_malformed_output",
+        null
+      ]
+    }
+  }
+}

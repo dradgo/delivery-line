@@ -63,6 +63,47 @@ class RunnerExecutionPersistenceAdapterManualTest {
   }
 
   @Test
+  void pinReviewedArtifactStoresTheTripleAndFindReadsItBack() {
+    // Story 3d-2 (code-review D1) — the reviewed-artifact pin: pinReviewedArtifact writes
+    // (id, version, type) onto the reviewer row; findReviewedArtifactPin reads it back. (Column
+    // existence/types are pinned by FlywaySchemaContractTest; this pins the adapter mapping logic.)
+    RunnerExecutionRepository executionRepository = mock(RunnerExecutionRepository.class);
+    WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);
+    RunnerExecutionEntityMapper mapper = mock(RunnerExecutionEntityMapper.class);
+    RunnerExecutionEntity reviewer = new RunnerExecutionEntity();
+    reviewer.setPublicId("rex_reviewerpin01");
+    when(executionRepository.findByPublicIdForUpdate("rex_reviewerpin01"))
+        .thenReturn(Optional.of(reviewer));
+    when(executionRepository.findByPublicId("rex_reviewerpin01")).thenReturn(Optional.of(reviewer));
+    when(executionRepository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
+    RunnerExecutionPersistenceAdapter adapter =
+        new RunnerExecutionPersistenceAdapter(
+            executionRepository,
+            runRepository,
+            mapper,
+            mock(NamedParameterJdbcTemplate.class),
+            Clock.systemUTC());
+
+    // Before pinning, no pin is present.
+    org.junit.jupiter.api.Assertions.assertTrue(
+        adapter.findReviewedArtifactPin("rex_reviewerpin01").isEmpty());
+
+    adapter.pinReviewedArtifact("rex_reviewerpin01", "art_pinned0001", 3, "prOutput");
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "art_pinned0001", reviewer.getReviewedArtifactId());
+    org.junit.jupiter.api.Assertions.assertEquals(3, reviewer.getReviewedArtifactVersion());
+    org.junit.jupiter.api.Assertions.assertEquals("prOutput", reviewer.getReviewedArtifactType());
+
+    Optional<org.dradgo.application.runner.spi.RunnerExecutionRecordPort.ReviewedArtifactPin> pin =
+        adapter.findReviewedArtifactPin("rex_reviewerpin01");
+    org.junit.jupiter.api.Assertions.assertTrue(pin.isPresent());
+    org.junit.jupiter.api.Assertions.assertEquals("art_pinned0001", pin.get().artifactPublicId());
+    org.junit.jupiter.api.Assertions.assertEquals(3, pin.get().version());
+    org.junit.jupiter.api.Assertions.assertEquals("prOutput", pin.get().artifactType());
+  }
+
+  @Test
   void allocatedInsertRejectsRunAlreadyWaitingForManualBeforeVersionSelection() {
     RunnerExecutionRepository executionRepository = mock(RunnerExecutionRepository.class);
     WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);

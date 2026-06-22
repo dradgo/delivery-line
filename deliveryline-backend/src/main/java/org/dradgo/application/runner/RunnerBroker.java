@@ -179,6 +179,18 @@ public class RunnerBroker {
     this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
   }
 
+  // Story 3d-2 (Task 5) — the advisory-reviewer verdict harvester. Optional SETTER injection
+  // (mirroring projectRuntimeConfigResolver) so none of the broker's telescoping constructors —
+  // nor their unit-test call sites — change. Present in production (the application.review
+  // @Component); absent in the lean broker unit ctors, where a REVIEW result would never arrive.
+  private org.dradgo.application.review.ReviewResultHarvester reviewResultHarvester;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setReviewResultHarvester(
+      org.dradgo.application.review.ReviewResultHarvester reviewResultHarvester) {
+    this.reviewResultHarvester = reviewResultHarvester;
+  }
+
   // Story 3.19 (AC5) — count a dispatch + record its duration (histogram, tagged stage), on the
   // successful-dispatch path. Exception-safe.
   private void recordDispatchMetrics(
@@ -824,6 +836,12 @@ public class RunnerBroker {
     int contextBundleVersion = leased.contextBundleVersion();
     ActorContext actor = reconstructActor(leased);
     String idempotencyKey = leased.idempotencyKey();
+    // Story 3d-2 (AC6) — a REVIEW execution is advisory and NEVER on the run's critical path: a
+    // compose/dispatch failure degrades the reviewer execution (markFailed) but must NOT drive the
+    // run to Failed. The run stays human-reviewable; the absence of a step_reviews verdict (with
+    // the
+    // failed reviewer runner_executions row) is the "review unavailable" state the panel renders.
+    boolean isReview = stage == RunnerStage.REVIEW;
 
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
@@ -856,9 +874,33 @@ public class RunnerBroker {
       // dispatching so it leaves ACTIVE_STATUSES and never reaches the adapter.
       if (idempotencyKey != null && !idempotencyKey.isBlank()) {
         String fingerprint = dispatchFingerprint(workflowRunId, stage, contextBundleVersion);
-        ReservationOutcome reservation =
-            idempotencyService.checkAndReserve(
-                idempotencyKey, "RunnerBroker.dispatch", actor.actorIdentity(), fingerprint);
+        ReservationOutcome reservation;
+        try {
+          reservation =
+              idempotencyService.checkAndReserve(
+                  idempotencyKey, "RunnerBroker.dispatch", actor.actorIdentity(), fingerprint);
+        } catch (DomainException reservationConflict) {
+          // Story 3d-2 (AC6) — a re-enqueued reviewer over the SAME producing execution reuses the
+          // idempotency key "review:<rex>" but carries a fresh contextBundleVersion ⇒ a different
+          // dispatch fingerprint. A prior COMPLETED/FAILED reservation then resolves to an
+          // IDEMPOTENCY_KEY_CONFLICT (or stale/exhausted) HERE — outside the compose/dispatch try
+          // blocks below. For a REVIEW execution, degrade the reviewer (mark its row failed)
+          // instead
+          // of letting the conflict escape the worker and strand the leased REVIEW row RUNNING: a
+          // failed/duplicate second opinion never strands or blocks the run. Non-review stages keep
+          // today's propagating behavior.
+          if (isReview) {
+            log.warn(
+                "reviewer run failed (idempotency conflict) for run {} reviewerExec={} code={} — run"
+                    + " remains human-reviewable",
+                workflowRunId,
+                runnerExecutionId,
+                reservationConflict.errorCode().value());
+            recordFailedBestEffort(runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+            return;
+          }
+          throw reservationConflict;
+        }
         if (reservation.decision() == ReservationDecision.REPLAY) {
           log.warn(
               "executeQueuedDispatch duplicate leased row retired runnerExecutionId={} workflowRunId={} priorRunnerExecutionId={}",
@@ -886,6 +928,17 @@ public class RunnerBroker {
         }
         FailureCategory category = FailureCategory.RUNNER_CONTRACT_VIOLATION;
         recordFailedBestEffort(runnerExecutionId, category);
+        if (isReview) {
+          // Story 3d-2 (AC6) — graceful degrade: record the reviewer execution failed, leave the
+          // run untouched (it stays WaitingForReview, fully human-reviewable). A failed second
+          // opinion never strands a run.
+          log.warn(
+              "reviewer run failed (composition) for run {} reviewerExec={} errorCode={} — run remains human-reviewable",
+              workflowRunId,
+              runnerExecutionId,
+              compositionError.errorCode().value());
+          return;
+        }
         log.warn(
             "executeQueuedDispatch composition failed -> Failed runnerExecutionId={} workflowRunId={} stage={} errorCode={}",
             runnerExecutionId,
@@ -938,13 +991,29 @@ public class RunnerBroker {
       try {
         java.nio.file.Path bundlePath =
             scratchStore.writeContextBundle(runnerExecutionId, composed.bundle().redactedPayload());
-        org.dradgo.domain.registry.RunnerKind dispatchKind =
-            projectRuntimeConfigResolver != null
-                ? projectRuntimeConfigResolver.resolveRunnerKind(
-                    workflowRunId, stage, composed.executionSubStage())
-                : (stage == RunnerStage.EXECUTION
-                    ? runnerProperties.kindForExecutionSubStage(composed.executionSubStage())
-                    : runnerProperties.kindForStage(stage));
+        org.dradgo.domain.registry.RunnerKind dispatchKind;
+        if (isReview) {
+          // Story 3d-2 (DD-1/DD-7) — the reviewer kind is per-project, resolved via
+          // resolveReviewerKind (NOT the global kindForStage, which throws for REVIEW). A binding
+          // that became unresolvable/misconfigured since enqueue throws here and is caught by the
+          // dispatch-failure branch below, which degrades the reviewer (does NOT fail the run).
+          dispatchKind =
+              projectRuntimeConfigResolver
+                  .resolveReviewerKind(workflowRunId)
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              "reviewer binding resolved empty at dispatch for run "
+                                  + workflowRunId));
+        } else {
+          dispatchKind =
+              projectRuntimeConfigResolver != null
+                  ? projectRuntimeConfigResolver.resolveRunnerKind(
+                      workflowRunId, stage, composed.executionSubStage())
+                  : (stage == RunnerStage.EXECUTION
+                      ? runnerProperties.kindForExecutionSubStage(composed.executionSubStage())
+                      : runnerProperties.kindForStage(stage));
+        }
         // Story 3b.1 (AC1) — queue/production path: carry composed.executionSubStage() (null for
         // INVESTIGATION) so the adapter selects implementation-plan / pr-output. This is the exact
         // wire field that was wrong on run_ae258… (execution → always prOutput).
@@ -995,6 +1064,15 @@ public class RunnerBroker {
         }
         FailureCategory category = FailureCategory.RUNNER_CRASH;
         recordFailedBestEffort(runnerExecutionId, category);
+        if (isReview) {
+          // Story 3d-2 (AC6) — graceful degrade: a reviewer dispatch fault never strands the run.
+          log.warn(
+              "reviewer run failed (dispatch) for run {} reviewerExec={} cause={} — run remains human-reviewable",
+              workflowRunId,
+              runnerExecutionId,
+              dispatchError.getClass().getSimpleName());
+          return;
+        }
         log.warn(
             "executeQueuedDispatch dispatch failed -> Failed runnerExecutionId={} workflowRunId={} stage={} cause={}",
             runnerExecutionId,
@@ -1192,6 +1270,18 @@ public class RunnerBroker {
                 DataClassification.SHAREABLE_REDACTED,
                 actor,
                 repositoryContextSummary);
+      } else if (stage == RunnerStage.REVIEW) {
+        // Story 3d-2 (Task 4) — the advisory reviewer reviews an existing WaitingForReview output
+        // artifact; read-only, no repo workspace, no execution sub-stage. createForReview derives
+        // the reviewed artifact and references its already-redacted content.
+        bundle =
+            contextBundleService.createForReview(
+                workflowRunId,
+                runnerExecutionId,
+                contextBundleVersion,
+                constraints,
+                DataClassification.SHAREABLE_REDACTED,
+                actor);
       } else {
         executionSubStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
         log.info(
@@ -1316,6 +1406,26 @@ public class RunnerBroker {
           || row.status() == RunnerExecutionStatus.ORPHANED) {
         handleLateResult(runnerExecutionId, workflowRunId, row, payloadBytes);
         completionOutcome = "late_result";
+        return;
+      }
+
+      // Story 3d-2 (Task 5) — a REVIEW execution harvests its verdict into step_reviews (DD-2: no
+      // artifacts row) and NEVER transitions the run (DD-9). All reviewer failure modes degrade
+      // gracefully inside the harvester (AC6) — never failing the run.
+      if (row.stage() == RunnerStage.REVIEW) {
+        if (reviewResultHarvester == null) {
+          // Defensive: a REVIEW result with no harvester wired (lean unit ctor) — record failed so
+          // the row leaves ACTIVE_STATUSES without touching the run.
+          log.warn(
+              "review result received with no harvester wired runnerExecutionId={} workflowRunId={}",
+              runnerExecutionId,
+              workflowRunId);
+          recordFailedBestEffort(runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+          completionOutcome = "failure";
+          return;
+        }
+        completionOutcome =
+            reviewResultHarvester.harvest(runnerExecutionId, workflowRunId, payloadBytes);
         return;
       }
 
@@ -1797,6 +1907,13 @@ public class RunnerBroker {
       case INVESTIGATION -> java.util.EnumSet.of(ArtifactType.SPEC);
       case EXECUTION ->
           java.util.EnumSet.of(ArtifactType.IMPLEMENTATION_PLAN, ArtifactType.PR_OUTPUT);
+      // Story 3d-2 (DD-2) — the reviewer emits NO artifacts-table artifact: its verdict is
+      // harvested
+      // directly into step_reviews (advisory metadata ABOUT an existing artifact, not a new
+      // reviewable artifact). The REVIEW harvest branches before artifactOperationService, so this
+      // empty set is a belt-and-braces guard — any artifactReference on a review result is
+      // rejected.
+      case REVIEW -> java.util.EnumSet.noneOf(ArtifactType.class);
     };
   }
 

@@ -91,6 +91,29 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private final ConcurrentMap<String, LogGrowthObservation> rexIdToLastLogObservation =
       new ConcurrentHashMap<>();
 
+  // Story 3d-2 (AC1) — per-project reviewer-credential resolution for a REVIEW dispatch. Optional
+  // SETTER injection (mirroring RunnerBroker's resolver) so none of the four telescoping ctors —
+  // nor their test sites — change. Present in production (the application.project @Components);
+  // null in lean adapter unit slices, where a REVIEW dispatch never occurs. adapters→application is
+  // an allowed dependency direction (only application→adapters is forbidden by ArchUnit).
+  @Nullable
+  private org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
+
+  @Nullable
+  private org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProjectRuntimeConfigResolver(
+      org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver) {
+    this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProjectConnectorResolver(
+      org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver) {
+    this.projectConnectorResolver = projectConnectorResolver;
+  }
+
   @org.springframework.beans.factory.annotation.Autowired
   public DockerRunnerAdapter(
       RunnerScratchStore scratchStore,
@@ -232,13 +255,12 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     // through RunnerDispatchRequest or any persisted/serialized record. Resolution may throw
     // DOCTOR_RUNNER_SECRET_MISSING (fail fast at dispatch time). The mock adapter never calls this
     // (Trap T4). Log the COUNT only — never names/values (Trap T5 / Logging task).
-    Map<String, String> secretEnv =
-        runnerSecretsService.resolveSecretsForRunner(
-            kind, request.stage(), request.workflowRunId());
+    Map<String, String> secretEnv = resolveSecretEnv(request, kind);
     log.info(
-        "docker dispatch secrets resolved runnerExecutionId={} kind={} secretVarCount={}",
+        "docker dispatch secrets resolved runnerExecutionId={} kind={} stage={} secretVarCount={}",
         rexId,
         kind.value(),
+        request.stage().value(),
         secretEnv.size());
 
     Map<String, String> containerEnv = new LinkedHashMap<>(secretEnv);
@@ -594,7 +616,63 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       };
     }
     // INVESTIGATION → "investigation"; EXECUTION + null → "execution" (legacy generic path).
+    // REVIEW → "review" (the entrypoint map_stage routes it to the review prompt).
     return request.stage().value();
+  }
+
+  /**
+   * Story 3d-2 (AC1) — resolve the {@code env-var → value} map for the dispatch. For a REVIEW
+   * dispatch the reviewer uses the PER-PROJECT reviewer credential (resolved through {@link
+   * org.dradgo.application.project.ProjectConnectorResolver}, decrypted in-memory only, injected
+   * under the kind's preferred env-var name, NEVER logged) — NOT the kind's host key. A configured
+   * reviewer with no active reviewer credential fails fast with {@code
+   * DOCTOR_RUNNER_SECRET_MISSING} so the worker degrades the reviewer execution (the run stays
+   * human-reviewable, AC6); there is no host-key fallback (the reviewer is strictly opt-in per
+   * project, AC5). Every non-REVIEW dispatch is byte-identical to story 3.5 (the kind's host key
+   * via {@link RunnerSecretsService}).
+   */
+  // Package-private for focused AC1 coverage (DockerRunnerAdapterReviewerCredentialTest).
+  Map<String, String> resolveSecretEnv(RunnerDispatchRequest request, RunnerKind kind) {
+    if (request.stage() == RunnerStage.REVIEW) {
+      if (projectRuntimeConfigResolver == null || projectConnectorResolver == null) {
+        // AC1/AC5 (code-review re-review 2026-06-22) — the advisory reviewer is strictly
+        // per-project; there is NO host-key fallback. If the project resolvers are not wired (a
+        // misconfigured context), fail loud rather than silently dispatching the reviewer on the
+        // operator's host credential. The REVIEW dispatch fault degrades gracefully in the broker
+        // (AC6): the run stays human-reviewable, the panel shows "unavailable".
+        throw new IllegalStateException(
+            "reviewer credential resolvers are not wired; cannot resolve a per-project reviewer"
+                + " secret for a REVIEW dispatch (refusing the host-key fallback)");
+      }
+      org.dradgo.domain.project.Project project =
+          projectRuntimeConfigResolver.resolveForRun(request.workflowRunId());
+      Optional<String> reviewerSecret =
+          projectConnectorResolver.resolveConnectorSecret(
+              project, org.dradgo.domain.registry.ConnectorRole.REVIEWER.value());
+      if (reviewerSecret.isEmpty() || reviewerSecret.get().isBlank()) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runnerKind", kind.value());
+        details.put("role", org.dradgo.domain.registry.ConnectorRole.REVIEWER.value());
+        details.put("projectId", project.publicId());
+        throw new org.dradgo.domain.DomainException(
+            org.dradgo.domain.registry.DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING,
+            "reviewer credential not configured for project " + project.publicId(),
+            details);
+      }
+      java.util.List<String> names = runnerProperties.secretEnvNamesFor(kind);
+      if (names.isEmpty()) {
+        throw new org.dradgo.domain.DomainException(
+            org.dradgo.domain.registry.DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING,
+            "no secret env-var name configured for reviewer kind " + kind.value(),
+            Map.of("runnerKind", kind.value()));
+      }
+      // Inject under the kind's PREFERRED name (mirrors RunnerSecretsService) so the runner image
+      // reads it back exactly as it reads a normal dispatch's key. Value is method-local — never
+      // logged, never stored in a field (Trap T1/T5).
+      return Map.of(names.get(0), reviewerSecret.get());
+    }
+    return runnerSecretsService.resolveSecretsForRunner(
+        kind, request.stage(), request.workflowRunId());
   }
 
   /**

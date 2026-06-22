@@ -211,6 +211,19 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void runnerExecutionsCarriesTheV22ReviewedArtifactPinColumns() {
+    // Story 3d-2 (code-review D1) V22: REVIEW executions pin the reviewed artifact (public id +
+    // version + wire type) resolved ONCE at enqueue, so the harvest reuses the exact artifact the
+    // reviewer saw instead of independently re-deriving. All nullable + REVIEW-only.
+    assertColumnType("runner_executions", "reviewed_artifact_id", "text");
+    assertColumnType("runner_executions", "reviewed_artifact_version", "integer");
+    assertColumnType("runner_executions", "reviewed_artifact_type", "text");
+    assertColumnNullable("runner_executions", "reviewed_artifact_id", true);
+    assertColumnNullable("runner_executions", "reviewed_artifact_version", true);
+    assertColumnNullable("runner_executions", "reviewed_artifact_type", true);
+  }
+
+  @Test
   void clarificationsSchemaCarriesTheExpectedV8ColumnsConstraintsAndIndexes() {
     assertColumnType("clarifications", "artifact_version", "integer");
     assertColumnType("clarifications", "question_id", "text");
@@ -688,6 +701,37 @@ class FlywaySchemaContractTest {
     assertConstraintDefinitionContains("fk_step_reviews_runner_executions", "runner_execution_id");
     assertConstraintDefinitionContains("fk_step_reviews_artifacts", "reviewed_artifact_id");
     assertConstraintDefinitionContains("fk_step_reviews_artifacts", "reviewed_artifact_version");
+
+    // Story 3d-2 / V21: one advisory verdict per reviewer execution — a PARTIAL unique index
+    // (active rows only) so re-review of a new artifact version (a distinct runner_execution_id)
+    // and archived verdicts (Epic 5 retention) are never blocked.
+    List<Map<String, Object>> runnerExecIndex =
+        jdbcTemplate.queryForList(
+            """
+				select indexname, indexdef
+				from pg_indexes
+				where schemaname = 'public'
+				  and tablename = 'step_reviews'
+				  and indexname = 'uq_step_reviews_runner_execution'
+				""");
+    assertEquals(
+        1,
+        runnerExecIndex.size(),
+        () -> "Missing V21 partial unique index uq_step_reviews_runner_execution");
+    String runnerExecIndexDef = ((String) runnerExecIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(
+        runnerExecIndexDef.contains("unique"),
+        () -> "uq_step_reviews_runner_execution must be UNIQUE: " + runnerExecIndexDef);
+    assertTrue(
+        runnerExecIndexDef.contains("runner_execution_id"),
+        () ->
+            "uq_step_reviews_runner_execution must cover runner_execution_id: "
+                + runnerExecIndexDef);
+    assertTrue(
+        runnerExecIndexDef.contains("archived_at is null"),
+        () ->
+            "uq_step_reviews_runner_execution must be partial on archived_at IS NULL: "
+                + runnerExecIndexDef);
   }
 
   @Test

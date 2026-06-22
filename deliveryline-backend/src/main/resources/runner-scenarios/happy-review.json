@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "outcome": "pass",
+  "rationale": "Mock advisory reviewer: the output artifact satisfies the approved spec; no blocking concerns.",
+  "summary": "Mock advisory review completed; verdict pass.",
+  "reviewerModelIdentity": "mock-reviewer",
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

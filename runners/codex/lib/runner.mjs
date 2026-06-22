@@ -201,6 +201,38 @@ function referencePathOf(ref) {
     : '';
 }
 
+// Story 3d-2 — advisory review outcome parser (lock-step with runners/claude/lib/runner.mjs). The
+// review prompt asks the model to end with a `VERDICT: pass|concern|fail` marker; absent a marker
+// the verdict defaults to `concern` (advisory + conservative — never silently `pass`).
+function parseReviewOutcome(text) {
+  const source = typeof text === 'string' ? text : '';
+  // Take the LAST line-anchored VERDICT marker so a quoted/echoed instruction earlier in the
+  // output cannot win over the model's actual closing verdict. Default to 'concern' when absent.
+  const matches = source.match(/^[ \t>*-]*VERDICT:\s*(pass|concern|fail)/gim);
+  if (!matches || matches.length === 0) return 'concern';
+  const verdict = /VERDICT:\s*(pass|concern|fail)/i.exec(matches[matches.length - 1]);
+  return verdict ? verdict[1].toLowerCase() : 'concern';
+}
+
+// Story 3d-2 (code-review 2026-06-22, lock-step with runners/claude/lib/runner.mjs) — cap the
+// rationale length WITHOUT slicing through the middle of a token. The backend redacts the rationale
+// before persistence, but it only ever sees the truncated text the runner emits; a hard mid-token
+// cut could split a secret so the backend redaction regex no longer matches the partial prefix that
+// remains. When the cut lands mid-token, retreat to the last whitespace boundary inside the budget
+// (dropping the trailing partial token), keeping at least half the budget so a whitespace-free blob
+// still truncates.
+function truncateRationale(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars);
+  if (/\S/.test(text.charAt(maxChars))) {
+    const lastWhitespace = cut.search(/\s\S*$/);
+    if (lastWhitespace > maxChars / 2) {
+      return cut.slice(0, lastWhitespace);
+    }
+  }
+  return cut;
+}
+
 function commandBuild(args) {
   const doc = readBundle(args.bundle);
   const stage = args.stage;
@@ -231,6 +263,27 @@ function commandBuild(args) {
   const artifactId = deriveArtifactId(runnerExecutionId, stage);
   // SHA-256 over the raw Codex output bytes — 64 lowercase hex chars (schema checksum).
   const hexDigest = createHash('sha256').update(rawOutput, 'utf8').digest('hex');
+
+  // Story 3d-2 — advisory REVIEW stage emits a review-result.v1 verdict (NOT a runner-result.v1
+  // artifact). Lock-step with runners/claude/lib/runner.mjs. Parse the verdict from the model's
+  // output (a `VERDICT: ...` marker when present; default `concern` when absent — advisory +
+  // conservative). Backend redacts the rationale + computes provenance.
+  if (stage === 'review') {
+    const reviewResult = {
+      schemaVersion: 1,
+      workflowRunId,
+      runnerExecutionId,
+      outcome: parseReviewOutcome(rawOutput),
+      rationale: rawOutput.trim().length > 0 ? truncateRationale(rawOutput.trim(), 8000) : summary,
+      summary,
+      reviewerModelIdentity: 'codex',
+      classification,
+      failureCategory: null,
+    };
+    writeAtomically(out, `${JSON.stringify(reviewResult, null, 2)}\n`);
+    process.stdout.write(`${summary}\n`);
+    process.exit(0);
+  }
 
   let artifact;
   if (stage === 'spec') {

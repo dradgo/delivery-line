@@ -577,6 +577,196 @@ public class ContextBundleService {
         redactedBytes);
   }
 
+  /**
+   * Story 3d-2 (AC1/AC7, Task 4, DD-8) — composes a context bundle for the advisory <em>review</em>
+   * use case ({@link RunnerStage#REVIEW}). The reviewer reviews the latest AVAILABLE
+   * execution-stage output artifact (prOutput if present, else implementationPlan) of the run; that
+   * artifact is carried as the SOLE {@code artifactReferences} entry (the runner reads its
+   * already-redacted content from the mounted input dir, exactly as any runner reads a referenced
+   * artifact), and the approved spec — when present — rides {@code approvedSpecificationReference}
+   * as review context.
+   *
+   * <p>Review is READ-ONLY over an existing artifact: NO repository workspace is prepared (unlike
+   * INVESTIGATION/EXECUTION), so no repo-context fields are emitted. The whole bundle passes the
+   * same single {@code redact(root, SHAREABLE_REDACTED)} pass + {@code CONTEXT_BUNDLE} contract
+   * validation as every other bundle (AC7 — the reviewed content the reviewer sees is redacted
+   * before egress).
+   *
+   * <p>A run with no AVAILABLE execution-stage artifact is a degenerate dispatch (the reviewer
+   * enqueue only fires on {@code WaitingForReview} entry, which an available plan/prOutput
+   * triggered) — surfaced as a {@link DomainException} so the worker degrades the reviewer
+   * execution gracefully (AC6) without failing the run.
+   */
+  public ContextBundle createForReview(
+      String workflowRunPublicId,
+      String reservedRunnerExecutionId,
+      int contextBundleVersion,
+      ExecutionConstraints executionConstraints,
+      DataClassification claimedClassification,
+      ActorContext actor) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(reservedRunnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Objects.requireNonNull(executionConstraints, "executionConstraints");
+    Objects.requireNonNull(claimedClassification, "claimedClassification");
+    Objects.requireNonNull(actor, "actor");
+    if (contextBundleVersion <= 0) {
+      throw new IllegalArgumentException("contextBundleVersion must be positive");
+    }
+
+    log.info(
+        "createForReview entry workflowRunId={} runnerExecutionId={} version={}",
+        workflowRunPublicId,
+        reservedRunnerExecutionId,
+        contextBundleVersion);
+
+    ArtifactRecordSnapshot reviewedArtifact = resolveReviewedArtifact(workflowRunPublicId);
+
+    TicketSummary ticket = ticketSummaryProvider.fetchByWorkflowRun(workflowRunPublicId);
+    if (ticket == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("workflowRunId", workflowRunPublicId);
+      details.put("runnerExecutionId", reservedRunnerExecutionId);
+      details.put("stage", RunnerStage.REVIEW.value());
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "Ticket summary unavailable for review bundle composition",
+          details);
+    }
+
+    Optional<ArtifactRecordSnapshot> approvedSpec =
+        latestAvailable(workflowRunPublicId, ArtifactType.SPEC);
+
+    ObjectNode root =
+        assembleForReview(
+            workflowRunPublicId,
+            reservedRunnerExecutionId,
+            ticket,
+            approvedSpec,
+            reviewedArtifact,
+            executionConstraints,
+            DataClassification.SHAREABLE_REDACTED);
+
+    RedactionResult redaction;
+    try {
+      redaction =
+          redactionPolicyService.redact(root, DataClassification.SHAREABLE_REDACTED.value());
+    } catch (RuntimeException e) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("workflowRunId", workflowRunPublicId);
+      details.put("runnerExecutionId", reservedRunnerExecutionId);
+      details.put("stage", RunnerStage.REVIEW.value());
+      details.put("cause", e.getClass().getSimpleName());
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "Redaction failure during review bundle composition",
+          details);
+    }
+    JsonNode redactedJson =
+        synchronizeClassification(
+            redaction.sanitizedJson() == null ? root : redaction.sanitizedJson(),
+            DataClassification.SHAREABLE_REDACTED);
+    byte[] redactedBytes = serialize(redactedJson);
+
+    ValidationContext validationContext =
+        ValidationContext.builder().maxPayloadBytes(CONTEXT_BUNDLE_MAX_PAYLOAD_BYTES).build();
+    ValidationResult result =
+        contractValidator.validate(
+            ValidationTarget.CONTEXT_BUNDLE, redactedBytes, validationContext);
+    if (!result.valid()) {
+      log.warn(
+          "createForReview context-bundle rejected workflowRunId={} runnerExecutionId={} errorCount={}",
+          workflowRunPublicId,
+          reservedRunnerExecutionId,
+          result.errors().size());
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("workflowRunId", workflowRunPublicId);
+      details.put("runnerExecutionId", reservedRunnerExecutionId);
+      details.put("stage", RunnerStage.REVIEW.value());
+      details.put("validationErrors", result.errors());
+      throw new DomainException(
+          DomainErrorCode.RUNNER_CONTRACT_VIOLATION,
+          "Review context bundle failed contract validation",
+          details);
+    }
+    log.info(
+        "createForReview ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} reviewedArtifactId={} reviewedArtifactType={}",
+        workflowRunPublicId,
+        reservedRunnerExecutionId,
+        RunnerStage.REVIEW.value(),
+        contextBundleVersion,
+        DataClassification.SHAREABLE_REDACTED.value(),
+        reviewedArtifact.publicId(),
+        reviewedArtifact.artifactType().value());
+    return new ContextBundle(
+        workflowRunPublicId,
+        RunnerStage.REVIEW,
+        reservedRunnerExecutionId,
+        contextBundleVersion,
+        DataClassification.SHAREABLE_REDACTED,
+        redactedBytes);
+  }
+
+  /**
+   * Story 3d-2 — the artifact the reviewer reviews: the latest AVAILABLE execution-stage output of
+   * the run (prOutput supersedes implementationPlan when both exist, mirroring how a re-entry into
+   * {@code WaitingForReview} after pr-output is the current head). Re-derived identically at
+   * compose and harvest time so the verdict pins to the same artifact.
+   */
+  public ArtifactRecordSnapshot resolveReviewedArtifact(String workflowRunPublicId) {
+    return latestAvailable(workflowRunPublicId, ArtifactType.PR_OUTPUT)
+        .or(() -> latestAvailable(workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN))
+        .orElseThrow(
+            () -> {
+              Map<String, Object> details = new LinkedHashMap<>();
+              details.put("workflowRunId", workflowRunPublicId);
+              details.put("stage", RunnerStage.REVIEW.value());
+              return new DomainException(
+                  DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
+                  "No available execution-stage artifact to review for run " + workflowRunPublicId,
+                  details);
+            });
+  }
+
+  private ObjectNode assembleForReview(
+      String workflowRunPublicId,
+      String runnerExecutionId,
+      TicketSummary ticket,
+      Optional<ArtifactRecordSnapshot> approvedSpec,
+      ArtifactRecordSnapshot reviewedArtifact,
+      ExecutionConstraints executionConstraints,
+      DataClassification classification) {
+    ObjectNode root = objectMapper.createObjectNode();
+    root.put("schemaVersion", CONTEXT_BUNDLE_SCHEMA_VERSION);
+    root.put("workflowRunId", workflowRunPublicId);
+    root.put("runnerExecutionId", runnerExecutionId);
+
+    ObjectNode ticketNode = root.putObject("ticketSummary");
+    ticketNode.put("ticketRef", ticket.ticketRef());
+    ticketNode.put("title", ticket.title());
+    ticketNode.put("summary", ticket.summary());
+
+    if (approvedSpec.isPresent()) {
+      writeArtifactReference(root.putObject("approvedSpecificationReference"), approvedSpec.get());
+    } else {
+      root.putNull("approvedSpecificationReference");
+    }
+
+    // Review carries no prior-feedback chain — the verdict is a fresh second opinion.
+    root.putArray("priorFeedbackReferences");
+
+    // The reviewed artifact is the SOLE reference; the runner reads its (already-redacted) content
+    // from the mounted input dir and emits its verdict over it.
+    ArrayNode artifactRefsNode = root.putArray("artifactReferences");
+    writeArtifactReference(artifactRefsNode.addObject(), reviewedArtifact);
+
+    ObjectNode constraintsNode = root.putObject("executionConstraints");
+    constraintsNode.put("timeoutSeconds", executionConstraints.timeoutSeconds());
+    constraintsNode.put("allowRawOutput", executionConstraints.allowRawOutput());
+
+    root.put("classification", classification.value());
+    return root;
+  }
+
   private ObjectNode assembleForSpecInvestigation(
       String workflowRunPublicId,
       String runnerExecutionId,

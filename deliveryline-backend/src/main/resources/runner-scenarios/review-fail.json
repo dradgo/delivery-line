@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "outcome": "fail",
+  "rationale": null,
+  "summary": "Mock advisory reviewer encountered a provider error.",
+  "reviewerModelIdentity": "mock-reviewer",
+  "classification": "shareable-redacted",
+  "failureCategory": "runner_crash"
+}

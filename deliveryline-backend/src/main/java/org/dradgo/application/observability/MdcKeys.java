@@ -26,6 +26,9 @@ public final class MdcKeys {
   public static final String ARTIFACT_ID = "artifactId";
   public static final String ARTIFACT_OPERATION_ID = "artifactOperationId";
   public static final String APPROVAL_ID = "approvalId";
+  // Story 3d-2 — the advisory step-review (rev_) public id, carried on the reviewer harvest +
+  // persistence log lines so a verdict write is attributable end-to-end.
+  public static final String STEP_REVIEW_ID = "stepReviewId";
   // Story 3.17b — the RunnerWorkerPool worker-thread lease holder, carried on every worker-loop +
   // dispatch log so a multi-worker pool's lines are attributable.
   public static final String WORKER_ID = "workerId";

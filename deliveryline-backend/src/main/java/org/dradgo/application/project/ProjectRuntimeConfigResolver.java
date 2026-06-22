@@ -151,4 +151,85 @@ public class ProjectRuntimeConfigResolver {
         global.value());
     return global;
   }
+
+  /**
+   * Story 3d-2 (AC1/AC5, Task 2, DD-7) — the effective advisory-reviewer {@link RunnerKind} for a
+   * run, resolved from the project's opaque {@code reviewer_model_kind} binding.
+   *
+   * <ul>
+   *   <li><b>null/blank</b> ⇒ {@link Optional#empty()} — no reviewer binding. This is the parity
+   *       hot path (AC5): a clean {@code DEBUG}-only no-op for the default/single-project
+   *       deployment, byte-identical to pre-3d (no reviewer enqueue, no panel).
+   *   <li><b>a valid non-{@code MANUAL} kind</b> ⇒ {@link Optional#of(Object)} the parsed kind.
+   *   <li><b>a set-but-unparseable kind, or {@code MANUAL}</b> ⇒ a graceful misconfiguration: a
+   *       {@link DomainException} tagged {@link DomainErrorCode#REVIEWER_MODEL_NOT_CONFIGURED} (its
+   *       first throw site — 3d-1 registered it ahead of use). It is NOT a crash: the dispatch
+   *       trigger (Task 4) catches it and degrades the verdict panel to {@code unavailable} with
+   *       this reason — it must never surface as a 5xx that fails the human's review of the run.
+   * </ul>
+   *
+   * <p>3d-1 stored {@code reviewer_model_kind} as opaque nullable text with NO DB CHECK precisely
+   * so this resolver owns validation at execution time (DD-7); {@code MANUAL} is structurally
+   * invalid for a reviewer (a manual reviewer is nonsensical — it would park, not produce a
+   * verdict).
+   */
+  /**
+   * Story 3d-2 (Task 4) — a cheap, NON-throwing predicate for the dispatch trigger: does the run's
+   * project carry a reviewer binding at all (a non-null, non-blank {@code reviewer_model_kind})?
+   * Unlike {@link #resolveReviewerKind} this does NOT validate the kind — a set-but-invalid binding
+   * still returns {@code true} so the reviewer is enqueued and the WORKER degrades it (markFailed →
+   * panel "unavailable"), funneling every reviewer failure mode (misconfig, missing credential,
+   * provider error, timeout) through the single graceful-degradation path (AC6). No binding ⇒
+   * {@code false} ⇒ no enqueue ⇒ parity (AC5).
+   */
+  public boolean hasReviewerBinding(String workflowRunId) {
+    String raw = resolveForRun(workflowRunId).reviewerModelKind();
+    return raw != null && !raw.isBlank();
+  }
+
+  public Optional<RunnerKind> resolveReviewerKind(String workflowRunId) {
+    Project project = resolveForRun(workflowRunId);
+    String raw = project.reviewerModelKind();
+    if (raw == null || raw.isBlank()) {
+      log.debug(
+          "resolveReviewerKind workflowRunId={} projectId={} reviewer=none source=no_binding",
+          workflowRunId,
+          project.publicId());
+      return Optional.empty();
+    }
+    RunnerKind kind;
+    try {
+      kind = RunnerKind.fromValue(raw, "projects.reviewer_model_kind");
+    } catch (DomainException parseFailure) {
+      throw reviewerMisconfigured(
+          workflowRunId, project, "unparseable reviewer_model_kind '" + raw + "'", parseFailure);
+    }
+    if (kind == RunnerKind.MANUAL) {
+      throw reviewerMisconfigured(
+          workflowRunId, project, "reviewer_model_kind 'manual' is not a valid reviewer", null);
+    }
+    log.info(
+        "resolveReviewerKind workflowRunId={} projectId={} reviewerKind={} source=project_binding",
+        workflowRunId,
+        project.publicId(),
+        kind.value());
+    return Optional.of(kind);
+  }
+
+  private DomainException reviewerMisconfigured(
+      String workflowRunId, Project project, String reason, Throwable cause) {
+    log.warn(
+        "reviewer misconfigured for run {}: {} projectId={}",
+        workflowRunId,
+        reason,
+        project.publicId());
+    java.util.Map<String, Object> details = new java.util.LinkedHashMap<>();
+    details.put("workflowRunId", workflowRunId);
+    details.put("reason", reason);
+    return new DomainException(
+        DomainErrorCode.REVIEWER_MODEL_NOT_CONFIGURED,
+        "reviewer model misconfigured: " + reason,
+        details,
+        cause);
+  }
 }
