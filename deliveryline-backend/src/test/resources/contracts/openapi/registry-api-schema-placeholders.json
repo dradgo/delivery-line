@@ -167,6 +167,7 @@
     "UNSUPPORTED_CONNECTOR_KIND": "https://deliveryline.local/problems/unsupported-connector-kind",
     "CREDENTIAL_MASTER_KEY_UNCONFIGURED": "https://deliveryline.local/problems/credential-master-key-unconfigured",
     "DOCTOR_PROJECT_CONFIG_INCOMPLETE": "https://deliveryline.local/problems/doctor-project-config-incomplete",
-    "REVIEWER_MODEL_NOT_CONFIGURED": "https://deliveryline.local/problems/reviewer-model-not-configured"
+    "REVIEWER_MODEL_NOT_CONFIGURED": "https://deliveryline.local/problems/reviewer-model-not-configured",
+    "ARCHIVE_NOT_APPLICABLE": "https://deliveryline.local/problems/archive-not-applicable"
   }
 }

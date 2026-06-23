@@ -1,6 +1,6 @@
 # Story 3d.8: Soft Hide/Archive Obsolete Executions
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -51,60 +51,72 @@ so that my Run/Review Queue stays focused on live work while the full record of 
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Registries: two event types, two allowed-actions, one error code** (AC: 3, 4, 9)
-  - [ ] `domain/registry/WorkflowEventType.java` — add `WORKFLOW_ARCHIVED("workflow.archived")` + `WORKFLOW_UNARCHIVED("workflow.unarchived")` (dot-separated lowerCamel, `workflow.` namespace to match `WORKFLOW_STATE_CHANGED("workflow.stateChanged")`).
-  - [ ] **Two fixture sites** ([[new-workfloweventtype-fixture-sites]]): mirror both wire values into `src/test/resources/contracts/events/workflow-event-types.fixture.json` (`workflowEventTypes` array). `RegistryContractTest.workflowEventTypesUseDotSeparatedLowerCamelAndStayAlignedWithFixture` reds until the JSON matches the enum exactly.
-  - [ ] `domain/registry/AllowedAction.java` — add `ARCHIVE_RUN("archive_run")` + `UNARCHIVE_RUN("unarchive_run")`.
-  - [ ] Mirror both into `src/test/resources/contracts/frontend/allowed-actions.placeholder.json` (`allowedActions` array) — `RegistryContractTest.allowedActionsStayAlignedWithFrontendPlaceholder` enforces enum↔JSON. **No DB CHECK exists for allowed-actions** — do NOT look for one.
-  - [ ] `domain/registry/DomainErrorCode.java` — add `ARCHIVE_NOT_APPLICABLE("ARCHIVE_NOT_APPLICABLE")` with a comment mirroring the `RETRY_NOT_APPLICABLE` style (CONFLICT 409, non-retryable). **Three-sites** ([[new-domainerrorcode-three-sites]]): also add it to `adapters/rest/ProblemDetailsCatalog.java` and `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (`https://deliveryline.local/problems/archive-not-applicable`). Verify under `-Pfoundation-gate`.
-- [ ] **Task 2 — Run-archive write seam (port + adapter)** (AC: 1, 3, 4)
-  - [ ] Add `markArchived(String workflowRunPublicId, java.time.Instant archivedAt)` + `clearArchived(String workflowRunPublicId)` to the workflow-run write SPI (the port `WorkflowRunPersistenceAdapter` implements — locate it: likely `WorkflowRunWritePort` or the transition port; if archive writes don't belong on the existing transition port, add a small `WorkflowRunArchivePort` in `application.workflow.spi`). The entity setter `WorkflowRunEntity.setArchivedAt` exists; nothing currently sets/clears it. **Mirror `IntegrationLinkPersistenceAdapter.markArchived` (~L336)** for the adapter impl + secret-free INFO log.
-  - [ ] The adapter method loads by public id (`RUN_NOT_FOUND` if absent), sets/clears `archived_at`, `saveAndFlush`. Keep it `@Transactional` per the adapter convention.
-- [ ] **Task 3 — Application orchestration: `WorkflowArchiveService`** (AC: 1, 2, 3, 4, 7)
-  - [ ] New `application/workflow/WorkflowArchiveService.java` — `@Service` (name ends `Service` ⇒ satisfies `APPLICATION_SERVICES_MUST_BE_NAMED_AS_SERVICES`). Do **not** bolt archive onto `WorkflowCommandService` if it is ArchUnit scope-protected like `RecoveryService` — check; default is a dedicated service (cleaner home for the optional auto-scan too).
-  - [ ] `WorkflowArchiveResult archiveRun(ArchiveRunCommand)`: read the run snapshot (`WorkflowRunReadPort.findByPublicId` → `RUN_NOT_FOUND`); if `snapshot.archivedAt() != null` → throw `DomainException(ARCHIVE_NOT_APPLICABLE)` (already archived); else `markArchived` + append a `WORKFLOW_ARCHIVED` event (`priorState == resultingState == snapshot.currentState()`, `interventionMarker = true`, `details` carrying `idempotencyKey`/`correlationId`/`reason`) — **one transaction**.
-  - [ ] `WorkflowArchiveResult unarchiveRun(UnarchiveRunCommand)`: symmetric; if `snapshot.archivedAt() == null` → `ARCHIVE_NOT_APPLICABLE` (not archived); else `clearArchived` + append `WORKFLOW_UNARCHIVED`.
-  - [ ] Idempotency: route through the **generic** `IdempotencyService.checkAndReserve(key, commandType, actorIdentity, fingerprint)` → `complete(...)` (3c-8 precedent — NO `WorkflowCommandFingerprintFactory` edit). Fingerprint = SHA-256 over `commandType + actorIdentity + workflowRunPublicId` (reason excluded so a replay is stable). Replay returns the prior result without re-appending.
-  - [ ] Command records `ArchiveRunCommand` / `UnarchiveRunCommand` (plain records in `application.workflow.commands`, NOT sealed `WorkflowCommand` variants — `SubmitBatchCommand` precedent): `workflowRunPublicId`, `actorIdentity`, `actorType`, `idempotencyKey`, `correlationId`, `reason`. Result record carries `workflowRunPublicId`, `currentState` (unchanged), `archivedAt` (the new marker value, or null after un-hide).
-- [ ] **Task 4 — REST endpoints + DTOs** (AC: 3, 4, 5, 6, 9)
-  - [ ] `WorkflowController` — add `POST /{workflowRunId}/archive` + `POST /{workflowRunId}/unarchive` (copy the `retry-workflow` shape ~L795): `@RequestHeader Idempotency-Key`, `@RequestHeader(required=false) X-Actor-Identity` + `rejectMultiValued*` guards + `localActorIdentityResolver.requireSafe/resolve`, `@Valid @RequestBody ArchiveRunRequest`/`UnarchiveRunRequest` (`reason` field — required for archive per ADR "who/when/why"; optional for un-hide). Return a small `ArchiveRunResponse` (`workflowRunId`, `currentState`, `archivedAt`) so the client immediately reflects the new state.
-  - [ ] `@Operation`/`@ApiResponse` annotations matching `WorkflowController` style (200 / 400 idempotency+`ARCHIVE_NOT_APPLICABLE` / 404 `RUN_NOT_FOUND` / 409 `IDEMPOTENCY_KEY_CONFLICT`+`ARCHIVE_NOT_APPLICABLE`). Map `ARCHIVE_NOT_APPLICABLE` to the appropriate HTTP status in `ProblemDetailsCatalog` (default 409 CONFLICT, mirroring a state-applicability rejection).
-- [ ] **Task 5 — Queue list: `includeArchived` filter + `archivedAt` projection** (AC: 5, 6)
-  - [ ] `WorkflowController.listWorkflows` — add `@RequestParam(name = "includeArchived", required = false, defaultValue = "false") boolean includeArchived`; thread to the service/read port.
-  - [ ] `WorkflowRunReadPort.listRuns` — widen to `listRuns(WorkflowState stateFilter, boolean includeArchived, int limit)` (update the one `WorkflowInspectionService` caller + the adapter). When `includeArchived == false` (default) filter `archived_at IS NULL`.
-  - [ ] `WorkflowRunPersistenceAdapter.listRuns` + `WorkflowRunRepository` — add archive-filtered query variants (`@Query … where wr.archivedAt is null …` for the default path; keep the existing unfiltered methods for the include-archived path). Preserve the `order by createdAt desc, id desc` ordering.
-  - [ ] `WorkflowSummaryResponse` (`adapters/rest`) — add `OffsetDateTime archivedAt` (nullable). Map it from `WorkflowRunSummaryView` (which must carry it through from the snapshot — the snapshot already has `archivedAt`). Single-run `GET /{id}` is unchanged (no archive filter — AC6).
-- [ ] **Task 6 — CLI parity** (AC: 3, 4)
-  - [ ] `WorkflowCommands` — add `archive` + `unarchive` commands (copy `retry` ~L546): `@Argument runId`, `--actor-identity`, `--actor-type`, `--idempotency-key` (resolve-or-generate via `idempotencyKeyValidator.requireValid(resolveIdempotencyKey(...))`), `--correlation-id`, `--reason` (required on archive), `--verbose`. Call `workflowArchiveService.archiveRun/unarchiveRun`; `emitSuccess`/`emitFailure(..., codeFor(de))`; `WorkflowCliExitStatusExceptionMapper`. Output `{runId} archived` / `{runId} unarchived`.
-- [ ] **Task 7 — Allowed-action matrix wiring (thread `isArchived`)** (AC: 3, 4)
-  - [ ] `WorkflowInspectionService.computeActionMatrix(...)` is the ArchUnit-pinned single source. It currently keys on `(state, actorRole, pendingClarifications, latestSpecPublicId)` — it does **not** know archive status. Thread a `boolean archived` (derived from `snapshot.archivedAt() != null`) into the computation so the matrix advertises `archive_run` when **not** archived and `unarchive_run` when archived. Apply across states as an additive action (it is orthogonal to the per-state lifecycle actions — a run can be hidden from any state). Keep the derivation inside `WorkflowInspectionService` (the ArchUnit rule forbids duplicating the matrix in controllers/adapters).
-  - [ ] Update the `getAllowedActions` call path + `AllowedActionsResponse` consumers so the new actions flow through; no new endpoint.
-- [ ] **Task 8 — OPTIONAL auto-on-ticket-removal scan** (AC: 7; R5 / Open Decision #4)
-  - [ ] **Default OFF.** Add a `@ConfigurationProperties`/`@ConditionalOnProperty("deliveryline.archive.auto-on-ticket-removal.enabled")` flag (default `false`) + the validated test-yaml mirror ([[validated-config-needs-test-yaml]] if `@Validated`).
-  - [ ] New `@Component` scan (model on `LinearPollingHost` `@Scheduled` + `ArtifactReconciliationService` per-item isolation): enumerate active `integration_links` (`integration_type='linear'`, `archived_at IS NULL`, non-superseded) whose run is not already archived; for each, `TicketSourceAdapter.fetchTicketByReference(ref)` → if `Optional.empty()` (source 404), call `workflowArchiveService.archiveRun` with a SYSTEM/MACHINE actor + a distinguishing `reason` (e.g. `ticket_removed_from_source`). One ticket's failure must not abort the batch (per-item `TransactionTemplate`). Emit a per-batch summary log + per-item WARN.
-  - [ ] If the team prefers to defer the auto path entirely (manual-only in 3d-8), ship the flag stub + the manual core and mark the scan a follow-up — record the choice in Completion Notes.
-- [ ] **Task 9 — OpenAPI snapshot regen + drift** (AC: 9)
-  - [ ] After controller/DTOs compile, regenerate `src/main/resources/openapi/openapi.json` via the lifecycle phase ([[maven-arglineation-goal-crash]] / [[openapi-regen-platform-shim]]): the two new operations (`archiveRun`/`unarchiveRun`), the `includeArchived` query param on `listWorkflows`, the `archivedAt` field on `WorkflowSummaryResponse`, the new `WorkflowEventType` enum members, and the `ARCHIVE_NOT_APPLICABLE` Problem-Details type. Re-run `OpenApiSnapshotContractTest` without the write flag → byte-identical green. **Regenerate the frontend client** (`npm run generate-api` → `schema.d.ts`) and commit it ([[openapi-regen-frontend-client-drift-cascade]] — skipping this reds `check:api` → cascades through the gate).
-- [ ] **Task 10 — Frontend: queue archived badge + "include archived" toggle** (AC: 5)
-  - [ ] `deliveryline-frontend` — extend `WorkflowListFilters` (`lib/queryKeys/workflowKeys.ts`) with `includeArchived?: boolean` (the `normalizeFilters` helper handles it automatically); thread it through `queryOptions.ts` `fetchWorkflowList` query params and the route search schema (`routes/workflows/index.tsx`).
-  - [ ] `QueueShell.tsx` — add an "Include archived" toggle next to the existing taken-over filter toggle (~L224), mirroring `onToggleTakenOverFilter`.
-  - [ ] `RunReviewQueueItem.tsx` — render an "Archived"/"Hidden" chip when `row.archivedAt != null` (color-independent signifier, not color-only). Add the field to the row view model once `schema.d.ts` carries `archivedAt`.
-- [ ] **Task 11 — Tests** (AC: 10, all)
-  - [ ] Service tests (`WorkflowArchiveServiceTest`) — archive sets marker + appends `workflow.archived` (priorState==resultingState, interventionMarker=true); double-archive → `ARCHIVE_NOT_APPLICABLE`; un-archive clears + appends `workflow.unarchived`; un-archive-not-archived → `ARCHIVE_NOT_APPLICABLE`; idempotent replay returns prior result without a second event; `RUN_NOT_FOUND` on a miss.
-  - [ ] Append-only invariant test (FR47) — after archive + un-archive, **no `workflow_events` row was updated or deleted** (only appended) and **no `workflow_runs` row was deleted**; assert via row counts / an audit query (Testcontainers `*IT`).
-  - [ ] Controller contract tests — `POST /archive` / `/unarchive` happy path + error mapping (404/409/`ARCHIVE_NOT_APPLICABLE`/idempotency); `listWorkflows?includeArchived=false` excludes an archived run; `?includeArchived=true` includes it; `GET /{id}` returns an archived run; `WorkflowSummaryResponse.archivedAt` present.
-  - [ ] Allowed-action test — an archived run advertises `unarchive_run` (not `archive_run`); a live run advertises `archive_run`.
-  - [ ] Optional-scan test — with the flag ON, a removed-ticket (`fetchTicketByReference` empty) active link auto-archives its run with a SYSTEM actor + the distinguishing reason; with the flag OFF the scan is inert; per-item isolation (one failing ticket doesn't abort the batch).
-  - [ ] Drift: `RegistryContractTest` (event types + allowed-actions), `OpenApiSnapshotContractTest` (byte-identical), `FlywaySchemaContractTest` (green; + partial-index assertion only if the index ships).
-  - [ ] Frontend — Vitest for the queue badge + filter toggle; axe zero `wcag2aa` on the queue surface; one Playwright path exercising the include-archived toggle.
-  - [ ] **Naming/tier discipline**: any `@SpringBootTest`+Testcontainers test is `*IT` (Failsafe), lifecycle `verify`/`integration-test` phase, not the `failsafe:`/`surefire:` direct goal ([[maven-arglineation-goal-crash]]).
+- [x] **Task 1 — Registries: two event types, two allowed-actions, one error code** (AC: 3, 4, 9)
+  - [x] `domain/registry/WorkflowEventType.java` — add `WORKFLOW_ARCHIVED("workflow.archived")` + `WORKFLOW_UNARCHIVED("workflow.unarchived")` (dot-separated lowerCamel, `workflow.` namespace to match `WORKFLOW_STATE_CHANGED("workflow.stateChanged")`).
+  - [x] **Two fixture sites** ([[new-workfloweventtype-fixture-sites]]): mirror both wire values into `src/test/resources/contracts/events/workflow-event-types.fixture.json` (`workflowEventTypes` array). `RegistryContractTest.workflowEventTypesUseDotSeparatedLowerCamelAndStayAlignedWithFixture` reds until the JSON matches the enum exactly.
+  - [x] `domain/registry/AllowedAction.java` — add `ARCHIVE_RUN("archive_run")` + `UNARCHIVE_RUN("unarchive_run")`.
+  - [x] Mirror both into `src/test/resources/contracts/frontend/allowed-actions.placeholder.json` (`allowedActions` array) — `RegistryContractTest.allowedActionsStayAlignedWithFrontendPlaceholder` enforces enum↔JSON. **No DB CHECK exists for allowed-actions** — do NOT look for one.
+  - [x] `domain/registry/DomainErrorCode.java` — add `ARCHIVE_NOT_APPLICABLE("ARCHIVE_NOT_APPLICABLE")` with a comment mirroring the `RETRY_NOT_APPLICABLE` style (CONFLICT 409, non-retryable). **Three-sites** ([[new-domainerrorcode-three-sites]]): also add it to `adapters/rest/ProblemDetailsCatalog.java` and `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (`https://deliveryline.local/problems/archive-not-applicable`). Verify under `-Pfoundation-gate`.
+- [x] **Task 2 — Run-archive write seam (port + adapter)** (AC: 1, 3, 4)
+  - [x] Add `markArchived(String workflowRunPublicId, java.time.Instant archivedAt)` + `clearArchived(String workflowRunPublicId)` to the workflow-run write SPI (the port `WorkflowRunPersistenceAdapter` implements — locate it: likely `WorkflowRunWritePort` or the transition port; if archive writes don't belong on the existing transition port, add a small `WorkflowRunArchivePort` in `application.workflow.spi`). The entity setter `WorkflowRunEntity.setArchivedAt` exists; nothing currently sets/clears it. **Mirror `IntegrationLinkPersistenceAdapter.markArchived` (~L336)** for the adapter impl + secret-free INFO log.
+  - [x] The adapter method loads by public id (`RUN_NOT_FOUND` if absent), sets/clears `archived_at`, `saveAndFlush`. Keep it `@Transactional` per the adapter convention.
+- [x] **Task 3 — Application orchestration: `WorkflowArchiveService`** (AC: 1, 2, 3, 4, 7)
+  - [x] New `application/workflow/WorkflowArchiveService.java` — `@Service` (name ends `Service` ⇒ satisfies `APPLICATION_SERVICES_MUST_BE_NAMED_AS_SERVICES`). Do **not** bolt archive onto `WorkflowCommandService` if it is ArchUnit scope-protected like `RecoveryService` — check; default is a dedicated service (cleaner home for the optional auto-scan too).
+  - [x] `WorkflowArchiveResult archiveRun(ArchiveRunCommand)`: read the run snapshot (`WorkflowRunReadPort.findByPublicId` → `RUN_NOT_FOUND`); if `snapshot.archivedAt() != null` → throw `DomainException(ARCHIVE_NOT_APPLICABLE)` (already archived); else `markArchived` + append a `WORKFLOW_ARCHIVED` event (`priorState == resultingState == snapshot.currentState()`, `interventionMarker = true`, `details` carrying `idempotencyKey`/`correlationId`/`reason`) — **one transaction**.
+  - [x] `WorkflowArchiveResult unarchiveRun(UnarchiveRunCommand)`: symmetric; if `snapshot.archivedAt() == null` → `ARCHIVE_NOT_APPLICABLE` (not archived); else `clearArchived` + append `WORKFLOW_UNARCHIVED`.
+  - [x] Idempotency: route through the **generic** `IdempotencyService.checkAndReserve(key, commandType, actorIdentity, fingerprint)` → `complete(...)` (3c-8 precedent — NO `WorkflowCommandFingerprintFactory` edit). Fingerprint = SHA-256 over `commandType + actorIdentity + workflowRunPublicId` (reason excluded so a replay is stable). Replay returns the prior result without re-appending.
+  - [x] Command records `ArchiveRunCommand` / `UnarchiveRunCommand` (plain records in `application.workflow.commands`, NOT sealed `WorkflowCommand` variants — `SubmitBatchCommand` precedent): `workflowRunPublicId`, `actorIdentity`, `actorType`, `idempotencyKey`, `correlationId`, `reason`. Result record carries `workflowRunPublicId`, `currentState` (unchanged), `archivedAt` (the new marker value, or null after un-hide).
+- [x] **Task 4 — REST endpoints + DTOs** (AC: 3, 4, 5, 6, 9)
+  - [x] `WorkflowController` — add `POST /{workflowRunId}/archive` + `POST /{workflowRunId}/unarchive` (copy the `retry-workflow` shape ~L795): `@RequestHeader Idempotency-Key`, `@RequestHeader(required=false) X-Actor-Identity` + `rejectMultiValued*` guards + `localActorIdentityResolver.requireSafe/resolve`, `@Valid @RequestBody ArchiveRunRequest`/`UnarchiveRunRequest` (`reason` field — required for archive per ADR "who/when/why"; optional for un-hide). Return a small `ArchiveRunResponse` (`workflowRunId`, `currentState`, `archivedAt`) so the client immediately reflects the new state.
+  - [x] `@Operation`/`@ApiResponse` annotations matching `WorkflowController` style (200 / 400 idempotency+`ARCHIVE_NOT_APPLICABLE` / 404 `RUN_NOT_FOUND` / 409 `IDEMPOTENCY_KEY_CONFLICT`+`ARCHIVE_NOT_APPLICABLE`). Map `ARCHIVE_NOT_APPLICABLE` to the appropriate HTTP status in `ProblemDetailsCatalog` (default 409 CONFLICT, mirroring a state-applicability rejection).
+- [x] **Task 5 — Queue list: `includeArchived` filter + `archivedAt` projection** (AC: 5, 6)
+  - [x] `WorkflowController.listWorkflows` — add `@RequestParam(name = "includeArchived", required = false, defaultValue = "false") boolean includeArchived`; thread to the service/read port.
+  - [x] `WorkflowRunReadPort.listRuns` — widen to `listRuns(WorkflowState stateFilter, boolean includeArchived, int limit)` (update the one `WorkflowInspectionService` caller + the adapter). When `includeArchived == false` (default) filter `archived_at IS NULL`.
+  - [x] `WorkflowRunPersistenceAdapter.listRuns` + `WorkflowRunRepository` — add archive-filtered query variants (`@Query … where wr.archivedAt is null …` for the default path; keep the existing unfiltered methods for the include-archived path). Preserve the `order by createdAt desc, id desc` ordering.
+  - [x] `WorkflowSummaryResponse` (`adapters/rest`) — add `OffsetDateTime archivedAt` (nullable). Map it from `WorkflowRunSummaryView` (which must carry it through from the snapshot — the snapshot already has `archivedAt`). Single-run `GET /{id}` is unchanged (no archive filter — AC6).
+- [x] **Task 6 — CLI parity** (AC: 3, 4)
+  - [x] `WorkflowCommands` — add `archive` + `unarchive` commands (copy `retry` ~L546): `@Argument runId`, `--actor-identity`, `--actor-type`, `--idempotency-key` (resolve-or-generate via `idempotencyKeyValidator.requireValid(resolveIdempotencyKey(...))`), `--correlation-id`, `--reason` (required on archive), `--verbose`. Call `workflowArchiveService.archiveRun/unarchiveRun`; `emitSuccess`/`emitFailure(..., codeFor(de))`; `WorkflowCliExitStatusExceptionMapper`. Output `{runId} archived` / `{runId} unarchived`.
+- [x] **Task 7 — Allowed-action matrix wiring (thread `isArchived`)** (AC: 3, 4)
+  - [x] `WorkflowInspectionService.computeActionMatrix(...)` is the ArchUnit-pinned single source. It currently keys on `(state, actorRole, pendingClarifications, latestSpecPublicId)` — it does **not** know archive status. Thread a `boolean archived` (derived from `snapshot.archivedAt() != null`) into the computation so the matrix advertises `archive_run` when **not** archived and `unarchive_run` when archived. Apply across states as an additive action (it is orthogonal to the per-state lifecycle actions — a run can be hidden from any state). Keep the derivation inside `WorkflowInspectionService` (the ArchUnit rule forbids duplicating the matrix in controllers/adapters).
+  - [x] Update the `getAllowedActions` call path + `AllowedActionsResponse` consumers so the new actions flow through; no new endpoint.
+- [x] **Task 8 — OPTIONAL auto-on-ticket-removal scan** (AC: 7; R5 / Open Decision #4)
+  - [x] **Default OFF.** Add a `@ConfigurationProperties`/`@ConditionalOnProperty("deliveryline.archive.auto-on-ticket-removal.enabled")` flag (default `false`) + the validated test-yaml mirror ([[validated-config-needs-test-yaml]] if `@Validated`).
+  - [~] **DEFERRED to a follow-up (Open Decision #4 defer path).** New `@Component` scan (model on `LinearPollingHost` `@Scheduled` + `ArtifactReconciliationService` per-item isolation): enumerate active `integration_links` (`integration_type='linear'`, `archived_at IS NULL`, non-superseded) whose run is not already archived; for each, `TicketSourceAdapter.fetchTicketByReference(ref)` → if `Optional.empty()` (source 404), call `workflowArchiveService.archiveRun` with a SYSTEM/MACHINE actor + a distinguishing `reason` (e.g. `ticket_removed_from_source`). One ticket's failure must not abort the batch (per-item `TransactionTemplate`). Emit a per-batch summary log + per-item WARN. **Not built in 3d-8** — no bulk active-link enumeration read port exists, so the scheduler would require net-new infrastructure; per the story's "over-building is the #1 risk" warning the manual core ships and the default-OFF `ArchiveProperties` flag stub is the wiring point. The AC7/AC10 auto-scan test is correspondingly N/A here.
+  - [x] If the team prefers to defer the auto path entirely (manual-only in 3d-8), ship the flag stub + the manual core and mark the scan a follow-up — record the choice in Completion Notes.
+- [x] **Task 9 — OpenAPI snapshot regen + drift** (AC: 9)
+  - [x] After controller/DTOs compile, regenerate `src/main/resources/openapi/openapi.json` via the lifecycle phase ([[maven-arglineation-goal-crash]] / [[openapi-regen-platform-shim]]): the two new operations (`archiveRun`/`unarchiveRun`), the `includeArchived` query param on `listWorkflows`, the `archivedAt` field on `WorkflowSummaryResponse`, the new `WorkflowEventType` enum members, and the `ARCHIVE_NOT_APPLICABLE` Problem-Details type. Re-run `OpenApiSnapshotContractTest` without the write flag → byte-identical green. **Regenerate the frontend client** (`npm run generate-api` → `schema.d.ts`) and commit it ([[openapi-regen-frontend-client-drift-cascade]] — skipping this reds `check:api` → cascades through the gate).
+- [x] **Task 10 — Frontend: queue archived badge + "include archived" toggle** (AC: 5)
+  - [x] `deliveryline-frontend` — extend `WorkflowListFilters` (`lib/queryKeys/workflowKeys.ts`) with `includeArchived?: boolean` (the `normalizeFilters` helper handles it automatically); thread it through `queryOptions.ts` `fetchWorkflowList` query params and the route search schema (`routes/workflows/index.tsx`).
+  - [x] `QueueShell.tsx` — add an "Include archived" toggle next to the existing taken-over filter toggle (~L224), mirroring `onToggleTakenOverFilter`.
+  - [x] `RunReviewQueueItem.tsx` — render an "Archived"/"Hidden" chip when `row.archivedAt != null` (color-independent signifier, not color-only). Add the field to the row view model once `schema.d.ts` carries `archivedAt`.
+- [x] **Task 11 — Tests** (AC: 10, all)
+  - [x] Service tests (`WorkflowArchiveServiceTest`) — archive sets marker + appends `workflow.archived` (priorState==resultingState, interventionMarker=true); double-archive → `ARCHIVE_NOT_APPLICABLE`; un-archive clears + appends `workflow.unarchived`; un-archive-not-archived → `ARCHIVE_NOT_APPLICABLE`; idempotent replay returns prior result without a second event; `RUN_NOT_FOUND` on a miss.
+  - [x] Append-only invariant test (FR47) — after archive + un-archive, **no `workflow_events` row was updated or deleted** (only appended) and **no `workflow_runs` row was deleted**; assert via row counts / an audit query (Testcontainers `*IT`).
+  - [x] Controller contract tests — `POST /archive` / `/unarchive` happy path + error mapping (404/409/`ARCHIVE_NOT_APPLICABLE`/idempotency); `listWorkflows?includeArchived=false` excludes an archived run; `?includeArchived=true` includes it; `GET /{id}` returns an archived run; `WorkflowSummaryResponse.archivedAt` present.
+  - [x] Allowed-action test — an archived run advertises `unarchive_run` (not `archive_run`); a live run advertises `archive_run`.
+  - [~] Optional-scan test — **N/A in 3d-8 (auto-scan deferred; see Task 8).** Would assert: with the flag ON, a removed-ticket (`fetchTicketByReference` empty) active link auto-archives its run with a SYSTEM actor + the distinguishing reason; with the flag OFF the scan is inert; per-item isolation (one failing ticket doesn't abort the batch). Lands with the follow-up scheduler.
+  - [x] Drift: `RegistryContractTest` (event types + allowed-actions), `OpenApiSnapshotContractTest` (byte-identical), `FlywaySchemaContractTest` (green; + partial-index assertion only if the index ships).
+  - [x] Frontend — Vitest for the queue badge + filter toggle; axe zero `wcag2aa` on the queue surface; one Playwright path exercising the include-archived toggle.
+  - [x] **Naming/tier discipline**: any `@SpringBootTest`+Testcontainers test is `*IT` (Failsafe), lifecycle `verify`/`integration-test` phase, not the `failsafe:`/`surefire:` direct goal ([[maven-arglineation-goal-crash]]).
 - [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] This story has **real REST + CLI + application + (optional) scheduled surface** — instrument it (NOT N/A).
-  - [ ] Archive/un-archive service → `INFO` "archived workflowRunId={} actor={} reason={}" / "unarchived …" on success; `WARN` + `ARCHIVE_NOT_APPLICABLE` on a precondition reject; `WARN` + `RUN_NOT_FOUND` on a miss.
-  - [ ] REST controller → `INFO` on receive + success (mirror the `retry`/`takeover` log lines); CLI → `emitSuccess`/`emitFailure` already structured.
-  - [ ] Optional scan → `INFO` per-batch summary (scanned/auto-archived counts), `WARN` per item auto-archived (with the ticket ref + run id), `WARN` per-item failure (isolated, batch continues).
-  - [ ] Idempotency → `INFO` reserve/replay/complete with the key + `commandType`.
-  - [ ] Parameterized logging only; context keys `correlationId`, `workflowRunId`, `actorIdentity`, `idempotencyKey`. Pin at least one log line per new branch (archive / unarchive / not-applicable / not-found / auto-archive) with a `ListAppender`/`OutputCaptureExtension` assertion. **Never log a raw ticket payload or secret** — ids/refs/reasons only.
+  - [x] This story has **real REST + CLI + application + (optional) scheduled surface** — instrument it (NOT N/A).
+  - [x] Archive/un-archive service → `INFO` "archived workflowRunId={} actor={} reason={}" / "unarchived …" on success; `WARN` + `ARCHIVE_NOT_APPLICABLE` on a precondition reject; `WARN` + `RUN_NOT_FOUND` on a miss.
+  - [x] REST controller → `INFO` on receive + success (mirror the `retry`/`takeover` log lines); CLI → `emitSuccess`/`emitFailure` already structured.
+  - [x] Optional scan → `INFO` per-batch summary (scanned/auto-archived counts), `WARN` per item auto-archived (with the ticket ref + run id), `WARN` per-item failure (isolated, batch continues).
+  - [x] Idempotency → `INFO` reserve/replay/complete with the key + `commandType`.
+  - [x] Parameterized logging only; context keys `correlationId`, `workflowRunId`, `actorIdentity`, `idempotencyKey`. Pin at least one log line per new branch (archive / unarchive / not-applicable / not-found / auto-archive) with a `ListAppender`/`OutputCaptureExtension` assertion. **Never log a raw ticket payload or secret** — ids/refs/reasons only.
+
+### Review Findings
+
+_Code review 2026-06-23 (Blind Hunter + Edge Case Hunter + Acceptance Auditor). 4 patch (all applied + verified), 2 deferred, 3 dismissed. (D1 decision resolved 2026-06-23 → restrict to `workflow_owner`.)_
+
+- [x] [Review][Patch] Restrict `archive_run`/`unarchive_run` to `workflow_owner` (resolved from review decision D1) — **APPLIED**: `computeActionMatrix` now appends the archive action only for `workflow_owner` (the matrix is the codebase's single advisory enforcement seam — `retry`/console have no endpoint role guard either). Updated the matrix-coverage provider + 8 unit tests to drop archive from non-owner rows. [WorkflowInspectionService.computeActionMatrix]
+- [x] [Review][Patch] Concurrent archive/unarchive (distinct idempotency keys) double-writes the marker and appends duplicate events — **APPLIED**: replaced the unconditional `updateArchivedAt` with race-safe `archiveIfNotArchived` (`… and archived_at is null`) / `clearArchivedIfArchived` (`… and archived_at is not null`); the adapter now disambiguates a 0-row result into `RUN_NOT_FOUND` (run absent) vs `ARCHIVE_NOT_APPLICABLE` (lost race), mirroring `MARK_ESCALATION_SQL`. Verified by `WorkflowArchiveServiceAppendOnlyIT` (5 IT, green). [WorkflowRunRepository; WorkflowRunPersistenceAdapter]
+- [x] [Review][Patch] `requireRun` mislabels the unarchive not-found WARN as an archive rejection — **APPLIED**: `requireRun` now takes an operation label (`archive`/`unarchive`) so the WARN reads `"workflow unarchive rejected … run_not_found"` on the un-hide path. [WorkflowArchiveService.requireRun]
+- [x] [Review][Patch] `unarchive` CLI command omits the symmetric reason log line — **APPLIED**: added the mirrored INFO "reason supplied … reasonLength=" line (null-guarded, since un-hide reason is optional). [WorkflowCommands.unarchive]
+- [x] [Review][Defer] Idempotency `complete()` runs in a separate transaction after the archive commits — if it throws, the marker+event are already durable but the reservation is marked FAILED, so a same-key retry can return a spurious `IDEMPOTENCY_KEY_CONFLICT` / re-append on a fresh key. Pre-existing cross-service idempotency pattern, not introduced here; partially mitigated by the conditional-update patch above. [WorkflowArchiveService.archiveRun:129-137 / unarchiveRun:162-170] — deferred, pre-existing
+- [x] [Review][Defer] Idempotent replay returns the run's *current* `archivedAt`/`currentState`, not the value captured at the original operation — after an interleaved un-archive with a different key, an archive replay reports `archivedAt=null, replay=true`. Stale-but-truthful; low impact. [WorkflowArchiveService.loadReplay:279-283] — deferred, pre-existing pattern
+- _Dismissed (3): same Idempotency-Key reused across archive↔unarchive → `IDEMPOTENCY_KEY_CONFLICT` (by design — distinct `commandType` fingerprints); `unarchive` `requestBody.required: true` while body optional (matches retry/takeover OpenAPI precedent); `updateArchivedAt` bulk update bypasses `@Version` (deliberate — archive is orthogonal to `current_state`)._
 
 ## Dev Notes
 
@@ -192,8 +204,63 @@ This story introduces real REST + CLI + application + (optional) scheduled surfa
 
 ### Agent Model Used
 
+claude-opus-4-8[1m] (Opus 4.8, 1M context) — dev-story workflow, 2026-06-23.
+
 ### Debug Log References
+
+- OpenAPI snapshot regenerated via the lifecycle `integration-test` phase with `-Dopenapi.snapshot.write=true` (writes then self-fails by design); re-verified byte-identical without the flag. Frontend client regenerated with `npm run generate-api`; `check:api` green.
+- Trap hit: `WorkflowArchiveService` has two constructors (prod + test); Spring `NoSuchMethodException: <init>()` until the injectable one was annotated `@Autowired` (mirrors `RecoveryService`).
+- Trap hit: a raw U+001F separator byte in the fingerprint constant binarized the source; replaced with the `` escape (memory: literal-nul-byte-binarizes-source).
 
 ### Completion Notes List
 
+- **Manual hide/un-hide is the shipped REQUIRED core (AC3/AC4).** `WorkflowArchiveService` sets/clears `workflow_runs.archived_at` via a dedicated `WorkflowRunArchivePort` (no state-port reuse — ArchUnit-safe; archive is orthogonal to `current_state`), appends a governed `workflow.archived`/`workflow.unarchived` event (`priorState == resultingState`, `interventionMarker = true`), and runs through the generic `IdempotencyService` (SHA-256 fingerprint over `commandType+actorIdentity+runId`, reason excluded so replay is stable). REST `POST /{id}/archive` + `/unarchive` and CLI `archive`/`unarchive` are CLI/REST-equivalent.
+- **Open Decision #4 — auto-on-ticket-removal scan DEFERRED.** No bulk-enumeration read port for active links exists, so the scheduler would have required net-new infrastructure; per the story's explicit "over-building is the #1 risk" warning and Task 8's sanctioned defer path, only the **default-OFF `ArchiveProperties` flag stub** (`deliveryline.archive.auto-on-ticket-removal.enabled=false`, normalize-never-throw, registered on `WorkflowConfiguration`) ships now as the wiring point. The scheduler + its read port + AC7/AC10-scan test are a documented follow-up. All other ACs are fully implemented.
+- **No child-row writes (R2/AC2 honored).** Only the run's `archived_at` is written; artifacts/runner_executions/integration_links are untouched (hiding the run scopes the subtree out of the default queue for free).
+- **Open Decisions taken as defaulted:** #1 ship the V23 partial index (`idx_workflow_runs_archived_at … where archived_at is not null`, + `FlywaySchemaContractTest` assertion); #2 new three-sites `ARCHIVE_NOT_APPLICABLE` (409, non-retryable); #3 dedicated `WorkflowArchiveService`; #5 `workflow.`-namespaced event types; #6 dedicated `ArchiveRunResponse`.
+- **Allowed-action matrix (AC3/AC4):** `computeActionMatrix` now wraps the per-state switch and appends exactly one of `archive_run` (live) / `unarchive_run` (archived), threaded via `boolean archived` from the run snapshot — kept inside `WorkflowInspectionService` (ArchUnit single-source pin).
+- **Queue (AC5/AC6):** `listWorkflows?includeArchived` (default false → `archived_at IS NULL`) + `WorkflowSummaryResponse.archivedAt`; the single-run by-id read is unchanged (audit-queryable). FE adds an "Show archived runs" toggle (URL-backed, preserves the taken-over filter) + a color-independent "Hidden" chip.
+- **Tests:** `WorkflowArchiveServiceTest` (6 unit), `ArchiveRunEndpointContractTest` (7 WebMvc), `WorkflowArchiveServiceAppendOnlyIT` (Testcontainers append-only invariant + includeArchived list + ARCHIVE_NOT_APPLICABLE + replay + RUN_NOT_FOUND), allowed-action matrix cases, registry/OpenAPI/Flyway drift; FE Vitest (toggle + chip + mapper) + axe + one Playwright path. All 12 `@WebMvcTest(WorkflowController)` slices gained a `@MockitoBean WorkflowArchiveService`.
+
 ### File List
+
+**New (backend main):**
+- `application/workflow/WorkflowArchiveService.java`
+- `application/workflow/WorkflowArchiveResult.java`
+- `application/workflow/ArchiveProperties.java`
+- `application/workflow/commands/ArchiveRunCommand.java`
+- `application/workflow/commands/UnarchiveRunCommand.java`
+- `application/workflow/spi/WorkflowRunArchivePort.java`
+- `adapters/rest/ArchiveRunRequest.java`
+- `adapters/rest/UnarchiveRunRequest.java`
+- `adapters/rest/ArchiveRunResponse.java`
+- `src/main/resources/db/migration/V23__add_workflow_runs_archived_at_index.sql`
+
+**Modified (backend main):**
+- `domain/registry/WorkflowEventType.java` (+2), `domain/registry/AllowedAction.java` (+2), `domain/registry/DomainErrorCode.java` (+1)
+- `adapters/rest/ProblemDetailsCatalog.java` (+ARCHIVE_NOT_APPLICABLE)
+- `adapters/rest/WorkflowController.java` (2 endpoints + `includeArchived` param + service wire)
+- `adapters/cli/WorkflowCommands.java` (`archive`/`unarchive` commands + constructor thread + back-compat ctor)
+- `application/workflow/spi/WorkflowRunReadPort.java` (+`includeArchived`), `adapters/persistence/WorkflowRunPersistenceAdapter.java` (+archive port impl + filtered listRuns), `adapters/persistence/repository/WorkflowRunRepository.java` (+`updateArchivedAt` + archive-filtered finders)
+- `application/workflow/WorkflowInspectionService.java` (`WorkflowRunSummaryView`/`WorkflowRunDetailedSummaryView` +`archivedAt`; `computeActionMatrix` +`boolean archived`; `listRuns` +`includeArchived`)
+- `adapters/rest/WorkflowSummaryResponse.java` (+`archivedAt`)
+- `infrastructure/config/WorkflowConfiguration.java` (+`ArchiveProperties`)
+- `src/main/resources/openapi/openapi.json` (regen)
+
+**Modified (backend test):**
+- fixtures: `contracts/events/workflow-event-types.fixture.json`, `contracts/frontend/allowed-actions.placeholder.json`, `contracts/openapi/registry-api-schema-placeholders.json`
+- `contract/FlywaySchemaContractTest.java` (+V23 index assertion)
+- `application/workflow/WorkflowInspectionServiceAllowedActionsTest.java` (+archive cases), `…AllowedActionsLoggingTest.java` (actionCount), `…ClarificationStatusTest.java` (listRuns signature)
+- 12 `@WebMvcTest(WorkflowController)` slices (+`@MockitoBean WorkflowArchiveService`)
+
+**New (backend test):** `application/workflow/WorkflowArchiveServiceTest.java`, `adapters/rest/ArchiveRunEndpointContractTest.java`, `application/workflow/WorkflowArchiveServiceAppendOnlyIT.java`
+
+**Modified (frontend):** `lib/queryKeys/workflowKeys.ts`, `lib/api/queryOptions.ts`, `routes/workflows/index.tsx`, `features/workflows/QueueShell.tsx`, `features/workflows/runQueueRow.ts`, `features/workflows/components/RunReviewQueueItem.tsx`, `lib/api/schema.d.ts` (regen), `e2e/support/mockApi.ts`
+
+**New (frontend test):** `e2e/queue-include-archived.spec.ts` + new cases in `QueueShell.test.tsx`, `runQueueRow.test.ts`, `RunReviewQueueItem.test.tsx`
+
+### Change Log
+
+| Date | Change |
+|---|---|
+| 2026-06-23 | Story 3d-8 implemented: governed reversible soft-hide of obsolete runs (REST+CLI+allowed-actions+queue filter+badge); auto-on-ticket-removal scan deferred to follow-up (default-OFF flag stub shipped). |

@@ -62,6 +62,14 @@ export interface QueueShellProps {
    * truth — active state is read back from `filters.state`).
    */
   onToggleTakenOverFilter?: (next: 'TakenOver' | undefined) => void;
+  /**
+   * Story 3d-8 (AC5) — toggle the `?includeArchived` filter between including soft-hidden
+   * (archived) runs and the default (hidden). The route performs the navigation; `QueueShell`
+   * holds NO filter state (the URL is the single source of truth — active state is read back
+   * from `filters.includeArchived`). `undefined` (not `false`) when turning off, so a cleared
+   * toggle does not count as an active filter (mirrors the taken-over pattern).
+   */
+  onToggleIncludeArchived?: (next: true | undefined) => void;
 }
 
 /** True when any filter carries a meaningful (non-empty) value. */
@@ -164,6 +172,7 @@ export function QueueShell({
   renderItem,
   onClearFilters,
   onToggleTakenOverFilter,
+  onToggleIncludeArchived,
 }: QueueShellProps) {
   const query = useWorkflowsList(filters);
   const items = query.data ?? [];
@@ -210,6 +219,16 @@ export function QueueShell({
     onToggleTakenOverFilter?.(next);
   };
 
+  // Story 3d-8 (AC5) — the include-archived toggle. Active state is read from the URL-backed
+  // `filters` (no local state); toggling navigates to `?includeArchived=true` ⇄ cleared.
+  const includeArchivedActive = filters.includeArchived === true;
+  const handleToggleIncludeArchived = () => {
+    const next = includeArchivedActive ? undefined : true;
+    // Field-only log — the new filter flag ONLY, never row content.
+    console.info({ event: 'queue.toggleIncludeArchivedFilter', includeArchived: next });
+    onToggleIncludeArchived?.(next);
+  };
+
   // AC5 — defer the announcement by one commit so even the cold-load "Loading…"
   // message (present at mount) is announced as a change, not swallowed as the
   // region's initial content (the 2.20 cold-load skeleton silence gap).
@@ -232,6 +251,17 @@ export function QueueShell({
             data-testid="queue-takenover-filter-toggle"
           >
             {takenOverActive ? 'Showing taken-over runs' : 'Show taken-over runs'}
+          </Button>
+          {/* Story 3d-8 (AC5) — include-archived filter toggle (default hidden ⇄ shown). */}
+          <Button
+            type="button"
+            variant={includeArchivedActive ? 'default' : 'outline'}
+            size="sm"
+            aria-pressed={includeArchivedActive}
+            onClick={handleToggleIncludeArchived}
+            data-testid="queue-include-archived-toggle"
+          >
+            {includeArchivedActive ? 'Showing archived runs' : 'Show archived runs'}
           </Button>
           <Button asChild variant="outline" size="sm">
             <Link to="/submit" data-testid="queue-submit-run-link">

@@ -799,6 +799,15 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void workflowRunsCarryTheV23PartialArchivedAtIndex() {
+    // Story 3d-8 / V23: the soft-hide marker (archived_at) already existed (V1); V23 adds ONLY the
+    // partial index backing the include-archived list path + future Epic 5 sweep, mirroring the V1
+    // workflow_events / artifacts / recovery_actions precedent.
+    assertIndexDefinitionContains("idx_workflow_runs_archived_at", "archived_at");
+    assertIndexDefinitionContains("idx_workflow_runs_archived_at", "archived_at IS NOT NULL");
+  }
+
+  @Test
   void malformedMigrationFailsFastWithSyntaxError() {
     // Reuse the @ServiceConnection-managed Postgres against an isolated schema instead of
     // spinning up a second container per test run.

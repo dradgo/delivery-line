@@ -52,7 +52,15 @@ public enum WorkflowEventType implements RegistryValue {
   // have no prior/resulting state (a console session is not a workflow-state change). They do NOT
   // belong in any scenario stream fixture (happy-path etc.) — only the registry + fixture mirrors.
   CONSOLE_OPENED("console.opened"),
-  CONSOLE_CLOSED("console.closed");
+  CONSOLE_CLOSED("console.closed"),
+  // Story 3d-8 (FR67, AC3/AC4, ADR 0027) — governed soft-hide of an obsolete run. Appended when an
+  // operator (or, behind the default-off auto-scan, a SYSTEM actor) hides a run from the default
+  // queue and when it is later un-hidden. Archiving is orthogonal to the lifecycle: it does NOT
+  // change current_state, so the event carries priorState == resultingState == the run's current
+  // state and interventionMarker = true (a human/governed triage action). Detail keys are the
+  // already-allow-listed idempotencyKey / correlationId / reason. No row is ever deleted (FR47).
+  WORKFLOW_ARCHIVED("workflow.archived"),
+  WORKFLOW_UNARCHIVED("workflow.unarchived");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

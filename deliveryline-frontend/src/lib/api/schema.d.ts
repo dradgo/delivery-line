@@ -253,6 +253,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Soft-hide (archive) an obsolete workflow run (story 3d-8)
+         * @description Hides a run from the default review queue by setting its archived_at marker and appending a governed workflow.archived audit event. Reversible via /unarchive; never deletes any row or mutates workflow_events (FR47). Archiving does not change the run's workflow state.
+         */
+        post: operations["archiveRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/artifacts/{artifactId}": {
         parameters: {
             query?: never;
@@ -458,6 +478,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reverse a soft-hide (un-archive) of a workflow run (story 3d-8)
+         * @description Clears a run's archived_at marker and appends a governed workflow.unarchived audit event, returning it to the default review queue. Symmetric reversal of /archive.
+         */
+        post: operations["unarchiveRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -524,6 +564,31 @@ export interface components {
             expectedContextBundleVersion: number;
             reason?: string;
             reviewerRole?: string;
+        };
+        /** @description Result of an archive / un-archive action. */
+        ArchiveRun: {
+            /**
+             * Format: date-time
+             * @description Soft-hide marker: non-null after archive, null after un-archive.
+             */
+            archivedAt?: string | null;
+            /**
+             * @description Current workflow state (unchanged by archiving).
+             * @example Failed
+             */
+            currentState?: string;
+            /**
+             * @description Run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
+        ArchiveRunRequest: {
+            /**
+             * @description Why this run is being hidden (required).
+             * @example ticket removed
+             */
+            reason: string;
         };
         /** @description Redacted content of a single workflow artifact. */
         ArtifactDetail: {
@@ -940,6 +1005,10 @@ export interface components {
             runId?: string;
             ticketRef: string;
         };
+        UnarchiveRunRequest: {
+            /** @description Why this run is being un-hidden (optional). */
+            reason?: string | null;
+        };
         /** @description Edit a project's mutable configuration. */
         UpdateProjectRequest: {
             /** @example Acme Widgets */
@@ -1088,6 +1157,11 @@ export interface components {
         };
         /** @description Queue/list summary of a workflow run. */
         WorkflowSummary: {
+            /**
+             * Format: date-time
+             * @description Soft-hide marker (story 3d-8). Non-null when the run has been archived (hidden from the default queue); null for a live run. The queue renders an archived/hidden badge when present.
+             */
+            archivedAt?: string | null;
             /**
              * @description Current workflow state.
              * @example WaitingForSpecApproval
@@ -1503,6 +1577,8 @@ export interface operations {
             query?: {
                 /** @description Optional current-state filter, e.g. WaitingForSpecApproval. */
                 state?: string;
+                /** @description Include soft-hidden (archived) runs. Defaults to false (archived_at IS NULL) — story 3d-8. */
+                includeArchived?: boolean;
                 /** @description Max rows to return (clamped to 1..200). */
                 limit?: number;
             };
@@ -1808,6 +1884,62 @@ export interface operations {
             };
             /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    archiveRun: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Run archived (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchiveRun"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARCHIVE_NOT_APPLICABLE (already archived) or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2349,6 +2481,62 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+        };
+    };
+    unarchiveRun: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnarchiveRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Run un-archived (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchiveRun"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARCHIVE_NOT_APPLICABLE (not archived) or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

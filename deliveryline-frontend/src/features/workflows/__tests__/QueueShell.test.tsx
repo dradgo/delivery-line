@@ -425,3 +425,47 @@ describe('QueueShell — taken-over filter toggle (story 3.29)', () => {
     expect(onClearFilters).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3d-8 (AC5) — the "Show archived runs" include-archived filter toggle.
+// ---------------------------------------------------------------------------
+describe('QueueShell — include-archived filter toggle (story 3d-8)', () => {
+  it('toggles ON: requests includeArchived=true and logs the new flag', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+    const onToggle = vi.fn();
+
+    renderShell(<QueueShell filters={{}} onToggleIncludeArchived={onToggle} />);
+
+    const toggle = await screen.findByTestId('queue-include-archived-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle).toHaveTextContent('Show archived runs');
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledWith(true);
+    expect(console.info).toHaveBeenCalledWith({
+      event: 'queue.toggleIncludeArchivedFilter',
+      includeArchived: true,
+    });
+  });
+
+  it('reflects the active flag and toggles OFF (clears includeArchived)', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+    const onToggle = vi.fn();
+
+    renderShell(
+      <QueueShell filters={{ includeArchived: true }} onToggleIncludeArchived={onToggle} />,
+    );
+
+    const toggle = await screen.findByTestId('queue-include-archived-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(toggle).toHaveTextContent('Showing archived runs');
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(undefined);
+    expect(console.info).toHaveBeenCalledWith({
+      event: 'queue.toggleIncludeArchivedFilter',
+      includeArchived: undefined,
+    });
+  });
+});

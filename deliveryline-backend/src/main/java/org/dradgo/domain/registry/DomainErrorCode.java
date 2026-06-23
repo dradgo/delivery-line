@@ -166,7 +166,14 @@ public enum DomainErrorCode implements RegistryValue {
   // gate (ProblemDetailsCoverageFoundationContract) round-trips every registered code, so
   // registration alone passes the gate — no production throw site is required in 3d-1.
   // SERVICE_UNAVAILABLE + non-retryable mirrors the other "config-absent advisory" codes.
-  REVIEWER_MODEL_NOT_CONFIGURED("REVIEWER_MODEL_NOT_CONFIGURED");
+  REVIEWER_MODEL_NOT_CONFIGURED("REVIEWER_MODEL_NOT_CONFIGURED"),
+  // Story 3d-8 (FR67, AC9 / R3) — three-sites code (enum + ProblemDetailsCatalog + manifest).
+  // Mirrors RETRY_NOT_APPLICABLE: there is NO generic ACTION_NOT_ALLOWED guard — command services
+  // enforce their own state preconditions. Raised by WorkflowArchiveService when archiving an
+  // already-archived run, or un-archiving a run that is not archived. CONFLICT (409) +
+  // non-retryable
+  // (a precondition mismatch on the run's archive marker, not a transient fault).
+  ARCHIVE_NOT_APPLICABLE("ARCHIVE_NOT_APPLICABLE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

@@ -557,3 +557,33 @@ describe('RunReviewQueueItem — takeover (story 3.29, AC3)', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3d-8 (AC5) — the archived/"Hidden" chip (LIVE from `archived`).
+// ---------------------------------------------------------------------------
+describe('RunReviewQueueItem — archived chip (story 3d-8, AC5)', () => {
+  it('renders a color-independent "Hidden" chip when the run is archived', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, archived: true }} />);
+    const chip = within(screen.getByTestId('queue-item-secondary')).getByTestId(
+      'queue-item-archived',
+    );
+    // Paired icon + label — never color-alone (AC5 non-color signifier).
+    expect(chip).toHaveTextContent('Hidden');
+    expect(chip.querySelector('svg')).not.toBeNull();
+  });
+
+  it('omits the archived chip entirely for a live (non-archived) run', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, archived: false }} />);
+    expect(screen.queryByTestId('queue-item-archived')).toBeNull();
+  });
+
+  it('archived is metadata, NOT a primary attention signal', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, archived: true }} />);
+    expect(screen.queryByTestId('queue-item-primary-attention')).toBeNull();
+  });
+
+  it('AC10 — an archived row has zero axe violations', async () => {
+    const { container } = render(<RunReviewQueueItem run={{ ...BASE_ROW, archived: true }} />);
+    await expectNoA11yViolations(container);
+  });
+});

@@ -129,6 +129,8 @@ export const DEV_REVIEW_RUN_ID = 'run_devreview0001';
 export const RECOVERY_RUN_ID = 'run_recovery0001';
 /** Story 3d-6 — an EXECUTING run whose owner-scoped actions advertise open_diagnostic_console. */
 export const DIAGNOSTIC_CONSOLE_RUN_ID = 'run_console00001';
+/** Story 3d-8 — a soft-hidden (archived) run, surfaced in the queue ONLY with ?includeArchived=true. */
+export const ARCHIVED_RUN_ID = 'run_archived00001';
 /** The prOutput artifact the impl-review bar resolves accept/reject against (highest version). */
 const IMPL_PR_ARTIFACT_ID = 'art_impl_pr_0001';
 const IMPL_PLAN_ARTIFACT_ID = 'art_impl_plan_0001';
@@ -583,12 +585,26 @@ export async function mockBackend(page: Page): Promise<void> {
     }
 
     // GET /api/v1/workflows — the run queue (spec-stage streams + the synthetic
-    // execution-stage developer-journey runs, story 3.35).
+    // execution-stage developer-journey runs, story 3.35). Story 3d-8: a soft-hidden (archived)
+    // run is included ONLY when ?includeArchived=true, mirroring the backend default-hide.
     if (/\/api\/v1\/workflows\/?$/.test(path)) {
-      return json(route, [
+      const base = [
         ...STREAMS.map(summary),
         ...Object.values(SYNTHETIC_RUNS).map((run) => run.summary()),
-      ]);
+      ];
+      if (url.searchParams.get('includeArchived') === 'true') {
+        base.push({
+          workflowRunId: ARCHIVED_RUN_ID,
+          currentState: 'Failed',
+          ticketRef: 'DEL-ARCHIVED',
+          lastEventAt: '2026-06-23T00:00:00Z',
+          lastEventType: 'workflow.archived',
+          specRejectionLoopCount: 0,
+          escalationMarker: false,
+          archivedAt: '2026-06-23T00:00:00Z',
+        });
+      }
+      return json(route, base);
     }
 
     const eventsMatch = /\/api\/v1\/workflows\/([^/]+)\/events$/.exec(path);

@@ -34,7 +34,14 @@ public enum AllowedAction implements RegistryValue {
   // container is live) and ONLY to the run owner (workflow_owner) — the single local operator. The
   // endpoint re-checks liveness at attach time and rejects a non-live/absent rex with
   // console-not-live, so even this narrow gate cannot open a console into an absent container.
-  OPEN_DIAGNOSTIC_CONSOLE("open_diagnostic_console");
+  OPEN_DIAGNOSTIC_CONSOLE("open_diagnostic_console"),
+  // Story 3d-8 (FR67, AC3/AC4, ADR 0027) — governed soft-hide affordances. Mutually exclusive per
+  // run: archive_run is advertised for a NOT-archived run, unarchive_run for an already-archived
+  // run. Orthogonal to the per-state lifecycle actions (a run can be hidden from any state), so
+  // WorkflowInspectionService.computeActionMatrix threads a `boolean archived` and adds exactly one
+  // of these. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only).
+  ARCHIVE_RUN("archive_run"),
+  UNARCHIVE_RUN("unarchive_run");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

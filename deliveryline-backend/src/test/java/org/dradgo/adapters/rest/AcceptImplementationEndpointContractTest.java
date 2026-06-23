@@ -21,6 +21,7 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
+import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
@@ -72,6 +73,7 @@ class AcceptImplementationEndpointContractTest {
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   private ListAppender<ILoggingEvent> appender;
   private Logger controllerLogger;

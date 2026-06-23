@@ -60,6 +60,15 @@ describe('toRunQueueRow', () => {
     expect(row.escalationMarker).toBeUndefined();
     expect(row.specRejectionLoopCount).toBeUndefined();
   });
+
+  it('Story 3d-8 — maps the LIVE archived marker (non-null archivedAt ⇒ archived=true)', () => {
+    expect(toRunQueueRow({ ...LIVE_SUMMARY, archivedAt: '2026-06-23T00:00:00Z' }).archived).toBe(
+      true,
+    );
+    // A live run (null/absent archivedAt) is not archived.
+    expect(toRunQueueRow({ ...LIVE_SUMMARY, archivedAt: null }).archived).toBe(false);
+    expect(toRunQueueRow(LIVE_SUMMARY).archived).toBe(false);
+  });
 });
 
 describe('resolvePrimaryAttentionIndicator', () => {

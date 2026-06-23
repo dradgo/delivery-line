@@ -19,17 +19,21 @@ import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
+import org.dradgo.application.workflow.WorkflowArchiveResult;
+import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.ArchiveRunCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
+import org.dradgo.application.workflow.commands.UnarchiveRunCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -85,18 +89,22 @@ public class WorkflowController {
   // endpoint (cancelled-runner counts + preserved PR ref). The pre-existing transition-only POST
   // /takeover-workflow endpoint keeps using workflowCommandService.takeoverWorkflow (R1 / R9).
   private final DeveloperTakeoverService developerTakeoverService;
+  // Story 3d-8 — governed soft-hide / un-hide of obsolete runs (archive marker + audit event).
+  private final WorkflowArchiveService workflowArchiveService;
 
   public WorkflowController(
       WorkflowCommandService workflowCommandService,
       WorkflowInspectionService workflowInspectionService,
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
-      DeveloperTakeoverService developerTakeoverService) {
+      DeveloperTakeoverService developerTakeoverService,
+      WorkflowArchiveService workflowArchiveService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
     this.developerTakeoverService = developerTakeoverService;
+    this.workflowArchiveService = workflowArchiveService;
   }
 
   // ---------------------------------------------------------------------------
@@ -116,17 +124,24 @@ public class WorkflowController {
       @Parameter(description = "Optional current-state filter, e.g. WaitingForSpecApproval.")
           @RequestParam(name = "state", required = false)
           String state,
+      @Parameter(
+              description =
+                  "Include soft-hidden (archived) runs. Defaults to false (archived_at IS NULL)"
+                      + " — story 3d-8.")
+          @RequestParam(name = "includeArchived", required = false, defaultValue = "false")
+          boolean includeArchived,
       @Parameter(description = "Max rows to return (clamped to 1..200).")
           @RequestParam(name = "limit", required = false, defaultValue = "50")
           int limit) {
     WorkflowState stateFilter =
         (state == null || state.isBlank()) ? null : WorkflowState.fromValue(state, "state");
     log.info(
-        "REST list workflows received stateFilter={} limit={}",
+        "REST list workflows received stateFilter={} includeArchived={} limit={}",
         stateFilter == null ? "<all>" : stateFilter.value(),
+        includeArchived,
         limit);
     List<WorkflowSummaryResponse> summaries =
-        workflowInspectionService.listRuns(stateFilter, limit).stream()
+        workflowInspectionService.listRuns(stateFilter, includeArchived, limit).stream()
             .map(WorkflowSummaryResponse::from)
             .toList();
     log.info("REST list workflows success count={}", summaries.size());
@@ -972,6 +987,150 @@ public class WorkflowController {
         response.cancelledInFlightCount(),
         response.cancelledQueuedCount(),
         response.replayed());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/archive",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "archiveRun",
+      summary = "Soft-hide (archive) an obsolete workflow run (story 3d-8)",
+      description =
+          "Hides a run from the default review queue by setting its archived_at marker and appending"
+              + " a governed workflow.archived audit event. Reversible via /unarchive; never deletes"
+              + " any row or mutates workflow_events (FR47). Archiving does not change the run's"
+              + " workflow state.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Run archived (or idempotent replay)."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_ID_PREFIX.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "ARCHIVE_NOT_APPLICABLE (already archived) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ArchiveRunResponse archive(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ArchiveRunRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST archive received workflowRunId={} actorIdentity={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        request.reason().length());
+    WorkflowArchiveResult result =
+        workflowArchiveService.archiveRun(
+            new ArchiveRunCommand(
+                workflowRunId,
+                actorIdentity,
+                ActorType.HUMAN,
+                idempotencyKey,
+                correlationId,
+                request.reason()));
+    ArchiveRunResponse response = ArchiveRunResponse.from(result);
+    log.info(
+        "REST archive success workflowRunId={} currentState={} archivedAt={} replay={}",
+        workflowRunId,
+        response.currentState(),
+        response.archivedAt(),
+        result.replay());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/unarchive",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "unarchiveRun",
+      summary = "Reverse a soft-hide (un-archive) of a workflow run (story 3d-8)",
+      description =
+          "Clears a run's archived_at marker and appends a governed workflow.unarchived audit event,"
+              + " returning it to the default review queue. Symmetric reversal of /archive.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Run un-archived (or idempotent replay)."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_ID_PREFIX.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "ARCHIVE_NOT_APPLICABLE (not archived) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ArchiveRunResponse unarchive(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody UnarchiveRunRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST unarchive received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowArchiveResult result =
+        workflowArchiveService.unarchiveRun(
+            new UnarchiveRunCommand(
+                workflowRunId,
+                actorIdentity,
+                ActorType.HUMAN,
+                idempotencyKey,
+                correlationId,
+                request.reason()));
+    ArchiveRunResponse response = ArchiveRunResponse.from(result);
+    log.info(
+        "REST unarchive success workflowRunId={} currentState={} replay={}",
+        workflowRunId,
+        response.currentState(),
+        result.replay());
     return response;
   }
 

@@ -15,6 +15,8 @@
     "view_runner_logs",
     "obtain_manual_bundle",
     "submit_manual_artifact",
-    "open_diagnostic_console"
+    "open_diagnostic_console",
+    "archive_run",
+    "unarchive_run"
   ]
 }

@@ -22,8 +22,18 @@ import { toRunQueueRow } from '@/features/workflows/runQueueRow';
  * client middleware (2.6/1.19). Building the filter CONTROLS is out of scope (AC9).
  */
 export const Route = createFileRoute('/workflows/')({
-  validateSearch: (search: Record<string, unknown>): WorkflowListFilters =>
-    typeof search.state === 'string' && search.state.length > 0 ? { state: search.state } : {},
+  // Story 3d-8 — the URL carries both the `state` filter and the `includeArchived` flag, each
+  // sanitized independently so a deep link with either (or both) renders off the shared cache.
+  validateSearch: (search: Record<string, unknown>): WorkflowListFilters => {
+    const filters: WorkflowListFilters = {};
+    if (typeof search.state === 'string' && search.state.length > 0) {
+      filters.state = search.state;
+    }
+    if (search.includeArchived === true || search.includeArchived === 'true') {
+      filters.includeArchived = true;
+    }
+    return filters;
+  },
   loaderDeps: ({ search }): WorkflowListFilters => search,
   loader: ({ context, deps }) => context.queryClient.ensureQueryData(listQueryOptions(deps)),
   component: WorkflowsRoute,
@@ -32,12 +42,26 @@ export const Route = createFileRoute('/workflows/')({
 function WorkflowsRoute() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  // Each toggle preserves the OTHER active filter (build conditionally for exactOptionalPropertyTypes).
   return (
     <QueueShell
       filters={search}
       onClearFilters={() => void navigate({ search: {} })}
       onToggleTakenOverFilter={(next) =>
-        void navigate({ search: next !== undefined ? { state: next } : {} })
+        void navigate({
+          search: {
+            ...(next !== undefined ? { state: next } : {}),
+            ...(search.includeArchived === true ? { includeArchived: true } : {}),
+          },
+        })
+      }
+      onToggleIncludeArchived={(next) =>
+        void navigate({
+          search: {
+            ...(search.state !== undefined ? { state: search.state } : {}),
+            ...(next === true ? { includeArchived: true } : {}),
+          },
+        })
       }
       renderItem={(summary) => <RunReviewQueueItem run={toRunQueueRow(summary)} />}
     />

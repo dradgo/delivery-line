@@ -20,9 +20,15 @@ public interface WorkflowRunReadPort {
    * /api/v1/workflows}). Ordering is performed in the database so the returned order is
    * authoritative.
    *
+   * <p>Story 3d-8 (FR67, AC5/AC6): when {@code includeArchived} is {@code false} (the default queue
+   * path) soft-hidden runs ({@code archived_at IS NOT NULL}) are excluded; {@code true} returns
+   * them alongside live runs so the operator can review hidden work. The single-run by-id read
+   * ({@link #findByPublicId}) is never archive-filtered (audit-queryable path).
+   *
    * @param stateFilter optional current-state filter; {@code null} returns runs in all states
+   * @param includeArchived when {@code false}, excludes runs with a non-null {@code archived_at}
    * @param limit maximum rows to return (callers clamp to a sane ceiling before calling)
    * @return run snapshots in newest-first order (possibly empty, never {@code null})
    */
-  List<WorkflowRunSnapshot> listRuns(WorkflowState stateFilter, int limit);
+  List<WorkflowRunSnapshot> listRuns(WorkflowState stateFilter, boolean includeArchived, int limit);
 }

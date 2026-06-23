@@ -19,6 +19,7 @@ import org.dradgo.application.security.RedactionCategory;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
+import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.domain.DomainException;
@@ -44,6 +45,8 @@ class ProblemDetailsContractTest {
   // Story 3.25 — WorkflowController wires the rich DeveloperTakeoverService for POST /takeover;
   // the bean must exist for this @WebMvcTest slice even though these tests exercise other paths.
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+
+  @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   // Story 6.9 — WorkflowController gained a read dependency on WorkflowInspectionService; the
   // bean must exist for this @WebMvcTest slice even though these tests exercise only POST commands.

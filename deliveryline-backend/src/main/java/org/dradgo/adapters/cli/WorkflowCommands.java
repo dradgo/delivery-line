@@ -31,6 +31,8 @@ import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.BatchSubmissionResult;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.TicketBatchResult;
+import org.dradgo.application.workflow.WorkflowArchiveResult;
+import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowBatchSubmissionService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
@@ -43,12 +45,14 @@ import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.ArchiveRunCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitBatchCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.application.workflow.commands.TakeoverWorkflowCommand;
+import org.dradgo.application.workflow.commands.UnarchiveRunCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -95,6 +99,9 @@ public class WorkflowCommands {
   // legacy/inspection-less test constructors; the takeover command guards via
   // requireTakeoverWired().
   private final DeveloperTakeoverService developerTakeoverService;
+  // Story 3d-8 — governed soft-hide / un-hide. Nullable in the legacy/inspection-less test
+  // constructors; the archive/unarchive commands guard via requireArchiveWired().
+  private final WorkflowArchiveService workflowArchiveService;
 
   @Autowired
   public WorkflowCommands(
@@ -109,7 +116,8 @@ public class WorkflowCommands {
       LocalActorIdentityResolver localActorIdentityResolver,
       WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowBatchSubmissionService workflowBatchSubmissionService,
-      DeveloperTakeoverService developerTakeoverService) {
+      DeveloperTakeoverService developerTakeoverService,
+      WorkflowArchiveService workflowArchiveService) {
     this(
         workflowCommandService,
         workflowInspectionService,
@@ -123,7 +131,8 @@ public class WorkflowCommands {
         localActorIdentityResolver,
         workflowOrchestrationService,
         workflowBatchSubmissionService,
-        developerTakeoverService);
+        developerTakeoverService,
+        workflowArchiveService);
   }
 
   /**
@@ -149,6 +158,7 @@ public class WorkflowCommands {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -165,7 +175,8 @@ public class WorkflowCommands {
       LocalActorIdentityResolver localActorIdentityResolver,
       WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowBatchSubmissionService workflowBatchSubmissionService,
-      DeveloperTakeoverService developerTakeoverService) {
+      DeveloperTakeoverService developerTakeoverService,
+      WorkflowArchiveService workflowArchiveService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.outputs = outputs;
@@ -179,6 +190,43 @@ public class WorkflowCommands {
     this.workflowOrchestrationService = workflowOrchestrationService;
     this.workflowBatchSubmissionService = workflowBatchSubmissionService;
     this.developerTakeoverService = developerTakeoverService;
+    this.workflowArchiveService = workflowArchiveService;
+  }
+
+  /**
+   * Backward-compatible constructor (pre story 3d-8). Delegates with a {@code null}
+   * WorkflowArchiveService; callers that exercise {@code archive}/{@code unarchive} must use the
+   * full constructor (the commands guard via {@link #requireArchiveWired()}).
+   */
+  public WorkflowCommands(
+      WorkflowCommandService workflowCommandService,
+      WorkflowInspectionService workflowInspectionService,
+      WorkflowCommandOutputs outputs,
+      BooleanSupplier interactivityDetector,
+      Supplier<String> generatedKeySupplier,
+      Supplier<String> correlationIdSupplier,
+      IdempotencyKeyValidator idempotencyKeyValidator,
+      RecoveryService recoveryService,
+      ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
+      LocalActorIdentityResolver localActorIdentityResolver,
+      WorkflowOrchestrationService workflowOrchestrationService,
+      WorkflowBatchSubmissionService workflowBatchSubmissionService,
+      DeveloperTakeoverService developerTakeoverService) {
+    this(
+        workflowCommandService,
+        workflowInspectionService,
+        outputs,
+        interactivityDetector,
+        generatedKeySupplier,
+        correlationIdSupplier,
+        idempotencyKeyValidator,
+        recoveryService,
+        approvalReviewerRoleResolver,
+        localActorIdentityResolver,
+        workflowOrchestrationService,
+        workflowBatchSubmissionService,
+        developerTakeoverService,
+        null);
   }
 
   @Command(
@@ -712,6 +760,148 @@ public class WorkflowCommands {
       throw de;
     } catch (RuntimeException re) {
       emitFailure("workflow takeover", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "archive",
+      description =
+          "Soft-hide (archive) an obsolete governed workflow run (story 3d-8). Sets the archived_at"
+              + " marker + appends a governed workflow.archived event; reversible via unarchive."
+              + " Never deletes any row or mutates history (FR47).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String archive(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "reason",
+              description = "Why the run is being hidden (required, free-form)",
+              required = true)
+          String reason,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    requireArchiveWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      WorkflowArchiveResult result =
+          workflowArchiveService.archiveRun(
+              new ArchiveRunCommand(
+                  runId,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation,
+                  reason));
+      StringBuilder output = new StringBuilder().append(runId).append(" archived");
+      if (result.replay()) {
+        output.append(" [replayed]");
+      }
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow archive", runId, resolvedCorrelation, start);
+      log.info(
+          "workflow archive reason supplied correlationId={} workflowRunId={} reasonLength={}",
+          resolvedCorrelation,
+          runId,
+          reason.length());
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow archive", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow archive", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "unarchive",
+      description =
+          "Reverse a soft-hide (un-archive) of a governed workflow run (story 3d-8). Clears the"
+              + " archived_at marker + appends a governed workflow.unarchived event, returning the"
+              + " run to the default review queue.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String unarchive(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "reason",
+              description = "Why the run is being un-hidden (optional, free-form)",
+              required = false)
+          String reason,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    requireArchiveWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      WorkflowArchiveResult result =
+          workflowArchiveService.unarchiveRun(
+              new UnarchiveRunCommand(
+                  runId,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation,
+                  reason));
+      StringBuilder output = new StringBuilder().append(runId).append(" unarchived");
+      if (result.replay()) {
+        output.append(" [replayed]");
+      }
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow unarchive", runId, resolvedCorrelation, start);
+      log.info(
+          "workflow unarchive reason supplied correlationId={} workflowRunId={} reasonLength={}",
+          resolvedCorrelation,
+          runId,
+          reason == null ? 0 : reason.length());
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow unarchive", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow unarchive", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
       throw re;
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
@@ -1683,6 +1873,17 @@ public class WorkflowCommands {
       throw new DomainException(
           DomainErrorCode.INTERNAL_ERROR,
           "WorkflowCommands was constructed without DeveloperTakeoverService; inject DeveloperTakeoverService to use takeover",
+          details);
+    }
+  }
+
+  private void requireArchiveWired() {
+    if (workflowArchiveService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_archive_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without WorkflowArchiveService; inject WorkflowArchiveService to use archive/unarchive",
           details);
     }
   }

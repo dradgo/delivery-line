@@ -130,7 +130,9 @@ class WorkflowInspectionServiceAllowedActionsLoggingTest {
                     && line.contains("workflowRunId=" + RUN)
                     && line.contains("actorRole=workflow_owner")
                     && line.contains("workflowState=Inbox")
-                    && line.contains("actionCount=1")
+                    // Story 3d-8 (D1): archive_run is appended for workflow_owner on a non-archived
+                    // run → VIEW_ONLY + ARCHIVE_RUN = 2.
+                    && line.contains("actionCount=2")
                     && line.contains("versionStampLastEventId=evt_log_a"));
   }
 

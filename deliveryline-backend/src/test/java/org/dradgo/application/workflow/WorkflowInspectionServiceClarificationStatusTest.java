@@ -372,7 +372,7 @@ class WorkflowInspectionServiceClarificationStatusTest {
 
   @Test
   void listRunsProjectsPendingClarificationsPerRow() {
-    when(runs.listRuns(null, 2))
+    when(runs.listRuns(null, false, 2))
         .thenReturn(
             List.of(
                 new WorkflowRunSnapshot("run_list_1", WorkflowState.EXECUTING, null, 1L, 0, false),
@@ -400,7 +400,8 @@ class WorkflowInspectionServiceClarificationStatusTest {
     when(clarifications.countPendingByWorkflowRun("run_list_1")).thenReturn(1);
     when(clarifications.countPendingByWorkflowRun("run_list_2")).thenReturn(4);
 
-    List<WorkflowInspectionService.WorkflowRunSummaryView> result = service.listRuns(null, 2);
+    List<WorkflowInspectionService.WorkflowRunSummaryView> result =
+        service.listRuns(null, false, 2);
 
     assertEquals(2, result.size());
     assertEquals("run_list_1", result.get(0).workflowRunId());

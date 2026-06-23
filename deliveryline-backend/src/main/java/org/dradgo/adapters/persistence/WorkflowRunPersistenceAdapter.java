@@ -6,6 +6,7 @@ import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.adapters.persistence.mapper.WorkflowRunEntityMapper;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.workflow.spi.WorkflowRunArchivePort;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort;
@@ -29,6 +30,7 @@ public class WorkflowRunPersistenceAdapter
     implements WorkflowRunReadPort,
         WorkflowRunCreatePort,
         WorkflowRunStatePort,
+        WorkflowRunArchivePort,
         WorkflowRunRejectionLoopPort {
 
   private static final Logger log = LoggerFactory.getLogger(WorkflowRunPersistenceAdapter.class);
@@ -79,14 +81,69 @@ public class WorkflowRunPersistenceAdapter
 
   @Override
   @Transactional(readOnly = true)
-  public List<WorkflowRunSnapshot> listRuns(WorkflowState stateFilter, int limit) {
+  public List<WorkflowRunSnapshot> listRuns(
+      WorkflowState stateFilter, boolean includeArchived, int limit) {
     Pageable page = PageRequest.of(0, limit);
-    List<WorkflowRunEntity> entities =
-        stateFilter == null
-            ? workflowRunRepository.findAllByOrderByCreatedAtDescIdDesc(page)
-            : workflowRunRepository.findByCurrentStateOrderByCreatedAtDescIdDesc(
-                stateFilter.value(), page);
+    List<WorkflowRunEntity> entities;
+    if (includeArchived) {
+      entities =
+          stateFilter == null
+              ? workflowRunRepository.findAllByOrderByCreatedAtDescIdDesc(page)
+              : workflowRunRepository.findByCurrentStateOrderByCreatedAtDescIdDesc(
+                  stateFilter.value(), page);
+    } else {
+      entities =
+          stateFilter == null
+              ? workflowRunRepository.findByArchivedAtIsNullOrderByCreatedAtDescIdDesc(page)
+              : workflowRunRepository
+                  .findByCurrentStateAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(
+                      stateFilter.value(), page);
+    }
     return entities.stream().map(workflowRunEntityMapper::toSnapshot).toList();
+  }
+
+  // Story 3d-8 (FR67, AC1/AC4) — the run-archive write seam. Mirrors
+  // IntegrationLinkPersistenceAdapter.markArchived: load-by-public-id semantics (RUN_NOT_FOUND when
+  // absent) over a bulk marker update that leaves current_state + version untouched. The governed
+  // workflow.archived / workflow.unarchived event append is the caller's (WorkflowArchiveService)
+  // concern and shares this transaction (REQUIRED propagation).
+  @Override
+  @Transactional
+  public void markArchived(String workflowRunPublicId, java.time.Instant archivedAt) {
+    java.util.Objects.requireNonNull(archivedAt, "archivedAt");
+    int updated =
+        workflowRunRepository.archiveIfNotArchived(
+            workflowRunPublicId,
+            java.time.OffsetDateTime.ofInstant(archivedAt, java.time.ZoneOffset.UTC));
+    requireSingleArchiveWrite(workflowRunPublicId, updated);
+    log.info("workflow_run archived publicId={} archivedAt={}", workflowRunPublicId, archivedAt);
+  }
+
+  @Override
+  @Transactional
+  public void clearArchived(String workflowRunPublicId) {
+    int updated = workflowRunRepository.clearArchivedIfArchived(workflowRunPublicId);
+    requireSingleArchiveWrite(workflowRunPublicId, updated);
+    log.info("workflow_run unarchived publicId={}", workflowRunPublicId);
+  }
+
+  // A conditional archive/clear that affects 0 rows is either a genuinely-missing run (RUN_NOT_FOUND)
+  // or a run whose marker was concurrently flipped between the caller's snapshot read and this write
+  // (a lost race → ARCHIVE_NOT_APPLICABLE — the same code the caller's precondition check throws).
+  private void requireSingleArchiveWrite(String workflowRunPublicId, int updated) {
+    if (updated == 1) {
+      return;
+    }
+    if (!workflowRunRepository.existsByPublicId(workflowRunPublicId)) {
+      throw new DomainException(
+          DomainErrorCode.RUN_NOT_FOUND,
+          "Workflow run not found: " + workflowRunPublicId,
+          Map.of("runId", workflowRunPublicId));
+    }
+    throw new DomainException(
+        DomainErrorCode.ARCHIVE_NOT_APPLICABLE,
+        "Workflow run archive state changed concurrently: " + workflowRunPublicId,
+        Map.of("runId", workflowRunPublicId, "reason", "concurrent_modification"));
   }
 
   @Override

@@ -31,7 +31,14 @@ public record WorkflowSummaryResponse(
                 "True once specRejectionLoopCount has crossed the configured escalation threshold."
                     + " Informational — does NOT terminate the workflow (FR13).",
             example = "false")
-        boolean escalationMarker) {
+        boolean escalationMarker,
+    @Schema(
+            description =
+                "Soft-hide marker (story 3d-8). Non-null when the run has been archived (hidden"
+                    + " from the default queue); null for a live run. The queue renders an"
+                    + " archived/hidden badge when present.",
+            nullable = true)
+        OffsetDateTime archivedAt) {
 
   // NOTE: Story 2.12 added `pendingClarifications` to the application-layer
   // {@link WorkflowRunSummaryView} but the REST surface does NOT yet expose it — the OpenAPI
@@ -48,7 +55,8 @@ public record WorkflowSummaryResponse(
         toUtc(view.lastEventAt()),
         view.lastEventType(),
         view.specRejectionLoopCount(),
-        view.escalationMarker());
+        view.escalationMarker(),
+        toUtc(view.archivedAt()));
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

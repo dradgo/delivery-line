@@ -20,6 +20,12 @@
 export interface WorkflowListFilters {
   /** Current-state filter, e.g. `WaitingForSpecApproval`. */
   state?: string;
+  /**
+   * Story 3d-8 — include soft-hidden (archived) runs in the queue. Omitted/false hides them
+   * (the backend defaults to `archived_at IS NULL`); `normalizeFilters` keys the cache per value
+   * so the archived/un-archived views are distinct cache entries.
+   */
+  includeArchived?: boolean;
 }
 
 /**

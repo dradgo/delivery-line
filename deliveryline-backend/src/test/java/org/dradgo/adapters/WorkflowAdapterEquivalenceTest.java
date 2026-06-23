@@ -17,6 +17,7 @@ import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
+import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -45,6 +46,8 @@ class WorkflowAdapterEquivalenceTest {
   // Story 3.25 — WorkflowController now also wires the rich DeveloperTakeoverService for POST
   // /takeover. Unused by this slice, but the bean must exist for the controller to construct.
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+
+  @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   // Story 6.9 — WorkflowController now also delegates GET reads to WorkflowInspectionService.
   // This @WebMvcTest slice exercises only the POST command equivalence, but the bean must exist

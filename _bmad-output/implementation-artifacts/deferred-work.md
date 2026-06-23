@@ -2,6 +2,11 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3d-8 (2026-06-23)
+
+- **Idempotency `complete()` runs in a transaction separate from the archive commit.** In `WorkflowArchiveService.archiveRun`/`unarchiveRun`, the marker + event commit inside `transactionTemplate.execute`, then `idempotencyService.complete(...)` runs as its own transaction. If `complete` throws, the archive is already durable but the reservation is marked FAILED, so a same-key retry can surface a spurious `IDEMPOTENCY_KEY_CONFLICT` (or a fresh-key retry re-appends a duplicate event). This is the established cross-service idempotency pattern, not introduced by 3d-8, and is partly mitigated once the conditional-update patch (above) lands. **Follow-up:** revisit reservation/commit atomicity across all command services (would need the reservation to share the business transaction). [`WorkflowArchiveService.java:129-137,162-170`]
+- **Idempotent replay reconstructs the result from the live run, not the original captured value.** `loadReplay` re-reads the run and echoes its current `archivedAt`/`currentState`; after an interleaved un-archive (different key), an archive replay returns `archivedAt=null, replay=true`. Stale-but-truthful, low impact. **Follow-up:** persist/return the original `WorkflowArchiveResult` if exact replay fidelity is ever required. [`WorkflowArchiveService.java:279-283`]
+
 ## Deferred from: code review of story-3d-1 (2026-06-21)
 
 - **`step_reviews` has no uniqueness beyond `public_id`.** No partial-unique index on `(workflow_run_id, runner_execution_id, reviewed_artifact_id, reviewed_artifact_version) where archived_at is null`, so unlimited duplicate verdicts for the same reviewed artifact version of the same run/execution are storable. AC3 specifies the exact column/constraint set (uniqueness not among them) and the table is dormant in 3d-1. **Follow-up:** decide the "one active verdict per reviewed artifact version" invariant when 3d-2 defines verdict-write semantics (the house partial-unique-index pattern). [`V19__add_reviewer_model_and_step_reviews.sql`]

@@ -480,6 +480,16 @@ public final class ProblemDetailsCatalog {
         HttpStatus.SERVICE_UNAVAILABLE,
         "Reviewer model not configured",
         false);
+    // Story 3d-8 (AC9 / R3) — archiving an already-archived run, or un-archiving a not-archived
+    // run,
+    // is a precondition mismatch on the run's archive marker; mirror RETRY_NOT_APPLICABLE's
+    // CONFLICT + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.ARCHIVE_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Archive not applicable",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

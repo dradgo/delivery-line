@@ -1,5 +1,6 @@
 package org.dradgo.infrastructure.config;
 
+import org.dradgo.application.workflow.ArchiveProperties;
 import org.dradgo.application.workflow.WorkflowProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -13,5 +14,5 @@ import org.springframework.context.annotation.Configuration;
  * clean, mirroring {@code GitHubConfiguration}/{@code RunnerConfiguration}.
  */
 @Configuration
-@EnableConfigurationProperties(WorkflowProperties.class)
+@EnableConfigurationProperties({WorkflowProperties.class, ArchiveProperties.class})
 public class WorkflowConfiguration {}

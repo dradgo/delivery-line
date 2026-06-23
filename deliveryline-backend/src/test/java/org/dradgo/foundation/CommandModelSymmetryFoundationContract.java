@@ -20,6 +20,7 @@ import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
+import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
@@ -97,6 +98,8 @@ class CommandModelSymmetryFoundationContract {
   // bean must exist for this slice to construct the controller; the existing captureTakeover
   // round-trip still exercises the transition-only /takeover-workflow path (R9 — unchanged).
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+
+  @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   @org.junit.jupiter.api.BeforeEach
   void stubActorResolver() {

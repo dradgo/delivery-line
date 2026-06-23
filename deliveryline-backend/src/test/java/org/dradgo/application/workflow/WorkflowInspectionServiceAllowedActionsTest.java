@@ -89,15 +89,25 @@ class WorkflowInspectionServiceAllowedActionsTest {
   // ---------------------------------------------------------------------------
 
   static Stream<Arguments> matrixCases() {
+    // Story 3d-8 / review decision D1: archive_run / unarchive_run are gated to workflow_owner only
+    // (mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE). Non-owner rows therefore carry NO archive action.
     return Stream.of(
         Arguments.of(WorkflowState.INBOX, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
-        Arguments.of(WorkflowState.INBOX, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+        Arguments.of(
+            WorkflowState.INBOX,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
         Arguments.of(WorkflowState.PLANNED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
-        Arguments.of(WorkflowState.PLANNED, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+        Arguments.of(
+            WorkflowState.PLANNED,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.INVESTIGATING, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
-            WorkflowState.INVESTIGATING, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+            WorkflowState.INVESTIGATING,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "product_reviewer",
@@ -108,7 +118,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "workflow_owner",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.ANSWER_CLARIFICATION,
+                AllowedAction.ARCHIVE_RUN)),
         // Story 3d-5 (AC6) — view_runner_logs joins the runner-execution states, role-agnostic.
         Arguments.of(
             WorkflowState.EXECUTING,
@@ -127,7 +140,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.AWAIT_OUTCOME,
                 AllowedAction.VIEW_RUNNER_LOGS,
-                AllowedAction.OPEN_DIAGNOSTIC_CONSOLE)),
+                AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+                AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "product_reviewer",
@@ -135,7 +149,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "workflow_owner",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.ARCHIVE_RUN)),
         // Story 3.20 AC12 + Story 3.21 AC9 + Story 3.22 AC9 — the developer-review actor may
         // accept,
         // reject, OR take over the implementation here. Story 3d-5 (AC6) adds view_runner_logs.
@@ -170,7 +187,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.OBTAIN_MANUAL_BUNDLE,
                 AllowedAction.SUBMIT_MANUAL_ARTIFACT,
-                AllowedAction.VIEW_ONLY)),
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             "product_reviewer",
@@ -180,7 +198,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
             "developer",
             List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(WorkflowState.COMPLETED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
-        Arguments.of(WorkflowState.COMPLETED, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+        Arguments.of(
+            WorkflowState.COMPLETED,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.FAILED,
             "product_reviewer",
@@ -194,7 +215,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.RETRY,
                 AllowedAction.VIEW_DIAGNOSTICS,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.PAUSED,
             "product_reviewer",
@@ -208,13 +230,20 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.TAKEN_OVER, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
-        Arguments.of(WorkflowState.TAKEN_OVER, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)),
+        Arguments.of(
+            WorkflowState.TAKEN_OVER,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.RECONCILED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
-        Arguments.of(WorkflowState.RECONCILED, "workflow_owner", List.of(AllowedAction.VIEW_ONLY)));
+        Arguments.of(
+            WorkflowState.RECONCILED,
+            "workflow_owner",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)));
   }
 
   @ParameterizedTest
@@ -229,6 +258,34 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
     assertThat(view.actions()).containsExactlyElementsOf(expected);
     assertThat(view.versionStamp().workflowState()).isEqualTo(state.value());
+  }
+
+  @Test
+  void liveRunAdvertisesArchiveRunAsFinalAction() {
+    // Story 3d-8 (AC3): a non-archived run offers archive_run (mutually exclusive with
+    // unarchive_run).
+    stubRunWithState(WorkflowState.FAILED, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+
+    AllowedActionsView view = service.getAllowedActions(RUN, "workflow_owner");
+
+    assertThat(view.actions()).contains(AllowedAction.ARCHIVE_RUN);
+    assertThat(view.actions()).doesNotContain(AllowedAction.UNARCHIVE_RUN);
+    assertThat(view.actions().get(view.actions().size() - 1)).isEqualTo(AllowedAction.ARCHIVE_RUN);
+  }
+
+  @Test
+  void archivedRunAdvertisesUnarchiveRunInsteadOfArchiveRun() {
+    // Story 3d-8 (AC4): an already-archived run offers unarchive_run, never archive_run.
+    stubArchivedRunWithState(WorkflowState.FAILED);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+
+    AllowedActionsView view = service.getAllowedActions(RUN, "workflow_owner");
+
+    assertThat(view.actions()).contains(AllowedAction.UNARCHIVE_RUN);
+    assertThat(view.actions()).doesNotContain(AllowedAction.ARCHIVE_RUN);
   }
 
   // ---------------------------------------------------------------------------
@@ -249,15 +306,25 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
       AllowedActionsView view = service.getAllowedActions(RUN, role);
 
-      List<AllowedAction> expected =
-          role.equals("developer")
-              ? List.of(
-                  AllowedAction.ACCEPT_IMPLEMENTATION,
-                  AllowedAction.REJECT_IMPLEMENTATION,
-                  AllowedAction.TAKEOVER_WORKFLOW,
-                  AllowedAction.VIEW_ONLY,
-                  AllowedAction.VIEW_RUNNER_LOGS)
-              : List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
+      List<AllowedAction> expected;
+      if (role.equals("developer")) {
+        expected =
+            List.of(
+                AllowedAction.ACCEPT_IMPLEMENTATION,
+                AllowedAction.REJECT_IMPLEMENTATION,
+                AllowedAction.TAKEOVER_WORKFLOW,
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS);
+      } else if (role.equals("workflow_owner")) {
+        // archive_run is workflow_owner-only (3d-8/D1).
+        expected =
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.ARCHIVE_RUN);
+      } else {
+        expected = List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
+      }
       assertThat(view.actions())
           .as("WaitingForReview matrix for role %s must be unchanged by 3d-2 (AC8)", role)
           .containsExactlyElementsOf(expected);
@@ -360,7 +427,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
     assertThat(view.actions())
         .containsExactly(
-            AllowedAction.RETRY, AllowedAction.VIEW_DIAGNOSTICS, AllowedAction.VIEW_RUNNER_LOGS);
+            AllowedAction.RETRY,
+            AllowedAction.VIEW_DIAGNOSTICS,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.ARCHIVE_RUN);
   }
 
   // ---------------------------------------------------------------------------
@@ -471,7 +541,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView blank = service.getAllowedActions(RUN, "  ");
     AllowedActionsView nullRole = service.getAllowedActions(RUN, null);
 
-    // product_reviewer in WaitingForSpecApproval with zero pending clarifications → full set.
+    // product_reviewer in WaitingForSpecApproval with zero pending clarifications → full set
+    // (no archive_run — that is workflow_owner-only per 3d-8/D1).
     List<AllowedAction> expected =
         List.of(
             AllowedAction.APPROVE_SPEC,
@@ -599,7 +670,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView view = service.getAllowedActions(RUN, "workflow_owner");
 
     assertThat(view.actions())
-        .containsExactly(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
+        .containsExactly(
+            AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION, AllowedAction.ARCHIVE_RUN);
   }
 
   // ---------------------------------------------------------------------------
@@ -610,6 +682,20 @@ class WorkflowInspectionServiceAllowedActionsTest {
     when(runs.findByPublicId(RUN))
         .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN, state, null, 1L, 0, false)));
     when(clarifications.countPendingByWorkflowRun(RUN)).thenReturn(pendingClarifications);
+  }
+
+  private void stubArchivedRunWithState(WorkflowState state) {
+    when(runs.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN,
+                    state,
+                    java.time.OffsetDateTime.parse("2026-06-23T00:00:00Z"),
+                    1L,
+                    0,
+                    false)));
+    when(clarifications.countPendingByWorkflowRun(RUN)).thenReturn(0);
   }
 
   private void stubNoLatestSpec() {

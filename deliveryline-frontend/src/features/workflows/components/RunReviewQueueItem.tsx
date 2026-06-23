@@ -276,7 +276,8 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
       row.assigneeHint !== undefined ||
       row.prLinkage != null ||
       row.takenOverBy !== undefined ||
-      row.takenOverAt !== undefined ? (
+      row.takenOverAt !== undefined ||
+      row.archived === true ? (
         <Inline
           gap="2"
           wrap
@@ -287,6 +288,11 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
           {secondarySignals.map((s) => (
             <StateSignifierChip key={s.indicator} stateName={s.stateName} label={s.label} />
           ))}
+          {/* Story 3d-8 (AC5) — color-independent "Hidden" chip for a soft-hidden (archived)
+              run. Paired icon+label (never color-alone); metadata, not an attention signal. */}
+          {row.archived === true ? (
+            <StateSignifierChip stateName="stale" label="Hidden" testId="queue-item-archived" />
+          ) : null}
           {/* OQ-3 — `specRejectionLoopCount` is a real live signal, shown secondary (NOT primary). */}
           {typeof row.specRejectionLoopCount === 'number' && row.specRejectionLoopCount > 0 ? (
             <StateSignifierChip

@@ -61,4 +61,34 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
       "update WorkflowRunEntity workflowRun set workflowRun.projectId = :projectId"
           + " where workflowRun.projectId is null")
   int backfillNullProjectIds(@Param("projectId") String projectId);
+
+  // Story 3d-8 (FR67, AC1/AC4) — set the soft-hide marker WITHOUT touching current_state or version.
+  // A bulk @Modifying update deliberately bypasses the @Version bump so a rare operator hide cannot
+  // race the optimistic-lock guard on an in-flight state transition. The `archived_at is null` guard
+  // makes the flip itself race-safe (mirrors MARK_ESCALATION_SQL): two concurrent hides with
+  // distinct idempotency keys can no longer both pass a stale read-then-write and double-append the
+  // governed event — the loser updates 0 rows. flush/clear so a same-tx re-read (the event append /
+  // tests) sees the new marker.
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "update WorkflowRunEntity workflowRun set workflowRun.archivedAt = :archivedAt"
+          + " where workflowRun.publicId = :publicId and workflowRun.archivedAt is null")
+  int archiveIfNotArchived(
+      @Param("publicId") String publicId, @Param("archivedAt") java.time.OffsetDateTime archivedAt);
+
+  // Symmetric race-safe clear: only an already-archived run is cleared, so a concurrent double
+  // un-hide cannot double-append workflow.unarchived (the loser updates 0 rows).
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "update WorkflowRunEntity workflowRun set workflowRun.archivedAt = null"
+          + " where workflowRun.publicId = :publicId and workflowRun.archivedAt is not null")
+  int clearArchivedIfArchived(@Param("publicId") String publicId);
+
+  // Story 3d-8 (FR67, AC5/AC6) — newest-first listing filtered to NON-archived runs (the default
+  // queue path; archived_at IS NULL). The include-archived path reuses the existing unfiltered
+  // findAllByOrderByCreatedAtDescIdDesc, so a single boolean at the adapter chooses between them.
+  List<WorkflowRunEntity> findByArchivedAtIsNullOrderByCreatedAtDescIdDesc(Pageable pageable);
+
+  List<WorkflowRunEntity> findByCurrentStateAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(
+      String currentState, Pageable pageable);
 }

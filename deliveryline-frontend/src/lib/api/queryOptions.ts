@@ -66,11 +66,16 @@ export function retryUnlessNonRetryable(failureCount: number, error: unknown): b
 
 /** GET a list of run summaries (newest-first), throwing typed problem details on failure. */
 async function fetchWorkflowList(filters: WorkflowListFilters): Promise<WorkflowSummary[]> {
-  return unwrap(
-    await apiClient.GET('/api/v1/workflows', {
-      params: { query: filters.state !== undefined ? { state: filters.state } : {} },
-    }),
-  );
+  // Story 3d-8 — thread the optional includeArchived flag alongside the state filter. Only send
+  // the param when the caller opted in (true) so the default request stays byte-identical to today.
+  const query: { state?: string; includeArchived?: boolean } = {};
+  if (filters.state !== undefined) {
+    query.state = filters.state;
+  }
+  if (filters.includeArchived === true) {
+    query.includeArchived = true;
+  }
+  return unwrap(await apiClient.GET('/api/v1/workflows', { params: { query } }));
 }
 
 /** GET a single run's detail, throwing typed problem details (e.g. RUN_NOT_FOUND) on failure. */

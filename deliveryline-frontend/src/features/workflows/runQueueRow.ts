@@ -79,6 +79,12 @@ export interface RunQueueRow {
   takenOverBy?: string | undefined;
   /** Story 3.29 (AC3/R5) — when the takeover happened; DORMANT (see {@link takenOverBy}). */
   takenOverAt?: string | undefined;
+  /**
+   * Story 3d-8 (AC5) — LIVE: true when the run is soft-hidden (archived). Derived from the
+   * `WorkflowSummary.archivedAt` marker (non-null ⇒ archived). Renders a color-independent
+   * "Hidden" chip in the secondary cluster; metadata, NOT an attention/dominant-state signal.
+   */
+  archived?: boolean | undefined;
 }
 
 /**
@@ -112,6 +118,8 @@ export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
     lastTransitionAt: summary.lastEventAt,
     escalationMarker: summary.escalationMarker,
     specRejectionLoopCount: summary.specRejectionLoopCount,
+    // Story 3d-8 — LIVE: the archived/hidden marker (non-null archivedAt ⇒ archived).
+    archived: summary.archivedAt != null,
     // DORMANT — no live source (reconciliation): summary, currentArtifactType,
     // assigneeHint, blockerCount, openQuestionCount, staleIndicator, failureCategory.
     // The `Failed` BADGE + attention indicator ARE live (from `currentState`); only the

@@ -33,6 +33,8 @@
     "linear.completionSyncFailed",
     "manual.executionRequested",
     "console.opened",
-    "console.closed"
+    "console.closed",
+    "workflow.archived",
+    "workflow.unarchived"
   ]
 }

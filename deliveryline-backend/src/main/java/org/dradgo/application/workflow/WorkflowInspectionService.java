@@ -507,7 +507,8 @@ public class WorkflowInspectionService {
               technicalApprovalState.name(),
               takenOverBy,
               takenOverAt,
-              takenOverReason);
+              takenOverReason,
+              run.archivedAt());
       log.info(
           "getRunSummary success workflowRunId={} pendingClarifications={} currentState={} productApprovalState={} technicalApprovalState={}",
           workflowRunPublicId,
@@ -737,7 +738,11 @@ public class WorkflowInspectionService {
 
       List<AllowedAction> actions =
           computeActionMatrix(
-              state, resolvedRole, summary.pendingClarifications(), latestSpecPublicId);
+              state,
+              resolvedRole,
+              summary.pendingClarifications(),
+              latestSpecPublicId,
+              summary.archivedAt() != null);
 
       AllowedActionsView view =
           new AllowedActionsView(
@@ -775,7 +780,31 @@ public class WorkflowInspectionService {
     return trimmed;
   }
 
+  // Story 3d-8 (FR67, AC3/AC4): soft-hide is orthogonal to the per-state lifecycle — a run can be
+  // hidden from ANY state. The base matrix encodes state×role; this wrapper appends exactly one of
+  // archive_run (a live run) / unarchive_run (an already-hidden run) so the two affordances are
+  // mutually exclusive per run. Kept inside WorkflowInspectionService so the ArchUnit pin (the
+  // matrix has a single home) still holds.
   private List<AllowedAction> computeActionMatrix(
+      WorkflowState state,
+      String actorRole,
+      int pendingClarifications,
+      String latestSpecPublicId,
+      boolean archived) {
+    List<AllowedAction> base =
+        baseActionMatrix(state, actorRole, pendingClarifications, latestSpecPublicId);
+    // Soft-hide is a run-owner triage affordance only (review decision 3d-8/D1): gate
+    // archive_run/unarchive_run to workflow_owner, mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE.
+    // It stays additive + orthogonal to the per-state lifecycle actions, just role-scoped.
+    if (!ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+      return base;
+    }
+    List<AllowedAction> withArchive = new ArrayList<>(base);
+    withArchive.add(archived ? AllowedAction.UNARCHIVE_RUN : AllowedAction.ARCHIVE_RUN);
+    return List.copyOf(withArchive);
+  }
+
+  private List<AllowedAction> baseActionMatrix(
       WorkflowState state, String actorRole, int pendingClarifications, String latestSpecPublicId) {
     // Single switch — the sole place in the codebase where state×role → action-set is encoded
     // (UX-DR12 + ArchUnit pin). Any duplication outside this method is a future-bug seed.
@@ -1086,13 +1115,16 @@ public class WorkflowInspectionService {
    *     ordered by run creation descending
    */
   @Transactional(readOnly = true)
-  public List<WorkflowRunSummaryView> listRuns(WorkflowState stateFilter, int limit) {
+  public List<WorkflowRunSummaryView> listRuns(
+      WorkflowState stateFilter, boolean includeArchived, int limit) {
     int capped = Math.min(Math.max(limit, 1), MAX_LIST_PAGE_SIZE);
     log.info(
-        "listing workflow_runs stateFilter={} limit={}",
+        "listing workflow_runs stateFilter={} includeArchived={} limit={}",
         stateFilter == null ? "<all>" : stateFilter.value(),
+        includeArchived,
         capped);
-    List<WorkflowRunSnapshot> runs = workflowRunReadPort.listRuns(stateFilter, capped);
+    List<WorkflowRunSnapshot> runs =
+        workflowRunReadPort.listRuns(stateFilter, includeArchived, capped);
     List<WorkflowRunSummaryView> summaries = new ArrayList<>(runs.size());
     for (WorkflowRunSnapshot run : runs) {
       Optional<WorkflowEventRecord> latest =
@@ -1112,7 +1144,8 @@ public class WorkflowInspectionService {
               latest.map(record -> record.eventType().value()).orElse(null),
               run.specRejectionLoopCount(),
               run.escalationMarkerSet(),
-              pendingClarifications));
+              pendingClarifications,
+              run.archivedAt()));
     }
     log.info("listing workflow_runs success count={}", summaries.size());
     return summaries;
@@ -2029,7 +2062,10 @@ public class WorkflowInspectionService {
       // Story 2.12 — non-terminal clarification count surfaced on the queue surface; story 2.14
       // gates approve_spec on this count == 0. N+1 in listRuns accepted for MVP queue scale
       // (typical < 50 rows) — see OQ-4 + Trap T12.
-      int pendingClarifications) {}
+      int pendingClarifications,
+      // Story 3d-8 (FR67, AC5) — the soft-hide marker (null = live), surfaced on the queue summary
+      // so WorkflowSummaryResponse can render an archived/hidden badge without a second lookup.
+      OffsetDateTime archivedAt) {}
 
   /**
    * Story 2.12 AC9: richer per-run summary returned by {@link #getRunSummary(String)}. Carries
@@ -2097,7 +2133,10 @@ public class WorkflowInspectionService {
       // onto WorkflowSummaryResponse/WorkflowStatusView — OpenApiSnapshotContractTest stays green.
       TakeoverAttribution takenOverBy,
       OffsetDateTime takenOverAt,
-      String takenOverReason) {}
+      String takenOverReason,
+      // Story 3d-8 (FR67, AC3/AC4) — the soft-hide marker (null = live). Drives the archive_run vs
+      // unarchive_run affordance in computeActionMatrix; never archive-filtered on the by-id read.
+      OffsetDateTime archivedAt) {}
 
   /**
    * Story 3.22 (AC8): the developer who took over a run — {@code actor_identity}, {@code
