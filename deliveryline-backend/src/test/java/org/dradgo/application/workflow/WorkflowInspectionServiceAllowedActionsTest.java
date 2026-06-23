@@ -90,7 +90,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
   static Stream<Arguments> matrixCases() {
     // Story 3d-8 / review decision D1: archive_run / unarchive_run are gated to workflow_owner only
-    // (mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE). Non-owner rows therefore carry NO archive action.
+    // (mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE). Non-owner rows therefore carry NO archive
+    // action.
     return Stream.of(
         Arguments.of(WorkflowState.INBOX, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
@@ -319,9 +320,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
         // archive_run is workflow_owner-only (3d-8/D1).
         expected =
             List.of(
-                AllowedAction.VIEW_ONLY,
-                AllowedAction.VIEW_RUNNER_LOGS,
-                AllowedAction.ARCHIVE_RUN);
+                AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS, AllowedAction.ARCHIVE_RUN);
       } else {
         expected = List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
       }

@@ -38,7 +38,10 @@ function normalizeFilters(filters: WorkflowListFilters = {}): WorkflowListFilter
   for (const key of Object.keys(filters).sort() as (keyof WorkflowListFilters)[]) {
     const value = filters[key];
     if (value !== undefined) {
-      normalized[key] = value;
+      // Writing through a union key (`keyof WorkflowListFilters`) would require the
+      // value to be assignable to `never` (the intersection of the differently-typed
+      // fields); a Record view keeps the generic loop while the runtime is unchanged.
+      (normalized as Record<string, unknown>)[key] = value;
     }
   }
   return normalized;

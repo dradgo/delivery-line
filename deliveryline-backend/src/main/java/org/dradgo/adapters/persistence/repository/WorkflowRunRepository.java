@@ -62,9 +62,11 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
           + " where workflowRun.projectId is null")
   int backfillNullProjectIds(@Param("projectId") String projectId);
 
-  // Story 3d-8 (FR67, AC1/AC4) — set the soft-hide marker WITHOUT touching current_state or version.
+  // Story 3d-8 (FR67, AC1/AC4) — set the soft-hide marker WITHOUT touching current_state or
+  // version.
   // A bulk @Modifying update deliberately bypasses the @Version bump so a rare operator hide cannot
-  // race the optimistic-lock guard on an in-flight state transition. The `archived_at is null` guard
+  // race the optimistic-lock guard on an in-flight state transition. The `archived_at is null`
+  // guard
   // makes the flip itself race-safe (mirrors MARK_ESCALATION_SQL): two concurrent hides with
   // distinct idempotency keys can no longer both pass a stale read-then-write and double-append the
   // governed event — the loser updates 0 rows. flush/clear so a same-tx re-read (the event append /

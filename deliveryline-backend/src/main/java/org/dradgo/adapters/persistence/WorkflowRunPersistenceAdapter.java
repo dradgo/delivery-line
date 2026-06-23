@@ -127,8 +127,10 @@ public class WorkflowRunPersistenceAdapter
     log.info("workflow_run unarchived publicId={}", workflowRunPublicId);
   }
 
-  // A conditional archive/clear that affects 0 rows is either a genuinely-missing run (RUN_NOT_FOUND)
-  // or a run whose marker was concurrently flipped between the caller's snapshot read and this write
+  // A conditional archive/clear that affects 0 rows is either a genuinely-missing run
+  // (RUN_NOT_FOUND)
+  // or a run whose marker was concurrently flipped between the caller's snapshot read and this
+  // write
   // (a lost race → ARCHIVE_NOT_APPLICABLE — the same code the caller's precondition check throws).
   private void requireSingleArchiveWrite(String workflowRunPublicId, int updated) {
     if (updated == 1) {
