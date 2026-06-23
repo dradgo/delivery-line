@@ -8,28 +8,39 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.runner.ManualArtifactSubmissionService;
+import org.dradgo.application.runner.ManualArtifactSubmissionService.ManualArtifactSubmissionCommand;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
+import org.dradgo.application.workflow.WorkflowInspectionService.ManualBundleLookupResult;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
+import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.RejectionTaxonomy;
+import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -82,6 +93,8 @@ class CliRestEquivalenceContractTest {
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
+
+  @TempDir private Path tempDir;
 
   @BeforeEach
   void stubActorResolverAndSeedMdc() {
@@ -478,5 +491,148 @@ class CliRestEquivalenceContractTest {
             "CLI and REST built different ApproveSpecCommand records when actor identity was"
                 + " omitted on both sides — fallback symmetry broken")
         .isEqualTo(restCommand);
+  }
+
+  // Story 3d-4 review follow-up 2026-06-23: CLI ↔ REST equivalence for the two manual-execution
+  // command surfaces. ManualArtifactSubmissionCommand carries a byte[] payload (identity-based
+  // record equals), and the two channels deliver the payload differently — REST re-serializes the
+  // parsed `result` node (compact), the CLI forwards the operator's raw `--file` bytes (here
+  // pretty-printed + reordered keys). So this asserts field-by-field equivalence plus payload JSON
+  // content-equality. Because the service canonicalizes the payload before fingerprinting, equal
+  // logical JSON ⇒ equal idempotency fingerprint ⇒ no false IDEMPOTENCY_KEY_CONFLICT across
+  // channels.
+  @Test
+  void manualArtifactCommandIsEquivalentAcrossRestAndCliForTheSameLogicalPayload()
+      throws Exception {
+    when(manualArtifactSubmissionService.submit(any()))
+        .thenReturn(
+            new WorkflowStateChangeResult(
+                RUN_ID, WorkflowState.WAITING_FOR_REVIEW, CORRELATION_ID));
+
+    String idempotencyKey = "idem-manual-equiv-eeeeee";
+    // REST body: the artifact JSON lives under `result`; Jackson parses then the controller
+    // re-serializes it compactly.
+    mockMvc
+        .perform(
+            post("/api/v1/workflows/{runId}/manual-artifact", RUN_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", idempotencyKey)
+                .header("X-Actor-Identity", "alex")
+                .content(
+                    """
+                    {
+                      "result": {
+                        "schemaVersion": 1,
+                        "workflowRunId": "%s",
+                        "runnerExecutionId": "rex_equiv_manual",
+                        "artifactReferences": []
+                      }
+                    }
+                    """
+                        .formatted(RUN_ID)))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<ManualArtifactSubmissionCommand> restCaptor =
+        ArgumentCaptor.forClass(ManualArtifactSubmissionCommand.class);
+    verify(manualArtifactSubmissionService).submit(restCaptor.capture());
+    ManualArtifactSubmissionCommand restCommand = restCaptor.getValue();
+
+    org.mockito.Mockito.clearInvocations(manualArtifactSubmissionService);
+
+    // CLI file: the SAME logical artifact, pretty-printed with reordered keys (raw bytes differ).
+    Path artifactFile = tempDir.resolve("manual-artifact.json");
+    Files.writeString(
+        artifactFile,
+        """
+        {
+          "runnerExecutionId": "rex_equiv_manual",
+          "artifactReferences": [],
+          "workflowRunId": "%s",
+          "schemaVersion": 1
+        }
+        """
+            .formatted(RUN_ID),
+        StandardCharsets.UTF_8);
+
+    WorkflowCommands cli = manualCommands();
+    cli.manualArtifact(
+        RUN_ID, artifactFile.toString(), "alex", idempotencyKey, CORRELATION_ID, false);
+
+    ArgumentCaptor<ManualArtifactSubmissionCommand> cliCaptor =
+        ArgumentCaptor.forClass(ManualArtifactSubmissionCommand.class);
+    verify(manualArtifactSubmissionService).submit(cliCaptor.capture());
+    ManualArtifactSubmissionCommand cliCommand = cliCaptor.getValue();
+
+    assertThat(cliCommand.workflowRunId()).isEqualTo(restCommand.workflowRunId());
+    assertThat(cliCommand.idempotencyKey()).isEqualTo(restCommand.idempotencyKey());
+    assertThat(cliCommand.actorIdentity()).isEqualTo(restCommand.actorIdentity());
+    assertThat(cliCommand.actorType()).isEqualTo(restCommand.actorType());
+    assertThat(cliCommand.correlationId()).isEqualTo(restCommand.correlationId());
+    // NOTE (3d-4 re-review): `artifactContents` is REST-only — the CLI `manual-artifact` command
+    // hardcodes an empty map (a CLI operator cannot submit a spec's contentReference content). Both
+    // channels therefore carry an EMPTY map for this no-content submission; assert that explicitly
+    // rather than a vacuous empty==empty symmetric compare. The CLI/REST parity gap for
+    // content-bearing (spec) submissions is tracked in deferred-work.md.
+    assertThat(restCommand.artifactContents()).isEmpty();
+    assertThat(cliCommand.artifactContents()).isEmpty();
+
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode restPayload = mapper.readTree(restCommand.payloadBytes());
+    JsonNode cliPayload = mapper.readTree(cliCommand.payloadBytes());
+    assertThat(cliPayload)
+        .as(
+            "CLI and REST delivered different logical manual-artifact payloads — fingerprint"
+                + " (idempotency) symmetry broken")
+        .isEqualTo(restPayload);
+  }
+
+  @Test
+  void manualBundleReadIsRoutedToTheSameInspectionServiceAcrossRestAndCli() throws Exception {
+    byte[] redacted = "redacted-bundle".getBytes(StandardCharsets.UTF_8);
+    ContextBundle bundle =
+        new ContextBundle(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            "rex_equiv_bundle",
+            1,
+            DataClassification.SHAREABLE_REDACTED,
+            redacted);
+    when(workflowInspectionService.getManualBundle(RUN_ID))
+        .thenReturn(ManualBundleLookupResult.available(RUN_ID, bundle));
+
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                    "/api/v1/workflows/{runId}/manual-bundle", RUN_ID)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+    verify(workflowInspectionService).getManualBundle(RUN_ID);
+
+    org.mockito.Mockito.clearInvocations(workflowInspectionService);
+
+    WorkflowCommands cli = manualCommands();
+    cli.manualBundle(RUN_ID, null, CORRELATION_ID);
+    // Both channels resolve the parked bundle through the identical run-scoped read.
+    verify(workflowInspectionService).getManualBundle(RUN_ID);
+  }
+
+  private WorkflowCommands manualCommands() {
+    return new WorkflowCommands(
+        workflowCommandService,
+        workflowInspectionService,
+        null,
+        () -> false,
+        () -> "generated-idempotency-key-unused",
+        () -> "generated-correlation-id-unused",
+        new IdempotencyKeyValidator(),
+        null,
+        new ApprovalReviewerRoleResolver("product_reviewer"),
+        new LocalActorIdentityResolver("local-operator"),
+        null,
+        null,
+        null,
+        null,
+        manualArtifactSubmissionService);
   }
 }

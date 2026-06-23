@@ -16,6 +16,7 @@ import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.runner.ManualArtifactSubmissionService.ManualArtifactSubmissionCommand;
 import org.dradgo.application.runner.spi.RunnerAdapter;
+import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.workspace.RepositoryContextSummary;
 import org.dradgo.application.runner.workspace.RepositoryWorkspaceService;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
@@ -23,6 +24,8 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ManualBundleLookupResult;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
@@ -57,7 +60,14 @@ import org.springframework.test.context.TestPropertySource;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @ActiveProfiles({"test", "linear-mock"})
-@TestPropertySource(properties = "deliveryline.runner.spec-stage.auto-dispatch=true")
+@TestPropertySource(
+    properties = {
+      "deliveryline.runner.spec-stage.auto-dispatch=true",
+      // Story 3d-4 re-review (chunk 2) — opt into the plan-stage auto-dispatch master switch so an
+      // approveSpec on a MANUAL-kind project re-parks at the EXECUTION (plan) stage, exercising the
+      // EXECUTION arm of ingestManualResult through to WaitingForReview (AC9 #5).
+      "deliveryline.runner.plan-stage.auto-dispatch=true"
+    })
 @Tag("integration")
 class ManualArtifactSubmissionIT {
 
@@ -69,6 +79,7 @@ class ManualArtifactSubmissionIT {
   @Autowired private ProjectStore projectStore;
   @Autowired private WorkflowInspectionService inspectionService;
   @Autowired private ManualArtifactSubmissionService submissionService;
+  @Autowired private RunnerScratchStore scratchStore;
 
   @org.springframework.test.context.bean.override.mockito.MockitoBean
   private RunnerAdapter runnerAdapter;
@@ -305,6 +316,187 @@ class ManualArtifactSubmissionIT {
     assertTrue(bundle.available());
     assertEquals(rexId, bundle.runnerExecutionId());
     assertTrue(bundle.bundle().redactedPayload().length > 0);
+  }
+
+  @Test
+  void sameKeyConflictsWhenADifferentArtifactIsSubmittedUnderOneKey() {
+    // AC9 #3 (conflict half) — driven through the REAL idempotency store, not a stubbed throw.
+    String runId = parkRun("idem-3d4-park-0000006", "LIN-102");
+    String rexId = parkedRex(runId);
+
+    // First valid submission under key K succeeds (run advances out of WaitingForManualExecution).
+    submissionService.submit(
+        submitCommand(runId, validSpecPayload(runId, rexId), "idem-3d4-conflict-key01"));
+
+    // A DIFFERENT artifact (changed inline content ⇒ different fingerprint) under the SAME key K
+    // must
+    // raise IDEMPOTENCY_KEY_CONFLICT — the conflict is detected at the idempotency step before the
+    // applicability gate, so the already-advanced run does not mask it.
+    ManualArtifactSubmissionCommand conflicting =
+        new ManualArtifactSubmissionCommand(
+            runId,
+            validSpecPayload(runId, rexId),
+            Map.of(
+                SPEC_CONTENT_REF,
+                "# Operator Spec\n\nDIFFERENT body.".getBytes(StandardCharsets.UTF_8)),
+            "idem-3d4-conflict-key01",
+            "operator-jane",
+            ActorType.HUMAN,
+            "corr-submit-1");
+    DomainException error =
+        assertThrows(DomainException.class, () -> submissionService.submit(conflicting));
+    assertEquals(DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT, error.errorCode());
+  }
+
+  @Test
+  void invalidSubmissionReleasesTheKeySoSameKeyResubmitSucceeds() {
+    // AC5 (exact promise) — an invalid submission rolls the reservation back, so the SAME key is
+    // free for an honest valid resubmission (the prior IT only proved a FRESH key).
+    String runId = parkRun("idem-3d4-park-0000007", "LIN-102");
+    String rexId = parkedRex(runId);
+    String key = "idem-3d4-samekey-retry1";
+
+    byte[] garbage = "{ not a runner result }".getBytes(StandardCharsets.UTF_8);
+    assertThrows(
+        DomainException.class, () -> submissionService.submit(submitCommand(runId, garbage, key)));
+    // Run untouched.
+    assertEquals(WorkflowState.WAITING_FOR_MANUAL_EXECUTION.value(), currentState(runId));
+
+    // Resubmit a VALID payload under the SAME key — succeeds (reservation was released on
+    // rollback).
+    WorkflowStateChangeResult retry =
+        submissionService.submit(submitCommand(runId, validSpecPayload(runId, rexId), key));
+    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, retry.currentState());
+  }
+
+  @Test
+  void manualBundleDegradesToBundleNotPersistedWhenScratchEvicted() {
+    // AC1 / R3 — the real getManualBundle read serves a typed unavailable reason (NOT a 500) when
+    // the
+    // scratch bundle has been evicted. Driven against the real scratch store, not a mocked service.
+    String runId = parkRun("idem-3d4-park-0000008", "LIN-102");
+    String rexId = parkedRex(runId);
+
+    // Evict the persisted bundle the park wrote (scratch is not durable).
+    scratchStore.deleteContextBundle(rexId);
+
+    ManualBundleLookupResult bundle = inspectionService.getManualBundle(runId);
+    assertEquals(false, bundle.available());
+    assertEquals(rexId, bundle.runnerExecutionId());
+    assertEquals("bundleNotPersisted", bundle.reason());
+  }
+
+  @Test
+  void executionStageManualPlanReachesWaitingForReviewAndIsAcceptedLikeAnAutomatedArtifact() {
+    // AC9 #5 / R7 — the load-bearing e2e: an operator-submitted EXECUTION-stage artifact re-enters
+    // the SAME review pipeline as an automated runner's output and the downstream review loop
+    // accepts
+    // it identically. This is the only test that exercises the EXECUTION arm of ingestManualResult
+    // (markArtifactAvailable for implementationPlan) end-to-end through WaitingForReview.
+    String runId = parkRun("idem-3d4-park-0000009", "LIN-102");
+    String specRex = parkedRex(runId);
+
+    // 1. INVESTIGATION manual spec submission → WaitingForSpecApproval.
+    submissionService.submit(
+        submitCommand(runId, validSpecPayload(runId, specRex), "idem-3d4-execflow-spec1"));
+    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), currentState(runId));
+
+    // 2. approveSpec → Executing → dispatchPlanGeneration → MANUAL kind re-parks the plan
+    // (EXECUTION)
+    // stage → WaitingForManualExecution with a SECOND awaiting_manual row.
+    String specArtifactId = availableArtifactId(runId, "spec");
+    commandService.approveSpec(
+        new ApproveSpecCommand(
+            runId,
+            specArtifactId,
+            1,
+            1,
+            "alex",
+            ActorType.HUMAN,
+            "idem-3d4-execflow-approve1",
+            "corr-execflow-approve",
+            "product_reviewer",
+            null));
+    assertEquals(WorkflowState.WAITING_FOR_MANUAL_EXECUTION.value(), currentState(runId));
+
+    String planRex = parkedRex(runId);
+    assertEquals(
+        "execution",
+        jdbcTemplate.queryForObject(
+            "select stage from runner_executions where public_id = ?", String.class, planRex));
+
+    // 3. Submit the operator-produced implementation plan → ingest EXECUTION arm →
+    // WaitingForReview.
+    WorkflowStateChangeResult planResult =
+        submissionService.submit(
+            new ManualArtifactSubmissionCommand(
+                runId,
+                validPlanPayload(runId, planRex),
+                Map.of(),
+                "idem-3d4-execflow-plan1",
+                "operator-jane",
+                ActorType.HUMAN,
+                "corr-execflow-plan"));
+    assertEquals(WorkflowState.WAITING_FOR_REVIEW, planResult.currentState());
+
+    // The plan artifact is ingested + marked available — the SAME approval-eligibility an automated
+    // plan produces, so the downstream review queue sees it identically.
+    String planArtifactId = availableArtifactId(runId, "implementationPlan");
+
+    // 4. The downstream review loop ACCEPTS the manual artifact exactly as an automated one —
+    // proving
+    // the manual path re-enters the same review pipeline (the run leaves WaitingForReview).
+    WorkflowStateChangeResult accepted =
+        commandService.acceptImplementation(
+            new AcceptImplementationCommand(
+                runId,
+                planArtifactId,
+                1,
+                1,
+                "dev-dan",
+                ActorType.HUMAN,
+                "idem-3d4-execflow-accept1",
+                "corr-execflow-accept",
+                "developer",
+                null));
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        WorkflowState.WAITING_FOR_REVIEW, accepted.currentState());
+  }
+
+  private byte[] validPlanPayload(String runId, String rexId) {
+    return ("""
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {
+              "artifactId": "art_manualplan1",
+              "artifactType": "implementationPlan",
+              "steps": ["Operator step one", "Operator step two"],
+              "contextReferences": ["ctx/ref/1"]
+            }
+          ],
+          "normalizedOutput": { "summary": "operator plan", "outcome": "success" },
+          "checksum": {
+            "algorithm": "SHA-256",
+            "hexDigest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          },
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """)
+        .formatted(runId, rexId)
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private String availableArtifactId(String runId, String artifactType) {
+    return jdbcTemplate.queryForObject(
+        "select public_id from artifacts where artifact_type = ? and status = 'available'"
+            + " and workflow_run_id = (select id from workflow_runs where public_id = ?)",
+        String.class,
+        artifactType,
+        runId);
   }
 
   private String currentState(String runId) {

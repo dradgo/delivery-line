@@ -233,6 +233,48 @@ class ManualArtifactSubmissionServiceTest {
   }
 
   @Test
+  void fingerprintIsStableAcrossWhitespaceAndKeyOrderingSoCrossChannelRetryReplays() {
+    // Review finding 2026-06-23: the REST controller re-serializes the parsed result JSON (compact)
+    // while the CLI forwards the operator's raw file bytes (pretty-printed / reordered keys). Both
+    // must hash to the SAME fingerprint for the SAME logical artifact, else an honest cross-channel
+    // retry under one key surfaces a false IDEMPOTENCY_KEY_CONFLICT. Canonicalization guarantees
+    // it.
+    byte[] cliRawBytes =
+        ("""
+        {
+          "b": 2,
+          "a": 1,
+          "nested": { "y": [1, 2], "x": "v" }
+        }
+        """)
+            .getBytes(StandardCharsets.UTF_8);
+    byte[] restCompactBytes =
+        "{\"a\":1,\"nested\":{\"x\":\"v\",\"y\":[1,2]},\"b\":2}".getBytes(StandardCharsets.UTF_8);
+
+    String cliFingerprint =
+        ManualArtifactSubmissionService.fingerprint(RUN_ID, cliRawBytes, Map.of());
+    String restFingerprint =
+        ManualArtifactSubmissionService.fingerprint(RUN_ID, restCompactBytes, Map.of());
+
+    assertThat(cliFingerprint)
+        .as("whitespace + key-order differences must not change the manual-artifact fingerprint")
+        .isEqualTo(restFingerprint);
+
+    // Negative: a genuinely different artifact value must still produce a different fingerprint.
+    byte[] differentValue = "{\"a\":1,\"b\":3}".getBytes(StandardCharsets.UTF_8);
+    assertThat(ManualArtifactSubmissionService.fingerprint(RUN_ID, differentValue, Map.of()))
+        .as("a different artifact value must change the fingerprint")
+        .isNotEqualTo(cliFingerprint);
+
+    // Array element ORDER is significant in JSON and must change the fingerprint.
+    byte[] reorderedArray =
+        "{\"a\":1,\"nested\":{\"x\":\"v\",\"y\":[2,1]},\"b\":2}".getBytes(StandardCharsets.UTF_8);
+    assertThat(ManualArtifactSubmissionService.fingerprint(RUN_ID, reorderedArray, Map.of()))
+        .as("array element order is significant and must change the fingerprint")
+        .isNotEqualTo(cliFingerprint);
+  }
+
+  @Test
   void idempotentReplayReturnsPriorStateWithoutIngesting() {
     stubParkedRunInState(RunnerStage.EXECUTION, WorkflowState.WAITING_FOR_REVIEW);
     when(idempotencyService.checkAndReserve(eq(IDEMPOTENCY_KEY), any(), eq(ACTOR), any()))

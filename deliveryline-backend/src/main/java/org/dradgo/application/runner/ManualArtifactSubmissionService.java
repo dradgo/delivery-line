@@ -2,9 +2,14 @@ package org.dradgo.application.runner;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,28 +48,34 @@ import org.springframework.transaction.annotation.Transactional;
  * battle-tested artifact-ingest core minus the workspace-coupled secret-scan / captureAndPush steps
  * a manual park never created).
  *
- * <p>Ordering is deliberate so that an early validation failure is a pure no-op on persisted state
- * (AC5 — an invalid artifact leaves the run parked + resubmittable):
+ * <p>Ordering is deliberate so that (a) an honest retry of an already-COMPLETED submission replays
+ * even after the run has left {@code WaitingForManualExecution}, and (b) any mid-sequence failure
+ * is a pure no-op on persisted state (AC5 — an invalid artifact leaves the run parked +
+ * resubmittable):
  *
  * <ol>
- *   <li>resolve the run + its single active {@code awaiting_manual} runner-execution row (else
- *       {@link DomainErrorCode#RUN_NOT_FOUND} / {@link
- *       DomainErrorCode#MANUAL_EXECUTION_NOT_APPLICABLE});
+ *   <li>verify the run exists (else {@link DomainErrorCode#RUN_NOT_FOUND} — wins over a
+ *       fabricated-run replay);
+ *   <li>reserve idempotency <strong>FIRST</strong> (fingerprint includes the artifact bytes — a
+ *       different artifact under one key conflicts; an honest retry replays). This must precede the
+ *       applicability gate so a same-key retry of an already-advanced run REPLAYs the prior result
+ *       instead of being rejected by the gate below;
+ *   <li>applicability gate — resolve the run's single active {@code awaiting_manual}
+ *       runner-execution row (else {@link DomainErrorCode#MANUAL_EXECUTION_NOT_APPLICABLE});
  *   <li>validate the payload with the SAME {@code ContractValidator}/{@code ValidationContext} the
  *       broker uses in {@code onResult} ({@link DomainErrorCode#RUNNER_OUTPUT_VALIDATION_FAILED}),
- *       then the stage→artifact-type rule ({@link DomainErrorCode#RUNNER_ARTIFACT_TYPE_MISMATCH}) —
- *       BEFORE any reservation or state change;
- *   <li>reserve idempotency (fingerprint includes the artifact bytes — a different artifact under
- *       one key conflicts; an honest retry replays);
+ *       then the stage→artifact-type rule ({@link DomainErrorCode#RUNNER_ARTIFACT_TYPE_MISMATCH});
  *   <li>materialize any operator-supplied artifact content into scratch (so a spec's {@code
  *       contentReference} resolves), then delegate ingest+complete+advance to the broker;
  *   <li>complete the idempotency record with the resulting state.
  * </ol>
  *
- * <p>The whole method is {@code @Transactional}: the finalize + ingest + event + transition (and
- * the idempotency reservation) all commit or roll back together (AC4). Because the reservation is
- * taken AFTER validation and inside this tx, a mid-sequence failure rolls the reservation back too,
- * leaving the run resubmittable under the same key (AC5).
+ * <p>The whole method is {@code @Transactional}: the finalize + ingest + event + transition AND the
+ * idempotency reservation all commit or roll back together (AC4). The no-op-on-failure guarantee
+ * (AC5) rests on this single transaction — the reservation is taken BEFORE validation, so a later
+ * validation/ingest failure rolls the reservation back too, leaving the run resubmittable under the
+ * same key. (Do NOT split the reservation into its own committed transaction: that would burn the
+ * key on an invalid submission.)
  */
 @Service
 public class ManualArtifactSubmissionService {
@@ -224,7 +235,7 @@ public class ManualArtifactSubmissionService {
     JsonNode parsed;
     try {
       parsed = objectMapper.readTree(payloadBytes);
-    } catch (java.io.IOException error) {
+    } catch (IOException error) {
       // Unreachable: the schema validation above already parses the payload as JSON.
       throw outputValidationFailed(workflowRunId, runnerExecutionId, List.of());
     }
@@ -275,7 +286,63 @@ public class ManualArtifactSubmissionService {
         .orElseThrow(() -> runNotFound(workflowRunId));
   }
 
-  private static String fingerprint(
+  // Dedicated mapper used ONLY to canonicalize the fingerprint input (config-independent tree
+  // round-trip). Kept separate from the Spring-managed boundary mappers so a future change to the
+  // app's serialization config can never silently shift fingerprints.
+  private static final ObjectMapper FINGERPRINT_MAPPER = new ObjectMapper();
+
+  /**
+   * Canonicalizes a JSON payload for fingerprinting: parse, recursively sort object keys (arrays
+   * keep their order — order is significant in JSON), re-serialize compactly. Falls back to the raw
+   * bytes when the payload is not parseable JSON (deterministic either way).
+   */
+  private static byte[] canonicalJsonBytes(byte[] payloadBytes) {
+    try {
+      JsonNode tree = FINGERPRINT_MAPPER.readTree(payloadBytes);
+      if (tree == null || tree.isMissingNode()) {
+        return payloadBytes;
+      }
+      return FINGERPRINT_MAPPER.writeValueAsBytes(canonicalize(tree));
+    } catch (IOException error) {
+      return payloadBytes;
+    }
+  }
+
+  private static JsonNode canonicalize(JsonNode node) {
+    if (node.isObject()) {
+      ObjectNode sorted = FINGERPRINT_MAPPER.createObjectNode();
+      List<String> names = new ArrayList<>();
+      node.fieldNames().forEachRemaining(names::add);
+      Collections.sort(names);
+      for (String name : names) {
+        sorted.set(name, canonicalize(node.get(name)));
+      }
+      return sorted;
+    }
+    if (node.isArray()) {
+      ArrayNode array = FINGERPRINT_MAPPER.createArrayNode();
+      for (JsonNode element : node) {
+        array.add(canonicalize(element));
+      }
+      return array;
+    }
+    return node;
+  }
+
+  /**
+   * Idempotency fingerprint for a manual submission. The {@code payloadBytes} are
+   * <strong>canonicalized</strong> (parsed and re-serialized with recursively sorted object keys
+   * and no insignificant whitespace) BEFORE hashing so that the SAME logical artifact yields the
+   * SAME fingerprint regardless of how each channel delivered it — the REST controller
+   * re-serializes the parsed {@code result} JSON node (compact) while the CLI forwards the
+   * operator's raw file bytes (arbitrary whitespace / key order). Without canonicalization those
+   * byte streams differ and an honest cross-channel retry under one key would surface a false
+   * {@link DomainErrorCode#IDEMPOTENCY_KEY_CONFLICT} (review finding 2026-06-23). A payload that is
+   * not parseable JSON (only reachable before validation rejects it) falls back to the raw bytes so
+   * the fingerprint stays deterministic. Package-private so {@code
+   * ManualArtifactSubmissionServiceTest} can pin the canonicalization invariant directly.
+   */
+  static String fingerprint(
       String workflowRunId, byte[] payloadBytes, Map<String, byte[]> artifactContents) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -283,7 +350,7 @@ public class ManualArtifactSubmissionService {
       digest.update((byte) 0);
       digest.update(workflowRunId.getBytes(StandardCharsets.UTF_8));
       digest.update((byte) 0);
-      digest.update(payloadBytes);
+      digest.update(canonicalJsonBytes(payloadBytes));
       if (artifactContents != null) {
         // Sorted so the fingerprint is order-independent.
         for (String key : new java.util.TreeSet<>(artifactContents.keySet())) {

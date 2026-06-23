@@ -96,6 +96,13 @@ public class WorkflowController {
   // Story 3d-4 — the operator manual-artifact submission path (validate → ingest → finalize →
   // advance, one tx). The bundle retrieval rides workflowInspectionService.getManualBundle.
   private final ManualArtifactSubmissionService manualArtifactSubmissionService;
+  // Used ONLY to re-serialize the already-parsed manual-artifact `result` tree (a Map/List tree the
+  // Jackson 3 HTTP converter produced) back to bytes for validation/ingest — a config-independent
+  // tree round-trip, so a local mapper is safe. Cross-channel idempotency parity does NOT depend on
+  // this serialization: the service canonicalizes the payload before fingerprinting (review finding
+  // 2026-06-23), so CLI raw bytes and REST re-serialized bytes hash identically for the same
+  // logical
+  // artifact.
   private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
       new com.fasterxml.jackson.databind.ObjectMapper();
 
@@ -921,7 +928,7 @@ public class WorkflowController {
     return response;
   }
 
-  private byte[] serializeManualResult(com.fasterxml.jackson.databind.JsonNode result) {
+  private byte[] serializeManualResult(Object result) {
     try {
       return objectMapper.writeValueAsBytes(result);
     } catch (com.fasterxml.jackson.core.JsonProcessingException error) {

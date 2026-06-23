@@ -20,11 +20,7 @@ import { useEffect, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  manualArtifactRejected,
-  manualArtifactSubmitted,
-  manualArtifactSubmitting,
-} from '@/lib/a11y/announcements';
+import { manualArtifactRejected, manualArtifactSubmitting } from '@/lib/a11y/announcements';
 import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
 
@@ -37,6 +33,13 @@ export interface ManualExecutionSurfaceProps {
   canObtainBundle: boolean;
   /** Backend-advertised `submit_manual_artifact` — gates the submit affordance (never role-derived). */
   canSubmitArtifact: boolean;
+  /**
+   * Story 3d-4 re-review — fired once when a submit SUCCEEDS. This surface unmounts the instant the
+   * run advances out of `WaitingForManualExecution` (the route re-gates on `currentState`), so a
+   * success announcement rendered here would race the unmount; the run-detail route owns a PERSISTENT
+   * live region and announces the result reliably from this callback (AC7 — announce submit result).
+   */
+  onSubmitted?: () => void;
 }
 
 /** Map a Problem-Details `code` to friendly operator text. Tests assert on `code`, never this copy. */
@@ -83,6 +86,7 @@ export function ManualExecutionSurface({
   workflowRunId,
   canObtainBundle,
   canSubmitArtifact,
+  onSubmitted,
 }: ManualExecutionSurfaceProps) {
   const bundleQuery = useManualBundle(workflowRunId, canObtainBundle);
   const submit = useSubmitManualArtifact(workflowRunId);
@@ -103,16 +107,24 @@ export function ManualExecutionSurface({
     return () => clearTimeout(timer);
   }, [copied]);
 
-  // Announce submit start/result (defers one commit — assert via `waitFor`, never synchronously).
+  // Announce submit START + ERROR here (both fire while the surface is reliably mounted: a pending
+  // submit hasn't advanced the run, and a rejection leaves it parked). The SUCCESS announcement is
+  // hoisted to the route via `onSubmitted` because a successful submit unmounts this surface.
   const announced = useLiveAnnouncement(
     submit.isPending
       ? manualArtifactSubmitting
-      : submit.isSuccess
-        ? manualArtifactSubmitted
-        : submit.isError
-          ? manualArtifactRejected
-          : '',
+      : submit.isError
+        ? manualArtifactRejected
+        : '',
   );
+
+  // Signal the route (which owns a persistent live region) to announce the result, since this surface
+  // unmounts the moment the run advances out of WaitingForManualExecution.
+  useEffect(() => {
+    if (submit.isSuccess) {
+      onSubmitted?.();
+    }
+  }, [submit.isSuccess, onSubmitted]);
 
   function handleDownload() {
     if (bundleText == null) {
@@ -185,6 +197,14 @@ export function ManualExecutionSurface({
           <h3 className="mb-1 text-meta uppercase tracking-wide text-text-tertiary">Input bundle</h3>
           {bundleQuery.isPending ? (
             <p className="text-meta text-text-tertiary">Loading the input bundle…</p>
+          ) : bundleQuery.isError ? (
+            // Distinct from the typed `bundleNotPersisted` degrade below — a transient load failure is
+            // retryable and must NOT read as a permanent eviction.
+            <Alert variant="destructive" data-testid="manual-bundle-error">
+              <AlertDescription>
+                The input bundle could not be loaded. Refresh to try again.
+              </AlertDescription>
+            </Alert>
           ) : bundle?.available === true ? (
             <div className="flex items-center gap-2">
               <Button
@@ -216,6 +236,15 @@ export function ManualExecutionSurface({
             </p>
           )}
         </div>
+      ) : null}
+
+      {/* localError covers BOTH clipboard/copy failures from the bundle region AND file/JSON errors
+          from the submit region — render it independently of the submit gating so a bundle-only
+          operator still sees copy failures inline (AC7 — errors shown inline). */}
+      {localError !== null ? (
+        <Alert variant="destructive" className="mb-3" data-testid="manual-artifact-local-error">
+          <AlertDescription>{localError}</AlertDescription>
+        </Alert>
       ) : null}
 
       {canSubmitArtifact ? (
@@ -250,12 +279,6 @@ export function ManualExecutionSurface({
               }}
             />
           </div>
-
-          {localError !== null ? (
-            <Alert variant="destructive" className="mt-3" data-testid="manual-artifact-local-error">
-              <AlertDescription>{localError}</AlertDescription>
-            </Alert>
-          ) : null}
 
           {submit.isError ? (
             <Alert variant="destructive" className="mt-3" data-testid="manual-artifact-error">

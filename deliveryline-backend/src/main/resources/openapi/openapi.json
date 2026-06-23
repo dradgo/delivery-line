@@ -504,7 +504,6 @@
         },
         "type" : "object"
       },
-      "JsonNode" : { },
       "LatestArtifact" : {
         "properties" : {
           "artifactId" : {
@@ -555,7 +554,6 @@
             ]
           },
           "result" : {
-            "$ref" : "#/components/schemas/JsonNode",
             "description" : "Runner-result-shaped JSON (runner-result.v1) the operator produced."
           }
         },

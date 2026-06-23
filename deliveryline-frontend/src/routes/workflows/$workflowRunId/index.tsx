@@ -1,6 +1,10 @@
+import { useState } from 'react';
+
 import { Link, createFileRoute, notFound } from '@tanstack/react-router';
 
 import { Stack } from '@/components/layout';
+import { manualArtifactSubmitted } from '@/lib/a11y/announcements';
+import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
 import { detailQueryOptions } from '@/lib/api/queryOptions';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
 import { isValidClarificationId } from '@/lib/routing/publicId';
@@ -156,6 +160,14 @@ function WorkflowDetailRoute() {
     ownerActions.data?.actions.includes('obtain_manual_bundle') ?? false;
   const canSubmitManualArtifact =
     ownerActions.data?.actions.includes('submit_manual_artifact') ?? false;
+  // Story 3d-4 re-review — the Manual Execution Surface unmounts the instant a successful submit
+  // advances the run out of WaitingForManualExecution, so the submit-RESULT announcement is owned
+  // HERE (route-level, always mounted) and fired via the surface's `onSubmitted` callback so it
+  // reaches assistive tech reliably (AC7 — announce submit result).
+  const [manualArtifactWasSubmitted, setManualArtifactWasSubmitted] = useState(false);
+  const manualSubmitResultAnnouncement = useLiveAnnouncement(
+    manualArtifactWasSubmitted ? manualArtifactSubmitted : '',
+  );
 
   // AC8a — a run reported in a state this build doesn't recognize.
   if (data?.currentState !== undefined && !RECOGNIZED_STATES.has(data.currentState)) {
@@ -189,8 +201,19 @@ function WorkflowDetailRoute() {
           workflowRunId={workflowRunId}
           canObtainBundle={canObtainManualBundle}
           canSubmitArtifact={canSubmitManualArtifact}
+          onSubmitted={() => setManualArtifactWasSubmitted(true)}
         />
       ) : null}
+      {/* Story 3d-4 re-review — PERSISTENT submit-result announcer (always mounted): the surface above
+          unmounts as soon as the run advances, so the result announcement fires from here (AC7). */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="sr-only"
+        data-testid="manual-execution-result-announcer"
+      >
+        {manualSubmitResultAnnouncement}
+      </div>
       {/* Story 2.18 — the Clarification Region, projected into the right context
           panel via the AppShell slot (sidebar subregion, AC4). The main pane stays
           artifact-primary; today the region renders the calm `no open questions`

@@ -298,11 +298,11 @@ This document provides the complete epic and story breakdown for DeliveryLine, d
 | FR6 | Epic 2 | Current pending action surfaced |
 | FR7 | Epic 2 | Capture or review specification |
 | FR8 | Epic 2 | Approve specification for progression |
-| FR9 | Epic 2 | Reject specification with structured feedback |
+| FR9 | Epic 2 / Epic 3e | Reject specification with structured feedback (clarification creation + incorporation deferred to E3e) |
 | FR10 | Epic 2 | Currently approved specification state visible |
-| FR11 | Epic 2 | Prior specification states and changes reviewable before approving revision |
+| FR11 | Epic 2 / Epic 3e | Prior specification states and changes reviewable before approving revision (visible-incorporation activation in E3e) |
 | FR12 | Epic 2 | Prevent implementation progression until spec accepted |
-| FR13 | Epic 2 | Expose unresolved specification loops for escalation |
+| FR13 | Epic 2 / Epic 3e | Expose unresolved specification loops for escalation (clarification loop activation in E3e) |
 | FR14 | Epic 3 | Developer access to approved spec + workflow context before reviewing output |
 | FR15 | Epic 3 | Developer reviews implementation output |
 | FR16 | Epic 3 | Developer accepts implementation output as merge-ready |
@@ -415,6 +415,16 @@ A single local-first operator gains finer control over how each workflow step is
 **Spike gate:** post-execution provider limit status (FR69) ships only if the Claude CLI / Anthropic API and Codex expose the 5-hour/weekly windows programmatically in headless mode; the epic confirms the signal via a spike before committing the UI.
 
 **FRs covered:** FR64, FR65, FR66, FR67, FR68, FR69
+
+### Epic 3e: Clarification Loop Activation
+
+A single local-first operator finally gets the **product-clarification loop working end-to-end**. When the spec runner has an open question it becomes a first-class, answerable **clarification** attached to the spec (visible in the review pane, not buried as prose in `spec.md`); the reviewer answers it, **accepts** the answer, and triggers a **spec regeneration that incorporates accepted answers**, with the runner reporting which questions it actually addressed and each clarification durably marked `incorporated` or `superseded`. Builds **no new subsystem** — it activates the dormant front half of a feature whose back half shipped in Epic 2.
+
+**Why this epic exists (the gap):** Epic 2 built the clarification back half (submission + `/answer` story 2.11, the visible-incorporation lifecycle + sweep story 2.12, the `ClarificationRegion` UI story 2.18) but the **front half was explicitly deferred to "Epic 3 runner-contracts" and never built** — story 2.11 AC6 records it verbatim ("created when the spec runner emits a question marker, wired in Epic 3"). Verified 2026-06-23: `ClarificationWritePort.insertOpen` has **zero production callers**, `runner-result.v1` `specArtifact` has no question channel, the only clarification endpoint is `/answer`, `markAccepted` has no trigger, and the sweep's `acknowledgesQuestion` is a substring stub with a `TODO(epic-3-runner-contracts)`. Net effect: no run ever shows a clarification question.
+
+**Positioning:** inserted between Epic 3d and Epic 4 purely for sequencing (avoids renumbering E4–E6); it is a **completion of the Epic 2 PM loop**, not a per-step-execution-control feature. Source: `sprint-change-proposal-2026-06-23.md`. Story 3e-1 alone resolves the user-visible symptom; story 3e-2 closes the accept → regenerate → incorporate loop. ADR (proposed): `docs/adr/0028-structured-clarification-channel.md`.
+
+**FRs covered:** completes the deferred clarification-creation + incorporation portion of FR9, FR11, FR13 (Epic 2 owns the definitions; this epic activates the deferred execution).
 
 ### Epic 4: Failure Handling, Recovery & Reconciliation (Workflow Owner + Compare Mode)
 

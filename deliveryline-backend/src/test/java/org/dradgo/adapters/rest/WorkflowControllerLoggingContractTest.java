@@ -12,8 +12,10 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.runner.ManualArtifactSubmissionService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -22,8 +24,11 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsVersionStamp;
 import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsView;
+import org.dradgo.application.workflow.WorkflowInspectionService.ManualBundleLookupResult;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.domain.registry.AllowedAction;
+import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -247,5 +252,87 @@ class WorkflowControllerLoggingContractTest {
                 line.contains("REST get allowed-actions success")
                     && line.contains("actionCount=2")
                     && line.contains("workflowState=Failed"));
+  }
+
+  @Test
+  void manualArtifactEntryAndSuccessLogsCarryActorIdentityAndWorkflowRunId() throws Exception {
+    // Story 3d-4 review follow-up 2026-06-23: pin the new controller-surface manual-artifact INFO
+    // branches (the service-tier logs were already pinned in ManualArtifactSubmissionServiceTest).
+    when(manualArtifactSubmissionService.submit(any()))
+        .thenReturn(new WorkflowStateChangeResult(RUN_ID, WorkflowState.WAITING_FOR_REVIEW, null));
+
+    mockMvc
+        .perform(
+            post("/api/v1/workflows/{runId}/manual-artifact", RUN_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", "idem-logging-manual-aaaaa")
+                .header("X-Actor-Identity", "alex")
+                .content(
+                    """
+                    {
+                      "result": {
+                        "schemaVersion": 1,
+                        "workflowRunId": "run_logging_a",
+                        "runnerExecutionId": "rex_logging_a",
+                        "artifactReferences": []
+                      }
+                    }
+                    """))
+        .andExpect(status().isOk());
+
+    List<String> infoLines =
+        appender.list.stream()
+            .filter(e -> e.getLevel() == Level.INFO)
+            .map(ILoggingEvent::getFormattedMessage)
+            .toList();
+    assertThat(infoLines)
+        .anyMatch(
+            line ->
+                line.contains("REST manual-artifact received")
+                    && line.contains("workflowRunId=" + RUN_ID)
+                    && line.contains("actorIdentity=alex"))
+        .anyMatch(
+            line ->
+                line.contains("REST manual-artifact success")
+                    && line.contains("workflowRunId=" + RUN_ID)
+                    && line.contains("currentState=WaitingForReview"));
+  }
+
+  @Test
+  void manualBundleEntryAndSuccessLogsCarryWorkflowRunIdAndAvailability() throws Exception {
+    byte[] redacted = "redacted-bundle".getBytes(StandardCharsets.UTF_8);
+    ContextBundle bundle =
+        new ContextBundle(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            "rex_logging_bundle",
+            1,
+            DataClassification.SHAREABLE_REDACTED,
+            redacted);
+    when(workflowInspectionService.getManualBundle(RUN_ID))
+        .thenReturn(ManualBundleLookupResult.available(RUN_ID, bundle));
+
+    mockMvc
+        .perform(
+            get("/api/v1/workflows/{runId}/manual-bundle", RUN_ID)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    List<String> infoLines =
+        appender.list.stream()
+            .filter(e -> e.getLevel() == Level.INFO)
+            .map(ILoggingEvent::getFormattedMessage)
+            .toList();
+    assertThat(infoLines)
+        .anyMatch(
+            line ->
+                line.contains("REST get manual-bundle received")
+                    && line.contains("workflowRunId=" + RUN_ID))
+        .anyMatch(
+            line ->
+                line.contains("REST get manual-bundle success")
+                    && line.contains("workflowRunId=" + RUN_ID)
+                    && line.contains("available=true"));
   }
 }

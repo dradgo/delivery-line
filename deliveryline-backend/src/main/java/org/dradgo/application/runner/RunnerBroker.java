@@ -2000,17 +2000,16 @@ public class RunnerBroker {
       if (artifactType == ArtifactType.SPEC
           || artifactType == ArtifactType.IMPLEMENTATION_PLAN
           || artifactType == ArtifactType.PR_OUTPUT) {
-        try {
-          markArtifactAvailable(opResult, payload.bytes(), correlationId);
-        } catch (RuntimeException error) {
-          log.warn(
-              "manual artifact availability marking failed (best-effort) workflowRunId={} "
-                  + "runnerExecutionId={} artifactId={} cause={}",
-              workflowRunId,
-              runnerExecutionId,
-              opResult.artifact().publicId(),
-              error.toString());
-        }
+        // Story 3d-4 re-review (2026-06-23) — unlike the automated handleSuccess swallow
+        // (RunnerBroker.java:~1639), the manual path has NO re-harvest to later re-mark a
+        // stuck-`pending` artifact. Let an availability-marking failure PROPAGATE:
+        // ingestManualResult
+        // runs inside the submission @Transactional, so the throw rolls the whole tx back to parked
+        // +
+        // resubmittable (AC5) rather than committing a run that advanced with an unavailable
+        // artifact
+        // the downstream approval-eligibility gate would silently reject.
+        markArtifactAvailable(opResult, payload.bytes(), correlationId);
       }
     }
 

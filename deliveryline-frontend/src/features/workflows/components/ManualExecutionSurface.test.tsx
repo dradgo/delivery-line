@@ -34,8 +34,14 @@ const availableBundle: ManualBundleResponse = {
   bundleBase64: btoa('{"hello":"bundle"}'),
 };
 
-function bundleQuery(overrides: Partial<{ data: ManualBundleResponse; isPending: boolean }> = {}) {
-  return { data: overrides.data, isPending: overrides.isPending ?? false };
+function bundleQuery(
+  overrides: Partial<{ data: ManualBundleResponse; isPending: boolean; isError: boolean }> = {},
+) {
+  return {
+    data: overrides.data,
+    isPending: overrides.isPending ?? false,
+    isError: overrides.isError ?? false,
+  };
 }
 
 function submitState(
@@ -193,6 +199,45 @@ describe('ManualExecutionSurface (story 3d-4)', () => {
       <ManualExecutionSurface workflowRunId="run_manual000001" canObtainBundle canSubmitArtifact />,
     );
     expect(screen.getByTestId('manual-bundle-unavailable')).toHaveTextContent('bundleNotPersisted');
+  });
+
+  it('renders a retryable error (not the eviction degrade) when the bundle query fails (AC1)', () => {
+    useManualBundleMock.mockReturnValue(bundleQuery({ isError: true }));
+    useSubmitManualArtifactMock.mockReturnValue(submitState());
+
+    render(
+      <ManualExecutionSurface workflowRunId="run_manual000001" canObtainBundle canSubmitArtifact />,
+    );
+    // A transient load failure is a distinct, retryable state — NOT the typed bundleNotPersisted
+    // eviction degrade.
+    expect(screen.getByTestId('manual-bundle-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('manual-bundle-unavailable')).not.toBeInTheDocument();
+  });
+
+  it('shows a bundle copy failure inline even when the submit region is gated off (AC7)', async () => {
+    useManualBundleMock.mockReturnValue(bundleQuery({ data: availableBundle }));
+    useSubmitManualArtifactMock.mockReturnValue(submitState());
+    // Clipboard write rejects (e.g. permission denied / insecure context).
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    });
+
+    render(
+      <ManualExecutionSurface
+        workflowRunId="run_manual000001"
+        canObtainBundle
+        canSubmitArtifact={false}
+      />,
+    );
+    // Submit region is gated off, but a bundle copy failure must still surface inline (the localError
+    // alert is hoisted out of the submit block).
+    expect(screen.queryByTestId('manual-submit-region')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('manual-bundle-copy'));
+    await waitFor(() =>
+      expect(screen.getByTestId('manual-artifact-local-error')).toHaveTextContent(
+        'could not be copied',
+      ),
+    );
   });
 
   it('has zero WCAG 2.1 AA axe violations (AC7/AC9)', async () => {

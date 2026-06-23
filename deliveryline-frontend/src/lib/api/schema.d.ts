@@ -762,7 +762,6 @@ export interface components {
              */
             status?: "configured" | "not_configured";
         };
-        JsonNode: unknown;
         LatestArtifact: {
             /**
              * @description Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).
@@ -788,7 +787,7 @@ export interface components {
                 [key: string]: string;
             } | null;
             /** @description Runner-result-shaped JSON (runner-result.v1) the operator produced. */
-            result: components["schemas"]["JsonNode"];
+            result: unknown;
         };
         ManualBundleResponse: {
             /** @example true */
