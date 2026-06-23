@@ -123,6 +123,7 @@
         "clarification.noEffectReason",
         "linear.completionSyncFailed",
         "manual.executionRequested",
+        "manual.artifactSubmitted",
         "console.opened",
         "console.closed"
       ]

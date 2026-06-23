@@ -45,6 +45,10 @@ public class RunnerExecutionEventPersistenceAdapter implements RunnerExecutionEv
           // Story 3d-3 — ManualExecutionDispatcher.park appends manual.executionRequested through
           // this port when a step is parked under the `manual` runner kind.
           WorkflowEventType.MANUAL_EXECUTION_REQUESTED,
+          // Story 3d-4 — RunnerBroker.ingestManualResult appends manual.artifactSubmitted through
+          // this port when an operator submits a manual artifact for a parked run (it carries the
+          // runnerExecutionId detail, the same as its dispatch-side twin).
+          WorkflowEventType.MANUAL_ARTIFACT_SUBMITTED,
           // Story 3d-6 — DiagnosticConsoleService appends console.opened / console.closed through
           // this port for the read-only diagnostic-console session history (no state change → null
           // prior/resulting state, which this adapter already produces).

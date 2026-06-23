@@ -17,6 +17,8 @@ import java.util.Map;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.TakeoverResult;
+import org.dradgo.application.runner.ManualArtifactSubmissionService;
+import org.dradgo.application.runner.ManualArtifactSubmissionService.ManualArtifactSubmissionCommand;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowArchiveResult;
@@ -91,6 +93,11 @@ public class WorkflowController {
   private final DeveloperTakeoverService developerTakeoverService;
   // Story 3d-8 — governed soft-hide / un-hide of obsolete runs (archive marker + audit event).
   private final WorkflowArchiveService workflowArchiveService;
+  // Story 3d-4 — the operator manual-artifact submission path (validate → ingest → finalize →
+  // advance, one tx). The bundle retrieval rides workflowInspectionService.getManualBundle.
+  private final ManualArtifactSubmissionService manualArtifactSubmissionService;
+  private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+      new com.fasterxml.jackson.databind.ObjectMapper();
 
   public WorkflowController(
       WorkflowCommandService workflowCommandService,
@@ -98,13 +105,15 @@ public class WorkflowController {
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
       DeveloperTakeoverService developerTakeoverService,
-      WorkflowArchiveService workflowArchiveService) {
+      WorkflowArchiveService workflowArchiveService,
+      ManualArtifactSubmissionService manualArtifactSubmissionService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
     this.developerTakeoverService = developerTakeoverService;
     this.workflowArchiveService = workflowArchiveService;
+    this.manualArtifactSubmissionService = manualArtifactSubmissionService;
   }
 
   // ---------------------------------------------------------------------------
@@ -775,6 +784,175 @@ public class WorkflowController {
         workflowRunId,
         response.currentState());
     return response;
+  }
+
+  // Story 3d-4 (AC1) — read-only retrieval of a parked run's manual input bundle. No
+  // Idempotency-Key
+  // (idempotent read). Run not parked ⇒ MANUAL_EXECUTION_NOT_APPLICABLE (409); scratch evicted ⇒ a
+  // typed bundleNotPersisted state on a 200 (not a 500). Advertised by the OBTAIN_MANUAL_BUNDLE
+  // allowed action (registered in 3d-3).
+  @GetMapping(value = "/{workflowRunId}/manual-bundle", produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getManualBundle",
+      summary = "Get the parked manual step's redacted input bundle (story 3d-4)")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Bundle bytes (base64) or a typed unavailable state."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "Run is not parked for manual execution (MANUAL_EXECUTION_NOT_APPLICABLE).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ManualBundleResponse getManualBundle(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info(
+        "REST get manual-bundle received workflowRunId={}", MdcKeys.sanitizeForLog(workflowRunId));
+    ManualBundleResponse response =
+        ManualBundleResponse.from(workflowInspectionService.getManualBundle(workflowRunId));
+    log.info(
+        "REST get manual-bundle success workflowRunId={} runnerExecutionId={} available={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(response.runnerExecutionId()),
+        response.available());
+    return response;
+  }
+
+  // Story 3d-4 (AC2-AC6) — governed submission of an operator-produced manual artifact. Runs the
+  // SAME
+  // runner-contracts output validation an automated runner's output would (no bypass), finalizes
+  // the
+  // parked awaiting_manual row, and transitions the run out of WaitingForManualExecution. Mirrors
+  // the
+  // accept/reject-implementation header preamble verbatim (Idempotency-Key + X-Actor-Identity).
+  @PostMapping(
+      value = "/{workflowRunId}/manual-artifact",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "submitManualArtifact",
+      summary = "Submit a manually-produced artifact for a parked run (story 3d-4)")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Artifact ingested; state advanced out of WaitingForManualExecution."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "MANUAL_EXECUTION_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "502",
+        description = "RUNNER_OUTPUT_VALIDATION_FAILED, RUNNER_ARTIFACT_TYPE_MISMATCH.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse submitManualArtifact(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ManualArtifactSubmissionRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST manual-artifact received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    byte[] payloadBytes = serializeManualResult(request.result());
+    Map<String, byte[]> artifactContents = decodeArtifactContents(request.artifactContents());
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            manualArtifactSubmissionService.submit(
+                new ManualArtifactSubmissionCommand(
+                    workflowRunId,
+                    payloadBytes,
+                    artifactContents,
+                    idempotencyKey,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    correlationId)));
+    log.info(
+        "REST manual-artifact success workflowRunId={} currentState={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.currentState());
+    return response;
+  }
+
+  private byte[] serializeManualResult(com.fasterxml.jackson.databind.JsonNode result) {
+    try {
+      return objectMapper.writeValueAsBytes(result);
+    } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("field", "result");
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+          "Manual artifact result could not be serialized",
+          details);
+    }
+  }
+
+  private static Map<String, byte[]> decodeArtifactContents(Map<String, String> base64Contents) {
+    if (base64Contents == null || base64Contents.isEmpty()) {
+      return Map.of();
+    }
+    Map<String, byte[]> decoded = new LinkedHashMap<>();
+    for (Map.Entry<String, String> entry : base64Contents.entrySet()) {
+      try {
+        decoded.put(entry.getKey(), java.util.Base64.getDecoder().decode(entry.getValue()));
+      } catch (IllegalArgumentException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("field", "artifactContents");
+        details.put("key", entry.getKey());
+        throw new DomainException(
+            DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+            "artifactContents value is not valid base64",
+            details);
+      }
+    }
+    return decoded;
   }
 
   @PostMapping(

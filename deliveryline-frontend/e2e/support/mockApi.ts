@@ -131,6 +131,8 @@ export const RECOVERY_RUN_ID = 'run_recovery0001';
 export const DIAGNOSTIC_CONSOLE_RUN_ID = 'run_console00001';
 /** Story 3d-8 — a soft-hidden (archived) run, surfaced in the queue ONLY with ?includeArchived=true. */
 export const ARCHIVED_RUN_ID = 'run_archived00001';
+/** Story 3d-4 — a run parked in WaitingForManualExecution; owner-scoped actions advertise the manual flow. */
+export const MANUAL_EXEC_RUN_ID = 'run_manual000001';
 /** The prOutput artifact the impl-review bar resolves accept/reject against (highest version). */
 const IMPL_PR_ARTIFACT_ID = 'art_impl_pr_0001';
 const IMPL_PLAN_ARTIFACT_ID = 'art_impl_plan_0001';
@@ -306,6 +308,52 @@ const SYNTHETIC_RUNS = {
       versionStamp: {
         workflowState: 'Executing',
         lastEventId: 'evt_console_1',
+        currentSpecArtifactVersion: 1,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) => syntheticArtifactDetail(artifactId, 'spec', 1),
+  },
+  [MANUAL_EXEC_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: MANUAL_EXEC_RUN_ID,
+      currentState: 'WaitingForManualExecution',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'manual.executionRequested',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: MANUAL_EXEC_RUN_ID,
+      currentState: 'WaitingForManualExecution',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'manual.executionRequested',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'operator',
+      latestArtifacts: [],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: MANUAL_EXEC_RUN_ID,
+        ticketRef: 'LIN-904',
+        createdAt: SYNTH_NOW,
+        terminalState: 'WaitingForManualExecution',
+      },
+      events: [
+        { publicId: 'evt_manual_1', eventType: 'manual.executionRequested', createdAt: SYNTH_NOW },
+      ],
+    }),
+    // Story 3d-4 — obtain_manual_bundle / submit_manual_artifact are offered ONLY to the run owner
+    // (workflow_owner) while WaitingForManualExecution; the default product_reviewer set omits them.
+    allowedActions: (actorRole) => ({
+      actions:
+        actorRole === 'workflow_owner'
+          ? ['view_only', 'obtain_manual_bundle', 'submit_manual_artifact']
+          : ['view_only'],
+      versionStamp: {
+        workflowState: 'WaitingForManualExecution',
+        lastEventId: 'evt_manual_1',
         currentSpecArtifactVersion: 1,
         currentContextBundleVersion: 1,
       },
@@ -572,6 +620,15 @@ export async function mockBackend(page: Page): Promise<void> {
         const runId = /\/api\/v1\/workflows\/([^/]+)\//.exec(path)?.[1] ?? DEV_REVIEW_RUN_ID;
         return json(route, developerMutationResponse(path, runId));
       }
+      // Story 3d-4 — manual-artifact submission re-enters the spec-approval flow.
+      const manualSubmit = /\/api\/v1\/workflows\/([^/]+)\/manual-artifact$/.exec(path);
+      if (manualSubmit) {
+        return json(route, {
+          workflowRunId: manualSubmit[1]!,
+          currentState: 'WaitingForSpecApproval',
+          correlationId: 'corr_e2e_manual',
+        });
+      }
       const isModelledMutation =
         /\/api\/v1\/workflows\/[^/]+\/(approve-spec|reject-spec)$/.test(path) ||
         /\/api\/v1\/workflows\/[^/]+\/clarifications\/[^/]+\/answer$/.test(path) ||
@@ -623,6 +680,20 @@ export async function mockBackend(page: Page): Promise<void> {
       if (synth) return json(route, synth.allowedActions(url.searchParams.get('actorRole')));
       const stream = streamByRunId(runId);
       return stream ? json(route, allowedActions(stream)) : notFound(route, runId, path);
+    }
+
+    // Story 3d-4 — the run-scoped manual input bundle read (GET, no Idempotency-Key).
+    const manualBundleMatch = /\/api\/v1\/workflows\/([^/]+)\/manual-bundle$/.exec(path);
+    if (manualBundleMatch) {
+      const runId = manualBundleMatch[1]!;
+      return json(route, {
+        workflowRunId: runId,
+        runnerExecutionId: 'rex_manual000001',
+        available: true,
+        unavailableReason: null,
+        contextBundleVersion: 1,
+        bundleBase64: Buffer.from('{"contextBundle":"e2e"}', 'utf8').toString('base64'),
+      });
     }
 
     // Story 3a-9 (Gate 3) — the live artifact-read endpoint. Must precede the bare

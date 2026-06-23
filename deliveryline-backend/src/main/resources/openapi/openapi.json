@@ -504,6 +504,7 @@
         },
         "type" : "object"
       },
+      "JsonNode" : { },
       "LatestArtifact" : {
         "properties" : {
           "artifactId" : {
@@ -539,6 +540,74 @@
             "type" : "string"
           }
         },
+        "type" : "object"
+      },
+      "ManualArtifactSubmissionRequest" : {
+        "properties" : {
+          "artifactContents" : {
+            "additionalProperties" : {
+              "type" : "string"
+            },
+            "description" : "Optional map of contentReference -> base64-encoded artifact bytes (e.g. a spec's markdown), materialized into scratch before ingest.",
+            "type" : [
+              "object",
+              "null"
+            ]
+          },
+          "result" : {
+            "$ref" : "#/components/schemas/JsonNode",
+            "description" : "Runner-result-shaped JSON (runner-result.v1) the operator produced."
+          }
+        },
+        "required" : [
+          "result"
+        ],
+        "type" : "object"
+      },
+      "ManualBundleResponse" : {
+        "properties" : {
+          "available" : {
+            "example" : true,
+            "type" : "boolean"
+          },
+          "bundleBase64" : {
+            "description" : "Base64-encoded redacted runner-contracts input bundle; null when unavailable.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "contextBundleVersion" : {
+            "description" : "Context-bundle version; null when unavailable.",
+            "example" : 1,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "runnerExecutionId" : {
+            "example" : "rex_abc123",
+            "type" : "string"
+          },
+          "unavailableReason" : {
+            "description" : "Reason the bundle is unavailable (e.g. bundleNotPersisted); null when available.",
+            "example" : "bundleNotPersisted",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "workflowRunId" : {
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "available",
+          "runnerExecutionId",
+          "workflowRunId"
+        ],
         "type" : "object"
       },
       "ProblemDetailsResponse" : {
@@ -3080,6 +3149,166 @@
           }
         },
         "summary" : "Get workflow run event history",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/manual-artifact" : {
+      "post" : {
+        "operationId" : "submitManualArtifact",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ManualArtifactSubmissionRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "Artifact ingested; state advanced out of WaitingForManualExecution."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MANUAL_EXECUTION_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT."
+          },
+          "502" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUNNER_OUTPUT_VALIDATION_FAILED, RUNNER_ARTIFACT_TYPE_MISMATCH."
+          }
+        },
+        "summary" : "Submit a manually-produced artifact for a parked run (story 3d-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/manual-bundle" : {
+      "get" : {
+        "operationId" : "getManualBundle",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ManualBundleResponse"
+                }
+              }
+            },
+            "description" : "Bundle bytes (base64) or a typed unavailable state."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Run is not parked for manual execution (MANUAL_EXECUTION_NOT_APPLICABLE)."
+          }
+        },
+        "summary" : "Get the parked manual step's redacted input bundle (story 3d-4)",
         "tags" : [
           "Workflows"
         ]

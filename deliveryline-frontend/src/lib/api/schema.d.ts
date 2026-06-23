@@ -350,6 +350,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/manual-artifact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit a manually-produced artifact for a parked run (story 3d-4) */
+        post: operations["submitManualArtifact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/manual-bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the parked manual step's redacted input bundle (story 3d-4) */
+        get: operations["getManualBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/reject-implementation": {
         parameters: {
             query?: never;
@@ -728,6 +762,7 @@ export interface components {
              */
             status?: "configured" | "not_configured";
         };
+        JsonNode: unknown;
         LatestArtifact: {
             /**
              * @description Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).
@@ -746,6 +781,35 @@ export interface components {
             /** @example linear */
             integrationType?: string;
             syncStatus?: string;
+        };
+        ManualArtifactSubmissionRequest: {
+            /** @description Optional map of contentReference -> base64-encoded artifact bytes (e.g. a spec's markdown), materialized into scratch before ingest. */
+            artifactContents?: {
+                [key: string]: string;
+            } | null;
+            /** @description Runner-result-shaped JSON (runner-result.v1) the operator produced. */
+            result: components["schemas"]["JsonNode"];
+        };
+        ManualBundleResponse: {
+            /** @example true */
+            available: boolean;
+            /** @description Base64-encoded redacted runner-contracts input bundle; null when unavailable. */
+            bundleBase64?: string | null;
+            /**
+             * Format: int32
+             * @description Context-bundle version; null when unavailable.
+             * @example 1
+             */
+            contextBundleVersion?: number | null;
+            /** @example rex_abc123 */
+            runnerExecutionId: string;
+            /**
+             * @description Reason the bundle is unavailable (e.g. bundleNotPersisted); null when available.
+             * @example bundleNotPersisted
+             */
+            unavailableReason?: string | null;
+            /** @example run_abc123 */
+            workflowRunId: string;
         };
         /** @description RFC 9457 Problem Details payload with DeliveryLine extension fields. */
         ProblemDetailsResponse: {
@@ -2149,6 +2213,124 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    submitManualArtifact: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualArtifactSubmissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Artifact ingested; state advanced out of WaitingForManualExecution. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description MANUAL_EXECUTION_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUNNER_OUTPUT_VALIDATION_FAILED, RUNNER_ARTIFACT_TYPE_MISMATCH. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getManualBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bundle bytes (base64) or a typed unavailable state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualBundleResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description Run is not parked for manual execution (MANUAL_EXECUTION_NOT_APPLICABLE). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

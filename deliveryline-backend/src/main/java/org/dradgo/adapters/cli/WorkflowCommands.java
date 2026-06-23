@@ -25,6 +25,8 @@ import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RetryRecoveryResult;
 import org.dradgo.application.recovery.TakeoverResult;
+import org.dradgo.application.runner.ManualArtifactSubmissionService;
+import org.dradgo.application.runner.ManualArtifactSubmissionService.ManualArtifactSubmissionCommand;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -37,6 +39,7 @@ import org.dradgo.application.workflow.WorkflowBatchSubmissionService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ContextBundleLookupResult;
+import org.dradgo.application.workflow.WorkflowInspectionService.ManualBundleLookupResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.RunnerLogReferenceResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.SpecHistoryEntry;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
@@ -102,6 +105,9 @@ public class WorkflowCommands {
   // Story 3d-8 — governed soft-hide / un-hide. Nullable in the legacy/inspection-less test
   // constructors; the archive/unarchive commands guard via requireArchiveWired().
   private final WorkflowArchiveService workflowArchiveService;
+  // Story 3d-4 — operator manual-artifact submission. Nullable in the legacy/inspection-less test
+  // constructors; the manual-artifact command guards via requireManualSubmissionWired().
+  private final ManualArtifactSubmissionService manualArtifactSubmissionService;
 
   @Autowired
   public WorkflowCommands(
@@ -117,7 +123,8 @@ public class WorkflowCommands {
       WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowBatchSubmissionService workflowBatchSubmissionService,
       DeveloperTakeoverService developerTakeoverService,
-      WorkflowArchiveService workflowArchiveService) {
+      WorkflowArchiveService workflowArchiveService,
+      ManualArtifactSubmissionService manualArtifactSubmissionService) {
     this(
         workflowCommandService,
         workflowInspectionService,
@@ -132,7 +139,8 @@ public class WorkflowCommands {
         workflowOrchestrationService,
         workflowBatchSubmissionService,
         developerTakeoverService,
-        workflowArchiveService);
+        workflowArchiveService,
+        manualArtifactSubmissionService);
   }
 
   /**
@@ -159,6 +167,7 @@ public class WorkflowCommands {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -176,7 +185,8 @@ public class WorkflowCommands {
       WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowBatchSubmissionService workflowBatchSubmissionService,
       DeveloperTakeoverService developerTakeoverService,
-      WorkflowArchiveService workflowArchiveService) {
+      WorkflowArchiveService workflowArchiveService,
+      ManualArtifactSubmissionService manualArtifactSubmissionService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.outputs = outputs;
@@ -191,6 +201,7 @@ public class WorkflowCommands {
     this.workflowBatchSubmissionService = workflowBatchSubmissionService;
     this.developerTakeoverService = developerTakeoverService;
     this.workflowArchiveService = workflowArchiveService;
+    this.manualArtifactSubmissionService = manualArtifactSubmissionService;
   }
 
   /**
@@ -226,6 +237,7 @@ public class WorkflowCommands {
         workflowOrchestrationService,
         workflowBatchSubmissionService,
         developerTakeoverService,
+        null,
         null);
   }
 
@@ -763,6 +775,162 @@ public class WorkflowCommands {
       throw re;
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Story 3d-4 (AC1) — read-only retrieval of a parked run's manual input bundle (CLI parity with
+  // GET /manual-bundle). Writes the redacted bundle bytes to stdout (or --out file). No
+  // Idempotency-Key (idempotent read).
+  @Command(
+      name = "manual-bundle",
+      description =
+          "Get the parked manual step's redacted runner-contracts input bundle (story 3d-4). Run"
+              + " not parked ⇒ MANUAL_EXECUTION_NOT_APPLICABLE; scratch evicted ⇒ a typed"
+              + " bundleNotPersisted state.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String manualBundle(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "out",
+              description = "Write the bundle bytes to this file instead of stdout",
+              required = false)
+          String outFile,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireManualSubmissionWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      ManualBundleLookupResult result = workflowInspectionService.getManualBundle(runId);
+      if (!result.available()) {
+        emitSuccess("workflow manual-bundle", runId, resolvedCorrelation, start);
+        return result.runnerExecutionId() + " bundle unavailable (" + result.reason() + ")";
+      }
+      byte[] bytes = result.bundle().redactedPayload();
+      if (outFile != null && !outFile.isBlank()) {
+        try {
+          Files.write(Path.of(outFile), bytes);
+        } catch (IOException error) {
+          Map<String, Object> details = new LinkedHashMap<>();
+          details.put("outFile", outFile);
+          throw new DomainException(
+              DomainErrorCode.INTERNAL_ERROR,
+              "Unable to write bundle to file: " + outFile,
+              details);
+        }
+        emitSuccess("workflow manual-bundle", runId, resolvedCorrelation, start);
+        return result.runnerExecutionId()
+            + " bundle written to "
+            + outFile
+            + " ("
+            + bytes.length
+            + " bytes)";
+      }
+      emitSuccess("workflow manual-bundle", runId, resolvedCorrelation, start);
+      return new String(bytes, StandardCharsets.UTF_8);
+    } catch (DomainException de) {
+      emitFailure("workflow manual-bundle", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow manual-bundle", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Story 3d-4 (AC2) — governed submission of a manually-produced artifact (CLI parity with POST
+  // /manual-artifact). Reads the runner-result-shaped JSON from --file; runs the SAME validation +
+  // ingest the REST endpoint does (both delegate to ManualArtifactSubmissionService).
+  @Command(
+      name = "manual-artifact",
+      description =
+          "Submit a manually-produced artifact for a parked run (story 3d-4). Reads the"
+              + " runner-result-shaped JSON from --file and re-enters the same validation/review"
+              + " pipeline as an automated runner.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String manualArtifact(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "file",
+              description = "Path to the runner-result-shaped JSON artifact payload",
+              required = true)
+          String file,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    requireManualSubmissionWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      byte[] payloadBytes;
+      try {
+        payloadBytes = Files.readAllBytes(Path.of(file));
+      } catch (IOException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("file", file);
+        throw new DomainException(
+            DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+            "Unable to read artifact file: " + file,
+            details);
+      }
+      WorkflowStateChangeResult result =
+          manualArtifactSubmissionService.submit(
+              new ManualArtifactSubmissionCommand(
+                  runId,
+                  payloadBytes,
+                  Map.of(),
+                  resolvedIdempotencyKey,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedCorrelation));
+      StringBuilder output =
+          new StringBuilder()
+              .append(result.workflowRunId())
+              .append(" manual artifact submitted (state: ")
+              .append(result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow manual-artifact", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow manual-artifact", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow manual-artifact", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  private void requireManualSubmissionWired() {
+    if (manualArtifactSubmissionService == null || workflowInspectionService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_manual_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without ManualArtifactSubmissionService; inject it to use manual-bundle/manual-artifact",
+          details);
     }
   }
 

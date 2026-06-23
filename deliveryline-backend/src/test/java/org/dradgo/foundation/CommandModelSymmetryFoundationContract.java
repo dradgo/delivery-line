@@ -17,6 +17,7 @@ import java.util.Set;
 import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.runner.ManualArtifactSubmissionService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.SubmitWorkflowResult;
@@ -84,6 +85,7 @@ class CommandModelSymmetryFoundationContract {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
+  @MockitoBean private ManualArtifactSubmissionService manualArtifactSubmissionService;
 
   // Story 6.9 — WorkflowController now also depends on WorkflowInspectionService (GET reads); the
   // bean must exist for this command-symmetry @WebMvcTest slice to construct the controller.

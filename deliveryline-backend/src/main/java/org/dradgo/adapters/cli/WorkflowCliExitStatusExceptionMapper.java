@@ -38,14 +38,23 @@ public class WorkflowCliExitStatusExceptionMapper implements ExitStatusException
           APPROVAL_VERSION_MISMATCH,
           EXPORT_CLASSIFICATION_VIOLATION,
           IDEMPOTENCY_RESERVATION_EXHAUSTED,
-          RETRY_NOT_APPLICABLE ->
+          RETRY_NOT_APPLICABLE,
+          // Story 3d-4 — wrong-state gate for manual-bundle/manual-artifact (mirrors
+          // RETRY_NOT_APPLICABLE's conflict exit code).
+          MANUAL_EXECUTION_NOT_APPLICABLE ->
           201;
       case MISSING_IDEMPOTENCY_KEY,
           INVALID_IDEMPOTENCY_KEY,
           INVALID_TIME_RANGE,
           HISTORY_TOO_LARGE ->
           101;
-      case RUNNER_TIMEOUT, RUNNER_CONTRACT_VIOLATION, ARTIFACT_PAYLOAD_UNAVAILABLE -> 301;
+      case RUNNER_TIMEOUT,
+          RUNNER_CONTRACT_VIOLATION,
+          ARTIFACT_PAYLOAD_UNAVAILABLE,
+          // Story 3d-4 — manual-artifact output-contract failures (runner-output family).
+          RUNNER_OUTPUT_VALIDATION_FAILED,
+          RUNNER_ARTIFACT_TYPE_MISMATCH ->
+          301;
       case DOCTOR_POSTGRES_UNREACHABLE,
           DOCTOR_FLYWAY_FAILED,
           DOCTOR_REST_BIND_UNAVAILABLE,

@@ -164,6 +164,34 @@ class RunnerExecutionStateMachineTest {
                 RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
   }
 
+  // Story 3d-4 (AC4 / R1) — a submitted manual artifact finalizes the parked row to COMPLETED. The
+  // edge was illegal before 3d-4 (3d-3 only declared the takeover edge). A parked row never runs in
+  // a container, so RUNNING / PENDING stay rejected.
+  @Test
+  void awaitingManualCanBeCompletedOnManualSubmission() {
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.AWAITING_MANUAL, RunnerExecutionStatus.COMPLETED));
+  }
+
+  @Test
+  void awaitingManualCannotGoToRunningOrPending() {
+    DomainException toRunning =
+        assertThrows(
+            DomainException.class,
+            () ->
+                RunnerExecutionStateMachine.assertCanTransition(
+                    REX, RunnerExecutionStatus.AWAITING_MANUAL, RunnerExecutionStatus.RUNNING));
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, toRunning.errorCode());
+    assertEquals("transition_not_allowed", toRunning.details().get("reason"));
+    assertThrows(
+        DomainException.class,
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.AWAITING_MANUAL, RunnerExecutionStatus.PENDING));
+  }
+
   @Test
   void queuedAllowsRunningAndCancelledForTakeoverOnly() {
     assertDoesNotThrow(

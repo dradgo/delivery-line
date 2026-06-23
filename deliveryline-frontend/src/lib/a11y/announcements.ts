@@ -121,6 +121,17 @@ export const consoleSessionEnded = 'Read-only diagnostic console session ended.'
  */
 export const consoleSessionError = 'The read-only diagnostic console could not be opened.';
 
+// ---- Manual execution surface (story 3d-4) -------------------------------------
+
+/** Announced while a manual-artifact submission is in flight. */
+export const manualArtifactSubmitting = 'Submitting the manual artifact.';
+/** Announced once a manual artifact is accepted (success), mirroring the inline outcome. */
+export const manualArtifactSubmitted =
+  'Manual artifact submitted. The run has advanced for review.';
+/** Announced when a manual-artifact submission is rejected (validation / wrong state). */
+export const manualArtifactRejected =
+  'The manual artifact was rejected. Review the error and resubmit.';
+
 // ---- Project connection test (story 3c-9) --------------------------------------
 
 /** Announced while a project connectivity test is in flight. */

@@ -63,6 +63,13 @@ public enum DomainErrorCode implements RegistryValue {
   DOCTOR_GIT_MISSING("DOCTOR_GIT_MISSING"),
   DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED("DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED"),
   RETRY_NOT_APPLICABLE("RETRY_NOT_APPLICABLE"),
+  // Story 3d-4 (AC6 / R5) — three-sites code (enum + ProblemDetailsCatalog + manifest). The
+  // wrong-state gate for the manual-artifact submission + manual-bundle retrieval endpoints: raised
+  // (409) when the run is not in WaitingForManualExecution (no parked awaiting_manual runner
+  // execution). It plays the role the epic wording assigns to a generic ACTION_NOT_ALLOWED — which
+  // is deliberately NOT added (this codebase expresses wrong-state via state-specific codes, the
+  // RETRY_NOT_APPLICABLE precedent). RBAC stays audit-only; this is the only allowed-action gate.
+  MANUAL_EXECUTION_NOT_APPLICABLE("MANUAL_EXECUTION_NOT_APPLICABLE"),
   // Story 3a-1 (AC8 / Trap T5) — three-sites code (enum + ProblemDetailsCatalog + manifest).
   // Raised when a runner emits an artifact whose type does not match the dispatching stage's
   // expected type (e.g. a spec-stage / INVESTIGATION runner emits an implementationPlan). The

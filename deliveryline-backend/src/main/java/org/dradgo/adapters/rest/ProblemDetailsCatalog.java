@@ -344,6 +344,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Retry not applicable",
         false);
+    // Story 3d-4 (AC6) — the wrong-state gate for the manual-bundle / manual-artifact endpoints:
+    // the run is not in WaitingForManualExecution (no parked awaiting_manual runner execution).
+    // Mirror RETRY_NOT_APPLICABLE's non-retryable CONFLICT (409) mapping.
+    register(
+        metadata,
+        DomainErrorCode.MANUAL_EXECUTION_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Manual execution not applicable",
+        false);
     // Story 3a-1 (AC8) — a runner emitting an artifact type the dispatching stage does not expect
     // is a runner-side contract violation; mirror RUNNER_CONTRACT_VIOLATION's BAD_GATEWAY mapping.
     register(

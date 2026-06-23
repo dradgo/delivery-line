@@ -71,9 +71,17 @@ public final class RunnerExecutionStateMachine {
             RunnerExecutionStatus.TIMED_OUT,
             RunnerExecutionStatus.ORPHANED,
             RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+    // Story 3d-4 (AC4 / R1): a submitted manual artifact finalizes the parked row to COMPLETED via
+    // executionService.recordCompleted. 3d-3 declared only the takeover edge (it just parked rows);
+    // 3d-4 is the first code that finalizes one. This is an in-code guard only — the DB CHECK
+    // ck_runner_executions_status (V20) already lists both awaiting_manual and completed, and
+    // completed is the terminal/completed_at-bearing status. RUNNING/PENDING stay rejected (a
+    // parked
+    // row never runs in a container); FAILED is deliberately omitted (AC5 keeps an invalid
+    // submission resubmittable, and there is no manual "runner crashed" signal).
     rules.put(
         RunnerExecutionStatus.AWAITING_MANUAL,
-        EnumSet.of(RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+        EnumSet.of(RunnerExecutionStatus.COMPLETED, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
     rules.put(RunnerExecutionStatus.COMPLETED, EnumSet.noneOf(RunnerExecutionStatus.class));
     rules.put(RunnerExecutionStatus.FAILED, EnumSet.noneOf(RunnerExecutionStatus.class));
     rules.put(RunnerExecutionStatus.TIMED_OUT, EnumSet.of(RunnerExecutionStatus.FAILED));

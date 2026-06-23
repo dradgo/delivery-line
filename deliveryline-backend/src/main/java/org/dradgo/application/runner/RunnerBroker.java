@@ -1897,12 +1897,209 @@ public class RunnerBroker {
   }
 
   /**
+   * Story 3d-4 (AC2/AC4 / R2) — ingest an operator-submitted manual artifact for a parked {@code
+   * WaitingForManualExecution} run. This is the manual twin of {@link #handleSuccess}'s success
+   * tail: it reuses the SAME artifact-ingest + {@code markAvailable} + {@code recordCompleted} +
+   * orchestration auto-advance collaborators, but deliberately SKIPS the workspace-coupled steps —
+   * the story-3.5 post-execution {@code runnerSecretScanService.scanWorkspace} and the EXECUTION
+   * pr-output {@code repositoryWorkspaceService.captureAndPush}/enrich — because a manual park
+   * launches no container and materializes no workspace (R2). The caller ({@code
+   * ManualArtifactSubmissionService}) has already run the SAME {@code ContractValidator} the broker
+   * runs in {@link #onResult} plus the stage→artifact-type rule, so by the time we reach here the
+   * payload is schema-valid and type-correct; validation is the caller's gate (AC5), so this method
+   * never short-circuits the run to Failed.
+   *
+   * <p>Runs INLINE in the caller's request transaction (R9): {@code recordCompleted} finalizes the
+   * parked {@code awaiting_manual} row to {@code COMPLETED} (legal since the R1 state-machine
+   * widening) and the orchestration callbacks transition the run OUT of {@code
+   * WaitingForManualExecution} into the stage-appropriate post-step state ({@code
+   * WaitingForSpecApproval} / {@code WaitingForReview}) over the OUT edges 3d-3 declared. Any
+   * mid-sequence failure rolls the whole submission back (the run stays parked, AC4/AC5).
+   *
+   * @param operatorActor the resolved OPERATOR identity (HUMAN), stamped onto the artifact
+   *     provenance and the {@code manual.artifactSubmitted} event — never {@code SYSTEM}.
+   */
+  public void ingestManualResult(
+      String runnerExecutionId, byte[] payloadBytes, ActorContext operatorActor) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    Objects.requireNonNull(payloadBytes, "payloadBytes");
+    Objects.requireNonNull(operatorActor, "operatorActor");
+    RunnerExecutionSnapshot row =
+        recordPort
+            .findByPublicId(runnerExecutionId)
+            .orElseThrow(() -> runnerExecutionNotFound(runnerExecutionId));
+    String workflowRunId = row.workflowRunPublicId();
+    JsonNode parsed;
+    try {
+      parsed = objectMapper.readTree(payloadBytes);
+    } catch (java.io.IOException error) {
+      // The caller validated the payload with the ContractValidator before reaching here, so a
+      // parse failure is a programming error, not operator input.
+      throw new IllegalStateException(
+          "manual artifact payload was not valid JSON after contract validation", error);
+    }
+    String correlationId =
+        operatorActor.correlationId() != null && !operatorActor.correlationId().isBlank()
+            ? operatorActor.correlationId()
+            : resolveOutcomeCorrelationId(runnerExecutionId);
+
+    JsonNode artifactRefs = parsed.path("artifactReferences");
+    for (JsonNode ref : artifactRefs) {
+      ArtifactType artifactType =
+          ArtifactType.fromValue(
+              ref.path("artifactType").asText(), "runner_result.artifactReferences.artifactType");
+      // Story 3d-4 (R8) — for a manual prOutput we do NOT re-run captureAndPush (no workspace); we
+      // resolve any operator-provided diff bytes the submission wrote to scratch, else omit the
+      // diff
+      // gracefully (the read path degrades to an empty-diff panel, exactly as for an automated
+      // mock).
+      String resolvedDiff = null;
+      if (artifactType == ArtifactType.PR_OUTPUT) {
+        resolvedDiff =
+            resolvePrOutputDiff(
+                    runnerExecutionId, workflowRunId, ref.path("artifactId").asText(null), ref)
+                .orElse(null);
+      }
+      Optional<ArtifactPayload> maybePayload =
+          artifactPayload(runnerExecutionId, ref, resolvedDiff);
+      if (maybePayload.isEmpty()) {
+        // A spec ref's contentReference did not resolve in scratch (the submission must write the
+        // artifact content before ingest). Roll back: the run stays parked + resubmittable (AC5).
+        throw manualIngestFailure(
+            workflowRunId, runnerExecutionId, "manual artifact content unreadable");
+      }
+      ArtifactPayload payload = maybePayload.get();
+      String idempotencyKey =
+          "manual-result:" + runnerExecutionId + ":" + ref.path("artifactId").asText();
+      RecordArtifactOperationCommand command =
+          new RecordArtifactOperationCommand(
+              workflowRunId,
+              artifactType,
+              ArtifactOperationType.CREATE,
+              idempotencyKey,
+              payload.payloadRef(),
+              payload.bytes(),
+              operatorActor.actorIdentity(),
+              operatorActor.actorType(),
+              correlationId,
+              runnerExecutionId);
+      RecordArtifactOperationResult opResult = artifactOperationService.recordOperation(command);
+      if (opResult.isFailure()) {
+        log.warn(
+            "manual artifact-record failed workflowRunId={} runnerExecutionId={} artifactType={} reason={}",
+            workflowRunId,
+            runnerExecutionId,
+            artifactType.value(),
+            opResult.failure());
+        throw manualIngestFailure(
+            workflowRunId, runnerExecutionId, "manual artifact ingest failed");
+      }
+      // Availability wiring — promote the freshly-ingested artifact to `available` so the
+      // downstream
+      // approval-eligibility gate accepts the manual artifact identically to an automated one (R7).
+      if (artifactType == ArtifactType.SPEC
+          || artifactType == ArtifactType.IMPLEMENTATION_PLAN
+          || artifactType == ArtifactType.PR_OUTPUT) {
+        try {
+          markArtifactAvailable(opResult, payload.bytes(), correlationId);
+        } catch (RuntimeException error) {
+          log.warn(
+              "manual artifact availability marking failed (best-effort) workflowRunId={} "
+                  + "runnerExecutionId={} artifactId={} cause={}",
+              workflowRunId,
+              runnerExecutionId,
+              opResult.artifact().publicId(),
+              error.toString());
+        }
+      }
+    }
+
+    // Finalize the parked awaiting_manual row to COMPLETED (legal since R1). NOT guarded for
+    // ILLEGAL_TRANSITION — the caller's applicability gate + idempotency guarantee a single parked
+    // row, and a stray double should surface, not silently no-op.
+    executionService.recordCompleted(runnerExecutionId);
+    appendManualArtifactSubmittedEvent(workflowRunId, runnerExecutionId, operatorActor);
+
+    ExecutionSubStage executionSubStage =
+        row.stage() == RunnerStage.EXECUTION
+            ? contextBundleService.deriveExecutionSubStage(workflowRunId)
+            : null;
+    log.info(
+        "manual artifact accepted workflowRunId={} runnerExecutionId={} stage={} subStage={}",
+        workflowRunId,
+        runnerExecutionId,
+        row.stage().value(),
+        executionSubStage);
+
+    // Auto-advance OUT of WaitingForManualExecution via the SAME orchestration callbacks the
+    // automated success tail uses (the OUT edges are legal from WaitingForManualExecution — 3d-3).
+    if (row.stage() == RunnerStage.INVESTIGATION) {
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+          workflowOrchestrationServiceSupplier.get();
+      if (orchestration != null) {
+        orchestration.onSpecStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
+      }
+    } else if (row.stage() == RunnerStage.EXECUTION) {
+      org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+          workflowOrchestrationServiceSupplier.get();
+      if (executionSubStage == ExecutionSubStage.IMPLEMENTATION_PLAN) {
+        if (orchestration != null) {
+          orchestration.onPlanStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
+        }
+      } else if (executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+        if (orchestration != null) {
+          orchestration.onPrOutputStageSucceeded(workflowRunId, runnerExecutionId, correlationId);
+        }
+      } else {
+        log.info(
+            "manual artifact success not auto-advanced workflowRunId={} runnerExecutionId={} "
+                + "subStage={} reason=unknown_substage",
+            workflowRunId,
+            runnerExecutionId,
+            executionSubStage);
+      }
+    }
+  }
+
+  private DomainException manualIngestFailure(
+      String workflowRunId, String runnerExecutionId, String message) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
+    details.put("runnerExecutionId", runnerExecutionId);
+    details.put("reason", "manual_artifact_ingest_failed");
+    return new DomainException(DomainErrorCode.RUNNER_OUTPUT_VALIDATION_FAILED, message, details);
+  }
+
+  private void appendManualArtifactSubmittedEvent(
+      String workflowRunId, String runnerExecutionId, ActorContext operatorActor) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(org.dradgo.domain.registry.WorkflowEventDetailKeys.WORKFLOW_RUN_ID, workflowRunId);
+    details.put("runnerExecutionId", runnerExecutionId);
+    eventPort.append(
+        workflowRunId,
+        WorkflowEventType.MANUAL_ARTIFACT_SUBMITTED,
+        operatorActor,
+        "manual_artifact_submitted",
+        null,
+        OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+        details);
+    log.info(
+        "manual.artifactSubmitted appended workflowRunId={} runnerExecutionId={} actorIdentity={}",
+        workflowRunId,
+        runnerExecutionId,
+        operatorActor.actorIdentity());
+  }
+
+  /**
    * Story 3a-1 (AC8) — the artifact types a dispatching stage is permitted to emit. INVESTIGATION
    * (spec stage) may only produce a {@code spec}; EXECUTION may produce an {@code
    * implementationPlan} or {@code prOutput}. (OQ-5: the mapping lives in the broker, where the
    * result is parsed.)
+   *
+   * <p>Package-private (story 3d-4) so {@code ManualArtifactSubmissionService} validates an
+   * operator-submitted artifact's type against the SAME stage rule the automated path uses.
    */
-  private static java.util.Set<ArtifactType> allowedArtifactTypesForStage(RunnerStage stage) {
+  static java.util.Set<ArtifactType> allowedArtifactTypesForStage(RunnerStage stage) {
     return switch (stage) {
       case INVESTIGATION -> java.util.EnumSet.of(ArtifactType.SPEC);
       case EXECUTION ->
@@ -2755,9 +2952,12 @@ public class RunnerBroker {
    * indicates a prior result was already accepted by the broker contribute to {@code
    * observedRunnerExecutionIds} so the validator can flag a 2nd arrival as {@code
    * DUPLICATE_RUNNER_EXECUTION_ID}.
+   *
+   * <p>Package-private (story 3d-4) so {@code ManualArtifactSubmissionService} validates an
+   * operator-submitted result with the IDENTICAL context the broker builds for an automated result
+   * (AC2 — no parallel weaker validation).
    */
-  private ValidationContext buildResultValidationContext(
-      String workflowRunId, String runnerExecutionId) {
+  ValidationContext buildResultValidationContext(String workflowRunId, String runnerExecutionId) {
     ValidationContext.Builder builder =
         ValidationContext.builder().maxPayloadBytes(RUNNER_RESULT_MAX_PAYLOAD_BYTES);
     builder.addKnownRunnerExecutionId(runnerExecutionId);

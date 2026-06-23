@@ -96,6 +96,15 @@ export const workflowKeys = {
   reviewerVerdict: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'reviewerVerdict'] as const,
 
+  /**
+   * A run's parked manual-execution input bundle (story 3d-4). A PREFIX child of `detail(id)`, so a
+   * manual-artifact submission's `detail(id)` invalidation cascade refreshes it for free (after a
+   * successful submission the run leaves WaitingForManualExecution and the bundle 409s — the surface
+   * self-hides on the new state).
+   */
+  manualBundle: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'manualBundle'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
 } as const;

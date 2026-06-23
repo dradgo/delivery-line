@@ -48,6 +48,7 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowState;
@@ -1652,6 +1653,93 @@ public class WorkflowInspectionService {
   }
 
   /**
+   * Story 3d-4 (AC1 / R3) — run-scoped retrieval of the parked manual step's input bundle. Unlike
+   * {@link #getContextBundleForArtifact(String)} (which walks artifact → producing runner-execution
+   * → bundle), a parked run has produced NO artifact yet, so this resolves the run's single active
+   * {@code awaiting_manual} {@code runner_executions} row and reads its persisted, ALREADY-REDACTED
+   * bundle bytes from the scratch store. The bytes are {@code SHAREABLE_REDACTED} — never
+   * recomposed, never re-egressed unredacted (ADR 0025 posture, same as 3d-5's finished-log read).
+   *
+   * <p>Throws {@link DomainErrorCode#RUN_NOT_FOUND} for an unknown run and {@link
+   * DomainErrorCode#MANUAL_EXECUTION_NOT_APPLICABLE} when the run has no parked {@code
+   * awaiting_manual} execution (the wrong-state gate — it is not in {@code
+   * WaitingForManualExecution}). Returns an {@code unavailable("bundleNotPersisted")} result (NOT a
+   * 500) when the row exists but the scratch file has been evicted (scratch is not durable).
+   */
+  @Transactional(readOnly = true)
+  public ManualBundleLookupResult getManualBundle(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      workflowRunReadPort
+          .findByPublicId(workflowRunId)
+          .orElseThrow(() -> runNotFound(workflowRunId));
+      List<RunnerExecutionSnapshot> parked =
+          runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
+              workflowRunId, List.of(RunnerExecutionStatus.AWAITING_MANUAL));
+      if (parked.isEmpty()) {
+        log.warn("getManualBundle reject workflowRunId={} reason=noParkedExecution", workflowRunId);
+        throw manualExecutionNotApplicable(workflowRunId);
+      }
+      if (parked.size() > 1) {
+        // Invariant breach: 3d-3 parks exactly one awaiting_manual row per run; serving an
+        // arbitrary row's bundle would be non-deterministic. Fail loud (mirrors the submission
+        // path's resolveParkedRow guard).
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("parkedRowCount", parked.size());
+        log.error(
+            "getManualBundle ambiguous parked rows workflowRunId={} count={}",
+            workflowRunId,
+            parked.size());
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR,
+            "Multiple awaiting_manual runner executions for the run; cannot resolve a single parked"
+                + " row",
+            details);
+      }
+      RunnerExecutionSnapshot row = parked.get(0);
+      String runnerExecutionId = row.publicId();
+      Optional<byte[]> scratchBytes = runnerScratchStore.tryReadContextBundle(runnerExecutionId);
+      if (scratchBytes.isPresent() && scratchBytes.get().length > 0) {
+        ContextBundle bundle =
+            new ContextBundle(
+                workflowRunId,
+                row.stage(),
+                runnerExecutionId,
+                row.contextBundleVersion(),
+                DataClassification.SHAREABLE_REDACTED,
+                scratchBytes.get());
+        log.info(
+            "manual bundle retrieved workflowRunId={} runnerExecutionId={} bundleByteLength={}",
+            workflowRunId,
+            runnerExecutionId,
+            bundle.redactedPayload().length);
+        return ManualBundleLookupResult.available(workflowRunId, bundle);
+      }
+      log.warn(
+          "getManualBundle unavailable workflowRunId={} runnerExecutionId={} reason=bundleNotPersisted",
+          workflowRunId,
+          runnerExecutionId);
+      return ManualBundleLookupResult.unavailable(
+          workflowRunId, runnerExecutionId, "bundleNotPersisted");
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private static DomainException manualExecutionNotApplicable(String workflowRunId) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runId", workflowRunId);
+    details.put("reason", "no_parked_manual_execution");
+    return new DomainException(
+        DomainErrorCode.MANUAL_EXECUTION_NOT_APPLICABLE,
+        "Manual execution is not applicable: run is not parked in WaitingForManualExecution: "
+            + workflowRunId,
+        details);
+  }
+
+  /**
    * Story 3.6 AC7 — typed inspection of a runner execution's durable redacted log store. Mirrors
    * {@link #getContextBundleForArtifact(String)}: validates the {@code rex_} prefix, opens an MDC
    * scope, reads the persisted {@code raw_output_*} columns off the {@code runner_executions} row
@@ -2260,6 +2348,43 @@ public class WorkflowInspectionService {
         throw new IllegalArgumentException("reason must not be blank");
       }
       return new ContextBundleLookupResult(artifactId, null, reason);
+    }
+
+    public boolean available() {
+      return bundle != null;
+    }
+  }
+
+  /**
+   * Story 3d-4 (AC1 / R3) — run-scoped available/unavailable result for {@link
+   * #getManualBundle(String)}. Mirrors {@link ContextBundleLookupResult} but is keyed by the
+   * workflow run (a parked run has produced no artifact yet). Exactly one of {@code bundle} /
+   * {@code reason} is set; {@code runnerExecutionId} is the parked execution's id (always present —
+   * the row exists in both the available and the {@code bundleNotPersisted} states).
+   */
+  public record ManualBundleLookupResult(
+      String workflowRunId, String runnerExecutionId, ContextBundle bundle, String reason) {
+
+    public ManualBundleLookupResult {
+      Objects.requireNonNull(workflowRunId, "workflowRunId");
+      Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
+      if ((bundle == null) == (reason == null)) {
+        throw new IllegalArgumentException(
+            "Exactly one of bundle or reason must be set on ManualBundleLookupResult");
+      }
+    }
+
+    public static ManualBundleLookupResult available(String workflowRunId, ContextBundle bundle) {
+      Objects.requireNonNull(bundle, "bundle");
+      return new ManualBundleLookupResult(workflowRunId, bundle.runnerExecutionId(), bundle, null);
+    }
+
+    public static ManualBundleLookupResult unavailable(
+        String workflowRunId, String runnerExecutionId, String reason) {
+      if (reason == null || reason.isBlank()) {
+        throw new IllegalArgumentException("reason must not be blank");
+      }
+      return new ManualBundleLookupResult(workflowRunId, runnerExecutionId, null, reason);
     }
 
     public boolean available() {

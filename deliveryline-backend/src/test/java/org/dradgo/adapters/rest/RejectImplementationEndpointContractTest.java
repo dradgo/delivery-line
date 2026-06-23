@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.runner.ManualArtifactSubmissionService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.WorkflowArchiveService;
@@ -74,6 +75,7 @@ class RejectImplementationEndpointContractTest {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
+  @MockitoBean private ManualArtifactSubmissionService manualArtifactSubmissionService;
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;

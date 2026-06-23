@@ -19,6 +19,7 @@ import { ClarificationRegionContainer } from '@/features/workflows/components/Cl
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
 import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
+import { ManualExecutionSurface } from '@/features/workflows/components/ManualExecutionSurface';
 import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
 import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
 import { useAllowedActions } from '@/features/workflows/hooks/useAllowedActions';
@@ -69,6 +70,7 @@ const RECOGNIZED_STATES = new Set([
   'WaitingForSpecApproval',
   'Executing',
   'WaitingForReview',
+  'WaitingForManualExecution',
   'Completed',
   'Failed',
   'Paused',
@@ -146,6 +148,14 @@ function WorkflowDetailRoute() {
   const ownerActions = useAllowedActions(workflowRunId, 'workflow_owner');
   const canOpenDiagnosticConsole =
     ownerActions.data?.actions.includes('open_diagnostic_console') ?? false;
+  // Story 3d-4 (AC7) — the Manual Execution Surface is gated on the backend-reported
+  // `obtain_manual_bundle` / `submit_manual_artifact` actions ONLY (flowing through
+  // `useAllowedActions`, never role-inferred — eslint `local-rules/no-role-based-action-gating`).
+  // The matrix offers them ONLY in WAITING_FOR_MANUAL_EXECUTION to the run owner (workflow_owner).
+  const canObtainManualBundle =
+    ownerActions.data?.actions.includes('obtain_manual_bundle') ?? false;
+  const canSubmitManualArtifact =
+    ownerActions.data?.actions.includes('submit_manual_artifact') ?? false;
 
   // AC8a — a run reported in a state this build doesn't recognize.
   if (data?.currentState !== undefined && !RECOGNIZED_STATES.has(data.currentState)) {
@@ -169,6 +179,17 @@ function WorkflowDetailRoute() {
           (EXECUTING + workflow_owner). Input is disabled end-to-end (no write path). */}
       {canOpenDiagnosticConsole ? (
         <ReadOnlyDiagnosticConsole workflowRunId={workflowRunId} actorRole="workflow_owner" />
+      ) : null}
+      {/* Story 3d-4 (AC7) — the Manual Execution Surface: for a run parked in
+          WaitingForManualExecution, download/copy the input bundle + submit the operator-produced
+          artifact. Gated on the backend `obtain_manual_bundle` / `submit_manual_artifact` actions. */}
+      {data?.currentState === 'WaitingForManualExecution' &&
+      (canObtainManualBundle || canSubmitManualArtifact) ? (
+        <ManualExecutionSurface
+          workflowRunId={workflowRunId}
+          canObtainBundle={canObtainManualBundle}
+          canSubmitArtifact={canSubmitManualArtifact}
+        />
       ) : null}
       {/* Story 2.18 — the Clarification Region, projected into the right context
           panel via the AppShell slot (sidebar subregion, AC4). The main pane stays

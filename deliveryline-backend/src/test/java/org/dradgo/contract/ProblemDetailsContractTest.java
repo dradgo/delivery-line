@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.runner.ManualArtifactSubmissionService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.security.RedactionCategory;
 import org.dradgo.application.security.RedactionPolicyService;
@@ -41,6 +42,7 @@ class ProblemDetailsContractTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private WorkflowCommandService workflowCommandService;
+  @MockitoBean private ManualArtifactSubmissionService manualArtifactSubmissionService;
 
   // Story 3.25 — WorkflowController wires the rich DeveloperTakeoverService for POST /takeover;
   // the bean must exist for this @WebMvcTest slice even though these tests exercise other paths.

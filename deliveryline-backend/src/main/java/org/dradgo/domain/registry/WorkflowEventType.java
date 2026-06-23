@@ -45,6 +45,12 @@ public enum WorkflowEventType implements RegistryValue {
   // existing allow-listed detail keys runnerExecutionId / workflowRunId / runnerKind (= "manual").
   // The submission-side `manual.artifactSubmitted` event belongs to story 3d-4, NOT here.
   MANUAL_EXECUTION_REQUESTED("manual.executionRequested"),
+  // Story 3d-4 (AC4, ADR 0024 D4) — appended when an operator submits a manually-produced artifact
+  // for a parked WaitingForManualExecution run. It carries the resolved OPERATOR ActorContext (not
+  // SYSTEM) and the existing allow-listed runnerExecutionId / workflowRunId detail keys; the run
+  // transitions out of WaitingForManualExecution as a side effect. The dispatch-side twin
+  // `manual.executionRequested` belongs to story 3d-3.
+  MANUAL_ARTIFACT_SUBMITTED("manual.artifactSubmitted"),
   // Story 3d-6 (AC3, ADR 0025 D2) — governed read-only diagnostic-console session history. Appended
   // when a console is opened against a LIVE runner execution (console.opened) and when the session
   // closes (console.closed). Console I/O is NOT durably stored — only this session metadata. Both
