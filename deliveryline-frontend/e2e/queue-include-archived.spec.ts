@@ -29,10 +29,11 @@ test.describe('Queue include-archived toggle (story 3d-8)', () => {
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByText('DEL-ARCHIVED')).toBeVisible();
-    const archivedRow = page
-      .getByTestId('run-review-queue-item')
-      .filter({ hasText: 'DEL-ARCHIVED' });
-    await expect(archivedRow.getByTestId('queue-item-archived')).toHaveText('Hidden');
+    // The fixture surfaces exactly one archived run, so the color-independent "Hidden" chip is
+    // unambiguous. (Scoping via the `run-review-queue-item` testid would not work for a navigable
+    // row: the testid sits on the absolutely-positioned overlay `<Link>` — the story 3.31
+    // stretched-link pattern — which has no text children, so a `hasText` filter excludes it.)
+    await expect(page.getByTestId('queue-item-archived')).toHaveText('Hidden');
 
     // The URL carries the filter so a reload/deep-link keeps the archived view.
     await expect(page).toHaveURL(new RegExp('includeArchived=true'));
