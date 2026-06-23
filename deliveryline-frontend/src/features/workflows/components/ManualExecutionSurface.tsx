@@ -111,11 +111,7 @@ export function ManualExecutionSurface({
   // submit hasn't advanced the run, and a rejection leaves it parked). The SUCCESS announcement is
   // hoisted to the route via `onSubmitted` because a successful submit unmounts this surface.
   const announced = useLiveAnnouncement(
-    submit.isPending
-      ? manualArtifactSubmitting
-      : submit.isError
-        ? manualArtifactRejected
-        : '',
+    submit.isPending ? manualArtifactSubmitting : submit.isError ? manualArtifactRejected : '',
   );
 
   // Signal the route (which owns a persistent live region) to announce the result, since this surface
@@ -194,7 +190,9 @@ export function ManualExecutionSurface({
 
       {canObtainBundle ? (
         <div className="mb-4" data-testid="manual-bundle-region">
-          <h3 className="mb-1 text-meta uppercase tracking-wide text-text-tertiary">Input bundle</h3>
+          <h3 className="mb-1 text-meta uppercase tracking-wide text-text-tertiary">
+            Input bundle
+          </h3>
           {bundleQuery.isPending ? (
             <p className="text-meta text-text-tertiary">Loading the input bundle…</p>
           ) : bundleQuery.isError ? (
@@ -309,7 +307,12 @@ export function ManualExecutionSurface({
       ) : null}
 
       {/* AC7 — submit start/result announced via an aria-live region. */}
-      <div role="status" aria-live="polite" className="sr-only" data-testid="manual-submit-announcer">
+      <div
+        role="status"
+        aria-live="polite"
+        className="sr-only"
+        data-testid="manual-submit-announcer"
+      >
         {announced}
       </div>
     </section>
