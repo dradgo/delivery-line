@@ -2095,10 +2095,12 @@ public class RunnerBroker {
    * implementationPlan} or {@code prOutput}. (OQ-5: the mapping lives in the broker, where the
    * result is parsed.)
    *
-   * <p>Package-private (story 3d-4) so {@code ManualArtifactSubmissionService} validates an
+   * <p>Public (story 3d-4 review) so {@code ManualArtifactSubmissionService} — relocated to {@code
+   * application.workflow} as a REST/CLI-facing command service (the thin-controller boundary
+   * forbids REST adapters from reaching into {@code application.runner}) — validates an
    * operator-submitted artifact's type against the SAME stage rule the automated path uses.
    */
-  static java.util.Set<ArtifactType> allowedArtifactTypesForStage(RunnerStage stage) {
+  public static java.util.Set<ArtifactType> allowedArtifactTypesForStage(RunnerStage stage) {
     return switch (stage) {
       case INVESTIGATION -> java.util.EnumSet.of(ArtifactType.SPEC);
       case EXECUTION ->
@@ -2952,11 +2954,14 @@ public class RunnerBroker {
    * observedRunnerExecutionIds} so the validator can flag a 2nd arrival as {@code
    * DUPLICATE_RUNNER_EXECUTION_ID}.
    *
-   * <p>Package-private (story 3d-4) so {@code ManualArtifactSubmissionService} validates an
+   * <p>Public (story 3d-4 review) so {@code ManualArtifactSubmissionService} — relocated to {@code
+   * application.workflow} as a REST/CLI-facing command service (the thin-controller boundary
+   * forbids REST adapters from reaching into {@code application.runner}) — validates an
    * operator-submitted result with the IDENTICAL context the broker builds for an automated result
    * (AC2 — no parallel weaker validation).
    */
-  ValidationContext buildResultValidationContext(String workflowRunId, String runnerExecutionId) {
+  public ValidationContext buildResultValidationContext(
+      String workflowRunId, String runnerExecutionId) {
     ValidationContext.Builder builder =
         ValidationContext.builder().maxPayloadBytes(RUNNER_RESULT_MAX_PAYLOAD_BYTES);
     builder.addKnownRunnerExecutionId(runnerExecutionId);

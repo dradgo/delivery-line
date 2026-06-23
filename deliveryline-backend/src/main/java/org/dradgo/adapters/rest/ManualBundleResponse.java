@@ -42,8 +42,8 @@ public record ManualBundleResponse(
           result.runnerExecutionId(),
           true,
           null,
-          result.bundle().contextBundleVersion(),
-          Base64.getEncoder().encodeToString(result.bundle().redactedPayload()));
+          result.contextBundleVersion(),
+          Base64.getEncoder().encodeToString(result.redactedPayload()));
     }
     return new ManualBundleResponse(
         result.workflowRunId(), result.runnerExecutionId(), false, result.reason(), null, null);

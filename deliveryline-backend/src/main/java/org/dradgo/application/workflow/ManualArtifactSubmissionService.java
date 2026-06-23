@@ -1,4 +1,4 @@
-package org.dradgo.application.runner;
+package org.dradgo.application.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,10 +17,10 @@ import java.util.Objects;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
-import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
@@ -339,10 +339,11 @@ public class ManualArtifactSubmissionService {
    * byte streams differ and an honest cross-channel retry under one key would surface a false
    * {@link DomainErrorCode#IDEMPOTENCY_KEY_CONFLICT} (review finding 2026-06-23). A payload that is
    * not parseable JSON (only reachable before validation rejects it) falls back to the raw bytes so
-   * the fingerprint stays deterministic. Package-private so {@code
-   * ManualArtifactSubmissionServiceTest} can pin the canonicalization invariant directly.
+   * the fingerprint stays deterministic. Public so {@code ManualArtifactSubmissionServiceTest} (in
+   * the {@code application.runner} test package) can pin the canonicalization invariant directly
+   * after this service relocated to {@code application.workflow}.
    */
-  static String fingerprint(
+  public static String fingerprint(
       String workflowRunId, byte[] payloadBytes, Map<String, byte[]> artifactContents) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");

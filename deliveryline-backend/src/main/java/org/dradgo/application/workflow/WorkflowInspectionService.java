@@ -2390,6 +2390,24 @@ public class WorkflowInspectionService {
     public boolean available() {
       return bundle != null;
     }
+
+    /**
+     * Story 3d-4 review — flattened accessor so the REST DTO ({@code ManualBundleResponse}) never
+     * reaches through this result into {@code application.runner.ContextBundle} (the
+     * thin-controller ArchUnit boundary forbids REST adapters from depending on {@code
+     * application.runner..}). Null when the bundle is unavailable.
+     */
+    public Integer contextBundleVersion() {
+      return bundle == null ? null : bundle.contextBundleVersion();
+    }
+
+    /**
+     * Story 3d-4 review — flattened accessor for the {@code SHAREABLE_REDACTED} bundle bytes, same
+     * boundary rationale as {@link #contextBundleVersion()}. Null when the bundle is unavailable.
+     */
+    public byte[] redactedPayload() {
+      return bundle == null ? null : bundle.redactedPayload();
+    }
   }
 
   /**
