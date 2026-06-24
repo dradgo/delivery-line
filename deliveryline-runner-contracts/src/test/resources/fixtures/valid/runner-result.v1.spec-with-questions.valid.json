@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_valid_spec_questions",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0004",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v4.md",
+      "questions": [
+        {
+          "questionId": "Q-001",
+          "questionText": "Confirm whether the export should include archived records."
+        },
+        {
+          "questionId": "Q-002",
+          "questionText": "Decide whether retries are user-configurable."
+        }
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated specification artifact with open questions",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

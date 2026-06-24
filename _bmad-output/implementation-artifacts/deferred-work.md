@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3e-1 (2026-06-24)
+
+- **No `maxItems` on `specArtifact.questions` / no `maxLength` on `questionText`.** The contract bounds `questionId` (≤128, pattern) but not the array size or text length, so a single spec result can mint an unbounded number of `open` clarification rows with unbounded `question_text` (bounded only by the 2 MB runner-result payload cap). Hardening, consistent with other unbounded arrays already in the contract; no production runner emits at that scale today. **Follow-up:** add `maxItems` + `questionText` `maxLength` (mirror a DB-side length CHECK on `question_text`). [`runner-result.v1.schema.json` · `V8` clarifications DDL]
+
 ## Deferred from: code review of story-3d-7 (2026-06-24, re-review)
 
 - **OpenAPI/TS nullable degradation on `fiveHour`/`weekly` `$ref` siblings (#326).** `@Schema(nullable=true)` on a `$ref`-typed property renders the contradictory `{$ref, "type":"null"}` form (a swagger-core serializer quirk), so generated `schema.d.ts` drops `| null` and a strict future consumer NPEs on the `not_exposed` path. There is no annotation attribute to inject a `null` branch into a `$ref`; a regen-proof fix needs a swagger-core version bump or a springdoc `PropertyCustomizer`/`OpenApiCustomizer` bean (new global infra touching every nullable ref across the API — broader OpenAPI churn than this story warrants). The `actorRole` `"type":"null"` half is shared/pre-existing across all 4 gated endpoints and is harmless (openapi-typescript still emits a correct union). Runtime-safe today (live FE guards `window != null`). **Follow-up:** introduce a project-wide springdoc nullable-`$ref` customizer. [`ProviderUsageStatusResponse.java` · `openapi.json` · `schema.d.ts`]

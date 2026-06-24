@@ -54,6 +54,16 @@
       "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-metadata-spoofing.json",
       "target": "RUNNER_RESULT",
       "expectedCode": "METADATA_SPOOFING_DETECTED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-question-missing-text.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-question-malformed-id.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
     }
   ]
 }

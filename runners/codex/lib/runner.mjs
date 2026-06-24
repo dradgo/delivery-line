@@ -290,6 +290,65 @@ function buildProviderUsage(authVar) {
   return { signalState: 'not_exposed', accountLabel, asOf };
 }
 
+// ===== Story 3e-1 — clarifications fence split (BYTE-IDENTICAL in both runner.mjs files) =====
+// The spec (investigation) stage agent may raise OPEN CLARIFYING QUESTIONS alongside the
+// specification it writes to stdout, using a fence convention mirroring the OpenSpec fence (3a-8):
+//   ```clarifications
+//   [{ "questionId": "Q-001", "questionText": "..." }]
+//   ```
+// This helper lifts that block out of the agent stdout: it returns the parsed `questions` array
+// (each entry coerced to {questionId, questionText}; malformed entries dropped) and the
+// `strippedStdout` with the fence removed so the persisted spec.md never carries the raw block.
+// A missing/empty/garbage block is NON-FATAL (logged to stderr, treated as no questions) — a
+// clarification problem NEVER fails spec delivery (Trap T-ADDITIVE-NEVER-BLOCKS). When no fence is
+// present the original stdout is returned UNCHANGED (no re-join) so a no-question result stays
+// byte-identical to pre-3e.
+function splitClarificationsFence(stdout) {
+  if (typeof stdout !== 'string' || stdout.length === 0) {
+    return { questions: [], strippedStdout: typeof stdout === 'string' ? stdout : '' };
+  }
+  const lines = stdout.split(/\r?\n/);
+  const OPEN = /^```clarifications\s*$/;
+  const CLOSE = /^```\s*$/;
+  let openIdx = -1;
+  let closeIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (openIdx === -1) {
+      if (OPEN.test(lines[i])) openIdx = i;
+    } else if (CLOSE.test(lines[i])) {
+      closeIdx = i;
+      break;
+    }
+  }
+  if (openIdx === -1 || closeIdx === -1) {
+    return { questions: [], strippedStdout: stdout };
+  }
+  const body = lines.slice(openIdx + 1, closeIdx).join('\n');
+  let questions = [];
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed)) {
+      questions = parsed
+        .filter(
+          (q) =>
+            q &&
+            typeof q === 'object' &&
+            typeof q.questionId === 'string' &&
+            typeof q.questionText === 'string',
+        )
+        .map((q) => ({ questionId: q.questionId, questionText: q.questionText }));
+    }
+  } catch {
+    process.stderr.write(
+      'runner.mjs: clarifications fence is not valid JSON — ignoring (no questions)\n',
+    );
+    questions = [];
+  }
+  const strippedStdout = lines.slice(0, openIdx).concat(lines.slice(closeIdx + 1)).join('\n');
+  return { questions, strippedStdout };
+}
+// ===== end clarifications fence split =====
+
 function commandBuild(args) {
   const doc = readBundle(args.bundle);
   const stage = args.stage;
@@ -344,14 +403,20 @@ function commandBuild(args) {
 
   let artifact;
   if (stage === 'spec') {
+    const { questions, strippedStdout } = splitClarificationsFence(rawOutput);
     const contentReference = `artifacts/${workflowRunId}/spec.md`;
     const artifactPath = join(dirname(out), contentReference);
-    writeAtomically(artifactPath, rawOutput || summary);
+    writeAtomically(artifactPath, strippedStdout || summary);
     artifact = {
       artifactId,
       artifactType: 'spec',
       contentReference,
     };
+    // Story 3e-1 — attach OPTIONAL open clarifications only when the agent fenced >=1
+    // (never `questions: []`, so a no-question result stays byte-identical to pre-3e).
+    if (questions.length > 0) {
+      artifact.questions = questions;
+    }
   } else if (stage === 'implementationPlan') {
     const steps = nonEmptyLines.slice(0, 50);
     artifact = {

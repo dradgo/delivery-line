@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_invalid_question_malformed_id",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0006",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v6.md",
+      "questions": [
+        {
+          "questionId": "Q 001 has spaces",
+          "questionText": "This question has a malformed id."
+        }
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated specification artifact",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

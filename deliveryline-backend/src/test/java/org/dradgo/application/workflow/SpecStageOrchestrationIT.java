@@ -50,6 +50,9 @@ class SpecStageOrchestrationIT {
   @Autowired private WorkflowInspectionService inspectionService;
   @Autowired private RunnerExecutionQueue runnerExecutionQueue;
 
+  @Autowired
+  private org.dradgo.application.clarification.spi.ClarificationReadPort clarificationReadPort;
+
   // Clean both before and after so residue leaked by a prior IT on the reused Testcontainers
   // Postgres (e.g. an active LIN-101 integration_links row) cannot cross-run-conflict this class's
   // LIN-101 submits regardless of class execution order.
@@ -145,6 +148,13 @@ class SpecStageOrchestrationIT {
                 + " (select id from workflow_runs where public_id = ?) and artifact_type = 'spec'",
             Integer.class,
             runId));
+
+    // Story 3e-1 parity: the question-less happy-spec scenario carries no specArtifact.questions,
+    // so
+    // the broker's clarification create seam is a no-op — a default run stays byte-identical to
+    // pre-3e (zero clarifications). The question-bearing path is pinned by
+    // SpecClarificationIngestIT.
+    assertTrue(clarificationReadPort.listByWorkflowRunId(runId).isEmpty());
   }
 
   @Test

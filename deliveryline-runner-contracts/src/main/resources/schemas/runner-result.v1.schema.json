@@ -222,6 +222,28 @@
             "contentReference": {
               "type": "string",
               "minLength": 1
+            },
+            "questions": {
+              "$comment": "Story 3e-1 (FR10) — OPTIONAL additive: open clarifying questions the spec runner lifted from a fenced ```clarifications block in agent stdout. Spec-stage only (NOT on implementationPlan/prOutput). Absent when the agent raised none (never emitted as []), so a no-question result stays byte-identical to pre-3e. Additive-optional pattern (3d-7 providerUsage) — declared here because specArtifact is unevaluatedProperties:false, but NOT in required and NO schemaVersion bump.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "questionId",
+                  "questionText"
+                ],
+                "properties": {
+                  "questionId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]{1,128}$"
+                  },
+                  "questionText": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
             }
           }
         }

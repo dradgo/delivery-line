@@ -24,6 +24,7 @@
     "artifact.lineageRecovered",
     "integration.linked",
     "export.created",
+    "clarification.raised",
     "clarification.answered",
     "clarification.accepted",
     "clarification.incorporated",

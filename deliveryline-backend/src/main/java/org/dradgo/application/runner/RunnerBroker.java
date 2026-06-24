@@ -142,6 +142,15 @@ public class RunnerBroker {
   private final java.util.function.Supplier<
           org.dradgo.application.integration.IntegrationLinkService>
       integrationLinkServiceSupplier;
+  // Story 3e-1 — the spec-runner question handler (CREATE half of the clarification loop), resolved
+  // LAZILY through a Supplier (same pattern as the orchestration/integration callbacks): the
+  // @Autowired ctor wires an ObjectProvider::getIfAvailable supplier. Supplies null in the
+  // package-private test ctors and lean contexts, so the clarification create seam stays a
+  // byte-identical no-op there. The broker NEVER touches ClarificationWritePort directly — it
+  // delegates the whole per-result batch here (keeps the broker free of a clarification-write dep).
+  private final java.util.function.Supplier<
+          org.dradgo.application.clarification.ClarificationIngestService>
+      clarificationIngestServiceSupplier;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate dispatchTransactionTemplate;
   private final TransactionTemplate perItemTransactionTemplate;
@@ -269,7 +278,13 @@ public class RunnerBroker {
       // seam stays a no-op where the bean is absent (lean/mock contexts).
       org.springframework.beans.factory.ObjectProvider<
               org.dradgo.application.integration.IntegrationLinkService>
-          integrationLinkServiceProvider) {
+          integrationLinkServiceProvider,
+      // Story 3e-1 — the spec-runner question handler. ObjectProvider keeps the package-private
+      // test
+      // ctors stable; resolves to null when the bean is absent (lean/mock contexts) → no-op ingest.
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.clarification.ClarificationIngestService>
+          clarificationIngestServiceProvider) {
     this(
         recordPort,
         eventPort,
@@ -293,7 +308,12 @@ public class RunnerBroker {
             workflowOrchestrationServiceProvider::getIfAvailable,
         ticketSummaryProvider,
         (java.util.function.Supplier<org.dradgo.application.integration.IntegrationLinkService>)
-            integrationLinkServiceProvider::getIfAvailable);
+            integrationLinkServiceProvider::getIfAvailable,
+        // Lazy: resolved at handleSuccess time. No cycle (the ingest service does not depend on the
+        // broker), but kept lazy for ctor-stability symmetry with the other callbacks.
+        (java.util.function.Supplier<
+                org.dradgo.application.clarification.ClarificationIngestService>)
+            clarificationIngestServiceProvider::getIfAvailable);
   }
 
   RunnerBroker(
@@ -331,6 +351,7 @@ public class RunnerBroker {
         null,
         () -> null,
         null,
+        () -> null,
         () -> null);
   }
 
@@ -371,6 +392,7 @@ public class RunnerBroker {
         repositoryWorkspaceService,
         () -> null,
         null,
+        () -> null,
         () -> null);
   }
 
@@ -395,7 +417,9 @@ public class RunnerBroker {
           workflowOrchestrationServiceSupplier,
       TicketSummaryProvider ticketSummaryProvider,
       java.util.function.Supplier<org.dradgo.application.integration.IntegrationLinkService>
-          integrationLinkServiceSupplier) {
+          integrationLinkServiceSupplier,
+      java.util.function.Supplier<org.dradgo.application.clarification.ClarificationIngestService>
+          clarificationIngestServiceSupplier) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -425,6 +449,10 @@ public class RunnerBroker {
     this.ticketSummaryProvider = ticketSummaryProvider;
     this.integrationLinkServiceSupplier =
         integrationLinkServiceSupplier == null ? () -> null : integrationLinkServiceSupplier;
+    this.clarificationIngestServiceSupplier =
+        clarificationIngestServiceSupplier == null
+            ? () -> null
+            : clarificationIngestServiceSupplier;
     this.objectMapper = new ObjectMapper();
   }
 
@@ -468,6 +496,7 @@ public class RunnerBroker {
         repositoryWorkspaceService,
         () -> workflowOrchestrationService,
         null,
+        () -> null,
         () -> null);
   }
 
@@ -1815,6 +1844,19 @@ public class RunnerBroker {
               error.toString());
         }
       }
+
+      // Story 3e-1 (AC4/AC5) — CREATE half of the clarification loop. At the spec (INVESTIGATION)
+      // stage ONLY, turn the result's specArtifact.questions into `open` clarifications pinned to
+      // the just-ingested spec artifact + version. Positioned AFTER the SPEC markArtifactAvailable
+      // block so the artifact exists + is available, and delegated to a best-effort helper so a
+      // creation failure NEVER unwinds the completed run — the run stays correctly advanced to
+      // WaitingForSpecApproval with the spec available, and the clarifications simply re-create on
+      // a
+      // re-harvest (deterministic idempotency key). EXECUTION-stage results carry no spec
+      // questions.
+      if (artifactType == ArtifactType.SPEC && row.stage() == RunnerStage.INVESTIGATION) {
+        ingestSpecClarifications(runnerExecutionId, workflowRunId, opResult, ref, correlationId);
+      }
     }
 
     if (artifactIngestionFailed) {
@@ -2071,6 +2113,71 @@ public class RunnerBroker {
             workflowRunId,
             executionSubStage);
       }
+    }
+  }
+
+  /**
+   * Story 3e-1 (AC4/AC5) — best-effort creation of {@code open} clarifications from a spec result's
+   * {@code specArtifact.questions}. Delegates the whole batch to {@link ClarificationIngestService}
+   * (resolved lazily so the broker carries no eager clarification-write dependency). Reads the
+   * questions off the SAME {@code ref} JsonNode the artifact was ingested from; an absent/empty
+   * array is a no-op. Swallows ALL {@link RuntimeException}s (including a missing-bean / no-ambient
+   * transaction case and any per-batch failure) so a creation problem NEVER unwinds the completed
+   * run — the run stays advanced to {@code WaitingForSpecApproval} with the spec available and the
+   * clarifications simply re-create on a re-harvest (deterministic idempotency key). Mirrors the
+   * SPEC {@code markArtifactAvailable} best-effort guard rationale.
+   */
+  private void ingestSpecClarifications(
+      String runnerExecutionId,
+      String workflowRunId,
+      RecordArtifactOperationResult opResult,
+      JsonNode ref,
+      String correlationId) {
+    JsonNode questionsNode = ref.path("questions");
+    if (!questionsNode.isArray() || questionsNode.isEmpty()) {
+      return;
+    }
+    org.dradgo.application.clarification.ClarificationIngestService ingestService =
+        clarificationIngestServiceSupplier.get();
+    if (ingestService == null) {
+      log.warn(
+          "spec clarifications present but ClarificationIngestService is not wired — skipping "
+              + "(no-op) runnerExecutionId={} workflowRunId={} questionCount={}",
+          runnerExecutionId,
+          workflowRunId,
+          questionsNode.size());
+      return;
+    }
+    try {
+      java.util.List<org.dradgo.application.clarification.ClarificationIngestService.RaisedQuestion>
+          questions = new java.util.ArrayList<>();
+      for (JsonNode question : questionsNode) {
+        String questionId = question.path("questionId").asText(null);
+        String questionText = question.path("questionText").asText(null);
+        if (questionId != null && questionText != null) {
+          questions.add(
+              new org.dradgo.application.clarification.ClarificationIngestService.RaisedQuestion(
+                  questionId, questionText));
+        }
+      }
+      if (questions.isEmpty()) {
+        return;
+      }
+      ingestService.createOpenFromSpec(
+          workflowRunId,
+          opResult.artifact().publicId(),
+          opResult.artifact().version(),
+          questions,
+          runnerExecutionId,
+          correlationId);
+    } catch (RuntimeException error) {
+      log.warn(
+          "spec clarification ingest failed (best-effort — run stays advanced, re-creates on "
+              + "re-harvest) runnerExecutionId={} workflowRunId={} artifactId={} cause={}",
+          runnerExecutionId,
+          workflowRunId,
+          opResult.artifact().publicId(),
+          error.toString());
     }
   }
 

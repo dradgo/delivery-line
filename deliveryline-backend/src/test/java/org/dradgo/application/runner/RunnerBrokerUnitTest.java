@@ -568,6 +568,7 @@ class RunnerBrokerUnitTest {
             repoService,
             () -> null,
             ticketProvider,
+            () -> null,
             () -> null);
 
     RepositoryWorkspaceService.RepositoryMount mount =
@@ -3107,7 +3108,8 @@ class RunnerBrokerUnitTest {
         repositoryWorkspaceService,
         () -> orchestration,
         null,
-        () -> linkService);
+        () -> linkService,
+        () -> null);
   }
 
   private void stubArtifactRecordSuccess() {

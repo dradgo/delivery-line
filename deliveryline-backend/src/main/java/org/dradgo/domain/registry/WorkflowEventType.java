@@ -28,6 +28,13 @@ public enum WorkflowEventType implements RegistryValue {
   ARTIFACT_LINEAGE_RECOVERED("artifact.lineageRecovered"),
   INTEGRATION_LINKED("integration.linked"),
   EXPORT_CREATED("export.created"),
+  // Story 3e-1 (FR10) — appended once per OPEN clarification the spec-runner question handler
+  // (ClarificationIngestService) creates from a spec result's specArtifact.questions, inside the
+  // broker's best-effort post-completion seam. Carries the already-allow-listed clarificationId /
+  // artifactId / questionId detail keys. NOT a workflow-state change (priorState ==
+  // resultingState == null), like clarification.answered. The CREATE half of the clarification loop
+  // (the answer/accept/incorporate transitions already existed; the create caller never did).
+  CLARIFICATION_RAISED("clarification.raised"),
   CLARIFICATION_ANSWERED("clarification.answered"),
   CLARIFICATION_ACCEPTED("clarification.accepted"),
   CLARIFICATION_INCORPORATED("clarification.incorporated"),

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_mockspecq0000001",
+      "artifactType": "spec",
+      "contentReference": "spec/v1.json",
+      "questions": [
+        {
+          "questionId": "Q-IT-001",
+          "questionText": "Confirm whether archived records are included in the export."
+        }
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Mock investigation completed; spec drafted with one open question.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "0000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}
