@@ -238,6 +238,91 @@ rather than yielding silent partial plaintext.
 
 ---
 
+## Epic 3d vocabulary (per-step execution control)
+
+These terms are registered here per glossary discipline; Epic 6 story 6.2 normalizes wording.
+
+### reviewer model
+
+A per-project (optionally per-stage) **second LLM**, resolved through the project's
+[connector](#connector)/[credential](#credential) model, that reviews a step's output and
+produces an [advisory verdict](#advisory-verdict). It is **strictly opt-in per project** — a
+project with no reviewer binding behaves byte-identically to before — and **never gates
+progression** in this epic (a gating-capable `reviewer_gating_enabled` flag exists in the data
+model but is not consulted). The verdict records which model reviewed and which produced the
+output, so a same-model self-review is detectable.
+
+**See also:** [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md),
+[`adr/0026-per-step-advisory-reviewer-model.md`](adr/0026-per-step-advisory-reviewer-model.md),
+[advisory verdict](#advisory-verdict).
+
+### advisory verdict
+
+The [reviewer model](#reviewer-model)'s structured outcome — `pass` / `concern` / `fail` plus a
+redacted rationale and the reviewer/producer model identities — surfaced in the `WaitingForReview`
+Decision Bar's **Reviewer Verdict Panel** as a second opinion. It is **presentational and
+advisory only**: it carries no governed action, never auto-approves or auto-rejects, and the
+**human approve/reject decision always governs**. A no-binding project yields an `unavailable`
+verdict (reason `no_reviewer_configured`) and renders nothing; a failed reviewer run degrades to a
+"review unavailable" reason without ever blocking the step.
+
+**See also:** [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md),
+[`adr/0026-per-step-advisory-reviewer-model.md`](adr/0026-per-step-advisory-reviewer-model.md),
+[reviewer model](#reviewer-model).
+
+### manual execution
+
+A first-class **`manual`** runner kind that, instead of launching a container, emits the step's
+context bundle and parks the [run](#run) in [WaitingForManualExecution](#waitingformanualexecution)
+so an operator can run the agent **by hand** and submit the resulting artifact. The submitted
+artifact re-enters the **same** runner-contracts output validation and the **same** review
+pipeline as an automated runner's output — manual mode changes the *producer*, not the contract,
+and bypasses no validation or review. It exists because an agent's unattended/headless auth may be
+unavailable.
+
+**See also:** [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md),
+[`adr/0024-manual-execution-mode.md`](adr/0024-manual-execution-mode.md),
+[WaitingForManualExecution](#waitingformanualexecution).
+
+### WaitingForManualExecution
+
+The workflow state a [run](#run) sits in while awaiting a manually-produced artifact (see
+[manual execution](#manual-execution)). It is entered on a `manual`-kind dispatch (which appends a
+`manual.executionRequested` event and emits the context bundle) and exited on a valid
+manual-artifact submission (`manual.artifactSubmitted`) into the normal post-step state
+(`WaitingForReview`). An invalid submission leaves the run parked and resubmittable.
+
+**See also:** [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md),
+[manual execution](#manual-execution).
+
+### diagnostic console
+
+A **read-only, live-only, governed-history-recorded, localhost-only** console attached to a
+*running* runner container for in-the-moment diagnosis. It **cannot mutate the run or the
+workspace** (no input path exists end-to-end — no stdin at the docker layer, no input widget on
+the UI; no host shell), records **only session metadata** (`console.opened` / `console.closed`
+events; console I/O is **not** durably stored), and changes **nothing** persisted or exported. A
+transient secret may flash to the single local operator before post-hoc redaction — an accepted,
+documented residual bounded to the already-trusted localhost boundary.
+
+**See also:** [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md),
+[`adr/0025-live-observability-and-readonly-console.md`](adr/0025-live-observability-and-readonly-console.md).
+
+### archived execution
+
+A [run](#run) soft-hidden from default operator views via an `archived_at` marker. Archiving is
+**reversible** (un-hide), **never deletes rows and never touches `workflow_events`** (append-only
+audit history, FR47), and leaves the default queue while remaining **audit-queryable** (an
+"include archived" filter). The shipped trigger is a manual hide/un-hide (REST + CLI,
+allowed-action-gated, audited); auto-archive on ticket removal is optional and default-off. It is
+distinct from **true purge** — physical deletion / retention, an Epic 5 concern not available
+here.
+
+**See also:** [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md),
+[`adr/0027-obsolete-execution-soft-hide.md`](adr/0027-obsolete-execution-soft-hide.md).
+
+---
+
 ## Linked from
 
 This glossary is referenced from:
@@ -246,6 +331,7 @@ This glossary is referenced from:
 - [`pm-loop-walkthrough.md`](pm-loop-walkthrough.md) — "Concepts you just used" footer.
 - [`execution-walkthrough.md`](execution-walkthrough.md) — "Concepts you just used" footer (Epic 3 vocabulary).
 - [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md) — "Concepts you just used" footer (Epic 3c vocabulary).
+- [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md) — "Concepts you just used" footer (Epic 3d vocabulary).
 - [`setup-local.md`](setup-local.md) — "See also" footer.
 
 Epic 6 stories (6.1 / 6.2) will wire cross-links from `failure-recovery-walkthrough.md`

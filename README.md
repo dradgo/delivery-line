@@ -13,6 +13,7 @@ dependencies.
 - **Product Manager reviewing a spec?** → [`docs/pm-loop-walkthrough.md`](docs/pm-loop-walkthrough.md)
 - **Developer reviewing implementation output?** → [`docs/execution-walkthrough.md`](docs/execution-walkthrough.md)
 - **Configuring a project (connectors + credentials)?** → [`docs/project-configuration-walkthrough.md`](docs/project-configuration-walkthrough.md)
+- **Reviewing, running manually, or observing a step?** → [`docs/per-step-execution-control-walkthrough.md`](docs/per-step-execution-control-walkthrough.md)
 - **Run failed?** → [`docs/failure-recovery-walkthrough.md`](docs/failure-recovery-walkthrough.md)
 - **All CLI commands** → [`docs/cli/`](docs/cli/README.md) (start at the CLI index for
   exit-code bands, idempotency-key contract, and per-command references —
