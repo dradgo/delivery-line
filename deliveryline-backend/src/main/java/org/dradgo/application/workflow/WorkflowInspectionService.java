@@ -28,6 +28,8 @@ import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.runner.ContextBundle;
+import org.dradgo.application.runner.ProviderUsageSnapshotView;
+import org.dradgo.application.runner.ProviderUsageStatusService;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerWorkerPoolProperties;
@@ -146,6 +148,52 @@ public class WorkflowInspectionService {
   void setStepReviewReadPort(
       org.dradgo.application.review.spi.StepReviewReadPort stepReviewReadPort) {
     this.stepReviewReadPort = stepReviewReadPort;
+  }
+
+  // Story 3d-7 (FR69, AC5) — the provider-usage read service, backing getProviderUsageStatus.
+  // Optional SETTER injection (mirroring stepReviewReadPort) so the lean `new
+  // WorkflowInspectionService(...)` test ctors stay untouched; production Spring wires the
+  // application.runner @Service. Routing the read through this application-service surface keeps
+  // the
+  // adapters.rest controller off the forbidden application.runner package
+  // (REST_CONTROLLERS_STAY_THIN
+  // [[story-3d-4-manual-artifact-submission-implementation]]).
+  private ProviderUsageStatusService providerUsageStatusService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProviderUsageStatusService(ProviderUsageStatusService providerUsageStatusService) {
+    this.providerUsageStatusService = providerUsageStatusService;
+  }
+
+  /**
+   * Story 3d-7 (FR69, AC5) — latest per-credential provider usage/limit status for a run, projected
+   * into an {@code application.workflow} view so the REST/CLI transports never reach into {@code
+   * application.runner}. Tolerant of absence: returns {@link Optional#empty()} when no snapshot has
+   * been captured (legacy/default runner) or when the read service is not wired (lean profiles).
+   */
+  @Transactional(readOnly = true)
+  public Optional<ProviderUsageStatusView> getProviderUsageStatus(String workflowRunId) {
+    if (providerUsageStatusService == null) {
+      return Optional.empty();
+    }
+    return providerUsageStatusService
+        .getLatestForRun(workflowRunId)
+        .map(ProviderUsageStatusView::from);
+  }
+
+  /**
+   * Story 3d-7 (FR69, AC5 / Trap T5) — true when {@code actionWireValue} is in the run×role
+   * allowed-action set. Lets transports gate on the wire string WITHOUT referencing the {@link
+   * AllowedAction} enum directly (story 2.14 AC9 boundary — only this service +
+   * AllowedActionsResponse may touch the enum). Throws the standard RUN_NOT_FOUND /
+   * INVALID_ID_PREFIX / UNKNOWN_ACTOR_ROLE Problem Details first, exactly as {@link
+   * #getAllowedActions}.
+   */
+  @Transactional(readOnly = true)
+  public boolean isActionAllowed(String workflowRunId, String actorRole, String actionWireValue) {
+    return getAllowedActions(workflowRunId, actorRole).actions().stream()
+        .map(AllowedAction::value)
+        .anyMatch(value -> value.equals(actionWireValue));
   }
 
   /**
@@ -293,6 +341,50 @@ public class WorkflowInspectionService {
       boolean selfReview,
       String unavailableReason,
       OffsetDateTime createdAt) {}
+
+  /**
+   * Story 3d-7 (FR69, AC5) — {@code application.workflow} projection of the latest provider
+   * usage/limit snapshot, so the REST/CLI transports consume an application-service view rather
+   * than the {@code application.runner} read type. NON-SECRET by construction: window numbers,
+   * timestamps, and the non-secret account label only. {@code signalState == not_exposed} ⇒ both
+   * windows are empty and the surface degrades to the documented "not exposed by provider"
+   * indicator.
+   */
+  public record ProviderUsageStatusView(
+      String signalState,
+      String accountReference,
+      UsageWindowView fiveHour,
+      UsageWindowView weekly,
+      OffsetDateTime asOf,
+      OffsetDateTime capturedAt) {
+
+    static ProviderUsageStatusView from(ProviderUsageSnapshotView view) {
+      return new ProviderUsageStatusView(
+          view.signalState(),
+          view.accountReference(),
+          UsageWindowView.from(view.fiveHour()),
+          UsageWindowView.from(view.weekly()),
+          view.asOf(),
+          view.capturedAt());
+    }
+
+    /** A single provider window (5h or weekly). All fields nullable. */
+    public record UsageWindowView(
+        Double usedFraction, Integer used, Integer limit, OffsetDateTime resetsAt) {
+
+      static UsageWindowView from(ProviderUsageSnapshotView.UsageWindow window) {
+        return window == null
+            ? null
+            : new UsageWindowView(
+                window.usedFraction(), window.used(), window.limit(), window.resetsAt());
+      }
+
+      /** True when no field carries a value (the not-exposed / empty window). */
+      public boolean isEmpty() {
+        return usedFraction == null && used == null && limit == null && resetsAt == null;
+      }
+    }
+  }
 
   /**
    * Story 2.11 AC9: status-grouped clarifications for the supplied workflow run. Backs the UI

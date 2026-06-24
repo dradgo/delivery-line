@@ -9,9 +9,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.Optional;
 import org.dradgo.application.observability.MdcKeys;
-import org.dradgo.application.runner.ProviderUsageSnapshotView;
-import org.dradgo.application.runner.ProviderUsageStatusService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
+import org.dradgo.application.workflow.WorkflowInspectionService.ProviderUsageStatusView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -48,13 +47,9 @@ public class ProviderUsageStatusController {
   /** AC5 wire value of {@code AllowedAction.VIEW_PROVIDER_USAGE_STATUS} (string-gated). */
   private static final String VIEW_PROVIDER_USAGE_STATUS_ACTION = "view_provider_usage_status";
 
-  private final ProviderUsageStatusService providerUsageStatusService;
   private final WorkflowInspectionService workflowInspectionService;
 
-  public ProviderUsageStatusController(
-      ProviderUsageStatusService providerUsageStatusService,
-      WorkflowInspectionService workflowInspectionService) {
-    this.providerUsageStatusService = providerUsageStatusService;
+  public ProviderUsageStatusController(WorkflowInspectionService workflowInspectionService) {
     this.workflowInspectionService = workflowInspectionService;
   }
 
@@ -135,8 +130,8 @@ public class ProviderUsageStatusController {
           MdcKeys.sanitizeForLog(workflowRunId));
       return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
-    Optional<ProviderUsageSnapshotView> snapshot =
-        providerUsageStatusService.getLatestForRun(workflowRunId);
+    Optional<ProviderUsageStatusView> snapshot =
+        workflowInspectionService.getProviderUsageStatus(workflowRunId);
     ProviderUsageStatusResponse body =
         snapshot
             .map(ProviderUsageStatusResponse::from)

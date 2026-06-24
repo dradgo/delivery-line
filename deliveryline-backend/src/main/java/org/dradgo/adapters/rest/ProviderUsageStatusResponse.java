@@ -2,7 +2,7 @@ package org.dradgo.adapters.rest;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
-import org.dradgo.application.runner.ProviderUsageSnapshotView;
+import org.dradgo.application.workflow.WorkflowInspectionService.ProviderUsageStatusView;
 
 /**
  * Story 3d-7 (FR69, AC5) — REST view of the latest per-credential provider usage/limit snapshot.
@@ -55,7 +55,7 @@ public record ProviderUsageStatusResponse(
   }
 
   /** Map a captured snapshot; a not-exposed/empty window becomes {@code null}. */
-  public static ProviderUsageStatusResponse from(ProviderUsageSnapshotView view) {
+  public static ProviderUsageStatusResponse from(ProviderUsageStatusView view) {
     return new ProviderUsageStatusResponse(
         true,
         view.signalState(),
@@ -66,7 +66,7 @@ public record ProviderUsageStatusResponse(
         view.capturedAt());
   }
 
-  private static UsageWindowResponse windowFrom(ProviderUsageSnapshotView.UsageWindow window) {
+  private static UsageWindowResponse windowFrom(ProviderUsageStatusView.UsageWindowView window) {
     if (window == null || window.isEmpty()) {
       return null;
     }

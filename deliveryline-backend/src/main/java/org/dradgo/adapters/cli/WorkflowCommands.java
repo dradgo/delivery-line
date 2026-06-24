@@ -582,12 +582,12 @@ public class WorkflowCommands {
     String resolvedCorrelation = scope.resolved();
     try {
       // Server-side gate (Trap T5): the same allowed-action matrix backing the REST endpoint + UI.
+      // Gate on the wire string via the inspection service so the CLI adapter never references the
+      // AllowedAction enum directly (story 2.14 AC9 boundary — ArchUnit
+      // allowed_action_derivation_lives_only_in_workflow_inspection_service).
       String role = actorRole == null ? null : actorRole.strip();
       boolean allowed =
-          workflowInspectionService
-              .getAllowedActions(runId, role)
-              .actions()
-              .contains(org.dradgo.domain.registry.AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+          workflowInspectionService.isActionAllowed(runId, role, "view_provider_usage_status");
       String rendered;
       if (!allowed) {
         rendered = renderProviderUsageDenied(runId, format);
