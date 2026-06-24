@@ -300,33 +300,52 @@ function buildProviderUsage(authVar) {
 // (each entry coerced to {questionId, questionText}; malformed entries dropped) and the
 // `strippedStdout` with the fence removed so the persisted spec.md never carries the raw block.
 // A missing/empty/garbage block is NON-FATAL (logged to stderr, treated as no questions) — a
-// clarification problem NEVER fails spec delivery (Trap T-ADDITIVE-NEVER-BLOCKS). When no fence is
-// present the original stdout is returned UNCHANGED (no re-join) so a no-question result stays
-// byte-identical to pre-3e.
+// clarification problem NEVER fails spec delivery (Trap T-ADDITIVE-NEVER-BLOCKS).
+//
+// The fence is stripped ONLY when it parses to >=1 usable question: a no-fence, malformed, or
+// zero-question block returns the original stdout UNCHANGED, so (a) a no-question result stays
+// byte-identical to pre-3e and (b) a malformed/empty block is preserved in the spec rather than
+// silently vanishing (code-review 2026-06-24). The strip itself slices the ORIGINAL string at the
+// fence-line boundaries (never split-then-rejoin) so the surrounding spec bytes — CRLF line endings
+// and the trailing newline — survive verbatim (AC2 byte-identical guarantee).
 function splitClarificationsFence(stdout) {
   if (typeof stdout !== 'string' || stdout.length === 0) {
     return { questions: [], strippedStdout: typeof stdout === 'string' ? stdout : '' };
   }
-  const lines = stdout.split(/\r?\n/);
   const OPEN = /^```clarifications\s*$/;
   const CLOSE = /^```\s*$/;
-  let openIdx = -1;
-  let closeIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (openIdx === -1) {
-      if (OPEN.test(lines[i])) openIdx = i;
-    } else if (CLOSE.test(lines[i])) {
-      closeIdx = i;
+  // Scan on \n boundaries (mirroring split(/\r?\n/): a single \r immediately before a \n is part of
+  // the terminator, not the line content) while tracking byte offsets, so a successful strip can
+  // slice the original string instead of re-joining normalized lines.
+  let blockStart = -1; // offset of the opening fence line
+  let bodyStart = -1; // offset just past the opening fence line terminator
+  let bodyEnd = -1; // offset of the closing fence line
+  let blockEnd = -1; // offset just past the closing fence line terminator
+  let pos = 0;
+  while (pos < stdout.length) {
+    const nl = stdout.indexOf('\n', pos);
+    const eol = nl === -1 ? stdout.length : nl;
+    const nextPos = nl === -1 ? stdout.length : nl + 1;
+    const contentEnd = eol > pos && stdout[eol - 1] === '\r' ? eol - 1 : eol;
+    const line = stdout.slice(pos, contentEnd);
+    if (blockStart === -1) {
+      if (OPEN.test(line)) {
+        blockStart = pos;
+        bodyStart = nextPos;
+      }
+    } else if (CLOSE.test(line)) {
+      bodyEnd = pos;
+      blockEnd = nextPos;
       break;
     }
+    pos = nextPos;
   }
-  if (openIdx === -1 || closeIdx === -1) {
+  if (blockStart === -1 || blockEnd === -1) {
     return { questions: [], strippedStdout: stdout };
   }
-  const body = lines.slice(openIdx + 1, closeIdx).join('\n');
   let questions = [];
   try {
-    const parsed = JSON.parse(body);
+    const parsed = JSON.parse(stdout.slice(bodyStart, bodyEnd));
     if (Array.isArray(parsed)) {
       questions = parsed
         .filter(
@@ -344,7 +363,10 @@ function splitClarificationsFence(stdout) {
     );
     questions = [];
   }
-  const strippedStdout = lines.slice(0, openIdx).concat(lines.slice(closeIdx + 1)).join('\n');
+  if (questions.length === 0) {
+    return { questions: [], strippedStdout: stdout };
+  }
+  const strippedStdout = stdout.slice(0, blockStart) + stdout.slice(blockEnd);
   return { questions, strippedStdout };
 }
 // ===== end clarifications fence split =====

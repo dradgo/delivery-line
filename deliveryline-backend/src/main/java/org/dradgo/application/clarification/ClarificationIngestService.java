@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort.NewClarification;
 import org.dradgo.application.observability.MdcKeys;
@@ -43,8 +44,12 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><strong>Idempotency:</strong> the caller supplies a DETERMINISTIC key per ({@code
  * runnerExecutionId}, {@code questionId}) so a legitimate re-harvest / scratch-replay does not
- * double-insert. A per-question {@code IDEMPOTENCY_KEY_CONFLICT} {@link DomainException} (the
- * DB-level {@code uq_clarifications_idempotency_key} backstop) is caught and logged at INFO as a
+ * double-insert. Each question is pre-flighted via {@link
+ * ClarificationReadPort#existsByIdempotencyKey} so a replay never reaches {@code insertOpen}'s
+ * {@code saveAndFlush} — flushing a conflict would poison the broker's shared transaction and
+ * strand the completed run (review D1). The per-question {@code IDEMPOTENCY_KEY_CONFLICT} {@link
+ * DomainException} catch (the DB-level {@code uq_clarifications_idempotency_key} backstop) remains
+ * as final defense-in-depth for the vanishing concurrent-TOCTOU window and is logged at INFO as a
  * benign duplicate — the remaining questions still proceed.
  *
  * <p><strong>Logging discipline (trap T12):</strong> NEVER logs {@code questionText} — only ids,
@@ -66,23 +71,27 @@ public class ClarificationIngestService {
   private static final String SYSTEM_ACTOR = "system";
 
   private final ClarificationWritePort clarificationWritePort;
+  private final ClarificationReadPort clarificationReadPort;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final Clock clock;
 
   @Autowired
   public ClarificationIngestService(
       ClarificationWritePort clarificationWritePort,
+      ClarificationReadPort clarificationReadPort,
       WorkflowEventWritePort workflowEventWritePort) {
-    this(clarificationWritePort, workflowEventWritePort, Clock.systemUTC());
+    this(clarificationWritePort, clarificationReadPort, workflowEventWritePort, Clock.systemUTC());
   }
 
   // Visible-for-tests constructor: lets unit tests inject a fixed Clock so raisedAt assertions are
   // deterministic without resorting to time-windowed greater-than checks.
   ClarificationIngestService(
       ClarificationWritePort clarificationWritePort,
+      ClarificationReadPort clarificationReadPort,
       WorkflowEventWritePort workflowEventWritePort,
       Clock clock) {
     this.clarificationWritePort = clarificationWritePort;
+    this.clarificationReadPort = clarificationReadPort;
     this.workflowEventWritePort = workflowEventWritePort;
     this.clock = clock;
   }
@@ -121,10 +130,15 @@ public class ClarificationIngestService {
     // whole
     // completion is rolled back, stranding the run in Investigating (re-harvested forever). The
     // runner-result schema does not enforce uniqueItems on questions[], so de-dup here (first wins)
-    // so a conflicting insert is never flushed. The per-question conflict catch below remains a
-    // defensive backstop for any future cross-call path.
+    // so a conflicting insert is never flushed. Cross-call replay/re-harvest is handled by the
+    // per-question pre-flight existence probe below (review D1); the DB-level conflict catch is the
+    // final defense-in-depth backstop for the vanishing concurrent-TOCTOU window.
     List<RaisedQuestion> uniqueQuestions = dedupeByQuestionId(questions);
     int collapsedCount = questions.size() - uniqueQuestions.size();
+    // Review 3e-1 (P3): stamp correlationId into the MDC so EVERY ingest log line on this
+    // INVESTIGATION branch (the summary + any benign-duplicate lines) is correlatable, not just the
+    // event-detail map. beginScope no-ops on null/blank, so a missing correlationId is harmless.
+    String priorCorrelationId = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, correlationId);
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, specArtifactId);
     try {
@@ -135,6 +149,22 @@ public class ClarificationIngestService {
         String clarificationId = PublicIdPrefixes.CLARIFICATION.next();
         String idempotencyKey =
             IDEMPOTENCY_KEY_PREFIX + runnerExecutionId + ":" + question.questionId();
+        // Review 3e-1 (D1): pre-flight existence probe so a cross-call replay / re-harvest of the
+        // SAME (runnerExecutionId, questionId) never reaches insertOpen's saveAndFlush — a flushed
+        // uq_clarifications_idempotency_key conflict poisons the broker's shared Hibernate session
+        // and strands the completed run (catching the translated DomainException does NOT heal it).
+        // This makes the IDEMPOTENCY_KEY_CONFLICT catch below a genuine DB-level backstop (it only
+        // fires on the vanishing TOCTOU window of two truly-concurrent batches inserting the same
+        // key) rather than a guaranteed strander. The probe joins the caller's RW tx.
+        if (clarificationReadPort.existsByIdempotencyKey(idempotencyKey)) {
+          duplicateCount++;
+          log.info(
+              "clarification ingest benign duplicate (idempotency key exists) workflowRunId={} specArtifactId={} questionId={}",
+              workflowRunId,
+              specArtifactId,
+              question.questionId());
+          continue;
+        }
         try {
           Clarification created =
               clarificationWritePort.insertOpen(
@@ -188,6 +218,7 @@ public class ClarificationIngestService {
     } finally {
       MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationId);
     }
   }
 

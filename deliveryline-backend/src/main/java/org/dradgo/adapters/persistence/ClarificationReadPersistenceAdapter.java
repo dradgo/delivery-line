@@ -77,6 +77,18 @@ public class ClarificationReadPersistenceAdapter implements ClarificationReadPor
   }
 
   @Override
+  public boolean existsByIdempotencyKey(String idempotencyKey) {
+    // Story 3e-1 review (D1): NO @Transactional(readOnly=true) — the probe must join the caller's
+    // existing read-write transaction (ClarificationIngestService runs MANDATORY inside the
+    // broker's
+    // per-result tx) so it observes rows inserted earlier in the same batch and never opens its own
+    // boundary. Mirrors the deliberate no-readOnly choice on findByPublicIdForUpdate.
+    boolean exists = clarificationRepository.existsByIdempotencyKey(idempotencyKey);
+    log.debug("clarification idempotency-key probe exists={}", exists);
+    return exists;
+  }
+
+  @Override
   @Transactional(readOnly = true)
   public List<Clarification> listByWorkflowRunId(String workflowRunPublicId) {
     log.info("clarification list-by-run entry workflowRunId={}", workflowRunPublicId);

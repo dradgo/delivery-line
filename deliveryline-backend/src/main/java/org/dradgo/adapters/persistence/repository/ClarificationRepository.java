@@ -25,6 +25,15 @@ public interface ClarificationRepository extends JpaRepository<ClarificationEnti
   Optional<ClarificationEntity> findByPublicId(String publicId);
 
   /**
+   * Story 3e-1 review (D1) — pre-flight idempotency-key existence probe. Deliberately NOT
+   * archived-filtered: {@code uq_clarifications_idempotency_key} (V8) is a TOTAL {@code UNIQUE
+   * (idempotency_key)}, so an archived row with the same key still collides on insert. The probe
+   * must mirror the constraint scope exactly to keep {@code ClarificationIngestService} from
+   * flushing a conflicting INSERT into the broker's shared transaction.
+   */
+  boolean existsByIdempotencyKey(String idempotencyKey);
+
+  /**
    * P30/D2 — pessimistic row-lock variant of {@link #findByPublicIdAndArchivedAtIsNull}. Emits
    * {@code SELECT ... FOR UPDATE} so a concurrent {@code ClarificationLifecycleService.mark*} on
    * the same row in another transaction blocks until the holder commits or rolls back. The caller

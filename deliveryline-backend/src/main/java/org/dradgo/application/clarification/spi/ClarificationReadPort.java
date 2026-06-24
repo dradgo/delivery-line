@@ -25,6 +25,19 @@ public interface ClarificationReadPort {
   Optional<Clarification> findByPublicId(String clarificationPublicId);
 
   /**
+   * Story 3e-1 review (D1) — pre-flight existence probe by idempotency key, used by {@link
+   * org.dradgo.application.clarification.ClarificationIngestService} to skip an insert that WOULD
+   * collide on {@code uq_clarifications_idempotency_key} rather than flush the conflict into the
+   * broker's shared transaction (a flushed conflict leaves the Hibernate session dirty and strands
+   * the completed run — catching the translated {@code IDEMPOTENCY_KEY_CONFLICT} does NOT heal it).
+   *
+   * <p>Deliberately NOT archived-filtered: the underlying UNIQUE constraint is total, so an
+   * archived row with the same key still collides. The probe MUST run inside the caller's
+   * read-write transaction so it observes rows inserted earlier in the same batch.
+   */
+  boolean existsByIdempotencyKey(String idempotencyKey);
+
+  /**
    * P30/D2 — pessimistic-lock variant of {@link #findByPublicId}. Emits {@code SELECT ... FOR
    * UPDATE} so concurrent lifecycle transitions on the same clarification row serialize. Caller
    * MUST be inside a transaction (the lifecycle service runs under the spec-rebuild outer

@@ -10,6 +10,8 @@ import org.dradgo.adapters.runner.MockRunnerAdapter;
 import org.dradgo.adapters.runner.MockRunnerScenario;
 import org.dradgo.adapters.runner.MockRunnerScenarioRegistry;
 import org.dradgo.application.clarification.Clarification;
+import org.dradgo.application.clarification.ClarificationIngestService;
+import org.dradgo.application.clarification.ClarificationIngestService.RaisedQuestion;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.queue.RunnerExecutionQueue;
@@ -73,6 +75,7 @@ class SpecClarificationIngestIT {
   @Autowired private MockRunnerAdapter mockRunnerAdapter;
   @Autowired private MockRunnerScenarioRegistry scenarioRegistry;
   @Autowired private ClarificationReadPort clarificationReadPort;
+  @Autowired private ClarificationIngestService clarificationIngestService;
   @Autowired private RunnerExecutionQueue runnerExecutionQueue;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -215,6 +218,61 @@ class SpecClarificationIngestIT {
         1,
         clarificationReadPort.listByWorkflowRunId(runId).size(),
         "re-harvest must not duplicate the clarification (idempotency key holds)");
+  }
+
+  @Test
+  void crossCallReplayOfTheSameKeyIsSkippedPreflightAndDoesNotStrandTheBatch() {
+    // Review 3e-1 (D1): the reHarvest test above never reaches insertOpen (onResult is rejected at
+    // the runner_duplicate_result validation layer first), so it does NOT exercise the
+    // clarification
+    // idempotency path. This test drives ClarificationIngestService DIRECTLY a second time with the
+    // SAME (runnerExecutionId, questionId) as the first run — the previously-broken path. The
+    // pre-flight existsByIdempotencyKey probe must skip the duplicate BEFORE saveAndFlush, so no
+    // uq_clarifications_idempotency_key conflict is flushed into the transaction (a flushed
+    // conflict
+    // would poison the session and roll the whole batch back). A genuinely-new question in the SAME
+    // call must still insert — proving the batch committed cleanly (session not poisoned).
+    String runId = driveSpecRun("xcall");
+    assertEquals(1, clarificationReadPort.listByWorkflowRunId(runId).size());
+
+    String specArtifactId =
+        jdbcTemplate.queryForObject(
+            "select public_id from artifacts where workflow_run_id ="
+                + " (select id from workflow_runs where public_id = ?) and artifact_type = 'spec'",
+            String.class,
+            runId);
+    String rex =
+        jdbcTemplate.queryForObject(
+            "select public_id from runner_executions where workflow_run_id ="
+                + " (select id from workflow_runs where public_id = ?)",
+            String.class,
+            runId);
+
+    // Same rex + same questionId Q-IT-001 (already created) PLUS a brand-new Q-IT-002.
+    int created =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    clarificationIngestService.createOpenFromSpec(
+                        runId,
+                        specArtifactId,
+                        1,
+                        List.of(
+                            new RaisedQuestion("Q-IT-001", "Replayed duplicate question?"),
+                            new RaisedQuestion("Q-IT-002", "Brand new on replay?")),
+                        rex,
+                        "corr-xcall"));
+
+    assertEquals(1, created, "only the brand-new question is inserted; the replay is skipped");
+    List<Clarification> after = clarificationReadPort.listByWorkflowRunId(runId);
+    assertEquals(
+        2, after.size(), "cross-call replay must not duplicate Q-IT-001 but must create Q-IT-002");
+    assertTrue(
+        after.stream().anyMatch(c -> "Q-IT-001".equals(c.questionId())),
+        "the originally-created clarification survives");
+    assertTrue(
+        after.stream().anyMatch(c -> "Q-IT-002".equals(c.questionId())),
+        "the genuinely-new clarification was committed (the batch was not rolled back)");
   }
 
   @Test

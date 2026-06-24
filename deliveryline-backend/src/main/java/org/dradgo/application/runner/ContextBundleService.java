@@ -205,6 +205,11 @@ public class ContextBundleService {
     }
 
     @Override
+    public boolean existsByIdempotencyKey(String idempotencyKey) {
+      throw unwired();
+    }
+
+    @Override
     public List<Clarification> listByWorkflowRunId(String workflowRunPublicId) {
       throw unwired();
     }

@@ -78,6 +78,50 @@ test('spec stage: malformed JSON in the fence is non-fatal — questions omitted
   assert.ok(!('questions' in artifact), 'malformed fence yields no questions field');
 });
 
+test('spec stage: a malformed fence is PRESERVED in spec.md (strip only on a successful parse)', () => {
+  const malformed = '```clarifications\n[{"questionId": "Q-001", oops not json}]\n```\n';
+  const { result, artifact, dir } = build({ stage: 'spec', summary: SPEC_BODY + malformed });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!('questions' in artifact), 'malformed fence yields no questions field');
+  const specMd = readFileSync(join(dir, 'artifacts/run_clarifications/spec.md'), 'utf8');
+  assert.ok(
+    specMd.includes('```clarifications'),
+    'a malformed clarifications block is kept in the spec, not silently dropped',
+  );
+});
+
+test('spec stage: a well-formed but question-less fence is PRESERVED (strip needs >=1 question)', () => {
+  const emptyFence = '```clarifications\n[]\n```\n';
+  const { result, artifact, dir } = build({ stage: 'spec', summary: SPEC_BODY + emptyFence });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!('questions' in artifact), 'an empty array yields no questions field');
+  const specMd = readFileSync(join(dir, 'artifacts/run_clarifications/spec.md'), 'utf8');
+  assert.ok(
+    specMd.includes('```clarifications'),
+    'a zero-question fence stays in the spec (the fence is only stripped when it yields questions)',
+  );
+});
+
+test('spec stage: stripping a valid fence preserves surrounding CRLF bytes and the trailing newline', () => {
+  const crlfBody = 'Line one\r\nLine two\r\n';
+  const crlfFence =
+    '```clarifications\r\n[{"questionId":"Q-CRLF","questionText":"Keep CRLF?"}]\r\n```\r\n';
+  const crlfTail = 'Tail line\r\n';
+  const { result, artifact, dir } = build({
+    stage: 'spec',
+    summary: crlfBody + crlfFence + crlfTail,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(artifact.questions, [{ questionId: 'Q-CRLF', questionText: 'Keep CRLF?' }]);
+  const specMd = readFileSync(join(dir, 'artifacts/run_clarifications/spec.md'), 'utf8');
+  assert.ok(!specMd.includes('```clarifications'), 'fence is removed');
+  assert.equal(
+    specMd,
+    crlfBody + crlfTail,
+    'the slice preserves surrounding CRLF endings + the trailing newline verbatim (no \\n normalization)',
+  );
+});
+
 test('implementationPlan stage: questions channel is spec-only (never attached to a plan)', () => {
   const { result, artifact } = build({
     stage: 'implementationPlan',

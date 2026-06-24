@@ -19,6 +19,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import org.dradgo.application.clarification.ClarificationIngestService.RaisedQuestion;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort.NewClarification;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
@@ -38,6 +39,8 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>N questions → N {@code insertOpen} calls (each with the deterministic idempotency key) + N
  *       {@code CLARIFICATION_RAISED} events carrying clarificationId/artifactId/questionId;
+ *   <li>a pre-flight idempotency-key hit (review D1) skips the insert entirely so no conflicting
+ *       {@code saveAndFlush} is issued — the remaining questions still proceed;
  *   <li>an {@code IDEMPOTENCY_KEY_CONFLICT} on one question is swallowed as a benign duplicate and
  *       the remaining questions still proceed;
  *   <li>an empty/null question list is a no-op (no SPI calls);
@@ -54,9 +57,10 @@ class ClarificationIngestServiceTest {
       Clock.fixed(Instant.parse("2026-06-24T10:00:00Z"), ZoneOffset.UTC);
 
   private final ClarificationWritePort writePort = mock(ClarificationWritePort.class);
+  private final ClarificationReadPort readPort = mock(ClarificationReadPort.class);
   private final WorkflowEventWritePort eventWritePort = mock(WorkflowEventWritePort.class);
   private final ClarificationIngestService service =
-      new ClarificationIngestService(writePort, eventWritePort, CLOCK);
+      new ClarificationIngestService(writePort, readPort, eventWritePort, CLOCK);
 
   @Test
   void createsOneOpenClarificationAndEventPerQuestionWithDeterministicIdempotencyKey() {
@@ -122,6 +126,36 @@ class ClarificationIngestServiceTest {
     // One duplicate skipped, one created; only the created one appends an event.
     assertEquals(1, created);
     verify(writePort, times(2)).insertOpen(any());
+    verify(eventWritePort, times(1)).append(any());
+  }
+
+  @Test
+  void preflightIdempotencyKeyHitSkipsInsertWithoutFlushAndTheRestProceed() {
+    // review D1: the FIRST question's key already exists (cross-call replay/re-harvest) — it must
+    // be
+    // skipped BEFORE insertOpen so no conflicting saveAndFlush is ever issued; the second proceeds.
+    when(readPort.existsByIdempotencyKey("runner-result-clarification:" + REX + ":Q-001"))
+        .thenReturn(true);
+    when(readPort.existsByIdempotencyKey("runner-result-clarification:" + REX + ":Q-002"))
+        .thenReturn(false);
+    when(writePort.insertOpen(any())).thenAnswer(inv -> openFrom(inv.getArgument(0)));
+
+    int created =
+        service.createOpenFromSpec(
+            RUN,
+            ART,
+            VERSION,
+            List.of(
+                new RaisedQuestion("Q-001", "Already raised on a prior harvest?"),
+                new RaisedQuestion("Q-002", "Brand new?")),
+            REX,
+            null);
+
+    assertEquals(1, created);
+    // Only the non-duplicate question reaches insertOpen — the pre-flight prevented the flush.
+    ArgumentCaptor<NewClarification> insertCaptor = ArgumentCaptor.forClass(NewClarification.class);
+    verify(writePort, times(1)).insertOpen(insertCaptor.capture());
+    assertEquals("Q-002", insertCaptor.getValue().questionId());
     verify(eventWritePort, times(1)).append(any());
   }
 
