@@ -450,7 +450,7 @@ development_status:
   # ADRs: 0024 (manual execution), 0025 (live obs + read-only console; SECURITY-REVIEW GATE),
   # 0026 (advisory reviewer model), 0027 (obsolete-execution soft-hide).
   # ============================================================
-  epic-3d: in-progress
+  epic-3d: done
   3d-1-reviewer-model-project-config-and-verdict-schema: done  # epic-3d; per-project (optionally per-stage) reviewer-model binding + step_reviews advisory-verdict table (Flyway next-free); reviewer connector role reuses 3c project_credentials/cipher; review_outcome+rev_ registries+drift; reviewer_gating_enabled flag DEFAULT false (NOT read this epic). Dep: 3c-5 (credential store).
   3d-2-reviewer-execution-and-advisory-verdict-in-decision-bar: done  # epic-3d; reviewer runner invocation via ProjectConnectorResolver over step output; verdict persisted + surfaced ADVISORY in WaitingForReview Decision Bar (never auto-approve/reject); no-binding parity; graceful degrade on reviewer failure; model provenance/self-review flag. Deps: 3d-1, 3c-3.
   3d-3-waiting-for-manual-execution-state-and-manual-runner-kind-dispatch: done  # epic-3d; `manual` runner kind (registry) + new WaitingForManualExecution state (state-machine CHECK, additive Flyway) + new WorkflowEventTypes (two fixture sites); dispatch EMITS bundle + parks (no container/queue); runner_executions row recorded (FR53). Driver: Claude dropped no-API-key prompt mode. Deps: 3c-7, 3-17.
@@ -461,7 +461,7 @@ development_status:
   3d-8-soft-hide-archive-obsolete-executions: done  # epic-3d (FR67); archive-NOT-delete (ADR 0027): archived_at markers + cascade VIEW; never touch workflow_events (FR47); manual hide (REST+CLI, allowed-action, audited) +/- auto-on-ticket-removal; reversible un-hide; queue archived state + "include archived" filter (Epic 4 story 4.2 honors); TRUE PURGE deferred to Epic 5. Deps: 3c-7.
   3d-9-foundation-gate-widening-and-test-suite-extension: done  # epic-3d; gate asserts manual-kind/WaitingForManualExecution/new-event-types/review_outcome/reviewer-role/rev_ drift + new error codes (three-sites); advisory-only + no-binding parity; live-stream/console posture (read-only/live-only/governed/localhost); soft-hide FR47 invariant; FE Vitest/Playwright/axe; coverage floors (80% / 90% secret-adjacent); ADR 0025 sign-off artifact. Deps: 3d-1..3d-8.
   3d-10-per-step-execution-control-documentation-increment: done  # epic-3d; docs/per-step-execution-control-walkthrough.md (reviewer model -> manual run -> live/finished logs -> read-only console -> provider limits -> hide obsolete) + glossary/NFR43 vocabulary; link-check + docs/index.md; named human-validator placeholder. Deps: 3d-2,3d-4,3d-5,3d-6,3d-7,3d-8.
-  epic-3d-retrospective: deferred  # runs at end of 3d
+  epic-3d-retrospective: done  # epic-3d-retro-2026-06-24.md — 10/10 done, 0 criticals (6th straight), security+spike gates held; A1 memory fix EXECUTED (37.5KB→<17.1KB one-line index); B1 off-request idempotency → Epic 4 decision; P3/TD3 projectId-on-DTOs → 3f-6. Next: 3e-1.
 
   # ============================================================
   # Epic 3e: Clarification Loop Activation - 5 stories
