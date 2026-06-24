@@ -260,6 +260,11 @@ class RealRunnerContractIT {
     jdbcTemplate.update("delete from recovery_actions");
     jdbcTemplate.update("delete from runner_executions");
     jdbcTemplate.update("delete from artifact_operations");
+    // Story 3e-1 — the spec-stage runner now emits a clarifications fence on the happy path (the
+    // mock resolves the stage from the --stage arg the entrypoint passes), so a clarification row
+    // referencing the spec artifact is created. Delete it before its artifacts/workflow_runs
+    // parents (fk_clarifications_artifacts) or the artifacts delete below violates the FK.
+    jdbcTemplate.update("delete from clarifications");
     jdbcTemplate.update("delete from artifacts");
     jdbcTemplate.update("delete from workflow_events");
     jdbcTemplate.update("delete from idempotency_records");
