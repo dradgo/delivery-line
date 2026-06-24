@@ -22,6 +22,12 @@ public enum AllowedAction implements RegistryValue {
   // FAILED, PAUSED, WAITING_FOR_REVIEW). The stream endpoint resolves the latest rex and returns a
   // graceful "no-runner-execution" end when none exists, so broad state coverage is safe.
   VIEW_RUNNER_LOGS("view_runner_logs"),
+  // Story 3d-7 (FR69, AC5) — gate for the Provider Limit Status indicator (post-execution provider
+  // 5h/weekly usage/limit, or the documented "not exposed" state). Role-agnostic, mirroring
+  // view_runner_logs: offered in every state where a runner execution exists (EXECUTING,
+  // WAITING_FOR_REVIEW, FAILED, PAUSED). The read endpoint resolves the latest snapshot and returns
+  // an empty/absent body when none exists, so broad state coverage is safe.
+  VIEW_PROVIDER_USAGE_STATUS("view_provider_usage_status"),
   // Story 3d-3 (AC7, ADR 0024) — actions a WaitingForManualExecution run advertises so the local
   // operator can obtain the emitted input bundle and submit the hand-run artifact. Registered +
   // surfaced in the action matrix here (gated to workflow_owner; other roles view_only); the

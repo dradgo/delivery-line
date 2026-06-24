@@ -13,6 +13,7 @@
     "reject_implementation",
     "takeover_workflow",
     "view_runner_logs",
+    "view_provider_usage_status",
     "obtain_manual_bundle",
     "submit_manual_artifact",
     "open_diagnostic_console",

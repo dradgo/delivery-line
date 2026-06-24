@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_valid_provider_usage",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0003",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v3.md"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated specification artifact",
+    "outcome": "success",
+    "providerUsage": {
+      "signalState": "available",
+      "accountLabel": "claude:oauth",
+      "fiveHour": {
+        "usedFraction": 0.42,
+        "used": 42,
+        "limit": 100,
+        "resetsAt": "2026-06-23T14:20:00Z"
+      },
+      "weekly": {
+        "usedFraction": 0.1,
+        "used": 70,
+        "limit": 700,
+        "resetsAt": "2026-06-29T00:00:00Z"
+      },
+      "asOf": "2026-06-23T09:05:00Z"
+    }
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

@@ -7,6 +7,12 @@
       "forbiddenSnippets": ["ghp_1234567890abcdef1234567890abcdef1234"]
     },
     {
+      "file": "provider-usage-snapshot.json",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ghp_FAKEDONOTUSEproviderusage0000000000"]
+    },
+    {
       "file": "bundle-json-nested-credentials.json",
       "placeholder": "[REDACTED_SECRET_FIELD]",
       "minimumClassification": "shareable-redacted",

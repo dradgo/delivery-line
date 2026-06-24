@@ -616,6 +616,7 @@ set -- "$NODE_BIN" "$RUNNER_LIB" build \
   --bundle "$BUNDLE_FILE" \
   --stage "$ARTIFACT_TYPE" \
   --summary-file "$STDOUT_LOG" \
+  --auth-var "${AUTH_KEY_VAR:-}" \
   --out "$RESULT_FILE"
 # Story 3a-8 (AC5/D4): surface the OpenSpec validate outcome in the result summary, ONLY on
 # flag-on pr-output (flag-off => no extra arg => byte-identical build invocation).

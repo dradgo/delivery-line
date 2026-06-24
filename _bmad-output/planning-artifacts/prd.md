@@ -738,6 +738,20 @@ These functional requirements define the Phase 1 capability contract for one gov
 - **FR69:** After a step executes, operators can see the agent provider's usage/limit status
   (for example, the 5-hour rolling window and weekly limits) where the provider exposes it.
 
+### Complex Ticket Flow (Split, Dependencies & Portfolio Visibility)
+
+- **FR70:** Operators can split a governed run into multiple smaller governed subtasks at the
+  specification-approval or implementation-review gate. An LLM proposes the decomposition; the
+  operator can approve it, continue as a single ticket, or re-propose with feedback. On approval
+  the system creates one child run per subtask — creating a source sub-ticket where the ticket
+  connector supports it, otherwise proceeding internal-only — and preserves parent→child lineage
+  in the governed history.
+- **FR71:** Operators can declare execution dependencies between governed runs so a dependent run
+  does not start until all its prerequisite runs complete; the dependency graph is acyclic and a
+  blocked run is held in an explicit waiting state until released.
+- **FR72:** Authorized users can see each run's project attribution in the run review queue and
+  filter the queue by project.
+
 ## Non-Functional Requirements
 
 The following non-functional requirements define the trust floor for the MVP: inspectability, recovery, identity integrity, safe local operation, and clear handoff context.

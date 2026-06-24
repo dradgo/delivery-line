@@ -426,6 +426,18 @@ A single local-first operator finally gets the **product-clarification loop work
 
 **FRs covered:** completes the deferred clarification-creation + incorporation portion of FR9, FR11, FR13 (Epic 2 owns the definitions; this epic activates the deferred execution).
 
+### Epic 3f: Complex Ticket Flow
+
+The governed workflow moves beyond the single linear *one-ticket → one-run → one-spec → one-plan* path. At the specification-approval or implementation-review gate, an operator who finds the scope too large can **split** the run: an LLM proposes a decomposition into smaller subtasks (with proposed inter-subtask dependencies), and the operator **approves** it, **continues as one ticket**, or **re-proposes with feedback**. On approval the system creates one child run per subtask — minting a source sub-ticket where the connector supports it, otherwise proceeding internal-only — preserving parent→child lineage and terminating the parent. Child runs can carry **execution dependencies** so a dependent run holds in an explicit `WaitingForDependencies` state until its prerequisites complete. The Run Review Queue gains **per-project attribution and a project filter** so the resulting portfolio of runs is navigable.
+
+**Why this epic exists (net-new capability):** Epics 1–3e assume a 1:1 ticket↔run↔lineage shape (NFR16). Real pilot tickets are often too coarse to spec/implement in one pass, and there is no governed way to break one down without losing lineage, no way to sequence the resulting work, and (per story 3c-9 AC6, deferred as backend-blocked) no way to see or filter runs by project in the queue. This epic adds those three capabilities as **new product scope** — it is not an activation of deferred Epic-1/2 work. Source: `sprint-change-proposal-2026-06-24.md`.
+
+**Positioning:** inserted between Epic 3e and Epic 4 purely for sequencing (avoids renumbering E4–E6). It builds on done substrates — the advisory-reviewer channel (3d-2/3e-3) for the split proposal, the batch-submission fan-out pattern (story 3-18, best-effort + non-transactional), the `TicketSourceAdapter`/capability abstraction (3-32), the soft-hide/archive precedent (3d-8) for parent disposition, and the `cancelled_for_takeover` precedent (3-22) for a new terminal state. Story 3f-6 completes the queue-scoping AC6 that story 3c-9 explicitly deferred (run DTOs lack a project field; `/workflows` has no `projectId` filter).
+
+**Story list (6 stories):** 3f-1 adapter `createSubticket` capability; 3f-2 parent→child lineage + terminal `Split` state; 3f-3 run-dependency graph + `WaitingForDependencies` state + release resolver; 3f-4 LLM split-proposal channel + three-action feedback loop; 3f-5 commit fan-out (subtickets/internal-only children + lineage + dependency edges + gated dispatch + parent termination); 3f-6 project references + queue filter. Detailed reconciled implementation stories live at `{implementation_artifacts}/3f-1..3f-6-...md`.
+
+**FRs covered:** FR70 (split/decompose a governed run, lineage-preserving), FR71 (run dependencies / sequenced execution), FR72 (run review queue project attribution + filter; completes the deferred 3c-9 AC6).
+
 ### Epic 4: Failure Handling, Recovery & Reconciliation (Workflow Owner + Compare Mode)
 
 A Workflow Owner opens the run queue, selects a failed or stalled run, inspects container logs, current failed stage, artifact status, and integration conflict state — then retries, reruns, reconciles, or classifies the failure, with every recovery action appended to the same governed history. Reviewers gain Compare Mode to verify what changed between revisions before approving. Delivers the governed failure taxonomy, artifact reconciliation for DB/file drift, and integration conflict detection for Linear/GitHub.

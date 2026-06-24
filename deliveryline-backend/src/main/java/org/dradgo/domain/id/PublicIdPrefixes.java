@@ -25,7 +25,11 @@ public enum PublicIdPrefixes implements RegistryValue {
   PROJECT("project", "prj_", "ck_projects_public_id_format"),
   PROJECT_CREDENTIAL("projectCredential", "cred_", "ck_project_credentials_public_id_format"),
   // Story 3d-1 (AC3) — public_id prefix for the V19 step_reviews advisory-verdict table.
-  REVIEW("review", "rev_", "ck_step_reviews_public_id_format");
+  REVIEW("review", "rev_", "ck_step_reviews_public_id_format"),
+  // Story 3d-7 (FR69, AC3) — public_id prefix for the V24 provider_usage_snapshots table (the
+  // per-credential, NON-SECRET provider 5h/weekly usage/limit snapshot).
+  PROVIDER_USAGE_SNAPSHOT(
+      "providerUsageSnapshot", "pul_", "ck_provider_usage_snapshots_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

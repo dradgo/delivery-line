@@ -130,7 +130,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.AWAIT_OUTCOME,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         // Story 3d-6 (AC4) — the read-only diagnostic console is offered ONLY here (EXECUTING) and
         // ONLY to the run owner (workflow_owner); product_reviewer above keeps the role-agnostic
         // set.
@@ -142,17 +143,22 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.AWAIT_OUTCOME,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "product_reviewer",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "workflow_owner",
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 AllowedAction.ARCHIVE_RUN)),
         // Story 3.20 AC12 + Story 3.21 AC9 + Story 3.22 AC9 — the developer-review actor may
         // accept,
@@ -165,7 +171,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.REJECT_IMPLEMENTATION,
                 AllowedAction.TAKEOVER_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
         // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
         // unintended action elsewhere.
@@ -179,7 +186,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         // Story 3d-3 (AC7) — a WaitingForManualExecution run offers the bundle-obtain + artifact-
         // submit actions to the local operator (workflow_owner); every other role gets view_only.
         Arguments.of(
@@ -209,7 +217,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         Arguments.of(
             WorkflowState.FAILED,
             "workflow_owner",
@@ -217,6 +226,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.RETRY,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.PAUSED,
@@ -224,7 +234,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
-                AllowedAction.VIEW_RUNNER_LOGS)),
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         Arguments.of(
             WorkflowState.PAUSED,
             "workflow_owner",
@@ -232,6 +243,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.TAKEN_OVER, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
@@ -315,14 +327,22 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.REJECT_IMPLEMENTATION,
                 AllowedAction.TAKEOVER_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
-                AllowedAction.VIEW_RUNNER_LOGS);
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       } else if (role.equals("workflow_owner")) {
         // archive_run is workflow_owner-only (3d-8/D1).
         expected =
             List.of(
-                AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS, AllowedAction.ARCHIVE_RUN);
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.ARCHIVE_RUN);
       } else {
-        expected = List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
+        expected =
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       }
       assertThat(view.actions())
           .as("WaitingForReview matrix for role %s must be unchanged by 3d-2 (AC8)", role)
@@ -413,7 +433,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
         .containsExactly(
             AllowedAction.VIEW_ONLY,
             AllowedAction.VIEW_DIAGNOSTICS,
-            AllowedAction.VIEW_RUNNER_LOGS);
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
   }
 
   @Test
@@ -429,6 +450,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.RETRY,
             AllowedAction.VIEW_DIAGNOSTICS,
             AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
             AllowedAction.ARCHIVE_RUN);
   }
 

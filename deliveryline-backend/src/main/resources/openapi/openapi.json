@@ -765,6 +765,97 @@
         },
         "type" : "object"
       },
+      "ProviderUsageStatus" : {
+        "description" : "Latest per-credential, NON-SECRET provider usage/limit snapshot for a run (5-hour + weekly windows, or the documented 'not exposed by provider' state). Provider-reported and as-of a timestamp; never a fabricated value.",
+        "properties" : {
+          "accountReference" : {
+            "description" : "Non-secret account label that produced the usage (e.g. claude:oauth).",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "asOf" : {
+            "description" : "Provider-reported as-of timestamp; null when not exposed.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "capturedAt" : {
+            "description" : "Server-stamped capture time; null when absent.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "fiveHour" : {
+            "$ref" : "#/components/schemas/ProviderUsageWindow",
+            "description" : "5-hour rolling window; null when not exposed / absent.",
+            "type" : "null"
+          },
+          "present" : {
+            "description" : "False when no snapshot has been captured for the run yet.",
+            "type" : "boolean"
+          },
+          "signalState" : {
+            "description" : "available | not_exposed; null when no snapshot exists.",
+            "enum" : [
+              "available",
+              "not_exposed"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "weekly" : {
+            "$ref" : "#/components/schemas/ProviderUsageWindow",
+            "description" : "Weekly window; null when not exposed / absent.",
+            "type" : "null"
+          }
+        },
+        "type" : "object"
+      },
+      "ProviderUsageWindow" : {
+        "properties" : {
+          "limit" : {
+            "description" : "Limit units.",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "resetsAt" : {
+            "description" : "Window reset timestamp.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "used" : {
+            "description" : "Used units.",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "usedFraction" : {
+            "description" : "Used fraction 0..1.",
+            "format" : "double",
+            "type" : [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "type" : "object"
+      },
       "RejectImplementationRequest" : {
         "properties" : {
           "artifactId" : {
@@ -3307,6 +3398,78 @@
           }
         },
         "summary" : "Get the parked manual step's redacted input bundle (story 3d-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/provider-usage" : {
+      "get" : {
+        "description" : "Returns the latest NON-SECRET provider usage/limit snapshot for the run — the 5-hour + weekly window status (or the documented 'not exposed by provider' state). Values are provider-reported and as-of a timestamp; never fabricated. Gated by the view_provider_usage_status allowed-action (offered in the runner-execution states). Returns present=false when no snapshot has been captured yet. Carries no secret material — only window numbers, timestamps, and a non-secret account label.",
+        "operationId" : "getProviderUsageStatus",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Actor role for action gating; defaults to product_reviewer when absent. view_provider_usage_status is role-agnostic in the runner-execution states.",
+            "example" : "product_reviewer",
+            "in" : "query",
+            "name" : "actorRole",
+            "required" : false,
+            "schema" : {
+              "enum" : [
+                "product_reviewer",
+                "workflow_owner",
+                "developer"
+              ],
+              "type" : "null"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProviderUsageStatus"
+                }
+              }
+            },
+            "description" : "Latest snapshot, or present=false when none."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole."
+          },
+          "403" : {
+            "description" : "view_provider_usage_status is not allowed for the run's state."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Latest per-credential provider usage/limit status for a run",
         "tags" : [
           "Workflows"
         ]

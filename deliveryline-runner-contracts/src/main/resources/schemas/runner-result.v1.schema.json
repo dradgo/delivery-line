@@ -61,6 +61,9 @@
             "success",
             "failure"
           ]
+        },
+        "providerUsage": {
+          "$ref": "#/$defs/providerUsage"
         }
       }
     },
@@ -101,6 +104,65 @@
     }
   },
   "$defs": {
+    "providerUsage": {
+      "$comment": "Story 3d-7 (FR69) — OPTIONAL additive metadata: the agent provider's post-execution 5h/weekly window status. NEVER carries secret material — only window numbers, timestamps, and a NON-SECRET account label (e.g. 'claude:oauth'). signalState 'not_exposed' is a first-class state (the provider does not surface the window headless), never a fabricated number.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signalState",
+        "accountLabel",
+        "asOf"
+      ],
+      "properties": {
+        "signalState": {
+          "type": "string",
+          "enum": [
+            "available",
+            "not_exposed"
+          ]
+        },
+        "accountLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "fiveHour": {
+          "$ref": "#/$defs/usageWindow"
+        },
+        "weekly": {
+          "$ref": "#/$defs/usageWindow"
+        },
+        "asOf": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 1
+        }
+      }
+    },
+    "usageWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usedFraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resetsAt": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 1
+        }
+      }
+    },
     "baseArtifact": {
       "type": "object",
       "required": [

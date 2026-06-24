@@ -105,6 +105,13 @@ export const workflowKeys = {
   manualBundle: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'manualBundle'] as const,
 
+  /**
+   * A run's latest provider usage/limit status (story 3d-7). A PREFIX child of `detail(id)`, so a
+   * detail invalidation cascade refreshes the indicator for free as the run advances.
+   */
+  providerUsageStatus: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'providerUsageStatus'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
 } as const;

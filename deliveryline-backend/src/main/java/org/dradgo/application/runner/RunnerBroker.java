@@ -191,6 +191,21 @@ public class RunnerBroker {
     this.reviewResultHarvester = reviewResultHarvester;
   }
 
+  // Story 3d-7 (FR69, AC3) — the per-credential provider usage/limit snapshot writer. Optional
+  // SETTER injection (mirroring reviewResultHarvester) so none of the broker's telescoping
+  // constructors — nor their unit-test call sites — change. Present in production (the
+  // application.persistence @Component); absent (null) in the lean broker unit ctors, where
+  // captureProviderUsage is a byte-identical no-op (legacy parity, AC7).
+  private org.dradgo.application.runner.spi.ProviderUsageSnapshotWritePort
+      providerUsageSnapshotWritePort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProviderUsageSnapshotWritePort(
+      org.dradgo.application.runner.spi.ProviderUsageSnapshotWritePort
+          providerUsageSnapshotWritePort) {
+    this.providerUsageSnapshotWritePort = providerUsageSnapshotWritePort;
+  }
+
   // Story 3.19 (AC5) — count a dispatch + record its duration (histogram, tagged stage), on the
   // successful-dispatch path. Exception-safe.
   private void recordDispatchMetrics(
@@ -1482,6 +1497,158 @@ public class RunnerBroker {
     }
   }
 
+  // Story 3d-7 (FR69, AC3) — read the OPTIONAL normalizedOutput.providerUsage metadata and persist
+  // a
+  // per-credential, NON-SECRET usage snapshot. The broker is the FIRST consumer of
+  // normalizedOutput,
+  // so this read is tolerant of absence (legacy/default runner → no row, AC7) and of the writer
+  // being
+  // unwired (lean unit ctors → no-op). Best-effort: any failure is logged WARN and swallowed so a
+  // successfully-executed run is never unwound by a snapshot-write error. NEVER logs a token — only
+  // the non-secret account label + window counts.
+  private void captureProviderUsage(
+      String workflowRunId, String runnerExecutionId, JsonNode parsed) {
+    org.dradgo.application.runner.spi.ProviderUsageSnapshotWritePort writePort =
+        providerUsageSnapshotWritePort;
+    if (writePort == null) {
+      return;
+    }
+    JsonNode usage = parsed.path("normalizedOutput").path("providerUsage");
+    if (usage.isMissingNode() || !usage.isObject()) {
+      return;
+    }
+    try {
+      String signalState = usage.path("signalState").asText(null);
+      String accountReference = usage.path("accountLabel").asText(null);
+      if (signalState == null || accountReference == null || accountReference.isBlank()) {
+        log.warn(
+            "onResult providerUsage missing signalState/accountLabel runnerExecutionId={} "
+                + "workflowRunId={} — skipping snapshot",
+            runnerExecutionId,
+            workflowRunId);
+        return;
+      }
+      // Review 2026-06-24: reject any signalState outside the runner-contract enum rather than
+      // letting it reach (and trip) the DB CHECK as a swallowed DataIntegrityViolation.
+      if (!"available".equals(signalState) && !"not_exposed".equals(signalState)) {
+        log.warn(
+            "onResult providerUsage unrecognized signalState={} runnerExecutionId={} "
+                + "workflowRunId={} — skipping snapshot",
+            MdcKeys.sanitizeForLog(signalState),
+            runnerExecutionId,
+            workflowRunId);
+        return;
+      }
+      // Window numbers are only meaningful when the provider exposed a signal; for not_exposed we
+      // persist no window values so a contradictory "not_exposed + numbers" row can never exist.
+      boolean available = "available".equals(signalState);
+      JsonNode fiveHour =
+          available
+              ? usage.path("fiveHour")
+              : com.fasterxml.jackson.databind.node.NullNode.getInstance();
+      JsonNode weekly =
+          available
+              ? usage.path("weekly")
+              : com.fasterxml.jackson.databind.node.NullNode.getInstance();
+      // Review 2026-06-24 (#332): asOf is REQUIRED by the runner-contract, but JSON-schema
+      // `format: date-time` is annotation-only (not asserted), so a present-but-unparseable asOf
+      // slips past validation and yields a null instant here. An available snapshot with no
+      // provenance timestamp is a provider-reported value the story forbids surfacing —
+      // skip-persist
+      // it rather than store a reading with no as-of stamp. not_exposed legitimately carries no
+      // window numbers and a null asOf is tolerated there (a documented absence, not a reading).
+      java.time.OffsetDateTime asOf = providerUsageInstant(usage, "asOf");
+      if (available && asOf == null) {
+        log.warn(
+            "onResult providerUsage available signal missing asOf timestamp runnerExecutionId={} "
+                + "workflowRunId={} — skipping snapshot (no provenance)",
+            runnerExecutionId,
+            workflowRunId);
+        return;
+      }
+      String snapshotId = org.dradgo.domain.id.PublicIdPrefixes.PROVIDER_USAGE_SNAPSHOT.next();
+      writePort.insert(
+          new org.dradgo.application.runner.spi.ProviderUsageSnapshotWritePort
+              .NewProviderUsageSnapshot(
+              snapshotId,
+              workflowRunId,
+              runnerExecutionId,
+              accountReference,
+              signalState,
+              providerUsageDouble(fiveHour, "usedFraction"),
+              providerUsageInt(fiveHour, "used"),
+              providerUsageInt(fiveHour, "limit"),
+              providerUsageInstant(fiveHour, "resetsAt"),
+              providerUsageDouble(weekly, "usedFraction"),
+              providerUsageInt(weekly, "used"),
+              providerUsageInt(weekly, "limit"),
+              providerUsageInstant(weekly, "resetsAt"),
+              asOf));
+      log.info(
+          "onResult provider-usage snapshot persisted runnerExecutionId={} workflowRunId={} "
+              + "snapshotId={} signalState={} accountReference={}",
+          runnerExecutionId,
+          workflowRunId,
+          snapshotId,
+          signalState,
+          accountReference);
+    } catch (RuntimeException error) {
+      log.warn(
+          "onResult provider-usage snapshot capture failed (best-effort) runnerExecutionId={} "
+              + "workflowRunId={} cause={}",
+          runnerExecutionId,
+          workflowRunId,
+          MdcKeys.sanitizeForLog(error.toString()));
+    }
+  }
+
+  // usedFraction is a 0..1 ratio; drop non-finite or out-of-range values rather than persisting a
+  // fabricated/contradictory figure (symmetric with the runner's sanitizeUsageWindow). Review
+  // 2026-06-24.
+  private static Double providerUsageDouble(JsonNode window, String field) {
+    JsonNode node = window.path(field);
+    if (!node.isNumber()) {
+      return null;
+    }
+    double value = node.doubleValue();
+    return (Double.isFinite(value) && value >= 0.0d && value <= 1.0d) ? value : null;
+  }
+
+  private static Integer providerUsageInt(JsonNode window, String field) {
+    JsonNode node = window.path(field);
+    if (node.isInt() || node.isLong()) {
+      long value = node.longValue();
+      // Reject out-of-int-range longs instead of silently truncating via intValue(). Review
+      // 2026-06-24.
+      return (value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE) ? (int) value : null;
+    }
+    // Tolerate an integral double (e.g. 62.0) from a lenient serializer; reject fractional or
+    // out-of-range/non-finite values rather than truncating.
+    if (node.isNumber()) {
+      double value = node.doubleValue();
+      if (Double.isFinite(value)
+          && value == Math.rint(value)
+          && value >= Integer.MIN_VALUE
+          && value <= Integer.MAX_VALUE) {
+        return (int) value;
+      }
+    }
+    return null;
+  }
+
+  private static java.time.OffsetDateTime providerUsageInstant(JsonNode window, String field) {
+    String raw = window.path(field).asText(null);
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    try {
+      return java.time.OffsetDateTime.parse(raw);
+    } catch (java.time.format.DateTimeParseException ignored) {
+      // Runner emits ISO-8601; a non-parseable value is dropped rather than failing the capture.
+      return null;
+    }
+  }
+
   private void handleSuccess(
       String runnerExecutionId,
       String workflowRunId,
@@ -1746,6 +1913,17 @@ public class RunnerBroker {
           secretScan.detectedCategories());
       return;
     }
+
+    // Story 3d-7 (FR69, AC3) — capture the OPTIONAL post-execution provider usage/limit snapshot
+    // emitted on normalizedOutput.providerUsage. Runs AFTER the secret scan (review 2026-06-24) so
+    // a
+    // leaked/quarantined execution never persists a snapshot row. Best-effort + tolerant of
+    // absence:
+    // a legacy/default result without the field is a byte-identical no-op (AC7), and a
+    // snapshot-write
+    // failure NEVER unwinds the successfully-ingested run (the method swallows all
+    // RuntimeExceptions).
+    captureProviderUsage(workflowRunId, runnerExecutionId, parsed);
 
     // Story 3.9 (Decision D0 / OQ-2): if this run had a repo workspace, commit the runner-produced
     // changes, push the branch, and open/update the PR BEFORE marking the execution completed. A

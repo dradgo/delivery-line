@@ -213,6 +213,61 @@ function truncateRationale(text, maxChars) {
   return cut;
 }
 
+// Story 3d-7 (FR69) — map the NON-SECRET name of the env var the entrypoint resolved the
+// provider auth from to a non-secret account label. NEVER the token value (Trap T1) — the
+// label is which credential MODE was used, attributable but secret-free. Claude has two modes.
+const CLAUDE_AUTH_LABELS = {
+  CLAUDE_CODE_OAUTH_TOKEN: 'claude:oauth',
+  ANTHROPIC_API_KEY: 'claude:api',
+};
+
+function resolveAccountLabel(authVar) {
+  return CLAUDE_AUTH_LABELS[authVar] ?? 'claude:unknown';
+}
+
+// Defensively rebuild a usage window from arbitrary input, copying ONLY the four allowed
+// numeric/timestamp keys — so even a hostile/garbage mock file can never smuggle a secret-shaped
+// string into the emitted/persisted payload (AC4). Returns undefined when nothing usable remains.
+function sanitizeUsageWindow(raw) {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out = {};
+  if (typeof raw.usedFraction === 'number' && raw.usedFraction >= 0 && raw.usedFraction <= 1) {
+    out.usedFraction = raw.usedFraction;
+  }
+  if (Number.isInteger(raw.used) && raw.used >= 0) out.used = raw.used;
+  if (Number.isInteger(raw.limit) && raw.limit >= 0) out.limit = raw.limit;
+  if (typeof raw.resetsAt === 'string' && raw.resetsAt.length > 0) out.resetsAt = raw.resetsAt;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// Story 3d-7 SPIKE outcome: the 5-hour/weekly SUBSCRIPTION window status is NOT exposed in the
+// headless invocation the runner uses (see the story Completion Notes), so the real path emits an
+// explicit `not_exposed` marker — never a fabricated number. The offline mock injects a
+// deterministic `available` payload via DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE so the happy path is
+// exercised offline + in CI. This is ADDITIVE optional metadata; capture must NEVER throw, never
+// fail the run, and never log/emit the token value.
+function buildProviderUsage(authVar) {
+  const accountLabel = resolveAccountLabel(authVar);
+  const asOf = new Date().toISOString();
+  const mockFile = process.env.DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE;
+  if (mockFile) {
+    try {
+      const parsed = JSON.parse(readFileSync(mockFile, 'utf8'));
+      if (parsed && typeof parsed === 'object' && parsed.signalState === 'available') {
+        const usage = { signalState: 'available', accountLabel, asOf };
+        const fiveHour = sanitizeUsageWindow(parsed.fiveHour);
+        const weekly = sanitizeUsageWindow(parsed.weekly);
+        if (fiveHour) usage.fiveHour = fiveHour;
+        if (weekly) usage.weekly = weekly;
+        return usage;
+      }
+    } catch {
+      // fall through to not_exposed — capture is best-effort and must never throw.
+    }
+  }
+  return { signalState: 'not_exposed', accountLabel, asOf };
+}
+
 function readTemplate(path) {
   try {
     return readFileSync(path, 'utf8');
@@ -311,12 +366,17 @@ function commandBuild(args) {
     fail(13, `unknown stage: ${stage}`);
   }
 
+  // Story 3d-7 (FR69) — attach the OPTIONAL provider usage/limit metadata (5h/weekly window
+  // status or the documented `not_exposed` marker). Additive: legacy runs / runners that omit
+  // this stay byte-identical and the backend treats absence as a no-op.
+  const providerUsage = buildProviderUsage(args['auth-var']);
+
   const result = {
     schemaVersion: 1,
     workflowRunId,
     runnerExecutionId,
     artifactReferences: [artifact],
-    normalizedOutput: { summary, outcome: 'success' },
+    normalizedOutput: { summary, outcome: 'success', providerUsage },
     checksum: { algorithm: 'SHA-256', hexDigest },
     classification,
     failureCategory: null,

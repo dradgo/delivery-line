@@ -106,6 +106,7 @@ class RedactionPolicyServiceContractTest {
     Set<String> expected =
         Set.of(
             "authorization-header.txt",
+            "provider-usage-snapshot.json",
             "bundle-json-nested-credentials.json",
             "dotenv-secret.env",
             "env-dump.txt",

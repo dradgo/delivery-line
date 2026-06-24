@@ -540,6 +540,75 @@ public class WorkflowCommands {
     }
   }
 
+  // Story 3d-7 (FR69, AC5) — optional setter injection for the provider-usage read service, so the
+  // telescoping WorkflowCommands constructors + their many unit-test call sites stay unchanged
+  // (mirrors RunnerBroker's setter-injected optional deps). Present in production; null in lean
+  // test
+  // ctors, where the provider-usage command surfaces a clear "not wired" error.
+  private org.dradgo.application.runner.ProviderUsageStatusService providerUsageStatusService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProviderUsageStatusService(
+      org.dradgo.application.runner.ProviderUsageStatusService providerUsageStatusService) {
+    this.providerUsageStatusService = providerUsageStatusService;
+  }
+
+  @Command(
+      name = "provider-usage",
+      description =
+          "Print the latest provider usage/limit status for a run — the 5-hour + weekly window "
+              + "status (or the documented 'not exposed by provider' state). Provider-reported and "
+              + "as-of a timestamp; never a fabricated value.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String providerUsage(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "actor-role",
+              description = "Actor role for gating (default product_reviewer)",
+              required = false)
+          String actorRole,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireInspectionWired();
+    requireProviderUsageWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Server-side gate (Trap T5): the same allowed-action matrix backing the REST endpoint + UI.
+      String role = actorRole == null ? null : actorRole.strip();
+      boolean allowed =
+          workflowInspectionService
+              .getAllowedActions(runId, role)
+              .actions()
+              .contains(org.dradgo.domain.registry.AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+      String rendered;
+      if (!allowed) {
+        rendered = renderProviderUsageDenied(runId, format);
+      } else {
+        rendered =
+            renderProviderUsage(
+                runId, providerUsageStatusService.getLatestForRun(runId).orElse(null), format);
+      }
+      emitSuccess("workflow provider-usage", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow provider-usage", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow provider-usage", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
   @Command(
       name = "status",
       description = "Print the current state of a governed workflow run",
@@ -2021,6 +2090,135 @@ public class WorkflowCommands {
               + "inject WorkflowInspectionService and WorkflowCommandOutputs to use status/history",
           details);
     }
+  }
+
+  private void requireProviderUsageWired() {
+    if (providerUsageStatusService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_provider_usage_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without ProviderUsageStatusService; inject it to use"
+              + " provider-usage",
+          details);
+    }
+  }
+
+  // Story 3d-7 (FR69, AC5) — color-independent render of the provider usage/limit status. Text uses
+  // bracketed labels (never color); JSON mirrors the REST shape. NO secret rendered — only window
+  // numbers, timestamps, and the non-secret account label.
+  private String renderProviderUsage(
+      String runId, org.dradgo.application.runner.ProviderUsageSnapshotView view, String format) {
+    String normalizedFormat = normalizeFormat(format);
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      try {
+        com.fasterxml.jackson.databind.node.ObjectNode root = jsonMapper().createObjectNode();
+        root.put("runId", runId);
+        if (view == null) {
+          root.put("present", false);
+          return jsonMapper().writeValueAsString(root);
+        }
+        root.put("present", true);
+        root.put("signalState", view.signalState());
+        root.put("accountReference", view.accountReference());
+        root.set("fiveHour", providerUsageWindowJson(view.fiveHour()));
+        root.set("weekly", providerUsageWindowJson(view.weekly()));
+        root.put("asOf", view.asOf() == null ? null : view.asOf().toString());
+        root.put("capturedAt", view.capturedAt() == null ? null : view.capturedAt().toString());
+        return jsonMapper().writeValueAsString(root);
+      } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "provider_usage_json_render_failed");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR, "Failed to render provider usage JSON", details);
+      }
+    }
+    if (view == null) {
+      return "provider-usage " + runId + ": no snapshot captured yet";
+    }
+    String header =
+        "provider-usage "
+            + runId
+            + ": signal="
+            + view.signalState()
+            + " account="
+            + view.accountReference()
+            + " (provider-reported, as-of "
+            + (view.asOf() == null ? "n/a" : view.asOf())
+            + ")";
+    return header
+        + System.lineSeparator()
+        + "  "
+        + renderProviderUsageWindow("5h", view.fiveHour())
+        + System.lineSeparator()
+        + "  "
+        + renderProviderUsageWindow("weekly", view.weekly());
+  }
+
+  private String renderProviderUsageWindow(
+      String label, org.dradgo.application.runner.ProviderUsageSnapshotView.UsageWindow window) {
+    if (window == null || window.isEmpty()) {
+      return "[" + label + ": not exposed]";
+    }
+    // Review 2026-06-24: preserve whatever values are present instead of collapsing a partial
+    // window
+    // to the literal "partial" (which discarded a present used/limit count).
+    StringBuilder value = new StringBuilder();
+    if (window.used() != null && window.limit() != null) {
+      value.append(window.used()).append('/').append(window.limit());
+      if (window.usedFraction() != null) {
+        value.append(" (").append(Math.round(window.usedFraction() * 100)).append("%)");
+      }
+    } else if (window.usedFraction() != null) {
+      value.append(Math.round(window.usedFraction() * 100)).append('%');
+    } else if (window.used() != null) {
+      value.append("used ").append(window.used());
+    } else if (window.limit() != null) {
+      value.append("limit ").append(window.limit());
+    }
+    StringBuilder sb = new StringBuilder("[").append(label).append(':');
+    if (value.length() > 0) {
+      sb.append(' ').append(value);
+    }
+    if (window.resetsAt() != null) {
+      sb.append(value.length() > 0 ? ", resets " : " resets ").append(window.resetsAt());
+    }
+    return sb.append(']').toString();
+  }
+
+  private com.fasterxml.jackson.databind.JsonNode providerUsageWindowJson(
+      org.dradgo.application.runner.ProviderUsageSnapshotView.UsageWindow window) {
+    if (window == null || window.isEmpty()) {
+      return jsonMapper().nullNode();
+    }
+    com.fasterxml.jackson.databind.node.ObjectNode node = jsonMapper().createObjectNode();
+    node.put("usedFraction", window.usedFraction());
+    node.put("used", window.used());
+    node.put("limit", window.limit());
+    node.put("resetsAt", window.resetsAt() == null ? null : window.resetsAt().toString());
+    return node;
+  }
+
+  private String renderProviderUsageDenied(String runId, String format) {
+    String normalizedFormat = normalizeFormat(format);
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      try {
+        com.fasterxml.jackson.databind.node.ObjectNode root = jsonMapper().createObjectNode();
+        root.put("runId", runId);
+        root.put("present", false);
+        root.put("denied", true);
+        root.put("reason", "view_provider_usage_status_not_allowed");
+        return jsonMapper().writeValueAsString(root);
+      } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "provider_usage_json_render_failed");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR, "Failed to render provider usage JSON", details);
+      }
+    }
+    return "provider-usage "
+        + runId
+        + ": not available for this run's state (view_provider_usage_status not allowed)";
   }
 
   private void requireRecoveryWired() {

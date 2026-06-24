@@ -1,0 +1,9 @@
+{
+  "_comment": "Story 3d-7 (AC4) adversarial fixture. A representative providerUsage payload (window numbers + timestamps + a NON-SECRET accountLabel) deliberately seeded with a secret-shaped string in an adjacent position to prove the redactor scrubs any secret that ever reaches this payload. The legit provider-usage fields carry NO secret; the planted Authorization bearer below MUST be redacted.",
+  "signalState": "available",
+  "accountLabel": "claude:oauth",
+  "fiveHour": { "usedFraction": 0.62, "used": 62, "limit": 100, "resetsAt": "2030-01-01T05:00:00Z" },
+  "weekly": { "usedFraction": 0.18, "used": 126, "limit": 700, "resetsAt": "2030-01-06T00:00:00Z" },
+  "asOf": "2026-06-23T09:05:00Z",
+  "debugCapturedHeader": "Authorization: Bearer ghp_FAKEDONOTUSEproviderusage0000000000"
+}

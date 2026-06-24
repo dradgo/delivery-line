@@ -850,10 +850,14 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_ONLY,
               AllowedAction.AWAIT_OUTCOME,
               AllowedAction.VIEW_RUNNER_LOGS,
-              AllowedAction.OPEN_DIAGNOSTIC_CONSOLE);
+              AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
         return List.of(
-            AllowedAction.VIEW_ONLY, AllowedAction.AWAIT_OUTCOME, AllowedAction.VIEW_RUNNER_LOGS);
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.AWAIT_OUTCOME,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       case WAITING_FOR_REVIEW:
         // Story 3.20 (AC12) + Story 3.21 (AC9): the developer-review actor may accept OR reject the
         // implementation here. Story 3.22 (AC9) additively adds takeover_workflow for the developer
@@ -865,9 +869,13 @@ public class WorkflowInspectionService {
               AllowedAction.REJECT_IMPLEMENTATION,
               AllowedAction.TAKEOVER_WORKFLOW,
               AllowedAction.VIEW_ONLY,
-              AllowedAction.VIEW_RUNNER_LOGS);
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
-        return List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
+        return List.of(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       case WAITING_FOR_MANUAL_EXECUTION:
         // Story 3d-3 (AC7 / R6): a run parked for manual execution advertises the bundle-obtain +
         // artifact-submit actions to the local operator (workflow_owner — the run owner); every
@@ -890,12 +898,14 @@ public class WorkflowInspectionService {
             return List.of(
                 AllowedAction.RETRY,
                 AllowedAction.VIEW_DIAGNOSTICS,
-                AllowedAction.VIEW_RUNNER_LOGS);
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
           }
           return List.of(
               AllowedAction.VIEW_ONLY,
               AllowedAction.VIEW_DIAGNOSTICS,
-              AllowedAction.VIEW_RUNNER_LOGS);
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
       case PAUSED:
         // SEAM (Epic 4): Epic 4 adds resume here for workflow_owner.
@@ -903,7 +913,8 @@ public class WorkflowInspectionService {
         return List.of(
             AllowedAction.VIEW_ONLY,
             AllowedAction.VIEW_DIAGNOSTICS,
-            AllowedAction.VIEW_RUNNER_LOGS);
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       case TAKEN_OVER:
         // SEAM (Epic 4): Epic 4 adds reconcile / clear_escalation_marker here for workflow_owner.
         return List.of(AllowedAction.VIEW_ONLY);

@@ -61,7 +61,8 @@ ENV CLAUDE_CLI_VERSION=${CLAUDE_CLI_VERSION} \
     SUPERPOWERS_PIN=${SUPERPOWERS_PIN} \
     CLAUDE_CLI_BIN=claude \
     NODE_BIN=node \
-    DELIVERYLINE_RUNNER_LIB=/opt/deliveryline/lib/runner.mjs
+    DELIVERYLINE_RUNNER_LIB=/opt/deliveryline/lib/runner.mjs \
+    DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE=/opt/deliveryline/test/provider-usage.mock.json
 
 WORKDIR /opt/deliveryline
 
@@ -103,6 +104,12 @@ RUN set -eu; \
     else \
       install -m 0755 /opt/deliveryline/test/mock-claude.sh /usr/local/bin/claude; \
       install -m 0755 /opt/deliveryline/test/mock-openspec.sh /usr/local/bin/openspec; \
+      # Story 3d-7 — bake the deterministic provider-usage signal ONLY into the offline/mock
+      # build (DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE points here). runner.mjs reads it and emits
+      # the `available` shape so the capture->persist->surface happy path is covered offline + in
+      # the conformance ITs. Production builds never create this file, so the real path correctly
+      # emits the `not_exposed` marker (spike outcome) — never a fabricated number. NO secret here.
+      printf '%s\n' '{"signalState":"available","fiveHour":{"usedFraction":0.62,"used":62,"limit":100,"resetsAt":"2030-01-01T05:00:00Z"},"weekly":{"usedFraction":0.18,"used":126,"limit":700,"resetsAt":"2030-01-06T00:00:00Z"}}' > /opt/deliveryline/test/provider-usage.mock.json; \
     fi; \
     chmod +x /opt/deliveryline/entrypoint.sh /opt/deliveryline/lib/runner.mjs; \
     groupadd --gid 1001 claude; \

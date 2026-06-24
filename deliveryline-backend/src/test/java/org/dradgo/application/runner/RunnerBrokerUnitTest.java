@@ -1,6 +1,7 @@
 package org.dradgo.application.runner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -38,6 +39,8 @@ import org.dradgo.application.artifact.RecordArtifactOperationResult;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
+import org.dradgo.application.runner.spi.ProviderUsageSnapshotWritePort;
+import org.dradgo.application.runner.spi.ProviderUsageSnapshotWritePort.NewProviderUsageSnapshot;
 import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerAdapter;
 import org.dradgo.application.runner.spi.RunnerExecutionEventPort;
@@ -774,6 +777,299 @@ class RunnerBrokerUnitTest {
         .transition(any(), any(), any(), any(), any(), any(FailureCategory.class), any());
     // Story 3.5 AC4: the happy path runs the post-execution secret scan before completing.
     verify(secretScanService).scanWorkspace(eq(REX_ID), any(), any(), eq(RUN_ID));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Story 3d-7 (FR69, AC3/AC7) — provider-usage snapshot capture on the success path. Added by the
+  // 2026-06-24 code review (the capture seam previously had no direct broker coverage).
+  // ---------------------------------------------------------------------------------------------
+
+  @Test
+  void onResultCapturesAvailableProviderUsageSnapshot() {
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    String usage =
+        """
+        {"signalState": "available", "accountLabel": "claude:oauth",
+         "fiveHour": {"usedFraction": 0.62, "used": 62, "limit": 100, "resetsAt": "2030-01-01T05:00:00Z"},
+         "weekly": {"usedFraction": 0.18, "used": 126, "limit": 700, "resetsAt": "2030-01-06T00:00:00Z"},
+         "asOf": "2026-06-23T09:05:00Z"}
+        """;
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<NewProviderUsageSnapshot> captor =
+        ArgumentCaptor.forClass(NewProviderUsageSnapshot.class);
+    verify(writePort).insert(captor.capture());
+    NewProviderUsageSnapshot snap = captor.getValue();
+    assertEquals("available", snap.signalState());
+    assertEquals("claude:oauth", snap.accountReference());
+    assertEquals(RUN_ID, snap.workflowRunId());
+    assertEquals(REX_ID, snap.runnerExecutionId());
+    assertEquals(62, snap.fiveHourUsed().intValue());
+    assertEquals(100, snap.fiveHourLimit().intValue());
+    assertEquals(126, snap.weeklyUsed().intValue());
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultNotExposedProviderUsagePersistsNoWindowNumbers() {
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    // Contradictory result: not_exposed but windows populated. The broker must persist no window
+    // numbers so a "not_exposed + numbers" row can never exist (review 2026-06-24).
+    String usage =
+        """
+        {"signalState": "not_exposed", "accountLabel": "codex:subscription",
+         "fiveHour": {"usedFraction": 0.5, "used": 5, "limit": 10},
+         "asOf": "2026-06-23T09:05:00Z"}
+        """;
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<NewProviderUsageSnapshot> captor =
+        ArgumentCaptor.forClass(NewProviderUsageSnapshot.class);
+    verify(writePort).insert(captor.capture());
+    NewProviderUsageSnapshot snap = captor.getValue();
+    assertEquals("not_exposed", snap.signalState());
+    assertNull(snap.fiveHourUsed());
+    assertNull(snap.fiveHourLimit());
+    assertNull(snap.fiveHourUsedFraction());
+  }
+
+  @Test
+  void onResultWithoutProviderUsageWritesNoSnapshot() {
+    // AC7 — a legacy/default result without the optional field is a byte-identical no-op.
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    broker.onResult(REX_ID, onResultSuccessPayload(null).getBytes(StandardCharsets.UTF_8));
+    verify(writePort, never()).insert(any());
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultUnrecognizedSignalStateWritesNoSnapshot() {
+    // Review 2026-06-24 — a signalState outside the contract enum is rejected before the DB CHECK.
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    String usage =
+        "{\"signalState\": \"degraded\", \"accountLabel\": \"claude:oauth\","
+            + " \"asOf\": \"2026-06-23T09:05:00Z\"}";
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+    verify(writePort, never()).insert(any());
+  }
+
+  @Test
+  void onResultAvailableProviderUsageWithUnparseableAsOfWritesNoSnapshot() {
+    // Review 2026-06-24 (#332) — asOf is a REQUIRED contract field, but JSON-schema `format:
+    // date-time` is annotation-only (not asserted), so a present-but-unparseable asOf passes
+    // validation yet yields a null instant. The broker skip-persists rather than store an
+    // `available` reading with no provenance timestamp. Run still completes (best-effort capture).
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    String usage =
+        """
+        {"signalState": "available", "accountLabel": "claude:oauth",
+         "fiveHour": {"usedFraction": 0.62, "used": 62, "limit": 100},
+         "asOf": "not-a-timestamp"}
+        """;
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+    verify(writePort, never()).insert(any());
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultNotExposedProviderUsageToleratesNullAsOf() {
+    // The asOf guard is scoped to the `available` path — a not_exposed snapshot is a documented
+    // absence (no fabricated reading), so a null (here unparseable) asOf is tolerated and
+    // persisted.
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    String usage =
+        "{\"signalState\": \"not_exposed\", \"accountLabel\": \"codex:subscription\","
+            + " \"asOf\": \"later\"}";
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<NewProviderUsageSnapshot> captor =
+        ArgumentCaptor.forClass(NewProviderUsageSnapshot.class);
+    verify(writePort).insert(captor.capture());
+    assertEquals("not_exposed", captor.getValue().signalState());
+    assertNull(captor.getValue().asOf());
+  }
+
+  // Note: the broker-level numeric hardening in providerUsageInt/providerUsageDouble (out-of-int
+  // longs, integral doubles, out-of-[0,1] / non-finite fractions) is defense-in-depth — the
+  // RunnerContractValidator already rejects schema-invalid providerUsage before handleSuccess, so
+  // those paths are not reachable through onResult and are exercised only as static-helper guards.
+
+  @Test
+  void onResultProviderUsageWriteFailureDoesNotUnwindCompletedRun() {
+    // Best-effort: a snapshot-write failure must NEVER unwind a successfully-completed run.
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    when(writePort.insert(any())).thenThrow(new RuntimeException("db down"));
+    String usage =
+        "{\"signalState\": \"available\", \"accountLabel\": \"claude:oauth\","
+            + " \"asOf\": \"2026-06-23T09:05:00Z\"}";
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+    verify(writePort).insert(any());
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultDoesNotCaptureProviderUsageWhenSecretLeakDetected() {
+    // Review 2026-06-24 — capture runs AFTER the secret scan, so a leaked/quarantined execution
+    // never persists a snapshot row.
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    when(secretScanService.scanWorkspace(any(), any(), any(), any()))
+        .thenReturn(
+            new RunnerSecretScanService.ScanOutcome(
+                true, "leak.txt", List.of("authorization_header")));
+    String usage =
+        "{\"signalState\": \"available\", \"accountLabel\": \"claude:oauth\","
+            + " \"asOf\": \"2026-06-23T09:05:00Z\"}";
+    broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+    verify(writePort, never()).insert(any());
+  }
+
+  @Test
+  void onResultProviderUsagePersistLogsNamedNonSecretFieldsOnly() {
+    // Task 9 logging subtask + review 2026-06-24 (PARTIAL→done): the capture seam must log the
+    // named, non-secret provider-usage fields (snapshotId / signalState / accountLabel) at INFO and
+    // NEVER adjacent payload bytes. Adversarial sweep: a secret-shaped token planted in the free
+    // `summary` field must not surface in ANY broker log line.
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    // The free `summary` field carries a secret-shaped token (an adjacent payload position the
+    // broker must never log); the providerUsage block itself is schema-clean (no secret field).
+    String usage =
+        "{\"signalState\": \"available\", \"accountLabel\": \"claude:oauth\","
+            + " \"asOf\": \"2026-06-23T09:05:00Z\"}";
+    String payload =
+        onResultSuccessPayload(usage)
+            .replace("\"summary\": \"ok\"", "\"summary\": \"sk-ant-api03-PLANTEDSECRETVALUE\"");
+
+    Logger brokerLog = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    brokerLog.addAppender(appender);
+    try {
+      broker.onResult(REX_ID, payload.getBytes(StandardCharsets.UTF_8));
+    } finally {
+      brokerLog.detachAppender(appender);
+    }
+
+    verify(writePort).insert(any());
+    assertTrue(
+        appender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel() == Level.INFO
+                        && e.getFormattedMessage().contains("provider-usage snapshot persisted")
+                        && e.getFormattedMessage().contains("signalState=available")
+                        && e.getFormattedMessage().contains("accountReference=claude:oauth")
+                        && e.getFormattedMessage().contains("snapshotId=pul_")),
+        "expected an INFO provider-usage persist line carrying the non-secret named fields");
+    assertTrue(
+        appender.list.stream().noneMatch(e -> e.getFormattedMessage().contains("sk-ant-")),
+        "no broker log line may carry secret-shaped material from an adjacent payload field");
+  }
+
+  @Test
+  void onResultProviderUsageWriteFailureLogsSanitizedWarnAndCompletesRun() {
+    // Review 2026-06-24 — the best-effort capture-failure WARN logs error.toString() via
+    // MdcKeys.sanitizeForLog, so a cause embedding CRLF (log-injection vector) is neutralized to
+    // '_' and the run still completes (the write failure never unwinds it).
+    ProviderUsageSnapshotWritePort writePort = wireHappyOnResultWithProviderUsageCapture();
+    when(writePort.insert(any()))
+        .thenThrow(new RuntimeException("db down\r\nINJECTED forged-log-line"));
+    String usage =
+        "{\"signalState\": \"available\", \"accountLabel\": \"claude:oauth\","
+            + " \"asOf\": \"2026-06-23T09:05:00Z\"}";
+
+    Logger brokerLog = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    brokerLog.addAppender(appender);
+    try {
+      broker.onResult(REX_ID, onResultSuccessPayload(usage).getBytes(StandardCharsets.UTF_8));
+    } finally {
+      brokerLog.detachAppender(appender);
+    }
+
+    verify(executionService).recordCompleted(REX_ID);
+    ILoggingEvent warn =
+        appender.list.stream()
+            .filter(
+                e ->
+                    e.getLevel() == Level.WARN
+                        && e.getFormattedMessage()
+                            .contains("provider-usage snapshot capture failed"))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected a best-effort capture-failure WARN"));
+    assertFalse(
+        warn.getFormattedMessage().contains("\n") || warn.getFormattedMessage().contains("\r"),
+        "capture-failure WARN must neutralize CRLF in the cause (log-injection guard)");
+  }
+
+  /**
+   * Wires the success-path stubs (running execution, artifact read + record) plus a mock
+   * provider-usage write port injected via the optional setter, returning the port for
+   * verification.
+   */
+  private ProviderUsageSnapshotWritePort wireHappyOnResultWithProviderUsageCapture() {
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(snapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(scratchStore.tryReadArtifactContent(eq(REX_ID), eq("spec/v1.json")))
+        .thenReturn(Optional.of("spec-payload-bytes".getBytes(StandardCharsets.UTF_8)));
+    when(artifactOperationService.recordOperation(any()))
+        .thenAnswer(
+            invocation -> {
+              RecordArtifactOperationCommand command = invocation.getArgument(0);
+              ArtifactRecordSnapshot artifact =
+                  ArtifactRecordSnapshot.withoutFailureMetadata(
+                      "art_test01234567",
+                      command.workflowRunId(),
+                      command.artifactType(),
+                      1,
+                      null,
+                      org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                      null,
+                      null,
+                      null,
+                      org.dradgo.domain.registry.ArtifactStatus.PENDING,
+                      null);
+              ArtifactOperationSnapshot op =
+                  new ArtifactOperationSnapshot(
+                      "op_test01234567",
+                      command.workflowRunId(),
+                      "art_test01234567",
+                      command.operationType().value(),
+                      org.dradgo.domain.registry.ArtifactOperationStatus.PENDING,
+                      command.idempotencyKey(),
+                      null,
+                      null,
+                      OffsetDateTime.now(CLOCK));
+              return new RecordArtifactOperationResult(artifact, op);
+            });
+    ProviderUsageSnapshotWritePort writePort = mock(ProviderUsageSnapshotWritePort.class);
+    when(writePort.insert(any())).thenReturn(OffsetDateTime.now(CLOCK));
+    broker.setProviderUsageSnapshotWritePort(writePort);
+    return writePort;
+  }
+
+  private String onResultSuccessPayload(String providerUsageJson) {
+    String normalized =
+        providerUsageJson == null
+            ? "{\"summary\": \"ok\", \"outcome\": \"success\"}"
+            : "{\"summary\": \"ok\", \"outcome\": \"success\", \"providerUsage\": "
+                + providerUsageJson
+                + "}";
+    return """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "spec", "contentReference": "spec/v1.json"}
+          ],
+          "normalizedOutput": %s,
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+        .formatted(RUN_ID, REX_ID, normalized);
   }
 
   @Test

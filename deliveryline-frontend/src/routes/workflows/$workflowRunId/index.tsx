@@ -23,6 +23,7 @@ import { ClarificationRegionContainer } from '@/features/workflows/components/Cl
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
 import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
+import { ProviderLimitStatus } from '@/features/workflows/components/ProviderLimitStatus';
 import { ManualExecutionSurface } from '@/features/workflows/components/ManualExecutionSurface';
 import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
 import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
@@ -143,6 +144,13 @@ function WorkflowDetailRoute() {
   // resolves the latest runner execution and ends gracefully when none exists.
   const allowedActions = useAllowedActions(workflowRunId);
   const canViewRunnerLogs = allowedActions.data?.actions.includes('view_runner_logs') ?? false;
+  // Story 3d-7 (AC5) — the Provider Limit Status indicator is gated on the backend-reported
+  // `view_provider_usage_status` action ONLY (via `useAllowedActions`, never role-inferred — eslint
+  // `local-rules/no-role-based-action-gating`). The action is offered in the runner-execution states
+  // (Executing / WaitingForReview / Failed / Paused); the read endpoint resolves the latest snapshot
+  // and returns present=false when none exists, so broad state coverage is safe.
+  const canViewProviderUsage =
+    allowedActions.data?.actions.includes('view_provider_usage_status') ?? false;
   // Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console is gated on the backend-reported
   // `open_diagnostic_console` action ONLY (flowing through `useAllowedActions`, never role-inferred —
   // eslint `local-rules/no-role-based-action-gating`). The action is offered ONLY in EXECUTING and
@@ -186,6 +194,10 @@ function WorkflowDetailRoute() {
       {/* Story 3d-5 (AC4/AC6) — the Step Execution Log Viewer: live-follow + finished replay of
           the latest runner execution's logs, gated on the backend `view_runner_logs` action. */}
       {canViewRunnerLogs ? <StepExecutionLogViewer workflowRunId={workflowRunId} /> : null}
+      {/* Story 3d-7 (AC5) — the Provider Limit Status indicator: latest provider 5h/weekly usage
+          status (or the documented "not exposed" state), gated on the backend
+          `view_provider_usage_status` action. Color-independent signifier; provider-reported + as-of. */}
+      {canViewProviderUsage ? <ProviderLimitStatus workflowRunId={workflowRunId} /> : null}
       {/* Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console: a LIVE-ONLY, read-only attach to
           the running runner container's stdio, gated on the backend `open_diagnostic_console` action
           (EXECUTING + workflow_owner). Input is disabled end-to-end (no write path). */}

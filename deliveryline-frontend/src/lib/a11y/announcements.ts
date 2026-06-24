@@ -121,6 +121,18 @@ export const consoleSessionEnded = 'Read-only diagnostic console session ended.'
  */
 export const consoleSessionError = 'The read-only diagnostic console could not be opened.';
 
+// ---- Provider limit status indicator (story 3d-7) ------------------------------
+
+/** Announced once the provider usage/limit status loads with provider-reported window data. */
+export const providerUsageStatusLoaded = 'Provider usage status loaded.';
+/**
+ * Announced when the provider does not expose the 5-hour/weekly window status (the documented
+ * degraded state) — surfaced so the operator knows the absence is by-provider, not an error.
+ */
+export const providerUsageStatusNotExposed = 'Provider usage status not exposed by the provider.';
+/** Announced when the provider usage status could not be loaded. */
+export const providerUsageStatusError = 'The provider usage status could not be loaded.';
+
 // ---- Manual execution surface (story 3d-4) -------------------------------------
 
 /** Announced while a manual-artifact submission is in flight. */

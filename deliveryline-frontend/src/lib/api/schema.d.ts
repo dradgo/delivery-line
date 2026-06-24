@@ -384,6 +384,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/provider-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest per-credential provider usage/limit status for a run
+         * @description Returns the latest NON-SECRET provider usage/limit snapshot for the run — the 5-hour + weekly window status (or the documented 'not exposed by provider' state). Values are provider-reported and as-of a timestamp; never fabricated. Gated by the view_provider_usage_status allowed-action (offered in the runner-execution states). Returns present=false when no snapshot has been captured yet. Carries no secret material — only window numbers, timestamps, and a non-secret account label.
+         */
+        get: operations["getProviderUsageStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/reject-implementation": {
         parameters: {
             query?: never;
@@ -904,6 +924,54 @@ export interface components {
              * @example linear
              */
             ticketSourceKind?: string;
+        };
+        /** @description Latest per-credential, NON-SECRET provider usage/limit snapshot for a run (5-hour + weekly windows, or the documented 'not exposed by provider' state). Provider-reported and as-of a timestamp; never a fabricated value. */
+        ProviderUsageStatus: {
+            /** @description Non-secret account label that produced the usage (e.g. claude:oauth). */
+            accountReference?: string | null;
+            /**
+             * Format: date-time
+             * @description Provider-reported as-of timestamp; null when not exposed.
+             */
+            asOf?: string | null;
+            /**
+             * Format: date-time
+             * @description Server-stamped capture time; null when absent.
+             */
+            capturedAt?: string | null;
+            /** @description 5-hour rolling window; null when not exposed / absent. */
+            fiveHour?: components["schemas"]["ProviderUsageWindow"];
+            /** @description False when no snapshot has been captured for the run yet. */
+            present?: boolean;
+            /**
+             * @description available | not_exposed; null when no snapshot exists.
+             * @enum {string|null}
+             */
+            signalState?: "available" | "not_exposed" | null;
+            /** @description Weekly window; null when not exposed / absent. */
+            weekly?: components["schemas"]["ProviderUsageWindow"];
+        };
+        ProviderUsageWindow: {
+            /**
+             * Format: int32
+             * @description Limit units.
+             */
+            limit?: number | null;
+            /**
+             * Format: date-time
+             * @description Window reset timestamp.
+             */
+            resetsAt?: string | null;
+            /**
+             * Format: int32
+             * @description Used units.
+             */
+            used?: number | null;
+            /**
+             * Format: double
+             * @description Used fraction 0..1.
+             */
+            usedFraction?: number | null;
         };
         RejectImplementationRequest: {
             artifactId: string;
@@ -2330,6 +2398,63 @@ export interface operations {
             };
             /** @description Run is not parked for manual execution (MANUAL_EXECUTION_NOT_APPLICABLE). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getProviderUsageStatus: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Actor role for action gating; defaults to product_reviewer when absent. view_provider_usage_status is role-agnostic in the runner-execution states.
+                 * @example product_reviewer
+                 */
+                actorRole?: "product_reviewer" | "workflow_owner" | "developer";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest snapshot, or present=false when none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderUsageStatus"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX) or unrecognized actorRole. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description view_provider_usage_status is not allowed for the run's state. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
