@@ -20,17 +20,17 @@ import org.junit.jupiter.api.Test;
  * Aggregate verification that every foundation contract is live end-to-end.
  *
  * <p>This is the structural close of Epic 1 (story 1.23), since widened to make Epic 3 (Contracts
- * #11–#15) and Epic 3c (Contracts #16–#20, story 3c.11) named, enforced members of the same gate.
- * It does <strong>not</strong> re-author any per-contract assertion; instead each {@link Nested}
- * class delegates via the JUnit Platform Launcher API to the existing source-of-truth test class.
- * Stronger-than-contract assertions (cross-product legal-table check, exhaustive fixture sweeps,
- * parameterized DomainErrorCode mapper, structural CLI/REST symmetry) live in adjacent {@code
- * *FoundationContract} classes that are reached <strong>only</strong> through this aggregator —
- * they are deliberately named with a suffix that does not match Surefire's {@code
- * **&#47;*Test.java} pattern nor Failsafe's include list, so Maven discovery skips them; the
- * Launcher API discovers them by FQN. The Launcher discovers by FQN regardless of Maven tag, so
- * plain {@code *Test} unit tests and Testcontainers {@code *IT}s can be aggregated here without
- * retagging.
+ * #11–#15), Epic 3c (Contracts #16–#20, story 3c.11), and Epic 3d (Contracts #21–#26, story 3d.9)
+ * named, enforced members of the same gate. It does <strong>not</strong> re-author any per-contract
+ * assertion; instead each {@link Nested} class delegates via the JUnit Platform Launcher API to the
+ * existing source-of-truth test class. Stronger-than-contract assertions (cross-product legal-table
+ * check, exhaustive fixture sweeps, parameterized DomainErrorCode mapper, structural CLI/REST
+ * symmetry) live in adjacent {@code *FoundationContract} classes that are reached
+ * <strong>only</strong> through this aggregator — they are deliberately named with a suffix that
+ * does not match Surefire's {@code **&#47;*Test.java} pattern nor Failsafe's include list, so Maven
+ * discovery skips them; the Launcher API discovers them by FQN. The Launcher discovers by FQN
+ * regardless of Maven tag, so plain {@code *Test} unit tests and Testcontainers {@code *IT}s can be
+ * aggregated here without retagging.
  *
  * <p><strong>Maven routing.</strong> Tagged {@code @Tag("foundation-gate")}. Both Surefire and
  * Failsafe in {@code deliveryline-backend/pom.xml} list {@code foundation-gate} under {@code
@@ -555,6 +555,306 @@ class FoundationGateVerificationTest {
     void defaultProjectSeederContract() {
       FoundationGateAssertions.delegateRunAssertGreen(
           "3c.6", "org.dradgo.application.project.DefaultProjectSeederIT");
+    }
+  }
+
+  // ===========================================================================================
+  // Epic 3d — Per-Step Execution Control (story 3d.9). Contracts #21–#26 plug the per-step-
+  // execution test debt that stories 3d-1..3d-8 paid down incrementally into the named gate, so a
+  // regression in any of them fails `-Pfoundation-gate verify`. Each contract delegate-runs the
+  // existing source-of-truth test (no assertion re-authoring), mirroring Contracts #1–#20.
+  // ===========================================================================================
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #21 — Reviewer registries + step_reviews schema drift (story 3d.1)")
+  class Contract21ReviewerRegistriesAndSchema {
+
+    /**
+     * Story 3d.1 — {@code RegistryContractTest} is already delegate-run by Contract #3/#16, but
+     * re-run here keeps the Epic 3d reviewer registry assertions ({@code ReviewOutcome} / {@code
+     * reviewer} connector role / {@code rev_} prefix drift vs the SQL CHECKs and the API
+     * placeholder manifest) legible at the Epic 3d site — mirroring how Contract #16 re-runs it for
+     * Epic 3c.
+     */
+    @Test
+    @DisplayName("RegistryContractTest passes (review_outcome / reviewer role / rev_ prefix drift)")
+    void reviewerRegistriesInLockstep() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.1", "org.dradgo.contract.RegistryContractTest");
+    }
+
+    /** Story 3d.1 — V19 {@code step_reviews} table shape + {@code rev_} public-id prefix. */
+    @Test
+    @DisplayName("FlywaySchemaContractTest passes (step_reviews table + rev_ prefix shape)")
+    void reviewerSchemaShapeHolds() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.1", "org.dradgo.contract.FlywaySchemaContractTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #22 — Reviewer execution advisory-only + persistence (story 3d.2)")
+  class Contract22ReviewerExecutionAdvisory {
+
+    /**
+     * Story 3d.2 — the reviewer verdict is advisory-only: the human decision is unaffected, {@code
+     * reviewer_gating_enabled} is never consulted in this epic, a no-binding project is byte-
+     * identical to pre-3d, and self-review is flagged-not-refused. {@code
+     * WorkflowInspectionServiceReviewerVerdictTest} proves the verdict surface adds no {@code
+     * AllowedAction} and no binding gate.
+     */
+    @Test
+    @DisplayName(
+        "WorkflowInspectionServiceReviewerVerdictTest passes (advisory-only, no-bind parity)")
+    void reviewerVerdictAdvisoryOnly() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.2", "org.dradgo.application.workflow.WorkflowInspectionServiceReviewerVerdictTest");
+    }
+
+    /** Story 3d.2 — {@code step_reviews} verdict write seam (mirrors the Approvals write path). */
+    @Test
+    @DisplayName(
+        "StepReviewPersistenceAdapterContractTest passes (verdict persisted to step_reviews)")
+    void reviewerVerdictPersisted() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.2", "org.dradgo.adapters.persistence.StepReviewPersistenceAdapterContractTest");
+    }
+
+    /** Story 3d.2 — the Docker reviewer runner resolves per-project reviewer credentials. */
+    @Test
+    @DisplayName(
+        "DockerRunnerAdapterReviewerCredentialTest passes (per-project reviewer credential)")
+    void reviewerCredentialResolution() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.2", "org.dradgo.adapters.runner.DockerRunnerAdapterReviewerCredentialTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #23 — Manual execution park + artifact submission (story 3d.3/3d.4)")
+  class Contract23ManualExecution {
+
+    /**
+     * Story 3d.3 — a {@code manual} runner-kind parks the run in {@code WaitingForManualExecution}
+     * without launching a container or enqueueing a dispatch. Testcontainers IT (the gate tier has
+     * Docker up).
+     */
+    @Test
+    @DisplayName("ManualExecutionParkIT passes (manual kind parks, no container/queue)")
+    void manualExecutionParks() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.3", "org.dradgo.application.workflow.ManualExecutionParkIT");
+    }
+
+    /**
+     * Story 3d.4 — manual artifact submission re-enters validation (spec/plan/prOutput), is
+     * idempotent (reserve-before-validate), and raises {@code MANUAL_EXECUTION_NOT_APPLICABLE} when
+     * the run is not parked.
+     */
+    @Test
+    @DisplayName("ManualArtifactEndpointContractTest passes (submission re-enters validation)")
+    void manualArtifactSubmissionEndpoint() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.4", "org.dradgo.adapters.rest.ManualArtifactEndpointContractTest");
+    }
+
+    /** Story 3d.4 — the run-scoped manual bundle retrieval surface. */
+    @Test
+    @DisplayName("ManualBundleEndpointContractTest passes (run-scoped manual bundle retrieval)")
+    void manualBundleEndpoint() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.4", "org.dradgo.adapters.rest.ManualBundleEndpointContractTest");
+    }
+
+    /**
+     * Story 3d.4 — end-to-end manual submission re-enters the orchestration tail (secret-scan /
+     * capture-and-push minus the workspace a parked run never made). Testcontainers IT.
+     */
+    @Test
+    @DisplayName("ManualArtifactSubmissionIT passes (submission ingests via the broker tail)")
+    void manualArtifactSubmissionEndToEnd() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.4", "org.dradgo.application.runner.ManualArtifactSubmissionIT");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #24 — Live logs + read-only diagnostic console posture (story 3d.5/3d.6)")
+  class Contract24LiveLogsAndConsole {
+
+    /**
+     * Story 3d.5 — one SSE endpoint serves live ({@code docker logs -f} behind {@code
+     * RunnerLogStreamPort}) and finished (replay of the 3.6 persisted post-hoc-redacted log) cases,
+     * server-side allowed-action gated, localhost-only.
+     */
+    @Test
+    @DisplayName("RunnerLogStreamControllerTest passes (live+finished SSE, server-side gating)")
+    void runnerLogStreamController() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.5", "org.dradgo.adapters.rest.RunnerLogStreamControllerTest");
+    }
+
+    /** Story 3d.5 — the live/finished stream service best-effort redacts the live view. */
+    @Test
+    @DisplayName(
+        "StepLogStreamServiceTest passes (live follow + finished replay, best-effort redact)")
+    void stepLogStreamService() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.5", "org.dradgo.application.runner.StepLogStreamServiceTest");
+    }
+
+    /** Story 3d.5 — the finished-case read of the already-persisted post-hoc-redacted log. */
+    @Test
+    @DisplayName(
+        "LocalRunnerLogStoreTest passes (persisted redacted log unchanged by the live view)")
+    void localRunnerLogStore() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.5", "org.dradgo.adapters.files.LocalRunnerLogStoreTest");
+    }
+
+    /**
+     * Story 3d.6 — the read-only console attaches WITHOUT stdin ({@code withStdIn} never invoked),
+     * the provable-non-mutation posture signed off in ADR 0025.
+     */
+    @Test
+    @DisplayName("DefaultDockerEngineGatewayTest passes (attach without stdin — no write channel)")
+    void dockerEngineGatewayReadOnlyAttach() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.6", "org.dradgo.adapters.runner.docker.DefaultDockerEngineGatewayTest");
+    }
+
+    /**
+     * Story 3d.6 — the console is LIVE-ONLY (a terminal/absent runner is rejected with {@code
+     * console-not-live}, no attach, no {@code console.opened}) and every session is governed-
+     * history recorded ({@code console.opened}/{@code console.closed}).
+     */
+    @Test
+    @DisplayName("DiagnosticConsoleServiceTest passes (live-only + governed console.opened/closed)")
+    void diagnosticConsoleService() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.6", "org.dradgo.application.workflow.DiagnosticConsoleServiceTest");
+    }
+
+    /** Story 3d.6 — the console REST surface is allowed-action gated and exposes no input path. */
+    @Test
+    @DisplayName("RunnerDiagnosticConsoleControllerTest passes (gated, receive-only SSE)")
+    void diagnosticConsoleController() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.6", "org.dradgo.adapters.rest.RunnerDiagnosticConsoleControllerTest");
+    }
+
+    /** Story 3d.6 — the console/log stream beans are localhost-profile wired. */
+    @Test
+    @DisplayName("RunnerConsoleStreamProfileWiringContractTest passes (localhost-only wiring)")
+    void consoleStreamProfileWiring() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.6", "org.dradgo.adapters.runner.RunnerConsoleStreamProfileWiringContractTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #25 — Provider usage/limit status + redaction (story 3d.7)")
+  class Contract25ProviderUsage {
+
+    /**
+     * Story 3d.7 — the provider-usage snapshot persists (no-secret {@code pul_} rows) and surfaces
+     * per-credential attribution. Testcontainers IT.
+     */
+    @Test
+    @DisplayName(
+        "ProviderUsageSnapshotPersistenceAdapterIT passes (snapshot persist + attribution)")
+    void providerUsageSnapshotPersisted() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.7", "org.dradgo.adapters.persistence.ProviderUsageSnapshotPersistenceAdapterIT");
+    }
+
+    /** Story 3d.7 — the usage/limit status REST surface + gate-denial posture. */
+    @Test
+    @DisplayName("ProviderUsageStatusControllerTest passes (status surface + gate denial)")
+    void providerUsageStatusController() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.7", "org.dradgo.adapters.rest.ProviderUsageStatusControllerTest");
+    }
+
+    /**
+     * Direct manifest drift guard (mirrors the Contract #19 project-credential guard). Proves the
+     * {@code provider-usage-snapshot.json} fixture is enumerated in {@code fixtures-manifest.json}
+     * independently of the AR10 sweep (Contract #9), so a corrupted/emptied manifest cannot
+     * silently remove provider-usage coverage from the redaction sweep without failing this gate.
+     * See {@code redaction-fixtures/fixtures-manifest.json} (story 3d-7).
+     */
+    @Test
+    @DisplayName("Direct guard — provider-usage-snapshot.json is in the redaction manifest")
+    void providerUsageFixtureEnumeratedInManifest() throws IOException {
+      Path manifest =
+          Path.of("src", "test", "resources", "redaction-fixtures", "fixtures-manifest.json");
+      if (!Files.isRegularFile(manifest)) {
+        fail(
+            FoundationGateAssertions.tagged(
+                "3d.7", "fixtures-manifest.json missing at " + manifest.toAbsolutePath()));
+        return;
+      }
+      JsonNode entries = new ObjectMapper().readTree(manifest.toFile()).path("fixtures");
+      if (!entries.isArray() || entries.isEmpty()) {
+        fail(
+            FoundationGateAssertions.tagged(
+                "3d.7", "fixtures-manifest.json fixtures array is missing or empty"));
+        return;
+      }
+      Set<String> manifestFiles = new LinkedHashSet<>();
+      for (JsonNode entry : entries) {
+        manifestFiles.add(entry.path("file").asText(""));
+      }
+      if (!manifestFiles.contains("provider-usage-snapshot.json")) {
+        fail(
+            FoundationGateAssertions.tagged(
+                "3d.7",
+                "provider-usage-snapshot.json missing from fixtures-manifest.json — the 3d-7"
+                    + " provider-usage secret would silently drop out of the AR10 sweep"));
+      }
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #26 — Soft-hide append-only invariant (story 3d.8)")
+  class Contract26SoftHideAppendOnly {
+
+    /**
+     * Story 3d.8 (FR47) — hiding/un-hiding a run NEVER mutates or deletes {@code workflow_events};
+     * archived runs remain audit-queryable. Testcontainers IT proves the append-only invariant
+     * against real Postgres.
+     */
+    @Test
+    @DisplayName(
+        "WorkflowArchiveServiceAppendOnlyIT passes (workflow_events untouched on hide/unhide)")
+    void archiveAppendOnlyInvariant() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.8", "org.dradgo.application.workflow.WorkflowArchiveServiceAppendOnlyIT");
+    }
+
+    /**
+     * Story 3d.8 — the archive service writes only the run (cascade is scope-not-write) and raises
+     * {@code ARCHIVE_NOT_APPLICABLE} for an ineligible run.
+     */
+    @Test
+    @DisplayName("WorkflowArchiveServiceTest passes (single-run write + ARCHIVE_NOT_APPLICABLE)")
+    void archiveServiceBehavior() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.8", "org.dradgo.application.workflow.WorkflowArchiveServiceTest");
+    }
+
+    /** Story 3d.8 — the hide/unhide REST surface + allowed-action gating. */
+    @Test
+    @DisplayName("ArchiveRunEndpointContractTest passes (hide/unhide REST + gating)")
+    void archiveRunEndpoint() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3d.8", "org.dradgo.adapters.rest.ArchiveRunEndpointContractTest");
     }
   }
 }

@@ -10,7 +10,7 @@ This is a **completion of the Epic 2 PM loop**, not a per-step-execution-control
 
 **ADR (proposed):** `docs/adr/0028-structured-clarification-channel.md` — the spec runner emits open questions and addressed-acknowledgements as a **structured additive channel** on `runner-result.v1` `specArtifact` (optional fields, no `schemaVersion` bump), replacing the substring-scan stub. Author alongside story 3e-1.
 
-### Story List (4 stories)
+### Story List (5 stories)
 
 ```
 Clarification Creation (closes the reported symptom)
@@ -24,9 +24,12 @@ Spec-Phase Review (advisory second opinion at the spec gate)
 
 Per-Project Execution Control (resolves 3d-3's deferred Open Decision #1)
 3e-4   Per-step runner mapping per project (+ configuration UI)
+
+Spec-Stage Observability (closes a separate "no console output" symptom)
+3e-5   Spec-stage (Investigating) runner log & console visibility + decision-bar placement
 ```
 
-> Story 3e-1 alone resolves the user-visible symptom (questions appear and are answerable). Story 3e-2 closes the full accept → regenerate → incorporate loop. Story 3e-3 extends the 3d-2 advisory LLM reviewer to the spec gate (consuming the open clarifications as review context — hence depends on 3e-1). Story 3e-4 delivers the per-step runner-kind mapping the user requested ("map a runner to each step") + the Projects-Management-UI control that 3d-3 left unbuilt — resolving 3d-3's deferred per-stage-per-project granularity. Detailed, reconciled implementation stories live at `{implementation_artifacts}/3e-1..3e-4-...md`.
+> Story 3e-1 alone resolves the user-visible symptom (questions appear and are answerable). Story 3e-2 closes the full accept → regenerate → incorporate loop. Story 3e-3 extends the 3d-2 advisory LLM reviewer to the spec gate (consuming the open clarifications as review context — hence depends on 3e-1). Story 3e-4 delivers the per-step runner-kind mapping the user requested ("map a runner to each step") + the Projects-Management-UI control that 3d-3 left unbuilt — resolving 3d-3's deferred per-stage-per-project granularity. Story 3e-5 closes a **separate** reported symptom — a run in `Investigating` (spec generation) showed no console output — by extending the 3d-5/3d-6 log-viewer + read-only-console affordances to the spec stage and relocating them below the Decision Bar; it is independent of 3e-1..3e-4. Detailed, reconciled implementation stories live at `{implementation_artifacts}/3e-1..3e-5-...md`.
 
 ---
 
@@ -97,8 +100,29 @@ So that I can run some steps with an agent and others manually, instead of one r
 7. **Given** the Projects Management UI (3c-9), **Then** it gains per-step runner selectors (spec / implementation plan / PR output → codex/claude/manual/use-default) AND surfaces the existing single `runnerKind` as the project-wide default — closing the gap that `runnerKind` had no UI control (it was only in generated types); WCAG 2.1 AA + axe clean.
 8. **Given** tests, **Then** coverage asserts: resolver precedence (per-step > override > global) + empty-map parity; a per-step `manual` parks only that step while others enqueue (IT); REST round-trips the map; registry/CHECK/Flyway/OpenAPI/schema.d.ts drift; UI Vitest + axe.
 
+### Story 3e-5: Spec-Stage (Investigating) Runner Log & Console Visibility + Decision-Bar Placement
+
+As a workflow owner watching a run during spec generation,
+I want the live step-log viewer and the read-only diagnostic console to be available while the run is in `Investigating`, rendered below the action buttons,
+So that I can see the spec runner's console output as it works (today the page shows nothing) and find that output in a consistent place beneath the decision controls.
+
+**Context (the gap):** `Investigating` is the spec-generation stage — a runner container is live and producing output there (story 3a-1, `INBOX → INVESTIGATING`). But stories 3d-5 (AC6) and 3d-6 (AC4) scoped the `view_runner_logs` / `open_diagnostic_console` affordances to the execution states only, so `WorkflowInspectionService.baseActionMatrix`'s `INVESTIGATING` arm offers neither. The FE gates both observability surfaces on those actions, so a run viewed in `Investigating` shows **no console output**. The streaming endpoints are stage-agnostic and already serve the spec runner — only the matrix gate is missing.
+
+**Acceptance Criteria:**
+
+1. **Given** the allowed-action matrix, **When** a run is in `Investigating`, **Then** `baseActionMatrix` offers `VIEW_RUNNER_LOGS` for every role and `OPEN_DIAGNOSTIC_CONSOLE` for `workflow_owner` only (mirroring `EXECUTING`, excluding `await_outcome`/`view_provider_usage_status`), on both the open-clarification and no-open-clarification branches.
+2. **Given** a live spec-generation run, **Then** the `StepExecutionLogViewer` streams the spec runner's logs and the owner's `ReadOnlyDiagnosticConsole` attaches to the live spec container — with no change to endpoints, ports, adapters, or `runner-result`/OpenAPI schemas.
+3. **Given** the run-detail route, **Then** the log viewer + diagnostic console render **below** the `WorkflowDecisionBar` (the action buttons), not at the top of the page; gating is unchanged. Provider Limit Status + Failure surface keep their positions.
+4. **Given** the registry/contract surfaces, **Then** there is no new `AllowedAction`/event/error code/Flyway/`runner-result` field; the two actions already exist in the enum + placeholder + `getAllowedActions` schema, so the OpenAPI snapshot is byte-identical (no `schema.d.ts` regen).
+5. **Given** ADR 0025, **Then** an amendment note records that both affordances now cover `Investigating` on the identical security posture (input-disabled console, owner-only, live-only re-check) — no new sign-off gate.
+6. **Given** tests, **Then** the `Investigating` matrix rows (both branches, `product_reviewer` + `workflow_owner`) + cross-product coverage test stay green; an `Investigating` run renders the viewer/console; both surfaces render below the Decision Bar; `application.*` ≥80% coverage holds.
+
+> **Dependencies:** 3d-5 + 3d-6 (done). Independent of 3e-1..3e-4. **FRs:** extends FR65 (live/historical step logs) + FR68 (read-only diagnostic console) to the spec stage; no new requirement.
+
+---
+
 ### Cross-Cutting Notes
 
 - **Foundation-gate widening:** the new `AllowedAction`s (3e-2), the `clarification.raised` event type (3e-1), the `ProjectRunnerStep` registry + `project_runner_kinds` table (3e-4), any new error codes (three-sites), and the additive runner-contract fields are drift-tested at the existing gates — folded into each story, no separate gate story.
 - **Documentation:** the Epic 2 PM-loop walkthrough (`docs/pm-loop-walkthrough.md`) gains a clarification-creation + incorporation + spec-review section (3e-2/3e-3); the per-step execution-control config is documented alongside 3e-4 (extends the 3d config walkthrough); new vocabulary confirmed in `docs/glossary.md`.
-- **FRs covered:** **3e-1/3e-2** complete the deferred clarification-creation + incorporation portion of **FR9, FR11, FR13** (Epic 2 owns the definitions). **3e-3** extends the advisory-reviewer capability (**FR64**, Epic 3d) to the spec gate. **3e-4** extends per-project execution control (**FR66** manual execution + Epic 3c project config) to per-step granularity and delivers its config UI. This epic activates/extends deferred execution; it introduces no new PRD requirement.
+- **FRs covered:** **3e-1/3e-2** complete the deferred clarification-creation + incorporation portion of **FR9, FR11, FR13** (Epic 2 owns the definitions). **3e-3** extends the advisory-reviewer capability (**FR64**, Epic 3d) to the spec gate. **3e-4** extends per-project execution control (**FR66** manual execution + Epic 3c project config) to per-step granularity and delivers its config UI. **3e-5** extends spec-stage observability (**FR65** live/historical step logs + **FR68** read-only diagnostic console, Epic 3d) to the `Investigating` state and refines run-detail placement. This epic activates/extends deferred execution; it introduces no new PRD requirement.

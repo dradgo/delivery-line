@@ -82,6 +82,12 @@ defense-in-depth `gsub` redaction pass that mirrors the Java `SensitivePayloadAn
 
 ## Apply the ILM policy (AC9)
 
+Story 3.7 (AC9 / Decision D1, OQ-4) — see [`docs/adr/0023-elk-replaces-loki.md`](../../docs/adr/0023-elk-replaces-loki.md).
+The 30-day retention bounds index growth on a dev host; edit `max_age` in `elasticsearch/ilm-policy.json`
+to change retention. The policy JSON is kept comment-free on purpose: the ES `_ilm/policy` endpoint
+strict-parses the request body and rejects unknown top-level fields (e.g. a `"//"` comment key → HTTP
+400), so the commands below can be pasted verbatim.
+
 After the cluster is healthy, register the retention policy and bind it via an index template:
 
 ```bash

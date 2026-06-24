@@ -566,6 +566,29 @@
 									     85.1% (57/67), ProjectEntityMapper 100% (33/33) — all comfortably above the BUNDLE
 									     floor. The AC5 named coverage commitment is the application.project (0.80) +
 									     infrastructure.crypto (0.90) floors above. -->
+										<!-- Story 3d-9 (AC6, decision — mirrors 3c-11 D1) — Epic 3d application code is
+										     intentionally NOT given an isolated per-PACKAGE floor. A package scan (2026-06-24)
+										     confirms all net-new 3d application code lands in the PRE-EXISTING shared roots
+										     org.dradgo.application.workflow (WorkflowArchiveService, DiagnosticConsoleService,
+										     StepLogStreamService, ManualArtifactSubmissionService) and
+										     org.dradgo.application.runner (ManualExecutionDispatcher) — no net-new DEDICATED 3d
+										     sub-package exists (the only sub-packages are queue/workspace/spi/commands, all
+										     pre-3d; queue+workspace already carry their own 0.80 floors above). A per-PACKAGE
+										     floor on application.workflow / application.runner would govern those entire large
+										     shared roots (every workflow/runner service in the module), not just 3d code, so it
+										     would red the build for unrelated classes — the same un-isolatable situation as the
+										     3c-11 D1 adapter case. The 3d application code is instead guarded by (a) the BUNDLE
+										     floor above (0.75 LINE / 0.55 BRANCH, which counts it) and (b) its dedicated
+										     *Test/*IT suites, all of which measure >=0.80 LINE. Measured per-class LINE coverage
+										     from the dedicated 3d suites (foundation-gate aggregator merged unit+IT run,
+										     2026-06-24): WorkflowArchiveService 95.3% (142/149), ManualExecutionDispatcher 100%
+										     (44/44), DiagnosticConsoleService 93.6% (117/125), ManualArtifactSubmissionService
+										     91.1% (153/168), StepLogStreamService 88.7% (86/97); reviewer-harvest persistence
+										     StepReviewSnapshot 95.0% (19/20) + StepReviewEntityMapper 100% (12/12);
+										     ProviderUsageSnapshotPersistenceAdapter 81.4% (48/59) + ProviderUsageStatusController
+										     100% (28/28) — all above the 0.80 reference floor. No net-new dedicated sub-package
+										     means no new per-PACKAGE <rule>; the AC6 commitment is this recorded decision +
+										     measured numbers (no silent skip). -->
 							</rules>
 						</configuration>
 					</execution>

@@ -745,10 +745,14 @@ These functional requirements define the Phase 1 capability contract for one gov
   operator can approve it, continue as a single ticket, or re-propose with feedback. On approval
   the system creates one child run per subtask — creating a source sub-ticket where the ticket
   connector supports it, otherwise proceeding internal-only — and preserves parent→child lineage
-  in the governed history.
+  in the governed history. Subtasks may themselves be split recursively, subject to a configurable
+  depth limit; a split run is treated as decomposed and pending until all of its descendant runs
+  complete, at which point it rolls up to a completed state — preserving full multi-level lineage.
 - **FR71:** Operators can declare execution dependencies between governed runs so a dependent run
   does not start until all its prerequisite runs complete; the dependency graph is acyclic and a
-  blocked run is held in an explicit waiting state until released.
+  blocked run is held in an explicit waiting state until released. A split prerequisite run
+  satisfies its dependents once all of its descendant runs complete (rollup); a failed descendant
+  holds the rollup, leaving dependents blocked and operator-visible with no cascade.
 - **FR72:** Authorized users can see each run's project attribution in the run review queue and
   filter the queue by project.
 
