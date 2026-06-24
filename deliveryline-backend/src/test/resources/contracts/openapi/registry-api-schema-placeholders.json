@@ -97,7 +97,8 @@
     "batchSubmission": "bat_",
     "project": "prj_",
     "projectCredential": "cred_",
-    "review": "rev_"
+    "review": "rev_",
+    "providerUsageSnapshot": "pul_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",

@@ -1,5 +1,5 @@
 {
-  "_comment": "Story 3d-7 (AC4) adversarial fixture. A representative providerUsage payload (window numbers + timestamps + a NON-SECRET accountLabel) deliberately seeded with a secret-shaped string in an adjacent position to prove the redactor scrubs any secret that ever reaches this payload. The legit provider-usage fields carry NO secret; the planted Authorization bearer below MUST be redacted.",
+  "_comment": "Story 3d-7 (AC4) adversarial fixture. A representative providerUsage payload (window numbers + timestamps + a non-sensitive accountLabel) deliberately seeded with a planted credential-shaped value in an adjacent field to prove the redactor scrubs anything sensitive that ever reaches this payload. The legit provider-usage fields carry nothing sensitive; the planted header value below MUST be scrubbed.",
   "signalState": "available",
   "accountLabel": "claude:oauth",
   "fiveHour": { "usedFraction": 0.62, "used": 62, "limit": 100, "resetsAt": "2030-01-01T05:00:00Z" },
