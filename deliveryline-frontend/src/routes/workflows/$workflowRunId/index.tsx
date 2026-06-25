@@ -191,19 +191,10 @@ function WorkflowDetailRoute() {
           Renders nothing unless the run's event stream carries failure / recovery
           events (scope discipline — Epic 4 owns the full timeline). */}
       <FailureEventSurface workflowRunId={workflowRunId} />
-      {/* Story 3d-5 (AC4/AC6) — the Step Execution Log Viewer: live-follow + finished replay of
-          the latest runner execution's logs, gated on the backend `view_runner_logs` action. */}
-      {canViewRunnerLogs ? <StepExecutionLogViewer workflowRunId={workflowRunId} /> : null}
       {/* Story 3d-7 (AC5) — the Provider Limit Status indicator: latest provider 5h/weekly usage
           status (or the documented "not exposed" state), gated on the backend
           `view_provider_usage_status` action. Color-independent signifier; provider-reported + as-of. */}
       {canViewProviderUsage ? <ProviderLimitStatus workflowRunId={workflowRunId} /> : null}
-      {/* Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console: a LIVE-ONLY, read-only attach to
-          the running runner container's stdio, gated on the backend `open_diagnostic_console` action
-          (EXECUTING + workflow_owner). Input is disabled end-to-end (no write path). */}
-      {canOpenDiagnosticConsole ? (
-        <ReadOnlyDiagnosticConsole workflowRunId={workflowRunId} actorRole="workflow_owner" />
-      ) : null}
       {/* Story 3d-4 (AC7) — the Manual Execution Surface: for a run parked in
           WaitingForManualExecution, download/copy the input bundle + submit the operator-produced
           artifact. Gated on the backend `obtain_manual_bundle` / `submit_manual_artifact` actions. */}
@@ -296,6 +287,18 @@ function WorkflowDetailRoute() {
         <ReviewerVerdictPanelContainer workflowRunId={workflowRunId} />
       ) : null}
       <WorkflowDecisionBar workflowRunId={workflowRunId} />
+      {/* Story 3d-5 (AC4/AC6) — the Step Execution Log Viewer: live-follow + finished replay of
+          the latest runner execution's logs, gated on the backend `view_runner_logs` action. Story
+          3e-5 (AC4) relocates it BELOW the Decision Bar so the runner's console output sits beneath
+          the action controls (and is now offered in the Investigating/spec-generation state too). */}
+      {canViewRunnerLogs ? <StepExecutionLogViewer workflowRunId={workflowRunId} /> : null}
+      {/* Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console: a LIVE-ONLY, read-only attach to
+          the running runner container's stdio, gated on the backend `open_diagnostic_console` action
+          (workflow_owner; Executing + — story 3e-5 — Investigating). Input is disabled end-to-end
+          (no write path). Relocated below the Decision Bar by story 3e-5 (AC4). */}
+      {canOpenDiagnosticConsole ? (
+        <ReadOnlyDiagnosticConsole workflowRunId={workflowRunId} actorRole="workflow_owner" />
+      ) : null}
     </Stack>
   );
 }

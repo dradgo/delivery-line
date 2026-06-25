@@ -911,10 +911,27 @@ public class WorkflowInspectionService {
           // story 2.12's pendingClarifications gate which counts NOT-in-{incorporated,
           // rejected_invalid}. The AC4 gate (below) uses the 2.12 definition; this AC3 row asks
           // "are there unanswered questions on the latest in-flight spec?".
+          //
+          // Story 3e-5 (AC1/AC2): INVESTIGATING is a live spec-runner state
+          // (WorkflowTransitionTable
+          // dispatches the spec runner on INBOX→INVESTIGATING, story 3a-1), so a container is live
+          // and producing output here exactly as in EXECUTING. The stage-agnostic streaming
+          // endpoints already serve it; the only missing piece was this matrix affordance. Mirror
+          // the EXECUTING role split — view_runner_logs for every role, open_diagnostic_console for
+          // workflow_owner only — but WITHOUT await_outcome and WITHOUT view_provider_usage_status
+          // (R3: tight scope to the two console affordances). The console keeps the identical
+          // read-only/input-disabled, owner-only, live-only-re-check-at-attach posture as EXECUTING
+          // (ADR 0025 amendment).
+          List<AllowedAction> actions = new ArrayList<>();
+          actions.add(AllowedAction.VIEW_ONLY);
           if (latestSpecPublicId != null && hasOpenClarificationOnArtifact(latestSpecPublicId)) {
-            return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
+            actions.add(AllowedAction.ANSWER_CLARIFICATION);
           }
-          return List.of(AllowedAction.VIEW_ONLY);
+          actions.add(AllowedAction.VIEW_RUNNER_LOGS);
+          if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            actions.add(AllowedAction.OPEN_DIAGNOSTIC_CONSOLE);
+          }
+          return List.copyOf(actions);
         }
       case WAITING_FOR_SPEC_APPROVAL:
         {
@@ -957,8 +974,9 @@ public class WorkflowInspectionService {
         // (role-agnostic) alongside the passive views. Story 3d-6 (AC4) additively offers the
         // read-only diagnostic console — but ONLY to the run owner (workflow_owner, the single
         // local
-        // operator), since EXECUTING is the only state where a container is live to attach. The
-        // endpoint re-checks liveness at attach time (LIVE-ONLY, DD-3).
+        // operator). EXECUTING and INVESTIGATING (the spec-generation stage, story 3e-5) are the
+        // live-container states where a container exists to attach; the endpoint re-checks liveness
+        // at attach time (LIVE-ONLY, DD-3).
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
           return List.of(
               AllowedAction.VIEW_ONLY,

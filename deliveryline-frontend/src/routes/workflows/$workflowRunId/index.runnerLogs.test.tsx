@@ -90,4 +90,33 @@ describe('WorkflowDetail route — runner-log viewer gating (story 3d-5 AC6/AC8)
     await screen.findByRole('heading', { name: /Workflow run/ });
     expect(screen.queryByTestId('step-execution-log-viewer')).not.toBeInTheDocument();
   });
+
+  // Story 3e-5 (AC3/AC4/AC7) — the spec-generation (Investigating) state is now a live runner state
+  // that offers view_runner_logs, and the viewer renders BELOW the Decision Bar.
+  it('renders the log viewer below the Decision Bar in the Investigating state', async () => {
+    server.use(
+      http.get(ALLOWED_ACTIONS_URL, () =>
+        HttpResponse.json({
+          actions: ['view_only', 'view_runner_logs'],
+          versionStamp: {
+            workflowState: 'Investigating',
+            lastEventId: 'evt_runnerlogs',
+            currentSpecArtifactVersion: 1,
+            currentContextBundleVersion: 1,
+          },
+        }),
+      ),
+    );
+
+    renderRoute();
+
+    const viewer = await screen.findByTestId('step-execution-log-viewer');
+    const decisionBar = await screen.findByTestId('approval-decision-bar');
+    // AC4: the viewer must appear AFTER the Decision Bar in document order. compareDocumentPosition
+    // returns a bitmask, so assert the FOLLOWING bit is set rather than strict-equal — robust to a
+    // future layout that nests the surfaces (which would OR-in DOCUMENT_POSITION_CONTAINED_BY etc.).
+    expect(
+      decisionBar.compareDocumentPosition(viewer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

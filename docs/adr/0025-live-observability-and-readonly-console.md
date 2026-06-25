@@ -44,6 +44,12 @@ The 3d-6 console implementation ships the **input-disabled** read-only design (D
 
 The interactive (write-forwarded) console of Alt 2 remains **deferred** to a future story; any move toward input forwarding requires a fresh review.
 
+### Amendment — story 3e-5 (Investigating/spec-generation coverage)
+
+Story 3e-5 extends **both** affordances — the live log viewer (`view_runner_logs`) and the read-only diagnostic console (`open_diagnostic_console`) — to cover the **`Investigating` (spec-generation) state** in addition to `Executing`. `Investigating` is a live-container state (the spec runner is dispatched on `INBOX → INVESTIGATING`, story 3a-1), so a container is live and producing output there exactly as in `Executing`; the streaming endpoints are stage-agnostic and already served it — only the allowed-action matrix arm withheld the affordances. The change is a single matrix widening (`WorkflowInspectionService.baseActionMatrix` `INVESTIGATING` arm) plus a frontend relocation of the two surfaces below the Decision Bar.
+
+The **security posture is identical** to `Executing`: the console stays read-only/input-disabled (no stdin at the docker layer, receive-only `EventSource` on the UI), owner-only (`open_diagnostic_console` for `workflow_owner` only; `view_runner_logs` role-agnostic), LIVE-ONLY (liveness re-checked at attach → `console-not-live` if absent), governed-history-audited, localhost-only, and best-effort-live-redacted with the same accepted residual risk. Because nothing about the threat model, the trust boundary, or the input/persistence design changes — only the *set of states* the unchanged affordances are offered in — **no new security sign-off gate is introduced** (contrast the 3d-6 AC1 sign-off that originally ratified the input-disabled console design, which still governs). ADR status is unchanged (remains Accepted).
+
 ## Alternatives Considered
 
 ### Alt 1 — Post-hoc redacted log download only (the Epic 4 / story 4.4 baseline), no live view

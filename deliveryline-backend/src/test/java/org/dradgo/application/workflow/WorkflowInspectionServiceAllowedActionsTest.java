@@ -103,12 +103,22 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.PLANNED,
             "workflow_owner",
             List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
+        // Story 3e-5 (AC1/AC2) — Investigating is a live spec-runner state, so view_runner_logs
+        // (role-agnostic) and open_diagnostic_console (workflow_owner only) join the arm, mirroring
+        // the EXECUTING role split (minus await_outcome / view_provider_usage_status — R3). These
+        // rows are the no-open-clarification branch (stubNoLatestSpec).
         Arguments.of(
-            WorkflowState.INVESTIGATING, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
+            WorkflowState.INVESTIGATING,
+            "product_reviewer",
+            List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
         Arguments.of(
             WorkflowState.INVESTIGATING,
             "workflow_owner",
-            List.of(AllowedAction.VIEW_ONLY, AllowedAction.ARCHIVE_RUN)),
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+                AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "product_reviewer",
@@ -415,12 +425,19 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
     AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
 
+    // Story 3e-5 (AC2) — view_runner_logs joins the open-clarification branch (role-agnostic),
+    // alongside the existing view_only + answer_clarification.
     assertThat(view.actions())
-        .containsExactly(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
+        .containsExactly(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.ANSWER_CLARIFICATION,
+            AllowedAction.VIEW_RUNNER_LOGS);
   }
 
   @Test
-  void investigatingWithZeroOpenClarificationsIsViewOnlyOnly() {
+  void investigatingWithZeroOpenClarificationsOffersViewAndRunnerLogs() {
+    // Story 3e-5 (AC2) — renamed from `...IsViewOnlyOnly`: the no-open-clarification branch now
+    // also offers view_runner_logs (role-agnostic), so it is no longer view-only.
     stubRunWithState(WorkflowState.INVESTIGATING, 0);
     stubLatestSpec(1);
     stubBundleAvailable(SPEC_ART, 1);
@@ -429,7 +446,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
     AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
 
-    assertThat(view.actions()).containsExactly(AllowedAction.VIEW_ONLY);
+    assertThat(view.actions())
+        .containsExactly(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS);
   }
 
   // ---------------------------------------------------------------------------
@@ -707,9 +725,16 @@ class WorkflowInspectionServiceAllowedActionsTest {
 
     AllowedActionsView view = service.getAllowedActions(RUN, "workflow_owner");
 
+    // Story 3e-5 (AC2) — owner open-clarification branch: view_runner_logs +
+    // open_diagnostic_console
+    // join alongside view_only + answer_clarification (archive_run appended by the wrapper).
     assertThat(view.actions())
         .containsExactly(
-            AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION, AllowedAction.ARCHIVE_RUN);
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.ANSWER_CLARIFICATION,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+            AllowedAction.ARCHIVE_RUN);
   }
 
   // ---------------------------------------------------------------------------
