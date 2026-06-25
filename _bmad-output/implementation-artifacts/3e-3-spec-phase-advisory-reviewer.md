@@ -1,6 +1,6 @@
 # Story 3e.3: Spec-Phase Advisory Reviewer (WaitingForSpecApproval)
 
-Status: backlog
+Status: done
 
 <!-- Added to Epic 3e via sprint-change-proposal-2026-06-23.md (correct-course addendum). Depends on 3d-2 (reviewer substrate) + 3e-1 (open clarifications as review context). Validation optional: run validate-create-story before dev-story. -->
 
@@ -9,7 +9,7 @@ Status: backlog
 > **Three reconciliations the live codebase forces (read all three before coding):**
 >
 > 1. **The reviewer trigger already exists — you call it from one more place.** `enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId)` enqueues a `RunnerStage.REVIEW` over the producing execution's artifact, async + non-blocking, inside the transition tx, and degrades every failure mode through the worker (panel "unavailable"). Add a call to it from `onSpecStageSucceeded` (the spec-ready transition), guarded so the spec-phase reviewer fires only when the project has a reviewer binding. The reviewer-kind binding (`reviewer_model_kind`) is **run-level, not per-stage** (`resolveReviewerKind`), so the same binding governs the spec reviewer and the execution reviewer — no new project field. See R1.
-> 2. **The spec-review context bundle must include the OPEN CLARIFICATIONS — this is why 3e-3 depends on 3e-1.** The existing reviewer bundle (`ContextBundleService.assembleForReview`, `:730`) sets `priorFeedbackReferences` EMPTY ("the verdict is a fresh second opinion") and references only the reviewed artifact. For the spec phase the user explicitly wants the reviewer to weigh the **ticket + spec + open questions**. Add a spec-review bundle variant (or extend `assembleForReview`) that includes the run's `open` clarifications (reference-by-id + redaction-policed materialized content, mirror 3e-2 R4) so the reviewer reads the questions. Without 3e-1 there are no clarifications to include. See R2.
+> 2. **The spec-review context bundle must include the OPEN CLARIFICATIONS — this is why 3e-3 depends on 3e-1 (now DONE).** The existing reviewer bundle (`ContextBundleService.assembleForReview`, `:745`) sets `priorFeedbackReferences` EMPTY ("the verdict is a fresh second opinion") and references only the reviewed artifact. For the spec phase the user explicitly wants the reviewer to weigh the **ticket + spec + open questions**. Add a spec-review bundle variant (or extend `assembleForReview`) that includes the run's `open` clarifications. **Mirror the EXACT pattern 3e-2 actually shipped (`assembleForSpecInvestigation`, `:785`/`:857`): an INLINE `acceptedClarifications` array of `{clarificationId, questionId, questionText[, answerText]}`, policed by the SAME single `redact(root, SHAREABLE_REDACTED)` pass — NOT a reference-by-id materialized input file.** The earlier "materialize as an input file / 2KB cap" framing is stale: the cap was raised to 256KB ([[context-bundle-2kb-payload-cap]], `CONTEXT_BUNDLE_MAX_PAYLOAD_BYTES = 256*1024`) and 3e-2 inlines the bounded clarification text directly. Open clarifications carry NO answer yet, so inline `{clarificationId, questionId, questionText}` only (questionText is bounded). Without 3e-1 there are no clarifications to include. See R2.
 > 3. **`step_reviews` + the verdict endpoint already persist/serve any reviewed artifact — the gap is "which stage triggers" + the FE surfacing at the spec phase.** `step_reviews` stores `reviewed_artifact_id` + version + `outcome` + `rationale` generically; `GET /reviewer-verdict` already serves it. So persistence is reused unchanged. The net-new is: (a) the spec-phase trigger (R1), (b) the spec-review bundle (R2), (c) surfacing the verdict panel in the **spec** Decision Bar (the FE panel exists for `WaitingForReview`; render it at `WaitingForSpecApproval` too). See R3.
 
 ## Story
@@ -24,7 +24,7 @@ So that I get a governed second opinion at the spec-approval gate (not only at t
 
 1. **Given** a project with a reviewer binding (`reviewer_model_kind` set — the same 3d-1/3d-2 binding, NOT a new field), **When** a spec artifact becomes available and the run advances `Investigating → WaitingForSpecApproval` (`onSpecStageSucceeded`), **Then** an advisory reviewer invocation (`RunnerStage.REVIEW`) is enqueued over the spec artifact via the existing `enqueueReviewerIfConfigured` — async, non-blocking, inside the spec-ready transition tx, resolved through `ProjectConnectorResolver` using the per-project reviewer credential (decrypted in memory only, never logged).
 
-2. **Given** the spec-review context, **Then** the reviewer's input bundle includes the **ticket summary + the spec artifact + the run's `open` clarifications** (question id + text, reference-by-id with redaction-policed materialized content per 3e-2 R4) — so the reviewer can assess the spec *and* flag whether the open questions are adequately handled. (Execution-phase reviewer bundles are unchanged — this is a spec-review-only bundle variant.)
+2. **Given** the spec-review context, **Then** the reviewer's input bundle includes the **ticket summary + the spec artifact + the run's `open` clarifications** (an INLINE `{clarificationId, questionId, questionText}` array, mirroring 3e-2's shipped `acceptedClarifications` inline block at `ContextBundleService:857`, policed by the same single `redact(...)` pass — open rows carry no answerText) — so the reviewer can assess the spec *and* flag whether the open questions are adequately handled. (Execution-phase reviewer bundles are unchanged — this is a spec-review-only bundle variant.)
 
 3. **Given** the reviewer run, **Then** a `runner_executions` row is recorded for it (FR53 inspectability) and a `step_reviews` row persists the structured `outcome` + `rationale` + reviewer/producer model identities, with `reviewed_artifact_id` = the spec artifact + version (the existing generic `step_reviews` write — no schema change).
 
@@ -44,35 +44,54 @@ So that I get a governed second opinion at the spec-approval gate (not only at t
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Fire the advisory reviewer at the spec phase** (AC: 1, 6)
-  - [ ] `application/workflow/WorkflowOrchestrationService.java#onSpecStageSucceeded` (`:349`) — after the `Investigating → WaitingForSpecApproval` transition commits (mirror the placement in `onPlanStageSucceeded` `:751`), call `enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId)`. The method already: resolves `hasReviewerBinding` (no-throw), no-ops on no binding (parity), enqueues `RunnerStage.REVIEW`, pins the reviewed artifact best-effort, and swallows enqueue failures (run remains correctly advanced). **Do not** duplicate that logic — reuse it.
-  - [ ] Confirm `pinReviewedArtifactBestEffort`/the compose derivation resolves the **spec** artifact for an INVESTIGATION-stage producing execution (it derives the reviewed artifact from the producing execution's stage). If the derivation is execution-stage-specific, extend it to map INVESTIGATION → the spec artifact. Note the decision in Completion Notes.
+- [x] **Task 1 — Fire the advisory reviewer at the spec phase** (AC: 1, 6)
+  - [x] `application/workflow/WorkflowOrchestrationService.java#onSpecStageSucceeded` — after the `Investigating → WaitingForSpecApproval` transition commits (mirroring `onPlanStageSucceeded`), call `enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId)`. Reused the existing helper verbatim (no logic duplicated).
+  - [x] Reviewed-artifact derivation: extended `ContextBundleService.resolveReviewedArtifact` with a SPEC fallback (`prOutput → implementationPlan → spec`) so the SAME derivation pins/composes the spec at the spec gate (only the spec exists there) and is byte-identical for execution review (plan/prOutput always present). Decision noted in Completion Notes.
 
-- [ ] **Task 2 — Spec-review context bundle (ticket + spec + open clarifications)** (AC: 2, 8)
-  - [ ] `application/runner/ContextBundleService.java` — add a spec-review path (new `assembleForSpecReview` OR a flag on `assembleForReview` `:730`) that, in addition to the reviewed spec artifact + ticket summary, includes the run's `open` clarifications: one `priorFeedbackReferences` entry `{referenceId: clarificationId, kind: "clarification.open"}` per open clarification + the question id/text **materialized as a redaction-policed referenced input file** (reuse the 3e-2 materialization helper / the `spec.rejection` reference-content pattern; never inline into the bundle JSON — respects the 2KB cap [[context-bundle-2kb-payload-cap]]).
-  - [ ] The reviewer bundle composer selects this variant when the REVIEW execution reviews a SPEC artifact (derive from the reviewed artifact's type). Execution-stage review bundles (plan/pr-output) are unchanged.
-  - [ ] `ClarificationReadPort.listByWorkflowRunId` is already injected into `ContextBundleService` (3.10) — filter `STATUS_OPEN`. (Open clarifications exist only once 3e-1 ships — dependency.)
+- [x] **Task 2 — Spec-review context bundle (ticket + spec + open clarifications)** (AC: 2, 8)
+  - [x] `application/runner/ContextBundleService.java` — added `assembleForSpecReview`; `createForReview` branches on the reviewed artifact type (SPEC ⇒ spec-review bundle). Emits an INLINE `openClarifications` array `{clarificationId, questionId, questionText}` (no answerText) only when ≥1 open clarification exists; policed by the same single `redact(root, SHAREABLE_REDACTED)` pass. Added `openClarifications` to `context-bundle.v1.schema.json` (additive-optional, mirroring 3e-2 `acceptedClarifications`). Plus a by-id `priorFeedbackReferences {kind:'clarification.open'}` row per open clarification (audit half).
+  - [x] The composer selects the spec-review variant when `reviewedArtifact.artifactType() == SPEC`; execution-stage review bundles (plan/pr-output) are unchanged.
+  - [x] Filter `Clarification.STATUS_OPEN` (mirror of the 3e-2 `STATUS_ACCEPTED` filter); `ClarificationReadPort` already injected. Both runner.mjs prompt builders surface `openClarifications` (byte-identical mirror of the 3e-2 acceptedClarifications block).
 
-- [ ] **Task 3 — Surface the verdict in the spec Decision Bar** (AC: 4, 5, 9)
-  - [ ] Frontend — render the existing Reviewer Verdict Panel (3d-2) in the `WaitingForSpecApproval` Decision Bar context (next to the spec approve/reject/answer/accept controls), fed by the existing `GET /reviewer-verdict` (run-scoped). Reuse the panel component + the self-review warning + the "unavailable" state; no new panel.
-  - [ ] Confirm the verdict-fetch hook keys off the run (not a hardcoded `WaitingForReview` state) so it loads at `WaitingForSpecApproval`. Adjust the state gating if it was scoped to execution review only.
-  - [ ] Vitest + axe over the panel rendered in the spec context.
+- [x] **Task 3 — Surface the verdict in the spec Decision Bar** (AC: 4, 5, 9)
+  - [x] Frontend — render the existing `ReviewerVerdictPanelContainer` (3d-2) at `WaitingForSpecApproval` too (route `index.tsx`); the panel/hook/`GET /reviewer-verdict` are run-scoped and unchanged.
+  - [x] Confirmed `useReviewerVerdict` keys off the run (not a hardcoded state); only the route-level render gate needed the `|| 'WaitingForSpecApproval'`.
+  - [x] Vitest: route renders the panel at WaitingForSpecApproval and NOT at Investigating; the panel's own axe coverage (`ReviewerVerdictPanel.test.tsx`) is unchanged (the component is reused as-is).
 
-- [ ] **Task 4 — Backend verification of reused surfaces** (AC: 3, 9)
-  - [ ] Confirm `step_reviews` write (the 3d-2 harvester, `ReviewResultHarvester`) records a spec-phase verdict with `reviewed_artifact_id` = spec + version with no schema change (it stores any reviewed artifact). Add an IT path for a spec-stage REVIEW harvest.
-  - [ ] Confirm `GET /reviewer-verdict` serves the spec-phase verdict (run-scoped). OpenAPI snapshot byte-identical (no contract change). If the endpoint filters by stage, widen it.
+- [x] **Task 4 — Backend verification of reused surfaces** (AC: 3, 9)
+  - [x] `ReviewResultHarvester` records a spec-phase verdict with `reviewed_artifact_id` = spec + version, no schema change (verified by IT harvest + unit test). Also fixed producer-identity provenance: a SPEC reviewed artifact resolves the INVESTIGATION producer kind (not EXECUTION) so self-review detection is correct at the spec gate.
+  - [x] `GET /reviewer-verdict` confirmed stage-agnostic (no code change) — added a unit test serving a verdict for a `WaitingForSpecApproval` run; OpenAPI snapshot byte-identical (no endpoint/DTO change). Supersession semantic noted in Completion Notes.
 
-- [ ] **Task 5 — Tests** (AC: 10, all)
-  - [ ] **Spec-reviewer enqueue IT** (Failsafe + Testcontainers): a project WITH a reviewer binding → a spec result drives `onSpecStageSucceeded` → a `RunnerStage.REVIEW` execution is enqueued over the spec artifact; a project WITHOUT a binding → NO reviewer enqueue (parity, byte-identical to pre-3e-3).
-  - [ ] Spec-review bundle test: the composed bundle includes ticket + spec ref + open-clarification refs + materialized (redaction-clean) question content.
-  - [ ] Harvest IT: a spec-stage `review-result.v1` harvests into `step_reviews` against the spec artifact; `GET /reviewer-verdict` serves it.
-  - [ ] Graceful degradation: a reviewer misconfig/failure on the spec phase yields panel "unavailable", spec gate NOT blocked, failed reviewer execution recorded (reuse the 3d-2 degradation assertions).
-  - [ ] Redaction: adversarial fixture over the spec-review input incl. clarification content + the reviewer output.
-  - [ ] FE: Vitest + axe for the verdict panel in the spec Decision Bar; advisory-only (no auto-approve).
-  - [ ] Naming/tier: `@SpringBootTest`+Testcontainers ⇒ `*IT` via the lifecycle phase ([[maven-arglineation-goal-crash]]).
+- [x] **Task 5 — Tests** (AC: 10, all)
+  - [x] **Spec-reviewer enqueue IT** (`SpecPhaseAdvisoryReviewerIT`, Failsafe + Testcontainers): bound project → `onSpecStageSucceeded` → a `RunnerStage.REVIEW` over the spec; unbound → NO reviewer enqueue (parity). Plus unit parity tests in `WorkflowOrchestrationServiceTest`.
+  - [x] Spec-review bundle test (`ContextBundleServiceSpecReviewTest`): inline `openClarifications` `{clarificationId, questionId, questionText}` (no answerText), redaction-clean, accepted rows excluded; no-open-clarification run omits the field.
+  - [x] Harvest IT: the same `SpecPhaseAdvisoryReviewerIT` drives the mock `happy-review` → `step_reviews` against the spec → `GET /reviewer-verdict` serves it. Plus `ReviewResultHarvesterTest` spec-path unit test.
+  - [x] Graceful degradation: reused 3d-2 degradation assertions (`ReviewResultHarvesterTest`); the spec gate is never blocked (the harvest never transitions the run — proven by the IT staying `WaitingForSpecApproval`).
+  - [x] Redaction: `ContextBundleServiceSpecReviewTest` plants a GitHub PAT in an open-clarification questionText and asserts it never egresses.
+  - [x] Naming/tier: `SpecPhaseAdvisoryReviewerIT` (`*IT`) run via the Failsafe lifecycle phase ([[maven-arglineation-goal-crash]]).
 
-- [ ] **Logging instrumentation** (cross-cutting)
-  - [ ] Spec-phase reviewer enqueue decision (`bound|parity`), bundle variant selection, verdict harvest — instrument (NOT N/A). Never log spec/clarification/answer text or reviewer credential (trap T12). Pin ≥1 log line per new branch.
+- [x] **Logging instrumentation** (cross-cutting)
+  - [x] `createForReview` logs `bundleVariant` (spec-review|execution-review) + `openClarificationCount`; the enqueue logs `bound|parity` (existing); the harvest logs verdict persistence (existing). No spec/clarification/answer text or reviewer credential is ever logged.
+
+### Review Findings
+
+_Code review 2026-06-25 (bmad-code-review, 3 adversarial layers: Blind Hunter, Edge Case Hunter, Acceptance Auditor). All 10 ACs assessed Met. 1 decision-needed · 1 patch · 5 deferred · 8 dismissed as noise/verified-handled._
+
+- [x] [Review][Decision→Patched 2026-06-25] SPEC fallback in `resolveReviewedArtifact` weakens the wrong-artifact guard — the new `prOutput → implementationPlan → SPEC` precedence means the old `orElseThrow` no longer fires when only a spec exists. The synchronous compose path is safe (the transition table has no inbound edge to `WaitingForSpecApproval` from `Executing`/`WaitingForReview`, so no plan/prOutput exists at the spec gate). The residual risk is the **harvest pin-absent fallback**: if `pinReviewedArtifactBestEffort` failed at enqueue and the async harvest lands *after* the run advanced past the spec gate and an `AVAILABLE` plan now exists, re-derivation returns the plan (not the spec the reviewer reviewed) → verdict FK + `resolveProducerIdentity` mis-attribute as EXECUTION. Pre-3e-3 this fallback threw `ARTIFACT_RECORD_NOT_FOUND` and degraded cleanly. Narrow (pin must be absent) + advisory-only, but a silent mis-attribution where there used to be a clean failure. [blind+edge+auditor] `ContextBundleService.java:769` / `ReviewResultHarvester.java:207`
+  - **Resolution:** Split the resolver — `resolveReviewedArtifact` (spec-inclusive) still serves compose + enqueue-pin (where the run is AT the gate); added `resolveExecutionReviewedArtifact` (prOutput → plan, NO spec tier) for the harvest pin-absent fallback. An execution reviewer re-derives unchanged; a spec reviewer with a lost pin now degrades cleanly (AC7) instead of mis-attributing. New regression test `ReviewResultHarvesterTest.specReviewerWithLostPinDegradesInsteadOfMisAttributing`. Verified: 10 harvester + 47 bundle/orchestration tests green.
+
+- [x] [Review][Patch→Applied 2026-06-25] `openClarificationCount = -1` sentinel logged for every execution-review — `bundleVariant` is already a separate explicit log field, so the `-1` count is redundant and poisons any log-derived metric summing `openClarificationCount`; emit 0 (or omit) on the execution-review branch. [blind] `ContextBundleService.java#createForReview`
+  - **Resolution:** Replaced the `-1` sentinel with an explicit `boolean isSpecReview` + an `openClarificationCount` that is an honest `0` on the execution-review branch. `bundleVariant` remains the authoritative spec-vs-execution signal. Verified: 13 bundle/review tests green.
+
+- [x] [Review][Defer] Unbounded `questionText` / open-clarification count vs the 256KB bundle cap — no `maxLength` on `questionText` and no count cap on the open-clarification loop; "bounded" is asserted in comments, not enforced. Shared with the 3e-2 `acceptedClarifications` pattern — deferred, pre-existing (cross-cutting decision). [blind+edge] `context-bundle.v1.schema.json` / `ContextBundleService.assembleForSpecReview`
+
+- [x] [Review][Defer] Unescaped `questionText` interpolated into both runner.mjs markdown prompts — free-form clarification text concatenated into a prompt bullet with no escaping; newlines/backticks/markdown break the layout and present a prompt-injection surface to the LLM reviewer (redaction policing covers secrets, not control chars). Shared with the 3e-2 `acceptedClarifications` block — deferred, pre-existing pattern. [blind] `runners/claude/lib/runner.mjs` + `runners/codex/lib/runner.mjs`
+
+- [x] [Review][Defer] Redaction-to-empty `questionText` fails schema `minLength:1` — an open clarification whose text is entirely secret-shaped is blanked by the single `redact(...)` pass, failing bundle validation → reviewer degrades to "no verdict" (gate not blocked, advisory). Same failure mode as 3e-2 `acceptedClarifications` — deferred, pre-existing shared. [edge] `context-bundle.v1.schema.json:221`
+
+- [x] [Review][Defer] FE Verdict Panel freshness keys on latest REVIEW execution, not reviewed-artifact version — on a spec→reject→Investigating→spec round-2 where the round-2 reviewer enqueue degrades, the round-1 verdict over a now-superseded spec still renders as `available`. Pre-existing freshness-check shape (`WorkflowInspectionService`), now reachable at the spec gate — deferred. [blind+edge] `WorkflowInspectionService.java:241` / `index.tsx:294`
+
+- [x] [Review][Defer] Spec-phase self-review unit test is mock-tautological — `ReviewResultHarvesterTest.specPhaseHarvest...` asserts the producer identity equals the runner kind it stubbed the resolver to return (verifies the mock, not the real INVESTIGATION-stage wiring); the self-review boolean (AC5 output) isn't asserted there. Mitigated by `SpecPhaseAdvisoryReviewerIT` — deferred, test-strengthening only. [blind] `ReviewResultHarvesterTest.java`
 
 ## Dev Notes
 
@@ -87,8 +106,8 @@ So that I get a governed second opinion at the spec-approval gate (not only at t
 ### R1 — One more call site, run-level reviewer binding
 The cheapest correct change: `onSpecStageSucceeded` calls `enqueueReviewerIfConfigured` exactly as the two execution callbacks do. The reviewer binding is **run-level** (`resolveReviewerKind`/`hasReviewerBinding` take only `workflowRunId`), so the spec reviewer and the execution reviewer share one project binding — no per-stage reviewer field, no new resolver. All the hard parts (async non-blocking, in-tx enqueue, graceful degradation, self-review flag, parity hot path) are already solved by 3d-2 and inherited for free. The only spec-specific care is that the reviewed artifact derivation resolves the SPEC for an INVESTIGATION-stage producing execution (Task 1 second bullet).
 
-### R2 — The spec reviewer needs the open clarifications → depends on 3e-1
-The user's intent ("ticket, specification and opened questions") makes the spec-review bundle richer than the execution-review bundle. Execution review is "a fresh second opinion over one artifact" (empty prior-feedback by design). Spec review wants the open questions so the reviewer can judge whether the spec leaves them unresolved. Reuse the 3e-2 redaction-policed materialization (reference-by-id + input file, never inline — 2KB cap + redaction contract). This is why 3e-3 sequences AFTER 3e-1 (no open clarifications exist before it).
+### R2 — The spec reviewer needs the open clarifications → depends on 3e-1 (now DONE)
+The user's intent ("ticket, specification and opened questions") makes the spec-review bundle richer than the execution-review bundle. Execution review is "a fresh second opinion over one artifact" (empty prior-feedback by design). Spec review wants the open questions so the reviewer can judge whether the spec leaves them unresolved. **Reconciliation (verified against the SHIPPED 3e-2 code, not the 3e-2 story prose):** 3e-2 did NOT use a reference-by-id materialized input file — it INLINES an `acceptedClarifications` array (`{clarificationId, questionId, questionText, answerText}`) directly in the bundle JSON at `ContextBundleService:857`, justified because the cap was raised to 256KB ([[context-bundle-2kb-payload-cap]]) and answerText is `@Size(max=8192)`, and policed by the single `redact(root, SHAREABLE_REDACTED)` pass that covers every text leaf. 3e-3 mirrors that exactly for OPEN clarifications (questionText only — no answer yet). The "materialize a separate input file / 2KB cap" instruction from the original draft is obsolete; do not follow it. This is why 3e-3 sequences AFTER 3e-1 (no open clarifications exist before it) — both 3e-1 and 3e-2 are now DONE.
 
 ### R3 — Persistence + endpoint are stage-agnostic; only trigger + FE surfacing are net-new
 `step_reviews.reviewed_artifact_id` + version is generic; the harvester writes whatever artifact the REVIEW execution reviewed; `GET /reviewer-verdict` is run-scoped. So no schema/endpoint change — confirm + test the spec-artifact path and (if any) widen a stage filter. The FE panel exists; render it in the spec Decision Bar and ensure its fetch isn't hardcoded to `WaitingForReview`.
@@ -99,8 +118,61 @@ The user's intent ("ticket, specification and opened questions") makes the spec-
 ### R5 — Out of scope
 Per-stage reviewer model selection (a different reviewer LLM for spec vs execution) — out of scope; one run-level reviewer binding governs both. Reviewer auto-gating the spec — out of scope (advisory only). The reviewer proposing answers to the open clarifications — out of scope (it flags adequacy; answering remains the human's via 3e-1/`/answer`).
 
-### Verified seams (file:line, 2026-06-23)
-- Reviewer trigger (execution-only today) — `WorkflowOrchestrationService.java:751` (onPlanStageSucceeded), `:953` (onPrOutputStageSucceeded), helper `enqueueReviewerIfConfigured` `:769`, `pinReviewedArtifactBestEffort` `:825`. Spec entry that LACKS the call — `onSpecStageSucceeded` `:349`.
-- Reviewer bundle (empty prior-feedback) — `ContextBundleService.assembleForReview:730`; clarification read port already injected (3.10) `:73`/`:1034`.
-- Reviewer kind/binding (run-level) — `ProjectRuntimeConfigResolver.resolveReviewerKind:190` / `hasReviewerBinding:185`.
-- Verdict persistence/serve — `application/review/ReviewResultHarvester.java`; `GET /reviewer-verdict` (3d-2). step_reviews generic over reviewed artifact.
+### Verified seams (file:line, re-verified 2026-06-25 against the 3e-1/3e-2-landed codebase)
+- Reviewer trigger (execution-only today) — `WorkflowOrchestrationService.java:751` (onPlanStageSucceeded enqueue call), `:953` (onPrOutputStageSucceeded enqueue call), helper `enqueueReviewerIfConfigured` `:769`, `pinReviewedArtifactBestEffort` `:825`. Spec entry that LACKS the call — `onSpecStageSucceeded` `:349`.
+- Reviewer bundle (empty prior-feedback) — `ContextBundleService.assembleForReview:745` (drifted from `:730`; 3e-2 inserted `assembleForSpecInvestigation` above it). **Pattern to mirror for the inline clarifications** — `assembleForSpecInvestigation:785`, the inline `acceptedClarifications` block `:857`, the `STATUS_ACCEPTED` filter precedent `:513-519`. Clarification read port already injected (3.10), `listByWorkflowRunId` `:517`/`:1095`.
+- Clarification domain — `application/clarification/Clarification.java`: `STATUS_OPEN = "open"` `:49`, fields `questionId` `:40` / `questionText` `:41`.
+- Reviewer kind/binding (run-level) — `application/project/ProjectRuntimeConfigResolver.java`: `resolveReviewerKind:190` / `hasReviewerBinding:185` (both take only `workflowRunId`).
+- Verdict persistence/serve — `application/review/ReviewResultHarvester.java`; serve via `WorkflowInspectionService.getReviewerVerdict:217` (run-scoped, **stage-agnostic** — `findLatestForRun` + `findLatestByWorkflowRunPublicIdAndStage(REVIEW)`, NO state filter) → `GET /reviewer-verdict` `WorkflowController:258` (3d-2). step_reviews generic over reviewed artifact; no schema/endpoint change.
+
+## Dev Agent Record
+
+### Context Reference
+- Story 3e-3 implemented 2026-06-25 (Opus 4.8 [1m]) following bmad-dev-story. Extends the 3d-2 advisory reviewer to the `WaitingForSpecApproval` gate.
+
+### Implementation Plan / Key Decisions
+- **Reviewed-artifact derivation = gate precedence, not a new stage parameter (Task 1).** Rather than thread the producing execution's stage through `resolveReviewedArtifact`/`createForReview`/`ReviewResultHarvester` (which only have the `workflowRunId`), I extended `resolveReviewedArtifact` with a SPEC fallback: `prOutput → implementationPlan → spec`. At `WaitingForSpecApproval` only a spec artifact exists, so the precedence resolves the spec; at `WaitingForReview` a plan/prOutput is always present, so the spec is never selected and execution review stays byte-identical. This is the cheapest correct realization of the story's "map INVESTIGATION → the spec artifact" and needs **no new constructor dependency** (avoiding the `ContextBundleService` legacy-ctor fan-out). The pin (`pinReviewedArtifactBestEffort`) then records `reviewedArtifactType=spec`, and the harvest reuses that pin.
+- **Bundle variant selected by reviewed-artifact TYPE (Task 2).** `createForReview` branches: `reviewedArtifact.artifactType() == SPEC` ⇒ `assembleForSpecReview` (inline `openClarifications` + `approvedSpecificationReference: null`, since the spec under review is not yet approved); else the unchanged `assembleForReview`. Inline `openClarifications` exactly mirrors 3e-2's shipped `acceptedClarifications` block (question text only — open rows have no answer), additive-optional, redaction-policed by the single root pass.
+- **Producer-identity provenance for the spec (Task 4, AC5).** `ReviewResultHarvester.resolveProducerIdentity` previously mapped every reviewed type to an EXECUTION sub-stage. A SPEC reviewed artifact is produced by the INVESTIGATION stage, so I added a SPEC branch resolving `resolveRunnerKind(runId, INVESTIGATION)` — otherwise a same-model self-review at the spec gate would be mis-detected.
+- **Supersession semantic (AC9, noted per Task 4).** `GET /reviewer-verdict` surfaces the LATEST verdict per run. A spec-phase verdict is naturally replaced once an execution-phase reviewer later runs — correct, because the run is at exactly one gate at a time.
+- **Advisory-only is structural and inherited.** The harvest never transitions the run; the `SpecPhaseAdvisoryReviewerIT` asserts the run stays `WaitingForSpecApproval` after the verdict persists. The human spec approve/reject/answer/accept actions are untouched.
+
+### Completion Notes
+- Net-new is a SINGLE backend call site (`onSpecStageSucceeded` → `enqueueReviewerIfConfigured`) + a spec-review bundle variant + a one-line FE render gate; everything else (queue, worker, `step_reviews`, harvest, verdict endpoint, panel, hook) is reused unchanged from 3d-2.
+- `openClarifications` is an additive-optional `context-bundle.v1` property (NOT in `required`; `schemaVersion` stays `const:1`) — same backward-compatible pattern as 3e-2's `acceptedClarifications`. **Reinstall `deliveryline-runner-contracts` into `.m2` before backend ITs** ([[runner-contracts-schema-stale-in-m2]]) — done.
+- **IT trap discovered:** overriding `deliveryline.runner.mock.default-scenario.investigation` via `@TestPropertySource` rebuilds the whole `Mock.defaultScenario` map, so the `review` default (`happy-review`) must be re-stated or `scenarioFor(REVIEW)` falls back to `happy-spec` and the reviewer emits a runner-result the harvest rejects (no verdict). The IT now sets both keys.
+- No OpenAPI/`schema.d.ts` regen (no endpoint/DTO change) — OpenAPI snapshot byte-identical (AC9).
+
+### Verification (all green, 2026-06-25)
+- Backend full unit suite: **1332 run, 0 fail, 0 error** (12 skipped) via the `test` lifecycle phase + `-Djacoco.skip=true`.
+- Backend IT `SpecPhaseAdvisoryReviewerIT`: **2/2** (Testcontainers Postgres + offline mock runner) — enqueue+verdict-vs-spec, and no-binding parity.
+- `deliveryline-runner-contracts`: 11/11. Runner node tiers: claude 28/28, codex 35/35. Both `runner.mjs` `node --check` clean.
+- Frontend: `tsc --noEmit` clean; `ReviewerVerdictPanel.test.tsx` 9/9; route `index.test.tsx` 4/4 (2 new spec-gate render tests); prettier + eslint clean.
+
+### File List
+**Backend (main)**
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowOrchestrationService.java` — `onSpecStageSucceeded` calls `enqueueReviewerIfConfigured`.
+- `deliveryline-backend/src/main/java/org/dradgo/application/runner/ContextBundleService.java` — `resolveReviewedArtifact` SPEC fallback; `createForReview` type-branch; new `assembleForSpecReview`; bundle-variant log.
+- `deliveryline-backend/src/main/java/org/dradgo/application/review/ReviewResultHarvester.java` — SPEC producer-identity branch (INVESTIGATION).
+
+**Runner contracts + runners**
+- `deliveryline-runner-contracts/src/main/resources/schemas/context-bundle.v1.schema.json` — additive `openClarifications` property.
+- `runners/claude/lib/runner.mjs`, `runners/codex/lib/runner.mjs` — surface `openClarifications` into the prompt (byte-identical mirror).
+
+**Frontend**
+- `deliveryline-frontend/src/routes/workflows/$workflowRunId/index.tsx` — render the verdict panel at `WaitingForSpecApproval`.
+
+**Tests (new)**
+- `deliveryline-backend/src/test/java/org/dradgo/application/runner/ContextBundleServiceSpecReviewTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/SpecPhaseAdvisoryReviewerIT.java`
+
+**Tests (extended)**
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowOrchestrationServiceTest.java` — spec-gate enqueue + parity.
+- `deliveryline-backend/src/test/java/org/dradgo/application/review/ReviewResultHarvesterTest.java` — spec-phase harvest + INVESTIGATION producer.
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceReviewerVerdictTest.java` — stage-agnostic spec-gate serve.
+- `deliveryline-frontend/src/routes/workflows/$workflowRunId/index.test.tsx` — spec-gate panel render / non-render.
+
+## Change Log
+| Date | Change |
+|---|---|
+| 2026-06-25 | Implemented 3e-3: fire the 3d-2 advisory reviewer at the `WaitingForSpecApproval` gate over the spec artifact with the run's open clarifications inlined into the review bundle; surface the existing verdict panel in the spec Decision Bar. Status `ready-for-dev → in-progress → review`. |

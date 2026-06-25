@@ -101,3 +101,65 @@ describe('WorkflowDetail route — implementation-output link (story 3b-3 AC4)',
     ).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Story 3e-3 (AC4) — the advisory Reviewer Verdict Panel (built at WaitingForReview by 3d-2) is now
+ * ALSO rendered in the WaitingForSpecApproval Decision Bar, fed by the same run-scoped, stage-
+ * agnostic GET /reviewer-verdict. Advisory-only: the panel is presentational and never gates the
+ * human spec decision.
+ */
+describe('WorkflowDetail route — spec-phase reviewer verdict panel (story 3e-3 AC4)', () => {
+  const VERDICT_URL = `http://localhost/api/v1/workflows/:workflowRunId/reviewer-verdict`;
+
+  /** A detail in the given state carrying only the spec artifact (the spec gate). */
+  function specGateDetail(currentState: string) {
+    return HttpResponse.json({
+      workflowRunId: RUN_ID,
+      currentState,
+      lastEventAt: '2026-06-25T00:00:00Z',
+      lastEventType: 'runner.completed',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      latestArtifacts: [SPEC_ARTIFACT],
+    });
+  }
+
+  it('renders the verdict panel at WaitingForSpecApproval when the reviewer produced a verdict', async () => {
+    server.use(
+      http.get(DETAIL_URL, () => specGateDetail('WaitingForSpecApproval')),
+      http.get(VERDICT_URL, () =>
+        HttpResponse.json({
+          state: 'available',
+          outcome: 'concern',
+          rationale: 'The spec leaves the open auth question unresolved.',
+          selfReview: false,
+          reviewerModelIdentity: 'claude:it',
+          producerModelIdentity: 'codex:it',
+          unavailableReason: null,
+        }),
+      ),
+    );
+
+    renderRoute();
+
+    // The spec link proves the detail loaded at the spec gate.
+    await screen.findByRole('link', { name: /Open the specification/ });
+    const panel = await screen.findByTestId('reviewer-verdict-panel');
+    expect(panel).toHaveAttribute('data-verdict-state', 'available');
+    expect(screen.getByTestId('reviewer-verdict-outcome')).toBeInTheDocument();
+  });
+
+  it('does NOT render the verdict panel before the spec gate (Investigating)', async () => {
+    server.use(
+      http.get(DETAIL_URL, () => specGateDetail('Investigating')),
+      http.get(VERDICT_URL, () =>
+        HttpResponse.json({ state: 'available', outcome: 'pass', unavailableReason: null }),
+      ),
+    );
+
+    renderRoute();
+
+    await screen.findByRole('link', { name: /Open the specification/ });
+    expect(screen.queryByTestId('reviewer-verdict-panel')).not.toBeInTheDocument();
+  });
+});

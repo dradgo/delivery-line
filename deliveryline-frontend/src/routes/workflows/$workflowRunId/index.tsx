@@ -285,10 +285,14 @@ function WorkflowDetailRoute() {
           every other state gets the story-2.19 `spec_approval` bar. The selector owns the
           retry mutation so the recovery bar survives the post-retry Failed→Executing flip
           (success panel + AC7 announcement) — see `WorkflowDecisionBar`. */}
-      {/* Story 3d-2 (AC3) — the advisory Reviewer Verdict Panel, beside the Decision Bar at
-          WaitingForReview. Presentational + advisory-only (never gates the human decision); renders
-          nothing for a no-reviewer-binding project (AC5, self-hides via the endpoint state). */}
-      {data?.currentState === 'WaitingForReview' ? (
+      {/* Story 3d-2 (AC3) / 3e-3 (AC4) — the advisory Reviewer Verdict Panel, beside the Decision
+          Bar at WaitingForReview (execution gate, 3d-2) AND WaitingForSpecApproval (spec gate,
+          3e-3). Presentational + advisory-only (never gates the human decision); the panel + its
+          run-scoped GET /reviewer-verdict fetch are stage-agnostic, so the same container renders
+          the latest verdict at whichever gate the run is parked. Renders nothing for a
+          no-reviewer-binding project (AC6, self-hides via the endpoint state). */}
+      {data?.currentState === 'WaitingForReview' ||
+      data?.currentState === 'WaitingForSpecApproval' ? (
         <ReviewerVerdictPanelContainer workflowRunId={workflowRunId} />
       ) : null}
       <WorkflowDecisionBar workflowRunId={workflowRunId} />

@@ -197,6 +197,33 @@
           }
         }
       }
+    },
+    "openClarifications": {
+      "type": "array",
+      "description": "Story 3e-3 (AC2) — OPTIONAL. The run's OPEN clarifications (question only — open rows carry no answer yet) inlined into a SPEC-phase REVIEW bundle so the advisory reviewer can weigh whether the spec leaves the open questions unresolved. The OPEN twin of acceptedClarifications: the runner reads only this bundle, so the question content is carried INLINE (not reference-by-id) and policed by the single shareable-redacted redaction pass exactly like artifact content. Emitted ONLY at the spec-phase review (reviewed artifactType=spec) and ONLY when >=1 open clarification exists; absent otherwise so an execution-phase review or a no-open-clarification spec review stays byte-identical. Each entry is also mirrored as a {referenceId, kind:'clarification.open'} priorFeedbackReferences row. Additive backward-compatible v1 patch (NOT in required); schemaVersion stays const:1.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "clarificationId",
+          "questionId",
+          "questionText"
+        ],
+        "properties": {
+          "clarificationId": {
+            "type": "string",
+            "pattern": "^clr_[A-Za-z0-9_-]{4,64}$"
+          },
+          "questionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,128}$"
+          },
+          "questionText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   },
   "$defs": {

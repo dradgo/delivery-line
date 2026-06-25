@@ -374,6 +374,15 @@ public class WorkflowOrchestrationService {
         }
         throw error;
       }
+      // Story 3e-3 (AC1/AC6) — fire the SAME advisory reviewer (3d-2) at the spec gate, exactly as
+      // onPlanStageSucceeded/onPrOutputStageSucceeded do at the execution gate. Async +
+      // non-blocking
+      // on WaitingForSpecApproval entry; shares the poller's per-item transaction with the
+      // transition above so a reviewer is enqueued iff the spec-ready transition commits. The
+      // reviewer binding is run-level (no per-stage field), the reviewed-artifact derivation falls
+      // through to the spec (resolveReviewedArtifact), and every failure mode degrades to "no
+      // verdict" inside the helper (the spec gate is never blocked, AC6/AC7).
+      enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);

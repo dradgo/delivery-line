@@ -648,18 +648,46 @@ public class ContextBundleService {
           details);
     }
 
-    Optional<ArtifactRecordSnapshot> approvedSpec =
-        latestAvailable(workflowRunPublicId, ArtifactType.SPEC);
-
-    ObjectNode root =
-        assembleForReview(
-            workflowRunPublicId,
-            reservedRunnerExecutionId,
-            ticket,
-            approvedSpec,
-            reviewedArtifact,
-            executionConstraints,
-            DataClassification.SHAREABLE_REDACTED);
+    // Story 3e-3 (AC2) — the reviewed artifact's TYPE selects the bundle variant. A SPEC reviewed
+    // artifact means the reviewer fired at the WaitingForSpecApproval gate (resolveReviewedArtifact
+    // fell through to the spec): compose the spec-review bundle that ALSO inlines the run's OPEN
+    // clarifications so the reviewer can weigh whether the spec leaves them unresolved. Every other
+    // reviewed type (prOutput / implementationPlan) is the unchanged execution-phase review bundle.
+    // bundleVariant (logged below) is the authoritative spec-vs-execution signal; the count is an
+    // honest 0 for an execution review (no open-clarification block), never a -1 sentinel that
+    // would
+    // poison a log-derived metric summing openClarificationCount.
+    boolean isSpecReview = reviewedArtifact.artifactType() == ArtifactType.SPEC;
+    int openClarificationCount = 0;
+    ObjectNode root;
+    if (isSpecReview) {
+      List<Clarification> openClarifications =
+          clarificationReadPort.listByWorkflowRunId(workflowRunPublicId).stream()
+              .filter(clarification -> Clarification.STATUS_OPEN.equals(clarification.status()))
+              .toList();
+      openClarificationCount = openClarifications.size();
+      root =
+          assembleForSpecReview(
+              workflowRunPublicId,
+              reservedRunnerExecutionId,
+              ticket,
+              reviewedArtifact,
+              openClarifications,
+              executionConstraints,
+              DataClassification.SHAREABLE_REDACTED);
+    } else {
+      Optional<ArtifactRecordSnapshot> approvedSpec =
+          latestAvailable(workflowRunPublicId, ArtifactType.SPEC);
+      root =
+          assembleForReview(
+              workflowRunPublicId,
+              reservedRunnerExecutionId,
+              ticket,
+              approvedSpec,
+              reviewedArtifact,
+              executionConstraints,
+              DataClassification.SHAREABLE_REDACTED);
+    }
 
     RedactionResult redaction;
     try {
@@ -704,14 +732,16 @@ public class ContextBundleService {
           details);
     }
     log.info(
-        "createForReview ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} reviewedArtifactId={} reviewedArtifactType={}",
+        "createForReview ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} reviewedArtifactId={} reviewedArtifactType={} bundleVariant={} openClarificationCount={}",
         workflowRunPublicId,
         reservedRunnerExecutionId,
         RunnerStage.REVIEW.value(),
         contextBundleVersion,
         DataClassification.SHAREABLE_REDACTED.value(),
         reviewedArtifact.publicId(),
-        reviewedArtifact.artifactType().value());
+        reviewedArtifact.artifactType().value(),
+        isSpecReview ? "spec-review" : "execution-review",
+        openClarificationCount);
     return new ContextBundle(
         workflowRunPublicId,
         RunnerStage.REVIEW,
@@ -722,14 +752,56 @@ public class ContextBundleService {
   }
 
   /**
-   * Story 3d-2 — the artifact the reviewer reviews: the latest AVAILABLE execution-stage output of
-   * the run (prOutput supersedes implementationPlan when both exist, mirroring how a re-entry into
-   * {@code WaitingForReview} after pr-output is the current head). Re-derived identically at
-   * compose and harvest time so the verdict pins to the same artifact.
+   * Story 3d-2 / 3e-3 — the artifact the reviewer reviews, resolved by gate precedence so the SAME
+   * derivation serves the execution gate and the spec gate (the reviewer fires at one gate at a
+   * time):
+   *
+   * <ul>
+   *   <li>{@code prOutput} ⊐ {@code implementationPlan} — the latest AVAILABLE execution-stage
+   *       output (prOutput supersedes implementationPlan when both exist, mirroring how a re-entry
+   *       into {@code WaitingForReview} after pr-output is the current head). This is the
+   *       execution-phase reviewer (3d-2), unchanged.
+   *   <li>else {@code spec} — story 3e-3: at the {@code WaitingForSpecApproval} gate only a spec
+   *       artifact exists (investigation produced it; no plan/prOutput yet), so the precedence
+   *       falls through to the spec and the spec-phase reviewer reviews it. At the execution gate a
+   *       plan/prOutput is always present, so the spec is never selected there — the
+   *       execution-phase behavior stays byte-identical.
+   * </ul>
+   *
+   * <p>Used at compose (build the bundle) and enqueue (pin the FK) time, where the run is AT the
+   * reviewer's gate so the precedence selects exactly what the reviewer sees. The harvest fallback
+   * must NOT use this spec-inclusive form — see {@link #resolveExecutionReviewedArtifact}.
    */
   public ArtifactRecordSnapshot resolveReviewedArtifact(String workflowRunPublicId) {
+    return resolveReviewedArtifact(workflowRunPublicId, true);
+  }
+
+  /**
+   * Story 3e-3 (code-review D1) — the harvest pin-absent fallback re-derives WITHOUT the spec tier.
+   *
+   * <p>The enqueue-time pin is the authoritative record of which artifact the reviewer actually
+   * saw. Once it is absent (a pre-V22 reviewer, or a rare enqueue-time pin-write failure) we can no
+   * longer tell a spec-phase reviewer from an execution reviewer, and the run may have advanced
+   * past {@code WaitingForSpecApproval} so that a plan/prOutput now exists. Including the spec tier
+   * in that fallback would let an advanced-run re-derivation silently return the plan for what was
+   * a spec review and mis-attribute the producer (EXECUTION instead of INVESTIGATION, see {@code
+   * ReviewResultHarvester#resolveProducerIdentity}). Excluding it restores the pre-3e-3 behavior:
+   * an execution reviewer re-derives its plan/prOutput unchanged, and a spec-phase reviewer whose
+   * pin was lost degrades cleanly (the gate stays human-reviewable, AC7) instead of guessing.
+   */
+  public ArtifactRecordSnapshot resolveExecutionReviewedArtifact(String workflowRunPublicId) {
+    return resolveReviewedArtifact(workflowRunPublicId, false);
+  }
+
+  private ArtifactRecordSnapshot resolveReviewedArtifact(
+      String workflowRunPublicId, boolean includeSpecFallback) {
     return latestAvailable(workflowRunPublicId, ArtifactType.PR_OUTPUT)
         .or(() -> latestAvailable(workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN))
+        .or(
+            () ->
+                includeSpecFallback
+                    ? latestAvailable(workflowRunPublicId, ArtifactType.SPEC)
+                    : Optional.empty())
         .orElseThrow(
             () -> {
               Map<String, Object> details = new LinkedHashMap<>();
@@ -737,7 +809,7 @@ public class ContextBundleService {
               details.put("stage", RunnerStage.REVIEW.value());
               return new DomainException(
                   DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
-                  "No available execution-stage artifact to review for run " + workflowRunPublicId,
+                  "No available artifact to review for run " + workflowRunPublicId,
                   details);
             });
   }
@@ -777,6 +849,89 @@ public class ContextBundleService {
     ObjectNode constraintsNode = root.putObject("executionConstraints");
     constraintsNode.put("timeoutSeconds", executionConstraints.timeoutSeconds());
     constraintsNode.put("allowRawOutput", executionConstraints.allowRawOutput());
+
+    root.put("classification", classification.value());
+    return root;
+  }
+
+  /**
+   * Story 3e-3 (AC2/AC8) — the spec-phase review bundle. Mirrors {@link #assembleForReview} (the
+   * reviewed SPEC artifact is the SOLE {@code artifactReferences} entry; the runner reads its
+   * already-redacted content from the mounted input dir) but ALSO inlines the run's {@code open}
+   * clarifications so the reviewer can assess whether the spec leaves the open questions
+   * unresolved.
+   *
+   * <p>Open clarifications carry NO answer yet (status {@code open} ⇒ answerText null), so the
+   * inline rows are {@code {clarificationId, questionId, questionText}} only — the exact OPEN twin
+   * of 3e-2's {@code acceptedClarifications} block ({@link #assembleForSpecInvestigation}), policed
+   * by the SAME single {@code redact(root, SHAREABLE_REDACTED)} pass downstream that covers every
+   * text leaf. The {@code openClarifications} array is emitted ONLY when ≥1 open clarification
+   * exists, so a no-open-clarification spec review is byte-identical to the execution-review
+   * baseline shape (the field is optional + not in the schema {@code required}). The reviewed spec
+   * is NOT yet approved (we are AT the approval gate), so {@code approvedSpecificationReference} is
+   * null — the spec rides {@code artifactReferences} as the reviewed artifact.
+   */
+  private ObjectNode assembleForSpecReview(
+      String workflowRunPublicId,
+      String runnerExecutionId,
+      TicketSummary ticket,
+      ArtifactRecordSnapshot reviewedSpecArtifact,
+      List<Clarification> openClarifications,
+      ExecutionConstraints executionConstraints,
+      DataClassification classification) {
+    ObjectNode root = objectMapper.createObjectNode();
+    root.put("schemaVersion", CONTEXT_BUNDLE_SCHEMA_VERSION);
+    root.put("workflowRunId", workflowRunPublicId);
+    root.put("runnerExecutionId", runnerExecutionId);
+
+    ObjectNode ticketNode = root.putObject("ticketSummary");
+    ticketNode.put("ticketRef", ticket.ticketRef());
+    ticketNode.put("title", ticket.title());
+    ticketNode.put("summary", ticket.summary());
+
+    // The spec under review is not yet approved (this IS the approval gate); it rides
+    // artifactReferences below as the reviewed artifact, not as an approved-spec reference.
+    root.putNull("approvedSpecificationReference");
+
+    // Story 3e-3 — one {kind: 'clarification.open'} feedback ref per open clarification, the by-id
+    // audit half (mirrors the 3e-2 clarification.answered ref). The question CONTENT rides the
+    // inline openClarifications array below (the runner reads only this bundle).
+    ArrayNode priorFeedbackRefsNode = root.putArray("priorFeedbackReferences");
+    for (Clarification open : openClarifications) {
+      ObjectNode feedbackNode = priorFeedbackRefsNode.addObject();
+      feedbackNode.put("referenceId", open.publicId());
+      feedbackNode.put("kind", "clarification.open");
+    }
+
+    // The reviewed spec is the SOLE artifact reference; the runner reads its (already-redacted)
+    // content from the mounted input dir and emits its verdict over it.
+    ArrayNode artifactRefsNode = root.putArray("artifactReferences");
+    writeArtifactReference(artifactRefsNode.addObject(), reviewedSpecArtifact);
+
+    ObjectNode constraintsNode = root.putObject("executionConstraints");
+    constraintsNode.put("timeoutSeconds", executionConstraints.timeoutSeconds());
+    constraintsNode.put("allowRawOutput", executionConstraints.allowRawOutput());
+
+    // Story 3e-3 (AC2) — inline the OPEN clarifications' question text so the spec reviewer can
+    // weigh
+    // whether the spec leaves them unresolved. Open rows have no answerText (status open ⇒ answer
+    // fields null), so only {clarificationId, questionId, questionText} is emitted — the OPEN twin
+    // of
+    // the 3e-2 acceptedClarifications block. Policed by the SAME single redact(root,
+    // SHAREABLE_REDACTED) pass below as every other text leaf. Emitted ONLY when >=1 open
+    // clarification exists so a no-clarification spec review stays additive-byte-identical (the
+    // field
+    // is optional + not schema-required; the 256KB cap stays comfortable — questionText is
+    // bounded).
+    if (!openClarifications.isEmpty()) {
+      ArrayNode openNode = root.putArray("openClarifications");
+      for (Clarification open : openClarifications) {
+        ObjectNode clarificationNode = openNode.addObject();
+        clarificationNode.put("clarificationId", open.publicId());
+        clarificationNode.put("questionId", open.questionId());
+        clarificationNode.put("questionText", open.questionText());
+      }
+    }
 
     root.put("classification", classification.value());
     return root;

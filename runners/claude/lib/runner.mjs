@@ -149,6 +149,20 @@ function commandPrepare(args) {
         }
       }
     }
+    // Story 3e-3 (AC2) — open clarifications arrive INLINE in the spec-phase REVIEW bundle (the
+    // runner reads only this bundle). Surface each open question into the prompt so the advisory
+    // reviewer can weigh whether the spec leaves them unresolved. Open rows carry no answer yet.
+    // Absent on every non-spec-review bundle (byte-identical there).
+    const openClarifications = Array.isArray(doc.openClarifications) ? doc.openClarifications : [];
+    if (openClarifications.length > 0) {
+      lines.push('');
+      lines.push('Open clarification questions the specification should adequately address:');
+      for (const clarification of openClarifications) {
+        if (clarification && typeof clarification === 'object') {
+          lines.push(`- [${clarification.questionId ?? ''}] Q: ${clarification.questionText ?? ''}`);
+        }
+      }
+    }
     const constraints = (doc.executionConstraints && typeof doc.executionConstraints === 'object')
       ? doc.executionConstraints
       : {};

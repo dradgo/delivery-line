@@ -207,9 +207,14 @@ public class ReviewResultHarvester {
     } else {
       ArtifactRecordSnapshot reviewedArtifact;
       try {
-        // Fallback: re-derive the reviewed artifact + version from the run (same derivation as
-        // compose-time); never pin the FK from runner-supplied input.
-        reviewedArtifact = contextBundleService.resolveReviewedArtifact(workflowRunId);
+        // Fallback: re-derive the reviewed artifact + version from the run; never pin the FK from
+        // runner-supplied input. Story 3e-3 (code-review D1) — use the EXECUTION-only resolver
+        // here,
+        // not the spec-inclusive compose-time one: with the pin lost we can no longer tell a
+        // spec-phase reviewer from an execution reviewer, and re-deriving the spec tier could
+        // silently return a plan (if the run advanced) and mis-attribute the producer. A spec
+        // reviewer whose pin was lost degrades cleanly instead.
+        reviewedArtifact = contextBundleService.resolveExecutionReviewedArtifact(workflowRunId);
       } catch (DomainException missing) {
         return degrade(
             runnerExecutionId,
@@ -408,19 +413,35 @@ public class ReviewResultHarvester {
   }
 
   /**
-   * Producer model identity: the model that produced the reviewed artifact. The reviewed artifact
-   * is an EXECUTION-stage output; its kind is the per-project/global EXECUTION kind for the
-   * matching sub-stage (deterministic — runner_executions carries no kind column, DD-6).
+   * Producer model identity: the model that produced the reviewed artifact (deterministic —
+   * runner_executions carries no kind column, DD-6).
+   *
+   * <ul>
+   *   <li>A {@code prOutput} / {@code implementationPlan} reviewed artifact is an EXECUTION-stage
+   *       output; its kind is the per-project/global EXECUTION kind for the matching sub-stage
+   *       (3d-2, unchanged).
+   *   <li>Story 3e-3 — a {@code spec} reviewed artifact (the spec-phase reviewer) was produced by
+   *       the INVESTIGATION stage; its kind is the per-project/global INVESTIGATION kind. Using the
+   *       EXECUTION kind here would mis-attribute the producer and could spuriously flag (or miss)
+   *       a same-model self-review at the spec gate (AC5).
+   * </ul>
    */
   private String resolveProducerIdentity(String workflowRunId, ArtifactType reviewedType) {
-    ExecutionSubStage subStage =
-        reviewedType == ArtifactType.PR_OUTPUT
-            ? ExecutionSubStage.PR_OUTPUT
-            : ExecutionSubStage.IMPLEMENTATION_PLAN;
     try {
-      RunnerKind producerKind =
-          projectRuntimeConfigResolver.resolveRunnerKind(
-              workflowRunId, RunnerStage.EXECUTION, subStage);
+      RunnerKind producerKind;
+      if (reviewedType == ArtifactType.SPEC) {
+        producerKind =
+            projectRuntimeConfigResolver.resolveRunnerKind(
+                workflowRunId, RunnerStage.INVESTIGATION);
+      } else {
+        ExecutionSubStage subStage =
+            reviewedType == ArtifactType.PR_OUTPUT
+                ? ExecutionSubStage.PR_OUTPUT
+                : ExecutionSubStage.IMPLEMENTATION_PLAN;
+        producerKind =
+            projectRuntimeConfigResolver.resolveRunnerKind(
+                workflowRunId, RunnerStage.EXECUTION, subStage);
+      }
       return identityFor(producerKind);
     } catch (RuntimeException unresolved) {
       log.warn(

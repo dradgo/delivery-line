@@ -91,6 +91,42 @@ class WorkflowInspectionServiceReviewerVerdictTest {
   }
 
   @Test
+  void availableForSpecPhaseRunIsStageAgnostic() {
+    // Story 3e-3 (AC9) — getReviewerVerdict is run-scoped, NOT state-bound: it serves a spec-phase
+    // verdict for a run parked at WaitingForSpecApproval exactly as it serves an execution-phase
+    // verdict, with no endpoint/contract change. The reviewed artifact is the SPEC.
+    when(workflowRunReadPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN_ID,
+                    org.dradgo.domain.registry.WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+                    null,
+                    1L,
+                    0,
+                    false)));
+    when(stepReviewReadPort.findLatestForRun(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new StepReviewSnapshot(
+                    "rev_spec0001",
+                    RUN_ID,
+                    "rex_spec0001",
+                    "art_spec0001",
+                    1,
+                    ReviewOutcome.CONCERN,
+                    "[redacted]",
+                    "claude:it",
+                    "codex:it",
+                    OffsetDateTime.parse("2026-06-25T10:00:00Z"))));
+
+    ReviewerVerdictView view = service.getReviewerVerdict(RUN_ID);
+
+    assertThat(view.state()).isEqualTo("available");
+    assertThat(view.outcome()).isEqualTo("concern");
+  }
+
+  @Test
   void pendingWhenReviewerExecutionStillRunningAndNoVerdict() {
     when(stepReviewReadPort.findLatestForRun(RUN_ID)).thenReturn(Optional.empty());
     when(runnerExecutions.findLatestByWorkflowRunPublicIdAndStage(RUN_ID, RunnerStage.REVIEW))

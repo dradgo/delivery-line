@@ -280,6 +280,56 @@ class WorkflowOrchestrationServiceTest {
   }
 
   @Test
+  void onSpecStageSucceededEnqueuesReviewerAndPinsSpecArtifactWhenBindingPresent() {
+    // Story 3e-3 (AC1/AC3 + D1 pin): a reviewer-bound run enqueues a REVIEW execution on
+    // WaitingForSpecApproval entry AND pins the reviewed SPEC artifact (resolved once at enqueue,
+    // falling through to the spec since no plan/prOutput exists at the spec gate) onto it. Mirrors
+    // the 3d-2 execution-phase enqueue exactly — same helper, same key shape, spec-typed pin.
+    when(projectRuntimeConfigResolver.hasReviewerBinding(RUN_ID)).thenReturn(true);
+    String reviewerRex = "rex_reviewer00002";
+    when(runnerExecutionQueue.enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), any(), any(), anyInt()))
+        .thenReturn(
+            new QueuedRunnerExecution(
+                reviewerRex, RUN_ID, RunnerStage.REVIEW, 100, "corr-s", 1L, "evt_q-review0002"));
+    when(contextBundleService.resolveReviewedArtifact(RUN_ID))
+        .thenReturn(
+            org.dradgo.application.artifact.ArtifactRecordSnapshot.withoutFailureMetadata(
+                "art_specrev00001",
+                RUN_ID,
+                org.dradgo.domain.registry.ArtifactType.SPEC,
+                1,
+                null,
+                org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED,
+                "artifacts/run/spec.md",
+                "SHA-256",
+                "spec123",
+                org.dradgo.domain.registry.ArtifactStatus.AVAILABLE,
+                null));
+
+    service(true).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    // AC1/AC3 — the reviewer runner_executions row is created via the same enqueue trigger.
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), eq("review:" + REX_ID), any(), anyInt());
+    // D1 — the reviewed SPEC artifact is pinned on the reviewer execution (id+version+type=spec).
+    verify(recordPort)
+        .pinReviewedArtifact(eq(reviewerRex), eq("art_specrev00001"), eq(1), eq("spec"));
+    assertLoggedAt(Level.INFO, "enqueuing reviewer review for run");
+  }
+
+  @Test
+  void onSpecStageSucceededEnqueuesNoReviewerForDefaultProjectParity() {
+    // Story 3e-3 (AC6 parity): no reviewer binding ⇒ NO REVIEW enqueue, NO pin at the spec gate —
+    // byte-identical to pre-3e-3. hasReviewerBinding defaults false (unstubbed) for the default
+    // project.
+    service(true).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verify(runnerExecutionQueue, never())
+        .enqueue(any(), eq(RunnerStage.REVIEW), any(), any(), anyInt());
+    verify(recordPort, never()).pinReviewedArtifact(any(), any(), anyInt(), any());
+  }
+
+  @Test
   void onSpecStageSucceededSwallowsIllegalTransitionAsBenignReplayWhenAlreadySpecReady() {
     // Review finding P3 — a duplicate/replayed result whose run already reached
     // WaitingForSpecApproval surfaces ILLEGAL_TRANSITION; that is a benign idempotent replay and is

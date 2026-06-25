@@ -76,8 +76,10 @@ class ReviewResultHarvesterTest {
             org.mockito.Mockito.mock(
                 org.springframework.transaction.PlatformTransactionManager.class));
 
-    // Reviewed artifact = a prOutput (so producer sub-stage = PR_OUTPUT).
-    when(contextBundleService.resolveReviewedArtifact(RUN_ID)).thenReturn(reviewedArtifact());
+    // Reviewed artifact = a prOutput (so producer sub-stage = PR_OUTPUT). The pin-absent fallback
+    // re-derives via the EXECUTION-only resolver (3e-3 code-review D1), so stub that one.
+    when(contextBundleService.resolveExecutionReviewedArtifact(RUN_ID))
+        .thenReturn(reviewedArtifact());
     // imageTagFor unavailable in unit → identityFor falls back to the bare kind value.
     when(runnerProperties.docker()).thenThrow(new RuntimeException("no docker in unit test"));
     when(redactionPolicyService.redact(anyString(), anyString()))
@@ -216,7 +218,59 @@ class ReviewResultHarvesterTest {
     assertThat(captor.getValue().reviewedArtifactPublicId()).isEqualTo("art_pinned0001");
     assertThat(captor.getValue().reviewedArtifactVersion()).isEqualTo(3);
     // The pin short-circuits re-derivation entirely.
-    verify(contextBundleService, never()).resolveReviewedArtifact(any());
+    verify(contextBundleService, never()).resolveExecutionReviewedArtifact(any());
+  }
+
+  @Test
+  void specPhaseHarvestPinsSpecArtifactAndResolvesInvestigationProducer() {
+    // Story 3e-3 (AC3/AC5) — a spec-phase reviewer execution pins the SPEC artifact; the verdict
+    // persists against it (no schema change — step_reviews is generic over the reviewed artifact),
+    // and the producer identity resolves the INVESTIGATION runner (the spec's producer), NOT the
+    // EXECUTION runner — so a same-model self-review at the spec gate is detected correctly.
+    when(resolver.resolveReviewerKind(RUN_ID)).thenReturn(Optional.of(RunnerKind.CLAUDE));
+    when(resolver.resolveRunnerKind(RUN_ID, org.dradgo.domain.registry.RunnerStage.INVESTIGATION))
+        .thenReturn(RunnerKind.CODEX);
+    when(runnerExecutionService.findReviewedArtifactPin(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new org.dradgo.application.runner.spi.RunnerExecutionRecordPort.ReviewedArtifactPin(
+                    "art_spec00000001", 1, "spec")));
+
+    String outcome = harvester.harvest(REX_ID, RUN_ID, review("pass", "spec is reasonable", null));
+
+    assertThat(outcome).isEqualTo("success");
+    ArgumentCaptor<NewStepReview> captor = ArgumentCaptor.forClass(NewStepReview.class);
+    verify(stepReviewWritePort).insert(captor.capture());
+    assertThat(captor.getValue().reviewedArtifactPublicId()).isEqualTo("art_spec00000001");
+    assertThat(captor.getValue().reviewedArtifactVersion()).isEqualTo(1);
+    assertThat(captor.getValue().reviewerModelIdentity()).isEqualTo("claude");
+    // Producer = the INVESTIGATION runner (spec producer), resolved via the SPEC branch.
+    assertThat(captor.getValue().producerModelIdentity()).isEqualTo("codex");
+    verify(contextBundleService, never()).resolveExecutionReviewedArtifact(any());
+    verify(runnerExecutionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void specReviewerWithLostPinDegradesInsteadOfMisAttributing() {
+    // Story 3e-3 (code-review D1) — a spec-phase reviewer whose enqueue-time pin was lost (pre-V22
+    // row or a rare pin-write failure). The harvest must NOT re-derive the spec via the
+    // spec-inclusive resolver (which, on an advanced run, could return a plan and mis-attribute the
+    // producer as EXECUTION). The EXECUTION-only fallback finds no plan/prOutput at the spec gate
+    // and throws, so the harvest degrades cleanly — the gate stays human-reviewable (AC7), no
+    // verdict is persisted against the wrong artifact.
+    when(runnerExecutionService.findReviewedArtifactPin(REX_ID)).thenReturn(Optional.empty());
+    when(contextBundleService.resolveExecutionReviewedArtifact(RUN_ID))
+        .thenThrow(
+            new org.dradgo.domain.DomainException(
+                org.dradgo.domain.registry.DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
+                "No available artifact to review for run " + RUN_ID));
+
+    String outcome = harvester.harvest(REX_ID, RUN_ID, review("pass", "spec is reasonable", null));
+
+    assertThat(outcome).isEqualTo("failure");
+    verify(stepReviewWritePort, never()).insert(any());
+    verify(runnerExecutionService).recordFailed(REX_ID, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+    verify(runnerExecutionService, never()).recordCompleted(any());
   }
 
   @Test
