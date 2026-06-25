@@ -48,7 +48,7 @@
             lines="108"/>
   <suppress id="ForbiddenThreadSleep"
             files="[\\/]application[\\/]workflow[\\/]WorkflowCommandService\.java$"
-            lines="881"/>
+            lines="1024"/>
 
   <!--
     RedactionLayoutHolder - two exemptions for this one class:
