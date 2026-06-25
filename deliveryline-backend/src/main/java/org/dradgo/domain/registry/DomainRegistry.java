@@ -39,6 +39,7 @@ public final class DomainRegistry {
   private static final Set<String> RUNNER_KINDS = valuesOf(RunnerKind.values());
   private static final Set<String> WORKFLOW_EVENT_TYPES = valuesOf(WorkflowEventType.values());
   private static final Set<String> PROJECT_STATUSES = valuesOf(ProjectStatus.values());
+  private static final Set<String> PROJECT_RUNNER_STEPS = valuesOf(ProjectRunnerStep.values());
   private static final Set<String> CONNECTOR_KINDS = valuesOf(ConnectorKind.values());
   private static final Set<String> REVIEW_OUTCOMES = valuesOf(ReviewOutcome.values());
   private static final Map<String, String> PUBLIC_ID_PREFIXES = PublicIdPrefixes.prefixMap();
@@ -119,6 +120,10 @@ public final class DomainRegistry {
 
   public static Set<String> projectStatuses() {
     return PROJECT_STATUSES;
+  }
+
+  public static Set<String> projectRunnerSteps() {
+    return PROJECT_RUNNER_STEPS;
   }
 
   public static Set<String> connectorKinds() {

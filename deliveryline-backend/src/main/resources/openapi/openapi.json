@@ -497,6 +497,20 @@
             "minLength" : 0,
             "type" : "string"
           },
+          "stepRunnerKinds" : {
+            "additionalProperties" : {
+              "type" : "string"
+            },
+            "description" : "Optional per-step runner mapping (step → runner kind). Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. A step omitted from the map uses the project-wide runnerKind default, else the global per-stage kind. Resolves more specifically than runnerKind.",
+            "example" : {
+              "prOutput" : "manual",
+              "spec" : "codex"
+            },
+            "type" : [
+              "object",
+              "null"
+            ]
+          },
           "ticketSourceKind" : {
             "example" : "linear",
             "minLength" : 1,
@@ -783,6 +797,17 @@
             ],
             "example" : "active",
             "type" : "string"
+          },
+          "stepRunnerKinds" : {
+            "additionalProperties" : {
+              "type" : "string"
+            },
+            "description" : "Per-step runner mapping (step → runner kind). Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. Empty when no per-step mapping is configured. Resolves more specifically than runnerKind.",
+            "example" : {
+              "prOutput" : "manual",
+              "spec" : "codex"
+            },
+            "type" : "object"
           },
           "ticketSourceKind" : {
             "description" : "Ticket-source connector kind.",
@@ -1424,6 +1449,20 @@
             ],
             "type" : [
               "string",
+              "null"
+            ]
+          },
+          "stepRunnerKinds" : {
+            "additionalProperties" : {
+              "type" : "string"
+            },
+            "description" : "Optional per-step runner mapping (step → runner kind), full-replace on update. Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. Omit or send empty to clear all per-step mappings.",
+            "example" : {
+              "prOutput" : "manual",
+              "spec" : "codex"
+            },
+            "type" : [
+              "object",
               "null"
             ]
           },

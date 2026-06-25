@@ -29,6 +29,10 @@ export interface CreateProjectVariables {
   /** Nullable repository URL — omitted from the body when blank. */
   repositoryUrl?: string | undefined;
   openspecEnabled: boolean;
+  /** Project-wide runner default (3d-3 override); null/omitted = use the global per-stage kind. */
+  runnerKind?: string | null | undefined;
+  /** Per-step runner mapping (step → kind); omitted/empty = no per-step mapping. */
+  stepRunnerKinds?: Record<string, string> | undefined;
   /** Forward-compat — omitted today (no live actor context). */
   actorIdentity?: string | undefined;
 }
@@ -48,6 +52,15 @@ export function useCreateProject(): CreateProjectResult {
         // Optional-field spread: omit when blank (mirror `useApproveSpec`).
         ...(variables.repositoryUrl !== undefined && variables.repositoryUrl !== ''
           ? { repositoryUrl: variables.repositoryUrl }
+          : {}),
+        // Story 3e-4 — per-project runner default + per-step mapping. Omit the default when
+        // null (use global); send the step map when non-empty.
+        ...(variables.runnerKind != null
+          ? { runnerKind: variables.runnerKind as NonNullable<CreateProjectRequest['runnerKind']> }
+          : {}),
+        ...(variables.stepRunnerKinds !== undefined &&
+        Object.keys(variables.stepRunnerKinds).length > 0
+          ? { stepRunnerKinds: variables.stepRunnerKinds }
           : {}),
       };
       return unwrap(

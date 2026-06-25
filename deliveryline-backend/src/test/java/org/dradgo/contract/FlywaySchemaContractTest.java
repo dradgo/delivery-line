@@ -46,6 +46,14 @@ class FlywaySchemaContractTest {
           "provider_usage_snapshots",
           "spec_clarification_acknowledgements");
 
+  // Story 3e-4 / V26: project_runner_kinds is a pure mapping/association table (composite PK
+  // (project_id, step)) — NOT a core table: it deliberately carries no bigserial id / public_id /
+  // created_at / archived_at, so it is excluded from the CORE_TABLES-driven shape loops and
+  // asserted
+  // by projectRunnerKindsSchemaCarriesExpectedColumnsConstraintsAndChecks instead. It must still be
+  // accounted for in the "exactly these tables" check, so it is unioned in there.
+  private static final List<String> ASSOCIATION_TABLES = List.of("project_runner_kinds");
+
   private static final Map<String, String> EXPECTED_PUBLIC_ID_PREFIX =
       Map.ofEntries(
           Map.entry("workflow_runs", "run_"),
@@ -92,11 +100,13 @@ class FlywaySchemaContractTest {
 				""",
                 String.class));
 
+    Set<String> expectedTables = new HashSet<>(CORE_TABLES);
+    expectedTables.addAll(ASSOCIATION_TABLES);
     assertEquals(
-        new HashSet<>(CORE_TABLES),
+        expectedTables,
         actualUserTables,
         () ->
-            "Public schema must contain exactly the V1 core tables (excluding flyway_schema_history). Found "
+            "Public schema must contain exactly the core + association tables (excluding flyway_schema_history). Found "
                 + actualUserTables);
   }
 
@@ -852,6 +862,68 @@ class FlywaySchemaContractTest {
     } finally {
       jdbcTemplate.update(
           "delete from spec_clarification_acknowledgements where spec_artifact_id = 'art_sweepkey'");
+    }
+  }
+
+  @Test
+  void projectRunnerKindsSchemaCarriesExpectedColumnsConstraintsChecksAndForeignKey() {
+    // Story 3e-4 / V26: per-step runner mapping. A lean mapping table — composite PK (project_id,
+    // step), no public_id/created_at/archived_at (deliberately not a core table). Probe its
+    // columns,
+    // the two value-set CHECKs (drift-tested against the ProjectRunnerStep/RunnerKind registries by
+    // RegistryContractTest), and the FK to projects.public_id (ON DELETE RESTRICT, like
+    // credentials).
+    assertColumnType("project_runner_kinds", "project_id", "text");
+    assertColumnType("project_runner_kinds", "step", "text");
+    assertColumnType("project_runner_kinds", "runner_kind", "text");
+    assertColumnNullable("project_runner_kinds", "project_id", false);
+    assertColumnNullable("project_runner_kinds", "step", false);
+    assertColumnNullable("project_runner_kinds", "runner_kind", false);
+
+    assertConstraintDefinitionContains("ck_project_runner_kinds_step", "spec");
+    assertConstraintDefinitionContains("ck_project_runner_kinds_step", "implementationPlan");
+    assertConstraintDefinitionContains("ck_project_runner_kinds_step", "prOutput");
+    assertConstraintDefinitionContains("ck_project_runner_kinds_kind", "codex");
+    assertConstraintDefinitionContains("ck_project_runner_kinds_kind", "claude");
+    assertConstraintDefinitionContains("ck_project_runner_kinds_kind", "manual");
+    assertConstraintDefinitionContains("fk_project_runner_kinds_projects", "project_id");
+
+    // The composite (project_id, step) PRIMARY KEY enforces one runner kind per (project, step):
+    // a duplicate (project, step) row is rejected; the same step on another project is allowed.
+    String projectPid = seedProject();
+    try {
+      jdbcTemplate.update(
+          "insert into project_runner_kinds (project_id, step, runner_kind) values (?, 'spec', 'codex')",
+          projectPid);
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into project_runner_kinds (project_id, step, runner_kind) values (?, 'spec', 'manual')",
+                  projectPid),
+          "Expected a primary-key violation on a duplicate (project_id, step)");
+      // A different step for the same project is fine.
+      jdbcTemplate.update(
+          "insert into project_runner_kinds (project_id, step, runner_kind) values (?, 'prOutput', 'manual')",
+          projectPid);
+      // An unknown step / kind trips the CHECKs.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into project_runner_kinds (project_id, step, runner_kind) values (?, 'bogus', 'codex')",
+                  projectPid),
+          "Expected ck_project_runner_kinds_step violation for an unknown step");
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into project_runner_kinds (project_id, step, runner_kind) values (?, 'implementationPlan', 'bogus')",
+                  projectPid),
+          "Expected ck_project_runner_kinds_kind violation for an unknown runner kind");
+    } finally {
+      jdbcTemplate.update("delete from project_runner_kinds where project_id = ?", projectPid);
+      jdbcTemplate.update("delete from projects where public_id = ?", projectPid);
     }
   }
 

@@ -1,18 +1,23 @@
 package org.dradgo.adapters.persistence;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.ProjectEntity;
+import org.dradgo.adapters.persistence.entity.ProjectRunnerKindEntity;
 import org.dradgo.adapters.persistence.mapper.ProjectEntityMapper;
 import org.dradgo.adapters.persistence.repository.ProjectRepository;
+import org.dradgo.adapters.persistence.repository.ProjectRunnerKindRepository;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
+import org.dradgo.domain.registry.RunnerKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -37,32 +42,35 @@ public class ProjectPersistenceAdapter implements ProjectStore {
   private static final Logger log = LoggerFactory.getLogger(ProjectPersistenceAdapter.class);
 
   private final ProjectRepository projectRepository;
+  private final ProjectRunnerKindRepository projectRunnerKindRepository;
   private final WorkflowRunRepository workflowRunRepository;
   private final ProjectEntityMapper projectEntityMapper;
 
   public ProjectPersistenceAdapter(
       ProjectRepository projectRepository,
+      ProjectRunnerKindRepository projectRunnerKindRepository,
       WorkflowRunRepository workflowRunRepository,
       ProjectEntityMapper projectEntityMapper) {
     this.projectRepository = projectRepository;
+    this.projectRunnerKindRepository = projectRunnerKindRepository;
     this.workflowRunRepository = workflowRunRepository;
     this.projectEntityMapper = projectEntityMapper;
   }
 
   @Override
   public Optional<Project> findBySlug(String slug) {
-    return projectRepository.findBySlug(slug).map(projectEntityMapper::toDomain);
+    return projectRepository.findBySlug(slug).map(this::toDomainWithSteps);
   }
 
   @Override
   public Optional<Project> findByPublicId(String publicId) {
-    return projectRepository.findByPublicId(publicId).map(projectEntityMapper::toDomain);
+    return projectRepository.findByPublicId(publicId).map(this::toDomainWithSteps);
   }
 
   @Override
   public List<Project> findAll() {
     return projectRepository.findAllByOrderByCreatedAtAsc().stream()
-        .map(projectEntityMapper::toDomain)
+        .map(this::toDomainWithSteps)
         .toList();
   }
 
@@ -70,8 +78,11 @@ public class ProjectPersistenceAdapter implements ProjectStore {
   @Transactional
   public Project insert(Project project) {
     try {
-      return projectEntityMapper.toDomain(
-          projectRepository.saveAndFlush(projectEntityMapper.toNewEntity(project)));
+      ProjectEntity saved =
+          projectRepository.saveAndFlush(projectEntityMapper.toNewEntity(project));
+      // Per-step rows reference projects.public_id (FK); insert only after the project row flushed.
+      replaceStepRunnerKinds(saved.getPublicId(), project.stepRunnerKinds());
+      return projectEntityMapper.toDomain(saved, project.stepRunnerKinds());
     } catch (DataIntegrityViolationException violation) {
       throw mapViolation(project, violation);
     }
@@ -97,10 +108,50 @@ public class ProjectPersistenceAdapter implements ProjectStore {
                 });
     projectEntityMapper.applyEditableColumns(entity, project);
     try {
-      return projectEntityMapper.toDomain(projectRepository.saveAndFlush(entity));
+      ProjectEntity saved = projectRepository.saveAndFlush(entity);
+      // Story 3e-4 (AC6) — full-replace semantics: the submitted map is authoritative.
+      replaceStepRunnerKinds(saved.getPublicId(), project.stepRunnerKinds());
+      return projectEntityMapper.toDomain(saved, project.stepRunnerKinds());
     } catch (DataIntegrityViolationException violation) {
       throw mapViolation(project, violation);
     }
+  }
+
+  /** Map the entity plus its {@code project_runner_kinds} child rows into the domain aggregate. */
+  private Project toDomainWithSteps(ProjectEntity entity) {
+    return projectEntityMapper.toDomain(entity, loadStepRunnerKinds(entity.getPublicId()));
+  }
+
+  /**
+   * Load the per-step rows for a project, ordered by {@code step} value (the repository's {@code
+   * OrderByStepAsc}). The resulting iteration order is deterministic but alphabetical by step — NOT
+   * the request's original insertion order — and is what {@code ProjectResponse} surfaces on the
+   * wire.
+   */
+  private Map<ProjectRunnerStep, RunnerKind> loadStepRunnerKinds(String projectPublicId) {
+    Map<ProjectRunnerStep, RunnerKind> map = new LinkedHashMap<>();
+    for (ProjectRunnerKindEntity row :
+        projectRunnerKindRepository.findByProjectIdOrderByStepAsc(projectPublicId)) {
+      map.put(row.getStep(), row.getRunnerKind());
+    }
+    return map;
+  }
+
+  /**
+   * Story 3e-4 (AC6) — full-replace the per-step rows for a project: delete the existing set then
+   * insert the submitted map (empty map → zero rows). Both run in the caller's
+   * {@code @Transactional} (insert/update), so the delete+insert is atomic.
+   */
+  private void replaceStepRunnerKinds(
+      String projectPublicId, Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    projectRunnerKindRepository.deleteByProjectId(projectPublicId);
+    if (stepRunnerKinds == null || stepRunnerKinds.isEmpty()) {
+      return;
+    }
+    List<ProjectRunnerKindEntity> rows = new ArrayList<>();
+    stepRunnerKinds.forEach(
+        (step, kind) -> rows.add(new ProjectRunnerKindEntity(projectPublicId, step, kind)));
+    projectRunnerKindRepository.saveAllAndFlush(rows);
   }
 
   @Override

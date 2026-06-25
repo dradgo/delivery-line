@@ -169,6 +169,50 @@ class ProjectControllerContractTest {
   }
 
   @Test
+  void createProjectThreadsStepRunnerKindsAndReturnsThem() throws Exception {
+    Project withSteps =
+        new Project(
+            PROJECT_ID,
+            "Acme Widgets",
+            "acme-widgets",
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            null,
+            false,
+            null,
+            OffsetDateTime.parse("2026-06-21T00:00:00Z"),
+            null,
+            Map.of(
+                org.dradgo.domain.registry.ProjectRunnerStep.SPEC, RunnerKind.CODEX,
+                org.dradgo.domain.registry.ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL));
+    when(projectManagementService.createProject(any())).thenReturn(withSteps);
+    when(projectCredentialService.isConfigured(anyString(), any())).thenReturn(false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/projects")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
+                        + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
+                        + "\"openspecEnabled\":false,"
+                        + "\"stepRunnerKinds\":{\"spec\":\"codex\",\"prOutput\":\"manual\"}}"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.stepRunnerKinds.spec").value("codex"))
+        .andExpect(jsonPath("$.stepRunnerKinds.prOutput").value("manual"));
+
+    org.mockito.ArgumentCaptor<CreateProjectCommand> command =
+        org.mockito.ArgumentCaptor.forClass(CreateProjectCommand.class);
+    verify(projectManagementService).createProject(command.capture());
+    org.assertj.core.api.Assertions.assertThat(command.getValue().stepRunnerKinds())
+        .containsEntry("spec", "codex")
+        .containsEntry("prOutput", "manual");
+  }
+
+  @Test
   void createProjectWithIdempotencyKeyReservesExecutesAndCompletes() throws Exception {
     when(idempotencyService.checkAndReserve(anyString(), anyString(), any(), anyString()))
         .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));

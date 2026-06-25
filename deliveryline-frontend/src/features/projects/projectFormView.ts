@@ -91,6 +91,74 @@ export const CONNECTION_CHECK_LABELS: Record<ConnectionCheck, string> = {
   repository_host_auth: 'Repository-host authentication',
 };
 
+// ---- Runner-kind + per-step vocabulary (story 3e-4) ----------------------------
+
+/**
+ * Frontend constant mirroring the backend `RunnerKind` registry (codex/claude/manual).
+ * DRIFT RISK: if the registry adds a kind, update this list — no automated gate covers
+ * it. Source of truth: `org.dradgo.domain.registry.RunnerKind`.
+ */
+export const RUNNER_KINDS = ['codex', 'claude', 'manual'] as const;
+export type RunnerKind = (typeof RUNNER_KINDS)[number];
+
+/** Human labels for each runner kind (the wire value stays the lowercase id). */
+export const RUNNER_KIND_LABELS: Record<RunnerKind, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  manual: 'Manual',
+};
+
+const RUNNER_KIND_SET = new Set<string>(RUNNER_KINDS);
+
+/**
+ * Sentinel `Select` value meaning "no explicit binding — fall through to the next-broader
+ * default". Radix `Select` forbids an empty-string item value, so this stands in for the
+ * cleared state in form state; the wire mappers translate it back to omitted/null.
+ */
+export const RUNNER_USE_DEFAULT = '__default__';
+
+/**
+ * The per-step runner mapping steps (story 3e-4), in display order. Wire values mirror the
+ * backend `ProjectRunnerStep` registry (spec/implementationPlan/prOutput).
+ */
+export const RUNNER_STEPS = ['spec', 'implementationPlan', 'prOutput'] as const;
+export type RunnerStep = (typeof RUNNER_STEPS)[number];
+
+/** Human labels for each per-step runner control. */
+export const RUNNER_STEP_LABELS: Record<RunnerStep, string> = {
+  spec: 'Spec',
+  implementationPlan: 'Implementation plan',
+  prOutput: 'PR output',
+};
+
+/** A runner-kind `Select` option (the wire value + its display label). */
+export interface RunnerKindOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * Options for a runner-kind `Select`: the "use default" sentinel first (its label differs
+ * between the project-wide default control and the per-step controls), then the known
+ * kinds. When `current` is a value the frontend list does NOT know (forward-registry
+ * drift), it is appended verbatim so an edit form preserves rather than silently drops it.
+ */
+export function runnerKindOptions(defaultLabel: string, current?: string): RunnerKindOption[] {
+  const base: RunnerKindOption[] = [
+    { value: RUNNER_USE_DEFAULT, label: defaultLabel },
+    ...RUNNER_KINDS.map((kind) => ({ value: kind, label: RUNNER_KIND_LABELS[kind] })),
+  ];
+  if (
+    current !== undefined &&
+    current !== '' &&
+    current !== RUNNER_USE_DEFAULT &&
+    !RUNNER_KIND_SET.has(current)
+  ) {
+    return [...base, { value: current, label: current }];
+  }
+  return base;
+}
+
 // ---- Form fields + validation -------------------------------------------------
 
 /** The values the create/edit form holds (all strings + the OpenSpec boolean). */
@@ -101,6 +169,10 @@ export interface ProjectFormFields {
   ticketSourceKind: string;
   repoHostKind: string;
   openspecEnabled: boolean;
+  /** Project-wide runner default (the 3d-3 override); `RUNNER_USE_DEFAULT` = use global. */
+  runnerKind: string;
+  /** Per-step runner mapping; each `RUNNER_USE_DEFAULT` = use the project-wide default. */
+  stepRunnerKinds: Record<RunnerStep, string>;
 }
 
 /** Per-field validation messages — a field is omitted when valid. */
@@ -112,7 +184,7 @@ export interface ProjectFormErrors {
   repoHostKind?: string;
 }
 
-/** A blank create form (defaults: first connector kind, OpenSpec off). */
+/** A blank create form (defaults: first connector kind, OpenSpec off, runners use defaults). */
 export function emptyProjectFormFields(): ProjectFormFields {
   return {
     name: '',
@@ -121,6 +193,12 @@ export function emptyProjectFormFields(): ProjectFormFields {
     ticketSourceKind: 'linear',
     repoHostKind: 'github',
     openspecEnabled: false,
+    runnerKind: RUNNER_USE_DEFAULT,
+    stepRunnerKinds: {
+      spec: RUNNER_USE_DEFAULT,
+      implementationPlan: RUNNER_USE_DEFAULT,
+      prOutput: RUNNER_USE_DEFAULT,
+    },
   };
 }
 
@@ -201,6 +279,7 @@ export function isProjectFormValid(errors: ProjectFormErrors): boolean {
  * [[workflowdetail-wire-sends-null-not-undefined]]).
  */
 export function toProjectFormFields(project: Project): ProjectFormFields {
+  const stepMap = project.stepRunnerKinds ?? {};
   return {
     name: project.name ?? '',
     slug: project.slug ?? '',
@@ -208,7 +287,40 @@ export function toProjectFormFields(project: Project): ProjectFormFields {
     ticketSourceKind: project.ticketSourceKind ?? 'linear',
     repoHostKind: project.repoHostKind ?? 'github',
     openspecEnabled: project.openspecEnabled ?? false,
+    // A nullable wire field serializes as JSON null → coalesce to the "use default" sentinel.
+    runnerKind: project.runnerKind ?? RUNNER_USE_DEFAULT,
+    stepRunnerKinds: {
+      spec: stepMap.spec ?? RUNNER_USE_DEFAULT,
+      implementationPlan: stepMap.implementationPlan ?? RUNNER_USE_DEFAULT,
+      prOutput: stepMap.prOutput ?? RUNNER_USE_DEFAULT,
+    },
   };
+}
+
+// ---- Runner wire mappers (story 3e-4) ------------------------------------------
+
+/** The project-wide runner default for the wire — `null` when "use global default". */
+export function toWireRunnerKind(runnerKind: string): string | null {
+  return runnerKind === RUNNER_USE_DEFAULT || runnerKind === '' ? null : runnerKind;
+}
+
+/**
+ * The per-step map for the wire — a step set to "use default" (`RUNNER_USE_DEFAULT`) is
+ * omitted, so it falls through to the project-wide default then the global per-stage kind.
+ * Always returns an object (possibly empty); on update the empty object full-replaces (clears)
+ * any existing per-step mapping.
+ */
+export function toWireStepRunnerKinds(
+  stepRunnerKinds: Record<RunnerStep, string>,
+): Record<string, string> {
+  const wire: Record<string, string> = {};
+  for (const step of RUNNER_STEPS) {
+    const value = stepRunnerKinds[step];
+    if (value !== RUNNER_USE_DEFAULT && value !== '') {
+      wire[step] = value;
+    }
+  }
+  return wire;
 }
 
 // ---- Allowed-actions view-model (status-derived, NO role gating) ----------------

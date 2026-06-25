@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.domain.DomainException;
@@ -13,7 +14,9 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -229,6 +232,85 @@ class ProjectPersistenceAdapterIT {
     assertThat(loaded.openspecEnabled()).isTrue();
     assertThat(loaded.runnerKind()).isEqualTo(org.dradgo.domain.registry.RunnerKind.MANUAL);
     assertThat(loaded.createdAt()).isEqualTo(inserted.createdAt());
+  }
+
+  @Test
+  void stepRunnerKindsRoundTripAndFullReplaceOnUpdate() {
+    String publicId = "prj_itsr" + suffix();
+    String slug = "it-steprunner-" + suffix();
+    Project inserted =
+        projectStore.insert(
+            new Project(
+                publicId,
+                "IT Step Runner",
+                slug,
+                ProjectStatus.ACTIVE,
+                null,
+                ConnectorKind.LINEAR,
+                ConnectorKind.GITHUB,
+                false,
+                null,
+                false,
+                null,
+                OffsetDateTime.now(ZoneOffset.UTC),
+                null,
+                Map.of(
+                    ProjectRunnerStep.SPEC, RunnerKind.CODEX,
+                    ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL)));
+    // The insert return value carries the submitted map.
+    assertThat(inserted.stepRunnerKinds())
+        .containsEntry(ProjectRunnerStep.SPEC, RunnerKind.CODEX)
+        .containsEntry(ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL);
+
+    // Loaded from the child rows.
+    Project loaded = projectStore.findByPublicId(publicId).orElseThrow();
+    assertThat(loaded.stepRunnerKinds())
+        .containsOnly(
+            Map.entry(ProjectRunnerStep.SPEC, RunnerKind.CODEX),
+            Map.entry(ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL));
+
+    // Full-replace on update — re-set SPEC (PK reuse) + a new step, drop PR_OUTPUT.
+    projectStore.update(
+        new Project(
+            publicId,
+            "IT Step Runner",
+            slug,
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            null,
+            false,
+            null,
+            inserted.createdAt(),
+            null,
+            Map.of(
+                ProjectRunnerStep.SPEC, RunnerKind.CLAUDE,
+                ProjectRunnerStep.IMPLEMENTATION_PLAN, RunnerKind.CODEX)));
+    assertThat(projectStore.findByPublicId(publicId).orElseThrow().stepRunnerKinds())
+        .containsOnly(
+            Map.entry(ProjectRunnerStep.SPEC, RunnerKind.CLAUDE),
+            Map.entry(ProjectRunnerStep.IMPLEMENTATION_PLAN, RunnerKind.CODEX));
+
+    // Empty map clears all per-step rows.
+    projectStore.update(
+        new Project(
+            publicId,
+            "IT Step Runner",
+            slug,
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            null,
+            false,
+            null,
+            inserted.createdAt(),
+            null,
+            Map.of()));
+    assertThat(projectStore.findByPublicId(publicId).orElseThrow().stepRunnerKinds()).isEmpty();
   }
 
   @Test

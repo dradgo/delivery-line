@@ -73,6 +73,11 @@
     "active",
     "disabled"
   ],
+  "projectRunnerSteps": [
+    "spec",
+    "implementationPlan",
+    "prOutput"
+  ],
   "connectorKinds": [
     "linear",
     "github",

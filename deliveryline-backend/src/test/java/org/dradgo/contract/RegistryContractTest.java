@@ -42,6 +42,7 @@ import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.ReviewOutcome;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -117,6 +118,7 @@ class RegistryContractTest {
     assertEquals(registryValues(RunnerKind.values()), DomainRegistry.runnerKinds());
     assertEquals(registryValues(WorkflowEventType.values()), DomainRegistry.workflowEventTypes());
     assertEquals(registryValues(ProjectStatus.values()), DomainRegistry.projectStatuses());
+    assertEquals(registryValues(ProjectRunnerStep.values()), DomainRegistry.projectRunnerSteps());
     assertEquals(registryValues(ConnectorKind.values()), DomainRegistry.connectorKinds());
     assertEquals(registryValues(ReviewOutcome.values()), DomainRegistry.reviewOutcomes());
     assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
@@ -204,6 +206,24 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.connectorKinds(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "connectorKinds"));
+  }
+
+  @Test
+  void projectRunnerStepStaysAlignedWithSqlCheckAndApiManifest() throws IOException {
+    // Story 3e-4 (AC2/AC9) — the per-step runner-mapping step value set is drift-tested against
+    // BOTH the V26 ck_project_runner_kinds_step CHECK and the projectRunnerSteps API placeholder
+    // (the same gate ProjectStatus/ConnectorKind use). The mapped runner_kind reuses the existing
+    // RunnerKind registry (already covered by
+    // runnerKindPersistedRegistryParserAcceptsCanonicalValues).
+    assertFalse(
+        DomainRegistry.projectRunnerSteps().isEmpty(),
+        "ProjectRunnerStep registry must not be empty");
+    assertEquals(
+        DomainRegistry.projectRunnerSteps(),
+        extractConstraintValues("ck_project_runner_kinds_step"));
+    assertEquals(
+        DomainRegistry.projectRunnerSteps(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "projectRunnerSteps"));
   }
 
   @Test
@@ -470,6 +490,12 @@ class RegistryContractTest {
     registryBoundaries.put(
         "projects.ticket_source_kind", PersistedRegistryValues::projectTicketSourceKind);
     registryBoundaries.put("projects.repo_host_kind", PersistedRegistryValues::projectRepoHostKind);
+    // Story 3e-4 (AC2/AC9) — the two V26 project_runner_kinds persistence boundaries (parsed at the
+    // child entity getter): step → ProjectRunnerStep, runner_kind → RunnerKind. Both fail fast.
+    registryBoundaries.put(
+        "project_runner_kinds.step", PersistedRegistryValues::projectRunnerKindStep);
+    registryBoundaries.put(
+        "project_runner_kinds.runner_kind", PersistedRegistryValues::projectRunnerKindRunnerKind);
     // Story 3c-5 (AC7) — the project_credentials.connector_role boundary handed off from 3c-6.
     registryBoundaries.put(
         "project_credentials.connector_role",

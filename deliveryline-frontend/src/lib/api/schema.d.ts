@@ -807,6 +807,16 @@ export interface components {
             runnerKind?: "manual" | "codex" | "claude" | null;
             /** @example acme-widgets */
             slug: string;
+            /**
+             * @description Optional per-step runner mapping (step → runner kind). Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. A step omitted from the map uses the project-wide runnerKind default, else the global per-stage kind. Resolves more specifically than runnerKind.
+             * @example {
+             *       "prOutput": "manual",
+             *       "spec": "codex"
+             *     }
+             */
+            stepRunnerKinds?: {
+                [key: string]: string;
+            } | null;
             /** @example linear */
             ticketSourceKind: string;
         };
@@ -961,6 +971,16 @@ export interface components {
              * @enum {string}
              */
             status?: "active" | "disabled";
+            /**
+             * @description Per-step runner mapping (step → runner kind). Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. Empty when no per-step mapping is configured. Resolves more specifically than runnerKind.
+             * @example {
+             *       "prOutput": "manual",
+             *       "spec": "codex"
+             *     }
+             */
+            stepRunnerKinds?: {
+                [key: string]: string;
+            };
             /**
              * @description Ticket-source connector kind.
              * @example linear
@@ -1200,6 +1220,16 @@ export interface components {
              * @enum {string|null}
              */
             runnerKind?: "manual" | "codex" | "claude" | null;
+            /**
+             * @description Optional per-step runner mapping (step → runner kind), full-replace on update. Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. Omit or send empty to clear all per-step mappings.
+             * @example {
+             *       "prOutput": "manual",
+             *       "spec": "codex"
+             *     }
+             */
+            stepRunnerKinds?: {
+                [key: string]: string;
+            } | null;
             /** @example linear */
             ticketSourceKind: string;
         };

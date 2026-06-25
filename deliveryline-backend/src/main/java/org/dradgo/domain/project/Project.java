@@ -1,9 +1,11 @@
 package org.dradgo.domain.project;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.Objects;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ConnectorKind;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerKind;
 
@@ -46,7 +48,52 @@ public record Project(
     // V20).
     RunnerKind runnerKind, // nullable
     OffsetDateTime createdAt,
-    OffsetDateTime archivedAt) { // nullable
+    OffsetDateTime archivedAt, // nullable
+    // Story 3e-4 (AC3) — per-STEP runner mapping (resolves more specifically than the single
+    // runnerKind override above, which is kept as the project-wide default). An empty map = "no
+    // per-step mapping" (the 3d-3-parity hot path); a present (step → kind) overrides that one step
+    // only. Defensive-copied to an unmodifiable map (null → empty) by the compact constructor; the
+    // child rows live in project_runner_kinds (V26), loaded with the project by the persistence
+    // adapter. NEVER null after construction.
+    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+
+  /**
+   * Back-compat constructor for the pre-3e-4 13-arg shape — defaults {@code stepRunnerKinds} to an
+   * empty map. Keeps the seeder, default-project, and the many existing {@code new Project(...)}
+   * call sites (3d-3 parity, no per-step mapping) compiling unchanged; only the
+   * create/update/persistence paths that actually carry a per-step map use the full constructor (R2
+   * fan-out discipline).
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        Map.of());
+  }
 
   public Project {
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.PROJECT);
@@ -64,5 +111,8 @@ public record Project(
       throw new IllegalArgumentException("Project reviewerModelKind must be non-blank when set");
     }
     Objects.requireNonNull(createdAt, "Project createdAt must not be null");
+    // Null-safe + immutable: an empty map is the canonical "no per-step mapping" value. Map.copyOf
+    // rejects null keys/values, so a malformed map fails fast at construction.
+    stepRunnerKinds = stepRunnerKinds == null ? Map.of() : Map.copyOf(stepRunnerKinds);
   }
 }

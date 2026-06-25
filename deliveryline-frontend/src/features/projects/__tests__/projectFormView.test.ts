@@ -17,10 +17,23 @@ import {
   projectErrorCode,
   projectErrorMessage,
   resolveProjectActions,
+  runnerKindOptions,
+  RUNNER_USE_DEFAULT,
   toProjectFormFields,
+  toWireRunnerKind,
+  toWireStepRunnerKinds,
   validateProjectForm,
   type ProjectFormFields,
 } from '../projectFormView';
+
+const defaultRunnerFields = {
+  runnerKind: RUNNER_USE_DEFAULT,
+  stepRunnerKinds: {
+    spec: RUNNER_USE_DEFAULT,
+    implementationPlan: RUNNER_USE_DEFAULT,
+    prOutput: RUNNER_USE_DEFAULT,
+  },
+};
 
 function problem(code: string, status: number): ProblemDetailsError {
   return new ProblemDetailsError(
@@ -35,6 +48,7 @@ const validFields: ProjectFormFields = {
   ticketSourceKind: 'linear',
   repoHostKind: 'github',
   openspecEnabled: false,
+  ...defaultRunnerFields,
 };
 
 describe('validateProjectForm', () => {
@@ -82,6 +96,7 @@ describe('emptyProjectFormFields', () => {
       ticketSourceKind: 'linear',
       repoHostKind: 'github',
       openspecEnabled: false,
+      ...defaultRunnerFields,
     });
   });
 });
@@ -103,7 +118,21 @@ describe('toProjectFormFields', () => {
       ticketSourceKind: 'github',
       repoHostKind: 'gitlab',
       openspecEnabled: true,
+      ...defaultRunnerFields,
     });
+  });
+
+  it('prefills runnerKind + per-step mapping from the project', () => {
+    const fields = toProjectFormFields({
+      name: 'X',
+      runnerKind: 'claude',
+      stepRunnerKinds: { spec: 'codex', prOutput: 'manual' },
+    });
+    expect(fields.runnerKind).toBe('claude');
+    expect(fields.stepRunnerKinds.spec).toBe('codex');
+    expect(fields.stepRunnerKinds.prOutput).toBe('manual');
+    // An unmapped step degrades to the "use default" sentinel.
+    expect(fields.stepRunnerKinds.implementationPlan).toBe(RUNNER_USE_DEFAULT);
   });
 
   it('degrades nullable/absent fields to defaults', () => {
@@ -113,6 +142,47 @@ describe('toProjectFormFields', () => {
     expect(fields.ticketSourceKind).toBe('linear');
     expect(fields.repoHostKind).toBe('github');
     expect(fields.openspecEnabled).toBe(false);
+  });
+});
+
+describe('runner mapping helpers (story 3e-4)', () => {
+  it('runnerKindOptions leads with the sentinel + the three known kinds', () => {
+    const options = runnerKindOptions('Use global default');
+    expect(options[0]).toEqual({ value: RUNNER_USE_DEFAULT, label: 'Use global default' });
+    expect(options.map((option) => option.value)).toEqual([
+      RUNNER_USE_DEFAULT,
+      'codex',
+      'claude',
+      'manual',
+    ]);
+  });
+
+  it('runnerKindOptions appends an unknown current value (forward drift)', () => {
+    const options = runnerKindOptions('Use project default', 'gpt-9000');
+    expect(options.at(-1)).toEqual({ value: 'gpt-9000', label: 'gpt-9000' });
+  });
+
+  it('toWireRunnerKind nulls the sentinel and passes a real kind through', () => {
+    expect(toWireRunnerKind(RUNNER_USE_DEFAULT)).toBeNull();
+    expect(toWireRunnerKind('')).toBeNull();
+    expect(toWireRunnerKind('manual')).toBe('manual');
+  });
+
+  it('toWireStepRunnerKinds omits "use default" steps and keeps bound ones', () => {
+    expect(
+      toWireStepRunnerKinds({
+        spec: 'codex',
+        implementationPlan: RUNNER_USE_DEFAULT,
+        prOutput: 'manual',
+      }),
+    ).toEqual({ spec: 'codex', prOutput: 'manual' });
+    expect(
+      toWireStepRunnerKinds({
+        spec: RUNNER_USE_DEFAULT,
+        implementationPlan: RUNNER_USE_DEFAULT,
+        prOutput: RUNNER_USE_DEFAULT,
+      }),
+    ).toEqual({});
   });
 });
 

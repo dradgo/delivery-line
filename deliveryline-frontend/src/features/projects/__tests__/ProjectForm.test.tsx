@@ -110,6 +110,14 @@ describe('ProjectForm — create', () => {
     expect(screen.getByTestId('project-slug-input')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('AC7 — renders the project-wide default + per-step runner controls (story 3e-4)', () => {
+    renderForm(<ProjectForm mode={{ kind: 'create' }} open onClose={vi.fn()} />);
+    expect(screen.getByTestId('project-runner-kind')).toBeInTheDocument();
+    expect(screen.getByTestId('project-step-runner-spec')).toBeInTheDocument();
+    expect(screen.getByTestId('project-step-runner-implementationPlan')).toBeInTheDocument();
+    expect(screen.getByTestId('project-step-runner-prOutput')).toBeInTheDocument();
+  });
+
   it('AC10 — the create form passes a wcag2aa axe scan', async () => {
     renderForm(<ProjectForm mode={{ kind: 'create' }} open onClose={vi.fn()} />);
     await screen.findByTestId('project-form-dialog');
@@ -152,6 +160,31 @@ describe('ProjectForm — edit', () => {
     fireEvent.click(screen.getByTestId('project-form-submit'));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(hit).toBe(true);
+  });
+
+  it('AC6/AC7 — an edit round-trips the prefilled runner config in the PUT body (story 3e-4)', async () => {
+    let captured: Record<string, unknown> | undefined;
+    server.use(
+      http.put(`${PROJECTS_URL}/prj_runner`, async ({ request }) => {
+        captured = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(defaultProjectFixture);
+      }),
+    );
+    const onClose = vi.fn();
+    const project = {
+      ...defaultProjectFixture,
+      id: 'prj_runner',
+      runnerKind: 'claude' as const,
+      stepRunnerKinds: { spec: 'codex', prOutput: 'manual' },
+    };
+    renderForm(<ProjectForm mode={{ kind: 'edit', project }} open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('project-form-submit'));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    // Full-replace: the prefilled project-wide default + per-step map ride the PUT body verbatim.
+    expect(captured).toMatchObject({
+      runnerKind: 'claude',
+      stepRunnerKinds: { spec: 'codex', prOutput: 'manual' },
+    });
   });
 
   it('AC10 — the edit form passes a wcag2aa axe scan', async () => {

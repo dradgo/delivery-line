@@ -11,6 +11,7 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.slf4j.Logger;
@@ -89,6 +90,8 @@ public class ProjectManagementService {
         ConnectorKind.fromValue(command.ticketSourceKind(), "ticketSourceKind");
     ConnectorKind repoHostKind = ConnectorKind.fromValue(command.repoHostKind(), "repoHostKind");
     RunnerKind runnerKind = parseRunnerKind(command.runnerKind());
+    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds =
+        parseStepRunnerKinds(command.stepRunnerKinds());
     Project project =
         new Project(
             PublicIdPrefixes.PROJECT.next(),
@@ -105,7 +108,9 @@ public class ProjectManagementService {
             // Nullable per-project override; null delegates to stage/global runner defaults.
             runnerKind,
             OffsetDateTime.now(ZoneOffset.UTC),
-            null);
+            null,
+            // Story 3e-4 (AC6) — the per-step runner mapping persisted to project_runner_kinds.
+            stepRunnerKinds);
     Project created = projectStore.insert(project);
     log.info(
         "project created projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -130,6 +135,8 @@ public class ProjectManagementService {
         ConnectorKind.fromValue(command.ticketSourceKind(), "ticketSourceKind");
     ConnectorKind repoHostKind = ConnectorKind.fromValue(command.repoHostKind(), "repoHostKind");
     RunnerKind runnerKind = parseRunnerKind(command.runnerKind());
+    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds =
+        parseStepRunnerKinds(command.stepRunnerKinds());
     Project mutated =
         new Project(
             existing.publicId(),
@@ -146,7 +153,9 @@ public class ProjectManagementService {
             // The update surface replaces or clears the nullable per-project runner override.
             runnerKind,
             existing.createdAt(),
-            existing.archivedAt());
+            existing.archivedAt(),
+            // Story 3e-4 (AC6) — full-replace: the submitted per-step map is authoritative.
+            stepRunnerKinds);
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -197,7 +206,11 @@ public class ProjectManagementService {
             existing.reviewerGatingEnabled(),
             existing.runnerKind(),
             existing.createdAt(),
-            existing.archivedAt());
+            existing.archivedAt(),
+            // Story 3e-4 — preserve the per-step map across a status-only change (update
+            // full-replaces
+            // it from the submitted aggregate, so a status flip must carry the existing mapping).
+            existing.stepRunnerKinds());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -230,7 +243,10 @@ public class ProjectManagementService {
             existing.reviewerGatingEnabled(),
             existing.runnerKind(),
             existing.createdAt(),
-            existing.archivedAt());
+            existing.archivedAt(),
+            // Story 3e-4 — preserve the per-step map across the status-only re-enable
+            // (full-replace).
+            existing.stepRunnerKinds());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",
@@ -272,5 +288,27 @@ public class ProjectManagementService {
 
   private static RunnerKind parseRunnerKind(String runnerKind) {
     return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "runnerKind");
+  }
+
+  /**
+   * Story 3e-4 (AC6/AC8) — parse the raw wire per-step map (step → kind) into the typed domain map.
+   * An unknown step or runner kind surfaces as a typed {@code UNKNOWN_REGISTRY_VALUE} 400 (via
+   * {@code ProjectRunnerStep}/{@code RunnerKind} fromValue), never a 500. A null/empty map → empty
+   * (no per-step mapping). The parsed map preserves the request's insertion order for the inbound
+   * persist + log path; note a project later READ back from persistence is re-ordered by {@code
+   * step} value (see {@code ProjectPersistenceAdapter.loadStepRunnerKinds}), so the round-tripped
+   * wire/log order is step-sorted, not insertion order.
+   */
+  private static Map<ProjectRunnerStep, RunnerKind> parseStepRunnerKinds(Map<String, String> raw) {
+    if (raw == null || raw.isEmpty()) {
+      return Map.of();
+    }
+    Map<ProjectRunnerStep, RunnerKind> parsed = new LinkedHashMap<>();
+    for (Map.Entry<String, String> entry : raw.entrySet()) {
+      ProjectRunnerStep step = ProjectRunnerStep.fromValue(entry.getKey(), "stepRunnerKinds.step");
+      RunnerKind kind = RunnerKind.fromValue(entry.getValue(), "stepRunnerKinds.runnerKind");
+      parsed.put(step, kind);
+    }
+    return parsed;
   }
 }

@@ -19,6 +19,10 @@ public record CreateProjectCommand(
     String repoHostKind,
     boolean openspecEnabled,
     String runnerKind,
+    // Story 3e-4 (AC6) — optional per-step runner mapping (raw wire strings step → kind); the
+    // service parses them through ProjectRunnerStep/RunnerKind.fromValue so a bad value is a typed
+    // 400, never a 500. Null/empty = no per-step mapping.
+    java.util.Map<String, String> stepRunnerKinds,
     String idempotencyKey,
     String actorIdentity) {
   public CreateProjectCommand(
@@ -37,6 +41,7 @@ public record CreateProjectCommand(
         ticketSourceKind,
         repoHostKind,
         openspecEnabled,
+        null,
         null,
         idempotencyKey,
         actorIdentity);

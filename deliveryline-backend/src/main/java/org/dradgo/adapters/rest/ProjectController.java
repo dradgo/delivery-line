@@ -134,6 +134,7 @@ public class ProjectController {
             request.repoHostKind(),
             request.openspecEnabled(),
             request.runnerKind(),
+            request.stepRunnerKinds(),
             idempotencyKey,
             actorIdentity);
     log.info(
@@ -234,6 +235,7 @@ public class ProjectController {
             request.repoHostKind(),
             request.openspecEnabled(),
             request.runnerKind(),
+            request.stepRunnerKinds(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
   }
@@ -456,8 +458,24 @@ public class ProjectController {
             nullSafe(command.ticketSourceKind()),
             nullSafe(command.repoHostKind()),
             Boolean.toString(command.openspecEnabled()),
-            nullSafe(command.runnerKind()));
+            nullSafe(command.runnerKind()),
+            canonicalStepRunnerKinds(command.stepRunnerKinds()));
     return sha256Hex(canonical);
+  }
+
+  /**
+   * Story 3e-4 — deterministic canonical form of the per-step map for the create fingerprint: the
+   * (step=kind) pairs sorted by step key, comma-joined. Two same-key creates with the same per-step
+   * mapping fingerprint identically (and replay); a different mapping is a distinct create.
+   */
+  private static String canonicalStepRunnerKinds(Map<String, String> stepRunnerKinds) {
+    if (stepRunnerKinds == null || stepRunnerKinds.isEmpty()) {
+      return "";
+    }
+    return stepRunnerKinds.entrySet().stream()
+        .sorted(Map.Entry.comparingByKey())
+        .map(entry -> nullSafe(entry.getKey()) + "=" + nullSafe(entry.getValue()))
+        .collect(java.util.stream.Collectors.joining(","));
   }
 
   private static String credentialFingerprint(

@@ -27,6 +27,17 @@ export interface UpdateProjectVariables {
   /** Nullable repository URL — omitted from the body when blank. */
   repositoryUrl?: string | undefined;
   openspecEnabled: boolean;
+  /**
+   * Project-wide runner default (3d-3 override). Full-replace on update: send `null` to clear
+   * it (use the global per-stage kind), or a kind to set it. Always sent by the edit form so an
+   * edit never silently drops a previously-set override.
+   */
+  runnerKind?: string | null | undefined;
+  /**
+   * Per-step runner mapping (step → kind), full-replace on update: the submitted map is
+   * authoritative. Send `{}` to clear all per-step mappings. Always sent by the edit form.
+   */
+  stepRunnerKinds?: Record<string, string> | undefined;
   /** Forward-compat — omitted today (no live actor context). */
   actorIdentity?: string | undefined;
 }
@@ -46,6 +57,13 @@ export function useUpdateProject(projectId: string): UpdateProjectResult {
         ...(variables.repositoryUrl !== undefined && variables.repositoryUrl !== ''
           ? { repositoryUrl: variables.repositoryUrl }
           : {}),
+        // Story 3e-4 — full-replace runner config. Always send both so an edit preserves or clears
+        // them explicitly (omitting runnerKind would clear the override; omitting the map clears it).
+        runnerKind: (variables.runnerKind ?? null) as Exclude<
+          UpdateProjectRequest['runnerKind'],
+          undefined
+        >,
+        stepRunnerKinds: variables.stepRunnerKinds ?? {},
       };
       return unwrap(
         await apiClient.PUT('/api/v1/projects/{projectId}', {

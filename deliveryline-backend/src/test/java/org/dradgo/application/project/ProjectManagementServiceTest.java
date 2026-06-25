@@ -9,11 +9,13 @@ import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.Test;
@@ -88,7 +90,7 @@ class ProjectManagementServiceTest {
     Project created =
         service.createProject(
             new CreateProjectCommand(
-                "Acme", "acme", null, "linear", "github", false, "manual", null, "alex"));
+                "Acme", "acme", null, "linear", "github", false, "manual", null, null, "alex"));
 
     assertThat(created.runnerKind()).isEqualTo(RunnerKind.MANUAL);
   }
@@ -99,7 +101,8 @@ class ProjectManagementServiceTest {
             () ->
                 service.createProject(
                     new CreateProjectCommand(
-                        "Acme", "acme", null, "linear", "github", false, "bogus", null, "alex")))
+                        "Acme", "acme", null, "linear", "github", false, "bogus", null, null,
+                        "alex")))
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.UNKNOWN_REGISTRY_VALUE);
@@ -135,6 +138,106 @@ class ProjectManagementServiceTest {
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.PROJECT_SLUG_CONFLICT);
     verify(store, never()).insert(any());
+  }
+
+  @Test
+  void createProjectParsesAndPersistsStepRunnerKinds() {
+    when(store.insert(any())).thenAnswer(inv -> inv.getArgument(0));
+    service.createProject(
+        new CreateProjectCommand(
+            "Acme",
+            "acme",
+            null,
+            "linear",
+            "github",
+            false,
+            null,
+            Map.of("spec", "codex", "prOutput", "manual"),
+            null,
+            "alex"));
+
+    ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
+    verify(store).insert(captor.capture());
+    assertThat(captor.getValue().stepRunnerKinds())
+        .containsEntry(ProjectRunnerStep.SPEC, RunnerKind.CODEX)
+        .containsEntry(ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL)
+        .doesNotContainKey(ProjectRunnerStep.IMPLEMENTATION_PLAN);
+  }
+
+  @Test
+  void createProjectRejectsUnknownStepOrKindInMap() {
+    assertThatThrownBy(
+            () ->
+                service.createProject(
+                    new CreateProjectCommand(
+                        "Acme",
+                        "acme",
+                        null,
+                        "linear",
+                        "github",
+                        false,
+                        null,
+                        Map.of("bogus", "codex"),
+                        null,
+                        "alex")))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.UNKNOWN_REGISTRY_VALUE);
+    verify(store, never()).insert(any());
+  }
+
+  @Test
+  void updateProjectFullReplacesStepRunnerKinds() {
+    Project existing = project("prj_acme0001", "acme", ProjectStatus.ACTIVE);
+    when(store.findByPublicId("prj_acme0001")).thenReturn(Optional.of(existing));
+    when(store.update(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    service.updateProject(
+        "prj_acme0001",
+        new UpdateProjectCommand(
+            "Acme",
+            null,
+            "linear",
+            "github",
+            false,
+            null,
+            Map.of("implementationPlan", "claude"),
+            "alex"));
+
+    ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
+    verify(store).update(captor.capture());
+    assertThat(captor.getValue().stepRunnerKinds())
+        .containsExactly(Map.entry(ProjectRunnerStep.IMPLEMENTATION_PLAN, RunnerKind.CLAUDE));
+  }
+
+  @Test
+  void disablePreservesStepRunnerKinds() {
+    Project existing =
+        new Project(
+            "prj_acme0001",
+            "Acme",
+            "acme",
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            null,
+            false,
+            null,
+            OffsetDateTime.parse("2026-06-25T00:00:00Z"),
+            null,
+            Map.of(ProjectRunnerStep.SPEC, RunnerKind.CODEX));
+    when(store.findByPublicId("prj_acme0001")).thenReturn(Optional.of(existing));
+    when(store.update(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    service.disableProject("prj_acme0001");
+
+    ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
+    verify(store).update(captor.capture());
+    // A status-only change must carry the existing per-step map (update full-replaces from it).
+    assertThat(captor.getValue().stepRunnerKinds())
+        .containsExactly(Map.entry(ProjectRunnerStep.SPEC, RunnerKind.CODEX));
   }
 
   @Test
@@ -178,7 +281,8 @@ class ProjectManagementServiceTest {
     Project updated =
         service.updateProject(
             "prj_acme0001",
-            new UpdateProjectCommand("Acme", null, "linear", "github", false, "claude", "alex"));
+            new UpdateProjectCommand(
+                "Acme", null, "linear", "github", false, "claude", null, "alex"));
 
     assertThat(updated.runnerKind()).isEqualTo(RunnerKind.CLAUDE);
   }

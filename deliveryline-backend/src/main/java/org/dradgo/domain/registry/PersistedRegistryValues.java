@@ -106,6 +106,18 @@ public final class PersistedRegistryValues {
     return ConnectorKind.fromValue(rawValue, "projects.repo_host_kind");
   }
 
+  // Story 3e-4 (AC2/AC9) — the two project_runner_kinds persistence boundaries. The child entity
+  // stores step + runner_kind as raw text and parses each at the getter through these wrappers
+  // (fail fast on an unknown DB value with UNKNOWN_REGISTRY_VALUE), mirroring the projects.*
+  // getters.
+  public static ProjectRunnerStep projectRunnerKindStep(String rawValue) {
+    return ProjectRunnerStep.fromValue(rawValue, "project_runner_kinds.step");
+  }
+
+  public static RunnerKind projectRunnerKindRunnerKind(String rawValue) {
+    return RunnerKind.fromValue(rawValue, "project_runner_kinds.runner_kind");
+  }
+
   // Story 3c-5 (AC7) — the project_credentials.connector_role persistence boundary that 3c-2 R1 /
   // 3c-6 explicitly deferred to this story ("the {ticket_source,repo_host} role set is a 3c-5
   // credential concern"). ProjectCredentialEntity stores connector_role as raw text and parses it

@@ -1,7 +1,10 @@
 package org.dradgo.adapters.persistence.mapper;
 
+import java.util.Map;
 import org.dradgo.adapters.persistence.entity.ProjectEntity;
 import org.dradgo.domain.project.Project;
+import org.dradgo.domain.registry.ProjectRunnerStep;
+import org.dradgo.domain.registry.RunnerKind;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,7 +21,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProjectEntityMapper {
 
+  /**
+   * Back-compat read (no per-step rows loaded) — used by the mapper unit test + any caller that has
+   * no child rows. Delegates to the {@code (entity, stepRunnerKinds)} form with an empty map.
+   */
   public Project toDomain(ProjectEntity entity) {
+    return toDomain(entity, Map.of());
+  }
+
+  /**
+   * Story 3e-4 (AC3) — entity + the per-step runner map loaded from {@code project_runner_kinds} →
+   * domain. The adapter loads the child rows and passes them here; an empty map round-trips as zero
+   * rows (3d-3 parity).
+   */
+  public Project toDomain(
+      ProjectEntity entity, Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
     return new Project(
         entity.getPublicId(),
         entity.getName(),
@@ -39,7 +56,8 @@ public class ProjectEntityMapper {
         // RunnerKind.fromValue in the entity getter; null round-trips as null).
         entity.getRunnerKind(),
         entity.getCreatedAt(),
-        entity.getArchivedAt());
+        entity.getArchivedAt(),
+        stepRunnerKinds);
   }
 
   public ProjectEntity toNewEntity(Project project) {

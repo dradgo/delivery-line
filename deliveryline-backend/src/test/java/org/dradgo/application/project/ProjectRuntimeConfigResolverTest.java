@@ -6,12 +6,15 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.Optional;
+import org.dradgo.application.runner.ExecutionSubStage;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
@@ -145,6 +148,127 @@ class ProjectRuntimeConfigResolverTest {
                 RunnerStage.EXECUTION,
                 org.dradgo.application.runner.ExecutionSubStage.PR_OUTPUT))
         .isEqualTo(RunnerKind.CLAUDE);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 3e-4 (AC4/AC5) — per-step mapping wins over the single override, which wins over global;
+  // an empty map is byte-identical to 3d-3; a per-step MANUAL returns MANUAL for that step only.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void resolveRunnerKindPrefersPerStepMappingOverOverrideAndGlobal() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(
+            Optional.of(
+                projectWith(RunnerKind.CLAUDE, Map.of(ProjectRunnerStep.SPEC, RunnerKind.CODEX))));
+
+    // SPEC is mapped to CODEX → per-step wins over the CLAUDE project-wide override + global.
+    assertThat(resolver.resolveRunnerKind(RUN_ID, RunnerStage.INVESTIGATION))
+        .isEqualTo(RunnerKind.CODEX);
+    org.mockito.Mockito.verifyNoInteractions(runnerProperties);
+  }
+
+  @Test
+  void resolveRunnerKindFallsThroughToOverrideWhenStepUnmapped() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(
+            Optional.of(
+                projectWith(RunnerKind.CLAUDE, Map.of(ProjectRunnerStep.SPEC, RunnerKind.CODEX))));
+
+    // PR_OUTPUT is NOT mapped → falls through to the project-wide override (CLAUDE), not global.
+    assertThat(
+            resolver.resolveRunnerKind(RUN_ID, RunnerStage.EXECUTION, ExecutionSubStage.PR_OUTPUT))
+        .isEqualTo(RunnerKind.CLAUDE);
+    org.mockito.Mockito.verifyNoInteractions(runnerProperties);
+  }
+
+  @Test
+  void resolveRunnerKindEmptyMapFallsBackToGlobalByteIdenticalTo3d3() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWith(null, Map.of())));
+    when(runnerProperties.kindForStage(RunnerStage.INVESTIGATION)).thenReturn(RunnerKind.CODEX);
+
+    // Empty map + no override → exactly the 3d-3 global-per-stage path.
+    assertThat(resolver.resolveRunnerKind(RUN_ID, RunnerStage.INVESTIGATION))
+        .isEqualTo(RunnerKind.CODEX);
+  }
+
+  @Test
+  void perStepManualReturnsManualForThatStepWhileOtherStepsResolveIndependently() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(
+            Optional.of(
+                projectWith(
+                    null,
+                    Map.of(
+                        ProjectRunnerStep.SPEC, RunnerKind.CODEX,
+                        ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL))));
+
+    // prOutput=manual parks (resolver returns MANUAL); spec=codex enqueues — independent per step.
+    assertThat(
+            resolver.resolveRunnerKind(RUN_ID, RunnerStage.EXECUTION, ExecutionSubStage.PR_OUTPUT))
+        .isEqualTo(RunnerKind.MANUAL);
+    assertThat(resolver.resolveRunnerKind(RUN_ID, RunnerStage.INVESTIGATION))
+        .isEqualTo(RunnerKind.CODEX);
+    org.mockito.Mockito.verifyNoInteractions(runnerProperties);
+  }
+
+  /**
+   * Story 3e-4 (AC5, review patch P1) — completes the proof that a per-step {@code manual} on EVERY
+   * mappable step resolves to {@code MANUAL}, the single value the stage-agnostic {@code
+   * WorkflowOrchestrationService.enqueueDispatch} chokepoint branches on to park ({@code if (kind
+   * == MANUAL) manualExecutionDispatcher.park(...)}, identical for INVESTIGATION + both EXECUTION
+   * sub-stages). The spec-gate park is driven end-to-end by {@code PerStepRunnerDispatchIT};
+   * together these prove the EXECUTION-sub-stage manual park by composition without a brittle
+   * multi-stage IT.
+   */
+  @Test
+  void perStepManualResolvesManualForEveryMappableStep() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(
+            Optional.of(
+                projectWith(
+                    null,
+                    Map.of(
+                        ProjectRunnerStep.SPEC, RunnerKind.MANUAL,
+                        ProjectRunnerStep.IMPLEMENTATION_PLAN, RunnerKind.MANUAL,
+                        ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL))));
+
+    assertThat(resolver.resolveRunnerKind(RUN_ID, RunnerStage.INVESTIGATION))
+        .isEqualTo(RunnerKind.MANUAL);
+    assertThat(
+            resolver.resolveRunnerKind(
+                RUN_ID, RunnerStage.EXECUTION, ExecutionSubStage.IMPLEMENTATION_PLAN))
+        .isEqualTo(RunnerKind.MANUAL);
+    assertThat(
+            resolver.resolveRunnerKind(RUN_ID, RunnerStage.EXECUTION, ExecutionSubStage.PR_OUTPUT))
+        .isEqualTo(RunnerKind.MANUAL);
+    // Per-step mapping is consulted before global — the global per-stage kind is never read.
+    org.mockito.Mockito.verifyNoInteractions(runnerProperties);
+  }
+
+  private static Project projectWith(
+      RunnerKind override, Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    return new Project(
+        DefaultProjectSeeder.DEFAULT_PROJECT_PUBLIC_ID,
+        DefaultProjectSeeder.DEFAULT_PROJECT_NAME,
+        DefaultProjectSeeder.DEFAULT_PROJECT_SLUG,
+        ProjectStatus.ACTIVE,
+        "octo/hello",
+        ConnectorKind.LINEAR,
+        ConnectorKind.GITHUB,
+        false,
+        null,
+        false,
+        override,
+        OffsetDateTime.parse("2026-06-25T00:00:00Z"),
+        null,
+        stepRunnerKinds);
   }
 
   // ---------------------------------------------------------------------------

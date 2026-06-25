@@ -2,15 +2,21 @@ package org.dradgo.domain.project;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.junit.jupiter.api.Test;
 
 class ProjectTest {
@@ -190,6 +196,73 @@ class ProjectTest {
                 newProject(
                     "cred_demo1234", "Demo", "demo", ProjectStatus.ACTIVE, ConnectorKind.LINEAR));
     assertEquals(DomainErrorCode.INVALID_ID_PREFIX, error.errorCode());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 3e-4 (AC3, review patch P2) — stepRunnerKinds null-safety + immutability invariant.
+  // ---------------------------------------------------------------------------
+
+  /** Build a Project carrying the given per-step map via the 14-arg constructor. */
+  private static Project newProjectWithSteps(Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    return new Project(
+        VALID_PUBLIC_ID,
+        "Demo",
+        "demo",
+        ProjectStatus.ACTIVE,
+        null,
+        ConnectorKind.LINEAR,
+        ConnectorKind.GITHUB,
+        false,
+        null,
+        false,
+        null,
+        CREATED_AT,
+        null,
+        stepRunnerKinds);
+  }
+
+  @Test
+  void backCompatConstructorDefaultsStepRunnerKindsToEmptyMap() {
+    // The 13-arg back-compat ctor (the 3d-3 fan-out shape) must yield a non-null empty map.
+    Project project =
+        newProject(VALID_PUBLIC_ID, "Demo", "demo", ProjectStatus.ACTIVE, ConnectorKind.LINEAR);
+    assertNotNull(project.stepRunnerKinds());
+    assertTrue(project.stepRunnerKinds().isEmpty());
+  }
+
+  @Test
+  void nullStepRunnerKindsBecomesEmptyMap() {
+    Project project = newProjectWithSteps(null);
+    assertNotNull(project.stepRunnerKinds());
+    assertTrue(project.stepRunnerKinds().isEmpty());
+  }
+
+  @Test
+  void stepRunnerKindsAreDefensivelyCopiedAndUnmodifiable() {
+    Map<ProjectRunnerStep, RunnerKind> source = new HashMap<>();
+    source.put(ProjectRunnerStep.SPEC, RunnerKind.CODEX);
+    Project project = newProjectWithSteps(source);
+
+    // Defensive copy: mutating the source after construction does not leak into the aggregate.
+    source.put(ProjectRunnerStep.PR_OUTPUT, RunnerKind.MANUAL);
+    assertEquals(1, project.stepRunnerKinds().size());
+    assertEquals(RunnerKind.CODEX, project.stepRunnerKinds().get(ProjectRunnerStep.SPEC));
+
+    // The exposed map is unmodifiable.
+    assertThrows(
+        UnsupportedOperationException.class,
+        () ->
+            project
+                .stepRunnerKinds()
+                .put(ProjectRunnerStep.IMPLEMENTATION_PLAN, RunnerKind.CLAUDE));
+  }
+
+  @Test
+  void rejectsNullValueInStepRunnerKinds() {
+    // Map.copyOf rejects null keys/values, so a malformed map fails fast at construction.
+    Map<ProjectRunnerStep, RunnerKind> withNullValue = new HashMap<>();
+    withNullValue.put(ProjectRunnerStep.SPEC, null);
+    assertThrows(NullPointerException.class, () -> newProjectWithSteps(withNullValue));
   }
 
   @Test

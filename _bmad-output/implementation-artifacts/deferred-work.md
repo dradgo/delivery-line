@@ -2,6 +2,11 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3e-4 (2026-06-25)
+
+- **Full-replace child-row update lacks optimistic locking / concurrency guard.** `ProjectPersistenceAdapter.replaceStepRunnerKinds` does a bulk `deleteByProjectId` then `saveAllAndFlush` inside the caller's transaction with no version column on `project_runner_kinds` and no parent-row lock. Two concurrent project edits can deadlock or last-writer-win on the composite PK, and an in-flight dispatch's `resolveRunnerKind` read can observe a freshly-replaced map. Project-config edits generally carry no optimistic lock (pre-existing pattern); contention on an admin surface is low. **Follow-up:** add a version column / parent-row lock if project edits ever become concurrent or operator-facing at scale. [`ProjectPersistenceAdapter.java:114-124`]
+- **Frontend `RUNNER_KINDS` is hard-coded with no registry-drift gate.** `projectFormView.ts` hard-codes `['codex','claude','manual']` (self-disclosed in an inline comment). A future `RunnerKind` value silently lags the dropdown, and an unknown stored kind is forwarded verbatim on edit → backend `UNKNOWN_REGISTRY_VALUE` 400 with no client-side signal pointing at the offending field. The `runnerKindOptions` forward-drift append preserves the value but cannot add the missing option. **Follow-up:** wire the FE runner-kind list to a generated/registry source on the registry-recipe drift trail. [`projectFormView.ts`]
+
 ## Deferred from: code review of story-3e-1 (2026-06-24)
 
 - **No `maxItems` on `specArtifact.questions` / no `maxLength` on `questionText`.** The contract bounds `questionId` (≤128, pattern) but not the array size or text length, so a single spec result can mint an unbounded number of `open` clarification rows with unbounded `question_text` (bounded only by the 2 MB runner-result payload cap). Hardening, consistent with other unbounded arrays already in the contract; no production runner emits at that scale today. **Follow-up:** add `maxItems` + `questionText` `maxLength` (mirror a DB-side length CHECK on `question_text`). [`runner-result.v1.schema.json` · `V8` clarifications DDL]

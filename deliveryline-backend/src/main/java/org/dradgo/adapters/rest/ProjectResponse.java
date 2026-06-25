@@ -2,8 +2,12 @@ package org.dradgo.adapters.rest;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.dradgo.domain.project.Project;
+import org.dradgo.domain.registry.ProjectRunnerStep;
+import org.dradgo.domain.registry.RunnerKind;
 
 /**
  * Story 3c-8 (AC1/AC6) — wire shape for a project. Carries project configuration, per-role
@@ -36,6 +40,13 @@ public record ProjectResponse(
             nullable = true,
             allowableValues = {"manual", "codex", "claude"})
         String runnerKind,
+    @Schema(
+            description =
+                "Per-step runner mapping (step → runner kind). Keys: spec, implementationPlan, "
+                    + "prOutput. Values: codex, claude, manual. Empty when no per-step mapping is "
+                    + "configured. Resolves more specifically than runnerKind.",
+            example = "{\"spec\":\"codex\",\"prOutput\":\"manual\"}")
+        Map<String, String> stepRunnerKinds,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -58,8 +69,24 @@ public record ProjectResponse(
         project.repoHostKind().value(),
         project.openspecEnabled(),
         project.runnerKind() == null ? null : project.runnerKind().value(),
+        toWireStepRunnerKinds(project.stepRunnerKinds()),
         project.createdAt(),
         credentials,
         allowedActions);
+  }
+
+  /**
+   * Project per-step map (typed) → wire form (step value → kind value). Order mirrors the source
+   * map's iteration order: for a project read from persistence that is sorted by {@code step} value
+   * (see {@code ProjectPersistenceAdapter.loadStepRunnerKinds}'s {@code OrderByStepAsc} read),
+   * which is deterministic but NOT the request's insertion order.
+   */
+  private static Map<String, String> toWireStepRunnerKinds(
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    Map<String, String> wire = new LinkedHashMap<>();
+    if (stepRunnerKinds != null) {
+      stepRunnerKinds.forEach((step, kind) -> wire.put(step.value(), kind.value()));
+    }
+    return wire;
   }
 }

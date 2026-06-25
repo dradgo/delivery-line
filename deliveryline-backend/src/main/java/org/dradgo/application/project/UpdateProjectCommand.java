@@ -15,6 +15,9 @@ public record UpdateProjectCommand(
     String repoHostKind,
     boolean openspecEnabled,
     String runnerKind,
+    // Story 3e-4 (AC6) — optional per-step runner mapping (raw wire strings), full-replace on
+    // update.
+    java.util.Map<String, String> stepRunnerKinds,
     String actorIdentity) {
   public UpdateProjectCommand(
       String name,
@@ -23,6 +26,14 @@ public record UpdateProjectCommand(
       String repoHostKind,
       boolean openspecEnabled,
       String actorIdentity) {
-    this(name, repositoryUrl, ticketSourceKind, repoHostKind, openspecEnabled, null, actorIdentity);
+    this(
+        name,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        null,
+        null,
+        actorIdentity);
   }
 }

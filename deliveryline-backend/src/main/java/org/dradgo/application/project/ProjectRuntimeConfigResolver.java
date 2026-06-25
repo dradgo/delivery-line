@@ -7,6 +7,7 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.slf4j.Logger;
@@ -115,9 +116,15 @@ public class ProjectRuntimeConfigResolver {
    * a single-project deployment is byte-identical to pre-3d (always the global per-stage kind —
    * never {@code MANUAL}, so it always takes the normal enqueue path; R7 parity).
    *
-   * <p>The override is a SINGLE per-project value applied across stages (R1 / Open Decision #1) —
-   * per-stage-per-project granularity is deferred. So a non-null override returns the same kind for
-   * every stage; only the global fallback is stage-sensitive.
+   * <p>Story 3e-4 (AC4/AC5) — resolution is now three-layered, most-specific first: <b>per-STEP
+   * mapping</b> ({@code stepRunnerKinds.get(stepOf(stage, subStage))}) → the single per-project
+   * {@code runnerKind} override (3d-3, kept as the project-wide default) → the global per-stage
+   * kind ({@link RunnerProperties}). An empty {@code stepRunnerKinds} map collapses to exactly 3d-3
+   * behavior (parity). The derived step is {@code INVESTIGATION→spec}, {@code
+   * EXECUTION+IMPLEMENTATION_PLAN→implementationPlan}, {@code EXECUTION+PR_OUTPUT→prOutput}; REVIEW
+   * (and a sub-stage-less EXECUTION) has no step, so it skips the per-step layer entirely. A
+   * per-step {@code MANUAL} flows through the unchanged 3d-3 park path (the resolver just returns
+   * {@code MANUAL} for that one step).
    */
   public RunnerKind resolveRunnerKind(String workflowRunId, RunnerStage stage) {
     return resolveRunnerKind(workflowRunId, stage, null);
@@ -129,6 +136,26 @@ public class ProjectRuntimeConfigResolver {
       org.dradgo.application.runner.ExecutionSubStage executionSubStage) {
     Objects.requireNonNull(stage, "stage");
     Project project = resolveForRun(workflowRunId);
+    // Layer 1 (most specific) — the per-step mapping, when this (stage, subStage) maps to a step
+    // and
+    // the project binds that step. A per-step MANUAL parks the run via the existing 3d-3
+    // chokepoint.
+    Optional<ProjectRunnerStep> step = ProjectRunnerSteps.of(stage, executionSubStage);
+    if (step.isPresent()) {
+      RunnerKind mapped = project.stepRunnerKinds().get(step.get());
+      if (mapped != null) {
+        log.debug(
+            "resolveRunnerKind workflowRunId={} projectId={} stage={} step={} kind={} source=project_step_mapping",
+            workflowRunId,
+            project.publicId(),
+            stage.value(),
+            step.get().value(),
+            mapped.value());
+        return mapped;
+      }
+    }
+    // Layer 2 — the single per-project override (3d-3), now the project-wide default beneath the
+    // map.
     RunnerKind override = project.runnerKind();
     if (override != null) {
       log.debug(

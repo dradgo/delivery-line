@@ -41,10 +41,16 @@ import {
   emptyProjectFormFields,
   projectErrorCode,
   projectErrorMessage,
+  runnerKindOptions,
+  RUNNER_STEP_LABELS,
+  RUNNER_STEPS,
   toProjectFormFields,
+  toWireRunnerKind,
+  toWireStepRunnerKinds,
   validateProjectForm,
   type ProjectFormErrors,
   type ProjectFormFields,
+  type RunnerStep,
 } from '../projectFormView';
 
 export type ProjectFormMode = { kind: 'create' } | { kind: 'edit'; project: Project };
@@ -111,6 +117,18 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
     setFields((prev) => ({ ...prev, [key]: value }));
   };
 
+  // Story 3e-4 — update one per-step runner mapping (nested record). A non-slug server failure is
+  // cleared on the next edit, mirroring `update`.
+  const updateStepRunner = (step: RunnerStep, value: string) => {
+    if (status === 'error' && !serverSlugConflict) {
+      active.reset();
+    }
+    setFields((prev) => ({
+      ...prev,
+      stepRunnerKinds: { ...prev.stepRunnerKinds, [step]: value },
+    }));
+  };
+
   const handleSubmit = (formEvent: React.FormEvent<HTMLFormElement>) => {
     formEvent.preventDefault();
     setShowErrors(true);
@@ -133,6 +151,9 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
           repoHostKind: fields.repoHostKind,
           repositoryUrl: fields.repositoryUrl.trim().length > 0 ? fields.repositoryUrl : undefined,
           openspecEnabled: fields.openspecEnabled,
+          // Full-replace runner config (story 3e-4): always send so an edit preserves/clears both.
+          runnerKind: toWireRunnerKind(fields.runnerKind),
+          stepRunnerKinds: toWireStepRunnerKinds(fields.stepRunnerKinds),
         },
         { onSuccess: onClose, onSettled },
       );
@@ -146,6 +167,9 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
           repoHostKind: fields.repoHostKind,
           repositoryUrl: fields.repositoryUrl.trim().length > 0 ? fields.repositoryUrl : undefined,
           openspecEnabled: fields.openspecEnabled,
+          // Story 3e-4 — per-project runner default (null = use global) + per-step mapping.
+          runnerKind: toWireRunnerKind(fields.runnerKind),
+          stepRunnerKinds: toWireStepRunnerKinds(fields.stepRunnerKinds),
         },
         { onSuccess: onClose, onSettled },
       );
@@ -290,6 +314,66 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
             />
             <Label htmlFor="project-openspec">Enable OpenSpec</Label>
           </div>
+
+          {/* Story 3e-4 — runner configuration: a project-wide default plus an optional per-step
+              override for each workflow step. "Use default" clears a binding (falls through to the
+              next-broader default). */}
+          <fieldset className="flex flex-col gap-3 rounded-md border border-border p-3">
+            <legend className="px-1 text-sm font-medium">Runner configuration</legend>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="project-runner-kind">Project-wide runner default</Label>
+              <Select
+                value={fields.runnerKind}
+                onValueChange={(value) => update('runnerKind', value)}
+              >
+                <SelectTrigger
+                  id="project-runner-kind"
+                  aria-label="Project-wide runner default"
+                  data-testid="project-runner-kind"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {runnerKindOptions('Use global default', fields.runnerKind).map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-meta text-text-tertiary">
+                Applies to every step unless a per-step runner below overrides it.
+              </p>
+            </div>
+
+            {RUNNER_STEPS.map((step) => {
+              const fieldId = `project-step-runner-${step}`;
+              const label = `${RUNNER_STEP_LABELS[step]} runner`;
+              return (
+                <div key={step} className="flex flex-col gap-1.5">
+                  <Label htmlFor={fieldId}>{label}</Label>
+                  <Select
+                    value={fields.stepRunnerKinds[step]}
+                    onValueChange={(value) => updateStepRunner(step, value)}
+                  >
+                    <SelectTrigger id={fieldId} aria-label={label} data-testid={fieldId}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {runnerKindOptions('Use project default', fields.stepRunnerKinds[step]).map(
+                        (option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
+          </fieldset>
 
           {showGeneralError ? (
             <p
