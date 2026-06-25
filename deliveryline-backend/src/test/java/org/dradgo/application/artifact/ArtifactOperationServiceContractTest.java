@@ -175,7 +175,7 @@ class ArtifactOperationServiceContractTest {
   }
 
   @Test
-  void markAvailableOnNewSpecVersionSweepsAcceptedClarificationsUsingReadablePayload() {
+  void markAvailableOnNewSpecVersionSweepsAcceptedClarificationsUsingStructuredAcknowledgements() {
     insertRun("run_clrsweep1234", WorkflowState.EXECUTING);
     ActorContext actor = new ActorContext("alex", ActorType.HUMAN, "corr-clrsweep");
 
@@ -220,6 +220,13 @@ class ArtifactOperationServiceContractTest {
                 "corr-clrsweep",
                 null));
     String v2StorageRef = "artifacts/run_clrsweep1234/" + v2.artifact().publicId() + "/v2/spec.md";
+
+    // Story 3e-2 (AC6) — the sweep oracle is the structured V25 acknowledgements side-store keyed by
+    // the rebuilt spec's public_id, NOT a substring scan over the payload text. The spec runner
+    // addressed Q-SWEEP-INC (addressed:true => incorporated) but not Q-SWEEP-SUP (addressed:false =>
+    // superseded); persisted at broker ingest, here seeded directly against the v2 spec artifactId.
+    seedAcknowledgement("sca_sweep_inc", v2.artifact().publicId(), "Q-SWEEP-INC", true);
+    seedAcknowledgement("sca_sweep_sup", v2.artifact().publicId(), "Q-SWEEP-SUP", false);
 
     service.markAvailable(
         v2.artifact().publicId(), new ArtifactChecksum("SHA-256", v2Checksum), v2StorageRef, actor);
@@ -817,6 +824,23 @@ class ArtifactOperationServiceContractTest {
         acceptedAt,
         "idem-" + clarificationPublicId,
         answeredAt.minusMinutes(1));
+  }
+
+  /**
+   * Seeds a Story 3e-2 (V25) structured clarification acknowledgement keyed by the rebuilt spec
+   * artifact's public_id — the side-store the sweep oracle reads (addressed:true => incorporated,
+   * addressed:false / absent => superseded). Mirrors what the broker persists at ingest from the
+   * spec runner's {@code specArtifact.clarificationAcknowledgements}.
+   */
+  private void seedAcknowledgement(
+      String publicId, String specArtifactPublicId, String questionId, boolean addressed) {
+    jdbcTemplate.update(
+        "insert into spec_clarification_acknowledgements "
+            + "(public_id, spec_artifact_id, question_id, addressed) values (?, ?, ?, ?)",
+        publicId,
+        specArtifactPublicId,
+        questionId,
+        addressed);
   }
 
   /**
