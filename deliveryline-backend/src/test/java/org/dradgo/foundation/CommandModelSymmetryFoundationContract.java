@@ -24,8 +24,10 @@ import org.dradgo.application.workflow.SubmitWorkflowResult;
 import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -72,6 +74,11 @@ class CommandModelSymmetryFoundationContract {
   // RejectImplementationCommand REST round-trip stays deferred to story 3.24 (reject-implementation
   // endpoint + OpenAPI), so it remains recorded as a known permit without a manual REST capture
   // until that story lands.
+  //
+  // Story 3e-2 (FR10 incorporation loop) added AcceptClarificationCommand (accept-clarification
+  // REST) and RegenerateSpecCommand (regenerate-spec REST) to the sealed permit set. They are
+  // recorded here as known permits to keep the set explicit; their REST round-trip captures follow
+  // the RejectImplementationCommand precedent (permit recorded without a mandatory capture block).
   private static final Set<Class<?>> EXPECTED_PERMITS =
       Set.of(
           SubmitWorkflowCommand.class,
@@ -81,7 +88,9 @@ class CommandModelSymmetryFoundationContract {
           RejectImplementationCommand.class,
           SubmitClarificationCommand.class,
           RetryWorkflowCommand.class,
-          TakeoverWorkflowCommand.class);
+          TakeoverWorkflowCommand.class,
+          AcceptClarificationCommand.class,
+          RegenerateSpecCommand.class);
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
