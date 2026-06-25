@@ -221,9 +221,11 @@ class ArtifactOperationServiceContractTest {
                 null));
     String v2StorageRef = "artifacts/run_clrsweep1234/" + v2.artifact().publicId() + "/v2/spec.md";
 
-    // Story 3e-2 (AC6) — the sweep oracle is the structured V25 acknowledgements side-store keyed by
+    // Story 3e-2 (AC6) — the sweep oracle is the structured V25 acknowledgements side-store keyed
+    // by
     // the rebuilt spec's public_id, NOT a substring scan over the payload text. The spec runner
-    // addressed Q-SWEEP-INC (addressed:true => incorporated) but not Q-SWEEP-SUP (addressed:false =>
+    // addressed Q-SWEEP-INC (addressed:true => incorporated) but not Q-SWEEP-SUP (addressed:false
+    // =>
     // superseded); persisted at broker ingest, here seeded directly against the v2 spec artifactId.
     seedAcknowledgement("sca_sweep_inc", v2.artifact().publicId(), "Q-SWEEP-INC", true);
     seedAcknowledgement("sca_sweep_sup", v2.artifact().publicId(), "Q-SWEEP-SUP", false);
