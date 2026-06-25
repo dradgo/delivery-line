@@ -73,8 +73,10 @@ class WorkflowCommandServiceCreateBindingTest {
             mock(ApprovalService.class),
             mock(TechnicalApprovalService.class),
             mock(ClarificationService.class),
+            mock(org.dradgo.application.clarification.ClarificationLifecycleService.class),
             mock(ClarificationReadPort.class),
             mock(WorkflowOrchestrationService.class),
+            mock(org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort.class),
             projectStore);
   }
 

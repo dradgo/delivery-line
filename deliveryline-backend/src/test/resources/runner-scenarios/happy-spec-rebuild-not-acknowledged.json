@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "{{workflowRunId}}",
+  "runnerExecutionId": "{{runnerExecutionId}}",
+  "artifactReferences": [
+    {
+      "artifactId": "art_mockspecrb000002",
+      "artifactType": "spec",
+      "contentReference": "spec/v2.json",
+      "clarificationAcknowledgements": [
+        {
+          "questionId": "Q-IT-001",
+          "addressed": false
+        }
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Mock spec rebuild completed; the accepted clarification was NOT addressed.",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "0000000000000000000000000000000000000000000000000000000000000004"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

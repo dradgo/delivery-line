@@ -510,6 +510,14 @@ public class ContextBundleService {
         artifactRecordPort.listByWorkflowRunIdAndArtifactType(
             workflowRunPublicId, ArtifactType.SPEC.value());
 
+    // Story 3e-2 (AC3) — feed the run's ACCEPTED clarifications into the spec rebuild. Only the
+    // accepted rows (the explicit PM judgment, story 2.12) drive the rebuild; open/answered-but-not
+    // -accepted clarifications are excluded.
+    List<Clarification> acceptedClarifications =
+        clarificationReadPort.listByWorkflowRunId(workflowRunPublicId).stream()
+            .filter(clarification -> Clarification.STATUS_ACCEPTED.equals(clarification.status()))
+            .toList();
+
     ObjectNode root =
         assembleForSpecInvestigation(
             workflowRunPublicId,
@@ -517,6 +525,7 @@ public class ContextBundleService {
             ticket,
             rejections,
             priorSpecVersions,
+            acceptedClarifications,
             executionConstraints,
             claimedClassification,
             repositoryContextSummary);
@@ -564,7 +573,7 @@ public class ContextBundleService {
           details);
     }
     log.info(
-        "createForSpecInvestigation ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} priorRejectionCount={} priorSpecVersionCount={} repoContextPresent={}",
+        "createForSpecInvestigation ok workflowRunId={} runnerExecutionId={} stage={} version={} classification={} priorRejectionCount={} priorSpecVersionCount={} acceptedClarificationCount={} repoContextPresent={}",
         workflowRunPublicId,
         reservedRunnerExecutionId,
         RunnerStage.INVESTIGATION.value(),
@@ -572,6 +581,7 @@ public class ContextBundleService {
         DataClassification.SHAREABLE_REDACTED.value(),
         rejections.size(),
         priorSpecVersions.size(),
+        acceptedClarifications.size(),
         repositoryContextSummary != null);
     return new ContextBundle(
         workflowRunPublicId,
@@ -778,6 +788,7 @@ public class ContextBundleService {
       TicketSummary ticket,
       List<ApprovalSnapshot> priorRejections,
       List<ArtifactRecordSnapshot> priorSpecVersions,
+      List<Clarification> acceptedClarifications,
       ExecutionConstraints executionConstraints,
       DataClassification classification,
       RepositoryContextSummary repositoryContextSummary) {
@@ -800,6 +811,15 @@ public class ContextBundleService {
       ObjectNode feedbackNode = priorFeedbackRefsNode.addObject();
       feedbackNode.put("referenceId", rejection.publicId());
       feedbackNode.put("kind", "spec.rejection");
+    }
+    // Story 3e-2 (AC3) — one clarification.answered feedback ref per ACCEPTED clarification, so the
+    // spec rebuild's feedback inventory records that each answer drove this regeneration (alongside
+    // the spec.rejection rows). The answer CONTENT rides the inline acceptedClarifications array
+    // below (the runner reads only this bundle); this ref is the by-id audit half.
+    for (Clarification accepted : acceptedClarifications) {
+      ObjectNode feedbackNode = priorFeedbackRefsNode.addObject();
+      feedbackNode.put("referenceId", accepted.publicId());
+      feedbackNode.put("kind", "clarification.answered");
     }
 
     ArrayNode artifactRefsNode = root.putArray("artifactReferences");
@@ -824,6 +844,41 @@ public class ContextBundleService {
     ObjectNode constraintsNode = root.putObject("executionConstraints");
     constraintsNode.put("timeoutSeconds", executionConstraints.timeoutSeconds());
     constraintsNode.put("allowRawOutput", executionConstraints.allowRawOutput());
+
+    // Story 3e-2 (AC3) — inline the ACCEPTED clarifications' question+answer so the spec rebuild
+    // runner can actually incorporate them. The runner reads ONLY this bundle, so (unlike every
+    // other feedback channel, which is reference-by-id) the answer content must be carried here.
+    // This is policed by the SAME single redact(root, SHAREABLE_REDACTED) pass below as every other
+    // text leaf, so the reviewer-authored answer text is redacted exactly like artifact content
+    // (the bundle 256KB cap stays comfortable — answerText is @Size(max=8192) per clarification).
+    // Emitted ONLY when >=1 accepted clarification exists, so a no-clarification rebuild stays
+    // byte-identical to the story-2.8 baseline (the field is optional + not in the schema
+    // required).
+    if (!acceptedClarifications.isEmpty()) {
+      ArrayNode acceptedNode = root.putArray("acceptedClarifications");
+      for (Clarification accepted : acceptedClarifications) {
+        // (review P5) Defensive guard: an accepted clarification with a blank answerText would emit
+        // a JSON null/empty leaf and fail the whole bundle against context-bundle.v1.schema.json
+        // (answerText: type string, minLength 1), aborting the spec rebuild. This is defended
+        // upstream by the @NotBlank answerText at answer time, so a blank here is a contract
+        // violation — skip the row's inline content (its by-id clarification.answered feedback ref
+        // is still recorded above) and warn rather than break the entire dispatch.
+        String answerText = accepted.answerText();
+        if (answerText == null || answerText.isBlank()) {
+          log.warn(
+              "accepted clarification has blank answerText — omitting from spec-rebuild bundle "
+                  + "clarificationId={} questionId={}",
+              accepted.publicId(),
+              accepted.questionId());
+          continue;
+        }
+        ObjectNode clarificationNode = acceptedNode.addObject();
+        clarificationNode.put("clarificationId", accepted.publicId());
+        clarificationNode.put("questionId", accepted.questionId());
+        clarificationNode.put("questionText", accepted.questionText());
+        clarificationNode.put("answerText", answerText);
+      }
+    }
 
     // Story 3a-2 (AC1) — additive optional repo-context fields. Emitted ONLY when a workspace was
     // prepared for this run; when null, NOTHING is written so the bundle is byte-identical to the

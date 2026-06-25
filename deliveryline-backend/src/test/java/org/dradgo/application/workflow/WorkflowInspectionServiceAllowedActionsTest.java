@@ -115,13 +115,20 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.APPROVE_SPEC,
                 AllowedAction.REJECT_SPEC,
-                AllowedAction.ANSWER_CLARIFICATION)),
+                AllowedAction.ANSWER_CLARIFICATION,
+                // Story 3e-2 (AC1/AC2) — accept + regenerate joined the reviewer arm.
+                AllowedAction.ACCEPT_CLARIFICATION,
+                AllowedAction.REGENERATE_SPEC)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "workflow_owner",
             List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.ANSWER_CLARIFICATION,
+                // Story 3e-2 (AC1/AC2) — accept + regenerate joined the reviewer arm (before the
+                // workflow_owner-only archive_run wrapper action).
+                AllowedAction.ACCEPT_CLARIFICATION,
+                AllowedAction.REGENERATE_SPEC,
                 AllowedAction.ARCHIVE_RUN)),
         // Story 3d-5 (AC6) — view_runner_logs joins the runner-execution states, role-agnostic.
         Arguments.of(
@@ -364,7 +371,12 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
 
     assertThat(view.actions())
-        .containsExactly(AllowedAction.REJECT_SPEC, AllowedAction.ANSWER_CLARIFICATION);
+        .containsExactly(
+            AllowedAction.REJECT_SPEC,
+            AllowedAction.ANSWER_CLARIFICATION,
+            // Story 3e-2 (AC1/AC2) — accept + regenerate surface even while clarifications pend.
+            AllowedAction.ACCEPT_CLARIFICATION,
+            AllowedAction.REGENERATE_SPEC);
     assertThat(view.versionStamp().currentSpecArtifactVersion()).isEqualTo(2);
     assertThat(view.versionStamp().currentContextBundleVersion()).isEqualTo(5);
   }
@@ -382,7 +394,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
         .containsExactly(
             AllowedAction.APPROVE_SPEC,
             AllowedAction.REJECT_SPEC,
-            AllowedAction.ANSWER_CLARIFICATION);
+            AllowedAction.ANSWER_CLARIFICATION,
+            // Story 3e-2 (AC1/AC2) — accept + regenerate joined the reviewer arm.
+            AllowedAction.ACCEPT_CLARIFICATION,
+            AllowedAction.REGENERATE_SPEC);
   }
 
   // ---------------------------------------------------------------------------
@@ -563,12 +578,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView nullRole = service.getAllowedActions(RUN, null);
 
     // product_reviewer in WaitingForSpecApproval with zero pending clarifications → full set
-    // (no archive_run — that is workflow_owner-only per 3d-8/D1).
+    // (no archive_run — that is workflow_owner-only per 3d-8/D1). Story 3e-2 added accept + regen.
     List<AllowedAction> expected =
         List.of(
             AllowedAction.APPROVE_SPEC,
             AllowedAction.REJECT_SPEC,
-            AllowedAction.ANSWER_CLARIFICATION);
+            AllowedAction.ANSWER_CLARIFICATION,
+            AllowedAction.ACCEPT_CLARIFICATION,
+            AllowedAction.REGENERATE_SPEC);
     assertThat(blank.actions()).containsExactlyElementsOf(expected);
     assertThat(nullRole.actions()).containsExactlyElementsOf(expected);
   }

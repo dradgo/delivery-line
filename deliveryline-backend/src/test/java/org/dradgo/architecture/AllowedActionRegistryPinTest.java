@@ -67,4 +67,23 @@ class AllowedActionRegistryPinTest {
     // with allowed-actions.placeholder.json + RegistryContractTest).
     assertThat(AllowedAction.SUBMIT_MANUAL_ARTIFACT.value()).isEqualTo("submit_manual_artifact");
   }
+
+  @Test
+  void acceptClarificationWireValueIsPinned() {
+    // Story 3e-2 AC1 — WorkflowCommandService.acceptClarification -> markAccepted is the canonical
+    // executor; surfaced in the WAITING_FOR_SPEC_APPROVAL reviewer-role matrix alongside
+    // answer_clarification. Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.ACCEPT_CLARIFICATION.value()).isEqualTo("accept_clarification");
+  }
+
+  @Test
+  void regenerateSpecWireValueIsPinned() {
+    // Story 3e-2 AC2 — WorkflowCommandService.regenerateSpecWithClarifications (transition then
+    // reuse retrySpecGeneration) is the canonical executor; surfaced in the
+    // WAITING_FOR_SPEC_APPROVAL reviewer-role matrix. Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.REGENERATE_SPEC.value())
+        .isEqualTo("regenerate_spec_with_clarifications");
+  }
 }

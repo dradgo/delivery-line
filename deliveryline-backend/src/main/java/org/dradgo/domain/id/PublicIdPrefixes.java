@@ -29,7 +29,13 @@ public enum PublicIdPrefixes implements RegistryValue {
   // Story 3d-7 (FR69, AC3) — public_id prefix for the V24 provider_usage_snapshots table (the
   // per-credential, NON-SECRET provider 5h/weekly usage/limit snapshot).
   PROVIDER_USAGE_SNAPSHOT(
-      "providerUsageSnapshot", "pul_", "ck_provider_usage_snapshots_public_id_format");
+      "providerUsageSnapshot", "pul_", "ck_provider_usage_snapshots_public_id_format"),
+  // Story 3e-2 (AC6) — public_id prefix for the V25 spec_clarification_acknowledgements side-store
+  // (structured spec-runner acknowledgements read by the clarification sweep).
+  SPEC_CLARIFICATION_ACKNOWLEDGEMENT(
+      "specClarificationAcknowledgement",
+      "sca_",
+      "ck_spec_clarification_acknowledgements_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

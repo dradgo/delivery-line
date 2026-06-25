@@ -26,12 +26,16 @@ import {
   type ClarificationLifecycleStatus,
   type ClarificationsView,
 } from '../clarificationView';
+import { useAcceptClarification } from '../hooks/useAcceptClarification';
+import { useAllowedActions } from '../hooks/useAllowedActions';
 import { useClarifications } from '../hooks/useClarifications';
+import { useRegenerateSpec } from '../hooks/useRegenerateSpec';
 import { useSubmitClarification } from '../hooks/useSubmitClarification';
 import {
   ClarificationRegion,
   type ClarificationRegionVariant,
   type ClarificationSubmissionState,
+  type RegenerateSubmissionState,
 } from './ClarificationRegion';
 
 /** The stable DOM id the 2.17 `artifact-clarification-anchor` focuses/scrolls (Task 5). */
@@ -51,6 +55,12 @@ export function ClarificationRegionContainer({
 }: ClarificationRegionContainerProps) {
   const clarificationsQuery = useClarifications(workflowRunId);
   const submit = useSubmitClarification(workflowRunId);
+  // Story 3e-2 — the run's allowed actions gate the accept + regenerate affordances; the two LIVE
+  // mutations drive accept_clarification / regenerate_spec_with_clarifications.
+  const allowedActionsQuery = useAllowedActions(workflowRunId);
+  const accept = useAcceptClarification(workflowRunId);
+  const regenerate = useRegenerateSpec(workflowRunId);
+  const [activeAcceptId, setActiveAcceptId] = useState<string | undefined>(undefined);
 
   // Disabled stub → `data` is always `undefined` today. When the hook becomes live,
   // NORMALIZE the future shape rather than trusting a cast (mirrors 2.17): a single
@@ -153,6 +163,88 @@ export function ClarificationRegionContainer({
     }
   }, [clarificationId, view]);
 
+  // Story 3e-2 (AC1) — accept inline feedback, scoped to the targeted clarification.
+  const acceptSubmission: ClarificationSubmissionState = {
+    status: accept.isPending
+      ? 'pending'
+      : accept.isSuccess
+        ? 'success'
+        : accept.isError
+          ? 'error'
+          : 'idle',
+    clarificationId: activeAcceptId,
+    errorCode: isProblemDetailsError(accept.error) ? accept.error.code : undefined,
+  };
+
+  // Story 3e-2 (AC2) — regenerate inline feedback (run-level; no per-clarification scoping).
+  const regenerateSubmission: RegenerateSubmissionState = {
+    status: regenerate.isPending
+      ? 'pending'
+      : regenerate.isSuccess
+        ? 'success'
+        : regenerate.isError
+          ? 'error'
+          : 'idle',
+    errorCode: isProblemDetailsError(regenerate.error) ? regenerate.error.code : undefined,
+  };
+
+  const handleAcceptClarification = (id: string) => {
+    if (accept.isPending) {
+      return;
+    }
+    // (review P3) Clear any settled (success/error) state from a PRIOR accept on a DIFFERENT
+    // clarification before retargeting. The single shared mutation's status is scoped to the row
+    // via `activeAcceptId`, so without this reset a prior row's banner could momentarily attach to
+    // the newly-targeted row. `accept.mutate` transitions to 'pending' immediately after, so a
+    // same-row re-accept (id unchanged) is unaffected and keeps its in-place feedback.
+    if (activeAcceptId !== id) {
+      accept.reset();
+    }
+    setActiveAcceptId(id);
+    accept.mutate(
+      { clarificationId: id },
+      {
+        onSuccess: (data) => {
+          // Field-only (T8): the response STATUS, never question/answer text.
+          console.info({
+            event: 'clarification.accept',
+            clarificationStatus: data.clarificationStatus,
+          });
+        },
+        onError: (error) => {
+          console.warn({
+            event: 'clarification.acceptError',
+            code: isProblemDetailsError(error) ? error.code : 'transport',
+            transport: !isProblemDetailsError(error),
+          });
+        },
+      },
+    );
+  };
+
+  const handleRegenerateSpec = () => {
+    if (regenerate.isPending) {
+      return;
+    }
+    regenerate.mutate(
+      {},
+      {
+        onSuccess: (data) => {
+          console.info({ event: 'clarification.regenerate', currentState: data.currentState });
+        },
+        onError: (error) => {
+          console.warn({
+            event: 'clarification.regenerateError',
+            code: isProblemDetailsError(error) ? error.code : 'transport',
+            transport: !isProblemDetailsError(error),
+          });
+        },
+      },
+    );
+  };
+
+  const allowedActions: readonly string[] = allowedActionsQuery.data?.actions ?? [];
+
   return (
     <ClarificationRegion
       view={view}
@@ -161,6 +253,11 @@ export function ClarificationRegionContainer({
       selectedClarificationId={clarificationId}
       submission={submission}
       onSubmitAnswer={handleSubmitAnswer}
+      allowedActions={allowedActions}
+      onAcceptClarification={handleAcceptClarification}
+      acceptSubmission={acceptSubmission}
+      onRegenerateSpec={handleRegenerateSpec}
+      regenerateSubmission={regenerateSubmission}
       onLifecycleAdvance={handleLifecycleAdvance}
       loadState={
         clarificationsQuery.isError

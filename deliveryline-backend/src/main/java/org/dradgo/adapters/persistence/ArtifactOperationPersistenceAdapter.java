@@ -60,6 +60,16 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 
   @Override
   @Transactional(readOnly = true)
+  public Optional<ArtifactOperationSnapshot> findRecordedOperation(
+      String workflowRunId, ArtifactType artifactType, String idempotencyKey) {
+    return artifactOperationRepository
+        .findFirstByWorkflowRunPublicIdAndArtifactTypeAndIdempotencyKeyOrderByCreatedAtAsc(
+            workflowRunId, artifactType.value(), idempotencyKey)
+        .map(artifactOperationEntityMapper::toSnapshot);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public Optional<ArtifactOperationSnapshot> findPendingByArtifactId(String artifactId) {
     List<ArtifactOperationEntity> pending =
         artifactOperationRepository.findByArtifactPublicIdAndStatusOrderByCreatedAtDesc(

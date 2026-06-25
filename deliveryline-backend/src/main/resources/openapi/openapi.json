@@ -366,6 +366,33 @@
         ],
         "type" : "object"
       },
+      "ClarificationAcceptResponse" : {
+        "properties" : {
+          "clarificationId" : {
+            "type" : "string"
+          },
+          "clarificationStatus" : {
+            "description" : "Clarification row status after the accept commit. Expected \"accepted\" on the happy path; an idempotent replay reflects the persisted status.",
+            "type" : "string"
+          },
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "clarificationId",
+          "clarificationStatus",
+          "currentState",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "ClarificationAnswerResponse" : {
         "properties" : {
           "clarificationId" : {
@@ -3025,6 +3052,91 @@
         ]
       }
     },
+    "/api/v1/workflows/{workflowRunId}/clarifications/{clarificationId}/accept" : {
+      "post" : {
+        "operationId" : "acceptClarification",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "path",
+            "name" : "clarificationId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ClarificationAcceptResponse"
+                }
+              }
+            },
+            "description" : "Clarification accepted (or idempotent replay)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND or CLARIFICATION_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "CLARIFICATION_TERMINAL_STATE, ILLEGAL_CLARIFICATION_TRANSITION, or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Accept an answered clarification (answered -> accepted) to drive a spec rebuild",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
     "/api/v1/workflows/{workflowRunId}/clarifications/{clarificationId}/answer" : {
       "post" : {
         "operationId" : "answerClarification",
@@ -3470,6 +3582,83 @@
           }
         },
         "summary" : "Latest per-credential provider usage/limit status for a run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/regenerate-spec" : {
+      "post" : {
+        "operationId" : "regenerateSpecWithClarifications",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "Spec regeneration dispatched; run is now Investigating."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL."
+          }
+        },
+        "summary" : "Regenerate the spec, incorporating accepted clarifications (WaitingForSpecApproval -> Investigating + re-dispatch)",
         "tags" : [
           "Workflows"
         ]

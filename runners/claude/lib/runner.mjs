@@ -132,6 +132,23 @@ function commandPrepare(args) {
       lines.push('');
       lines.push(`Prior feedback references: ${feedback.map((f) => f.referenceId).join(', ')}`);
     }
+    // Story 3e-2 (AC3) — accepted clarifications arrive INLINE in the spec-rebuild bundle (the
+    // runner reads only this bundle). Surface each question+answer into the prompt so the
+    // regenerated spec incorporates the reviewer's answers. Absent on every non-rebuild bundle.
+    const acceptedClarifications = Array.isArray(doc.acceptedClarifications)
+      ? doc.acceptedClarifications
+      : [];
+    if (acceptedClarifications.length > 0) {
+      lines.push('');
+      lines.push('Accepted clarifications to incorporate into the regenerated specification:');
+      for (const clarification of acceptedClarifications) {
+        if (clarification && typeof clarification === 'object') {
+          lines.push(
+            `- [${clarification.questionId ?? ''}] Q: ${clarification.questionText ?? ''} A: ${clarification.answerText ?? ''}`,
+          );
+        }
+      }
+    }
     const constraints = (doc.executionConstraints && typeof doc.executionConstraints === 'object')
       ? doc.executionConstraints
       : {};
@@ -363,6 +380,79 @@ function splitClarificationsFence(stdout) {
 }
 // ===== end clarifications fence split =====
 
+// ===== Story 3e-2 — clarificationAcknowledgements fence split (SHA-EQUAL in both runner.mjs files) =====
+// Sibling of splitClarificationsFence: the spec-REBUILD stage agent reports which ACCEPTED
+// clarifications it actually addressed, using a fence convention mirroring the clarifications fence:
+//   ```clarificationAcknowledgements
+//   [{ "questionId": "Q-001", "addressed": true }]
+//   ```
+// This helper lifts that block out of the agent stdout: it returns the parsed `acknowledgements`
+// array (each entry coerced to {questionId, addressed}; malformed entries dropped) and the
+// `strippedStdout` with the fence removed so the persisted spec.md never carries the raw block.
+// Same NEVER-BLOCKS + byte-identical-strip discipline as splitClarificationsFence: a missing/
+// malformed/empty/zero-item block is NON-FATAL and returns the original stdout UNCHANGED; a
+// successful strip slices the ORIGINAL string at the fence-line boundaries (preserving CRLF and the
+// trailing newline verbatim).
+function splitClarificationAcknowledgementsFence(stdout) {
+  if (typeof stdout !== 'string' || stdout.length === 0) {
+    return { acknowledgements: [], strippedStdout: typeof stdout === 'string' ? stdout : '' };
+  }
+  const OPEN = /^```clarificationAcknowledgements\s*$/;
+  const CLOSE = /^```\s*$/;
+  let blockStart = -1;
+  let bodyStart = -1;
+  let bodyEnd = -1;
+  let blockEnd = -1;
+  let pos = 0;
+  while (pos < stdout.length) {
+    const nl = stdout.indexOf('\n', pos);
+    const eol = nl === -1 ? stdout.length : nl;
+    const nextPos = nl === -1 ? stdout.length : nl + 1;
+    const contentEnd = eol > pos && stdout[eol - 1] === '\r' ? eol - 1 : eol;
+    const line = stdout.slice(pos, contentEnd);
+    if (blockStart === -1) {
+      if (OPEN.test(line)) {
+        blockStart = pos;
+        bodyStart = nextPos;
+      }
+    } else if (CLOSE.test(line)) {
+      bodyEnd = pos;
+      blockEnd = nextPos;
+      break;
+    }
+    pos = nextPos;
+  }
+  if (blockStart === -1 || blockEnd === -1) {
+    return { acknowledgements: [], strippedStdout: stdout };
+  }
+  let acknowledgements = [];
+  try {
+    const parsed = JSON.parse(stdout.slice(bodyStart, bodyEnd));
+    if (Array.isArray(parsed)) {
+      acknowledgements = parsed
+        .filter(
+          (a) =>
+            a &&
+            typeof a === 'object' &&
+            typeof a.questionId === 'string' &&
+            typeof a.addressed === 'boolean',
+        )
+        .map((a) => ({ questionId: a.questionId, addressed: a.addressed }));
+    }
+  } catch {
+    process.stderr.write(
+      'runner.mjs: clarificationAcknowledgements fence is not valid JSON — ignoring (no acknowledgements)\n',
+    );
+    acknowledgements = [];
+  }
+  if (acknowledgements.length === 0) {
+    return { acknowledgements: [], strippedStdout: stdout };
+  }
+  const strippedStdout = stdout.slice(0, blockStart) + stdout.slice(blockEnd);
+  return { acknowledgements, strippedStdout };
+}
+// ===== end clarificationAcknowledgements fence split =====
+
 function commandBuild(args) {
   const doc = readBundle(args.bundle);
   const stage = args.stage;
@@ -418,7 +508,11 @@ function commandBuild(args) {
 
   let artifact;
   if (stage === 'spec') {
-    const { questions, strippedStdout } = splitClarificationsFence(rawOutput);
+    const { questions, strippedStdout: afterQuestions } = splitClarificationsFence(rawOutput);
+    // Story 3e-2 — also lift the acknowledgements fence (sibling of the questions fence), chaining
+    // on the questions-stripped output so a spec carrying BOTH fences strips both from spec.md.
+    const { acknowledgements, strippedStdout } =
+      splitClarificationAcknowledgementsFence(afterQuestions);
     const contentReference = `artifacts/${workflowRunId}/spec.md`;
     const artifactPath = join(dirname(out), contentReference);
     writeAtomically(artifactPath, strippedStdout || summary);
@@ -431,6 +525,11 @@ function commandBuild(args) {
     // (never `questions: []`, so a no-question result stays byte-identical to pre-3e).
     if (questions.length > 0) {
       artifact.questions = questions;
+    }
+    // Story 3e-2 — attach OPTIONAL clarification acknowledgements only when the agent fenced >=1
+    // (never `clarificationAcknowledgements: []`, mirroring the questions discipline).
+    if (acknowledgements.length > 0) {
+      artifact.clarificationAcknowledgements = acknowledgements;
     }
   } else if (stage === 'implementationPlan') {
     const steps = nonEmptyLines.slice(0, 50);

@@ -43,7 +43,8 @@ class FlywaySchemaContractTest {
           "projects",
           "project_credentials",
           "step_reviews",
-          "provider_usage_snapshots");
+          "provider_usage_snapshots",
+          "spec_clarification_acknowledgements");
 
   private static final Map<String, String> EXPECTED_PUBLIC_ID_PREFIX =
       Map.ofEntries(
@@ -61,7 +62,8 @@ class FlywaySchemaContractTest {
           Map.entry("projects", "prj_"),
           Map.entry("project_credentials", "cred_"),
           Map.entry("step_reviews", "rev_"),
-          Map.entry("provider_usage_snapshots", "pul_"));
+          Map.entry("provider_usage_snapshots", "pul_"),
+          Map.entry("spec_clarification_acknowledgements", "sca_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -807,6 +809,50 @@ class FlywaySchemaContractTest {
     // workflow_events / artifacts / recovery_actions precedent.
     assertIndexDefinitionContains("idx_workflow_runs_archived_at", "archived_at");
     assertIndexDefinitionContains("idx_workflow_runs_archived_at", "archived_at IS NOT NULL");
+  }
+
+  @Test
+  void specClarificationAcknowledgementsSchemaCarriesExpectedColumnsAndDedupUnique() {
+    // Story 3e-2 / V25: structured spec-runner acknowledgements side-store (the id/public_id/
+    // created_at/archived_at retention shape + uq/ck public_id are asserted by the CORE_TABLES
+    // tests
+    // above). Probe the story-specific columns + the (spec_artifact_id, question_id) dedup UNIQUE.
+    assertColumnType("spec_clarification_acknowledgements", "spec_artifact_id", "text");
+    assertColumnType("spec_clarification_acknowledgements", "question_id", "text");
+    assertColumnType("spec_clarification_acknowledgements", "addressed", "boolean");
+    assertColumnNullable("spec_clarification_acknowledgements", "spec_artifact_id", false);
+    assertColumnNullable("spec_clarification_acknowledgements", "question_id", false);
+    assertColumnNullable("spec_clarification_acknowledgements", "addressed", false);
+    assertConstraintDefinitionContains(
+        "ck_spec_clarification_acknowledgements_question_id_format", "A-Za-z0-9._-");
+
+    // The (spec_artifact_id, question_id) UNIQUE is the dedup backstop the broker
+    // pre-flight-probes.
+    assertTrue(
+        uniqueConstraintNames()
+            .contains("uq_spec_clarification_acknowledgements_artifact_question"),
+        "Missing dedup unique uq_spec_clarification_acknowledgements_artifact_question");
+
+    String n = uniqueRowSuffix();
+    String first = "sca_dedup1" + n;
+    String second = "sca_dedup2" + n;
+    jdbcTemplate.update(
+        "insert into spec_clarification_acknowledgements (public_id, spec_artifact_id, question_id, addressed) "
+            + "values (?, 'art_sweepkey', 'Q-DEDUP', true)",
+        first);
+    try {
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into spec_clarification_acknowledgements (public_id, spec_artifact_id, question_id, addressed) "
+                      + "values (?, 'art_sweepkey', 'Q-DEDUP', false)",
+                  second),
+          "Expected uq_spec_clarification_acknowledgements_artifact_question violation on a duplicate (artifact, question)");
+    } finally {
+      jdbcTemplate.update(
+          "delete from spec_clarification_acknowledgements where spec_artifact_id = 'art_sweepkey'");
+    }
   }
 
   @Test

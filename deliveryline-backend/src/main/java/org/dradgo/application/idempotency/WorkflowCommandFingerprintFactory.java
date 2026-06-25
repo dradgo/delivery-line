@@ -4,8 +4,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -89,6 +91,21 @@ public class WorkflowCommandFingerprintFactory {
         append(digest, clarify.clarificationId());
         append(digest, clarify.artifactId());
         append(digest, clarify.artifactVersion().toString());
+      }
+      case AcceptClarificationCommand accept -> {
+        // Story 3e-2: canonical fingerprint fields beyond the shared envelope are workflowRunId +
+        // clarificationId. Acceptance carries no artifact-version binding (markAccepted acts on the
+        // already-answered row), so the semantic identity is the (run, clarification) pair — a
+        // second accept of the same clarification with the same key replays idempotently.
+        append(digest, accept.workflowRunId());
+        append(digest, accept.clarificationId());
+      }
+      case RegenerateSpecCommand regenerate -> {
+        // Story 3e-2: the only semantic-identity field beyond the shared envelope is workflowRunId.
+        // A regenerate is a forward re-run request — the same key replays idempotently; a distinct
+        // key (a fresh operator-initiated rebuild) bumps the spec_rejection_loop_count for a fresh
+        // dispatch key.
+        append(digest, regenerate.workflowRunId());
       }
       case RetryWorkflowCommand retry -> {
         append(digest, retry.workflowRunId());

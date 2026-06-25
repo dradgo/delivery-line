@@ -23,6 +23,7 @@ import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.runner.spi.TicketSummaryProvider;
 import org.dradgo.application.runner.workspace.RepoManifestRef;
 import org.dradgo.application.runner.workspace.RepositoryContextSummary;
@@ -90,6 +91,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -142,6 +144,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -206,6 +209,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -258,6 +262,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -296,6 +301,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -351,6 +357,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -378,6 +385,7 @@ class ContextBundleServiceSpecInvestigationTest {
             mock(TicketSummaryProvider.class),
             mock(ArtifactRecordPort.class),
             mock(ApprovalReadPort.class),
+            mock(ClarificationReadPort.class),
             mock(RedactionPolicyService.class),
             new RunnerContractValidator());
 
@@ -430,6 +438,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -485,6 +494,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 
@@ -542,6 +552,7 @@ class ContextBundleServiceSpecInvestigationTest {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            mock(ClarificationReadPort.class),
             redactionPolicyService,
             new RunnerContractValidator());
 

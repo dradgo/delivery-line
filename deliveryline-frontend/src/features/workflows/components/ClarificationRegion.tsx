@@ -59,6 +59,17 @@ export interface ClarificationSubmissionState {
 
 export type ClarificationRegionVariant = 'inline' | 'sidebar' | 'compact' | 'full';
 
+/** Story 3e-2 — the allowed-action wire strings that gate the accept + regenerate affordances. */
+const ACCEPT_CLARIFICATION_ACTION = 'accept_clarification';
+const REGENERATE_SPEC_ACTION = 'regenerate_spec_with_clarifications';
+
+/** Story 3e-2 — the mutation state the region renders as inline feedback for regenerate-spec. */
+export interface RegenerateSubmissionState {
+  readonly status: 'idle' | 'pending' | 'success' | 'error';
+  /** Stable ProblemDetails `code` on a failed regenerate (never a raw message — T8). */
+  readonly errorCode?: string | undefined;
+}
+
 export interface ClarificationRegionProps {
   /** The resolved clarifications (from the container's mapped read model / fixtures). */
   view: ClarificationsView;
@@ -81,6 +92,20 @@ export interface ClarificationRegionProps {
   onRetry?: (() => void) | undefined;
   /** DOM id + focus target for the 2.17 `artifact-clarification-anchor` wiring (Task 5). */
   regionId?: string | undefined;
+  /**
+   * Story 3e-2 (AC1/AC2) — the run's allowed-action wire strings. Gates the accept-clarification
+   * (per answered question) + regenerate-spec affordances; both stay hidden unless the governing
+   * action is present (governed-button discipline, no bare role text).
+   */
+  allowedActions?: readonly string[] | undefined;
+  /** Story 3e-2 (AC1) — LIVE seam wired to `useAcceptClarification` in the container. */
+  onAcceptClarification?: ((clarificationId: string) => void) | undefined;
+  /** Story 3e-2 (AC1) — accept mutation state for inline feedback (reuses the submission shape). */
+  acceptSubmission?: ClarificationSubmissionState | undefined;
+  /** Story 3e-2 (AC2) — LIVE seam wired to `useRegenerateSpec` in the container. */
+  onRegenerateSpec?: (() => void) | undefined;
+  /** Story 3e-2 (AC2) — regenerate mutation state for inline feedback. */
+  regenerateSubmission?: RegenerateSubmissionState | undefined;
 }
 
 /** Map an item state to the chip — the non-color signifier (story 2.3 AC5). */
@@ -255,10 +280,16 @@ function QuestionDetail({
   view,
   submission,
   onSubmitAnswer,
+  allowedActions,
+  onAcceptClarification,
+  acceptSubmission,
 }: {
   view: ClarificationView;
   submission?: ClarificationSubmissionState | undefined;
   onSubmitAnswer?: ((clarificationId: string, answerText: string) => void) | undefined;
+  allowedActions?: readonly string[] | undefined;
+  onAcceptClarification?: ((clarificationId: string) => void) | undefined;
+  acceptSubmission?: ClarificationSubmissionState | undefined;
 }) {
   const headingId = useId();
   const [draft, setDraft] = useState('');
@@ -274,6 +305,20 @@ function QuestionDetail({
     submission?.status === 'error' && submission.clarificationId === view.clarificationId;
   const succeededThis =
     submission?.status === 'success' && submission.clarificationId === view.clarificationId;
+
+  // Story 3e-2 (AC1) — the per-question Accept affordance: only an `answered` clarification can be
+  // accepted, and only when the run advertises `accept_clarification` (governed-button discipline).
+  const canAccept =
+    view.status === 'answered' && (allowedActions?.includes(ACCEPT_CLARIFICATION_ACTION) ?? false);
+  const acceptingThis =
+    acceptSubmission?.status === 'pending' &&
+    acceptSubmission.clarificationId === view.clarificationId;
+  const acceptErroredThis =
+    acceptSubmission?.status === 'error' &&
+    acceptSubmission.clarificationId === view.clarificationId;
+  const acceptSucceededThis =
+    acceptSubmission?.status === 'success' &&
+    acceptSubmission.clarificationId === view.clarificationId;
 
   // A new submission RESULT (status/target/code change) re-arms the inline feedback.
   useEffect(() => {
@@ -353,6 +398,40 @@ function QuestionDetail({
       ) : null}
 
       <NoEffectReason view={view} />
+
+      {/* Story 3e-2 (AC1) — Accept an answered clarification so a spec rebuild can incorporate it.
+          Governed: hidden unless the run advertises `accept_clarification`. */}
+      {canAccept ? (
+        <div className="space-y-1">
+          <button
+            type="button"
+            data-testid="clarification-accept"
+            disabled={acceptingThis}
+            onClick={() => onAcceptClarification?.(view.clarificationId)}
+            className="rounded-md border border-border bg-surface px-2.5 py-1 text-sm font-medium text-text-primary hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          >
+            {acceptingThis ? 'Accepting…' : 'Accept answer for incorporation'}
+          </button>
+          {acceptSucceededThis ? (
+            <p
+              data-testid="clarification-accept-feedback"
+              className="text-xs text-state-success-foreground"
+            >
+              Answer accepted — ready for spec regeneration.
+            </p>
+          ) : null}
+          {acceptErroredThis ? (
+            <p
+              role="alert"
+              data-testid="clarification-accept-error"
+              className="text-xs text-state-error-foreground"
+            >
+              We couldn’t accept this answer ({acceptSubmission.errorCode ?? 'error'}). Please try
+              again.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Response input — only for answerable (`open`) questions. */}
       {isAnswerable(view) ? (
@@ -517,6 +596,11 @@ export function ClarificationRegion({
   loadState,
   onRetry,
   regionId,
+  allowedActions,
+  onAcceptClarification,
+  acceptSubmission,
+  onRegenerateSpec,
+  regenerateSubmission,
 }: ClarificationRegionProps) {
   const [internalSelected, setInternalSelected] = useState<string | undefined>(
     selectedClarificationId,
@@ -697,6 +781,9 @@ export function ClarificationRegion({
             view={selected}
             submission={submission}
             onSubmitAnswer={onSubmitAnswer}
+            allowedActions={allowedActions}
+            onAcceptClarification={onAcceptClarification}
+            acceptSubmission={acceptSubmission}
           />
         ) : selectedId !== undefined ? (
           // P6 — a selected/deep-linked id that resolves to nothing (stale link, wrong
@@ -733,6 +820,45 @@ export function ClarificationRegion({
       </header>
       {liveRegion}
       {renderBody()}
+      {/* Story 3e-2 (AC2) — run-level regenerate-spec affordance. Governed: hidden unless the run
+          advertises `regenerate_spec_with_clarifications`. Surfaced regardless of clarification
+          count (the backend no-ops / informs when there is nothing accepted to rebuild from). */}
+      {(allowedActions?.includes(REGENERATE_SPEC_ACTION) ?? false) ? (
+        <div
+          className="mt-3 flex flex-col gap-1 border-t border-border pt-2"
+          data-testid="clarification-regenerate-footer"
+        >
+          <button
+            type="button"
+            data-testid="clarification-regenerate"
+            disabled={regenerateSubmission?.status === 'pending'}
+            onClick={() => onRegenerateSpec?.()}
+            className="self-start rounded-md border border-border bg-surface px-2.5 py-1 text-sm font-medium text-text-primary hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          >
+            {regenerateSubmission?.status === 'pending'
+              ? 'Regenerating…'
+              : 'Regenerate specification with accepted clarifications'}
+          </button>
+          {regenerateSubmission?.status === 'success' ? (
+            <p
+              data-testid="clarification-regenerate-feedback"
+              className="text-xs text-state-success-foreground"
+            >
+              Spec regeneration dispatched — incorporating accepted clarifications.
+            </p>
+          ) : null}
+          {regenerateSubmission?.status === 'error' ? (
+            <p
+              role="alert"
+              data-testid="clarification-regenerate-error"
+              className="text-xs text-state-error-foreground"
+            >
+              We couldn’t start the regeneration ({regenerateSubmission.errorCode ?? 'error'}).
+              Please try again.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -42,10 +42,19 @@ for arg in "$@"; do
     --stage) expect_stage_value="yes" ;;
   esac
 done
+# Story 3e-2 — at the SPEC stage also emit a deterministic clarificationAcknowledgements fence for
+# the SAME fixed Q-MOCK-001 (addressed:true) that runner.mjs lifts into
+# specArtifact.clarificationAcknowledgements. The full-loop incorporation IT drives addressed
+# true/false via pre-built runner-result JSON fed to the broker (3e-1 precedent), so this fixed
+# acknowledgement only needs to keep the runner-image/conformance + node tiers deterministic and
+# schema-valid. Same --stage/env gating + secret-leak posture as the questions fence above.
 case "$RESOLVED_STAGE" in
   spec | spec-investigation | investigation)
     printf '```clarifications\n'
     printf '[{"questionId":"Q-MOCK-001","questionText":"Mock clarification: confirm scope?"}]\n'
+    printf '```\n'
+    printf '```clarificationAcknowledgements\n'
+    printf '[{"questionId":"Q-MOCK-001","addressed":true}]\n'
     printf '```\n'
     ;;
 esac

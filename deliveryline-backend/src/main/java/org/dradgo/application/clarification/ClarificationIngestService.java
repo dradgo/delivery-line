@@ -10,6 +10,7 @@ import java.util.Map;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort;
 import org.dradgo.application.clarification.spi.ClarificationWritePort.NewClarification;
+import org.dradgo.application.clarification.spi.SpecClarificationAcknowledgementWritePort;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
@@ -73,14 +74,22 @@ public class ClarificationIngestService {
   private final ClarificationWritePort clarificationWritePort;
   private final ClarificationReadPort clarificationReadPort;
   private final WorkflowEventWritePort workflowEventWritePort;
+  // Story 3e-2 (AC6) — the V25 acknowledgements side-store, written alongside the spec ingest.
+  private final SpecClarificationAcknowledgementWritePort acknowledgementWritePort;
   private final Clock clock;
 
   @Autowired
   public ClarificationIngestService(
       ClarificationWritePort clarificationWritePort,
       ClarificationReadPort clarificationReadPort,
-      WorkflowEventWritePort workflowEventWritePort) {
-    this(clarificationWritePort, clarificationReadPort, workflowEventWritePort, Clock.systemUTC());
+      WorkflowEventWritePort workflowEventWritePort,
+      SpecClarificationAcknowledgementWritePort acknowledgementWritePort) {
+    this(
+        clarificationWritePort,
+        clarificationReadPort,
+        workflowEventWritePort,
+        acknowledgementWritePort,
+        Clock.systemUTC());
   }
 
   // Visible-for-tests constructor: lets unit tests inject a fixed Clock so raisedAt assertions are
@@ -89,10 +98,12 @@ public class ClarificationIngestService {
       ClarificationWritePort clarificationWritePort,
       ClarificationReadPort clarificationReadPort,
       WorkflowEventWritePort workflowEventWritePort,
+      SpecClarificationAcknowledgementWritePort acknowledgementWritePort,
       Clock clock) {
     this.clarificationWritePort = clarificationWritePort;
     this.clarificationReadPort = clarificationReadPort;
     this.workflowEventWritePort = workflowEventWritePort;
+    this.acknowledgementWritePort = acknowledgementWritePort;
     this.clock = clock;
   }
 
@@ -252,6 +263,87 @@ public class ClarificationIngestService {
     return trimmed.isEmpty() ? null : trimmed;
   }
 
+  /**
+   * Story 3e-2 (AC6/R5) — persist the rebuilt spec's structured {@code
+   * clarificationAcknowledgements} into the V25 side-store, keyed by the just-ingested spec
+   * artifact's public id, so the clarification sweep (which runs inside {@code markAvailable} and
+   * sees only the artifact) can read them. The broker calls this BEFORE {@code
+   * markArtifactAvailable} so the rows exist when the synchronous sweep reads them.
+   *
+   * <p>Runs in the caller's transaction (MANDATORY). De-dups by questionId (first-wins) and
+   * pre-flight-probes the {@code (spec_artifact_id, question_id)} UNIQUE so a re-harvest never
+   * flushes a conflicting insert into the shared broker transaction (the same session-poison trap
+   * as {@link #createOpenFromSpec}'s questions path — review 3e-1 CRITICAL).
+   *
+   * @param specArtifactId the just-ingested spec artifact ({@code art_…})
+   * @param acknowledgements the acknowledgements lifted from {@code
+   *     specArtifact.clarificationAcknowledgements}
+   * @param correlationId optional correlation id for the audit log (may be {@code null}/blank)
+   * @return the number of rows actually inserted (duplicates skipped)
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int persistSpecClarificationAcknowledgements(
+      String specArtifactId, List<RaisedAcknowledgement> acknowledgements, String correlationId) {
+    if (acknowledgements == null || acknowledgements.isEmpty()) {
+      return 0;
+    }
+    List<RaisedAcknowledgement> unique = dedupeAcknowledgementsByQuestionId(acknowledgements);
+    int collapsedCount = acknowledgements.size() - unique.size();
+    String priorCorrelationId = MdcKeys.beginScope(MdcKeys.CORRELATION_ID, correlationId);
+    String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, specArtifactId);
+    try {
+      int insertedCount = 0;
+      int duplicateCount = 0;
+      for (RaisedAcknowledgement acknowledgement : unique) {
+        if (acknowledgementWritePort.existsBySpecArtifactPublicIdAndQuestionId(
+            specArtifactId, acknowledgement.questionId())) {
+          duplicateCount++;
+          log.info(
+              "spec acknowledgement ingest benign duplicate specArtifactId={} questionId={} addressed={}",
+              specArtifactId,
+              acknowledgement.questionId(),
+              acknowledgement.addressed());
+          continue;
+        }
+        acknowledgementWritePort.insert(
+            PublicIdPrefixes.SPEC_CLARIFICATION_ACKNOWLEDGEMENT.next(),
+            specArtifactId,
+            acknowledgement.questionId(),
+            acknowledgement.addressed());
+        insertedCount++;
+      }
+      log.info(
+          "spec acknowledgement ingest specArtifactId={} acknowledgementCount={} uniqueCount={} collapsedCount={} insertedCount={} duplicateCount={}",
+          specArtifactId,
+          acknowledgements.size(),
+          unique.size(),
+          collapsedCount,
+          insertedCount,
+          duplicateCount);
+      return insertedCount;
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationId);
+    }
+  }
+
+  // Story 3e-2: first-wins de-dup by questionId — the twin of dedupeByQuestionId for the
+  // acknowledgements side-store (same shared-tx-poison defense).
+  private static List<RaisedAcknowledgement> dedupeAcknowledgementsByQuestionId(
+      List<RaisedAcknowledgement> acknowledgements) {
+    Map<String, RaisedAcknowledgement> byId = new LinkedHashMap<>();
+    for (RaisedAcknowledgement acknowledgement : acknowledgements) {
+      byId.putIfAbsent(acknowledgement.questionId(), acknowledgement);
+    }
+    return new ArrayList<>(byId.values());
+  }
+
   /** A single open question lifted from a spec result's {@code specArtifact.questions}. */
   public record RaisedQuestion(String questionId, String questionText) {}
+
+  /**
+   * Story 3e-2 — a single structured acknowledgement lifted from a spec result's {@code
+   * specArtifact.clarificationAcknowledgements}.
+   */
+  public record RaisedAcknowledgement(String questionId, boolean addressed) {}
 }

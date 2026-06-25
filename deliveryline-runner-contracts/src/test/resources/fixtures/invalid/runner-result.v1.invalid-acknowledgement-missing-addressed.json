@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_invalid_ack_missing_addressed",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0007",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v7.md",
+      "clarificationAcknowledgements": [
+        {
+          "questionId": "Q-001"
+        }
+      ]
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Regenerated specification",
+    "outcome": "success"
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

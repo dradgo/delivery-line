@@ -180,7 +180,15 @@ public enum DomainErrorCode implements RegistryValue {
   // already-archived run, or un-archiving a run that is not archived. CONFLICT (409) +
   // non-retryable
   // (a precondition mismatch on the run's archive marker, not a transient fault).
-  ARCHIVE_NOT_APPLICABLE("ARCHIVE_NOT_APPLICABLE");
+  ARCHIVE_NOT_APPLICABLE("ARCHIVE_NOT_APPLICABLE"),
+  // Story 3e-2 (review D1) — three-sites code (enum + ProblemDetailsCatalog + manifest). Mirrors
+  // RETRY_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE: there is NO generic ACTION_NOT_ALLOWED guard —
+  // command services enforce their own state preconditions. Raised by
+  // WorkflowCommandService.regenerateSpecWithClarifications when a spec rebuild is requested for a
+  // run that has ZERO `accepted` clarifications to incorporate (the regenerate action is surfaced
+  // unconditionally at WaitingForSpecApproval, so the executor is the gate). CONFLICT (409) +
+  // non-retryable (a precondition mismatch, not a transient fault).
+  REGENERATE_NOT_APPLICABLE("REGENERATE_NOT_APPLICABLE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

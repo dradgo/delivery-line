@@ -26,9 +26,11 @@ import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ArchiveRunCommand;
+import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -1038,6 +1040,140 @@ public class WorkflowController {
         workflowRunId,
         clarificationId,
         response.clarificationStatus(),
+        response.currentState());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/clarifications/{clarificationId}/accept",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "acceptClarification",
+      summary = "Accept an answered clarification (answered -> accepted) to drive a spec rebuild")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Clarification accepted (or idempotent replay)."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_ID_PREFIX.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND or CLARIFICATION_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "CLARIFICATION_TERMINAL_STATE, ILLEGAL_CLARIFICATION_TRANSITION, or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ClarificationAcceptResponse acceptClarification(
+      @PathVariable String workflowRunId,
+      @PathVariable String clarificationId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    // Story 3e-2 (AC1): HUMAN-only audit posture, mirroring answerClarification.
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST accept-clarification received workflowRunId={} clarificationId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(clarificationId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResult result =
+        workflowCommandService.acceptClarification(
+            new AcceptClarificationCommand(
+                workflowRunId,
+                clarificationId,
+                actorIdentity,
+                ActorType.HUMAN,
+                idempotencyKey,
+                correlationId));
+    ClarificationAcceptResponse response =
+        ClarificationAcceptResponse.from(result, clarificationId);
+    log.info(
+        "REST accept-clarification success workflowRunId={} clarificationId={} clarificationStatus={} currentState={}",
+        workflowRunId,
+        clarificationId,
+        response.clarificationStatus(),
+        response.currentState());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/regenerate-spec",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "regenerateSpecWithClarifications",
+      summary =
+          "Regenerate the spec, incorporating accepted clarifications (WaitingForSpecApproval ->"
+              + " Investigating + re-dispatch)")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Spec regeneration dispatched; run is now Investigating."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT, ILLEGAL_TRANSITION, or WORKFLOW_RUN_TERMINAL.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse regenerateSpecWithClarifications(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    // Story 3e-2 (AC2): HUMAN-only audit posture, mirroring accept/answer clarification.
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST regenerate-spec received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.regenerateSpecWithClarifications(
+                new RegenerateSpecCommand(
+                    workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
+    log.info(
+        "REST regenerate-spec success workflowRunId={} currentState={}",
+        workflowRunId,
         response.currentState());
     return response;
   }

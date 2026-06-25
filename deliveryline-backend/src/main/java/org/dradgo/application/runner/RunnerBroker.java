@@ -1777,11 +1777,41 @@ public class RunnerBroker {
       ArtifactPayload payload = maybePayload.get();
       String idempotencyKey =
           "runner-result:" + runnerExecutionId + ":" + ref.path("artifactId").asText();
+      // Story 3e-2 (AC5/R3) — GRAFT a re-ingested spec onto the prior spec lineage. When the run
+      // already has an active spec, route through UPDATE (createNextVersion sets parentArtifactId =
+      // priorSpec) so lineageArtifactIds(v2) contains v1 and the clarification sweep considers a
+      // v1-pinned accepted clarification when v2 becomes available. The FIRST spec (no prior
+      // lineage) stays CREATE; other artifact types are unaffected.
+      //
+      // Story 3e-2 (review P1) — the CREATE-vs-UPDATE decision is computed from MUTABLE state
+      // (hasActiveLineage), but the recordOperation replay key includes operation_type. On a
+      // re-harvest of THIS result (at-least-once delivery, or the best-effort markArtifactAvailable
+      // -failed re-mark path below), hasActiveLineage has flipped false->true because this
+      // execution's own spec is now recorded — so a naive recompute would pick UPDATE, the replay
+      // would MISS the stored CREATE row, and createNextVersion would mint a SPURIOUS v2. Guard by
+      // REUSING the operation_type a prior harvest already recorded for this idempotency key; only
+      // the FIRST harvest (no recorded op) computes the type fresh, so the decision is idempotent.
+      ArtifactOperationType operationType =
+          artifactOperationService
+              .recordedOperationType(workflowRunId, artifactType, idempotencyKey)
+              .orElseGet(
+                  () ->
+                      artifactType == ArtifactType.SPEC
+                              && artifactOperationService.hasActiveLineage(
+                                  workflowRunId, ArtifactType.SPEC)
+                          ? ArtifactOperationType.UPDATE
+                          : ArtifactOperationType.CREATE);
+      if (operationType == ArtifactOperationType.UPDATE) {
+        log.info(
+            "onResult grafting rebuilt spec onto prior lineage runnerExecutionId={} workflowRunId={}",
+            runnerExecutionId,
+            workflowRunId);
+      }
       RecordArtifactOperationCommand command =
           new RecordArtifactOperationCommand(
               workflowRunId,
               artifactType,
-              ArtifactOperationType.CREATE,
+              operationType,
               idempotencyKey,
               payload.payloadRef(),
               payload.bytes(),
@@ -1819,6 +1849,14 @@ public class RunnerBroker {
       // v2; that enriched head is marked available separately inside enrichPrOutputArtifact. This
       // in-loop mark covers v1 (the no-enrich cases: plan, no-push pr-output, and every mock-runner
       // result where captureAndPush returns empty).
+      // Story 3e-2 (AC6) — persist the rebuilt spec's structured clarificationAcknowledgements
+      // BEFORE markArtifactAvailable, because markAvailable triggers the clarification sweep
+      // SYNCHRONOUSLY and the sweep reads these rows by the spec artifactId. Best-effort + dedup +
+      // pre-flight probe (shared-tx poison trap) inside the ingest service. EXECUTION-stage results
+      // carry no spec acknowledgements.
+      if (artifactType == ArtifactType.SPEC && row.stage() == RunnerStage.INVESTIGATION) {
+        ingestSpecAcknowledgements(runnerExecutionId, workflowRunId, opResult, ref, correlationId);
+      }
       if (artifactType == ArtifactType.SPEC
           || artifactType == ArtifactType.IMPLEMENTATION_PLAN
           || artifactType == ArtifactType.PR_OUTPUT) {
@@ -2173,6 +2211,66 @@ public class RunnerBroker {
     } catch (RuntimeException error) {
       log.warn(
           "spec clarification ingest failed (best-effort — run stays advanced, re-creates on "
+              + "re-harvest) runnerExecutionId={} workflowRunId={} artifactId={} cause={}",
+          runnerExecutionId,
+          workflowRunId,
+          opResult.artifact().publicId(),
+          error.toString());
+    }
+  }
+
+  /**
+   * Story 3e-2 (AC6/R5) — persist a rebuilt spec's structured {@code clarificationAcknowledgements}
+   * into the V25 side-store so the synchronous clarification sweep (inside {@code markAvailable},
+   * run AFTER this) can read them by spec artifactId. Best-effort sibling of {@link
+   * #ingestSpecClarifications}: a persist failure NEVER unwinds the completed run (the
+   * acknowledgements re-persist on re-harvest via the deterministic {@code (artifactId,
+   * questionId)} uniqueness + pre-flight probe). Delegated to {@code ClarificationIngestService}
+   * (the same lazy supplier as the questions path) so the broker grows no new clarification-write
+   * dependency.
+   */
+  private void ingestSpecAcknowledgements(
+      String runnerExecutionId,
+      String workflowRunId,
+      RecordArtifactOperationResult opResult,
+      JsonNode ref,
+      String correlationId) {
+    JsonNode acknowledgementsNode = ref.path("clarificationAcknowledgements");
+    if (!acknowledgementsNode.isArray() || acknowledgementsNode.isEmpty()) {
+      return;
+    }
+    org.dradgo.application.clarification.ClarificationIngestService ingestService =
+        clarificationIngestServiceSupplier.get();
+    if (ingestService == null) {
+      log.warn(
+          "spec acknowledgements present but ClarificationIngestService is not wired — skipping "
+              + "(no-op) runnerExecutionId={} workflowRunId={} acknowledgementCount={}",
+          runnerExecutionId,
+          workflowRunId,
+          acknowledgementsNode.size());
+      return;
+    }
+    try {
+      java.util.List<
+              org.dradgo.application.clarification.ClarificationIngestService.RaisedAcknowledgement>
+          acknowledgements = new java.util.ArrayList<>();
+      for (JsonNode acknowledgement : acknowledgementsNode) {
+        String questionId = acknowledgement.path("questionId").asText(null);
+        JsonNode addressedNode = acknowledgement.path("addressed");
+        if (questionId != null && addressedNode.isBoolean()) {
+          acknowledgements.add(
+              new org.dradgo.application.clarification.ClarificationIngestService
+                  .RaisedAcknowledgement(questionId, addressedNode.asBoolean()));
+        }
+      }
+      if (acknowledgements.isEmpty()) {
+        return;
+      }
+      ingestService.persistSpecClarificationAcknowledgements(
+          opResult.artifact().publicId(), acknowledgements, correlationId);
+    } catch (RuntimeException error) {
+      log.warn(
+          "spec acknowledgement ingest failed (best-effort — run stays advanced, re-persists on "
               + "re-harvest) runnerExecutionId={} workflowRunId={} artifactId={} cause={}",
           runnerExecutionId,
           workflowRunId,

@@ -260,6 +260,128 @@ class ArtifactOperationServiceContractTest {
   }
 
   @Test
+  void recordedOperationTypeReusedOnReharvestDoesNotMintASpuriousSpecVersion() {
+    // Story 3e-2 (review P1) — the broker decides a re-ingested spec's CREATE-vs-UPDATE graft from
+    // MUTABLE state (hasActiveLineage), but the recordOperation replay key includes operation_type.
+    // On a re-harvest of the SAME runner result, hasActiveLineage has flipped false->true (this
+    // execution's own v1 is now recorded), so a naive recompute picks UPDATE, the replay MISSES the
+    // stored CREATE row, and createNextVersion mints a SPURIOUS v2. The fix: REUSE the recorded
+    // operation_type for the idempotency key. This pins both halves: the reuse signal and
+    // idempotency.
+    insertRun("run_reharvest12", WorkflowState.EXECUTING);
+    ActorContext actor = new ActorContext("alex", ActorType.HUMAN, "corr-reharvest");
+    String key = "runner-result:rex_reharvest:spec-artifact";
+    byte[] payload = "v1 spec body".getBytes();
+    String checksum = ArtifactChecksum.digestHex("SHA-256", payload).orElseThrow();
+
+    RecordArtifactOperationResult v1 =
+        service.recordOperation(
+            new RecordArtifactOperationCommand(
+                "run_reharvest12",
+                ArtifactType.SPEC,
+                ArtifactOperationType.CREATE,
+                key,
+                "spec.md",
+                payload,
+                "alex",
+                ActorType.HUMAN,
+                "corr-reharvest",
+                null));
+    service.markAvailable(
+        v1.artifact().publicId(),
+        new ArtifactChecksum("SHA-256", checksum),
+        "artifacts/run_reharvest12/" + v1.artifact().publicId() + "/v1/spec.md",
+        actor);
+
+    // The fix's signal: the recorded type for this key is CREATE (type-agnostic lookup), so the
+    // broker reuses it on re-harvest instead of recomputing UPDATE from the now-active lineage.
+    assertEquals(
+        java.util.Optional.of(ArtifactOperationType.CREATE),
+        service.recordedOperationType("run_reharvest12", ArtifactType.SPEC, key));
+
+    // Re-harvest with the REUSED type -> idempotent replay, still exactly ONE spec version.
+    RecordArtifactOperationResult reharvest =
+        service.recordOperation(
+            new RecordArtifactOperationCommand(
+                "run_reharvest12",
+                ArtifactType.SPEC,
+                ArtifactOperationType.CREATE,
+                key,
+                "spec.md",
+                payload,
+                "alex",
+                ActorType.HUMAN,
+                "corr-reharvest",
+                null));
+    assertEquals(
+        v1.artifact().publicId(),
+        reharvest.artifact().publicId(),
+        "re-harvest with the reused CREATE type must replay to v1, not mint a new version");
+    assertEquals(
+        Integer.valueOf(1),
+        jdbcTemplate.queryForObject(
+            "select count(*) from artifacts where workflow_run_id = "
+                + "(select id from workflow_runs where public_id = ?) and artifact_type = 'spec'",
+            Integer.class,
+            "run_reharvest12"),
+        "reusing the recorded operation_type must not mint a spurious second spec version");
+  }
+
+  @Test
+  void flippingOperationTypeOnReharvestMintsASpuriousVersion_whyTheGuardIsNeeded() {
+    // Story 3e-2 (review P1) — documents the BUG the guard prevents: recording the SAME idempotency
+    // key first as CREATE then as UPDATE (what the unguarded broker recompute did on re-harvest)
+    // slips past the (idempotency_key, operation_type, workflow_run) replay/unique and mints a v2.
+    insertRun("run_flipbug123", WorkflowState.EXECUTING);
+    ActorContext actor = new ActorContext("alex", ActorType.HUMAN, "corr-flipbug");
+    String key = "runner-result:rex_flipbug:spec-artifact";
+    byte[] payload = "first spec".getBytes();
+    String checksum = ArtifactChecksum.digestHex("SHA-256", payload).orElseThrow();
+
+    RecordArtifactOperationResult v1 =
+        service.recordOperation(
+            new RecordArtifactOperationCommand(
+                "run_flipbug123",
+                ArtifactType.SPEC,
+                ArtifactOperationType.CREATE,
+                key,
+                "spec.md",
+                payload,
+                "alex",
+                ActorType.HUMAN,
+                "corr-flipbug",
+                null));
+    service.markAvailable(
+        v1.artifact().publicId(),
+        new ArtifactChecksum("SHA-256", checksum),
+        "artifacts/run_flipbug123/" + v1.artifact().publicId() + "/v1/spec.md",
+        actor);
+
+    // The unguarded recompute: SAME key, flipped to UPDATE -> NOT a replay -> a spurious v2 graft.
+    service.recordOperation(
+        new RecordArtifactOperationCommand(
+            "run_flipbug123",
+            ArtifactType.SPEC,
+            ArtifactOperationType.UPDATE,
+            key,
+            "spec.md",
+            "spurious v2".getBytes(),
+            "alex",
+            ActorType.HUMAN,
+            "corr-flipbug",
+            null));
+    assertEquals(
+        Integer.valueOf(2),
+        jdbcTemplate.queryForObject(
+            "select count(*) from artifacts where workflow_run_id = "
+                + "(select id from workflow_runs where public_id = ?) and artifact_type = 'spec'",
+            Integer.class,
+            "run_flipbug123"),
+        "a flipped operation_type on the same key bypasses replay and mints a spurious version — "
+            + "this is exactly why the broker must reuse the recorded type");
+  }
+
+  @Test
   void recordOperationCommitsTheArtifactEventAndOperationRowsTogetherAgainstARealDatabase() {
     // AC3 transactional outbox: a single recordOperation must produce one workflow_event row,
     // one artifact row, and one artifact_operations row, all cross-referenced. This is the

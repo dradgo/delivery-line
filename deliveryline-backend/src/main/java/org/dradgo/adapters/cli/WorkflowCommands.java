@@ -46,9 +46,11 @@ import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistory
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
+import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ArchiveRunCommand;
+import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.SubmitBatchCommand;
@@ -1702,6 +1704,136 @@ public class WorkflowCommands {
     } catch (RuntimeException re) {
       emitFailure(
           "workflow answer-clarification", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "accept-clarification",
+      description =
+          "Accept an answered clarification (answered -> accepted) so a spec rebuild can incorporate"
+              + " it (story 3e-2 — CLI/REST equivalence).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String acceptClarification(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Argument(index = 1, description = "Clarification public id (clr_...)")
+          String clarificationId,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 3e-2: CLI mirrors REST's HUMAN-only audit posture for the spec-loop mutation commands.
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      WorkflowStateChangeResult result =
+          workflowCommandService.acceptClarification(
+              new AcceptClarificationCommand(
+                  runId,
+                  clarificationId,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation));
+      String clarificationStatus =
+          result.clarificationStatus() == null ? "unknown" : result.clarificationStatus();
+      StringBuilder output =
+          new StringBuilder()
+              .append(clarificationId)
+              .append(" accepted (clarificationStatus: ")
+              .append(clarificationStatus)
+              .append(", currentState: ")
+              .append(result.currentState() == null ? "unknown" : result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow accept-clarification", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow accept-clarification", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure(
+          "workflow accept-clarification", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "regenerate-spec",
+      description =
+          "Regenerate the spec, incorporating accepted clarifications (WaitingForSpecApproval ->"
+              + " Investigating + re-dispatch) (story 3e-2 — CLI/REST equivalence).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String regenerateSpec(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    // Story 3e-2: CLI mirrors REST's HUMAN-only audit posture for the spec-loop mutation commands.
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      WorkflowStateChangeResult result =
+          workflowCommandService.regenerateSpecWithClarifications(
+              new RegenerateSpecCommand(
+                  runId,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation));
+      StringBuilder output =
+          new StringBuilder()
+              .append(runId)
+              .append(" spec regeneration dispatched (currentState: ")
+              .append(result.currentState() == null ? "unknown" : result.currentState().value())
+              .append(")");
+      if (idempotencyKey == null) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+      if (verbose) {
+        output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      }
+      emitSuccess("workflow regenerate-spec", runId, resolvedCorrelation, start);
+      return output.toString();
+    } catch (DomainException de) {
+      emitFailure("workflow regenerate-spec", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow regenerate-spec", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
       throw re;
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());

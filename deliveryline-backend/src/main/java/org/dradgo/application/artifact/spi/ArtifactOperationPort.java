@@ -13,6 +13,17 @@ public interface ArtifactOperationPort {
       String workflowRunId, ArtifactType artifactType, String idempotencyKey, String operationType);
 
   /**
+   * Story 3e-2 (review P1) — the operation already recorded for this idempotency key within the run
+   * + artifactType, independent of {@code operation_type}, if any. The broker uses this to REUSE
+   * the type a prior harvest chose rather than recomputing the SPEC graft decision (CREATE vs
+   * UPDATE) from mutable lineage state — a recompute that flips {@code CREATE -> UPDATE} on a
+   * re-harvest of the same runner result and, because the idempotency replay key includes {@code
+   * operation_type}, misses the stored row and mints a spurious extra spec version.
+   */
+  Optional<ArtifactOperationSnapshot> findRecordedOperation(
+      String workflowRunId, ArtifactType artifactType, String idempotencyKey);
+
+  /**
    * Returns the single PENDING operation for the given artifact, if one exists.
    *
    * <p><strong>Invariant:</strong> at most one PENDING operation may exist per artifact at any

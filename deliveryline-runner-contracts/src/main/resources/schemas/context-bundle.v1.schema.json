@@ -165,6 +165,38 @@
       ],
       "minLength": 1,
       "description": "Story 3.10 (AC2) — OPTIONAL. The expected deterministic feature-branch name (story 3.9 AC2 convention, e.g. deliveryline/{ticketSlug}/stage-{runIdShort}) the runner pushes to. A git ref, NEVER a host absolute path (Trap T5). Emitted only when a repository workspace was prepared; absent on no-repo dispatches."
+    },
+    "acceptedClarifications": {
+      "type": "array",
+      "description": "Story 3e-2 (AC3) — OPTIONAL. The run's ACCEPTED clarifications (question + reviewer answer) fed into a spec REGENERATION so the runner can incorporate the answers. Unlike every other feedback channel (reference-by-id only), the answer content is carried INLINE here because the runner reads only this bundle — the whole bundle is policed by the single shareable-redacted redaction pass, so the reviewer-authored answer text is redacted exactly like artifact content. Emitted ONLY at the spec-investigation stage and ONLY when >=1 accepted clarification exists; absent otherwise so a no-clarification rebuild stays byte-identical. Each entry is also mirrored as a {referenceId, kind:'clarification.answered'} priorFeedbackReferences row. Additive backward-compatible v1 patch (NOT in required); schemaVersion stays const:1.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "clarificationId",
+          "questionId",
+          "questionText",
+          "answerText"
+        ],
+        "properties": {
+          "clarificationId": {
+            "type": "string",
+            "pattern": "^clr_[A-Za-z0-9_-]{4,64}$"
+          },
+          "questionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,128}$"
+          },
+          "questionText": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answerText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   },
   "$defs": {

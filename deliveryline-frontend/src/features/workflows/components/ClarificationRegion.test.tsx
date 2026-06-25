@@ -456,3 +456,78 @@ describe('ClarificationRegion a11y (story 2.25)', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 });
+
+describe('ClarificationRegion — accept + regenerate controls (story 3e-2 AC1/AC2)', () => {
+  const ANSWERED_ID = answeredClarification.clarificationId;
+
+  it('shows the Accept button on an answered clarification only when accept_clarification is allowed', () => {
+    const onAccept = vi.fn();
+    render(
+      <ClarificationRegion
+        view={answeredView}
+        selectedClarificationId={ANSWERED_ID}
+        allowedActions={['accept_clarification']}
+        onAcceptClarification={onAccept}
+      />,
+    );
+    const acceptButton = screen.getByTestId('clarification-accept');
+    fireEvent.click(acceptButton);
+    expect(onAccept).toHaveBeenCalledWith(ANSWERED_ID);
+  });
+
+  it('hides the Accept button when accept_clarification is NOT in the allowed actions (governed)', () => {
+    render(
+      <ClarificationRegion
+        view={answeredView}
+        selectedClarificationId={ANSWERED_ID}
+        allowedActions={[]}
+        onAcceptClarification={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('clarification-accept')).toBeNull();
+  });
+
+  it('shows the regenerate footer + fires onRegenerateSpec only when regenerate is allowed', () => {
+    const onRegenerate = vi.fn();
+    render(
+      <ClarificationRegion
+        view={answeredView}
+        selectedClarificationId={ANSWERED_ID}
+        allowedActions={['regenerate_spec_with_clarifications']}
+        onRegenerateSpec={onRegenerate}
+      />,
+    );
+    const regenerateButton = screen.getByTestId('clarification-regenerate');
+    fireEvent.click(regenerateButton);
+    expect(onRegenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the regenerate footer when regenerate is NOT allowed (governed)', () => {
+    render(
+      <ClarificationRegion
+        view={answeredView}
+        selectedClarificationId={ANSWERED_ID}
+        allowedActions={['answer_clarification']}
+        onRegenerateSpec={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('clarification-regenerate-footer')).toBeNull();
+  });
+
+  it('surfaces inline accept + regenerate feedback and stays a11y-clean', async () => {
+    const { container } = render(
+      <ClarificationRegion
+        view={answeredView}
+        selectedClarificationId={ANSWERED_ID}
+        allowedActions={['accept_clarification', 'regenerate_spec_with_clarifications']}
+        onAcceptClarification={vi.fn()}
+        acceptSubmission={{ status: 'success', clarificationId: ANSWERED_ID }}
+        onRegenerateSpec={vi.fn()}
+        regenerateSubmission={{ status: 'success' }}
+      />,
+    );
+    expect(screen.getByTestId('clarification-accept-feedback')).toBeInTheDocument();
+    expect(screen.getByTestId('clarification-regenerate-feedback')).toBeInTheDocument();
+    await expectNoA11yViolations(container);
+  });
+});

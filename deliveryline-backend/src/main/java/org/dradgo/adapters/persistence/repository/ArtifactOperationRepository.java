@@ -21,6 +21,15 @@ public interface ArtifactOperationRepository extends JpaRepository<ArtifactOpera
   Optional<ArtifactOperationEntity> findFirstByIdempotencyKeyAndOperationTypeAndArtifactPublicId(
       String idempotencyKey, String operationType, String artifactPublicId);
 
+  // Story 3e-2 (review P1) — type-AGNOSTIC lookup of the operation already recorded for an
+  // idempotency key within a run+artifactType (any operation_type). Lets the broker REUSE the
+  // operation_type a prior harvest chose instead of recomputing it from mutable lineage state on a
+  // re-harvest (a recompute flips CREATE->UPDATE and, because the replay key includes
+  // operation_type, misses the stored row and mints a spurious extra version).
+  Optional<ArtifactOperationEntity>
+      findFirstByWorkflowRunPublicIdAndArtifactTypeAndIdempotencyKeyOrderByCreatedAtAsc(
+          String workflowRunPublicId, String artifactType, String idempotencyKey);
+
   @Query(
       value =
           "SELECT ao.* FROM artifact_operations ao "

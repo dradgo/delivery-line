@@ -499,6 +499,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Archive not applicable",
         false);
+    // Story 3e-2 (review D1) — regenerating a spec with zero `accepted` clarifications to
+    // incorporate is a precondition mismatch; mirror ARCHIVE_NOT_APPLICABLE's CONFLICT +
+    // non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.REGENERATE_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Regenerate not applicable",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

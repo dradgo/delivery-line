@@ -12,15 +12,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectNoA11yViolations } from '@/test/a11y/axe';
 import { ProblemDetailsError, toProblemDetails } from '@/lib/api/problemDetails';
-import { openView } from '@/test/fixtures/clarification/clarificationViewFixtures';
+import { answeredView, openView } from '@/test/fixtures/clarification/clarificationViewFixtures';
 
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
   useReturnToRunContext: () => vi.fn(),
 }));
 vi.mock('../hooks/useClarifications', () => ({ useClarifications: vi.fn() }));
 vi.mock('../hooks/useSubmitClarification', () => ({ useSubmitClarification: vi.fn() }));
+// Story 3e-2 — the container now sources allowed actions + the accept/regenerate mutations.
+vi.mock('../hooks/useAllowedActions', () => ({ useAllowedActions: vi.fn() }));
+vi.mock('../hooks/useAcceptClarification', () => ({ useAcceptClarification: vi.fn() }));
+vi.mock('../hooks/useRegenerateSpec', () => ({ useRegenerateSpec: vi.fn() }));
 
+import { useAcceptClarification } from '../hooks/useAcceptClarification';
+import { useAllowedActions } from '../hooks/useAllowedActions';
 import { useClarifications } from '../hooks/useClarifications';
+import { useRegenerateSpec } from '../hooks/useRegenerateSpec';
 import { useSubmitClarification } from '../hooks/useSubmitClarification';
 import {
   ClarificationRegionContainer,
@@ -29,6 +36,21 @@ import {
 
 const mockUseClarifications = vi.mocked(useClarifications);
 const mockUseSubmitClarification = vi.mocked(useSubmitClarification);
+const mockUseAllowedActions = vi.mocked(useAllowedActions);
+const mockUseAcceptClarification = vi.mocked(useAcceptClarification);
+const mockUseRegenerateSpec = vi.mocked(useRegenerateSpec);
+
+function fakeMutation(overrides: Record<string, unknown> = {}) {
+  return {
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
+    isSuccess: false,
+    isError: false,
+    error: null,
+    ...overrides,
+  } as never;
+}
 
 function fakeReadQuery(overrides: Record<string, unknown> = {}) {
   return {
@@ -57,6 +79,11 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   vi.spyOn(console, 'info').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
+  // Story 3e-2 — safe defaults so the pre-existing tests don't touch the new seams: no allowed
+  // actions (accept/regenerate hidden) + idle mutations.
+  mockUseAllowedActions.mockReturnValue({ data: undefined } as never);
+  mockUseAcceptClarification.mockReturnValue(fakeMutation());
+  mockUseRegenerateSpec.mockReturnValue(fakeMutation());
 });
 afterEach(() => {
   cleanup();
@@ -254,5 +281,38 @@ describe('ClarificationRegionContainer a11y (story 2.25)', () => {
     expect(document.activeElement).toBe(screen.getByTestId('clarification-submit'));
     await user.keyboard('{Enter}');
     expect(mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ClarificationRegionContainer — accept + regenerate wiring (story 3e-2)', () => {
+  it('wires the Accept button to useAcceptClarification with the clarification id', () => {
+    const acceptMutate = vi.fn();
+    mockUseClarifications.mockReturnValue(fakeReadQuery({ data: answeredView }));
+    mockUseSubmitClarification.mockReturnValue(fakeSubmit());
+    mockUseAllowedActions.mockReturnValue({ data: { actions: ['accept_clarification'] } } as never);
+    mockUseAcceptClarification.mockReturnValue(fakeMutation({ mutate: acceptMutate }));
+
+    render(<ClarificationRegionContainer workflowRunId="run_clr_demo_001" />);
+    fireEvent.click(screen.getByRole('option'));
+    fireEvent.click(screen.getByTestId('clarification-accept'));
+
+    expect(acceptMutate).toHaveBeenCalledTimes(1);
+    const variables = acceptMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(variables).toEqual({ clarificationId: 'cla_answered01' });
+  });
+
+  it('wires the regenerate footer to useRegenerateSpec', () => {
+    const regenerateMutate = vi.fn();
+    mockUseClarifications.mockReturnValue(fakeReadQuery({ data: answeredView }));
+    mockUseSubmitClarification.mockReturnValue(fakeSubmit());
+    mockUseAllowedActions.mockReturnValue({
+      data: { actions: ['regenerate_spec_with_clarifications'] },
+    } as never);
+    mockUseRegenerateSpec.mockReturnValue(fakeMutation({ mutate: regenerateMutate }));
+
+    render(<ClarificationRegionContainer workflowRunId="run_clr_demo_001" />);
+    fireEvent.click(screen.getByTestId('clarification-regenerate'));
+
+    expect(regenerateMutate).toHaveBeenCalledTimes(1);
   });
 });

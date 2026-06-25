@@ -193,6 +193,8 @@ class SpecStageRepoContextIT {
             ticketProvider,
             artifactRecordPort,
             approvalReadPort,
+            org.mockito.Mockito.mock(
+                org.dradgo.application.clarification.spi.ClarificationReadPort.class),
             new RedactionPolicyService(new DataClassificationService()),
             new RunnerContractValidator());
 

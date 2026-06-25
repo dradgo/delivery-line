@@ -23,6 +23,7 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ArtifactOperationStatus;
+import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -509,6 +510,40 @@ public class ArtifactOperationService {
         artifact.publicId(),
         artifact.version());
     return artifact;
+  }
+
+  /**
+   * Story 3e-2 (AC5/R3) — true when the run already has a non-FAILED artifact of {@code
+   * artifactType} (an active lineage head). The broker uses this to decide whether a re-ingested
+   * SPEC should GRAFT onto the prior spec lineage (operationType {@code UPDATE} -&gt; {@code
+   * createNextVersion} sets {@code parentArtifactId}) instead of minting a FRESH lineage ({@code
+   * CREATE} -&gt; {@code parentArtifactId = null}). Grafting is what keeps a v1-pinned accepted
+   * clarification inside {@code lineageArtifactIds(v2)} so the sweep considers it when v2 becomes
+   * available.
+   */
+  public boolean hasActiveLineage(String workflowRunId, ArtifactType artifactType) {
+    return artifactRecordPort
+        .findLatestByWorkflowRunIdAndArtifactType(workflowRunId, artifactType.value())
+        .filter(snapshot -> snapshot.status() != ArtifactStatus.FAILED)
+        .isPresent();
+  }
+
+  /**
+   * Story 3e-2 (review P1) — the {@code operation_type} already recorded for {@code idempotencyKey}
+   * within the run + artifactType (independent of type), if any. A caller that decides CREATE vs
+   * UPDATE from mutable state (the broker's SPEC graft) MUST reuse this on a re-harvest instead of
+   * recomputing: {@link #hasActiveLineage} flips {@code false -> true} once this execution's own
+   * spec is recorded, so a recompute picks {@code UPDATE} on re-harvest, the replay key (which
+   * includes {@code operation_type}) misses the stored {@code CREATE} row, and a SPURIOUS extra
+   * version is minted. Empty ⇒ first harvest of this result; the caller computes the type fresh.
+   */
+  public Optional<ArtifactOperationType> recordedOperationType(
+      String workflowRunId, ArtifactType artifactType, String idempotencyKey) {
+    return artifactOperationPort
+        .findRecordedOperation(workflowRunId, artifactType, idempotencyKey)
+        .map(
+            operation ->
+                ArtifactOperationType.fromValue(operation.operationType(), "operationType"));
   }
 
   private Optional<RecordArtifactOperationResult> replayIfPresent(

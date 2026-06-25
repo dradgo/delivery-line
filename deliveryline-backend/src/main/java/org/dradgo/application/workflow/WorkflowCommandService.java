@@ -15,6 +15,8 @@ import org.dradgo.application.approval.ApprovalService;
 import org.dradgo.application.approval.TechnicalApprovalService;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.clarification.Clarification;
+import org.dradgo.application.clarification.ClarificationLifecycleResult;
+import org.dradgo.application.clarification.ClarificationLifecycleService;
 import org.dradgo.application.clarification.ClarificationResult;
 import org.dradgo.application.clarification.ClarificationService;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
@@ -26,8 +28,10 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.project.DefaultProjectSeeder;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
+import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
@@ -39,6 +43,7 @@ import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
+import org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
@@ -95,9 +100,14 @@ public class WorkflowCommandService {
   private final ApprovalService approvalService;
   private final TechnicalApprovalService technicalApprovalService;
   private final ClarificationService clarificationService;
+  // Story 3e-2 (AC1) — canonical executor for accept_clarification (answered -> accepted).
+  private final ClarificationLifecycleService clarificationLifecycleService;
   private final ClarificationReadPort clarificationReadPort;
   // Story 3a-1 (Task 5 / AC1) — auto-dispatch the spec runner once a submitted run is created.
   private final WorkflowOrchestrationService workflowOrchestrationService;
+  // Story 3e-2 (AC2) — bump spec_rejection_loop_count before retrySpecGeneration so each
+  // regenerate mints a fresh deterministic dispatch key (mirrors ApprovalService.rejectSpec).
+  private final WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort;
   // Story 3c-6 (AC2) — resolve the default project to bind every new run to at create time.
   private final ProjectStore projectStore;
   private final TransactionTemplate failureCompletionTemplate;
@@ -118,8 +128,10 @@ public class WorkflowCommandService {
       ApprovalService approvalService,
       TechnicalApprovalService technicalApprovalService,
       ClarificationService clarificationService,
+      ClarificationLifecycleService clarificationLifecycleService,
       ClarificationReadPort clarificationReadPort,
       WorkflowOrchestrationService workflowOrchestrationService,
+      WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
       ProjectStore projectStore) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
@@ -134,8 +146,10 @@ public class WorkflowCommandService {
     this.approvalService = approvalService;
     this.technicalApprovalService = technicalApprovalService;
     this.clarificationService = clarificationService;
+    this.clarificationLifecycleService = clarificationLifecycleService;
     this.clarificationReadPort = clarificationReadPort;
     this.workflowOrchestrationService = workflowOrchestrationService;
+    this.workflowRunRejectionLoopPort = workflowRunRejectionLoopPort;
     this.projectStore = projectStore;
   }
 
@@ -192,6 +206,30 @@ public class WorkflowCommandService {
         this::answerClarificationInternal,
         this::replayStateChange,
         this::clarificationReplayRef);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult acceptClarification(AcceptClarificationCommand command) {
+    // Story 3e-2 (AC1): the answered -> accepted row UPDATE + clarification.accepted event append
+    // happen inside ClarificationLifecycleService.markAccepted, participating in this method's
+    // @Transactional boundary. Twin of answerClarification: accepting does NOT advance workflow
+    // state (the run stays WaitingForSpecApproval), so the replay ref carries the same
+    // (runId, state, clarificationStatus) triple as the answer path.
+    return executeIdempotent(
+        command,
+        this::acceptClarificationInternal,
+        this::replayStateChange,
+        this::clarificationReplayRef);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult regenerateSpecWithClarifications(RegenerateSpecCommand command) {
+    // Story 3e-2 (AC2): structural twin of rejectSpec — transition WaitingForSpecApproval ->
+    // Investigating then re-dispatch the spec runner, all inside this @Transactional boundary so a
+    // dispatch failure rolls back the transition + loop-count bump. Replay pins INVESTIGATING (the
+    // original command's post-state), mirroring rejectSpec.
+    return executeIdempotent(
+        command, this::regenerateSpecWithClarificationsInternal, this::replayStateChange);
   }
 
   @Transactional
@@ -425,6 +463,95 @@ public class WorkflowCommandService {
       ClarificationResult result = clarificationService.submitAnswer(command);
       return new WorkflowStateChangeResult(
           result.workflowRunId(), currentState, result.correlationId(), result.status());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  private WorkflowStateChangeResult acceptClarificationInternal(
+      AcceptClarificationCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      // Story 3e-2 (AC1): read currentState FIRST (mirror answerClarificationInternal trap T6) so
+      // the response reflects the run state at the START of the accept — accepting does NOT advance
+      // workflow state, so a concurrent reject/takeover must not surface as the accept's
+      // post-mutation state.
+      WorkflowState currentState =
+          workflowRunReadPort
+              .findByPublicId(command.workflowRunId())
+              .map(WorkflowRunSnapshot::currentState)
+              .orElseThrow(
+                  () ->
+                      new DomainException(
+                          DomainErrorCode.RUN_NOT_FOUND,
+                          "Workflow run not found: " + command.workflowRunId(),
+                          Map.of("runId", command.workflowRunId())));
+      ClarificationLifecycleResult result =
+          clarificationLifecycleService.markAccepted(
+              command.workflowRunId(),
+              command.clarificationId(),
+              new ActorContext(
+                  command.actorIdentity(),
+                  command.actorType(),
+                  normalizeOptional(command.correlationId())));
+      return new WorkflowStateChangeResult(
+          result.workflowRunId(),
+          currentState,
+          normalizeOptional(command.correlationId()),
+          result.status());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  private WorkflowStateChangeResult regenerateSpecWithClarificationsInternal(
+      RegenerateSpecCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      // (review D1) Gate FIRST: a spec rebuild only makes sense when there is >=1 `accepted`
+      // clarification to incorporate. The REGENERATE_SPEC action is surfaced unconditionally at
+      // WaitingForSpecApproval (WorkflowInspectionService.computeActionMatrix), so the executor is
+      // the gate (mirrors the RETRY_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE precedent — no generic
+      // ACTION_NOT_ALLOWED). Reject BEFORE the loop-count bump / transition / re-dispatch so a
+      // no-incorporation rebuild never spuriously re-runs the spec stage.
+      boolean hasAccepted =
+          clarificationReadPort.listByWorkflowRunId(command.workflowRunId()).stream()
+              .anyMatch(c -> Clarification.STATUS_ACCEPTED.equals(c.status()));
+      if (!hasAccepted) {
+        throw new DomainException(
+            DomainErrorCode.REGENERATE_NOT_APPLICABLE,
+            "Spec regeneration requires at least one accepted clarification to incorporate",
+            Map.of("runId", command.workflowRunId()));
+      }
+      // (a) Bump spec_rejection_loop_count FIRST (mirror ApprovalService.rejectSpec's order:
+      // increment -> transition -> retry) so retrySpecGeneration's snapshot read sees the new count
+      // and mints a dispatch key distinct from the prior spec attempt. Without this, two successive
+      // spec dispatches compute the SAME specDispatchKey and the broker rejects the second as an
+      // idempotency conflict (the initial submit already dispatched at loopCount=0).
+      int loopCount =
+          workflowRunRejectionLoopPort.incrementAndReadLoopCount(command.workflowRunId());
+      log.info(
+          "regenerateSpecWithClarifications workflowRunId={} bumped specRejectionLoopCount={}",
+          command.workflowRunId(),
+          loopCount);
+      // (b) WaitingForSpecApproval -> Investigating. The transition service appends
+      // workflow.stateChanged itself (do NOT append a second one). The edge is already legal — the
+      // reject->retry loop uses it — so no transition-table change.
+      transition(
+          command.workflowRunId(),
+          WorkflowState.INVESTIGATING,
+          command,
+          "regenerate specification with clarifications",
+          Map.of());
+      // (c) Re-dispatch ONLY (Trap T8) — retrySpecGeneration MUST NOT re-transition. Shares this
+      // @Transactional boundary, so a dispatch failure rolls back the transition + the bump
+      // (all-or-nothing). No-op when spec-stage.auto-dispatch=false.
+      workflowOrchestrationService.retrySpecGeneration(
+          command.workflowRunId(), normalizeOptional(command.correlationId()));
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(),
+          WorkflowState.INVESTIGATING,
+          normalizeOptional(command.correlationId()));
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
     }
@@ -685,6 +812,7 @@ public class WorkflowCommandService {
     String workflowRunId =
         switch (command) {
           case SubmitClarificationCommand ignored -> clarificationReplayRunId(resultRef);
+          case AcceptClarificationCommand ignored -> clarificationReplayRunId(resultRef);
           default -> resultRef;
         };
     var workflowRun = findWorkflowRunForReplay(workflowRunId);
@@ -695,12 +823,17 @@ public class WorkflowCommandService {
         switch (command) {
           case ApproveSpecCommand ignored -> WorkflowState.EXECUTING;
           case RejectSpecCommand ignored -> WorkflowState.INVESTIGATING;
+          // Story 3e-2 (AC2): regenerate's post-state is Investigating (the re-dispatch
+          // transition),
+          // pinned like RejectSpecCommand so a replay after the rebuild returns Investigating.
+          case RegenerateSpecCommand ignored -> WorkflowState.INVESTIGATING;
           // Story 3.21: both implementationPlan + prOutput rejection land in Executing (Decision
           // D3),
           // so a hard-coded replay state is correct (unlike acceptImplementation's type-dependent
           // target, which uses the dedicated replayAcceptImplementation re-read).
           case RejectImplementationCommand ignored -> WorkflowState.EXECUTING;
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
+          case AcceptClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();
         };
     if (command instanceof SubmitClarificationCommand submitClarificationCommand) {
@@ -709,6 +842,16 @@ public class WorkflowCommandService {
           resultingState,
           normalizeOptional(command.correlationId()),
           clarificationReplayStatus(resultRef, submitClarificationCommand));
+    }
+    if (command instanceof AcceptClarificationCommand) {
+      // Story 3e-2: accept_clarification is a NET-NEW command — every replay ref is the 3-segment
+      // (run, state, status) shape (no legacy 2-segment refs exist), so the embedded status is
+      // always present. No legacy live-read fallback needed (contrast SubmitClarificationCommand).
+      return new WorkflowStateChangeResult(
+          workflowRun.publicId(),
+          resultingState,
+          normalizeOptional(command.correlationId()),
+          parseClarificationReplayRef(resultRef).clarificationStatus());
     }
     return new WorkflowStateChangeResult(
         workflowRun.publicId(), resultingState, normalizeOptional(command.correlationId()));

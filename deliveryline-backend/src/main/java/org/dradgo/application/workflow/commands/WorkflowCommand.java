@@ -9,6 +9,8 @@ public sealed interface WorkflowCommand
         AcceptImplementationCommand,
         RejectImplementationCommand,
         SubmitClarificationCommand,
+        AcceptClarificationCommand,
+        RegenerateSpecCommand,
         RetryWorkflowCommand,
         TakeoverWorkflowCommand {
 

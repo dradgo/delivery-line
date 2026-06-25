@@ -18,6 +18,8 @@
     "submit_manual_artifact",
     "open_diagnostic_console",
     "archive_run",
-    "unarchive_run"
+    "unarchive_run",
+    "accept_clarification",
+    "regenerate_spec_with_clarifications"
   ]
 }

@@ -244,6 +244,27 @@
                   }
                 }
               }
+            },
+            "clarificationAcknowledgements": {
+              "$comment": "Story 3e-2 (FR10 close) — OPTIONAL additive: which ACCEPTED clarifications the rebuilt spec actually addressed. Lifted from a fenced ```clarificationAcknowledgements block in agent stdout (sibling of questions). Spec-stage only. Absent when the agent emitted none (never []), so a no-ack result stays byte-identical. The broker persists these at ingest (side-store keyed by spec artifactId); the ClarificationLifecycleOrchestrator sweep reads them (addressed:true => markIncorporated, else markSuperseded). Same additive-optional discipline as questions: declared (specArtifact is unevaluatedProperties:false) but NOT in required, NO schemaVersion bump.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "questionId",
+                  "addressed"
+                ],
+                "properties": {
+                  "questionId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]{1,128}$"
+                  },
+                  "addressed": {
+                    "type": "boolean"
+                  }
+                }
+              }
             }
           }
         }

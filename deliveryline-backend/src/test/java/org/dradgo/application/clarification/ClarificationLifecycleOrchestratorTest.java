@@ -11,15 +11,14 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
-import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
+import org.dradgo.application.clarification.spi.SpecClarificationAcknowledgementReadPort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactStatus;
@@ -31,19 +30,23 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Story 2.12 AC4 + AC10 — focused Mockito coverage for {@link ClarificationLifecycleOrchestrator}.
+ * Story 2.12 AC4 + story 3e-2 AC6 — focused Mockito coverage for {@link
+ * ClarificationLifecycleOrchestrator} after the substring-scan stub was replaced by the structured
+ * acknowledgements oracle ({@link SpecClarificationAcknowledgementReadPort}).
  *
  * <p>Pins:
  *
  * <ul>
- *   <li>Zero accepted clarifications → no mark* calls, empty {@code LifecycleSweepResult}.
- *   <li>One accepted + payload mentions questionId → exactly one {@code markIncorporated} call.
- *   <li>One accepted + payload does NOT mention questionId → exactly one {@code markSuperseded}
- *       call with {@code noEffectReason = clarification_not_addressed}.
- *   <li>Mixed sweep: incorporates the matching, supersedes the unmatched.
- *   <li>P32/D5 fatal abort: empty {@code storageRef} raises {@code
+ *   <li>Zero accepted clarifications → no mark* calls, no artifact/acknowledgement load.
+ *   <li>One accepted + acknowledgement {@code addressed:true} → one {@code markIncorporated}.
+ *   <li>One accepted + acknowledgement {@code addressed:false} → one {@code markSuperseded} with
+ *       {@code noEffectReason = clarification_not_addressed}.
+ *   <li>One accepted + NO acknowledgement (absent) → superseded (not-addressed).
+ *   <li>Mixed sweep: incorporates the addressed, supersedes the unaddressed.
+ *   <li>Lineage scope: an accepted clarification pinned outside the rebuilt spec lineage is
+ *       skipped.
+ *   <li>Fail-loud: a missing artifact record raises {@code
  *       DomainException(ARTIFACT_PAYLOAD_UNAVAILABLE)} and NO mark* calls fire.
- *   <li>P32/D5 fatal abort: missing artifact record raises the same error code.
  *   <li>P23 input validation: blank/whitespace ids raise {@code
  *       DomainException(INVALID_ID_PREFIX)}.
  * </ul>
@@ -55,14 +58,13 @@ class ClarificationLifecycleOrchestratorTest {
   private static final String SPEC_V2_ID = "art_orch_spec_v2";
   private static final String OTHER_SPEC_V1_ID = "art_orch_other_v1";
   private static final int SPEC_V2_VERSION = 2;
-  private static final String STORAGE_REF_V2 =
-      "artifacts/run_orch_test_001/art_orch_spec_v2/v2/spec.md";
 
   private final ClarificationReadPort readPort = Mockito.mock(ClarificationReadPort.class);
   private final ClarificationLifecycleService lifecycleService =
       Mockito.mock(ClarificationLifecycleService.class);
   private final ArtifactRecordPort artifactRecordPort = Mockito.mock(ArtifactRecordPort.class);
-  private final ArtifactPayloadStore payloadStore = Mockito.mock(ArtifactPayloadStore.class);
+  private final SpecClarificationAcknowledgementReadPort acknowledgementReadPort =
+      Mockito.mock(SpecClarificationAcknowledgementReadPort.class);
 
   private ClarificationLifecycleOrchestrator orchestrator;
 
@@ -70,7 +72,7 @@ class ClarificationLifecycleOrchestratorTest {
   void setUp() {
     orchestrator =
         new ClarificationLifecycleOrchestrator(
-            readPort, lifecycleService, artifactRecordPort, payloadStore);
+            readPort, lifecycleService, artifactRecordPort, acknowledgementReadPort);
   }
 
   @Test
@@ -89,21 +91,18 @@ class ClarificationLifecycleOrchestratorTest {
         .markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
     verify(lifecycleService, never())
         .markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
-    // P32 — no payload-load even attempted when zero accepted (short-circuit).
+    // No artifact/acknowledgement load even attempted when zero accepted (short-circuit).
     verify(artifactRecordPort, never()).findByPublicId(anyString());
-    verify(payloadStore, never()).readBytes(anyString());
+    verify(acknowledgementReadPort, never()).findBySpecArtifactPublicId(anyString());
   }
 
   @Test
-  void sweepIncorporatesAcceptedClarificationsWhenPayloadAcknowledgesQuestionId() {
+  void sweepIncorporatesAcceptedClarificationsWhenAcknowledgementIsAddressedTrue() {
     Clarification accepted = accepted("clr_orch_001", "Q-AUTH-001");
     when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(accepted));
     when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.of(specV2()));
-    when(payloadStore.readBytes(STORAGE_REF_V2))
-        .thenReturn(
-            Optional.of(
-                "Spec v2 incorporates Q-AUTH-001 with the new auth flow."
-                    .getBytes(StandardCharsets.UTF_8)));
+    when(acknowledgementReadPort.findBySpecArtifactPublicId(SPEC_V2_ID))
+        .thenReturn(List.of(new SpecClarificationAcknowledgement(SPEC_V2_ID, "Q-AUTH-001", true)));
 
     ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
         orchestrator.sweepAfterSpecRebuild(
@@ -124,13 +123,12 @@ class ClarificationLifecycleOrchestratorTest {
   }
 
   @Test
-  void sweepSupersedesAcceptedClarificationsWhenPayloadDoesNotAcknowledge() {
+  void sweepSupersedesAcceptedClarificationsWhenAcknowledgementIsAddressedFalse() {
     Clarification accepted = accepted("clr_orch_002", "Q-AUTH-001");
     when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(accepted));
     when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.of(specV2()));
-    when(payloadStore.readBytes(STORAGE_REF_V2))
-        .thenReturn(
-            Optional.of("Spec v2 talks about unrelated work.".getBytes(StandardCharsets.UTF_8)));
+    when(acknowledgementReadPort.findBySpecArtifactPublicId(SPEC_V2_ID))
+        .thenReturn(List.of(new SpecClarificationAcknowledgement(SPEC_V2_ID, "Q-AUTH-001", false)));
 
     ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
         orchestrator.sweepAfterSpecRebuild(
@@ -151,14 +149,41 @@ class ClarificationLifecycleOrchestratorTest {
   }
 
   @Test
+  void sweepSupersedesAcceptedClarificationsWhenAcknowledgementIsAbsent() {
+    // Story 3e-2 — an ABSENT acknowledgement (the runner never mentioned the question) is
+    // not-addressed => superseded (identical to addressed:false).
+    Clarification accepted = accepted("clr_orch_absent", "Q-AUTH-001");
+    when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(accepted));
+    when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.of(specV2()));
+    when(acknowledgementReadPort.findBySpecArtifactPublicId(SPEC_V2_ID)).thenReturn(List.of());
+
+    ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
+        orchestrator.sweepAfterSpecRebuild(
+            RUN_ID, SPEC_V2_ID, SPEC_V2_VERSION, ActorContext.SYSTEM);
+
+    assertThat(result.incorporatedCount()).isZero();
+    assertThat(result.supersededCount()).isEqualTo(1);
+    verify(lifecycleService, times(1))
+        .markSuperseded(
+            eq(RUN_ID),
+            eq("clr_orch_absent"),
+            eq(SPEC_V2_ID),
+            eq(SPEC_V2_VERSION),
+            eq("clarification_not_addressed"),
+            eq(ActorContext.SYSTEM));
+  }
+
+  @Test
   void sweepMixedAcceptedClarificationsApplyPerQuestionDecision() {
     Clarification c1 = accepted("clr_orch_mixed_a", "Q-AUTH-001");
     Clarification c2 = accepted("clr_orch_mixed_b", "Q-AUTH-002");
     when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(c1, c2));
     when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.of(specV2()));
-    when(payloadStore.readBytes(STORAGE_REF_V2))
+    when(acknowledgementReadPort.findBySpecArtifactPublicId(SPEC_V2_ID))
         .thenReturn(
-            Optional.of("Spec v2 mentions Q-AUTH-001 only.".getBytes(StandardCharsets.UTF_8)));
+            List.of(
+                new SpecClarificationAcknowledgement(SPEC_V2_ID, "Q-AUTH-001", true),
+                new SpecClarificationAcknowledgement(SPEC_V2_ID, "Q-AUTH-002", false)));
 
     ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
         orchestrator.sweepAfterSpecRebuild(
@@ -204,11 +229,13 @@ class ClarificationLifecycleOrchestratorTest {
     when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(sameLineage, unrelated));
     when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.of(specV2()));
     when(artifactRecordPort.findByPublicId(SPEC_V1_ID)).thenReturn(Optional.of(specV1()));
-    when(payloadStore.readBytes(STORAGE_REF_V2))
+    // Even though the runner addressed BOTH questions, the unrelated clarification is pinned to a
+    // FOREIGN lineage (OTHER_SPEC_V1_ID not in lineageArtifactIds(v2)) so the sweep skips it.
+    when(acknowledgementReadPort.findBySpecArtifactPublicId(SPEC_V2_ID))
         .thenReturn(
-            Optional.of(
-                "Spec v2 incorporates Q-AUTH-001 with the new auth flow."
-                    .getBytes(StandardCharsets.UTF_8)));
+            List.of(
+                new SpecClarificationAcknowledgement(SPEC_V2_ID, "Q-AUTH-001", true),
+                new SpecClarificationAcknowledgement(SPEC_V2_ID, "Q-OTHER-001", true)));
 
     ClarificationLifecycleOrchestrator.LifecycleSweepResult result =
         orchestrator.sweepAfterSpecRebuild(
@@ -253,11 +280,10 @@ class ClarificationLifecycleOrchestratorTest {
   }
 
   @Test
-  void sweepRaisesArtifactPayloadUnavailableWhenStorageRefIsBlankP32() {
-    Clarification accepted = accepted("clr_orch_p32_blank", "Q-AUTH-001");
+  void sweepRaisesArtifactPayloadUnavailableWhenArtifactRecordIsMissing() {
+    Clarification accepted = accepted("clr_orch_missing", "Q-AUTH-001");
     when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(accepted));
-    when(artifactRecordPort.findByPublicId(SPEC_V2_ID))
-        .thenReturn(Optional.of(specV2WithStorageRef("   ")));
+    when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.empty());
 
     assertThatThrownBy(
             () ->
@@ -270,37 +296,6 @@ class ClarificationLifecycleOrchestratorTest {
         .markIncorporated(anyString(), anyString(), anyString(), anyInt(), any());
     verify(lifecycleService, never())
         .markSuperseded(anyString(), anyString(), anyString(), anyInt(), anyString(), any());
-  }
-
-  @Test
-  void sweepRaisesArtifactPayloadUnavailableWhenArtifactRecordIsMissingP32() {
-    Clarification accepted = accepted("clr_orch_p32_missing", "Q-AUTH-001");
-    when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(accepted));
-    when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.empty());
-
-    assertThatThrownBy(
-            () ->
-                orchestrator.sweepAfterSpecRebuild(
-                    RUN_ID, SPEC_V2_ID, SPEC_V2_VERSION, ActorContext.SYSTEM))
-        .isInstanceOf(DomainException.class)
-        .extracting("errorCode")
-        .isEqualTo(DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE);
-  }
-
-  @Test
-  void sweepRaisesArtifactPayloadUnavailableWhenPayloadBytesAreZeroLengthP32() {
-    Clarification accepted = accepted("clr_orch_p32_empty", "Q-AUTH-001");
-    when(readPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of(accepted));
-    when(artifactRecordPort.findByPublicId(SPEC_V2_ID)).thenReturn(Optional.of(specV2()));
-    when(payloadStore.readBytes(STORAGE_REF_V2)).thenReturn(Optional.of(new byte[0]));
-
-    assertThatThrownBy(
-            () ->
-                orchestrator.sweepAfterSpecRebuild(
-                    RUN_ID, SPEC_V2_ID, SPEC_V2_VERSION, ActorContext.SYSTEM))
-        .isInstanceOf(DomainException.class)
-        .extracting("errorCode")
-        .isEqualTo(DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE);
   }
 
   @Test
@@ -323,23 +318,6 @@ class ClarificationLifecycleOrchestratorTest {
         .isInstanceOf(DomainException.class)
         .extracting("errorCode")
         .isEqualTo(DomainErrorCode.INVALID_ID_PREFIX);
-  }
-
-  @Test
-  void acknowledgesQuestionTrueOnExactMatchFalseOnSubstringInsideLongerId() {
-    // P29 — word-boundary regex prevents Q-1 matching inside Q-12.
-    byte[] payload = "Spec mentions Q-12 explicitly.".getBytes(StandardCharsets.UTF_8);
-    assertThat(ClarificationLifecycleOrchestrator.acknowledgesQuestion(payload, "Q-12")).isTrue();
-    assertThat(ClarificationLifecycleOrchestrator.acknowledgesQuestion(payload, "Q-1")).isFalse();
-  }
-
-  @Test
-  void acknowledgesQuestionRejectsEmptyOrNullQuestionIdP21() {
-    byte[] payload = "Anything.".getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(() -> ClarificationLifecycleOrchestrator.acknowledgesQuestion(payload, ""))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> ClarificationLifecycleOrchestrator.acknowledgesQuestion(payload, null))
-        .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static Clarification accepted(String clarificationId, String questionId) {
@@ -365,7 +343,22 @@ class ClarificationLifecycleOrchestratorTest {
   }
 
   private static ArtifactRecordSnapshot specV2() {
-    return specV2WithStorageRef(STORAGE_REF_V2);
+    return new ArtifactRecordSnapshot(
+        SPEC_V2_ID,
+        RUN_ID,
+        ArtifactType.SPEC,
+        SPEC_V2_VERSION,
+        SPEC_V1_ID,
+        DataClassification.LOCAL_ONLY,
+        "artifacts/run_orch_test_001/art_orch_spec_v2/v2/spec.md",
+        "SHA-256",
+        "abc123",
+        null,
+        null,
+        ArtifactStatus.AVAILABLE,
+        null,
+        false,
+        OffsetDateTime.parse("2026-05-25T10:00:00Z"));
   }
 
   private static ArtifactRecordSnapshot specV1() {
@@ -385,24 +378,5 @@ class ClarificationLifecycleOrchestratorTest {
         null,
         false,
         OffsetDateTime.parse("2026-05-25T09:00:00Z"));
-  }
-
-  private static ArtifactRecordSnapshot specV2WithStorageRef(String storageRef) {
-    return new ArtifactRecordSnapshot(
-        SPEC_V2_ID,
-        RUN_ID,
-        ArtifactType.SPEC,
-        SPEC_V2_VERSION,
-        SPEC_V1_ID,
-        DataClassification.LOCAL_ONLY,
-        storageRef,
-        "SHA-256",
-        "abc123",
-        null,
-        null,
-        ArtifactStatus.AVAILABLE,
-        null,
-        false,
-        OffsetDateTime.parse("2026-05-25T10:00:00Z"));
   }
 }

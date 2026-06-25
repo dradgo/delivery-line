@@ -47,7 +47,21 @@ public enum AllowedAction implements RegistryValue {
   // WorkflowInspectionService.computeActionMatrix threads a `boolean archived` and adds exactly one
   // of these. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only).
   ARCHIVE_RUN("archive_run"),
-  UNARCHIVE_RUN("unarchive_run");
+  UNARCHIVE_RUN("unarchive_run"),
+  // Story 3e-2 (AC1) — explicit PM judgment that an answered clarification's answer is ready to
+  // drive a spec rebuild (answered -> accepted, story 2.12 lifecycle). Canonical executor is
+  // WorkflowCommandService.acceptClarification -> ClarificationLifecycleService.markAccepted.
+  // Surfaced (next to answer_clarification) in the WAITING_FOR_SPEC_APPROVAL reviewer-role matrix.
+  // The sweep (ClarificationLifecycleOrchestrator) acts ONLY on accepted rows, so without this
+  // action the visible-incorporation loop is starved. No DB CHECK exists for allowed-actions (enum
+  // <-> frontend placeholder JSON only).
+  ACCEPT_CLARIFICATION("accept_clarification"),
+  // Story 3e-2 (AC2) — reviewer triggers a spec regeneration that incorporates the accepted
+  // clarifications. Canonical executor is WorkflowCommandService.regenerateSpecWithClarifications:
+  // it performs the WaitingForSpecApproval -> Investigating transition then reuses
+  // WorkflowOrchestrationService.retrySpecGeneration (re-dispatch only, Trap T8). Surfaced in the
+  // WAITING_FOR_SPEC_APPROVAL reviewer-role matrix alongside accept_clarification.
+  REGENERATE_SPEC("regenerate_spec_with_clarifications");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

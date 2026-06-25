@@ -918,15 +918,37 @@ public class WorkflowInspectionService {
         }
       case WAITING_FOR_SPEC_APPROVAL:
         {
+          // Story 3e-2 (AC1/AC2): the accept_clarification + regenerate_spec_with_clarifications
+          // actions are surfaced alongside answer_clarification for the reviewer roles
+          // (product_reviewer + workflow_owner). Both are surfaced unconditionally (not gated on a
+          // pending/accepted count) — the canonical executors no-op/guard when there is nothing to
+          // accept or no accepted clarification to rebuild from, mirroring how answer_clarification
+          // is offered regardless of the open-question count (Completion Notes: "surface always").
           if (ROLE_PRODUCT_REVIEWER.equals(actorRole)) {
             // AC4: drop approve_spec when pending clarifications block approval (story 2.12 gate).
             if (pendingClarifications > 0) {
-              return List.of(AllowedAction.REJECT_SPEC, AllowedAction.ANSWER_CLARIFICATION);
+              return List.of(
+                  AllowedAction.REJECT_SPEC,
+                  AllowedAction.ANSWER_CLARIFICATION,
+                  AllowedAction.ACCEPT_CLARIFICATION,
+                  AllowedAction.REGENERATE_SPEC);
             }
             return List.of(
                 AllowedAction.APPROVE_SPEC,
                 AllowedAction.REJECT_SPEC,
-                AllowedAction.ANSWER_CLARIFICATION);
+                AllowedAction.ANSWER_CLARIFICATION,
+                AllowedAction.ACCEPT_CLARIFICATION,
+                AllowedAction.REGENERATE_SPEC);
+          }
+          // Story 3e-2 (AC1/AC2) — accept + regenerate are REVIEWER actions (product_reviewer above
+          // + workflow_owner here). The run owner can also drive them; other recognized roles (e.g.
+          // developer) keep the view + answer set only.
+          if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            return List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.ANSWER_CLARIFICATION,
+                AllowedAction.ACCEPT_CLARIFICATION,
+                AllowedAction.REGENERATE_SPEC);
           }
           return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
         }

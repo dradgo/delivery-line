@@ -59,8 +59,14 @@ class ClarificationIngestServiceTest {
   private final ClarificationWritePort writePort = mock(ClarificationWritePort.class);
   private final ClarificationReadPort readPort = mock(ClarificationReadPort.class);
   private final WorkflowEventWritePort eventWritePort = mock(WorkflowEventWritePort.class);
+  private final org.dradgo.application.clarification.spi.SpecClarificationAcknowledgementWritePort
+      acknowledgementWritePort =
+          mock(
+              org.dradgo.application.clarification.spi.SpecClarificationAcknowledgementWritePort
+                  .class);
   private final ClarificationIngestService service =
-      new ClarificationIngestService(writePort, readPort, eventWritePort, CLOCK);
+      new ClarificationIngestService(
+          writePort, readPort, eventWritePort, acknowledgementWritePort, CLOCK);
 
   @Test
   void createsOneOpenClarificationAndEventPerQuestionWithDeterministicIdempotencyKey() {
@@ -198,6 +204,104 @@ class ClarificationIngestServiceTest {
         appender.list.stream()
             .anyMatch(e -> e.getFormattedMessage().contains("Top secret question text"));
     assertTrue(!leaked, "questionText must never appear in any log line (trap T12)");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 3e-2 (AC6) — persistSpecClarificationAcknowledgements
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void persistsOneRowPerUniqueAcknowledgementWithScaPublicId() {
+    when(acknowledgementWritePort.existsBySpecArtifactPublicIdAndQuestionId(any(), any()))
+        .thenReturn(false);
+
+    int inserted =
+        service.persistSpecClarificationAcknowledgements(
+            ART,
+            List.of(
+                new ClarificationIngestService.RaisedAcknowledgement("Q-1", true),
+                new ClarificationIngestService.RaisedAcknowledgement("Q-2", false)),
+            "corr-ack");
+
+    assertEquals(2, inserted);
+    ArgumentCaptor<String> publicId = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> questionId = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Boolean> addressed = ArgumentCaptor.forClass(Boolean.class);
+    verify(acknowledgementWritePort, times(2))
+        .insert(
+            publicId.capture(),
+            org.mockito.ArgumentMatchers.eq(ART),
+            questionId.capture(),
+            addressed.capture());
+    assertTrue(
+        publicId.getAllValues().stream().allMatch(id -> id.startsWith("sca_")),
+        "each acknowledgement row carries a sca_ public id");
+    assertEquals(List.of("Q-1", "Q-2"), questionId.getAllValues());
+    assertEquals(List.of(true, false), addressed.getAllValues());
+  }
+
+  @Test
+  void collapsesDuplicateQuestionIdAcknowledgementsBeforeInsert() {
+    // Mirror the createOpenFromSpec CRITICAL trap: two acknowledgements sharing a questionId in one
+    // result must de-dup (first-wins) BEFORE insert so the (artifact, question) UNIQUE never
+    // flushes
+    // a conflict into the shared broker transaction.
+    when(acknowledgementWritePort.existsBySpecArtifactPublicIdAndQuestionId(any(), any()))
+        .thenReturn(false);
+
+    int inserted =
+        service.persistSpecClarificationAcknowledgements(
+            ART,
+            List.of(
+                new ClarificationIngestService.RaisedAcknowledgement("Q-DUP", true),
+                new ClarificationIngestService.RaisedAcknowledgement("Q-DUP", false)),
+            "corr-ack");
+
+    assertEquals(1, inserted, "duplicate questionIds collapse to one row (first-wins)");
+    verify(acknowledgementWritePort, times(1))
+        .insert(
+            any(),
+            org.mockito.ArgumentMatchers.eq(ART),
+            org.mockito.ArgumentMatchers.eq("Q-DUP"),
+            org.mockito.ArgumentMatchers.eq(true));
+  }
+
+  @Test
+  void preFlightProbeSkipsAnAlreadyPersistedAcknowledgementWithoutInserting() {
+    when(acknowledgementWritePort.existsBySpecArtifactPublicIdAndQuestionId(ART, "Q-EXISTS"))
+        .thenReturn(true);
+    when(acknowledgementWritePort.existsBySpecArtifactPublicIdAndQuestionId(ART, "Q-NEW"))
+        .thenReturn(false);
+
+    int inserted =
+        service.persistSpecClarificationAcknowledgements(
+            ART,
+            List.of(
+                new ClarificationIngestService.RaisedAcknowledgement("Q-EXISTS", true),
+                new ClarificationIngestService.RaisedAcknowledgement("Q-NEW", true)),
+            "corr-ack");
+
+    assertEquals(1, inserted, "only the genuinely-new acknowledgement is inserted");
+    verify(acknowledgementWritePort, never())
+        .insert(
+            any(),
+            any(),
+            org.mockito.ArgumentMatchers.eq("Q-EXISTS"),
+            org.mockito.ArgumentMatchers.anyBoolean());
+    verify(acknowledgementWritePort, times(1))
+        .insert(
+            any(),
+            org.mockito.ArgumentMatchers.eq(ART),
+            org.mockito.ArgumentMatchers.eq("Q-NEW"),
+            org.mockito.ArgumentMatchers.eq(true));
+  }
+
+  @Test
+  void emptyOrNullAcknowledgementsListIsANoOp() {
+    assertEquals(0, service.persistSpecClarificationAcknowledgements(ART, List.of(), "c"));
+    assertEquals(0, service.persistSpecClarificationAcknowledgements(ART, null, "c"));
+    verify(acknowledgementWritePort, never())
+        .insert(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
   }
 
   private static Clarification openFrom(NewClarification newClarification) {

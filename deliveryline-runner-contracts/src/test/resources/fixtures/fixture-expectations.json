@@ -64,6 +64,16 @@
       "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-question-malformed-id.json",
       "target": "RUNNER_RESULT",
       "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-acknowledgement-missing-addressed.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
+    },
+    {
+      "path": "src/test/resources/fixtures/invalid/runner-result.v1.invalid-acknowledgement-malformed-id.json",
+      "target": "RUNNER_RESULT",
+      "expectedCode": "SCHEMA_VALIDATION_FAILED"
     }
   ]
 }
