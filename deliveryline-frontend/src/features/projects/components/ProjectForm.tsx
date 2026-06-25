@@ -185,7 +185,9 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
         }
       }}
     >
-      <DialogContent data-testid="project-form-dialog">
+      {/* The runner-configuration fieldset (story 3e-4) can make this form taller than a short
+          viewport; bound the height and scroll so the footer submit stays reachable. */}
+      <DialogContent data-testid="project-form-dialog" className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Edit project' : 'New project'}</DialogTitle>
           <DialogDescription>

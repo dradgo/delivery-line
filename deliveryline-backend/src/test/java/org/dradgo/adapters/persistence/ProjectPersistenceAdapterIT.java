@@ -206,6 +206,15 @@ class ProjectPersistenceAdapterIT {
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null));
 
+    // PostgreSQL rounds created_at to microsecond precision on write, but the inserted aggregate
+    // still carries the in-memory nanosecond createdAt (the mapper stamps it so the aggregate is
+    // not null; Hibernate never refreshes it after saveAndFlush). Read the persisted value straight
+    // from the DB so the preservation assertion compares like-for-like — otherwise it flakes when
+    // the CI clock yields sub-microsecond nanos (the update reload returns the DB-rounded micros).
+    OffsetDateTime persistedCreatedAt =
+        jdbcTemplate.queryForObject(
+            "select created_at from projects where public_id = ?", OffsetDateTime.class, publicId);
+
     Project mutated =
         new Project(
             publicId,
@@ -231,7 +240,7 @@ class ProjectPersistenceAdapterIT {
     assertThat(loaded.repoHostKind()).isEqualTo(ConnectorKind.LINEAR);
     assertThat(loaded.openspecEnabled()).isTrue();
     assertThat(loaded.runnerKind()).isEqualTo(org.dradgo.domain.registry.RunnerKind.MANUAL);
-    assertThat(loaded.createdAt()).isEqualTo(inserted.createdAt());
+    assertThat(loaded.createdAt()).isEqualTo(persistedCreatedAt);
   }
 
   @Test
