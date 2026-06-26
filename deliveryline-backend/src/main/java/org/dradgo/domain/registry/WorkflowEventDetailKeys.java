@@ -31,6 +31,7 @@ public final class WorkflowEventDetailKeys {
   public static final String ARTIFACT_VERSION = "artifactVersion";
   public static final String CONTEXT_VERSION = "contextVersion";
   public static final String CORRELATION_ID = "correlationId";
+  public static final String CHILD_RUN_IDS = "childRunIds";
 
   // Recovery-event audit keys (added story 1.18 review F530)
   public static final String FAILED_STAGE = "failedStage";
@@ -107,6 +108,7 @@ public final class WorkflowEventDetailKeys {
           ARTIFACT_VERSION,
           CONTEXT_VERSION,
           CORRELATION_ID,
+          CHILD_RUN_IDS,
           FAILED_STAGE,
           TRIGGERING_EVENT_ID,
           REASON,

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1028,6 +1029,9 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_ONLY);
         }
         return List.of(AllowedAction.VIEW_ONLY);
+      case SPLIT:
+        // Story 3f-2: decomposed parent state; 3f-7 owns rollup, so operators inspect only.
+        return List.of(AllowedAction.VIEW_ONLY);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
       case FAILED:
@@ -1174,6 +1178,14 @@ public class WorkflowInspectionService {
       FailureDescription failure = recoveryService.describeFailure(workflowRunPublicId);
 
       ProjectAttribution project = projectAttributionFor(run.projectId());
+      List<String> childRunIds =
+          workflowRunReadPort.findByParentRunId(run.publicId()).stream()
+              .map(WorkflowRunSnapshot::publicId)
+              .toList();
+      log.debug(
+          "inspecting workflow_run children workflowRunId={} childCount={}",
+          run.publicId(),
+          childRunIds.size());
 
       WorkflowStatusView view =
           new WorkflowStatusView(
@@ -1193,6 +1205,8 @@ public class WorkflowInspectionService {
               failure.nextSafeAction(),
               run.specRejectionLoopCount(),
               run.escalationMarkerSet(),
+              run.parentRunId(),
+              childRunIds,
               project == null ? null : project.projectId(),
               project == null ? null : project.projectName(),
               project == null ? null : project.projectSlug());
@@ -1316,6 +1330,7 @@ public class WorkflowInspectionService {
               run.escalationMarkerSet(),
               pendingClarifications,
               run.archivedAt(),
+              run.parentRunId(),
               project == null ? null : project.projectId(),
               project == null ? null : project.projectName(),
               project == null ? null : project.projectSlug()));
@@ -2232,21 +2247,38 @@ public class WorkflowInspectionService {
         .forEachRemaining(
             entry -> {
               JsonNode value = entry.getValue();
-              if (value.isNull()) {
-                rebuilt.put(entry.getKey(), null);
-              } else if (value.isBoolean()) {
-                rebuilt.put(entry.getKey(), value.booleanValue());
-              } else if (value.isNumber()) {
-                // Preserve numeric type instead of coercing to a String — schemas pin
-                // `artifactVersion` / `contextVersion` as integers, and a future writer that
-                // hands us a Double, BigInteger, or BigDecimal would otherwise produce a JSON
-                // string that fails `workflow-history.v1` validation.
-                rebuilt.put(entry.getKey(), value.numberValue());
-              } else {
-                rebuilt.put(entry.getKey(), value.asText());
-              }
+              rebuilt.put(entry.getKey(), toPlainJsonValue(value));
             });
     return rebuilt;
+  }
+
+  private static Object toPlainJsonValue(JsonNode value) {
+    if (value == null || value.isNull()) {
+      return null;
+    }
+    if (value.isBoolean()) {
+      return value.booleanValue();
+    }
+    if (value.isNumber()) {
+      return value.numberValue();
+    }
+    if (value.isArray()) {
+      // Recurse into elements; a nested JSON null maps to a Java null, so wrap with
+      // Collections.unmodifiableList (List.copyOf rejects null elements and would 500 render).
+      List<Object> values = new ArrayList<>();
+      value.forEach(item -> values.add(toPlainJsonValue(item)));
+      return Collections.unmodifiableList(values);
+    }
+    if (value.isObject()) {
+      // As above, a nested null value would make Map.copyOf throw; unmodifiableMap tolerates it.
+      Map<String, Object> values = new LinkedHashMap<>();
+      value
+          .fields()
+          .forEachRemaining(
+              entry -> values.put(entry.getKey(), toPlainJsonValue(entry.getValue())));
+      return Collections.unmodifiableMap(values);
+    }
+    return value.asText();
   }
 
   private static Map<String, Object> filterAllowedDetails(Map<String, Object> raw) {
@@ -2310,6 +2342,8 @@ public class WorkflowInspectionService {
       // Story 2.10 - spec rejection loop tracking surfaced to the inspection consumer.
       int specRejectionLoopCount,
       boolean escalationMarker,
+      String parentRunId,
+      List<String> childRunIds,
       String projectId,
       String projectName,
       String projectSlug) {
@@ -2348,6 +2382,8 @@ public class WorkflowInspectionService {
           nextSafeAction,
           specRejectionLoopCount,
           escalationMarker,
+          null,
+          List.of(),
           null,
           null,
           null);
@@ -2434,6 +2470,7 @@ public class WorkflowInspectionService {
       // Story 3d-8 (FR67, AC5) - the soft-hide marker (null = live), surfaced on the queue summary
       // so WorkflowSummaryResponse can render an archived/hidden badge without a second lookup.
       OffsetDateTime archivedAt,
+      String parentRunId,
       String projectId,
       String projectName,
       String projectSlug) {
@@ -2458,6 +2495,7 @@ public class WorkflowInspectionService {
           escalationMarker,
           pendingClarifications,
           archivedAt,
+          null,
           null,
           null,
           null);

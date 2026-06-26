@@ -15,6 +15,8 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
 
   Optional<WorkflowRunEntity> findByPublicId(String publicId);
 
+  List<WorkflowRunEntity> findByParentRunIdOrderByCreatedAtDescIdDesc(String parentRunId);
+
   // Story 6.9 — newest-first run listing for GET /api/v1/workflows. created_at desc with an id
   // tiebreak gives a deterministic order even when fixtures share a created_at. Pageable caps the
   // row count (callers clamp the limit before building the page request).

@@ -14,6 +14,10 @@ public interface WorkflowRunReadPort {
    */
   Optional<WorkflowRunSnapshot> findByPublicId(String publicId);
 
+  default List<WorkflowRunSnapshot> findByParentRunId(String parentRunId) {
+    return List.of();
+  }
+
   /**
    * List workflow runs newest-first (by {@code created_at} descending, id tiebreak), optionally
    * filtered by current state, capped at {@code limit} rows (story 6.9 — backs {@code GET

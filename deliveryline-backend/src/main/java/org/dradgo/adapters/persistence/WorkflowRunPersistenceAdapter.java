@@ -81,6 +81,14 @@ public class WorkflowRunPersistenceAdapter
 
   @Override
   @Transactional(readOnly = true)
+  public List<WorkflowRunSnapshot> findByParentRunId(String parentRunId) {
+    return workflowRunRepository.findByParentRunIdOrderByCreatedAtDescIdDesc(parentRunId).stream()
+        .map(workflowRunEntityMapper::toSnapshot)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public List<WorkflowRunSnapshot> listRuns(
       WorkflowState stateFilter, boolean includeArchived, int limit, String projectId) {
     Pageable page = PageRequest.of(0, limit);
@@ -137,10 +145,14 @@ public class WorkflowRunPersistenceAdapter
   }
 
   @Override
-  public WorkflowRunSnapshot create(String publicId, WorkflowState initialState, String projectId) {
+  public WorkflowRunSnapshot create(
+      String publicId, WorkflowState initialState, String projectId, String parentRunId) {
+    if (parentRunId != null) {
+      log.info("creating child run {} under parent {}", publicId, parentRunId);
+    }
     return workflowRunEntityMapper.toSnapshot(
         workflowRunRepository.saveAndFlush(
-            workflowRunEntityMapper.toNewEntity(publicId, initialState, projectId)));
+            workflowRunEntityMapper.toNewEntity(publicId, initialState, projectId, parentRunId)));
   }
 
   @Override

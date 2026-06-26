@@ -94,7 +94,21 @@ class WorkflowInspectionServiceTest {
   void getStatusReturnsHappyPathViewWithLatestEventArtifactsAndLink() {
     when(runs.findByPublicId(RUN))
         .thenReturn(
-            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 3L, 0, false)));
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN,
+                    WorkflowState.EXECUTING,
+                    null,
+                    3L,
+                    0,
+                    false,
+                    "prj_default",
+                    "run_parent1234")));
+    when(runs.findByParentRunId(RUN))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot(
+                    "run_childA1234", WorkflowState.INBOX, null, 1L, 0, false, null, RUN)));
     when(events.findLatestByWorkflowRunPublicId(RUN))
         .thenReturn(
             Optional.of(
@@ -145,6 +159,8 @@ class WorkflowInspectionServiceTest {
     assertNotNull(view.linkedTicket());
     assertEquals("LIN-101", view.linkedTicket().externalRef());
     assertEquals("await_outcome", view.nextSafeAction());
+    assertEquals("run_parent1234", view.parentRunId());
+    assertEquals(List.of("run_childA1234"), view.childRunIds());
     assertNull(view.failedStage());
     assertNull(view.lastSuccessfulStage());
     assertNull(view.failureTimestamp());
@@ -157,6 +173,11 @@ class WorkflowInspectionServiceTest {
     when(runs.findByPublicId(RUN))
         .thenReturn(
             Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.INBOX, null, 1L, 0, false)));
+    when(runs.findByParentRunId(RUN))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot(
+                    "run_childA1234", WorkflowState.INBOX, null, 1L, 0, false, null, RUN)));
     when(events.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
     when(artifacts.findLatestByWorkflowRunIdAndArtifactType(eq(RUN), any()))
         .thenReturn(Optional.empty());
@@ -198,6 +219,7 @@ class WorkflowInspectionServiceTest {
     rawDetails.put("specRejectionLoopCount", 2);
     rawDetails.put("escalationMarker", true);
     rawDetails.put("someUnknownKey", "drop-me");
+    rawDetails.put("childRunIds", List.of("run_child1", "run_child2"));
     when(events.listByWorkflowRunPublicId(RUN, null))
         .thenReturn(
             List.of(
@@ -218,6 +240,7 @@ class WorkflowInspectionServiceTest {
     assertEquals("missing_scope", renderedDetails.get("taggedFeedback"));
     assertEquals(2, renderedDetails.get("specRejectionLoopCount"));
     assertEquals(true, renderedDetails.get("escalationMarker"));
+    assertEquals(List.of("run_child1", "run_child2"), renderedDetails.get("childRunIds"));
     assertNull(
         renderedDetails.get("idempotencyKey"),
         "idempotencyKey must never reach a rendered details payload");

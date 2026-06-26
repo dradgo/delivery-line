@@ -44,6 +44,12 @@ public record WorkflowDetailResponse(
             example = "false")
         boolean escalationMarker,
     @Schema(
+            description = "Parent workflow run public id, when this run is a split child.",
+            nullable = true)
+        String parentRunId,
+    @Schema(description = "Child workflow run public ids for this parent run.")
+        List<String> childRunIds,
+    @Schema(
             description = "Project public id for the run.",
             nullable = true,
             example = "prj_default")
@@ -76,6 +82,8 @@ public record WorkflowDetailResponse(
         view.nextSafeAction(),
         view.specRejectionLoopCount(),
         view.escalationMarker(),
+        view.parentRunId(),
+        view.childRunIds() == null ? List.of() : view.childRunIds(),
         view.projectId(),
         view.projectName(),
         view.projectSlug());

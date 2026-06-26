@@ -193,6 +193,7 @@ class WorkflowReadEndpointsContractTest {
             "specRejectionLoopCount",
             "escalationMarker",
             "archivedAt",
+            "parentRunId",
             "projectId",
             "projectName",
             "projectSlug");

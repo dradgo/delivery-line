@@ -28,6 +28,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_REVIEW,
             // Story 3d-3 — manual-execution park state.
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            WorkflowState.SPLIT,
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
             WorkflowState.PAUSED,
@@ -62,6 +63,7 @@ class WorkflowTransitionTableTest {
         Set.of(
             WorkflowState.EXECUTING,
             WorkflowState.INVESTIGATING,
+            WorkflowState.SPLIT,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3d-3: EXECUTING gains a WAITING_FOR_MANUAL_EXECUTION edge (execution-stage manual
@@ -80,6 +82,7 @@ class WorkflowTransitionTableTest {
         Set.of(
             WorkflowState.COMPLETED,
             WorkflowState.EXECUTING,
+            WorkflowState.SPLIT,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3d-3: a parked manual run leaves only on operator submission (spec → SpecApproval,
@@ -92,6 +95,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.FAILED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
+    expectedTargets.put(WorkflowState.SPLIT, Set.of(WorkflowState.COMPLETED));
     expectedTargets.put(WorkflowState.COMPLETED, Set.of());
     expectedTargets.put(
         WorkflowState.FAILED,
@@ -112,6 +116,12 @@ class WorkflowTransitionTableTest {
           table.allowedTargetsFrom(entry.getKey()),
           () -> "Unexpected targets from " + entry.getKey());
     }
+  }
+
+  @Test
+  void splitStateWireValueParsesRoundTrip() {
+    assertEquals(WorkflowState.SPLIT, WorkflowState.fromValue("Split", "state"));
+    assertEquals("Split", WorkflowState.SPLIT.value());
   }
 
   @Test

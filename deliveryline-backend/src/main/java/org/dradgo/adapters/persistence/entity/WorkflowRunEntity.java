@@ -26,10 +26,16 @@ public class WorkflowRunEntity {
   // non-null prj_default.
   public static WorkflowRunEntity create(
       String publicId, WorkflowState currentState, String projectId) {
+    return create(publicId, currentState, projectId, null);
+  }
+
+  public static WorkflowRunEntity create(
+      String publicId, WorkflowState currentState, String projectId, String parentRunId) {
     WorkflowRunEntity entity = new WorkflowRunEntity();
     entity.publicId = publicId;
     entity.currentState = Objects.requireNonNull(currentState, "currentState").value();
     entity.projectId = projectId;
+    entity.parentRunId = parentRunId;
     return entity;
   }
 
@@ -49,6 +55,9 @@ public class WorkflowRunEntity {
   // can target it. Still nullable at the column level (legacy rows backfilled at startup).
   @Column(name = "project_id")
   private String projectId;
+
+  @Column(name = "parent_run_id")
+  private String parentRunId;
 
   @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
   private OffsetDateTime createdAt;
@@ -90,6 +99,10 @@ public class WorkflowRunEntity {
 
   public String getProjectId() {
     return projectId;
+  }
+
+  public String getParentRunId() {
+    return parentRunId;
   }
 
   public void setProjectId(String projectId) {

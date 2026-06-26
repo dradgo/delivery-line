@@ -8,6 +8,7 @@
     "Executing",
     "WaitingForReview",
     "WaitingForManualExecution",
+    "Split",
     "Completed",
     "Failed",
     "Paused",

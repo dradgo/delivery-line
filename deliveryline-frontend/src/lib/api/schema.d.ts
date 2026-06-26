@@ -1290,6 +1290,8 @@ export interface components {
         };
         /** @description Current status detail of a workflow run. */
         WorkflowDetail: {
+            /** @description Child workflow run public ids for this parent run. */
+            childRunIds?: string[];
             currentActorIdentity?: string;
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
@@ -1316,6 +1318,8 @@ export interface components {
              * @example view_only
              */
             nextSafeAction?: string;
+            /** @description Parent workflow run public id, when this run is a split child. */
+            parentRunId?: string | null;
             /**
              * @description Project public id for the run.
              * @example prj_default
@@ -1382,17 +1386,17 @@ export interface components {
              * @example workflow.stateChanged
              * @enum {string}
              */
-            eventType: "workflow.stateChanged" | "approval.requested" | "approval.approved" | "approval.rejected" | "escalation.required" | "artifact.draftCreated" | "artifact.available" | "artifact.failed" | "artifact.versionCreated" | "runner.started" | "runner.failed" | "runner.dispatched" | "runner.heartbeatStale" | "runner.timeout" | "runner.orphaned" | "runner.completed" | "recovery.retried" | "recovery.dispatchFailed" | "recovery.reconciled" | "artifact.lineageRecovered" | "integration.linked" | "export.created" | "clarification.answered" | "clarification.accepted" | "clarification.incorporated" | "clarification.superseded" | "clarification.rejectedInvalid" | "clarification.noEffectReason";
+            eventType: "workflow.stateChanged" | "approval.requested" | "approval.approved" | "approval.rejected" | "escalation.required" | "artifact.draftCreated" | "artifact.available" | "artifact.failed" | "artifact.versionCreated" | "runner.started" | "runner.failed" | "runner.dispatched" | "runner.heartbeatStale" | "runner.timeout" | "runner.orphaned" | "runner.completed" | "recovery.retried" | "recovery.dispatchFailed" | "recovery.reconciled" | "artifact.lineageRecovered" | "integration.linked" | "export.created" | "clarification.answered" | "clarification.accepted" | "clarification.incorporated" | "clarification.superseded" | "clarification.rejectedInvalid" | "clarification.noEffectReason" | "workflow.split";
             /** @enum {string|null} */
             failureCategory?: "runner_timeout" | "runner_crash" | "runner_contract_violation" | "runner_non_zero_exit" | "runner_late_result" | "runner_duplicate_result" | "runner_malformed_output" | "runner_secret_leak" | "orphan" | null;
             interventionMarker: boolean;
             /** @enum {string|null} */
-            priorState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
+            priorState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
             /** @example evt_abc123 */
             publicId: string;
             reason?: string | null;
             /** @enum {string|null} */
-            resultingState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
+            resultingState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
             /** @example run_abc123 */
             workflowRunPublicId: string;
         };
@@ -1411,7 +1415,7 @@ export interface components {
              * @description State at the end of the returned stream (the run's current state).
              * @enum {string|null}
              */
-            terminalState: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
+            terminalState: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
             /** @example DEL-1234 */
             ticketRef: string;
         };
@@ -1447,6 +1451,8 @@ export interface components {
              * @example workflow.stateChanged
              */
             lastEventType?: string;
+            /** @description Parent workflow run public id, when this run is a split child. */
+            parentRunId?: string | null;
             /**
              * @description Project public id for the run.
              * @example prj_default

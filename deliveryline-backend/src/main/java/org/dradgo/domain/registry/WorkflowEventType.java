@@ -4,6 +4,7 @@ import java.util.Map;
 
 public enum WorkflowEventType implements RegistryValue {
   WORKFLOW_STATE_CHANGED("workflow.stateChanged"),
+  SPLIT("workflow.split"),
   APPROVAL_REQUESTED("approval.requested"),
   APPROVAL_APPROVED("approval.approved"),
   APPROVAL_REJECTED("approval.rejected"),

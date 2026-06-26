@@ -40,6 +40,10 @@ public record WorkflowSummaryResponse(
             nullable = true)
         OffsetDateTime archivedAt,
     @Schema(
+            description = "Parent workflow run public id, when this run is a split child.",
+            nullable = true)
+        String parentRunId,
+    @Schema(
             description = "Project public id for the run.",
             nullable = true,
             example = "prj_default")
@@ -69,6 +73,7 @@ public record WorkflowSummaryResponse(
         view.specRejectionLoopCount(),
         view.escalationMarker(),
         toUtc(view.archivedAt()),
+        view.parentRunId(),
         view.projectId(),
         view.projectName(),
         view.projectSlug());

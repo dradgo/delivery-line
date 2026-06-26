@@ -66,6 +66,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.WAITING_FOR_SPEC_APPROVAL,
         WorkflowState.EXECUTING,
         WorkflowState.INVESTIGATING,
+        WorkflowState.SPLIT,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -84,6 +85,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.WAITING_FOR_REVIEW,
         WorkflowState.COMPLETED,
         WorkflowState.EXECUTING,
+        WorkflowState.SPLIT,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4 picks
@@ -99,6 +101,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
+    put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED);
     put(rules, WorkflowState.COMPLETED);
     put(
         rules,

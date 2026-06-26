@@ -65,6 +65,7 @@ class TransitionTableCrossProductFoundationContract {
               EnumSet.of(
                   WorkflowState.EXECUTING,
                   WorkflowState.INVESTIGATING,
+                  WorkflowState.SPLIT,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           // Story 3d-3 (AC2 / R4) — the execution-stage dispatching state parks in
@@ -83,6 +84,7 @@ class TransitionTableCrossProductFoundationContract {
               EnumSet.of(
                   WorkflowState.COMPLETED,
                   WorkflowState.EXECUTING,
+                  WorkflowState.SPLIT,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4
@@ -96,6 +98,7 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.FAILED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
+          Map.entry(WorkflowState.SPLIT, EnumSet.of(WorkflowState.COMPLETED)),
           Map.entry(WorkflowState.COMPLETED, EnumSet.noneOf(WorkflowState.class)),
           Map.entry(
               WorkflowState.FAILED,

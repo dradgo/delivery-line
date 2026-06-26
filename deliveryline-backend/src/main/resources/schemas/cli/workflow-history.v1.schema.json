@@ -83,6 +83,11 @@
               "redactionCount": { "type": "integer" },
               "rawOutputByteSize": { "type": "integer" },
               "rawOutputClassification": { "type": "string" },
+              "childRunIds": {
+                "type": "array",
+                "maxItems": 100,
+                "items": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{4,}$" }
+              },
               "githubPrReference": { "type": "string" },
               "repositoryFullName": { "type": "string" },
               "branch": { "type": "string" },

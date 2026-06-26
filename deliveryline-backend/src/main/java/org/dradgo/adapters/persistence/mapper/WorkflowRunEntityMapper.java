@@ -10,7 +10,12 @@ public class WorkflowRunEntityMapper {
 
   public WorkflowRunEntity toNewEntity(
       String publicId, WorkflowState initialState, String projectId) {
-    return WorkflowRunEntity.create(publicId, initialState, projectId);
+    return toNewEntity(publicId, initialState, projectId, null);
+  }
+
+  public WorkflowRunEntity toNewEntity(
+      String publicId, WorkflowState initialState, String projectId, String parentRunId) {
+    return WorkflowRunEntity.create(publicId, initialState, projectId, parentRunId);
   }
 
   public WorkflowRunSnapshot toSnapshot(WorkflowRunEntity entity) {
@@ -21,6 +26,7 @@ public class WorkflowRunEntityMapper {
         entity.getVersion(),
         entity.getSpecRejectionLoopCount(),
         entity.isEscalationMarkerSet(),
-        entity.getProjectId());
+        entity.getProjectId(),
+        entity.getParentRunId());
   }
 }

@@ -1616,6 +1616,13 @@
       "WorkflowDetail" : {
         "description" : "Current status detail of a workflow run.",
         "properties" : {
+          "childRunIds" : {
+            "description" : "Child workflow run public ids for this parent run.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
           "currentActorIdentity" : {
             "type" : "string"
           },
@@ -1668,6 +1675,13 @@
             "description" : "Next safe operator action for the current state.",
             "example" : "view_only",
             "type" : "string"
+          },
+          "parentRunId" : {
+            "description" : "Parent workflow run public id, when this run is a split child.",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "projectId" : {
             "description" : "Project public id for the run.",
@@ -1848,7 +1862,8 @@
               "clarification.incorporated",
               "clarification.superseded",
               "clarification.rejectedInvalid",
-              "clarification.noEffectReason"
+              "clarification.noEffectReason",
+              "workflow.split"
             ],
             "example" : "workflow.stateChanged",
             "type" : "string"
@@ -1881,6 +1896,7 @@
               "WaitingForSpecApproval",
               "Executing",
               "WaitingForReview",
+              "Split",
               "Completed",
               "Failed",
               "Paused",
@@ -1911,6 +1927,7 @@
               "WaitingForSpecApproval",
               "Executing",
               "WaitingForReview",
+              "Split",
               "Completed",
               "Failed",
               "Paused",
@@ -1981,6 +1998,7 @@
               "WaitingForSpecApproval",
               "Executing",
               "WaitingForReview",
+              "Split",
               "Completed",
               "Failed",
               "Paused",
@@ -2054,6 +2072,13 @@
             "description" : "Type of the most recent event.",
             "example" : "workflow.stateChanged",
             "type" : "string"
+          },
+          "parentRunId" : {
+            "description" : "Parent workflow run public id, when this run is a split child.",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "projectId" : {
             "description" : "Project public id for the run.",

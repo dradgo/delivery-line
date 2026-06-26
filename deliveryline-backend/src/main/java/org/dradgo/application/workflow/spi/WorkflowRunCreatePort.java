@@ -17,5 +17,11 @@ public interface WorkflowRunCreatePort {
    *     caller resolves the default project first; the run row is never null at insert)
    * @return non-null snapshot of the freshly created row, including assigned version
    */
-  WorkflowRunSnapshot create(String publicId, WorkflowState initialState, String projectId);
+  default WorkflowRunSnapshot create(
+      String publicId, WorkflowState initialState, String projectId) {
+    return create(publicId, initialState, projectId, null);
+  }
+
+  WorkflowRunSnapshot create(
+      String publicId, WorkflowState initialState, String projectId, String parentRunId);
 }

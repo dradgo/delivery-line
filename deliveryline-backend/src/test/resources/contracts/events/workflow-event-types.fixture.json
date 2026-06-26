@@ -2,6 +2,7 @@
   "ownerUntil": "Keep runner schema fixtures out of backend resources; this file hands off to the foundation fixture stream in story 1.23.",
   "workflowEventTypes": [
     "workflow.stateChanged",
+    "workflow.split",
     "approval.requested",
     "approval.approved",
     "approval.rejected",

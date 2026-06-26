@@ -21,7 +21,8 @@ public record WorkflowRunSnapshot(
     Long version,
     int specRejectionLoopCount,
     boolean escalationMarkerSet,
-    String projectId) {
+    String projectId,
+    String parentRunId) {
 
   public WorkflowRunSnapshot(
       String publicId,
@@ -37,6 +38,26 @@ public record WorkflowRunSnapshot(
         version,
         specRejectionLoopCount,
         escalationMarkerSet,
+        null,
+        null);
+  }
+
+  public WorkflowRunSnapshot(
+      String publicId,
+      WorkflowState currentState,
+      OffsetDateTime archivedAt,
+      Long version,
+      int specRejectionLoopCount,
+      boolean escalationMarkerSet,
+      String projectId) {
+    this(
+        publicId,
+        currentState,
+        archivedAt,
+        version,
+        specRejectionLoopCount,
+        escalationMarkerSet,
+        projectId,
         null);
   }
 

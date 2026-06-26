@@ -67,6 +67,7 @@ public record WorkflowEventsResponse(
                 "WaitingForSpecApproval",
                 "Executing",
                 "WaitingForReview",
+                "Split",
                 "Completed",
                 "Failed",
                 "Paused",
@@ -137,7 +138,8 @@ public record WorkflowEventsResponse(
                 "clarification.incorporated",
                 "clarification.superseded",
                 "clarification.rejectedInvalid",
-                "clarification.noEffectReason"
+                "clarification.noEffectReason",
+                "workflow.split"
               },
               requiredMode = Schema.RequiredMode.REQUIRED)
           String eventType,
@@ -150,6 +152,7 @@ public record WorkflowEventsResponse(
                 "WaitingForSpecApproval",
                 "Executing",
                 "WaitingForReview",
+                "Split",
                 "Completed",
                 "Failed",
                 "Paused",
@@ -166,6 +169,7 @@ public record WorkflowEventsResponse(
                 "WaitingForSpecApproval",
                 "Executing",
                 "WaitingForReview",
+                "Split",
                 "Completed",
                 "Failed",
                 "Paused",

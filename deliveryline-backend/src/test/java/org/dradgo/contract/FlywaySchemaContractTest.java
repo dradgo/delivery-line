@@ -188,6 +188,8 @@ class FlywaySchemaContractTest {
             "WaitingForSpecApproval",
             "Executing",
             "WaitingForReview",
+            "WaitingForManualExecution",
+            "Split",
             "Completed",
             "Failed",
             "Paused",
@@ -819,6 +821,47 @@ class FlywaySchemaContractTest {
     // workflow_events / artifacts / recovery_actions precedent.
     assertIndexDefinitionContains("idx_workflow_runs_archived_at", "archived_at");
     assertIndexDefinitionContains("idx_workflow_runs_archived_at", "archived_at IS NOT NULL");
+  }
+
+  @Test
+  void workflowRunsCarryNullableParentRunIdForeignKeyAndPartialIndex() {
+    assertColumnType("workflow_runs", "parent_run_id", "text");
+    assertColumnNullable("workflow_runs", "parent_run_id", true);
+    assertConstraintDefinitionContains("fk_workflow_runs_parent_run", "parent_run_id");
+    assertConstraintDefinitionContains("fk_workflow_runs_parent_run", "public_id");
+    assertConstraintDefinitionContains("ck_workflow_runs_parent_run_not_self", "parent_run_id");
+    assertConstraintDefinitionContains("ck_workflow_runs_parent_run_not_self", "public_id");
+    assertIndexDefinitionContains("idx_workflow_runs_parent_run_id", "parent_run_id");
+    assertIndexDefinitionContains("idx_workflow_runs_parent_run_id", "parent_run_id IS NOT NULL");
+
+    String parent = "run_parent" + uniqueRowSuffix();
+    String child = "run_child" + uniqueRowSuffix();
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, 'Inbox')", parent);
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state, parent_run_id) values (?, 'Inbox', ?)",
+        child,
+        parent);
+    assertEquals(
+        parent,
+        jdbcTemplate.queryForObject(
+            "select parent_run_id from workflow_runs where public_id = ?", String.class, child));
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into workflow_runs (public_id, current_state, parent_run_id) values (?, 'Inbox', 'run_missing_parent')",
+                "run_dangling" + uniqueRowSuffix()),
+        "Expected parent_run_id FK to reject a missing parent run public id");
+    String self = "run_self" + uniqueRowSuffix();
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into workflow_runs (public_id, current_state, parent_run_id) values (?, 'Inbox', ?)",
+                self,
+                self),
+        "Expected parent_run_id CHECK to reject a self-parent row");
   }
 
   @Test
