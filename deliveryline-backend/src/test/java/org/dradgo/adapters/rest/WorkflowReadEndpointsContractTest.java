@@ -192,7 +192,10 @@ class WorkflowReadEndpointsContractTest {
             "lastEventType",
             "specRejectionLoopCount",
             "escalationMarker",
-            "archivedAt");
+            "archivedAt",
+            "projectId",
+            "projectName",
+            "projectSlug");
     // Newest-first: OTHER_RUN was created after HAPPY_RUN.
     assertThat(first.get("workflowRunId").asText()).isEqualTo(OTHER_RUN);
 
