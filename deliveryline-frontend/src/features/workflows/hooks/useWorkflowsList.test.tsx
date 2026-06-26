@@ -38,6 +38,39 @@ describe('useWorkflowsList', () => {
     expect(result.current.data?.[0]?.workflowRunId).toBe('run_abcd0001');
   });
 
+  it('threads a non-empty projectId filter to the workflow list request', async () => {
+    let seenProjectId: string | null = null;
+    server.use(
+      http.get('http://localhost/api/v1/workflows', ({ request }) => {
+        seenProjectId = new URL(request.url).searchParams.get('projectId');
+        return HttpResponse.json([]);
+      }),
+    );
+
+    const { result } = renderHook(() => useWorkflowsList({ projectId: 'prj_alpha' }), {
+      wrapper: createWrapper(freshClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(seenProjectId).toBe('prj_alpha');
+  });
+
+  it('does not send an empty projectId query parameter', async () => {
+    let hasProjectId = true;
+    server.use(
+      http.get('http://localhost/api/v1/workflows', ({ request }) => {
+        hasProjectId = new URL(request.url).searchParams.has('projectId');
+        return HttpResponse.json([]);
+      }),
+    );
+
+    const { result } = renderHook(() => useWorkflowsList({ projectId: ' ' }), {
+      wrapper: createWrapper(freshClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(hasProjectId).toBe(false);
+  });
   it('surfaces a server failure as isError', async () => {
     server.use(
       http.get(

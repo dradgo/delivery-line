@@ -587,3 +587,59 @@ describe('RunReviewQueueItem — archived chip (story 3d-8, AC5)', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3f-6 - project attribution metadata.
+// ---------------------------------------------------------------------------
+describe('RunReviewQueueItem - project attribution (story 3f-6)', () => {
+  it('renders a color-independent project chip from live row attribution', () => {
+    render(
+      <RunReviewQueueItem
+        run={{
+          ...BASE_ROW,
+          projectId: 'prj_alpha',
+          projectName: 'Alpha project',
+          projectSlug: 'alpha',
+        }}
+      />,
+    );
+
+    const project = within(screen.getByTestId('queue-item-secondary')).getByTestId(
+      'queue-item-project',
+    );
+    expect(project).toHaveTextContent('Project: Alpha project');
+    expect(project.querySelector('svg')).not.toBeNull();
+    expect(row()).toHaveAttribute(
+      'aria-label',
+      'DEL-1234 run_abc123, Alpha project, WaitingForSpecApproval, last updated 3 minutes ago',
+    );
+  });
+
+  it('falls back to slug then id and omits the chip when no project attribution exists', () => {
+    const { rerender } = render(
+      <RunReviewQueueItem run={{ ...BASE_ROW, projectId: 'prj_alpha', projectSlug: 'alpha' }} />,
+    );
+    expect(screen.getByTestId('queue-item-project')).toHaveTextContent('Project: alpha');
+
+    rerender(<RunReviewQueueItem run={{ ...BASE_ROW, projectId: 'prj_alpha' }} />);
+    expect(screen.getByTestId('queue-item-project')).toHaveTextContent('Project: prj_alpha');
+
+    rerender(<RunReviewQueueItem run={BASE_ROW} />);
+    expect(screen.queryByTestId('queue-item-project')).toBeNull();
+  });
+
+  it('AC5 — a project-attributed row passes a wcag2aa axe scan', async () => {
+    const { container } = render(
+      <RunReviewQueueItem
+        run={{
+          ...BASE_ROW,
+          projectId: 'prj_alpha',
+          projectName: 'Alpha project',
+          projectSlug: 'alpha',
+        }}
+      />,
+    );
+
+    await expectNoA11yViolations(container);
+  });
+});

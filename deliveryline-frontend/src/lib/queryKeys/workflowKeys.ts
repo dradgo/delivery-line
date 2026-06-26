@@ -26,6 +26,8 @@ export interface WorkflowListFilters {
    * so the archived/un-archived views are distinct cache entries.
    */
   includeArchived?: boolean;
+  /** Project filter, accepted as a project slug or prj_ public id. */
+  projectId?: string;
 }
 
 /**
@@ -37,12 +39,21 @@ function normalizeFilters(filters: WorkflowListFilters = {}): WorkflowListFilter
   const normalized: WorkflowListFilters = {};
   for (const key of Object.keys(filters).sort() as (keyof WorkflowListFilters)[]) {
     const value = filters[key];
-    if (value !== undefined) {
-      // Writing through a union key (`keyof WorkflowListFilters`) would require the
-      // value to be assignable to `never` (the intersection of the differently-typed
-      // fields); a Record view keeps the generic loop while the runtime is unchanged.
-      (normalized as Record<string, unknown>)[key] = value;
+    if (value === undefined) {
+      continue;
     }
+    if (key === 'projectId' && typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed === '') {
+        continue;
+      }
+      (normalized as Record<string, unknown>)[key] = trimmed;
+      continue;
+    }
+    // Writing through a union key (`keyof WorkflowListFilters`) would require the
+    // value to be assignable to `never` (the intersection of the differently-typed
+    // fields); a Record view keeps the generic loop while the runtime is unchanged.
+    (normalized as Record<string, unknown>)[key] = value;
   }
   return normalized;
 }

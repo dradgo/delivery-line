@@ -1669,6 +1669,30 @@
             "example" : "view_only",
             "type" : "string"
           },
+          "projectId" : {
+            "description" : "Project public id for the run.",
+            "example" : "prj_default",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "projectName" : {
+            "description" : "Project display name for the run.",
+            "example" : "Default project",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "projectSlug" : {
+            "description" : "Project slug for the run.",
+            "example" : "default",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "specRejectionLoopCount" : {
             "description" : "How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).",
             "example" : 0,
@@ -2030,6 +2054,30 @@
             "description" : "Type of the most recent event.",
             "example" : "workflow.stateChanged",
             "type" : "string"
+          },
+          "projectId" : {
+            "description" : "Project public id for the run.",
+            "example" : "prj_default",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "projectName" : {
+            "description" : "Project display name for the run.",
+            "example" : "Default project",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "projectSlug" : {
+            "description" : "Project slug for the run.",
+            "example" : "default",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "specRejectionLoopCount" : {
             "description" : "How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).",
@@ -2562,7 +2610,7 @@
     },
     "/api/v1/workflows" : {
       "get" : {
-        "description" : "Newest-first list of workflow runs for the review queue, optionally filtered by state.",
+        "description" : "Newest-first list of workflow runs for the review queue, optionally filtered by state and project. The projectId query parameter accepts either a project slug or a prj_ public id.",
         "operationId" : "listWorkflows",
         "parameters" : [
           {
@@ -2582,6 +2630,15 @@
             "schema" : {
               "default" : false,
               "type" : "boolean"
+            }
+          },
+          {
+            "description" : "Optional project filter. Accepts a project slug or a prj_ public id.",
+            "in" : "query",
+            "name" : "projectId",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
             }
           },
           {

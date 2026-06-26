@@ -30,5 +30,11 @@ public interface WorkflowRunReadPort {
    * @param limit maximum rows to return (callers clamp to a sane ceiling before calling)
    * @return run snapshots in newest-first order (possibly empty, never {@code null})
    */
-  List<WorkflowRunSnapshot> listRuns(WorkflowState stateFilter, boolean includeArchived, int limit);
+  default List<WorkflowRunSnapshot> listRuns(
+      WorkflowState stateFilter, boolean includeArchived, int limit) {
+    return listRuns(stateFilter, includeArchived, limit, null);
+  }
+
+  List<WorkflowRunSnapshot> listRuns(
+      WorkflowState stateFilter, boolean includeArchived, int limit, String projectId);
 }

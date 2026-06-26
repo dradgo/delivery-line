@@ -24,6 +24,8 @@ import { toRunQueueRow } from '@/features/workflows/runQueueRow';
 export const Route = createFileRoute('/workflows/')({
   // Story 3d-8 — the URL carries both the `state` filter and the `includeArchived` flag, each
   // sanitized independently so a deep link with either (or both) renders off the shared cache.
+  // Story 3f-6 — the URL also carries the `projectId` filter (slug or prj_ public id); without
+  // parsing it here TanStack would strip it on every navigation, leaving the filter inert.
   validateSearch: (search: Record<string, unknown>): WorkflowListFilters => {
     const filters: WorkflowListFilters = {};
     if (typeof search.state === 'string' && search.state.length > 0) {
@@ -31,6 +33,9 @@ export const Route = createFileRoute('/workflows/')({
     }
     if (search.includeArchived === true || search.includeArchived === 'true') {
       filters.includeArchived = true;
+    }
+    if (typeof search.projectId === 'string' && search.projectId.length > 0) {
+      filters.projectId = search.projectId;
     }
     return filters;
   },
@@ -52,6 +57,7 @@ function WorkflowsRoute() {
           search: {
             ...(next !== undefined ? { state: next } : {}),
             ...(search.includeArchived === true ? { includeArchived: true } : {}),
+            ...(search.projectId !== undefined ? { projectId: search.projectId } : {}),
           },
         })
       }
@@ -60,6 +66,16 @@ function WorkflowsRoute() {
           search: {
             ...(search.state !== undefined ? { state: search.state } : {}),
             ...(next === true ? { includeArchived: true } : {}),
+            ...(search.projectId !== undefined ? { projectId: search.projectId } : {}),
+          },
+        })
+      }
+      onProjectFilterChange={(next) =>
+        void navigate({
+          search: {
+            ...(search.state !== undefined ? { state: search.state } : {}),
+            ...(search.includeArchived === true ? { includeArchived: true } : {}),
+            ...(next !== undefined ? { projectId: next } : {}),
           },
         })
       }

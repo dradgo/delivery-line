@@ -38,6 +38,18 @@ describe('toRunQueueRow', () => {
     expect(row.specRejectionLoopCount).toBe(2);
   });
 
+  it('Story 3f-6 — maps live project attribution fields from the workflow summary', () => {
+    const row = toRunQueueRow({
+      ...LIVE_SUMMARY,
+      projectId: 'prj_alpha',
+      projectName: 'Alpha project',
+      projectSlug: 'alpha',
+    });
+    expect(row.projectId).toBe('prj_alpha');
+    expect(row.projectName).toBe('Alpha project');
+    expect(row.projectSlug).toBe('alpha');
+  });
+
   it('leaves every dormant (non-live) field undefined', () => {
     const row = toRunQueueRow(LIVE_SUMMARY);
     expect(row.summary).toBeUndefined();

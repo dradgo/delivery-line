@@ -68,12 +68,15 @@ export function retryUnlessNonRetryable(failureCount: number, error: unknown): b
 async function fetchWorkflowList(filters: WorkflowListFilters): Promise<WorkflowSummary[]> {
   // Story 3d-8 — thread the optional includeArchived flag alongside the state filter. Only send
   // the param when the caller opted in (true) so the default request stays byte-identical to today.
-  const query: { state?: string; includeArchived?: boolean } = {};
+  const query: { state?: string; includeArchived?: boolean; projectId?: string } = {};
   if (filters.state !== undefined) {
     query.state = filters.state;
   }
   if (filters.includeArchived === true) {
     query.includeArchived = true;
+  }
+  if (typeof filters.projectId === 'string' && filters.projectId.trim() !== '') {
+    query.projectId = filters.projectId.trim();
   }
   return unwrap(await apiClient.GET('/api/v1/workflows', { params: { query } }));
 }

@@ -193,11 +193,33 @@ class ArchiveRunEndpointContractTest {
   }
 
   @Test
+  void listWorkflowsThreadsProjectIdToService() throws Exception {
+    when(workflowInspectionService.listRuns(
+            any(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyInt(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(List.of());
+
+    mockMvc
+        .perform(
+            get("/api/v1/workflows")
+                .param("projectId", "prj_alpha")
+                .param("state", "Executing")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    verify(workflowInspectionService)
+        .listRuns(eq(WorkflowState.EXECUTING), eq(false), eq(50), eq("prj_alpha"));
+  }
+
+  @Test
   void listWorkflowsThreadsIncludeArchivedToService() throws Exception {
     when(workflowInspectionService.listRuns(
             any(),
             org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyInt()))
+            org.mockito.ArgumentMatchers.anyInt(),
+            org.mockito.ArgumentMatchers.any()))
         .thenReturn(List.of());
 
     mockMvc
@@ -206,11 +228,11 @@ class ArchiveRunEndpointContractTest {
                 .param("includeArchived", "true")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
-    verify(workflowInspectionService).listRuns(eq(null), eq(true), eq(50));
+    verify(workflowInspectionService).listRuns(eq(null), eq(true), eq(50), eq(null));
 
     mockMvc
         .perform(get("/api/v1/workflows").accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
-    verify(workflowInspectionService).listRuns(eq(null), eq(false), eq(50));
+    verify(workflowInspectionService).listRuns(eq(null), eq(false), eq(50), eq(null));
   }
 }

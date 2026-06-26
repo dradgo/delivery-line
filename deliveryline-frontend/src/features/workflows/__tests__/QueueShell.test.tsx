@@ -13,6 +13,7 @@ import type { ComponentProps, ReactNode } from 'react';
 import type * as ReactRouter from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, delay } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -53,6 +54,16 @@ function renderShell(node: ReactNode) {
   return render(<QueryClientProvider client={freshClient()}>{node}</QueryClientProvider>);
 }
 
+function installRadixSelectJsdomShims() {
+  Object.defineProperty(Element.prototype, 'hasPointerCapture', {
+    configurable: true,
+    value: () => false,
+  });
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: () => undefined,
+  });
+}
 function problemResponse() {
   return new HttpResponse(
     JSON.stringify({ status: 500, code: 'INTERNAL_ERROR', retryable: true, title: 'x' }),
@@ -61,6 +72,7 @@ function problemResponse() {
 }
 
 beforeEach(() => {
+  installRadixSelectJsdomShims();
   backSpy.mockClear();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -467,5 +479,99 @@ describe('QueueShell — include-archived filter toggle (story 3d-8)', () => {
       event: 'queue.toggleIncludeArchivedFilter',
       includeArchived: undefined,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3f-6 - project filter selector.
+// ---------------------------------------------------------------------------
+describe('QueueShell - project filter selector (story 3f-6)', () => {
+  it('changes the URL-owned project filter and logs only field-level state', async () => {
+    server.use(
+      http.get('http://localhost/api/v1/projects', () =>
+        HttpResponse.json([
+          { id: 'prj_alpha', slug: 'alpha', name: 'Alpha project', status: 'ACTIVE' },
+          { id: 'prj_beta', slug: 'beta', name: 'Beta project', status: 'ACTIVE' },
+        ]),
+      ),
+      http.get(LIST_URL, () => HttpResponse.json([])),
+    );
+    const onProjectFilterChange = vi.fn();
+    const user = userEvent.setup();
+
+    const { rerender } = renderShell(
+      <QueueShell filters={{}} onProjectFilterChange={onProjectFilterChange} />,
+    );
+
+    await user.click(await screen.findByRole('combobox', { name: 'Project:' }));
+    await user.click(await screen.findByRole('option', { name: 'Beta project' }));
+
+    expect(onProjectFilterChange).toHaveBeenCalledWith('prj_beta');
+    expect(console.info).toHaveBeenCalledWith({
+      event: 'queue.projectFilterChange',
+      projectId: 'prj_beta',
+    });
+
+    rerender(
+      <QueryClientProvider client={freshClient()}>
+        <QueueShell
+          filters={{ projectId: 'prj_beta' }}
+          onProjectFilterChange={onProjectFilterChange}
+        />
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole('combobox', { name: 'Project:' }));
+    await user.click(await screen.findByRole('option', { name: 'All projects' }));
+
+    expect(onProjectFilterChange).toHaveBeenCalledWith(undefined);
+    expect(console.info).toHaveBeenCalledWith({
+      event: 'queue.projectFilterChange',
+      projectId: null,
+    });
+  });
+
+  it('AC5 — the expanded project filter control passes a wcag2aa axe scan', async () => {
+    server.use(
+      http.get('http://localhost/api/v1/projects', () =>
+        HttpResponse.json([
+          { id: 'prj_alpha', slug: 'alpha', name: 'Alpha project', status: 'ACTIVE' },
+          { id: 'prj_beta', slug: 'beta', name: 'Beta project', status: 'ACTIVE' },
+        ]),
+      ),
+      http.get(LIST_URL, () => HttpResponse.json([])),
+    );
+    const user = userEvent.setup();
+    renderShell(<QueueShell filters={{}} onProjectFilterChange={vi.fn()} />);
+
+    // Expand the listbox so the axe scan covers the open combobox + options (Radix portals the
+    // listbox onto document.body, so scan the whole document rather than the render container).
+    await user.click(await screen.findByRole('combobox', { name: 'Project:' }));
+    await screen.findByRole('option', { name: 'Beta project' });
+    await expectNoA11yViolations(document.body);
+  });
+
+  it('announces the filtered-empty state after a project filter resolves', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+
+    const { container } = renderShell(<QueueShell filters={{ projectId: 'prj_alpha' }} />);
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-queue-state="filtered-empty"]')).not.toBeNull(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-announcer')).toHaveTextContent(
+        'No runs match the current filters',
+      ),
+    );
+  });
+  it('treats an empty projectId as inactive so Clear filters is not shown for it alone', async () => {
+    server.use(http.get(LIST_URL, () => HttpResponse.json([])));
+
+    const { container } = renderShell(<QueueShell filters={{ projectId: ' ' }} />);
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-queue-state="empty"]')).not.toBeNull(),
+    );
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull();
   });
 });

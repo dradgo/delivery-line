@@ -23,6 +23,7 @@ import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.recovery.FailureDescription;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
@@ -45,6 +46,7 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
@@ -93,6 +95,7 @@ public class WorkflowInspectionService {
   // in the test profile); the stale/lease window from RunnerProperties.staleThresholdFor(stage).
   private final RunnerProperties runnerProperties;
   private final RunnerWorkerPoolProperties runnerWorkerPoolProperties;
+  private ProjectStore projectStore;
   // Story 3b-5 — parses the structured prOutput payload (branch/commitSha/diff) for the
   // artifact-read projection. A plain instance field, not a constructor dependency, so the ~7 `new
   // WorkflowInspectionService(...)` test sites are untouched ([[runnerproperties-record-fanout]]).
@@ -143,6 +146,11 @@ public class WorkflowInspectionService {
   // WorkflowInspectionService(...)` test sites change; production Spring wires the
   // application.review @Component. Absent in lean unit ctors that never call getReviewerVerdict.
   private org.dradgo.application.review.spi.StepReviewReadPort stepReviewReadPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setProjectStore(ProjectStore projectStore) {
+    this.projectStore = projectStore;
+  }
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setStepReviewReadPort(
@@ -1165,6 +1173,8 @@ public class WorkflowInspectionService {
 
       FailureDescription failure = recoveryService.describeFailure(workflowRunPublicId);
 
+      ProjectAttribution project = projectAttributionFor(run.projectId());
+
       WorkflowStatusView view =
           new WorkflowStatusView(
               run.publicId(),
@@ -1182,7 +1192,10 @@ public class WorkflowInspectionService {
               failure.lastActivityTimestamp(),
               failure.nextSafeAction(),
               run.specRejectionLoopCount(),
-              run.escalationMarkerSet());
+              run.escalationMarkerSet(),
+              project == null ? null : project.projectId(),
+              project == null ? null : project.projectName(),
+              project == null ? null : project.projectSlug());
       log.info(
           "inspecting workflow_run snapshot success workflowRunId={} currentState={}",
           workflowRunPublicId,
@@ -1261,14 +1274,26 @@ public class WorkflowInspectionService {
   @Transactional(readOnly = true)
   public List<WorkflowRunSummaryView> listRuns(
       WorkflowState stateFilter, boolean includeArchived, int limit) {
+    return listRuns(stateFilter, includeArchived, limit, null);
+  }
+
+  @Transactional(readOnly = true)
+  public List<WorkflowRunSummaryView> listRuns(
+      WorkflowState stateFilter, boolean includeArchived, int limit, String projectFilter) {
     int capped = Math.min(Math.max(limit, 1), MAX_LIST_PAGE_SIZE);
     log.info(
-        "listing workflow_runs stateFilter={} includeArchived={} limit={}",
+        "listing workflow_runs stateFilter={} includeArchived={} limit={} projectFilterPresent={}",
         stateFilter == null ? "<all>" : stateFilter.value(),
         includeArchived,
-        capped);
+        capped,
+        projectFilter != null && !projectFilter.isBlank());
+    Project resolvedProject = resolveProjectFilter(projectFilter);
+    String resolvedProjectId = resolvedProject == null ? null : resolvedProject.publicId();
     List<WorkflowRunSnapshot> runs =
-        workflowRunReadPort.listRuns(stateFilter, includeArchived, capped);
+        resolvedProjectId == null
+            ? workflowRunReadPort.listRuns(stateFilter, includeArchived, capped)
+            : workflowRunReadPort.listRuns(stateFilter, includeArchived, capped, resolvedProjectId);
+    Map<String, Project> projectsById = projectsById(resolvedProject);
     List<WorkflowRunSummaryView> summaries = new ArrayList<>(runs.size());
     for (WorkflowRunSnapshot run : runs) {
       Optional<WorkflowEventRecord> latest =
@@ -1279,6 +1304,7 @@ public class WorkflowInspectionService {
               .map(IntegrationLink::externalRef)
               .orElse(null);
       int pendingClarifications = clarificationReadPort.countPendingByWorkflowRun(run.publicId());
+      ProjectAttribution project = projectAttributionFor(run.projectId(), projectsById);
       summaries.add(
           new WorkflowRunSummaryView(
               run.publicId(),
@@ -1289,11 +1315,79 @@ public class WorkflowInspectionService {
               run.specRejectionLoopCount(),
               run.escalationMarkerSet(),
               pendingClarifications,
-              run.archivedAt()));
+              run.archivedAt(),
+              project == null ? null : project.projectId(),
+              project == null ? null : project.projectName(),
+              project == null ? null : project.projectSlug()));
     }
-    log.info("listing workflow_runs success count={}", summaries.size());
+    log.info(
+        "listing workflow_runs success count={} projectFilterPresent={} resolvedProjectId={}",
+        summaries.size(),
+        projectFilter != null && !projectFilter.isBlank(),
+        resolvedProjectId);
     return summaries;
   }
+
+  private Project resolveProjectFilter(String projectFilter) {
+    if (projectFilter == null || projectFilter.isBlank()) {
+      return null;
+    }
+    String trimmed = projectFilter.trim();
+    if (projectStore == null) {
+      throw projectNotFound(trimmed);
+    }
+    Optional<Project> project =
+        trimmed.startsWith("prj_")
+            ? projectStore.findByPublicId(trimmed)
+            : projectStore.findBySlug(trimmed);
+    return project.orElseThrow(() -> projectNotFound(trimmed));
+  }
+
+  private Map<String, Project> projectsById(Project resolvedProject) {
+    Map<String, Project> projects = new LinkedHashMap<>();
+    if (projectStore != null) {
+      for (Project project : projectStore.findAll()) {
+        projects.put(project.publicId(), project);
+      }
+    }
+    if (resolvedProject != null) {
+      projects.put(resolvedProject.publicId(), resolvedProject);
+    }
+    return projects;
+  }
+
+  private ProjectAttribution projectAttributionFor(String projectId) {
+    if (projectId == null || projectId.isBlank()) {
+      return null;
+    }
+    if (projectStore == null) {
+      return new ProjectAttribution(projectId, null, null);
+    }
+    return projectStore
+        .findByPublicId(projectId)
+        .map(project -> new ProjectAttribution(project.publicId(), project.name(), project.slug()))
+        .orElseGet(() -> new ProjectAttribution(projectId, null, null));
+  }
+
+  private static ProjectAttribution projectAttributionFor(
+      String projectId, Map<String, Project> projectsById) {
+    if (projectId == null || projectId.isBlank()) {
+      return null;
+    }
+    Project project = projectsById.get(projectId);
+    return project == null
+        ? new ProjectAttribution(projectId, null, null)
+        : new ProjectAttribution(project.publicId(), project.name(), project.slug());
+  }
+
+  private static DomainException projectNotFound(String projectFilter) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("projectId", projectFilter);
+    return new DomainException(
+        DomainErrorCode.PROJECT_NOT_FOUND, "Project not found: " + projectFilter, details);
+  }
+
+  private record ProjectAttribution(String projectId, String projectName, String projectSlug) {}
 
   /**
    * Story 2.8 AC8 / FR10: latest approved spec for the workflow run, projected as a {@link
@@ -2213,9 +2307,52 @@ public class WorkflowInspectionService {
       String failureCategory,
       OffsetDateTime lastActivityTimestamp,
       String nextSafeAction,
-      // Story 2.10 — spec rejection loop tracking surfaced to the inspection consumer.
+      // Story 2.10 - spec rejection loop tracking surfaced to the inspection consumer.
       int specRejectionLoopCount,
-      boolean escalationMarker) {}
+      boolean escalationMarker,
+      String projectId,
+      String projectName,
+      String projectSlug) {
+
+    public WorkflowStatusView(
+        String workflowRunId,
+        WorkflowState currentState,
+        String currentActorIdentity,
+        String currentActorType,
+        String lastEventType,
+        OffsetDateTime lastEventAt,
+        List<LatestArtifactView> latestArtifacts,
+        LinkedTicketView linkedTicket,
+        String failedStage,
+        String lastSuccessfulStage,
+        OffsetDateTime failureTimestamp,
+        String failureCategory,
+        OffsetDateTime lastActivityTimestamp,
+        String nextSafeAction,
+        int specRejectionLoopCount,
+        boolean escalationMarker) {
+      this(
+          workflowRunId,
+          currentState,
+          currentActorIdentity,
+          currentActorType,
+          lastEventType,
+          lastEventAt,
+          latestArtifacts,
+          linkedTicket,
+          failedStage,
+          lastSuccessfulStage,
+          failureTimestamp,
+          failureCategory,
+          lastActivityTimestamp,
+          nextSafeAction,
+          specRejectionLoopCount,
+          escalationMarker,
+          null,
+          null,
+          null);
+    }
+  }
 
   public record LatestArtifactView(
       String artifactType, int version, String status, String artifactId) {
@@ -2286,17 +2423,46 @@ public class WorkflowInspectionService {
       String ticketRef,
       OffsetDateTime lastEventAt,
       String lastEventType,
-      // Story 2.10 — spec rejection loop tracking surfaced on the queue surface so the UI can
+      // Story 2.10 - spec rejection loop tracking surfaced on the queue surface so the UI can
       // render a "loop depth N" badge / escalation badge without a second per-row lookup.
       int specRejectionLoopCount,
       boolean escalationMarker,
-      // Story 2.12 — non-terminal clarification count surfaced on the queue surface; story 2.14
+      // Story 2.12 - non-terminal clarification count surfaced on the queue surface; story 2.14
       // gates approve_spec on this count == 0. N+1 in listRuns accepted for MVP queue scale
-      // (typical < 50 rows) — see OQ-4 + Trap T12.
+      // (typical < 50 rows) - see OQ-4 + Trap T12.
       int pendingClarifications,
-      // Story 3d-8 (FR67, AC5) — the soft-hide marker (null = live), surfaced on the queue summary
+      // Story 3d-8 (FR67, AC5) - the soft-hide marker (null = live), surfaced on the queue summary
       // so WorkflowSummaryResponse can render an archived/hidden badge without a second lookup.
-      OffsetDateTime archivedAt) {}
+      OffsetDateTime archivedAt,
+      String projectId,
+      String projectName,
+      String projectSlug) {
+
+    public WorkflowRunSummaryView(
+        String workflowRunId,
+        String currentState,
+        String ticketRef,
+        OffsetDateTime lastEventAt,
+        String lastEventType,
+        int specRejectionLoopCount,
+        boolean escalationMarker,
+        int pendingClarifications,
+        OffsetDateTime archivedAt) {
+      this(
+          workflowRunId,
+          currentState,
+          ticketRef,
+          lastEventAt,
+          lastEventType,
+          specRejectionLoopCount,
+          escalationMarker,
+          pendingClarifications,
+          archivedAt,
+          null,
+          null,
+          null);
+    }
+  }
 
   /**
    * Story 2.12 AC9: richer per-run summary returned by {@link #getRunSummary(String)}. Carries

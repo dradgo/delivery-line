@@ -93,4 +93,19 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
 
   List<WorkflowRunEntity> findByCurrentStateAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(
       String currentState, Pageable pageable);
+
+  @Query(
+      """
+      select workflowRun
+      from WorkflowRunEntity workflowRun
+      where (:state is null or workflowRun.currentState = :state)
+        and (:includeArchived = true or workflowRun.archivedAt is null)
+        and (:projectId is null or workflowRun.projectId = :projectId)
+      order by workflowRun.createdAt desc, workflowRun.id desc
+      """)
+  List<WorkflowRunEntity> listRunsFiltered(
+      @Param("state") String state,
+      @Param("includeArchived") boolean includeArchived,
+      @Param("projectId") String projectId,
+      Pageable pageable);
 }

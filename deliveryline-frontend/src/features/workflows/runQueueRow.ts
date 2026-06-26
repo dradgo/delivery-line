@@ -85,6 +85,10 @@ export interface RunQueueRow {
    * "Hidden" chip in the secondary cluster; metadata, NOT an attention/dominant-state signal.
    */
   archived?: boolean | undefined;
+  /** Story 3f-6 - LIVE project attribution from the backend summary. */
+  projectId?: string | undefined;
+  projectName?: string | undefined;
+  projectSlug?: string | undefined;
 }
 
 /**
@@ -120,6 +124,9 @@ export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
     specRejectionLoopCount: summary.specRejectionLoopCount,
     // Story 3d-8 — LIVE: the archived/hidden marker (non-null archivedAt ⇒ archived).
     archived: summary.archivedAt != null,
+    projectId: summary.projectId ?? undefined,
+    projectName: summary.projectName ?? undefined,
+    projectSlug: summary.projectSlug ?? undefined,
     // DORMANT — no live source (reconciliation): summary, currentArtifactType,
     // assigneeHint, blockerCount, openQuestionCount, staleIndicator, failureCategory.
     // The `Failed` BADGE + attention indicator ARE live (from `currentState`); only the

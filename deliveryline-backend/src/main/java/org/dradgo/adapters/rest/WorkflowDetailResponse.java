@@ -42,7 +42,19 @@ public record WorkflowDetailResponse(
                 "True once specRejectionLoopCount has crossed the configured escalation threshold."
                     + " Informational — does NOT terminate the workflow (FR13).",
             example = "false")
-        boolean escalationMarker) {
+        boolean escalationMarker,
+    @Schema(
+            description = "Project public id for the run.",
+            nullable = true,
+            example = "prj_default")
+        String projectId,
+    @Schema(
+            description = "Project display name for the run.",
+            nullable = true,
+            example = "Default project")
+        String projectName,
+    @Schema(description = "Project slug for the run.", nullable = true, example = "default")
+        String projectSlug) {
 
   public static WorkflowDetailResponse from(WorkflowStatusView view) {
     return new WorkflowDetailResponse(
@@ -63,7 +75,10 @@ public record WorkflowDetailResponse(
         toUtc(view.lastActivityTimestamp()),
         view.nextSafeAction(),
         view.specRejectionLoopCount(),
-        view.escalationMarker());
+        view.escalationMarker(),
+        view.projectId(),
+        view.projectName(),
+        view.projectSlug());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

@@ -23,6 +23,7 @@ import { useEffect, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 
 import { Button } from '@/components/ui/button';
+import { ProjectSelector } from '@/features/projects/components/ProjectSelector';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/feedback';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
@@ -70,13 +71,18 @@ export interface QueueShellProps {
    * toggle does not count as an active filter (mirrors the taken-over pattern).
    */
   onToggleIncludeArchived?: (next: true | undefined) => void;
+  /** Story 3f-6 - URL-owned project filter change. */
+  onProjectFilterChange?: (next: string | undefined) => void;
 }
 
 /** True when any filter carries a meaningful (non-empty) value. */
 function hasActiveFilters(filters: WorkflowListFilters): boolean {
-  return Object.values(filters).some(
-    (value) => value !== undefined && value !== null && value !== '',
-  );
+  return Object.values(filters).some((value) => {
+    if (typeof value === 'string') {
+      return value.trim() !== '';
+    }
+    return value !== undefined && value !== null && value !== '';
+  });
 }
 
 /**
@@ -173,6 +179,7 @@ export function QueueShell({
   onClearFilters,
   onToggleTakenOverFilter,
   onToggleIncludeArchived,
+  onProjectFilterChange,
 }: QueueShellProps) {
   const query = useWorkflowsList(filters);
   const items = query.data ?? [];
@@ -224,9 +231,14 @@ export function QueueShell({
   const includeArchivedActive = filters.includeArchived === true;
   const handleToggleIncludeArchived = () => {
     const next = includeArchivedActive ? undefined : true;
-    // Field-only log — the new filter flag ONLY, never row content.
+    // Field-only log - the new filter flag ONLY, never row content.
     console.info({ event: 'queue.toggleIncludeArchivedFilter', includeArchived: next });
     onToggleIncludeArchived?.(next);
+  };
+
+  const handleProjectFilterChange = (next: string | undefined) => {
+    console.info({ event: 'queue.projectFilterChange', projectId: next ?? null });
+    onProjectFilterChange?.(next);
   };
 
   // AC5 — defer the announcement by one commit so even the cold-load "Loading…"
@@ -241,7 +253,12 @@ export function QueueShell({
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-page-title">Run review queue</h1>
         <div className="flex flex-wrap items-center gap-2">
-          {/* AC4/R5 — taken-over filter toggle (view-only-taken-over ⇄ all). */}
+          <ProjectSelector
+            includeAllOption
+            value={filters.projectId}
+            onChange={handleProjectFilterChange}
+          />
+          {/* AC4/R5 - taken-over filter toggle (view-only-taken-over <-> all). */}
           <Button
             type="button"
             variant={takenOverActive ? 'default' : 'outline'}

@@ -15,19 +15,24 @@ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ClarificationStatusView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowRunDetailedSummaryView;
+import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ActorType;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Test;
@@ -55,6 +60,7 @@ class WorkflowInspectionServiceClarificationStatusTest {
       mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
   private final org.dradgo.application.recovery.spi.RecoveryActionRecordPort recoveryActions =
       mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class);
+  private final ProjectStore projects = mock(ProjectStore.class);
 
   private final WorkflowInspectionService service =
       new WorkflowInspectionService(
@@ -72,6 +78,10 @@ class WorkflowInspectionServiceClarificationStatusTest {
           recoveryActions,
           org.dradgo.application.runner.RunnerProperties.defaults(),
           org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+
+  {
+    service.setProjectStore(projects);
+  }
 
   @Test
   void getClarificationStatusProjectsEachLifecycleShape() {
@@ -410,6 +420,123 @@ class WorkflowInspectionServiceClarificationStatusTest {
     assertEquals("run_list_2", result.get(1).workflowRunId());
     assertEquals(4, result.get(1).pendingClarifications());
     assertNull(result.get(1).lastEventType());
+  }
+
+  @Test
+  void listRunsResolvesProjectSlugFilterAndAddsProjectAttribution() {
+    Project alpha = project("prj_alpha", "Alpha Project", "alpha");
+    when(projects.findBySlug("alpha")).thenReturn(Optional.of(alpha));
+    when(projects.findAll()).thenReturn(List.of(alpha));
+    when(runs.listRuns(null, false, 2, "prj_alpha"))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot(
+                    "run_project_alpha",
+                    WorkflowState.EXECUTING,
+                    null,
+                    1L,
+                    0,
+                    false,
+                    "prj_alpha")));
+    when(events.findLatestByWorkflowRunPublicId("run_project_alpha")).thenReturn(Optional.empty());
+    when(links.findActiveLinkByWorkflowRun("run_project_alpha")).thenReturn(Optional.empty());
+    when(clarifications.countPendingByWorkflowRun("run_project_alpha")).thenReturn(0);
+
+    List<WorkflowInspectionService.WorkflowRunSummaryView> result =
+        service.listRuns(null, false, 2, "alpha");
+
+    assertEquals(1, result.size());
+    assertEquals("prj_alpha", result.get(0).projectId());
+    assertEquals("Alpha Project", result.get(0).projectName());
+    assertEquals("alpha", result.get(0).projectSlug());
+    verify(runs).listRuns(null, false, 2, "prj_alpha");
+  }
+
+  @Test
+  void listRunsResolvesProjectPublicIdFilterAndComposesStateFilter() {
+    Project alpha = project("prj_alpha", "Alpha Project", "alpha");
+    when(projects.findByPublicId("prj_alpha")).thenReturn(Optional.of(alpha));
+    when(projects.findAll()).thenReturn(List.of(alpha));
+    when(runs.listRuns(WorkflowState.EXECUTING, true, 25, "prj_alpha"))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot(
+                    "run_project_alpha",
+                    WorkflowState.EXECUTING,
+                    null,
+                    1L,
+                    0,
+                    false,
+                    "prj_alpha")));
+    when(events.findLatestByWorkflowRunPublicId("run_project_alpha")).thenReturn(Optional.empty());
+    when(links.findActiveLinkByWorkflowRun("run_project_alpha")).thenReturn(Optional.empty());
+    when(clarifications.countPendingByWorkflowRun("run_project_alpha")).thenReturn(0);
+
+    List<WorkflowInspectionService.WorkflowRunSummaryView> result =
+        service.listRuns(WorkflowState.EXECUTING, true, 25, "prj_alpha");
+
+    assertEquals(1, result.size());
+    assertEquals("run_project_alpha", result.get(0).workflowRunId());
+    assertEquals("prj_alpha", result.get(0).projectId());
+    verify(runs).listRuns(WorkflowState.EXECUTING, true, 25, "prj_alpha");
+  }
+
+  @Test
+  void listRunsUnknownProjectFilterRaisesProjectNotFound() {
+    when(projects.findByPublicId("prj_missing")).thenReturn(Optional.empty());
+
+    DomainException error =
+        assertThrows(DomainException.class, () -> service.listRuns(null, false, 50, "prj_missing"));
+
+    assertEquals(DomainErrorCode.PROJECT_NOT_FOUND, error.errorCode());
+    assertEquals("prj_missing", error.details().get("projectId"));
+  }
+
+  @Test
+  void getStatusAddsProjectAttributionFromRunProjectId() {
+    Project alpha = project("prj_alpha", "Alpha Project", "alpha");
+    when(runs.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN, WorkflowState.WAITING_FOR_REVIEW, null, 7L, 0, false, "prj_alpha")));
+    when(projects.findByPublicId("prj_alpha")).thenReturn(Optional.of(alpha));
+    when(events.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
+    when(recovery.describeFailure(RUN))
+        .thenReturn(
+            new org.dradgo.application.recovery.FailureDescription(
+                RUN,
+                WorkflowState.WAITING_FOR_REVIEW,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "view_only",
+                null));
+
+    WorkflowStatusView view = service.getStatus(RUN);
+
+    assertEquals("prj_alpha", view.projectId());
+    assertEquals("Alpha Project", view.projectName());
+    assertEquals("alpha", view.projectSlug());
+  }
+
+  private static Project project(String publicId, String name, String slug) {
+    return new Project(
+        publicId,
+        name,
+        slug,
+        ProjectStatus.ACTIVE,
+        null,
+        ConnectorKind.LINEAR,
+        ConnectorKind.GITHUB,
+        true,
+        null,
+        false,
+        null,
+        NOW,
+        null);
   }
 
   private static ClarificationLifecycleSnapshot snapshot(

@@ -134,7 +134,7 @@ public class WorkflowController {
       operationId = "listWorkflows",
       summary = "List workflow runs",
       description =
-          "Newest-first list of workflow runs for the review queue, optionally filtered by state.")
+          "Newest-first list of workflow runs for the review queue, optionally filtered by state and project. The projectId query parameter accepts either a project slug or a prj_ public id.")
   @ApiResponse(
       responseCode = "200",
       description = "Workflow run summaries (direct array, no envelope).")
@@ -148,18 +148,23 @@ public class WorkflowController {
                       + " — story 3d-8.")
           @RequestParam(name = "includeArchived", required = false, defaultValue = "false")
           boolean includeArchived,
+      @Parameter(
+              description = "Optional project filter. Accepts a project slug or a prj_ public id.")
+          @RequestParam(name = "projectId", required = false)
+          String projectId,
       @Parameter(description = "Max rows to return (clamped to 1..200).")
           @RequestParam(name = "limit", required = false, defaultValue = "50")
           int limit) {
     WorkflowState stateFilter =
         (state == null || state.isBlank()) ? null : WorkflowState.fromValue(state, "state");
     log.info(
-        "REST list workflows received stateFilter={} includeArchived={} limit={}",
+        "REST list workflows received stateFilter={} includeArchived={} projectFilterPresent={} limit={}",
         stateFilter == null ? "<all>" : stateFilter.value(),
         includeArchived,
+        projectId != null && !projectId.isBlank(),
         limit);
     List<WorkflowSummaryResponse> summaries =
-        workflowInspectionService.listRuns(stateFilter, includeArchived, limit).stream()
+        workflowInspectionService.listRuns(stateFilter, includeArchived, limit, projectId).stream()
             .map(WorkflowSummaryResponse::from)
             .toList();
     log.info("REST list workflows success count={}", summaries.size());

@@ -98,6 +98,13 @@ const ATTENTION_ARIA_TERM: Record<AttentionIndicator, string> = {
  * just one part when only one is provided. Non-exported (this is a `.tsx`, so only
  * components may be exported — `frontend-react-refresh-no-fn-exports`).
  */
+function projectDisplayLabel(row: RunQueueRow): string | undefined {
+  const candidate = row.projectName ?? row.projectSlug ?? row.projectId;
+  if (candidate === undefined || candidate.trim() === '') {
+    return undefined;
+  }
+  return candidate;
+}
 function takeoverMetaText(
   takenOverBy: string | undefined,
   takenOverAt: string | undefined,
@@ -179,6 +186,10 @@ function composeAriaLabel(
   if (identity !== '') {
     parts.push(identity);
   }
+  const project = projectDisplayLabel(row);
+  if (project !== undefined) {
+    parts.push(project);
+  }
   // OQ-2 — reuse the RAW backend state for parity with the visible badge.
   if (row.currentState !== undefined && row.currentState.trim() !== '') {
     parts.push(row.currentState);
@@ -217,6 +228,7 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
   const primaryIndicator = resolvePrimaryAttentionIndicator(row);
   const primarySignal = signals.find((s) => s.indicator === primaryIndicator);
   const secondarySignals = signals.filter((s) => s !== primarySignal);
+  const project = projectDisplayLabel(row);
 
   const relative = formatRelativeTime(row.lastTransitionAt, nowMs);
   const utc = formatUtcTimestamp(row.lastTransitionAt);
@@ -277,7 +289,8 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
       row.prLinkage != null ||
       row.takenOverBy !== undefined ||
       row.takenOverAt !== undefined ||
-      row.archived === true ? (
+      row.archived === true ||
+      project !== undefined ? (
         <Inline
           gap="2"
           wrap
@@ -292,6 +305,13 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
               run. Paired icon+label (never color-alone); metadata, not an attention signal. */}
           {row.archived === true ? (
             <StateSignifierChip stateName="stale" label="Hidden" testId="queue-item-archived" />
+          ) : null}
+          {project !== undefined ? (
+            <StateSignifierChip
+              stateName="informational"
+              label={`Project: ${project}`}
+              testId="queue-item-project"
+            />
           ) : null}
           {/* OQ-3 — `specRejectionLoopCount` is a real live signal, shown secondary (NOT primary). */}
           {typeof row.specRejectionLoopCount === 'number' && row.specRejectionLoopCount > 0 ? (

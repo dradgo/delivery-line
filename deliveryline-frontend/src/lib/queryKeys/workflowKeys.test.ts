@@ -23,13 +23,25 @@ describe('workflowKeys', () => {
     );
   });
 
-  it('normalizes list filters so undefined fields and key order do not matter', () => {
+  it('normalizes list filters so undefined fields, empty project ids, and key order do not matter', () => {
     expect(workflowKeys.list({})).toEqual(workflowKeys.list(undefined));
     // An explicit `state: undefined` (built dynamically — exactOptionalPropertyTypes
     // forbids the literal) normalizes to the same key as an absent filter.
     const withExplicitUndefined: WorkflowListFilters = {};
     Object.assign(withExplicitUndefined, { state: undefined });
     expect(workflowKeys.list(withExplicitUndefined)).toEqual(workflowKeys.list({}));
+    expect(workflowKeys.list({ projectId: '' })).toEqual(workflowKeys.list({}));
+    expect(workflowKeys.list({ projectId: '  ' })).toEqual(workflowKeys.list({}));
+    expect(workflowKeys.list({ includeArchived: true, projectId: 'prj_alpha' })).toEqual(
+      workflowKeys.list({ projectId: 'prj_alpha', includeArchived: true }),
+    );
+  });
+
+  it('keys the workflow list separately per project filter', () => {
+    expect(workflowKeys.list({ projectId: 'prj_alpha' })).not.toEqual(workflowKeys.list({}));
+    expect(workflowKeys.list({ projectId: 'prj_alpha' })).not.toEqual(
+      workflowKeys.list({ projectId: 'prj_beta' }),
+    );
   });
 
   it('makes detail(id) a structural PREFIX of events/artifacts/allowedActions(id)', () => {

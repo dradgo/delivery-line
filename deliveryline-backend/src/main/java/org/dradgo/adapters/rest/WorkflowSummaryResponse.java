@@ -38,7 +38,19 @@ public record WorkflowSummaryResponse(
                     + " from the default queue); null for a live run. The queue renders an"
                     + " archived/hidden badge when present.",
             nullable = true)
-        OffsetDateTime archivedAt) {
+        OffsetDateTime archivedAt,
+    @Schema(
+            description = "Project public id for the run.",
+            nullable = true,
+            example = "prj_default")
+        String projectId,
+    @Schema(
+            description = "Project display name for the run.",
+            nullable = true,
+            example = "Default project")
+        String projectName,
+    @Schema(description = "Project slug for the run.", nullable = true, example = "default")
+        String projectSlug) {
 
   // NOTE: Story 2.12 added `pendingClarifications` to the application-layer
   // {@link WorkflowRunSummaryView} but the REST surface does NOT yet expose it — the OpenAPI
@@ -56,7 +68,10 @@ public record WorkflowSummaryResponse(
         view.lastEventType(),
         view.specRejectionLoopCount(),
         view.escalationMarker(),
-        toUtc(view.archivedAt()));
+        toUtc(view.archivedAt()),
+        view.projectId(),
+        view.projectName(),
+        view.projectSlug());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

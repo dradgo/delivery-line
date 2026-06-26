@@ -82,6 +82,9 @@ export function summaryFromStream(stream: WorkflowEventsResponse): WorkflowSumma
     lastEventType: event.eventType,
     specRejectionLoopCount: specRejectionLoopCount(stream),
     escalationMarker: false,
+    projectId: defaultProjectFixture.id ?? null,
+    projectName: defaultProjectFixture.name ?? null,
+    projectSlug: defaultProjectFixture.slug ?? null,
   };
 }
 
@@ -95,6 +98,9 @@ export function detailFromStream(stream: WorkflowEventsResponse): WorkflowDetail
     lastEventType: event.eventType,
     specRejectionLoopCount: specRejectionLoopCount(stream),
     escalationMarker: false,
+    projectId: defaultProjectFixture.id ?? null,
+    projectName: defaultProjectFixture.name ?? null,
+    projectSlug: defaultProjectFixture.slug ?? null,
   };
 }
 

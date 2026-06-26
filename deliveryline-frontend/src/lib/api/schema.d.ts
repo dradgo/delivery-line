@@ -134,7 +134,7 @@ export interface paths {
         };
         /**
          * List workflow runs
-         * @description Newest-first list of workflow runs for the review queue, optionally filtered by state.
+         * @description Newest-first list of workflow runs for the review queue, optionally filtered by state and project. The projectId query parameter accepts either a project slug or a prj_ public id.
          */
         get: operations["listWorkflows"];
         put?: never;
@@ -1317,6 +1317,21 @@ export interface components {
              */
             nextSafeAction?: string;
             /**
+             * @description Project public id for the run.
+             * @example prj_default
+             */
+            projectId?: string | null;
+            /**
+             * @description Project display name for the run.
+             * @example Default project
+             */
+            projectName?: string | null;
+            /**
+             * @description Project slug for the run.
+             * @example default
+             */
+            projectSlug?: string | null;
+            /**
              * Format: int32
              * @description How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).
              * @example 0
@@ -1432,6 +1447,21 @@ export interface components {
              * @example workflow.stateChanged
              */
             lastEventType?: string;
+            /**
+             * @description Project public id for the run.
+             * @example prj_default
+             */
+            projectId?: string | null;
+            /**
+             * @description Project display name for the run.
+             * @example Default project
+             */
+            projectName?: string | null;
+            /**
+             * @description Project slug for the run.
+             * @example default
+             */
+            projectSlug?: string | null;
             /**
              * Format: int32
              * @description How many spec rejections this run has accumulated. Increments on every successful rejectSpec call (story 2.10).
@@ -1829,6 +1859,8 @@ export interface operations {
                 state?: string;
                 /** @description Include soft-hidden (archived) runs. Defaults to false (archived_at IS NULL) — story 3d-8. */
                 includeArchived?: boolean;
+                /** @description Optional project filter. Accepts a project slug or a prj_ public id. */
+                projectId?: string;
                 /** @description Max rows to return (clamped to 1..200). */
                 limit?: number;
             };

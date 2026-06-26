@@ -82,23 +82,11 @@ public class WorkflowRunPersistenceAdapter
   @Override
   @Transactional(readOnly = true)
   public List<WorkflowRunSnapshot> listRuns(
-      WorkflowState stateFilter, boolean includeArchived, int limit) {
+      WorkflowState stateFilter, boolean includeArchived, int limit, String projectId) {
     Pageable page = PageRequest.of(0, limit);
-    List<WorkflowRunEntity> entities;
-    if (includeArchived) {
-      entities =
-          stateFilter == null
-              ? workflowRunRepository.findAllByOrderByCreatedAtDescIdDesc(page)
-              : workflowRunRepository.findByCurrentStateOrderByCreatedAtDescIdDesc(
-                  stateFilter.value(), page);
-    } else {
-      entities =
-          stateFilter == null
-              ? workflowRunRepository.findByArchivedAtIsNullOrderByCreatedAtDescIdDesc(page)
-              : workflowRunRepository
-                  .findByCurrentStateAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(
-                      stateFilter.value(), page);
-    }
+    List<WorkflowRunEntity> entities =
+        workflowRunRepository.listRunsFiltered(
+            stateFilter == null ? null : stateFilter.value(), includeArchived, projectId, page);
     return entities.stream().map(workflowRunEntityMapper::toSnapshot).toList();
   }
 

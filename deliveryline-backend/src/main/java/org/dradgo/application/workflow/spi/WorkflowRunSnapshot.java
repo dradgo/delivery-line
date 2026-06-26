@@ -20,7 +20,25 @@ public record WorkflowRunSnapshot(
     OffsetDateTime archivedAt,
     Long version,
     int specRejectionLoopCount,
-    boolean escalationMarkerSet) {
+    boolean escalationMarkerSet,
+    String projectId) {
+
+  public WorkflowRunSnapshot(
+      String publicId,
+      WorkflowState currentState,
+      OffsetDateTime archivedAt,
+      Long version,
+      int specRejectionLoopCount,
+      boolean escalationMarkerSet) {
+    this(
+        publicId,
+        currentState,
+        archivedAt,
+        version,
+        specRejectionLoopCount,
+        escalationMarkerSet,
+        null);
+  }
 
   public Long requiredVersion() {
     if (version != null) {
