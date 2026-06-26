@@ -136,7 +136,8 @@ class TicketSourceAbstractionFoundationContract {
     // AC9 — inject a source declaring supportsCommentOnTicket=false and assert the completion sync
     // skips gracefully: no post, no event, the typed SKIPPED_NO_COMMENT_CAPABILITY outcome.
     TicketSourceAdapter incapable = mock(TicketSourceAdapter.class);
-    when(incapable.getCapabilities()).thenReturn(new TicketSourceCapabilities(false, true, true));
+    when(incapable.getCapabilities())
+        .thenReturn(TicketSourceCapabilities.noCreation(false, true, true));
 
     WorkflowEventWritePort eventWritePort = mock(WorkflowEventWritePort.class);
     WorkflowOrchestrationService service = serviceWith(incapable, eventWritePort);

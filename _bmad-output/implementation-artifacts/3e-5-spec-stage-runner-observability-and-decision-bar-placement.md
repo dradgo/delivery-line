@@ -1,6 +1,6 @@
 # Story 3e.5: Spec-Stage (Investigating) Runner Log & Console Visibility + Decision-Bar-Relative Placement
 
-Status: review
+Status: done
 
 <!-- Added to Epic 3e via sprint-change-proposal-2026-06-24-spec-stage-observability.md (correct-course). Depends on 3d-5 + 3d-6 (the log-viewer + read-only-console substrates, both done). Validation optional: run validate-create-story before dev-story. -->
 
@@ -30,7 +30,7 @@ So that I can see the spec runner's console output as it works (today the page s
 
 4. **Given** the run-detail route (`/workflows/$workflowRunId`), **Then** the `StepExecutionLogViewer` and `ReadOnlyDiagnosticConsole` render **below** the `WorkflowDecisionBar` (the action buttons) rather than near the top of the page; their gating (`canViewRunnerLogs` from role-agnostic `useAllowedActions`; `canOpenDiagnosticConsole` from the `workflow_owner`-scoped action set) is unchanged — only their DOM position moves. The Provider Limit Status indicator and Failure surface keep their current positions.
 
-5. **Given** the registry/contract surfaces, **Then** there is **no** new `AllowedAction`, event type, error code, Flyway migration, or `runner-result` field; `view_runner_logs` and `open_diagnostic_console` already exist in `AllowedAction` and in `contracts/frontend/allowed-actions.placeholder.json`, and the `getAllowedActions` `@Schema(allowableValues)` already lists them — so the **OpenAPI snapshot is byte-identical** and no `schema.d.ts` regen is required.
+5. **Given** the registry/contract surfaces, **Then** there is **no** new `AllowedAction`, event type, error code, Flyway migration, or `runner-result` field; `view_runner_logs` and `open_diagnostic_console` already exist in `AllowedAction` and in `contracts/frontend/allowed-actions.placeholder.json`, and the `getAllowedActions` `@Schema(allowableValues)` already lists them. Review follow-up updated the diagnostic-console OpenAPI description and regenerated `schema.d.ts` so public docs reflect the actual `Investigating` coverage; this is documentation-only API churn, not schema shape/action churn.
 
 6. **Given** ADR 0025 (live observability + read-only console), **Then** an amendment note records that both affordances now cover the `Investigating` (spec-generation) state on the **identical** security posture as `Executing` (read-only/input-disabled console, owner-only, live-only re-check at attach) — so no new security sign-off gate is introduced (contrast 3d-6's AC1 sign-off, which already ratified the input-disabled design).
 
@@ -54,7 +54,7 @@ So that I can see the spec runner's console output as it works (today the page s
 - [x] **Task 4 — Tests** (AC: 7)
   - [x] `WorkflowInspectionServiceAllowedActionsTest`: updated the parameterized `INVESTIGATING` rows (`product_reviewer`, `workflow_owner`) to AC2; updated `investigatingWithOpenClarificationIncludesAnswerClarification` to expect the added `view_runner_logs`; renamed `investigatingWithZeroOpenClarificationsIsViewOnlyOnly` → `...OffersViewAndRunnerLogs`; updated the `workflow_owner` `Investigating` open-clarification variant (now `+view_runner_logs +open_diagnostic_console`). `matrixCoversEveryStateAndRow` stays green.
   - [x] FE route tests (`index.runnerLogs.test.tsx`, `index.diagnosticConsole.test.tsx`): added an `Investigating` case for each that renders the viewer/console and asserts DOM order places the surface **after** the Decision Bar (via `compareDocumentPosition` against `approval-decision-bar`). No existing position assertions existed to flip.
-  - [x] Confirmed the OpenAPI snapshot test (`OpenApiSnapshotContractTest`) is byte-identical (no contract change); `allowed-actions.placeholder.json` needs no edit (both actions already present) — no regen.
+  - [x] Confirmed `allowed-actions.placeholder.json` needs no edit (both actions already present). Review follow-up updated the diagnostic-console OpenAPI description and regenerated `schema.d.ts`; `OpenApiSnapshotContractTest` and `check:api` pass.
   - [x] e2e: no change needed — the e2e mocks (`mockApi.ts`) pin only `Executing`/`Failed` action sets (unchanged), and the specs assert no surface DOM position, so the relocation + the `Investigating` widening don't touch them (condition not met).
 
 - [x] **Logging instrumentation** (cross-cutting)
@@ -73,7 +73,7 @@ So that I can see the spec runner's console output as it works (today the page s
 - **R1 — matrix gate is the whole fix; the plumbing is done.** See readiness note 1. The endpoints already serve the spec runner; the symptom is purely the missing matrix affordance. This keeps the story small and contained.
 - **R2 — mirror EXECUTING's role split, both branches.** See readiness note 2. `OPEN_DIAGNOSTIC_CONSOLE` is owner-only; `VIEW_RUNNER_LOGS` is role-agnostic. The `Investigating` arm has two branches (open / no-open clarification) and the affordances must be added to both.
 - **R3 — provider-usage is excluded.** See readiness note 3. Tight scope to the two console affordances.
-- **R4 — no contract churn.** Both actions are already in the `AllowedAction` enum, the frontend placeholder, and the `getAllowedActions` `@Schema(allowableValues)` (added by 3d-5/3d-6). Widening a matrix arm that returns already-registered actions does not change the OpenAPI snapshot or `schema.d.ts`. Avoids the [[openapi-regen-frontend-client-drift-cascade]] cascade entirely (nothing to regen).
+- **R4 — no schema/action churn.** Both actions are already in the `AllowedAction` enum, the frontend placeholder, and the `getAllowedActions` `@Schema(allowableValues)` (added by 3d-5/3d-6). Widening a matrix arm that returns already-registered actions does not add a schema shape, action, error, event, migration, or runner-result field. Review follow-up intentionally updated the diagnostic-console OpenAPI description and regenerated `schema.d.ts` so public documentation matches the widened gate.
 - **R5 — placement is cosmetic but test-bearing.** Moving the JSX below `WorkflowDecisionBar` changes DOM order; any FE test asserting the viewers appear before the bar must flip. No accessibility regression expected (the surfaces remain in the same single `Stack`, in source order, keyboard-reachable).
 
 ### Testing standards
@@ -99,12 +99,12 @@ So that I can see the spec runner's console output as it works (today the page s
 1. **Backend (Task 1):** widened the single `INVESTIGATING` arm of `WorkflowInspectionService.baseActionMatrix`. Rebuilt it from a two-`List.of` branch into an `ArrayList` accumulation: always `VIEW_ONLY`, then `ANSWER_CLARIFICATION` iff the latest in-flight spec has an open clarification (unchanged AC3 gate), then `VIEW_RUNNER_LOGS` (role-agnostic), then `OPEN_DIAGNOSTIC_CONSOLE` iff `workflow_owner`. This mirrors the `EXECUTING` role split minus `AWAIT_OUTCOME`/`VIEW_PROVIDER_USAGE_STATUS` (R3). The `archive_run`/`unarchive_run` wrapper (`computeActionMatrix`) is untouched, so the owner rows still trail with `archive_run`. Corrected the stale `EXECUTING`-arm comment that claimed it was "the only state where a container is live".
 2. **Frontend (Task 2):** moved the `StepExecutionLogViewer` and `ReadOnlyDiagnosticConsole` JSX blocks from near the top of the `<Stack>` to after `<WorkflowDecisionBar>`. `ProviderLimitStatus`, `FailureEventSurface`, the manual-execution surface, and the clarification region stay put. Gating expressions (`canViewRunnerLogs`, `canOpenDiagnosticConsole`) are unchanged — only DOM order moved.
 3. **ADR (Task 3):** appended an amendment to ADR 0025 recording the `Investigating` coverage on identical security posture (read-only/input-disabled, owner-only, live-only re-check) → no new sign-off gate. Status unchanged (Accepted).
-4. **Tests (Task 4):** updated the backend matrix parameterized rows + the dedicated `Investigating` tests to AC2; added an `Investigating` render + DOM-order case to each FE route test; confirmed the OpenAPI snapshot stayed byte-identical.
+4. **Tests (Task 4):** updated the backend matrix parameterized rows + the dedicated `Investigating` tests to AC2; added an `Investigating` render + DOM-order case to each FE route test; review follow-up verified the OpenAPI snapshot and frontend generated-client drift gate after the documentation-only description update.
 
 ### Completion Notes
 
 - **Provider-usage status is intentionally EXCLUDED (R3).** `VIEW_PROVIDER_USAGE_STATUS` (3d-7) is offered in `EXECUTING` but was deliberately NOT added to `Investigating` — the reported symptom and the requested change are about console output (logs + console). The spike snapshot is captured post-execution, so provider-usage during the spec stage is a separate concern.
-- **No contract churn (R4).** No new `AllowedAction`, event type, error code, Flyway migration, or `runner-result` field. Both `view_runner_logs` and `open_diagnostic_console` were already in the `AllowedAction` enum, the FE placeholder, and the `getAllowedActions` `@Schema(allowableValues)`. `OpenApiSnapshotContractTest` confirmed the OpenAPI snapshot is byte-identical — no `schema.d.ts` regen.
+- **No schema/action churn (R4).** No new `AllowedAction`, event type, error code, Flyway migration, or `runner-result` field. Both `view_runner_logs` and `open_diagnostic_console` were already in the `AllowedAction` enum, the FE placeholder, and the `getAllowedActions` `@Schema(allowableValues)`. Review follow-up updated only the diagnostic-console operation description in `openapi.json`/`schema.d.ts`.
 - **Streaming endpoints unchanged (R1).** The `GET /runner-logs/stream` and `GET /diagnostic-console/stream` endpoints, ports, and adapters were not touched — they are stage-agnostic and already served the spec runner; the only gap was the matrix affordance.
 - **e2e: no change required.** The e2e mocks pin only `Executing`/`Failed` action sets (unchanged) and the specs assert no surface DOM position, so neither the matrix widening nor the relocation affects them.
 
@@ -112,6 +112,7 @@ So that I can see the spec runner's console output as it works (today the page s
 
 - Backend: `WorkflowInspectionService*Test` (122 tests) — **all pass**, including `matrixCoversEveryStateAndRow` (cross-product) and the updated `Investigating` rows. `OpenApiSnapshotContractTest`, `WorkflowInspectionServiceAllowedActionsLoggingTest`, `WorkflowReadEndpointsContractTest` — **all pass**.
 - Frontend: `index.runnerLogs.test.tsx` + `index.diagnosticConsole.test.tsx` + full `$workflowRunId` route folder — **13 tests pass** (incl. the 2 new `Investigating` DOM-order cases). ESLint + Prettier clean on the 3 changed FE files.
+- Review follow-up verification: `index.runnerLogs.test.tsx` + `index.diagnosticConsole.test.tsx` — **6 tests pass**; `RunnerDiagnosticConsoleControllerTest` — **3 tests pass**; `OpenApiSnapshotContractTest` — **1 test passes**; `npm run check:api` — generated client in sync; backend `spotless:check` passes.
 
 ## File List
 
@@ -126,9 +127,17 @@ So that I can see the spec runner's console output as it works (today the page s
 
 _Code review 2026-06-25 (bmad-code-review, 3 adversarial layers: Blind Hunter, Edge Case Hunter, Acceptance Auditor). All 7 ACs + R3 verified satisfied by the Acceptance Auditor against the live code; matrix ordering & consumer impact verified clean by the Edge Case Hunter. 2 low-severity patch items below; 10 findings dismissed as noise / by-design / pre-existing / false-positive._
 
-- [ ] [Review][Patch] Stale `@Operation` description still says the diagnostic console is gated "(EXECUTING + workflow_owner)" — the gate now also covers `Investigating`, so the OpenAPI doc is inaccurate [deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RunnerDiagnosticConsoleController.java:118]. Note: this text feeds the OpenAPI snapshot, so fixing it makes the snapshot NO LONGER byte-identical (mild tension with AC5) and requires regenerating `OpenApiSnapshotContractTest`'s baseline. The FE comment in `index.tsx` was kept current ("Executing + Investigating") but this backend operation description (and any `open_diagnostic_console` Javadoc referencing EXECUTING-only) was missed.
-- [ ] [Review][Patch] FE DOM-order tests assert `compareDocumentPosition(...) === Node.DOCUMENT_POSITION_FOLLOWING` (strict equality on a bitmask) [deliveryline-frontend/src/routes/workflows/$workflowRunId/index.diagnosticConsole.test.tsx + index.runnerLogs.test.tsx]. Passes today because the surfaces are siblings of the Decision Bar (result is exactly `4`), but a future layout that nests them would OR-in extra bits and fail for the wrong reason. More robust as a bitwise check: `expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()`.
+- [x] [Review][Patch] Stale `@Operation` description still says the diagnostic console is gated "(EXECUTING + workflow_owner)" — resolved by documenting `EXECUTING or INVESTIGATING + workflow_owner` in the controller, committed OpenAPI snapshot, and generated frontend schema.
+- [x] [Review][Patch] FE DOM-order tests assert `compareDocumentPosition(...) === Node.DOCUMENT_POSITION_FOLLOWING` (strict equality on a bitmask) — dismissed as stale in the second pass; the tests already use `expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()`.
+
+### Review Findings — 2026-06-25 second pass
+
+- [x] [Review][Decision] Public OpenAPI/client docs still describe the diagnostic console as `EXECUTING + workflow_owner` only — resolved per Alex's decision to update documentation to reflect actual code state. Updated the controller OpenAPI description, committed `openapi.json`, and generated `schema.d.ts` wording to `EXECUTING or INVESTIGATING + workflow_owner`.
+- [x] [Review][Patch] Non-contract comments/docs still say the console/log affordances are `EXECUTING`-only [deliveryline-frontend/src/routes/workflows/$workflowRunId/index.tsx:143]
+- [x] [Review][Patch] Investigating console route test does not model the AC2 default action set [deliveryline-frontend/src/routes/workflows/$workflowRunId/index.diagnosticConsole.test.tsx:114]
+- [x] [Review][Patch] Prior review finding is now stale and contradicts the current bitmask assertions [_bmad-output/implementation-artifacts/3e-5-spec-stage-runner-observability-and-decision-bar-placement.md:130]
 
 ## Change Log
 
 - 2026-06-25 — Story 3e-5 implemented: widened the `INVESTIGATING` allowed-action matrix arm to offer `view_runner_logs` (all roles) and `open_diagnostic_console` (workflow_owner) — mirroring `EXECUTING` minus `await_outcome`/`view_provider_usage_status` — and relocated the log viewer + diagnostic console below the Decision Bar in the run-detail route. ADR 0025 amended (identical posture, no new sign-off). No contract/schema/migration churn; OpenAPI snapshot byte-identical. Status → review.
+- 2026-06-25 — Code review follow-up complete: public diagnostic-console docs now say `EXECUTING or INVESTIGATING + workflow_owner`, route comments/test fixture match AC2, stale review note resolved, `openapi.json` + `schema.d.ts` regenerated for documentation-only description drift. Status → done.

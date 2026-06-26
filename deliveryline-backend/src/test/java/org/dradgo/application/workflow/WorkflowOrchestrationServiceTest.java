@@ -1180,7 +1180,7 @@ class WorkflowOrchestrationServiceTest {
     stubRedactionPassthrough();
     when(linearAdapter.getCapabilities())
         .thenReturn(
-            new org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities(
+            org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities.noCreation(
                 false, true, true));
 
     WorkflowOrchestrationService.SyncCompletionOutcome outcome =

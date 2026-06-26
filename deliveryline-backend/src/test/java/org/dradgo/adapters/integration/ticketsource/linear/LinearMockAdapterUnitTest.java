@@ -9,7 +9,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.DataClassification;
@@ -163,6 +165,37 @@ class LinearMockAdapterUnitTest {
 
     adapter.clearPostedComments();
     assertTrue(adapter.postedComments().isEmpty());
+  }
+
+  @Test
+  void createSubticketIsDeterministicAndReplayDoesNotDuplicateParentLinkComment() {
+    SubticketDraft draft =
+        new SubticketDraft(
+            "run_parent01",
+            "proposal_01",
+            "subtask_01",
+            2,
+            "Redacted child title",
+            "Redacted child scope",
+            "split:run_parent01:proposal_01:2");
+
+    CreateSubticketResult first = adapter.createSubticket(TicketRef.of("LIN-101"), draft);
+    CreateSubticketResult replay = adapter.createSubticket(TicketRef.of("LIN-101"), draft);
+
+    assertEquals(TicketRef.of("LIN-101-2"), first.childRef());
+    assertEquals(first.childRef(), replay.childRef());
+    assertFalse(first.replay());
+    assertTrue(replay.replay());
+    assertEquals(1, adapter.createdSubtickets().size());
+    assertEquals(1, adapter.postedComments().size());
+    assertEquals("LIN-101", adapter.postedComments().get(0).ticketRef());
+    assertEquals(
+        first.parentLinkFingerprint(), adapter.postedComments().get(0).comment().fingerprint());
+  }
+
+  @Test
+  void capabilitiesAdvertiseTicketCreation() {
+    assertTrue(adapter.getCapabilities().supportsTicketCreation());
   }
 
   @Test

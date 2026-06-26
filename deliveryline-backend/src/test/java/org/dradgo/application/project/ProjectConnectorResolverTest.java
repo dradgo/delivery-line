@@ -27,7 +27,9 @@ import org.dradgo.domain.integration.repohost.Repository;
 import org.dradgo.domain.integration.repohost.RepositoryHostCapabilities;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
+import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
@@ -160,7 +162,7 @@ class ProjectConnectorResolverTest {
   void returnsResolvedAdapterUntouchedSoDegradedCapabilitiesPassThrough() {
     FakeTicketSource degradedTs =
         new FakeTicketSource(
-            ConnectorKind.GITLAB, new TicketSourceCapabilities(false, false, false));
+            ConnectorKind.GITLAB, TicketSourceCapabilities.noCreation(false, false, false));
     FakeRepoHost degradedRh =
         new FakeRepoHost(
             ConnectorKind.GITLAB,
@@ -429,6 +431,11 @@ class ProjectConnectorResolverTest {
     @Override
     public CommentResult postGovernedRunComment(TicketRef ref, GovernedRunComment summary) {
       return CommentResult.SKIPPED_DUPLICATE;
+    }
+
+    @Override
+    public CreateSubticketResult createSubticket(TicketRef parentRef, SubticketDraft draft) {
+      throw new UnsupportedOperationException("fake ticket source does not create sub-tickets");
     }
 
     @Override

@@ -5,7 +5,9 @@ import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
+import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
@@ -68,6 +70,17 @@ public interface TicketSourceAdapter {
    * the source does not support comment posting.
    */
   CommentResult postGovernedRunComment(TicketRef ref, GovernedRunComment summary);
+
+  /**
+   * Optional operation: create a source-system child/sub-ticket under {@code parentRef}. Consumers
+   * must check {@link TicketSourceCapabilities#supportsTicketCreation()} before invoking; adapters
+   * that do not advertise the capability may throw {@link UnsupportedOperationException}.
+   *
+   * <p>The {@code draft} text fields are expected to have already passed the redaction/content
+   * policy. The adapter must use {@code draft.idempotencyKey()} as its replay key and return the
+   * same child ref on replay when the external source state is discoverable.
+   */
+  CreateSubticketResult createSubticket(TicketRef parentRef, SubticketDraft draft);
 
   /**
    * Declare which optional operations this ticket source supports (story 3.32 AC3). Consuming

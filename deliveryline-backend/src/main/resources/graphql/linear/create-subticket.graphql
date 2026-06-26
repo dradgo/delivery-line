@@ -1,0 +1,10 @@
+mutation CreateSubticket($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue {
+      id
+      identifier
+      url
+    }
+  }
+}

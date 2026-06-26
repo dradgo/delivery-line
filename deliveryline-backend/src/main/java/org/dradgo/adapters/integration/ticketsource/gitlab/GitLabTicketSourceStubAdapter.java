@@ -7,7 +7,9 @@ import java.util.Optional;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
+import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
@@ -68,9 +70,16 @@ public class GitLabTicketSourceStubAdapter implements TicketSourceAdapter {
   }
 
   @Override
+  public CreateSubticketResult createSubticket(TicketRef parentRef, SubticketDraft draft) {
+    Objects.requireNonNull(parentRef, "parentRef");
+    Objects.requireNonNull(draft, "draft");
+    throw new UnsupportedOperationException("GitLab ticket creation is not supported");
+  }
+
+  @Override
   public TicketSourceCapabilities getCapabilities() {
     // Deliberately degraded — all optional operations unsupported (exercises AC4 degradation).
-    return new TicketSourceCapabilities(false, false, false);
+    return TicketSourceCapabilities.noCreation(false, false, false);
   }
 
   @Override

@@ -25,9 +25,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * Story 3d-6 (AC4 / Trap T5) — SERVER-SIDE allowed-action enforcement on the diagnostic-console SSE
  * endpoint: the attach is opened only when {@code open_diagnostic_console} is present in the run's
- * allowed actions (EXECUTING + workflow_owner). Plain unit test (no MockMvc/SSE plumbing) asserting
- * the gate decides BEFORE the attach is ever engaged, plus the localhost-only no-own-binding
- * invariant (AC5).
+ * allowed actions (EXECUTING or INVESTIGATING + workflow_owner). Plain unit test (no MockMvc/SSE
+ * plumbing) asserting the gate decides BEFORE the attach is ever engaged, plus the localhost-only
+ * no-own-binding invariant (AC5).
  */
 class RunnerDiagnosticConsoleControllerTest {
 

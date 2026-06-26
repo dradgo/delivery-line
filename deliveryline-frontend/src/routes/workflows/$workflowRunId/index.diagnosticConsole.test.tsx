@@ -111,7 +111,7 @@ describe('WorkflowDetail route — diagnostic-console gating (story 3d-6 AC4/AC6
         const ownerScopedRead = new URL(request.url).searchParams.has('actorRole');
         const actions = ownerScopedRead
           ? ['view_only', 'view_runner_logs', 'open_diagnostic_console']
-          : ['view_only'];
+          : ['view_only', 'view_runner_logs'];
         return HttpResponse.json({
           actions,
           versionStamp: {

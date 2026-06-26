@@ -238,6 +238,55 @@ public class WorkflowController {
   }
 
   /**
+   * Clarification-read surface (reserved by story 2.18, activated here): the open/answered
+   * clarifications raised against a run's specification, in the frontend-pinned {@code
+   * ClarificationView} wire shape. Delegates to the existing {@link
+   * WorkflowInspectionService#getClarifications(String)} read model (no new business logic). Drives
+   * the Clarification Region — flipping the frontend's previously-disabled {@code
+   * useClarifications} hook to live needs ZERO component changes. Read-only and idempotent (no
+   * Idempotency-Key); an unknown/empty run returns an empty list so the region shows the calm "no
+   * open questions" state.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/clarifications",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getClarifications",
+      summary = "Get the clarifications raised against a run's specification")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Clarifications for the run (possibly empty)."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ClarificationsResponse getClarifications(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info("REST get clarifications received workflowRunId={}", workflowRunId);
+    ClarificationsResponse response =
+        ClarificationsResponse.from(workflowInspectionService.getClarifications(workflowRunId));
+    log.info(
+        "REST get clarifications success workflowRunId={} clarificationCount={}",
+        workflowRunId,
+        response.clarifications().size());
+    return response;
+  }
+
+  /**
    * Story 3a-9 (Gate 3): artifact-content read for the run-detail review surface. Returns the
    * redacted artifact body (UTF-8 markdown) plus identity/type/version/status/classification/
    * createdAt/checksum so the Artifact Review Panel (story 2.17) can render the real spec body

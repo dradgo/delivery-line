@@ -580,6 +580,35 @@ if openspec_enabled; then
       ;;
   esac
 fi
+# Story 3e — OPEN CLARIFYING QUESTIONS directive (SPEC/investigation stage ONLY). Twin of the
+# claude entrypoint's block: the 3e-1 loop already PARSES a ```clarifications fence out of the
+# agent stdout (lib/runner.mjs splitClarificationsFence) and the backend INGESTS it into `open`
+# clarifications, but nothing told the model to emit it, so real spec runs produced no open
+# questions. This teaches the exact fence convention the runner parses. Optional + advisory: an
+# unambiguous spec omits the block and a malformed/absent block never blocks delivery
+# (T-ADDITIVE-NEVER-BLOCKS), so the no-question path stays byte-identical to pre-3e. Built via
+# printf single-quoted args so the literal ```fence``` survives (double-quoted backticks would be
+# command substitution); appended to PROMPT_INSTRUCTION which is prepended to the prompt below.
+if [ "$ARTIFACT_TYPE" = spec ]; then
+  CLARIFICATIONS_DIRECTIVE="$(
+    printf '%s\n' \
+      '' \
+      '--- OPEN CLARIFYING QUESTIONS (optional) ---' \
+      'If, while writing this specification, you identify genuinely open questions that a human' \
+      'reviewer must decide — ambiguous requirements, unstated constraints, or conflicting signals' \
+      'the specification cannot responsibly resolve on its own — raise them so the reviewer can' \
+      'answer them. Append them as the VERY LAST thing in your response, as a fenced block in' \
+      'EXACTLY this form (a single JSON array, one object per question, between the fences):' \
+      '```clarifications' \
+      '[{"questionId": "Q-001", "questionText": "..."}]' \
+      '```' \
+      'Use short stable ids (Q-001, Q-002, ...). Include ONLY real open questions; if the' \
+      'specification is unambiguous and complete, OMIT the block entirely. The block is advisory' \
+      'and never blocks delivery.'
+  )"
+  PROMPT_INSTRUCTION="${PROMPT_INSTRUCTION}
+${CLARIFICATIONS_DIRECTIVE}"
+fi
 # Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
 set -- "$CODEX_SUBCOMMAND" --skip-git-repo-check --sandbox "$CODEX_SANDBOX"
 if [ -d "$CODEX_REPO_DIR" ]; then

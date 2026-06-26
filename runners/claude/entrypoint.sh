@@ -558,6 +558,33 @@ if [ "$ARTIFACT_TYPE" = review ]; then
     printf 'VERDICT: fail   (a blocking defect)\n'
   } >>"$PROMPT_FILE"
 fi
+# Story 3e — OPEN CLARIFYING QUESTIONS directive. Appended to the prepared prompt for a SPEC
+# (investigation) dispatch ONLY — the one stage that writes the design specification a human
+# approves. The 3e-1 loop already PARSES a ```clarifications fence out of the agent stdout
+# (lib/runner.mjs splitClarificationsFence) and the backend INGESTS it into `open` clarifications,
+# but nothing ever told the model to emit it, so real spec runs produced no open questions. This
+# directive closes that gap by teaching the exact fence convention the runner parses. Optional +
+# advisory: an unambiguous spec omits the block entirely and a malformed/absent block never blocks
+# spec delivery (T-ADDITIVE-NEVER-BLOCKS) — so the no-question path stays byte-identical to pre-3e.
+# Stage-gated like the review directive above; the Codex twin appends the same intent to its
+# PROMPT_INSTRUCTION.
+if [ "$ARTIFACT_TYPE" = spec ]; then
+  {
+    printf '\n\n--- OPEN CLARIFYING QUESTIONS (optional) ---\n'
+    printf 'If, while writing this specification, you identify genuinely open questions that a\n'
+    printf 'human reviewer must decide — ambiguous requirements, unstated constraints, or\n'
+    printf 'conflicting signals the specification cannot responsibly resolve on its own — raise\n'
+    printf 'them so the reviewer can answer them. Append them as the VERY LAST thing in your\n'
+    printf 'response, as a fenced block in EXACTLY this form (a single JSON array, one object per\n'
+    printf 'question, on the line between the fences):\n'
+    printf '```clarifications\n'
+    printf '[{"questionId": "Q-001", "questionText": "..."}]\n'
+    printf '```\n'
+    printf 'Use short stable ids (Q-001, Q-002, ...). Include ONLY real open questions; if the\n'
+    printf 'specification is unambiguous and complete, OMIT the block entirely. The block is\n'
+    printf 'advisory and never blocks delivery.\n'
+  } >>"$PROMPT_FILE"
+fi
 log INFO "claude invocation start bin=$CLAUDE_CLI_BIN subcommand=$CLAUDE_SUBCOMMAND repoDir=$CLAUDE_REPO_DIR argCount=$#"
 set +e
 if [ -d "$CLAUDE_REPO_DIR" ]; then

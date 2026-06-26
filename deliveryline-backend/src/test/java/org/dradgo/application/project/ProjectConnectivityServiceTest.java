@@ -91,7 +91,7 @@ class ProjectConnectivityServiceTest {
     Project project = project("https://github.com/acme/widgets");
     wireResolvers(project);
     when(ticketSource.getCapabilities())
-        .thenReturn(new TicketSourceCapabilities(false, false, false));
+        .thenReturn(TicketSourceCapabilities.noCreation(false, false, false));
     when(repoHost.getCapabilities())
         .thenReturn(new RepositoryHostCapabilities(false, false, false, false, false));
 

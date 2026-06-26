@@ -145,6 +145,10 @@ class ArchitectureBoundaryTest {
       ArchitectureRuleCatalog.ONLY_ORCHESTRATION_AND_CLI_MAY_POST_LINEAR_COMMENT;
 
   @ArchTest
+  static final ArchRule only_subticket_service_may_create_source_subticket =
+      ArchitectureRuleCatalog.ONLY_SUBTICKET_SERVICE_MAY_CREATE_SOURCE_SUBTICKET;
+
+  @ArchTest
   static final ArchRule credential_detection_must_stay_in_application_security =
       ArchitectureRuleCatalog.CREDENTIAL_DETECTION_MUST_STAY_IN_APPLICATION_SECURITY;
 

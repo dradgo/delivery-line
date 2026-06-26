@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -22,7 +23,9 @@ import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.integration.linear.LinearProperties;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.DataClassification;
@@ -544,7 +547,144 @@ class LinearRealAdapterUnitTest {
     mockServer.verify();
   }
 
+  @Test
+  void createSubticketCreatesLinearSubIssueAndPostsParentLink() {
+    SubticketDraft draft =
+        new SubticketDraft(
+            "run_parent01",
+            "proposal_01",
+            "subtask_01",
+            2,
+            "Redacted child title",
+            "Redacted child scope",
+            "split:run_parent01:proposal_01:2");
+    mockParentFetch("parent-uuid", "team-uuid", "LIN-10");
+    mockEmptyCommentScan();
+    mockServer
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.variables.input.parentId").value("parent-uuid"))
+        .andExpect(jsonPath("$.variables.input.teamId").value("team-uuid"))
+        .andExpect(jsonPath("$.variables.input.title").value("Redacted child title"))
+        .andExpect(jsonPath("$.variables.input.description").value("Redacted child scope"))
+        .andRespond(
+            withSuccess(
+                "{\"data\":{\"issueCreate\":{\"success\":true,\"issue\":{\"id\":\"child-uuid\",\"identifier\":\"LIN-11\",\"url\":\"https://linear.app/acme/issue/LIN-11\"}}}}",
+                MediaType.APPLICATION_JSON));
+    mockEmptyCommentScan();
+    mockServer
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.containsString("Created split child ticket LIN-11")))
+        .andExpect(
+            content()
+                .string(
+                    org.hamcrest.Matchers.containsString(
+                        "deliveryline:subticket key=split:run_parent01:proposal_01:2 child=LIN-11")))
+        .andRespond(
+            withSuccess(
+                "{\"data\":{\"commentCreate\":{\"success\":true,\"comment\":{\"id\":\"comment-id-1\"}}}}",
+                MediaType.APPLICATION_JSON));
+
+    CreateSubticketResult result = adapter.createSubticket(TicketRef.of("LIN-10"), draft);
+
+    assertEquals(TicketRef.of("LIN-11"), result.childRef());
+    assertEquals(draft.idempotencyKey(), result.idempotencyKey());
+    assertFalse(result.replay());
+    assertEquals("linear", result.metadata().get("source"));
+    mockServer.verify();
+  }
+
+  @Test
+  void createSubticketReplayReturnsExistingChildFromParentLinkCommentWithoutCreatingAgain() {
+    SubticketDraft draft =
+        new SubticketDraft(
+            "run_parent01",
+            "proposal_01",
+            "subtask_01",
+            2,
+            "Redacted child title",
+            "Redacted child scope",
+            "split:run_parent01:proposal_01:2");
+    mockParentFetch("parent-uuid", "team-uuid", "LIN-10");
+    mockServer
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withSuccess(
+                "{\"data\":{\"issue\":{\"comments\":{\"nodes\":[{\"body\":\"<!-- deliveryline:subticket key=split:run_parent01:proposal_01:2 child=LIN-11 -->\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"\"}}}}}",
+                MediaType.APPLICATION_JSON));
+
+    CreateSubticketResult result = adapter.createSubticket(TicketRef.of("LIN-10"), draft);
+
+    assertEquals(TicketRef.of("LIN-11"), result.childRef());
+    assertTrue(result.replay());
+    mockServer.verify();
+  }
+
+  @Test
+  void createSubticketLogsDoNotContainDraftBodyOrToken() {
+    SubticketDraft draft =
+        new SubticketDraft(
+            "run_parent01",
+            "proposal_01",
+            "subtask_01",
+            1,
+            "SECRET_TITLE_SHOULD_NOT_LOG",
+            "scope with sk-live-secret-token",
+            "split:run_parent01:proposal_01:1");
+    mockParentFetch("parent-uuid", "team-uuid", "LIN-10");
+    mockServer
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+    ListAppender<ILoggingEvent> appender = attachListAppender();
+    try {
+      assertThrows(
+          TicketSourceAdapterException.class,
+          () -> adapter.createSubticket(TicketRef.of("LIN-10"), draft));
+    } finally {
+      detach(appender);
+    }
+
+    String logs =
+        appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList().toString();
+    assertFalse(logs.contains("SECRET_TITLE_SHOULD_NOT_LOG"));
+    assertFalse(logs.contains("sk-live-secret-token"));
+    assertFalse(logs.contains("test-token"));
+    mockServer.verify();
+  }
+
   // ---- Story 3a.4 helpers ---------------------------------------------------------------------
+
+  private void mockParentFetch(String parentId, String teamId, String identifier) {
+    mockServer
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withSuccess(
+                "{\"data\":{\"issues\":{\"nodes\":[{\"id\":\""
+                    + parentId
+                    + "\",\"identifier\":\""
+                    + identifier
+                    + "\",\"title\":\"Parent\",\"description\":\"\",\"createdAt\":\"2026-05-01T10:00:00Z\",\"updatedAt\":\"2026-05-02T12:30:00Z\",\"creator\":{\"email\":\"dev@example.com\",\"displayName\":\"Dev\"},\"labels\":{\"nodes\":[]},\"state\":{\"id\":\"state-ready-uuid\",\"name\":\"Ready\"},\"team\":{\"id\":\""
+                    + teamId
+                    + "\"}}]}}}",
+                MediaType.APPLICATION_JSON));
+  }
+
+  private void mockEmptyCommentScan() {
+    mockServer
+        .expect(requestTo(BASE_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withSuccess(
+                "{\"data\":{\"issue\":{\"comments\":{\"nodes\":[],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"\"}}}}}",
+                MediaType.APPLICATION_JSON));
+  }
 
   /** A real adapter bound to its own {@link MockRestServiceServer} with the given poll scope. */
   private static PollHarness scopedHarness(String teamKey, String projectId) {

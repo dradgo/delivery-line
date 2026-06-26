@@ -4,6 +4,7 @@ query FetchTicketByReference($teamKey: String!, $number: Float!) {
     first: 1
   ) {
     nodes {
+      id
       identifier
       title
       description
@@ -21,6 +22,9 @@ query FetchTicketByReference($teamKey: String!, $number: Float!) {
       state {
         id
         name
+      }
+      team {
+        id
       }
     }
   }

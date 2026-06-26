@@ -293,6 +293,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/clarifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the clarifications raised against a run's specification */
+        get: operations["getClarifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/clarifications/{clarificationId}/accept": {
         parameters: {
             query?: never;
@@ -336,7 +353,7 @@ export interface paths {
         };
         /**
          * Attach a read-only diagnostic console to a run's live runner execution
-         * @description Server-Sent Events stream of a READ-ONLY console attached to the run's latest runner execution while it is LIVE. The attach is opened WITHOUT stdin — input is disabled end-to-end (a pure streaming pty), which is the provable non-mutating guarantee (ADR 0025 D1). LIVE-ONLY: a finished/absent execution is rejected with a typed console-not-live end/error and no attach is engaged (the finished-state diagnostic surface is the runner-logs viewer). Live chunks are redacted BEST-EFFORT; nothing the console shows changes persisted/exported content (the console never writes to runner-logs/ nor mutates runner_executions — the story-3.6 persisted scan remains the authoritative redaction guarantee). Opening appends a console.opened governed event and closing appends console.closed (session metadata only; console I/O is not durably stored, ADR 0025 D4). Served only over the localhost-only binding to the single local operator; gated by the open_diagnostic_console allowed-action (EXECUTING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough for the console-safety posture. Events: console {stream,chunk,seq}, status {phase,rex}, end {reason}, error {reason}.
+         * @description Server-Sent Events stream of a READ-ONLY console attached to the run's latest runner execution while it is LIVE. The attach is opened WITHOUT stdin — input is disabled end-to-end (a pure streaming pty), which is the provable non-mutating guarantee (ADR 0025 D1). LIVE-ONLY: a finished/absent execution is rejected with a typed console-not-live end/error and no attach is engaged (the finished-state diagnostic surface is the runner-logs viewer). Live chunks are redacted BEST-EFFORT; nothing the console shows changes persisted/exported content (the console never writes to runner-logs/ nor mutates runner_executions — the story-3.6 persisted scan remains the authoritative redaction guarantee). Opening appends a console.opened governed event and closing appends console.closed (session metadata only; console I/O is not durably stored, ADR 0025 D4). Served only over the localhost-only binding to the single local operator; gated by the open_diagnostic_console allowed-action (EXECUTING or INVESTIGATING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough for the console-safety posture. Events: console {stream,chunk,seq}, status {phase,rex}, end {reason}, error {reason}.
          */
         get: operations["streamDiagnosticConsole"];
         put?: never;
@@ -751,6 +768,32 @@ export interface components {
             /** Format: int32 */
             total: number;
         };
+        /** @description A single clarification raised against a spec artifact version. */
+        Clarification: {
+            /** @description UNTRUSTED reviewer wording — sanitized render only. */
+            answerText?: string | null;
+            /** Format: date-time */
+            answeredAt?: string | null;
+            answeredByActor?: string | null;
+            /** @enum {string|null} */
+            answeredByActorType?: "human" | "agent" | "system" | "service_account" | null;
+            /** @example art_abc123 */
+            artifactId: string;
+            /** Format: int32 */
+            artifactVersion: number;
+            /** @example clr_abc123 */
+            clarificationId: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** @example Q-001 */
+            questionId: string;
+            /** @description UNTRUSTED — rendered only via the frontend SafeMarkdownRenderer. */
+            questionText: string;
+            /** @enum {string} */
+            status: "open" | "answered" | "accepted" | "incorporated" | "superseded" | "rejected_invalid";
+            /** @example run_abc123 */
+            workflowRunId: string;
+        };
         ClarificationAcceptResponse: {
             clarificationId: string;
             /** @description Clarification row status after the accept commit. Expected "accepted" on the happy path; an idempotent replay reflects the persisted status. */
@@ -766,6 +809,10 @@ export interface components {
             correlationId?: string;
             currentState: string;
             workflowRunId: string;
+        };
+        /** @description Clarifications raised against a workflow run's specification. */
+        ClarificationsResponse: {
+            clarifications: components["schemas"]["Clarification"][];
         };
         /** @description One connectivity check's tri-state result. */
         ConnectionCheckResult: {
@@ -2201,6 +2248,50 @@ export interface operations {
             };
             /** @description Artifact payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE). */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getClarifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Clarifications for the run (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationsResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

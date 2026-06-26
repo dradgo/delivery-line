@@ -115,7 +115,7 @@ public class RunnerDiagnosticConsoleController {
               + "event and closing appends console.closed (session metadata only; console I/O is not "
               + "durably stored, ADR 0025 D4). Served only over the localhost-only binding to the "
               + "single local operator; gated by the open_diagnostic_console allowed-action "
-              + "(EXECUTING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough "
+              + "(EXECUTING or INVESTIGATING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough "
               + "for the console-safety posture. Events: console {stream,chunk,seq}, status "
               + "{phase,rex}, end {reason}, error {reason}.")
   @ApiResponses({

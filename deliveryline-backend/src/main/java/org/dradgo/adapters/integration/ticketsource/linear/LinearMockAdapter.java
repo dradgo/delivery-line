@@ -4,15 +4,19 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
+import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
@@ -61,6 +65,8 @@ public class LinearMockAdapter implements TicketSourceAdapter {
 
   private final LinearMockScenarioRegistry registry;
   private final CopyOnWriteArrayList<PostedComment> postedComments = new CopyOnWriteArrayList<>();
+  private final ConcurrentHashMap<CreationKey, CreateSubticketResult> createdSubtickets =
+      new ConcurrentHashMap<>();
 
   public LinearMockAdapter(LinearMockScenarioRegistry registry) {
     this.registry = Objects.requireNonNull(registry, "registry");
@@ -139,6 +145,62 @@ public class LinearMockAdapter implements TicketSourceAdapter {
   }
 
   @Override
+  public CreateSubticketResult createSubticket(TicketRef parentRef, SubticketDraft draft) {
+    Objects.requireNonNull(parentRef, "parentRef");
+    Objects.requireNonNull(draft, "draft");
+    CreationKey key = new CreationKey(parentRef.value(), draft.idempotencyKey());
+    CreateSubticketResult existing = createdSubtickets.get(key);
+    if (existing != null) {
+      log.info(
+          "linear_mock subticket_replay parentTicketRef={} childTicketRef={} workflowRunId={} subtaskOrdinal={} idempotencyKey={}",
+          parentRef.value(),
+          existing.childRef().value(),
+          draft.parentRunId(),
+          draft.ordinal(),
+          draft.idempotencyKey());
+      return new CreateSubticketResult(
+          existing.childRef(),
+          existing.idempotencyKey(),
+          existing.parentLinkFingerprint(),
+          true,
+          existing.metadata());
+    }
+    TicketRef childRef = TicketRef.of(parentRef.value() + "-" + draft.ordinal());
+    String parentLinkFingerprint = "subticket:" + draft.idempotencyKey();
+    CreateSubticketResult created =
+        new CreateSubticketResult(
+            childRef,
+            draft.idempotencyKey(),
+            parentLinkFingerprint,
+            false,
+            Map.of("source", "linear-mock", "subtaskOrdinal", Integer.toString(draft.ordinal())));
+    CreateSubticketResult raced = createdSubtickets.putIfAbsent(key, created);
+    if (raced != null) {
+      return new CreateSubticketResult(
+          raced.childRef(),
+          raced.idempotencyKey(),
+          raced.parentLinkFingerprint(),
+          true,
+          raced.metadata());
+    }
+    postGovernedRunComment(
+        parentRef,
+        new GovernedRunComment(
+            draft.parentRunId(),
+            parentLinkFingerprint,
+            "Created split child ticket " + childRef.value(),
+            org.dradgo.domain.registry.DataClassification.SHAREABLE_REDACTED));
+    log.info(
+        "linear_mock subticket_created parentTicketRef={} childTicketRef={} workflowRunId={} subtaskOrdinal={} idempotencyKey={}",
+        parentRef.value(),
+        childRef.value(),
+        draft.parentRunId(),
+        draft.ordinal(),
+        draft.idempotencyKey());
+    return created;
+  }
+
+  @Override
   public ConnectorKind connectorKind() {
     return ConnectorKind.LINEAR;
   }
@@ -170,6 +232,18 @@ public class LinearMockAdapter implements TicketSourceAdapter {
     postedComments.clear();
   }
 
+  /** Test-only accessor returning source sub-ticket creation history. */
+  public Map<String, CreateSubticketResult> createdSubtickets() {
+    return createdSubtickets.entrySet().stream()
+        .collect(
+            Collectors.toUnmodifiableMap(entry -> entry.getKey().asString(), Map.Entry::getValue));
+  }
+
+  /** Test-only utility - clear recorded sub-ticket creation history. */
+  public void clearCreatedSubtickets() {
+    createdSubtickets.clear();
+  }
+
   private static TicketSourceAdapterException failure(
       LinearMockScenario scenario, String operation) {
     IntegrationFailureCategory category = scenario.expectedFailureCategory();
@@ -194,4 +268,10 @@ public class LinearMockAdapter implements TicketSourceAdapter {
 
   /** In-memory record of a {@link #postGovernedRunComment} call. */
   public record PostedComment(String ticketRef, GovernedRunComment comment) {}
+
+  private record CreationKey(String parentTicketRef, String idempotencyKey) {
+    private String asString() {
+      return parentTicketRef + "|" + idempotencyKey;
+    }
+  }
 }

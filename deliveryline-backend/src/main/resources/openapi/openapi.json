@@ -366,6 +366,98 @@
         ],
         "type" : "object"
       },
+      "Clarification" : {
+        "description" : "A single clarification raised against a spec artifact version.",
+        "properties" : {
+          "answerText" : {
+            "description" : "UNTRUSTED reviewer wording — sanitized render only.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "answeredAt" : {
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "answeredByActor" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "answeredByActorType" : {
+            "enum" : [
+              "human",
+              "agent",
+              "system",
+              "service_account"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "artifactId" : {
+            "example" : "art_abc123",
+            "pattern" : "^art_[A-Za-z0-9_]{4,}$",
+            "type" : "string"
+          },
+          "artifactVersion" : {
+            "format" : "int32",
+            "minimum" : 1,
+            "type" : "integer"
+          },
+          "clarificationId" : {
+            "example" : "clr_abc123",
+            "pattern" : "^clr_[A-Za-z0-9_]{4,}$",
+            "type" : "string"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "questionId" : {
+            "example" : "Q-001",
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "questionText" : {
+            "description" : "UNTRUSTED — rendered only via the frontend SafeMarkdownRenderer.",
+            "type" : "string"
+          },
+          "status" : {
+            "enum" : [
+              "open",
+              "answered",
+              "accepted",
+              "incorporated",
+              "superseded",
+              "rejected_invalid"
+            ],
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "example" : "run_abc123",
+            "pattern" : "^run_[A-Za-z0-9_]{4,}$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "artifactId",
+          "artifactVersion",
+          "clarificationId",
+          "createdAt",
+          "questionId",
+          "questionText",
+          "status",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "ClarificationAcceptResponse" : {
         "properties" : {
           "clarificationId" : {
@@ -417,6 +509,21 @@
           "clarificationStatus",
           "currentState",
           "workflowRunId"
+        ],
+        "type" : "object"
+      },
+      "ClarificationsResponse" : {
+        "description" : "Clarifications raised against a workflow run's specification.",
+        "properties" : {
+          "clarifications" : {
+            "items" : {
+              "$ref" : "#/components/schemas/Clarification"
+            },
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "clarifications"
         ],
         "type" : "object"
       },
@@ -3091,6 +3198,59 @@
         ]
       }
     },
+    "/api/v1/workflows/{workflowRunId}/clarifications" : {
+      "get" : {
+        "operationId" : "getClarifications",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ClarificationsResponse"
+                }
+              }
+            },
+            "description" : "Clarifications for the run (possibly empty)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get the clarifications raised against a run's specification",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
     "/api/v1/workflows/{workflowRunId}/clarifications/{clarificationId}/accept" : {
       "post" : {
         "operationId" : "acceptClarification",
@@ -3273,7 +3433,7 @@
     },
     "/api/v1/workflows/{workflowRunId}/diagnostic-console/stream" : {
       "get" : {
-        "description" : "Server-Sent Events stream of a READ-ONLY console attached to the run's latest runner execution while it is LIVE. The attach is opened WITHOUT stdin — input is disabled end-to-end (a pure streaming pty), which is the provable non-mutating guarantee (ADR 0025 D1). LIVE-ONLY: a finished/absent execution is rejected with a typed console-not-live end/error and no attach is engaged (the finished-state diagnostic surface is the runner-logs viewer). Live chunks are redacted BEST-EFFORT; nothing the console shows changes persisted/exported content (the console never writes to runner-logs/ nor mutates runner_executions — the story-3.6 persisted scan remains the authoritative redaction guarantee). Opening appends a console.opened governed event and closing appends console.closed (session metadata only; console I/O is not durably stored, ADR 0025 D4). Served only over the localhost-only binding to the single local operator; gated by the open_diagnostic_console allowed-action (EXECUTING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough for the console-safety posture. Events: console {stream,chunk,seq}, status {phase,rex}, end {reason}, error {reason}.",
+        "description" : "Server-Sent Events stream of a READ-ONLY console attached to the run's latest runner execution while it is LIVE. The attach is opened WITHOUT stdin — input is disabled end-to-end (a pure streaming pty), which is the provable non-mutating guarantee (ADR 0025 D1). LIVE-ONLY: a finished/absent execution is rejected with a typed console-not-live end/error and no attach is engaged (the finished-state diagnostic surface is the runner-logs viewer). Live chunks are redacted BEST-EFFORT; nothing the console shows changes persisted/exported content (the console never writes to runner-logs/ nor mutates runner_executions — the story-3.6 persisted scan remains the authoritative redaction guarantee). Opening appends a console.opened governed event and closing appends console.closed (session metadata only; console I/O is not durably stored, ADR 0025 D4). Served only over the localhost-only binding to the single local operator; gated by the open_diagnostic_console allowed-action (EXECUTING or INVESTIGATING + workflow_owner). See story 3d-10's per-step-execution-control walkthrough for the console-safety posture. Events: console {stream,chunk,seq}, status {phase,rex}, end {reason}, error {reason}.",
         "operationId" : "streamDiagnosticConsole",
         "parameters" : [
           {

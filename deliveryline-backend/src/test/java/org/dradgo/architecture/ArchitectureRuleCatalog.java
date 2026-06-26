@@ -27,6 +27,7 @@ import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
+import org.dradgo.application.integration.ticketsource.TicketSourceSubticketService;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.queue.RunnerExecutionQueue;
@@ -39,6 +40,7 @@ import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.WorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
+import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.registry.AllowedAction;
 import org.dradgo.domain.registry.RunnerStage;
@@ -545,30 +547,43 @@ final class ArchitectureRuleCatalog {
                   String.class));
 
   /**
-   * Story 3.16 (AC9) — Linear is intake + completion-sync only: the merge-ready write-back is the
-   * sole path that posts to Linear. {@code LinearAdapter.postGovernedRunComment} may be called only
-   * from {@link WorkflowOrchestrationService} (its {@code syncCompletionToLinear} is the composer)
-   * and the {@code WorkflowCommands} CLI ({@code sync-completion} manual retry) — runner CLIs and
-   * every other component are forbidden, preserving the narrow boundary. (In practice the CLI calls
-   * {@code syncCompletionToLinear}, not {@code postGovernedRunComment} directly, so {@code
-   * WorkflowOrchestrationService} is the only actual caller; the CLI is allow-listed per AC9 so a
-   * future direct call from {@code sync-completion} would not trip the rule.)
+   * Story 3.16 (AC9) plus story 3f-1: governed ticket-source comments have two canonical write-back
+   * paths only: completion sync in {@link WorkflowOrchestrationService}, and the adapter-internal
+   * parent-link comment posted as part of Linear sub-ticket creation. Runner CLIs, REST
+   * controllers, persistence, and other services must not call the comment operation directly.
    */
   static final ArchRule ONLY_ORCHESTRATION_AND_CLI_MAY_POST_LINEAR_COMMENT =
       namedRule(
-          "only WorkflowOrchestrationService and the sync-completion CLI may post a Linear comment",
-          "Remediation: route any Linear write-back through WorkflowOrchestrationService.syncCompletionToLinear (story 3.16 AC9). Runner CLIs and other components must never call LinearAdapter.postGovernedRunComment — Linear stays intake + completion-sync only.",
+          "only canonical completion-sync and subticket adapter paths may post a Linear comment",
+          "Remediation: route completion write-back through WorkflowOrchestrationService.syncCompletionToLinear and source sub-ticket parent-link comments through TicketSourceSubticketService -> TicketSourceAdapter.createSubticket. Runner CLIs, controllers, persistence, and other components must never call TicketSourceAdapter.postGovernedRunComment directly.",
           noClasses()
               .that()
               .doNotHaveFullyQualifiedName(WorkflowOrchestrationService.class.getName())
               .and()
               .doNotHaveFullyQualifiedName("org.dradgo.adapters.cli.WorkflowCommands")
+              .and()
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter")
               .should()
               .callMethod(
                   TicketSourceAdapter.class,
                   "postGovernedRunComment",
                   TicketRef.class,
                   GovernedRunComment.class));
+
+  static final ArchRule ONLY_SUBTICKET_SERVICE_MAY_CREATE_SOURCE_SUBTICKET =
+      namedRule(
+          "only TicketSourceSubticketService may call source sub-ticket creation",
+          "Remediation: route split sub-ticket creation through TicketSourceSubticketService so capability gating, idempotency, and log-safety stay centralized. Controllers, CLIs, runner code, and persistence adapters must not call TicketSourceAdapter.createSubticket directly.",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(TicketSourceSubticketService.class.getName())
+              .should()
+              .callMethod(
+                  TicketSourceAdapter.class,
+                  "createSubticket",
+                  TicketRef.class,
+                  SubticketDraft.class));
 
   static final ArchRule ARTIFACT_WRITES_MUST_GO_THROUGH_ARTIFACT_OPERATION_SERVICE =
       namedRule(
@@ -801,7 +816,7 @@ final class ArchitectureRuleCatalog {
       namedRule(
           "vendor-specific ticket-source types must not leak through the application.integration.ticketsource port",
           "Remediation: keep Linear GraphQL DTOs, vendor SDK types, and HTTP-client surface inside adapters.integration.ticketsource.{kind}; the application port "
-              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment). Story 1.14 AC1 / story 3.32 AC7 invariant.",
+              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment, SubticketDraft, CreateSubticketResult). Story 1.14 AC1 / story 3.32 AC7 / story 3f-1 invariant.",
           noClasses()
               .that()
               .resideInAPackage("org.dradgo.application.integration.ticketsource..")

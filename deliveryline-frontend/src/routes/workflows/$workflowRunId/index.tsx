@@ -140,8 +140,8 @@ function WorkflowDetailRoute() {
   // Story 3d-5 (AC6) — the Step Execution Log Viewer is gated on the backend-reported
   // `view_runner_logs` action ONLY (flowing through `useAllowedActions`, never role-inferred —
   // eslint `local-rules/no-role-based-action-gating`). The action is offered in the
-  // runner-execution states (Executing / Failed / Paused / WaitingForReview); the stream itself
-  // resolves the latest runner execution and ends gracefully when none exists.
+  // runner-execution states (Investigating / Executing / Failed / Paused / WaitingForReview); the
+  // stream itself resolves the latest runner execution and ends gracefully when none exists.
   const allowedActions = useAllowedActions(workflowRunId);
   const canViewRunnerLogs = allowedActions.data?.actions.includes('view_runner_logs') ?? false;
   // Story 3d-7 (AC5) — the Provider Limit Status indicator is gated on the backend-reported
@@ -153,10 +153,11 @@ function WorkflowDetailRoute() {
     allowedActions.data?.actions.includes('view_provider_usage_status') ?? false;
   // Story 3d-6 (AC4/AC6) — the Read-only Diagnostic Console is gated on the backend-reported
   // `open_diagnostic_console` action ONLY (flowing through `useAllowedActions`, never role-inferred —
-  // eslint `local-rules/no-role-based-action-gating`). The action is offered ONLY in EXECUTING and
-  // ONLY to the run owner (workflow_owner), so we resolve the owner-scoped action set; the stream is
-  // opened with the same role so the backend resolves the SERVER-SIDE gate too. The endpoint
-  // re-checks liveness at attach and rejects a non-live execution with console-not-live (LIVE-ONLY).
+  // eslint `local-rules/no-role-based-action-gating`). The action is offered only in the EXECUTING
+  // or INVESTIGATING states, and only to the run owner (workflow_owner), so we resolve the
+  // owner-scoped action set; the stream is opened with the same role so the backend resolves the
+  // SERVER-SIDE gate too. The endpoint re-checks liveness at attach and rejects a non-live execution
+  // with console-not-live (LIVE-ONLY).
   const ownerActions = useAllowedActions(workflowRunId, 'workflow_owner');
   const canOpenDiagnosticConsole =
     ownerActions.data?.actions.includes('open_diagnostic_console') ?? false;
