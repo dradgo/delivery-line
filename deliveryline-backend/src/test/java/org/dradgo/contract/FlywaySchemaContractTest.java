@@ -959,6 +959,14 @@ class FlywaySchemaContractTest {
                 "insert into run_dependencies (run_id, depends_on_run_id) values ('run_missing_dependent', ?)",
                 prerequisite),
         "Expected fk_run_dependencies_run to reject a dangling dependent id");
+
+    // Clean up the probe rows. This @SpringBootTest shares its cached context's Testcontainers
+    // Postgres with every other contract test, so a leaked run_dependencies edge would block their
+    // `delete from workflow_runs` cleanups via the ON DELETE RESTRICT FK. Delete the child edge
+    // first, then the two workflow_runs.
+    jdbcTemplate.update("delete from run_dependencies where run_id = ?", dependent);
+    jdbcTemplate.update(
+        "delete from workflow_runs where public_id in (?, ?)", dependent, prerequisite);
   }
 
   @Test
