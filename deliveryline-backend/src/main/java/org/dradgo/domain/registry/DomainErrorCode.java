@@ -188,7 +188,14 @@ public enum DomainErrorCode implements RegistryValue {
   // run that has ZERO `accepted` clarifications to incorporate (the regenerate action is surfaced
   // unconditionally at WaitingForSpecApproval, so the executor is the gate). CONFLICT (409) +
   // non-retryable (a precondition mismatch, not a transient fault).
-  REGENERATE_NOT_APPLICABLE("REGENERATE_NOT_APPLICABLE");
+  REGENERATE_NOT_APPLICABLE("REGENERATE_NOT_APPLICABLE"),
+  // Story 3f-3 (AC4) — three-sites code (enum + ProblemDetailsCatalog + manifest). Raised by
+  // RunDependencyService when declaring a run dependency edge would introduce a cycle in the
+  // run-dependency DAG (a recursive-CTE reachability probe detects that the prerequisite already
+  // depends, transitively, on the dependent). CONFLICT (409) + non-retryable: a malformed
+  // declaration, not a transient fault (mirrors ILLEGAL_TRANSITION). Carries runId, dependsOnRunId,
+  // and reason=cycle_detected.
+  RUN_DEPENDENCY_CYCLE("RUN_DEPENDENCY_CYCLE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

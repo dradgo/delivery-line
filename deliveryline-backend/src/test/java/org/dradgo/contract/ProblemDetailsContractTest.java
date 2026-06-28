@@ -60,6 +60,10 @@ class ProblemDetailsContractTest {
   // @WebMvcTest slice can construct the controller without the SecurityProperties auto-config.
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
 
+  // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the
+  // bean must exist for this @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
+
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @BeforeEach

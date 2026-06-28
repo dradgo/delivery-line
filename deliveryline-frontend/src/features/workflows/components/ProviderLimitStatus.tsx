@@ -83,6 +83,42 @@ function windowDisplay(window: UsageWindow): string {
   return parts.join(' · ');
 }
 
+function usagePercent(window: UsageWindow | null | undefined): string {
+  if (window?.usedFraction != null) {
+    return `${Math.round(window.usedFraction * 100)}%`;
+  }
+  if (window?.used != null && window.limit != null && window.limit > 0) {
+    return `${Math.round((window.used / window.limit) * 100)}%`;
+  }
+  return 'n/a';
+}
+
+function formatDurationLeft(resetsAt: string, asOf: string): string | undefined {
+  const resetMillis = Date.parse(resetsAt);
+  const asOfMillis = Date.parse(asOf);
+  if (Number.isNaN(resetMillis) || Number.isNaN(asOfMillis) || resetMillis <= asOfMillis) {
+    return undefined;
+  }
+  const totalMinutes = Math.floor((resetMillis - asOfMillis) / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}h${minutes.toString().padStart(2, '0')}m left` : `${minutes}m left`;
+}
+
+function codexUsageSummary(status: ProviderUsageStatus): string | undefined {
+  if (status.accountReference?.startsWith('codex:') !== true) {
+    return undefined;
+  }
+  const fiveHourPercent = usagePercent(status.fiveHour);
+  const weeklyPercent = usagePercent(status.weekly);
+  const resetLeft =
+    status.fiveHour?.resetsAt != null && status.asOf != null
+      ? formatDurationLeft(status.fiveHour.resetsAt, status.asOf)
+      : undefined;
+  const fiveHour = resetLeft === undefined ? fiveHourPercent : `${fiveHourPercent} (${resetLeft})`;
+  return `Codex | 5h ${fiveHour} | wk ${weeklyPercent} | high · /effort | accept edits on`;
+}
+
 /** Color-independent render of one window (5h / weekly), or the not-exposed / no-data state. */
 function WindowRow({
   label,
@@ -123,6 +159,7 @@ export function ProviderLimitStatus({ workflowRunId }: ProviderLimitStatusProps)
   const signal = signalSignifier(status, isError);
   const announced = useLiveAnnouncement(announcementFor(status, isError));
   const present = status?.present === true;
+  const codexSummary = status !== undefined && present ? codexUsageSummary(status) : undefined;
 
   return (
     <section
@@ -170,6 +207,14 @@ export function ProviderLimitStatus({ workflowRunId }: ProviderLimitStatusProps)
             'flex flex-col gap-1 rounded-md border border-border bg-surface-sunken p-3',
           )}
         >
+          {codexSummary !== undefined ? (
+            <p
+              data-testid="codex-usage-summary"
+              className="mb-1 font-mono text-sm text-text-primary"
+            >
+              {codexSummary}
+            </p>
+          ) : null}
           <WindowRow
             label="5-hour window"
             window={status.fiveHour}

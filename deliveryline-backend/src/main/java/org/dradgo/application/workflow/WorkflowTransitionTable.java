@@ -32,11 +32,15 @@ public final class WorkflowTransitionTable {
     // reserved/unused intermediate (nothing in production advances into or out of it today), so
     // INBOX -> INVESTIGATING is added directly rather than forcing orchestration through a
     // side-effect-free PLANNED hop. The legacy INBOX -> PLANNED edge is retained for compatibility.
+    // Story 3f-3 (AC2 / AC5) — a freshly-created run with unmet run-dependency prerequisites parks
+    // in WAITING_FOR_DEPENDENCIES from INBOX (instead of dispatching to INVESTIGATING). A
+    // zero/satisfied-dependency run keeps the existing INBOX -> INVESTIGATING dispatch edge.
     put(
         rules,
         WorkflowState.INBOX,
         WorkflowState.PLANNED,
         WorkflowState.INVESTIGATING,
+        WorkflowState.WAITING_FOR_DEPENDENCIES,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -102,6 +106,11 @@ public final class WorkflowTransitionTable {
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED);
+    // Story 3f-3 (AC2 / AC6) — the sole out-edge from the dependency-gating state: when the last
+    // prerequisite reaches Completed, RunDependencyReleaseService releases the dependent onward
+    // into
+    // the normal spec-generation path. No direct edges to approval/review/completed states.
+    put(rules, WorkflowState.WAITING_FOR_DEPENDENCIES, WorkflowState.INVESTIGATING);
     put(rules, WorkflowState.COMPLETED);
     put(
         rules,

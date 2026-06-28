@@ -37,11 +37,14 @@ class TransitionTableCrossProductFoundationContract {
   private static final Map<WorkflowState, Set<WorkflowState>> EXPECTED_ALLOWED_TARGETS =
       Map.ofEntries(
           // Story 3a-1 (ADR 0004 §Decision-1 / OQ-1) — Inbox gains a direct Investigating edge.
+          // Story 3f-3 (AC2 / AC5) — Inbox gains a WaitingForDependencies edge for runs parked on
+          // unmet run-dependency prerequisites.
           Map.entry(
               WorkflowState.INBOX,
               EnumSet.of(
                   WorkflowState.PLANNED,
                   WorkflowState.INVESTIGATING,
+                  WorkflowState.WAITING_FOR_DEPENDENCIES,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           Map.entry(
@@ -99,6 +102,10 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.SPLIT, EnumSet.of(WorkflowState.COMPLETED)),
+          // Story 3f-3 (AC2 / AC6) — the dependency-gating state's sole out-edge: release onward to
+          // spec generation once the last prerequisite completes.
+          Map.entry(
+              WorkflowState.WAITING_FOR_DEPENDENCIES, EnumSet.of(WorkflowState.INVESTIGATING)),
           Map.entry(WorkflowState.COMPLETED, EnumSet.noneOf(WorkflowState.class)),
           Map.entry(
               WorkflowState.FAILED,

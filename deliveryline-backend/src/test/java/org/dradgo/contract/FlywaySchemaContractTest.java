@@ -52,7 +52,12 @@ class FlywaySchemaContractTest {
   // asserted
   // by projectRunnerKindsSchemaCarriesExpectedColumnsConstraintsAndChecks instead. It must still be
   // accounted for in the "exactly these tables" check, so it is unioned in there.
-  private static final List<String> ASSOCIATION_TABLES = List.of("project_runner_kinds");
+  // Story 3f-3 / V28: run_dependencies is a pure association table too (composite PK (run_id,
+  // depends_on_run_id), no bigserial id / public_id / created_at-only). Its columns/constraints are
+  // probed by runDependenciesSchemaCarriesExpectedColumnsConstraintsForeignKeysAndIndexes; it is
+  // unioned here only to satisfy the "exactly these tables" check.
+  private static final List<String> ASSOCIATION_TABLES =
+      List.of("project_runner_kinds", "run_dependencies");
 
   private static final Map<String, String> EXPECTED_PUBLIC_ID_PREFIX =
       Map.ofEntries(
@@ -189,6 +194,7 @@ class FlywaySchemaContractTest {
             "Executing",
             "WaitingForReview",
             "WaitingForManualExecution",
+            "WaitingForDependencies",
             "Split",
             "Completed",
             "Failed",
@@ -862,6 +868,97 @@ class FlywaySchemaContractTest {
                 self,
                 self),
         "Expected parent_run_id CHECK to reject a self-parent row");
+  }
+
+  @Test
+  void runDependenciesSchemaCarriesExpectedColumnsConstraintsChecksForeignKeysAndIndexes() {
+    // Story 3f-3 / V28: run-dependency DAG join table. A directed edge run_id -> depends_on_run_id
+    // (the dependent depends on the prerequisite). Composite PK makes duplicate edges idempotent;
+    // two FKs to workflow_runs.public_id (ON DELETE RESTRICT ON UPDATE CASCADE); a self-edge CHECK;
+    // and an index for each lookup direction.
+    assertColumnType("run_dependencies", "run_id", "text");
+    assertColumnType("run_dependencies", "depends_on_run_id", "text");
+    assertColumnType("run_dependencies", "created_at", "timestamp with time zone");
+    assertColumnNullable("run_dependencies", "run_id", false);
+    assertColumnNullable("run_dependencies", "depends_on_run_id", false);
+    assertColumnNullable("run_dependencies", "created_at", false);
+
+    assertConstraintDefinitionContains("pk_run_dependencies", "PRIMARY KEY");
+    assertConstraintDefinitionContains("pk_run_dependencies", "run_id");
+    assertConstraintDefinitionContains("pk_run_dependencies", "depends_on_run_id");
+    assertConstraintDefinitionContains("fk_run_dependencies_run", "run_id");
+    assertConstraintDefinitionContains("fk_run_dependencies_run", "public_id");
+    assertConstraintDefinitionContains("fk_run_dependencies_depends_on_run", "depends_on_run_id");
+    assertConstraintDefinitionContains("fk_run_dependencies_depends_on_run", "public_id");
+    // AC1 — both FKs must be ON DELETE RESTRICT ON UPDATE CASCADE (review 3f-3 P8).
+    // pg_get_constraintdef renders the referential actions in canonical uppercase.
+    assertConstraintDefinitionContains("fk_run_dependencies_run", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains("fk_run_dependencies_run", "ON UPDATE CASCADE");
+    assertConstraintDefinitionContains("fk_run_dependencies_depends_on_run", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains("fk_run_dependencies_depends_on_run", "ON UPDATE CASCADE");
+    assertConstraintDefinitionContains("ck_run_dependencies_not_self", "run_id");
+    assertConstraintDefinitionContains("ck_run_dependencies_not_self", "depends_on_run_id");
+    assertIndexDefinitionContains("idx_run_dependencies_run_id", "run_id");
+    assertIndexDefinitionContains("idx_run_dependencies_depends_on_run_id", "depends_on_run_id");
+
+    String n = uniqueRowSuffix();
+    String dependent = "run_dep_dependent" + n;
+    String prerequisite = "run_dep_prereq" + n;
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, 'Inbox')", dependent);
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, 'Inbox')", prerequisite);
+    jdbcTemplate.update(
+        "insert into run_dependencies (run_id, depends_on_run_id) values (?, ?)",
+        dependent,
+        prerequisite);
+    // Lookup by dependent (find prerequisites).
+    assertEquals(
+        prerequisite,
+        jdbcTemplate.queryForObject(
+            "select depends_on_run_id from run_dependencies where run_id = ?",
+            String.class,
+            dependent));
+    // Lookup by prerequisite (find dependents).
+    assertEquals(
+        dependent,
+        jdbcTemplate.queryForObject(
+            "select run_id from run_dependencies where depends_on_run_id = ?",
+            String.class,
+            prerequisite));
+    // Duplicate edge is rejected by the composite PK.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into run_dependencies (run_id, depends_on_run_id) values (?, ?)",
+                dependent,
+                prerequisite),
+        "Expected pk_run_dependencies to reject a duplicate edge");
+    // Self-edge CHECK rejects run_id = depends_on_run_id.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into run_dependencies (run_id, depends_on_run_id) values (?, ?)",
+                dependent,
+                dependent),
+        "Expected ck_run_dependencies_not_self to reject a self-edge");
+    // FK rejects a dangling run id on either side.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into run_dependencies (run_id, depends_on_run_id) values (?, 'run_missing_prereq')",
+                dependent),
+        "Expected fk_run_dependencies_depends_on_run to reject a dangling prerequisite id");
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into run_dependencies (run_id, depends_on_run_id) values ('run_missing_dependent', ?)",
+                prerequisite),
+        "Expected fk_run_dependencies_run to reject a dangling dependent id");
   }
 
   @Test

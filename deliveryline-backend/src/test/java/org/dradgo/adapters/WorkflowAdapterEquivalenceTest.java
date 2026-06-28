@@ -60,6 +60,10 @@ class WorkflowAdapterEquivalenceTest {
   // doesn't use it, but the controller bean still requires injection at construction.
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
 
+  // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the
+  // bean must exist for this @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
+
   @BeforeEach
   void stubActorResolver() {
     // Story 2.13 review P13: stub resolve(...) so any future approve/reject coverage added here

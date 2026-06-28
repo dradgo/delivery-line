@@ -62,6 +62,10 @@ class WorkflowControllerLoggingContractTest {
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
+  // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the
+  // bean must exist for this @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
+
   private ListAppender<ILoggingEvent> appender;
   private Logger logger;
 

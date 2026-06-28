@@ -45,6 +45,10 @@ public class WorkflowTransitionService {
   // never
   // eagerly in the ctor) to break the cycle ([[broker-orchestration-lazy-supplier]], Fact 6).
   private final ObjectProvider<WorkflowOrchestrationService> orchestrationProvider;
+  // Story 3f-3 (AC6) — the dependency-release collaborator. It depends on THIS service, so it is
+  // injected lazily (ObjectProvider, resolved at afterCommit time) to break the cycle, mirroring
+  // orchestrationProvider above.
+  private final ObjectProvider<RunDependencyReleaseService> dependencyReleaseProvider;
   private final WorkflowProperties workflowProperties;
 
   public WorkflowTransitionService(
@@ -54,6 +58,7 @@ public class WorkflowTransitionService {
       PlatformTransactionManager transactionManager,
       ObjectProvider<WorkflowTransitionConcurrencyProbe> concurrencyProbeProvider,
       ObjectProvider<WorkflowOrchestrationService> orchestrationProvider,
+      ObjectProvider<RunDependencyReleaseService> dependencyReleaseProvider,
       WorkflowProperties workflowProperties) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunStatePort = workflowRunStatePort;
@@ -63,6 +68,7 @@ public class WorkflowTransitionService {
     this.concurrencyProbe =
         concurrencyProbeProvider.getIfAvailable(WorkflowTransitionConcurrencyProbe::noop);
     this.orchestrationProvider = orchestrationProvider;
+    this.dependencyReleaseProvider = dependencyReleaseProvider;
     this.workflowProperties = workflowProperties;
   }
 
@@ -122,6 +128,7 @@ public class WorkflowTransitionService {
             doTransition(
                 runId, targetState, actor, reason, idempotencyKey, failureCategory, eventDetails);
             registerCompletionSyncHookIfApplicable(runId, targetState);
+            registerDependencyReleaseHookIfApplicable(runId, targetState);
           });
     } catch (OptimisticLockingFailureException exception) {
       throw concurrentConflict(runId, targetState, idempotencyKey, exception);
@@ -177,6 +184,52 @@ public class WorkflowTransitionService {
               log.warn(
                   "completion-sync hook swallowed an error (completion intact) workflowRunId={} "
                       + "cause={}",
+                  runId,
+                  error.getClass().getSimpleName());
+            }
+          }
+        });
+  }
+
+  /**
+   * Story 3f-3 (AC6, Task 6) — when this transition commits a run into {@code Completed}, register
+   * a post-commit {@link TransactionSynchronization} that releases any dependency-blocked
+   * dependents (runs parked in {@code WaitingForDependencies} whose every prerequisite is now
+   * {@code Completed}). The hook resolves {@link RunDependencyReleaseService} lazily and runs AFTER
+   * commit, so the {@code Completed} transition is already durable and a release failure cannot
+   * roll it back (best-effort, AC6). Unlike completion-sync this is NOT gated on a feature flag:
+   * dependency release is core gating behavior.
+   */
+  private void registerDependencyReleaseHookIfApplicable(String runId, WorkflowState targetState) {
+    if (targetState != WorkflowState.COMPLETED) {
+      return;
+    }
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      log.warn(
+          "dependency-release hook not registered (no active transaction synchronization) workflowRunId={}",
+          runId);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            RunDependencyReleaseService release = dependencyReleaseProvider.getIfAvailable();
+            if (release == null) {
+              log.warn(
+                  "dependency-release hook fired but RunDependencyReleaseService is unavailable; "
+                      + "skipping workflowRunId={}",
+                  runId);
+              return;
+            }
+            log.info("dependency-release hook fired completedRunId={} (post-commit)", runId);
+            try {
+              release.releaseDependentsOf(runId, null);
+            } catch (RuntimeException error) {
+              // afterCommit cannot roll back the (already committed) Completed transition; release
+              // is best-effort (AC6) so any escape is swallowed with a WARN.
+              log.warn(
+                  "dependency-release hook swallowed an error (completion intact) completedRunId={} cause={}",
                   runId,
                   error.getClass().getSimpleName());
             }

@@ -555,6 +555,213 @@ public class WorkflowCommands {
     this.providerUsageStatusService = providerUsageStatusService;
   }
 
+  // Story 3f-3 (AC9) — optional setter injection for the run-dependency service, so the telescoping
+  // WorkflowCommands constructors + their many unit-test call sites stay unchanged (mirrors
+  // providerUsageStatusService). Present in production; null in lean test ctors, where the
+  // dependencies commands surface a clear "not wired" error.
+  private org.dradgo.application.workflow.RunDependencyService runDependencyService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setRunDependencyService(
+      org.dradgo.application.workflow.RunDependencyService runDependencyService) {
+    this.runDependencyService = runDependencyService;
+  }
+
+  @Command(
+      name = "dependencies-show",
+      description =
+          "Inspect a governed run's run-dependency graph: prerequisites it waits on, dependents"
+              + " waiting on it, and the unfinished blocking subset (story 3f-3).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String dependenciesShow(
+      @Option(longName = "run", description = "Workflow run public id (run_...)", required = true)
+          String runId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireDependenciesWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      org.dradgo.application.workflow.RunDependencyGraphView graph =
+          runDependencyService.graphView(runId);
+      String rendered = renderDependencies(runId, graph, format);
+      emitSuccess("workflow dependencies-show", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow dependencies-show", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow dependencies-show", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "dependencies-add",
+      description =
+          "Declare that a run depends on one or more prerequisite runs. The run parks in"
+              + " WaitingForDependencies when it has unmet prerequisites (story 3f-3).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String dependenciesAdd(
+      @Option(
+              longName = "run",
+              description = "Dependent workflow run public id (run_...)",
+              required = true)
+          String runId,
+      @Option(
+              longName = "depends-on",
+              description = "Comma-separated prerequisite run public ids (run_...,run_...)",
+              required = true)
+          String dependsOn,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireDependenciesWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      java.util.List<String> dependsOnRunIds = parseDependsOn(dependsOn);
+      org.dradgo.application.workflow.RunDependencyGraphView graph =
+          runDependencyService.declareDependencies(
+              new org.dradgo.application.workflow.DeclareRunDependenciesCommand(
+                  runId,
+                  dependsOnRunIds,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedIdempotencyKey,
+                  resolvedCorrelation));
+      String rendered = renderDependencies(runId, graph, format);
+      emitSuccess("workflow dependencies-add", runId, resolvedCorrelation, start);
+      log.info(
+          "workflow dependencies-add declared correlationId={} workflowRunId={} dependsOnCount={}",
+          resolvedCorrelation,
+          runId,
+          dependsOnRunIds.size());
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow dependencies-add", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow dependencies-add", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  private static java.util.List<String> parseDependsOn(String dependsOn) {
+    if (dependsOn == null || dependsOn.isBlank()) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "empty_depends_on");
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+          "--depends-on must list at least one prerequisite run id",
+          details);
+    }
+    java.util.List<String> ids = new java.util.ArrayList<>();
+    for (String raw : dependsOn.split(",")) {
+      String trimmed = raw.trim();
+      if (!trimmed.isEmpty()) {
+        ids.add(trimmed);
+      }
+    }
+    return ids;
+  }
+
+  private String renderDependencies(
+      String runId, org.dradgo.application.workflow.RunDependencyGraphView graph, String format) {
+    String normalizedFormat = normalizeFormat(format);
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      try {
+        com.fasterxml.jackson.databind.node.ObjectNode root = jsonMapper().createObjectNode();
+        root.put("runId", runId);
+        root.put("blockedByDependencies", graph.blockedByDependencies());
+        root.set("prerequisites", dependencyRefsJson(graph.prerequisites()));
+        root.set("dependents", dependencyRefsJson(graph.dependents()));
+        root.set("blockedOn", dependencyRefsJson(graph.blockedOn()));
+        return jsonMapper().writeValueAsString(root);
+      } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "run_dependencies_json_render_failed");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR, "Failed to render run dependencies JSON", details);
+      }
+    }
+    StringBuilder out = new StringBuilder();
+    out.append("dependencies ")
+        .append(runId)
+        .append(": blocked=")
+        .append(graph.blockedByDependencies());
+    out.append(System.lineSeparator())
+        .append("  prerequisites: ")
+        .append(renderDependencyRefs(graph.prerequisites()));
+    out.append(System.lineSeparator())
+        .append("  dependents: ")
+        .append(renderDependencyRefs(graph.dependents()));
+    out.append(System.lineSeparator())
+        .append("  blocked-on: ")
+        .append(renderDependencyRefs(graph.blockedOn()));
+    return out.toString();
+  }
+
+  private static String renderDependencyRefs(
+      java.util.List<org.dradgo.application.workflow.BlockedDependencyView> refs) {
+    if (refs == null || refs.isEmpty()) {
+      return "(none)";
+    }
+    return refs.stream()
+        .map(ref -> ref.runId() + "[" + ref.state().value() + "]")
+        .collect(java.util.stream.Collectors.joining(", "));
+  }
+
+  private com.fasterxml.jackson.databind.node.ArrayNode dependencyRefsJson(
+      java.util.List<org.dradgo.application.workflow.BlockedDependencyView> refs) {
+    com.fasterxml.jackson.databind.node.ArrayNode array = jsonMapper().createArrayNode();
+    if (refs != null) {
+      for (org.dradgo.application.workflow.BlockedDependencyView ref : refs) {
+        com.fasterxml.jackson.databind.node.ObjectNode node = jsonMapper().createObjectNode();
+        node.put("runId", ref.runId());
+        node.put("state", ref.state().value());
+        array.add(node);
+      }
+    }
+    return array;
+  }
+
+  private void requireDependenciesWired() {
+    if (runDependencyService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_dependencies_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without RunDependencyService; inject it to use"
+              + " dependencies-add / dependencies-show",
+          details);
+    }
+  }
+
   @Command(
       name = "provider-usage",
       description =

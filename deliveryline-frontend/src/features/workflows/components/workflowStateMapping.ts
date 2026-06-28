@@ -34,6 +34,13 @@ const BACKEND_STATE_TO_STATE_NAME: Record<string, StateName> = {
   Executing: 'informational',
   WaitingForSpecApproval: 'warning',
   WaitingForReview: 'warning',
+  // Story 3f-3 (AC8 / Task 2) — a run parked on unmet run-dependency prerequisites renders as an
+  // explicit blocked state, never the generic fallback. Filling the two pre-existing omissions
+  // (Split / WaitingForManualExecution) at the same time so every real backend state maps
+  // deliberately instead of silently degrading to `informational`.
+  WaitingForManualExecution: 'warning',
+  WaitingForDependencies: 'blocker',
+  Split: 'informational',
   Completed: 'success',
   Failed: 'error',
   Paused: 'warning',

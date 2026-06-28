@@ -652,6 +652,27 @@
         },
         "type" : "object"
       },
+      "DeclareRunDependenciesRequest" : {
+        "properties" : {
+          "dependsOnRunIds" : {
+            "description" : "Prerequisite run public ids this run must wait for.",
+            "example" : [
+              "run_prereq1",
+              "run_prereq2"
+            ],
+            "items" : {
+              "minLength" : 1,
+              "type" : "string"
+            },
+            "minItems" : 1,
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "dependsOnRunIds"
+        ],
+        "type" : "object"
+      },
       "LatestArtifact" : {
         "properties" : {
           "artifactId" : {
@@ -1217,6 +1238,51 @@
         },
         "type" : "object"
       },
+      "RunDependencies" : {
+        "description" : "A run's prerequisites, dependents, and blocked-on subset in the dependency DAG.",
+        "properties" : {
+          "blockedByDependencies" : {
+            "description" : "True when at least one prerequisite has not yet completed.",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "blockedOn" : {
+            "description" : "Prerequisites that are not yet Completed — the runs still blocking this run.",
+            "items" : {
+              "$ref" : "#/components/schemas/RunDependencyRef"
+            },
+            "type" : "array"
+          },
+          "dependents" : {
+            "description" : "Runs that depend on this run.",
+            "items" : {
+              "$ref" : "#/components/schemas/RunDependencyRef"
+            },
+            "type" : "array"
+          },
+          "prerequisites" : {
+            "description" : "Runs this run depends on (its prerequisites).",
+            "items" : {
+              "$ref" : "#/components/schemas/RunDependencyRef"
+            },
+            "type" : "array"
+          }
+        },
+        "type" : "object"
+      },
+      "RunDependencyRef" : {
+        "properties" : {
+          "runId" : {
+            "example" : "run_abc123",
+            "type" : "string"
+          },
+          "state" : {
+            "example" : "Executing",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "RunnerQueueStatusResponse" : {
         "properties" : {
           "activeWorkers" : {
@@ -1633,6 +1699,10 @@
             "example" : "WaitingForSpecApproval",
             "type" : "string"
           },
+          "dependencies" : {
+            "$ref" : "#/components/schemas/RunDependencies",
+            "description" : "This run's position in the run-dependency DAG (story 3f-3): prerequisites, dependents, the unfinished blocking subset, and a blocked boolean."
+          },
           "escalationMarker" : {
             "description" : "True once specRejectionLoopCount has crossed the configured escalation threshold. Informational — does NOT terminate the workflow (FR13).",
             "example" : false,
@@ -1896,6 +1966,8 @@
               "WaitingForSpecApproval",
               "Executing",
               "WaitingForReview",
+              "WaitingForManualExecution",
+              "WaitingForDependencies",
               "Split",
               "Completed",
               "Failed",
@@ -1927,6 +1999,8 @@
               "WaitingForSpecApproval",
               "Executing",
               "WaitingForReview",
+              "WaitingForManualExecution",
+              "WaitingForDependencies",
               "Split",
               "Completed",
               "Failed",
@@ -1998,6 +2072,8 @@
               "WaitingForSpecApproval",
               "Executing",
               "WaitingForReview",
+              "WaitingForManualExecution",
+              "WaitingForDependencies",
               "Split",
               "Completed",
               "Failed",
@@ -3508,6 +3584,146 @@
           }
         },
         "summary" : "Answer an open clarification on a spec",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/dependencies" : {
+      "get" : {
+        "description" : "This run's prerequisites, dependents, blocked-on subset, and blocked boolean in the run-dependency DAG.",
+        "operationId" : "getRunDependencies",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RunDependencies"
+                }
+              }
+            },
+            "description" : "Run dependency graph."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get run dependencies (story 3f-3)",
+        "tags" : [
+          "Workflows"
+        ]
+      },
+      "post" : {
+        "description" : "Declare that this run depends on the given prerequisite runs. The run is parked in WaitingForDependencies when it has unmet prerequisites. Idempotent under Idempotency-Key.",
+        "operationId" : "declareRunDependencies",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/DeclareRunDependenciesRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RunDependencies"
+                }
+              }
+            },
+            "description" : "Dependencies declared; current graph."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id, empty/blank list, self-dependency, or wrong-state run (INVALID_ID_PREFIX / INVALID_COMMAND_PAYLOAD)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Declaration would introduce a cycle (RUN_DEPENDENCY_CYCLE)."
+          }
+        },
+        "summary" : "Declare run dependencies (story 3f-3)",
         "tags" : [
           "Workflows"
         ]

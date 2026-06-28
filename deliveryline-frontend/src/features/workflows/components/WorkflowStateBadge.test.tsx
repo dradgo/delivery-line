@@ -57,6 +57,11 @@ describe('WorkflowStateBadge a11y (story 2.25)', () => {
     ['Executing', 'informational'],
     ['WaitingForSpecApproval', 'warning'],
     ['WaitingForReview', 'warning'],
+    // Story 3f-3 — dependency-gating state maps to the blocker palette; the two pre-existing
+    // omissions are now explicit too.
+    ['WaitingForManualExecution', 'warning'],
+    ['WaitingForDependencies', 'blocker'],
+    ['Split', 'informational'],
     ['Completed', 'success'],
     ['Failed', 'error'],
     ['Paused', 'warning'],

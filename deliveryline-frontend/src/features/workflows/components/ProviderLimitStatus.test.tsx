@@ -68,6 +68,31 @@ describe('ProviderLimitStatus (story 3d-7)', () => {
     );
   });
 
+  it('renders a compact Codex settings line with usage, reset interval, effort, and permission mode', async () => {
+    server.use(
+      http.get(PROVIDER_USAGE_URL, () =>
+        HttpResponse.json({
+          present: true,
+          signalState: 'available',
+          accountReference: 'codex:subscription',
+          fiveHour: {
+            usedFraction: 0.04,
+            used: 4,
+            limit: 100,
+            resetsAt: '2026-06-23T13:32:00Z',
+          },
+          weekly: { usedFraction: 0.84, used: 84, limit: 100 },
+          asOf: '2026-06-23T09:05:00Z',
+          capturedAt: '2026-06-23T09:05:01Z',
+        }),
+      ),
+    );
+    renderIndicator('run_provider_codex001');
+
+    expect(await screen.findByTestId('codex-usage-summary')).toHaveTextContent(
+      'Codex | 5h 4% (4h27m left) | wk 84% | high · /effort | accept edits on',
+    );
+  });
   it('degrades to the documented "not exposed" state without a fabricated number (AC1/AC5)', async () => {
     server.use(
       http.get(PROVIDER_USAGE_URL, () =>

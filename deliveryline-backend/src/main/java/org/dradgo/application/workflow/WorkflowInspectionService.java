@@ -153,6 +153,19 @@ public class WorkflowInspectionService {
     this.projectStore = projectStore;
   }
 
+  // Story 3f-3 (AC8) — the run-dependency read port, backing the dependency graph embedded in the
+  // workflow detail. Optional SETTER injection (mirroring stepReviewReadPort / projectStore) so the
+  // ~10 lean `new WorkflowInspectionService(...)` test ctors stay untouched; production Spring
+  // wires
+  // the persistence adapter. Absent in lean unit ctors → detail reports an empty dependency graph.
+  private org.dradgo.application.workflow.spi.RunDependencyPort runDependencyPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setRunDependencyPort(
+      org.dradgo.application.workflow.spi.RunDependencyPort runDependencyPort) {
+    this.runDependencyPort = runDependencyPort;
+  }
+
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setStepReviewReadPort(
       org.dradgo.application.review.spi.StepReviewReadPort stepReviewReadPort) {
@@ -1032,6 +1045,11 @@ public class WorkflowInspectionService {
       case SPLIT:
         // Story 3f-2: decomposed parent state; 3f-7 owns rollup, so operators inspect only.
         return List.of(AllowedAction.VIEW_ONLY);
+      case WAITING_FOR_DEPENDENCIES:
+        // Story 3f-3 (AC8): a dependency-blocked run is view-only — it is released automatically
+        // when its prerequisites complete, so no spec/plan/manual/approval actions are exposed. The
+        // computeActionMatrix wrapper still appends archive/unarchive for the workflow owner.
+        return List.of(AllowedAction.VIEW_ONLY);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
       case FAILED:
@@ -1187,6 +1205,11 @@ public class WorkflowInspectionService {
           run.publicId(),
           childRunIds.size());
 
+      RunDependencyGraphView dependencyGraph =
+          runDependencyPort == null
+              ? RunDependencyGraphView.empty()
+              : runDependencyPort.graphView(run.publicId());
+
       WorkflowStatusView view =
           new WorkflowStatusView(
               run.publicId(),
@@ -1209,7 +1232,8 @@ public class WorkflowInspectionService {
               childRunIds,
               project == null ? null : project.projectId(),
               project == null ? null : project.projectName(),
-              project == null ? null : project.projectSlug());
+              project == null ? null : project.projectSlug(),
+              dependencyGraph);
       log.info(
           "inspecting workflow_run snapshot success workflowRunId={} currentState={}",
           workflowRunPublicId,
@@ -2346,7 +2370,11 @@ public class WorkflowInspectionService {
       List<String> childRunIds,
       String projectId,
       String projectName,
-      String projectSlug) {
+      String projectSlug,
+      // Story 3f-3 (AC8) — this run's position in the run-dependency DAG (prerequisites,
+      // dependents,
+      // blocked-on subset, and a blocked boolean). Never null; defaults to an empty graph.
+      RunDependencyGraphView dependencyGraph) {
 
     public WorkflowStatusView(
         String workflowRunId,
@@ -2386,7 +2414,8 @@ public class WorkflowInspectionService {
           List.of(),
           null,
           null,
-          null);
+          null,
+          RunDependencyGraphView.empty());
     }
   }
 

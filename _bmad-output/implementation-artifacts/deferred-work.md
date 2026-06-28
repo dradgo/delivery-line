@@ -1011,3 +1011,7 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 ## Deferred from: code review of story-3f-2 (2026-06-26)
 
 - Event-state enums (`priorState` / `resultingState` / `terminalState`) in `WorkflowEventsResponse.java`, `openapi.json`, and `schema.d.ts` omit `WaitingForManualExecution` while the DB CHECK + fixture schema include it. Pre-existing V20/3d-3 drift — story 3f-2 Task 7 explicitly scoped it out. An event whose prior/resulting state is `WaitingForManualExecution` would violate the published OpenAPI/TS contract. Fix when a test forces it or alongside the next event-state schema change.
+
+## Deferred from: code review of 3f-3-run-dependency-graph-and-waiting-for-dependencies-gating (2026-06-28)
+
+- No liveness guard for never-satisfiable prerequisites — a prerequisite left in `Inbox` (never submitted) blocks its dependent indefinitely; only direct transitive cycles are checked, not reachability-to-completion. Deferred: by-design per AC3 (Inbox prerequisites are permitted). [RunDependencyService.java]

@@ -508,6 +508,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Regenerate not applicable",
         false);
+    // Story 3f-3 (AC4) — declaring a run dependency edge that would introduce a cycle in the
+    // run-dependency DAG is a malformed declaration, not a transient fault; mirror
+    // ILLEGAL_TRANSITION's CONFLICT + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.RUN_DEPENDENCY_CYCLE,
+        HttpStatus.CONFLICT,
+        "Run dependency cycle",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

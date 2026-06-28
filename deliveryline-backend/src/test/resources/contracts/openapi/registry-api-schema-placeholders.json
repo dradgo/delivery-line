@@ -8,6 +8,7 @@
     "Executing",
     "WaitingForReview",
     "WaitingForManualExecution",
+    "WaitingForDependencies",
     "Split",
     "Completed",
     "Failed",
@@ -178,6 +179,7 @@
     "DOCTOR_PROJECT_CONFIG_INCOMPLETE": "https://deliveryline.local/problems/doctor-project-config-incomplete",
     "REVIEWER_MODEL_NOT_CONFIGURED": "https://deliveryline.local/problems/reviewer-model-not-configured",
     "ARCHIVE_NOT_APPLICABLE": "https://deliveryline.local/problems/archive-not-applicable",
-    "REGENERATE_NOT_APPLICABLE": "https://deliveryline.local/problems/regenerate-not-applicable"
+    "REGENERATE_NOT_APPLICABLE": "https://deliveryline.local/problems/regenerate-not-applicable",
+    "RUN_DEPENDENCY_CYCLE": "https://deliveryline.local/problems/run-dependency-cycle"
   }
 }

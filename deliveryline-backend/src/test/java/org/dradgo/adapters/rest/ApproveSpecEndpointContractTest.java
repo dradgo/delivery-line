@@ -65,6 +65,10 @@ class ApproveSpecEndpointContractTest {
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
+  // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the
+  // bean must exist for this @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
+
   @BeforeEach
   void stubActorResolver() {
     // Story 2.13 round-4 D-R4-1 + P-R4-12: delegate to a real LocalActorIdentityResolver so the

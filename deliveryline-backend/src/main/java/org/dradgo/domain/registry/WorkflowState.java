@@ -19,6 +19,12 @@ public enum WorkflowState implements RegistryValue {
   // WaitingForSpecApproval / WaitingForReview) or a recovery/safety edge (Failed / TakenOver /
   // Reconciled).
   WAITING_FOR_MANUAL_EXECUTION("WaitingForManualExecution"),
+  // Story 3f-3 (AC2 / FR71): non-terminal gating state. A run with unmet run-dependency
+  // prerequisites parks HERE instead of dispatching (entered from INBOX). It leaves only when its
+  // last prerequisite reaches Completed and RunDependencyReleaseService transitions it onward
+  // (WAITING_FOR_DEPENDENCIES -> INVESTIGATING). A run with zero/satisfied prerequisites never
+  // enters this state. Wire value is PascalCase, matching the other states.
+  WAITING_FOR_DEPENDENCIES("WaitingForDependencies"),
   COMPLETED("Completed"),
   FAILED("Failed"),
   PAUSED("Paused"),

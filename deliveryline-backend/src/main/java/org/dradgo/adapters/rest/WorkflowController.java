@@ -19,6 +19,7 @@ import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
+import org.dradgo.application.workflow.DeclareRunDependenciesCommand;
 import org.dradgo.application.workflow.ManualArtifactSubmissionService;
 import org.dradgo.application.workflow.ManualArtifactSubmissionService.ManualArtifactSubmissionCommand;
 import org.dradgo.application.workflow.WorkflowArchiveResult;
@@ -98,6 +99,8 @@ public class WorkflowController {
   // Story 3d-4 — the operator manual-artifact submission path (validate → ingest → finalize →
   // advance, one tx). The bundle retrieval rides workflowInspectionService.getManualBundle.
   private final ManualArtifactSubmissionService manualArtifactSubmissionService;
+  // Story 3f-3 — standalone run-dependency declaration + inspection (declare/show endpoints).
+  private final org.dradgo.application.workflow.RunDependencyService runDependencyService;
   // Used ONLY to re-serialize the already-parsed manual-artifact `result` tree (a Map/List tree the
   // Jackson 3 HTTP converter produced) back to bytes for validation/ingest — a config-independent
   // tree round-trip, so a local mapper is safe. Cross-channel idempotency parity does NOT depend on
@@ -115,7 +118,8 @@ public class WorkflowController {
       LocalActorIdentityResolver localActorIdentityResolver,
       DeveloperTakeoverService developerTakeoverService,
       WorkflowArchiveService workflowArchiveService,
-      ManualArtifactSubmissionService manualArtifactSubmissionService) {
+      ManualArtifactSubmissionService manualArtifactSubmissionService,
+      org.dradgo.application.workflow.RunDependencyService runDependencyService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
@@ -123,6 +127,7 @@ public class WorkflowController {
     this.developerTakeoverService = developerTakeoverService;
     this.workflowArchiveService = workflowArchiveService;
     this.manualArtifactSubmissionService = manualArtifactSubmissionService;
+    this.runDependencyService = runDependencyService;
   }
 
   // ---------------------------------------------------------------------------
@@ -201,6 +206,112 @@ public class WorkflowController {
     WorkflowDetailResponse response =
         WorkflowDetailResponse.from(workflowInspectionService.getStatus(workflowRunId));
     log.info("REST get workflow detail success workflowRunId={}", workflowRunId);
+    return response;
+  }
+
+  @GetMapping(value = "/{workflowRunId}/dependencies", produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getRunDependencies",
+      summary = "Get run dependencies (story 3f-3)",
+      description =
+          "This run's prerequisites, dependents, blocked-on subset, and blocked boolean in the"
+              + " run-dependency DAG.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Run dependency graph."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowDetailResponse.RunDependencies getRunDependencies(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info("REST get run dependencies received workflowRunId={}", workflowRunId);
+    WorkflowDetailResponse.RunDependencies response =
+        WorkflowDetailResponse.RunDependencies.from(runDependencyService.graphView(workflowRunId));
+    log.info("REST get run dependencies success workflowRunId={}", workflowRunId);
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/dependencies",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "declareRunDependencies",
+      summary = "Declare run dependencies (story 3f-3)",
+      description =
+          "Declare that this run depends on the given prerequisite runs. The run is parked in"
+              + " WaitingForDependencies when it has unmet prerequisites. Idempotent under"
+              + " Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Dependencies declared; current graph."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "Malformed run id, empty/blank list, self-dependency, or wrong-state run"
+                + " (INVALID_ID_PREFIX / INVALID_COMMAND_PAYLOAD).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "Declaration would introduce a cycle (RUN_DEPENDENCY_CYCLE).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowDetailResponse.RunDependencies declareRunDependencies(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody DeclareRunDependenciesRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST declare-dependencies received workflowRunId={} dependsOnCount={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        request.dependsOnRunIds() == null ? 0 : request.dependsOnRunIds().size(),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowDetailResponse.RunDependencies response =
+        WorkflowDetailResponse.RunDependencies.from(
+            runDependencyService.declareDependencies(
+                new DeclareRunDependenciesCommand(
+                    workflowRunId,
+                    request.dependsOnRunIds(),
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId)));
+    log.info(
+        "REST declare-dependencies success workflowRunId={} blockedByDependencies={}",
+        workflowRunId,
+        response.blockedByDependencies());
     return response;
   }
 

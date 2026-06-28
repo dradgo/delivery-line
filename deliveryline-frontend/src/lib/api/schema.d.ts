@@ -344,6 +344,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/dependencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get run dependencies (story 3f-3)
+         * @description This run's prerequisites, dependents, blocked-on subset, and blocked boolean in the run-dependency DAG.
+         */
+        get: operations["getRunDependencies"];
+        put?: never;
+        /**
+         * Declare run dependencies (story 3f-3)
+         * @description Declare that this run depends on the given prerequisite runs. The run is parked in WaitingForDependencies when it has unmet prerequisites. Idempotent under Idempotency-Key.
+         */
+        post: operations["declareRunDependencies"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/diagnostic-console/stream": {
         parameters: {
             query?: never;
@@ -881,6 +905,16 @@ export interface components {
              */
             status?: "configured" | "not_configured";
         };
+        DeclareRunDependenciesRequest: {
+            /**
+             * @description Prerequisite run public ids this run must wait for.
+             * @example [
+             *       "run_prereq1",
+             *       "run_prereq2"
+             *     ]
+             */
+            dependsOnRunIds: string[];
+        };
         LatestArtifact: {
             /**
              * @description Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).
@@ -1153,6 +1187,26 @@ export interface components {
              */
             unavailableReason?: string | null;
         };
+        /** @description A run's prerequisites, dependents, and blocked-on subset in the dependency DAG. */
+        RunDependencies: {
+            /**
+             * @description True when at least one prerequisite has not yet completed.
+             * @example false
+             */
+            blockedByDependencies?: boolean;
+            /** @description Prerequisites that are not yet Completed — the runs still blocking this run. */
+            blockedOn?: components["schemas"]["RunDependencyRef"][];
+            /** @description Runs that depend on this run. */
+            dependents?: components["schemas"]["RunDependencyRef"][];
+            /** @description Runs this run depends on (its prerequisites). */
+            prerequisites?: components["schemas"]["RunDependencyRef"][];
+        };
+        RunDependencyRef: {
+            /** @example run_abc123 */
+            runId?: string;
+            /** @example Executing */
+            state?: string;
+        };
         RunnerQueueStatusResponse: {
             /** Format: int64 */
             activeWorkers: number;
@@ -1296,6 +1350,8 @@ export interface components {
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
             currentState?: string;
+            /** @description This run's position in the run-dependency DAG (story 3f-3): prerequisites, dependents, the unfinished blocking subset, and a blocked boolean. */
+            dependencies?: components["schemas"]["RunDependencies"];
             /**
              * @description True once specRejectionLoopCount has crossed the configured escalation threshold. Informational — does NOT terminate the workflow (FR13).
              * @example false
@@ -1391,12 +1447,12 @@ export interface components {
             failureCategory?: "runner_timeout" | "runner_crash" | "runner_contract_violation" | "runner_non_zero_exit" | "runner_late_result" | "runner_duplicate_result" | "runner_malformed_output" | "runner_secret_leak" | "orphan" | null;
             interventionMarker: boolean;
             /** @enum {string|null} */
-            priorState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
+            priorState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "WaitingForManualExecution" | "WaitingForDependencies" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
             /** @example evt_abc123 */
             publicId: string;
             reason?: string | null;
             /** @enum {string|null} */
-            resultingState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
+            resultingState?: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "WaitingForManualExecution" | "WaitingForDependencies" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
             /** @example run_abc123 */
             workflowRunPublicId: string;
         };
@@ -1415,7 +1471,7 @@ export interface components {
              * @description State at the end of the returned stream (the run's current state).
              * @enum {string|null}
              */
-            terminalState: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
+            terminalState: "Inbox" | "Planned" | "Investigating" | "WaitingForSpecApproval" | "Executing" | "WaitingForReview" | "WaitingForManualExecution" | "WaitingForDependencies" | "Split" | "Completed" | "Failed" | "Paused" | "TakenOver" | "Reconciled" | null;
             /** @example DEL-1234 */
             ticketRef: string;
         };
@@ -2439,6 +2495,106 @@ export interface operations {
                 };
             };
             /** @description CLARIFICATION_ARTIFACT_VERSION_MISMATCH, CLARIFICATION_TERMINAL_STATE, ILLEGAL_CLARIFICATION_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getRunDependencies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run dependency graph. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDependencies"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    declareRunDependencies: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeclareRunDependenciesRequest"];
+            };
+        };
+        responses: {
+            /** @description Dependencies declared; current graph. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDependencies"];
+                };
+            };
+            /** @description Malformed run id, empty/blank list, self-dependency, or wrong-state run (INVALID_ID_PREFIX / INVALID_COMMAND_PAYLOAD). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description Declaration would introduce a cycle (RUN_DEPENDENCY_CYCLE). */
             409: {
                 headers: {
                     [name: string]: unknown;

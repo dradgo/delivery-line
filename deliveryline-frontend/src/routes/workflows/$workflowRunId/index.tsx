@@ -24,6 +24,7 @@ import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDec
 import { FailureEventSurface } from '@/features/workflows/components/FailureEventSurface';
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
 import { ProviderLimitStatus } from '@/features/workflows/components/ProviderLimitStatus';
+import { RunDependencyPanel } from '@/features/workflows/components/RunDependencyPanel';
 import { ManualExecutionSurface } from '@/features/workflows/components/ManualExecutionSurface';
 import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
 import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
@@ -76,6 +77,10 @@ const RECOGNIZED_STATES = new Set([
   'Executing',
   'WaitingForReview',
   'WaitingForManualExecution',
+  // Story 3f-3 — dependency-gating state; also fills the pre-existing 'Split' omission so the
+  // unrecognized-state guard does not flag real backend states.
+  'WaitingForDependencies',
+  'Split',
   'Completed',
   'Failed',
   'Paused',
@@ -192,6 +197,10 @@ function WorkflowDetailRoute() {
           Renders nothing unless the run's event stream carries failure / recovery
           events (scope discipline — Epic 4 owns the full timeline). */}
       <FailureEventSurface workflowRunId={workflowRunId} />
+      {/* Story 3f-3 (AC8) — the Run Dependency panel: prerequisites this run waits on, dependents
+          waiting on it, and an explicit blocked-on signifier. Reads the embedded
+          `WorkflowDetail.dependencies` read model; renders nothing for ordinary unlinked runs. */}
+      <RunDependencyPanel dependencies={data?.dependencies} />
       {/* Story 3d-7 (AC5) — the Provider Limit Status indicator: latest provider 5h/weekly usage
           status (or the documented "not exposed" state), gated on the backend
           `view_provider_usage_status` action. Color-independent signifier; provider-reported + as-of. */}

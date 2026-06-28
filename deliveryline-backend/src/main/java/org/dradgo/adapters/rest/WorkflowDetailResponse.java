@@ -4,6 +4,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import org.dradgo.application.workflow.BlockedDependencyView;
+import org.dradgo.application.workflow.RunDependencyGraphView;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
 import org.dradgo.application.workflow.WorkflowInspectionService.LinkedTicketView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
@@ -60,7 +62,12 @@ public record WorkflowDetailResponse(
             example = "Default project")
         String projectName,
     @Schema(description = "Project slug for the run.", nullable = true, example = "default")
-        String projectSlug) {
+        String projectSlug,
+    @Schema(
+            description =
+                "This run's position in the run-dependency DAG (story 3f-3): prerequisites,"
+                    + " dependents, the unfinished blocking subset, and a blocked boolean.")
+        RunDependencies dependencies) {
 
   public static WorkflowDetailResponse from(WorkflowStatusView view) {
     return new WorkflowDetailResponse(
@@ -86,7 +93,8 @@ public record WorkflowDetailResponse(
         view.childRunIds() == null ? List.of() : view.childRunIds(),
         view.projectId(),
         view.projectName(),
-        view.projectSlug());
+        view.projectSlug(),
+        RunDependencies.from(view.dependencyGraph()));
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {
@@ -122,6 +130,50 @@ public record WorkflowDetailResponse(
 
     static LinkedTicket from(LinkedTicketView view) {
       return new LinkedTicket(view.integrationType(), view.externalRef(), view.syncStatus());
+    }
+  }
+
+  /** Story 3f-3 (AC8) — this run's run-dependency DAG neighborhood. */
+  @Schema(
+      name = "RunDependencies",
+      description =
+          "A run's prerequisites, dependents, and blocked-on subset in the dependency DAG.")
+  public record RunDependencies(
+      @Schema(description = "Runs this run depends on (its prerequisites).")
+          List<RunDependencyRef> prerequisites,
+      @Schema(description = "Runs that depend on this run.") List<RunDependencyRef> dependents,
+      @Schema(
+              description =
+                  "Prerequisites that are not yet Completed — the runs still blocking this run.")
+          List<RunDependencyRef> blockedOn,
+      @Schema(
+              description = "True when at least one prerequisite has not yet completed.",
+              example = "false")
+          boolean blockedByDependencies) {
+
+    static RunDependencies from(RunDependencyGraphView view) {
+      if (view == null) {
+        return new RunDependencies(List.of(), List.of(), List.of(), false);
+      }
+      return new RunDependencies(
+          refs(view.prerequisites()),
+          refs(view.dependents()),
+          refs(view.blockedOn()),
+          view.blockedByDependencies());
+    }
+
+    private static List<RunDependencyRef> refs(List<BlockedDependencyView> views) {
+      return views == null ? List.of() : views.stream().map(RunDependencyRef::from).toList();
+    }
+  }
+
+  /** A run referenced by a dependency edge, with its current state. */
+  @Schema(name = "RunDependencyRef")
+  public record RunDependencyRef(
+      @Schema(example = "run_abc123") String runId, @Schema(example = "Executing") String state) {
+
+    static RunDependencyRef from(BlockedDependencyView view) {
+      return new RunDependencyRef(view.runId(), view.state() == null ? null : view.state().value());
     }
   }
 }
