@@ -28,6 +28,8 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_REVIEW,
             // Story 3d-3 — manual-execution park state.
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            // Story 3f-3 — run-dependency gating park state.
+            WorkflowState.WAITING_FOR_DEPENDENCIES,
             WorkflowState.SPLIT,
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
@@ -38,11 +40,13 @@ class WorkflowTransitionTableTest {
 
     Map<WorkflowState, Set<WorkflowState>> expectedTargets = new LinkedHashMap<>();
     // Story 3a-1: INBOX gains a direct INVESTIGATING edge (ADR 0004 spec-stage trigger).
+    // Story 3f-3: INBOX gains a WAITING_FOR_DEPENDENCIES edge (run-dependency gating park).
     expectedTargets.put(
         WorkflowState.INBOX,
         Set.of(
             WorkflowState.PLANNED,
             WorkflowState.INVESTIGATING,
+            WorkflowState.WAITING_FOR_DEPENDENCIES,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(
@@ -96,6 +100,10 @@ class WorkflowTransitionTableTest {
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.SPLIT, Set.of(WorkflowState.COMPLETED));
+    // Story 3f-3: the dependency-gating park state releases onward into the spec-generation path
+    // (INVESTIGATING) once the last prerequisite reaches Completed — its sole out-edge.
+    expectedTargets.put(
+        WorkflowState.WAITING_FOR_DEPENDENCIES, Set.of(WorkflowState.INVESTIGATING));
     expectedTargets.put(WorkflowState.COMPLETED, Set.of());
     expectedTargets.put(
         WorkflowState.FAILED,
