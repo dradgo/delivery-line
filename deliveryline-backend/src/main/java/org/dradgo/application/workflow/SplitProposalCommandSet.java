@@ -7,9 +7,9 @@ import org.dradgo.domain.registry.ActorType;
  * SplitProposalService}. Each carries the fail-closed HUMAN actor identity + the Idempotency-Key +
  * correlation id resolved by the REST/CLI surface.
  */
-public final class SplitProposalCommands {
+public final class SplitProposalCommandSet {
 
-  private SplitProposalCommands() {}
+  private SplitProposalCommandSet() {}
 
   /** {@code request_split} — request an advisory proposal at the spec/review gate. */
   public record RequestSplitCommand(
