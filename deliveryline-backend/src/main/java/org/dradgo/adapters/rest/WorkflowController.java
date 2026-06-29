@@ -101,6 +101,8 @@ public class WorkflowController {
   private final ManualArtifactSubmissionService manualArtifactSubmissionService;
   // Story 3f-3 — standalone run-dependency declaration + inspection (declare/show endpoints).
   private final org.dradgo.application.workflow.RunDependencyService runDependencyService;
+  // Story 3f-4 — advisory split-proposal channel (request/repropose/decline + GET split-proposal).
+  private final org.dradgo.application.workflow.SplitProposalService splitProposalService;
   // Used ONLY to re-serialize the already-parsed manual-artifact `result` tree (a Map/List tree the
   // Jackson 3 HTTP converter produced) back to bytes for validation/ingest — a config-independent
   // tree round-trip, so a local mapper is safe. Cross-channel idempotency parity does NOT depend on
@@ -119,7 +121,8 @@ public class WorkflowController {
       DeveloperTakeoverService developerTakeoverService,
       WorkflowArchiveService workflowArchiveService,
       ManualArtifactSubmissionService manualArtifactSubmissionService,
-      org.dradgo.application.workflow.RunDependencyService runDependencyService) {
+      org.dradgo.application.workflow.RunDependencyService runDependencyService,
+      org.dradgo.application.workflow.SplitProposalService splitProposalService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
@@ -128,6 +131,7 @@ public class WorkflowController {
     this.workflowArchiveService = workflowArchiveService;
     this.manualArtifactSubmissionService = manualArtifactSubmissionService;
     this.runDependencyService = runDependencyService;
+    this.splitProposalService = splitProposalService;
   }
 
   // ---------------------------------------------------------------------------
@@ -313,6 +317,153 @@ public class WorkflowController {
         workflowRunId,
         response.blockedByDependencies());
     return response;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 3f-4 — advisory split-proposal channel (request/repropose/decline + GET). HUMAN actor,
+  // fail-closed actor identity, Idempotency-Key. Mirrors the 3f-3 dependency endpoints.
+  // ---------------------------------------------------------------------------
+
+  @GetMapping(
+      value = "/{workflowRunId}/split-proposal",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getSplitProposal",
+      summary = "Get the current split proposal (story 3f-4)",
+      description =
+          "The advisory split proposal channel state (none|pending|available|unavailable), the"
+              + " current proposal when available, and the re-propose loop count.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Split proposal state."),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public SplitProposalResponse getSplitProposal(@PathVariable String workflowRunId) {
+    log.info("REST get split-proposal received workflowRunId={}", workflowRunId);
+    SplitProposalResponse response =
+        SplitProposalResponse.from(splitProposalService.proposalView(workflowRunId));
+    log.info(
+        "REST get split-proposal success workflowRunId={} state={}",
+        workflowRunId,
+        response.state());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/split/request",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "requestSplit",
+      summary = "Request an advisory split proposal (story 3f-4)",
+      description =
+          "Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under"
+              + " Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model"
+              + " degrades to state=unavailable (the gate is never blocked).")
+  public SplitProposalResponse requestSplit(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest) {
+    String actorIdentity = resolveHumanActor(idempotencyKey, actorIdentityHeader, httpRequest);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST split request received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    SplitProposalResponse response =
+        SplitProposalResponse.from(
+            splitProposalService.request(
+                new org.dradgo.application.workflow.SplitProposalCommands.RequestSplitCommand(
+                    workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
+    log.info(
+        "REST split request success workflowRunId={} state={}", workflowRunId, response.state());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/split/repropose",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "reproposeSplit",
+      summary = "Re-propose a split with operator feedback (story 3f-4)",
+      description =
+          "Re-run the proposal call with free-text feedback (materialized by reference). Supersedes"
+              + " the prior open proposal, bumps the loop counter, and honors the escalation marker"
+              + " at the configured threshold.")
+  public SplitProposalResponse reproposeSplit(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ReproposeSplitRequest request) {
+    String actorIdentity = resolveHumanActor(idempotencyKey, actorIdentityHeader, httpRequest);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST split repropose received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    SplitProposalResponse response =
+        SplitProposalResponse.from(
+            splitProposalService.repropose(
+                new org.dradgo.application.workflow.SplitProposalCommands.ReproposeSplitCommand(
+                    workflowRunId,
+                    request.feedbackText(),
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId)));
+    log.info(
+        "REST split repropose success workflowRunId={} state={} loopCount={}",
+        workflowRunId,
+        response.state(),
+        response.loopCount());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/split/decline",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "declineSplit",
+      summary = "Decline the split — continue as one ticket (story 3f-4)",
+      description =
+          "Dismiss the current open proposal; the parent stays at its gate and the normal gate"
+              + " actions are restored byte-identically.")
+  public SplitProposalResponse declineSplit(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest) {
+    String actorIdentity = resolveHumanActor(idempotencyKey, actorIdentityHeader, httpRequest);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST split decline received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    SplitProposalResponse response =
+        SplitProposalResponse.from(
+            splitProposalService.decline(
+                new org.dradgo.application.workflow.SplitProposalCommands.DeclineSplitCommand(
+                    workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
+    log.info(
+        "REST split decline success workflowRunId={} state={}", workflowRunId, response.state());
+    return response;
+  }
+
+  // Shared fail-closed HUMAN actor resolution for the split endpoints (mirrors declare-deps).
+  private String resolveHumanActor(
+      String idempotencyKey, String actorIdentityHeader, HttpServletRequest httpRequest) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    return localActorIdentityResolver.resolve(actorIdentityHeader);
   }
 
   @GetMapping(value = "/{workflowRunId}/events", produces = MediaType.APPLICATION_JSON_VALUE)

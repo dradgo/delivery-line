@@ -93,6 +93,12 @@ deliveryline:
     # the threshold from below); subsequent rejections continue to advance the counter and the
     # workflow stays in Executing — escalation does NOT terminate the workflow.
     implementation-rejection-escalation-threshold: 3
+    # Story 3f-4 (AC4): threshold above which SplitProposalService.repropose raises the per-run
+    # escalation marker (the SAME marker as the spec-rejection / implementation-rejection loops). The
+    # escalation event is appended exactly once (when the split-proposal re-propose counter crosses
+    # the threshold from below); subsequent re-proposes continue to advance the counter and the run
+    # stays parked at its gate — escalation does NOT terminate the workflow or move the gate.
+    split-proposal-escalation-threshold: 3
     # Story 3.9 (Decision D8) — deliveryline-bot git identity for RepositoryWorkspaceService commits.
     # Supplied at runtime via DELIVERYLINE_BOT_NAME / DELIVERYLINE_BOT_EMAIL (.env / process env);
     # blank ⇒ the built-in default identity is used for commits and the doctor git-bot-identity probe

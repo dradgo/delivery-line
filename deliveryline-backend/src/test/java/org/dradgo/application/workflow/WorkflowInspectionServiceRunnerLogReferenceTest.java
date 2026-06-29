@@ -16,6 +16,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.RunnerLogReferenceResult;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.domain.registry.DataClassification;
@@ -44,7 +45,8 @@ class WorkflowInspectionServiceRunnerLogReferenceTest {
           mock(ClarificationReadPort.class),
           mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
           org.dradgo.application.runner.RunnerProperties.defaults(),
-          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults(),
+          mock(SplitProposalReadPort.class));
 
   private static RunnerExecutionSnapshot snapshot(
       String reference, DataClassification classification, Long byteSize, Integer redactionCount) {

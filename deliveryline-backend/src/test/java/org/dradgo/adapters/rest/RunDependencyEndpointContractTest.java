@@ -20,6 +20,7 @@ import org.dradgo.application.workflow.DeclareRunDependenciesCommand;
 import org.dradgo.application.workflow.ManualArtifactSubmissionService;
 import org.dradgo.application.workflow.RunDependencyGraphView;
 import org.dradgo.application.workflow.RunDependencyService;
+import org.dradgo.application.workflow.SplitProposalService;
 import org.dradgo.application.workflow.WorkflowArchiveService;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
@@ -58,6 +59,7 @@ class RunDependencyEndpointContractTest {
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
   @MockitoBean private RunDependencyService runDependencyService;
+  @MockitoBean private SplitProposalService splitProposalService;
 
   @BeforeEach
   void stubActorResolver() {

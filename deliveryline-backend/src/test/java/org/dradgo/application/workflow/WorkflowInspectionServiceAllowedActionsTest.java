@@ -20,6 +20,7 @@ import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.AllowedActionsView;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
@@ -66,6 +67,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
   private final RunnerScratchStore scratchStore = mock(RunnerScratchStore.class);
   private final org.dradgo.application.clarification.spi.ClarificationReadPort clarifications =
       mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
+  private final SplitProposalReadPort splitProposals = mock(SplitProposalReadPort.class);
 
   private final WorkflowInspectionService service =
       new WorkflowInspectionService(
@@ -82,7 +84,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
           clarifications,
           mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
           org.dradgo.application.runner.RunnerProperties.defaults(),
-          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults(),
+          splitProposals);
 
   // ---------------------------------------------------------------------------
   // AC3 — parameterized matrix coverage
@@ -128,7 +131,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.ANSWER_CLARIFICATION,
                 // Story 3e-2 (AC1/AC2) — accept + regenerate joined the reviewer arm.
                 AllowedAction.ACCEPT_CLARIFICATION,
-                AllowedAction.REGENERATE_SPEC)),
+                AllowedAction.REGENERATE_SPEC,
+                // Story 3f-4 (AC1) — split overlay fires at the spec gate; default mock
+                // (no open proposal) appends request_split.
+                AllowedAction.REQUEST_SPLIT)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "workflow_owner",
@@ -139,6 +145,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 // workflow_owner-only archive_run wrapper action).
                 AllowedAction.ACCEPT_CLARIFICATION,
                 AllowedAction.REGENERATE_SPEC,
+                // Story 3f-4 (AC1) — split overlay (request_split) is appended before the
+                // workflow_owner-only archive_run wrapper action.
+                AllowedAction.REQUEST_SPLIT,
                 AllowedAction.ARCHIVE_RUN)),
         // Story 3d-5 (AC6) — view_runner_logs joins the runner-execution states, role-agnostic.
         Arguments.of(
@@ -189,7 +198,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.TAKEOVER_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
-                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                // Story 3f-4 (AC1) — split overlay fires at the review gate for developer;
+                // default mock (no open proposal) appends request_split.
+                AllowedAction.REQUEST_SPLIT)),
         // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
         // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
         // unintended action elsewhere.
@@ -345,7 +357,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.TAKEOVER_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
-                AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                // Story 3f-4 (AC1) — split overlay (request_split) fires for the developer at
+                // the review gate; it is advisory and orthogonal to the reviewer verdict panel.
+                AllowedAction.REQUEST_SPLIT);
       } else if (role.equals("workflow_owner")) {
         // archive_run is workflow_owner-only (3d-8/D1).
         expected =
@@ -368,6 +383,41 @@ class WorkflowInspectionServiceAllowedActionsTest {
   }
 
   // ---------------------------------------------------------------------------
+  // Story 3f-4 AC8 — split overlay at both gates × open/no-open proposal
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void specApprovalWithOpenSplitProposalOffersReproposeAndDeclineNotRequest() {
+    // Story 3f-4 (AC1/AC8): an OPEN split proposal flips the overlay from request_split to the
+    // two-action repropose/decline loop at the spec gate.
+    stubRunWithState(WorkflowState.WAITING_FOR_SPEC_APPROVAL, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+    when(splitProposals.hasOpenForRun(RUN)).thenReturn(true);
+
+    AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
+
+    assertThat(view.actions())
+        .contains(AllowedAction.REPROPOSE_SPLIT, AllowedAction.DECLINE_SPLIT)
+        .doesNotContain(AllowedAction.REQUEST_SPLIT);
+  }
+
+  @Test
+  void waitingForReviewWithOpenSplitProposalOffersReproposeAndDeclineNotRequest() {
+    // Story 3f-4 (AC1/AC8): same flip for the developer at the review gate.
+    stubRunWithState(WorkflowState.WAITING_FOR_REVIEW, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+    when(splitProposals.hasOpenForRun(RUN)).thenReturn(true);
+
+    AllowedActionsView view = service.getAllowedActions(RUN, "developer");
+
+    assertThat(view.actions())
+        .contains(AllowedAction.REPROPOSE_SPLIT, AllowedAction.DECLINE_SPLIT)
+        .doesNotContain(AllowedAction.REQUEST_SPLIT);
+  }
+
+  // ---------------------------------------------------------------------------
   // AC4 — clarification gating
   // ---------------------------------------------------------------------------
 
@@ -386,7 +436,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.ANSWER_CLARIFICATION,
             // Story 3e-2 (AC1/AC2) — accept + regenerate surface even while clarifications pend.
             AllowedAction.ACCEPT_CLARIFICATION,
-            AllowedAction.REGENERATE_SPEC);
+            AllowedAction.REGENERATE_SPEC,
+            // Story 3f-4 (AC1) — split overlay (request_split) fires at the spec gate regardless
+            // of pending clarifications.
+            AllowedAction.REQUEST_SPLIT);
     assertThat(view.versionStamp().currentSpecArtifactVersion()).isEqualTo(2);
     assertThat(view.versionStamp().currentContextBundleVersion()).isEqualTo(5);
   }
@@ -407,7 +460,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.ANSWER_CLARIFICATION,
             // Story 3e-2 (AC1/AC2) — accept + regenerate joined the reviewer arm.
             AllowedAction.ACCEPT_CLARIFICATION,
-            AllowedAction.REGENERATE_SPEC);
+            AllowedAction.REGENERATE_SPEC,
+            // Story 3f-4 (AC1) — split overlay (request_split) fires at the spec gate.
+            AllowedAction.REQUEST_SPLIT);
   }
 
   // ---------------------------------------------------------------------------
@@ -603,7 +658,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.REJECT_SPEC,
             AllowedAction.ANSWER_CLARIFICATION,
             AllowedAction.ACCEPT_CLARIFICATION,
-            AllowedAction.REGENERATE_SPEC);
+            AllowedAction.REGENERATE_SPEC,
+            // Story 3f-4 (AC1) — blank/null role defaults to product_reviewer, so the split
+            // overlay (request_split) fires at the spec gate.
+            AllowedAction.REQUEST_SPLIT);
     assertThat(blank.actions()).containsExactlyElementsOf(expected);
     assertThat(nullRole.actions()).containsExactlyElementsOf(expected);
   }

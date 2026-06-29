@@ -64,6 +64,10 @@ class WorkflowAdapterEquivalenceTest {
   // bean must exist for this @WebMvcTest slice to construct the controller.
   @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
 
+  // Story 3f-4 — WorkflowController gained the split-proposal service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.SplitProposalService splitProposalService;
+
   @BeforeEach
   void stubActorResolver() {
     // Story 2.13 review P13: stub resolve(...) so any future approve/reject coverage added here

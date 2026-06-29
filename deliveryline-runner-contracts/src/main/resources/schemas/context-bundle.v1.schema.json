@@ -224,6 +224,10 @@
           }
         }
       }
+    },
+    "splitProposalRequested": {
+      "type": "boolean",
+      "description": "Story 3f-4 (AC2) — OPTIONAL. When true on a REVIEW-stage bundle, the runner builds a decomposition prompt over the reviewed artifact and emits a fenced ```split block (split-proposal.v1) INSTEAD of a review-result.v1 verdict. Absent/false keeps the REVIEW stage byte-identical to a normal advisory review. The re-propose operator feedback is carried by-reference via a priorFeedbackReferences entry of kind 'split.feedback' (NOT inlined). Additive backward-compatible v1 patch (NOT in required); schemaVersion stays const:1."
     }
   },
   "$defs": {

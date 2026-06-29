@@ -200,6 +200,28 @@ public class RunnerBroker {
     this.reviewResultHarvester = reviewResultHarvester;
   }
 
+  // Story 3f-4 (R1) — the advisory split-proposal harvester. Same optional-setter pattern as the
+  // reviewer verdict harvester: a split-mode REVIEW result (idempotency key `split-proposal:…`)
+  // routes here instead of ReviewResultHarvester, so step_reviews is never written for a split.
+  private org.dradgo.application.workflow.SplitProposalHarvester splitProposalHarvester;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSplitProposalHarvester(
+      org.dradgo.application.workflow.SplitProposalHarvester splitProposalHarvester) {
+    this.splitProposalHarvester = splitProposalHarvester;
+  }
+
+  // Story 3f-4 (R3) — read the durable split-feedback reference id at compose time so the split
+  // review bundle carries a {referenceId, kind:'split.feedback'} entry. Optional setter (absent in
+  // lean unit ctors, where no split dispatch is composed).
+  private org.dradgo.application.workflow.spi.SplitProposalReadPort splitProposalReadPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSplitProposalReadPort(
+      org.dradgo.application.workflow.spi.SplitProposalReadPort splitProposalReadPort) {
+    this.splitProposalReadPort = splitProposalReadPort;
+  }
+
   // Story 3d-7 (FR69, AC3) — the per-credential provider usage/limit snapshot writer. Optional
   // SETTER injection (mirroring reviewResultHarvester) so none of the broker's telescoping
   // constructors — nor their unit-test call sites — change. Present in production (the
@@ -958,11 +980,29 @@ public class RunnerBroker {
 
       ExecutionConstraints constraints =
           new ExecutionConstraints(runnerProperties.timeoutFor(stage), false);
+      // Story 3f-4 (R1) — a split-mode REVIEW dispatch (idempotency key `split-proposal:…`)
+      // composes
+      // a split bundle (splitProposalRequested=true + the by-reference feedback). Resolve the
+      // feedback reference id from the durable store keyed by THIS execution (null for an initial
+      // request / when the port is absent in a lean ctor).
+      boolean splitProposalRequested =
+          org.dradgo.application.workflow.SplitProposalService.isSplitDispatch(idempotencyKey);
+      String splitFeedbackReferenceId =
+          (splitProposalRequested && splitProposalReadPort != null)
+              ? splitProposalReadPort.findFeedbackReferenceId(runnerExecutionId).orElse(null)
+              : null;
       ComposedDispatch composed;
       try {
         composed =
             composeQueuedBundle(
-                runnerExecutionId, workflowRunId, stage, contextBundleVersion, constraints, actor);
+                runnerExecutionId,
+                workflowRunId,
+                stage,
+                contextBundleVersion,
+                constraints,
+                actor,
+                splitProposalRequested,
+                splitFeedbackReferenceId);
       } catch (DomainException compositionError) {
         // Async failure path: there is no caller transaction to unwind. Complete the reservation
         // FAILED (so a later same-key enqueue can re-reserve), then drive the run to Failed.
@@ -1227,9 +1267,17 @@ public class RunnerBroker {
     Objects.requireNonNull(actor, "actor");
     ExecutionConstraints constraints =
         new ExecutionConstraints(runnerProperties.timeoutFor(stage), false);
+    // Manual-bundle path (3d-3/3d-4) is never a split dispatch — pass split-mode off.
     ComposedDispatch composed =
         composeQueuedBundle(
-            runnerExecutionId, workflowRunId, stage, contextBundleVersion, constraints, actor);
+            runnerExecutionId,
+            workflowRunId,
+            stage,
+            contextBundleVersion,
+            constraints,
+            actor,
+            false,
+            null);
     java.nio.file.Path bundlePath =
         scratchStore.writeContextBundle(runnerExecutionId, composed.bundle().redactedPayload());
     log.info(
@@ -1261,7 +1309,9 @@ public class RunnerBroker {
       RunnerStage stage,
       int contextBundleVersion,
       ExecutionConstraints constraints,
-      ActorContext actor) {
+      ActorContext actor,
+      boolean splitProposalRequested,
+      String splitFeedbackReferenceId) {
     boolean repoContextStage = stage == RunnerStage.INVESTIGATION || stage == RunnerStage.EXECUTION;
     String resolvedRepositoryRef =
         (repoContextStage && repositoryWorkspaceService != null)
@@ -1325,7 +1375,9 @@ public class RunnerBroker {
                 contextBundleVersion,
                 constraints,
                 DataClassification.SHAREABLE_REDACTED,
-                actor);
+                actor,
+                splitProposalRequested,
+                splitFeedbackReferenceId);
       } else {
         executionSubStage = contextBundleService.deriveExecutionSubStage(workflowRunId);
         log.info(
@@ -1457,6 +1509,27 @@ public class RunnerBroker {
       // artifacts row) and NEVER transitions the run (DD-9). All reviewer failure modes degrade
       // gracefully inside the harvester (AC6) — never failing the run.
       if (row.stage() == RunnerStage.REVIEW) {
+        // Story 3f-4 (R1) — a split-mode REVIEW execution (idempotency key `split-proposal:…`)
+        // emits a split-proposal.v1 decomposition, NOT a verdict: route it to the split harvester
+        // so step_reviews is never written for a split. Distinguished by the durable key prefix
+        // pinned at enqueue (no new runner stage). Non-split REVIEW results keep the 3d-2 path.
+        boolean splitMode =
+            org.dradgo.application.workflow.SplitProposalService.isSplitDispatch(
+                row.idempotencyKey());
+        if (splitMode) {
+          if (splitProposalHarvester == null) {
+            log.warn(
+                "split-proposal result received with no harvester wired runnerExecutionId={} workflowRunId={}",
+                runnerExecutionId,
+                workflowRunId);
+            recordFailedBestEffort(runnerExecutionId, FailureCategory.RUNNER_CONTRACT_VIOLATION);
+            completionOutcome = "failure";
+            return;
+          }
+          completionOutcome =
+              splitProposalHarvester.harvest(runnerExecutionId, workflowRunId, payloadBytes);
+          return;
+        }
         if (reviewResultHarvester == null) {
           // Defensive: a REVIEW result with no harvester wired (lean unit ctor) — record failed so
           // the row leaves ACTIVE_STATUSES without touching the run.

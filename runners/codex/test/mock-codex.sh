@@ -5,9 +5,10 @@
 # (profile-gated). This mock:
 #   * answers `--version` (so --self-test passes) with the build-pinned version,
 #   * otherwise prints fixed, deterministic output and exits 0,
-#   * NEVER reads or echoes any environment variable OTHER THAN CODEX_CLI_VERSION
-#     and DELIVERYLINE_RUNNER_STAGE (both NON-SECRET) — so an injected secret
-#     value can never leak into runner.stdout/.stderr (negative-log assertion).
+#   * NEVER reads or echoes any environment variable OTHER THAN CODEX_CLI_VERSION,
+#     DELIVERYLINE_RUNNER_STAGE, and (story 3f-4) DELIVERYLINE_SPLIT_PROPOSAL_REQUESTED
+#     (all NON-SECRET) — so an injected secret value can never leak into
+#     runner.stdout/.stderr (negative-log assertion).
 set -eu
 
 if [ "${1:-}" = "--version" ]; then
@@ -58,4 +59,15 @@ case "$RESOLVED_STAGE" in
     printf '```\n'
     ;;
 esac
+# Story 3f-4 — at a SPLIT-mode REVIEW dispatch, emit a deterministic 2-subtask / 1-dependency
+# proposal in the fenced ```split block runner.mjs lifts into split-proposal.v1, so the full-loop
+# split IT is deterministic. Gated purely on the NON-SECRET DELIVERYLINE_SPLIT_PROPOSAL_REQUESTED
+# marker the entrypoint exports from the bundle's splitProposalRequested flag (decoupled from stage
+# resolution); a normal review dispatch never sets it and stays byte-identical (no fence). Same
+# secret-leak posture as the clarifications fence above (only this non-secret marker is read).
+if [ "${DELIVERYLINE_SPLIT_PROPOSAL_REQUESTED:-}" = "true" ]; then
+  printf '```split\n'
+  printf '{"schemaVersion":1,"subtasks":[{"ordinal":1,"title":"Mock subtask one","scope":"Mock split scope one"},{"ordinal":2,"title":"Mock subtask two","scope":"Mock split scope two"}],"dependencies":[{"fromOrdinal":2,"toOrdinal":1}]}\n'
+  printf '```\n'
+fi
 exit 0

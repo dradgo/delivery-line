@@ -18,6 +18,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ReviewerVerdictView;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
@@ -56,7 +57,8 @@ class WorkflowInspectionServiceReviewerVerdictTest {
           mock(ClarificationReadPort.class),
           mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
           org.dradgo.application.runner.RunnerProperties.defaults(),
-          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults(),
+          mock(SplitProposalReadPort.class));
 
   {
     service.setStepReviewReadPort(stepReviewReadPort);

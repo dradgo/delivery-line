@@ -35,7 +35,14 @@ public enum PublicIdPrefixes implements RegistryValue {
   SPEC_CLARIFICATION_ACKNOWLEDGEMENT(
       "specClarificationAcknowledgement",
       "sca_",
-      "ck_spec_clarification_acknowledgements_public_id_format");
+      "ck_spec_clarification_acknowledgements_public_id_format"),
+  // Story 3f-4 (AC3) — public_id prefix for the V29 split_proposals table (the advisory LLM
+  // decomposition proposal persisted at the spec/review gate; one open proposal per run).
+  SPLIT_PROPOSAL("splitProposal", "splprop_", "ck_split_proposals_public_id_format"),
+  // Story 3f-4 (AC4/R3) — public_id prefix for the V29 split_proposal_feedback table (the
+  // redacted re-propose operator feedback, materialized by reference into the context bundle).
+  SPLIT_PROPOSAL_FEEDBACK(
+      "splitProposalFeedback", "splfb_", "ck_split_proposal_feedback_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

@@ -548,11 +548,22 @@ case "$ARTIFACT_TYPE" in
     PROMPT_INSTRUCTION="OPERATING MODE: IMPLEMENTATION PLAN (read-only). You are a planning stage of a governed delivery pipeline. Analyse the repository at ${CODEX_REPO_DIR} and produce a concrete, ordered IMPLEMENTATION PLAN (the steps required) for the ticket below. Do NOT modify, create, or delete any files. Output the plan as Markdown on standard output only."
     ;;
   review)
-    # Story 3d-2 — advisory reviewer (read-only). Reviews the produced output under /workspace/input
-    # against the approved spec and ends with a parseable verdict marker (lib/runner.mjs review arm
-    # reads `VERDICT: pass|concern|fail`; absent a marker defaults to `concern`). No repo changes.
     CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"
-    PROMPT_INSTRUCTION="OPERATING MODE: ADVISORY REVIEW (read-only). You are an independent reviewer in a governed delivery pipeline. The output artifact produced for the ticket below is available under /workspace/input alongside the approved specification. Review it for correctness and completeness against the specification. Do NOT modify, create, or delete any files. After your assessment, end your response with EXACTLY one line and nothing after it: 'VERDICT: pass' (no blocking concerns), 'VERDICT: concern' (non-blocking concerns the human should weigh), or 'VERDICT: fail' (a blocking defect)."
+    if [ "${DL_SPLIT_PROPOSAL_REQUESTED:-}" = "true" ]; then
+      # Story 3f-4 — SPLIT-PROPOSAL mode (the bundle set splitProposalRequested=true). Ask the
+      # reviewer model to DECOMPOSE the reviewed artifact and emit a fenced ```split block
+      # (split-proposal.v1) INSTEAD of a pass/concern/fail verdict — lib/runner.mjs commandBuild's
+      # split arm lifts it. Export the NON-SECRET marker so the offline mock emits its deterministic
+      # proposal. Read-only: no repo changes, no push.
+      export DELIVERYLINE_SPLIT_PROPOSAL_REQUESTED=true
+      PROMPT_INSTRUCTION="OPERATING MODE: ADVISORY SPLIT PROPOSAL (read-only). You are an independent reviewer in a governed delivery pipeline. The output artifact produced for the ticket below is available under /workspace/input alongside the approved specification. Propose how to split it into smaller, independently-deliverable subtasks. Do NOT modify, create, or delete any files. Append your proposal as the VERY LAST thing in your response, as a fenced block in EXACTLY this form (a single JSON object on the line between the fences): \`\`\`split then {\"schemaVersion\": 1, \"subtasks\": [{\"ordinal\": 1, \"title\": \"...\", \"scope\": \"...\"}], \"dependencies\": [{\"fromOrdinal\": 2, \"toOrdinal\": 1}]} then \`\`\`. Each subtask carries a 1-based ordinal, a short title, and a one-sentence scope; dependencies are OPTIONAL ordering edges (fromOrdinal depends on toOrdinal). Propose 2..8 subtasks; omit dependencies for a flat fan-out."
+    else
+      # Story 3d-2 — advisory reviewer (read-only). Reviews the produced output under
+      # /workspace/input against the approved spec and ends with a parseable verdict marker
+      # (lib/runner.mjs review arm reads `VERDICT: pass|concern|fail`; absent a marker defaults to
+      # `concern`). No repo changes.
+      PROMPT_INSTRUCTION="OPERATING MODE: ADVISORY REVIEW (read-only). You are an independent reviewer in a governed delivery pipeline. The output artifact produced for the ticket below is available under /workspace/input alongside the approved specification. Review it for correctness and completeness against the specification. Do NOT modify, create, or delete any files. After your assessment, end your response with EXACTLY one line and nothing after it: 'VERDICT: pass' (no blocking concerns), 'VERDICT: concern' (non-blocking concerns the human should weigh), or 'VERDICT: fail' (a blocking defect)."
+    fi
     ;;
   *)
     CODEX_SANDBOX="${CODEX_SANDBOX:-read-only}"

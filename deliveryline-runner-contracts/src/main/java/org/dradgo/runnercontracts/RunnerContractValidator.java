@@ -30,6 +30,11 @@ public final class RunnerContractValidator {
   // ArtifactType + the frontend ArtifactView union completely untouched.
   private static final String REVIEW_RESULT_ID =
       "https://deliveryline.local/runner-contracts/review-result.v1.schema.json";
+  // Story 3f-4 (R1) — the advisory split proposal's own contract. A decomposition
+  // (subtasks[]+dependencies[]) with a lifecycle, NOT a verdict, so it is a distinct schema from
+  // review-result.v1 and is harvested into split_proposals (NOT step_reviews).
+  private static final String SPLIT_PROPOSAL_ID =
+      "https://deliveryline.local/runner-contracts/split-proposal.v1.schema.json";
   private static final Pattern PATH_TRAVERSAL_PATTERN =
       Pattern.compile("(^[A-Za-z]:\\\\)|(^/)|\\.\\./|\\.\\.\\\\");
   private static final Pattern SECRET_PATTERN =
@@ -199,7 +204,9 @@ public final class RunnerContractValidator {
     CONTEXT_BUNDLE(CONTEXT_BUNDLE_ID),
     RUNNER_RESULT(RUNNER_RESULT_ID),
     // Story 3d-2 (DD-3) — the advisory reviewer's verdict contract.
-    REVIEW_RESULT(REVIEW_RESULT_ID);
+    REVIEW_RESULT(REVIEW_RESULT_ID),
+    // Story 3f-4 (R1) — the advisory split proposal contract.
+    SPLIT_PROPOSAL(SPLIT_PROPOSAL_ID);
 
     private final String schemaId;
 

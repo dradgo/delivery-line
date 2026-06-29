@@ -619,6 +619,35 @@ public class ContextBundleService {
       ExecutionConstraints executionConstraints,
       DataClassification claimedClassification,
       ActorContext actor) {
+    return createForReview(
+        workflowRunPublicId,
+        reservedRunnerExecutionId,
+        contextBundleVersion,
+        executionConstraints,
+        claimedClassification,
+        actor,
+        false,
+        null);
+  }
+
+  /**
+   * Story 3f-4 (AC2/R1) — split-mode overload: when {@code splitProposalRequested} is true the
+   * review bundle carries the additive {@code splitProposalRequested:true} marker (the runner emits
+   * a fenced ```split decomposition instead of a verdict) and, for a re-propose, {@code
+   * splitFeedbackReferenceId} adds a {@code {referenceId, kind:'split.feedback'}}
+   * priorFeedbackReferences entry — materialized BY REFERENCE from the durable
+   * split_proposal_feedback store, never inlined (R3). Both are additive; an absent flag keeps the
+   * review bundle byte-identical to a plain advisory review.
+   */
+  public ContextBundle createForReview(
+      String workflowRunPublicId,
+      String reservedRunnerExecutionId,
+      int contextBundleVersion,
+      ExecutionConstraints executionConstraints,
+      DataClassification claimedClassification,
+      ActorContext actor,
+      boolean splitProposalRequested,
+      String splitFeedbackReferenceId) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     PublicIdPrefixes.require(reservedRunnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
     Objects.requireNonNull(executionConstraints, "executionConstraints");
@@ -687,6 +716,23 @@ public class ContextBundleService {
               reviewedArtifact,
               executionConstraints,
               DataClassification.SHAREABLE_REDACTED);
+    }
+
+    // Story 3f-4 — additive split-mode markers, set BEFORE the single redact pass so the reference
+    // metadata is policed exactly like the rest of the bundle. The feedback CONTENT is never here
+    // (it lives in the durable split_proposal_feedback store, referenced by id only — R3).
+    if (splitProposalRequested) {
+      root.put("splitProposalRequested", true);
+      if (splitFeedbackReferenceId != null && !splitFeedbackReferenceId.isBlank()) {
+        JsonNode existingRefs = root.get("priorFeedbackReferences");
+        com.fasterxml.jackson.databind.node.ArrayNode refs =
+            existingRefs instanceof com.fasterxml.jackson.databind.node.ArrayNode
+                ? (com.fasterxml.jackson.databind.node.ArrayNode) existingRefs
+                : root.putArray("priorFeedbackReferences");
+        ObjectNode entry = refs.addObject();
+        entry.put("referenceId", splitFeedbackReferenceId);
+        entry.put("kind", "split.feedback");
+      }
     }
 
     RedactionResult redaction;

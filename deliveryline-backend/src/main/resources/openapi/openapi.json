@@ -1132,6 +1132,20 @@
         ],
         "type" : "object"
       },
+      "ReproposeSplitRequest" : {
+        "properties" : {
+          "feedbackText" : {
+            "description" : "Free-text feedback steering the re-proposal.",
+            "example" : "Split the persistence layer out as its own subtask.",
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "feedbackText"
+        ],
+        "type" : "object"
+      },
       "RetryWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -1375,6 +1389,112 @@
           },
           "status" : {
             "example" : "configured",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "SplitDependencyPayload" : {
+        "properties" : {
+          "fromOrdinal" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "toOrdinal" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
+      "SplitProposalPayload" : {
+        "properties" : {
+          "dependencies" : {
+            "items" : {
+              "$ref" : "#/components/schemas/SplitDependencyPayload"
+            },
+            "type" : "array"
+          },
+          "producerModelIdentity" : {
+            "example" : "claude:latest",
+            "type" : "string"
+          },
+          "reviewedArtifactId" : {
+            "example" : "art_spec123",
+            "type" : "string"
+          },
+          "reviewedArtifactVersion" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "reviewerModelIdentity" : {
+            "example" : "claude:latest",
+            "type" : "string"
+          },
+          "selfReview" : {
+            "description" : "True when the proposing model equals the reviewed-artifact producer.",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "splitProposalId" : {
+            "example" : "splprop_abc123",
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "open",
+            "type" : "string"
+          },
+          "subtasks" : {
+            "items" : {
+              "$ref" : "#/components/schemas/SplitSubtaskPayload"
+            },
+            "type" : "array"
+          }
+        },
+        "type" : "object"
+      },
+      "SplitProposalResponse" : {
+        "properties" : {
+          "loopCount" : {
+            "description" : "The run's re-propose loop counter.",
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "proposal" : {
+            "$ref" : "#/components/schemas/SplitProposalPayload",
+            "description" : "The current proposal (only when state=available)."
+          },
+          "state" : {
+            "description" : "Proposal channel state.",
+            "enum" : [
+              "none",
+              "pending",
+              "available",
+              "unavailable"
+            ],
+            "example" : "available",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "SplitSubtaskPayload" : {
+        "properties" : {
+          "ordinal" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "scope" : {
+            "example" : "Move the auth handlers into a dedicated module.",
+            "type" : "string"
+          },
+          "title" : {
+            "example" : "Extract the auth module",
             "type" : "string"
           }
         },
@@ -4512,6 +4632,202 @@
           }
         },
         "summary" : "Stream a run's latest runner-execution logs (live + historical)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/split-proposal" : {
+      "get" : {
+        "description" : "The advisory split proposal channel state (none|pending|available|unavailable), the current proposal when available, and the re-propose loop count.",
+        "operationId" : "getSplitProposal",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SplitProposalResponse"
+                }
+              }
+            },
+            "description" : "Split proposal state."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get the current split proposal (story 3f-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/split/decline" : {
+      "post" : {
+        "description" : "Dismiss the current open proposal; the parent stays at its gate and the normal gate actions are restored byte-identically.",
+        "operationId" : "declineSplit",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SplitProposalResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Decline the split — continue as one ticket (story 3f-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/split/repropose" : {
+      "post" : {
+        "description" : "Re-run the proposal call with free-text feedback (materialized by reference). Supersedes the prior open proposal, bumps the loop counter, and honors the escalation marker at the configured threshold.",
+        "operationId" : "reproposeSplit",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ReproposeSplitRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SplitProposalResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Re-propose a split with operator feedback (story 3f-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/split/request" : {
+      "post" : {
+        "description" : "Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model degrades to state=unavailable (the gate is never blocked).",
+        "operationId" : "requestSplit",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SplitProposalResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Request an advisory split proposal (story 3f-4)",
         "tags" : [
           "Workflows"
         ]

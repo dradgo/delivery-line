@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/runner-contracts/split-proposal.v1.schema.json",
+  "title": "DeliveryLine Split Proposal v1",
+  "description": "Story 3f-4 (R1) — the advisory decomposition a reviewer-style runner invocation emits over the spec/review-gate artifact when bundle.splitProposalRequested is true. A DISTINCT contract from review-result.v1: a split proposal is a decomposition (subtasks[] + dependencies[]) with its own lifecycle (open -> superseded / dismissed / approved), NOT a pass/concern/fail verdict, so it is harvested into split_proposals (NOT step_reviews). The backend redacts proposal_json and computes model provenance; this contract carries only what the runner authoritatively knows. It creates NO children/edges and does NOT move the parent (that is 3f-5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workflowRunId",
+    "runnerExecutionId",
+    "subtasks",
+    "classification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "workflowRunId": {
+      "type": "string",
+      "pattern": "^run_[A-Za-z0-9_-]{4,64}$"
+    },
+    "runnerExecutionId": {
+      "type": "string",
+      "pattern": "^rex_[A-Za-z0-9_-]{4,64}$"
+    },
+    "subtasks": {
+      "type": "array",
+      "description": "The proposed decomposition: ordered subtasks (1..20 on the happy path; the allOf below requires >=1 unless failureCategory is set). The ordinal is a 1-based index the dependencies[] edges reference; 3f-5 mints a child run per subtask in this order.",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ordinal",
+          "title",
+          "scope"
+        ],
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "description": "OPTIONAL suggested ordering edges between subtasks (the subtask at fromOrdinal depends on the one at toOrdinal). 3f-5 turns these into run_dependencies edges; absent/empty means a flat fan-out.",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fromOrdinal",
+          "toOrdinal"
+        ],
+        "properties": {
+          "fromOrdinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "toOrdinal": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL one-line human summary of the proposed split."
+    },
+    "reviewerModelIdentity": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL self-reported reviewer model identity. The backend independently derives the authoritative reviewer identity from the proposal execution for provenance/self-review (AC7); this is advisory only."
+    },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "local-only",
+        "shareable-redacted",
+        "shareable-full",
+        "derived-public-safe"
+      ]
+    },
+    "failureCategory": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "OPTIONAL — a runner-self-reported failure (parallels review-result.v1). When present and non-blank, the backend records the proposal execution failed (graceful degrade, AC5/R5: the gate is never blocked) and writes NO proposal. Constrained to the FailureCategory wire values a runner can authoritatively self-report.",
+      "enum": [
+        "runner_timeout",
+        "runner_crash",
+        "runner_contract_violation",
+        "runner_non_zero_exit",
+        "runner_malformed_output",
+        null
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "description": "A SUCCESSFUL proposal (failureCategory absent or null) must carry >=1 subtask. A failure-shaped result (failureCategory set) may carry an empty subtasks array — the backend harvester degrades the panel to 'proposal unavailable' (R5) and writes no row.",
+      "if": {
+        "anyOf": [
+          {
+            "not": {
+              "required": [
+                "failureCategory"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "failureCategory": {
+                "type": "null"
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "subtasks": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

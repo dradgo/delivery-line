@@ -62,7 +62,20 @@ public enum AllowedAction implements RegistryValue {
   // it performs the WaitingForSpecApproval -> Investigating transition then reuses
   // WorkflowOrchestrationService.retrySpecGeneration (re-dispatch only, Trap T8). Surfaced in the
   // WAITING_FOR_SPEC_APPROVAL reviewer-role matrix alongside accept_clarification.
-  REGENERATE_SPEC("regenerate_spec_with_clarifications");
+  REGENERATE_SPEC("regenerate_spec_with_clarifications"),
+  // Story 3f-4 (AC1) — request an advisory LLM split proposal at the spec/review gate. Canonical
+  // executor is SplitProposalService.request; surfaced as an advisory overlay when NO open proposal
+  // exists. Creates no children/edges and does NOT move the parent out of its gate (that is 3f-5).
+  // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only).
+  REQUEST_SPLIT("request_split"),
+  // Story 3f-4 (AC1/AC5) — dismiss the current open split proposal ("continue as one ticket").
+  // Canonical executor is SplitProposalService.decline; surfaced when an open proposal exists. The
+  // normal gate actions are byte-identical to a run that was never split-proposed (AC5).
+  DECLINE_SPLIT("continue_as_single"),
+  // Story 3f-4 (AC1/AC4) — re-run the proposal call with operator feedback (materialized by
+  // reference). Canonical executor is SplitProposalService.repropose; surfaced when an open
+  // proposal exists. (APPROVE_SPLIT("approve_split") is owned by story 3f-5 — do NOT add it here.)
+  REPROPOSE_SPLIT("repropose_split");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

@@ -96,6 +96,8 @@ public class WorkflowInspectionService {
   // in the test profile); the stale/lease window from RunnerProperties.staleThresholdFor(stage).
   private final RunnerProperties runnerProperties;
   private final RunnerWorkerPoolProperties runnerWorkerPoolProperties;
+  // Story 3f-4 — threads hasOpenSplitProposal into the action matrix (advisory split overlay).
+  private final org.dradgo.application.workflow.spi.SplitProposalReadPort splitProposalReadPort;
   private ProjectStore projectStore;
   // Story 3b-5 — parses the structured prOutput payload (branch/commitSha/diff) for the
   // artifact-read projection. A plain instance field, not a constructor dependency, so the ~7 `new
@@ -117,7 +119,8 @@ public class WorkflowInspectionService {
       ClarificationReadPort clarificationReadPort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       RunnerProperties runnerProperties,
-      RunnerWorkerPoolProperties runnerWorkerPoolProperties) {
+      RunnerWorkerPoolProperties runnerWorkerPoolProperties,
+      org.dradgo.application.workflow.spi.SplitProposalReadPort splitProposalReadPort) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -140,6 +143,8 @@ public class WorkflowInspectionService {
     this.runnerProperties = Objects.requireNonNull(runnerProperties, "runnerProperties");
     this.runnerWorkerPoolProperties =
         Objects.requireNonNull(runnerWorkerPoolProperties, "runnerWorkerPoolProperties");
+    this.splitProposalReadPort =
+        Objects.requireNonNull(splitProposalReadPort, "splitProposalReadPort");
   }
 
   // Story 3d-2 (AC3, Task 7) — the advisory-verdict read port, backing getReviewerVerdict. Optional
@@ -851,13 +856,24 @@ public class WorkflowInspectionService {
               .map(WorkflowEventRecord::publicId)
               .orElse(null);
 
+      boolean hasOpenSplitProposal = splitProposalReadPort.hasOpenForRun(workflowRunPublicId);
+      // Story 3f-4 review (Decision 2a): while a split dispatch is in flight the proposal row does
+      // not exist yet (it is created at harvest), so the overlay must surface a "pending" state (no
+      // split action) to match proposalView — not re-offer request_split. Queried only at the two
+      // gate states to keep it off the hot path.
+      boolean hasActiveSplitDispatch =
+          (state == WorkflowState.WAITING_FOR_SPEC_APPROVAL
+                  || state == WorkflowState.WAITING_FOR_REVIEW)
+              && hasActiveSplitDispatch(workflowRunPublicId);
       List<AllowedAction> actions =
           computeActionMatrix(
               state,
               resolvedRole,
               summary.pendingClarifications(),
               latestSpecPublicId,
-              summary.archivedAt() != null);
+              summary.archivedAt() != null,
+              hasOpenSplitProposal,
+              hasActiveSplitDispatch);
 
       AllowedActionsView view =
           new AllowedActionsView(
@@ -905,18 +921,73 @@ public class WorkflowInspectionService {
       String actorRole,
       int pendingClarifications,
       String latestSpecPublicId,
-      boolean archived) {
-    List<AllowedAction> base =
-        baseActionMatrix(state, actorRole, pendingClarifications, latestSpecPublicId);
+      boolean archived,
+      boolean hasOpenSplitProposal,
+      boolean hasActiveSplitDispatch) {
+    List<AllowedAction> result =
+        new ArrayList<>(
+            baseActionMatrix(state, actorRole, pendingClarifications, latestSpecPublicId));
+    // Story 3f-4 (AC1) — advisory split overlay at the existing spec/review gate (NO new gate
+    // state). Surfaced for the reviewer roles at WaitingForSpecApproval (product_reviewer /
+    // workflow_owner) and the developer at WaitingForReview: request_split when no open proposal
+    // exists, else repropose_split + continue_as_single. (approve_split is added by 3f-5.) Appended
+    // before the archive overlay so the gate actions stay grouped.
+    appendSplitOverlay(result, state, actorRole, hasOpenSplitProposal, hasActiveSplitDispatch);
     // Soft-hide is a run-owner triage affordance only (review decision 3d-8/D1): gate
     // archive_run/unarchive_run to workflow_owner, mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE.
     // It stays additive + orthogonal to the per-state lifecycle actions, just role-scoped.
-    if (!ROLE_WORKFLOW_OWNER.equals(actorRole)) {
-      return base;
+    if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+      result.add(archived ? AllowedAction.UNARCHIVE_RUN : AllowedAction.ARCHIVE_RUN);
     }
-    List<AllowedAction> withArchive = new ArrayList<>(base);
-    withArchive.add(archived ? AllowedAction.UNARCHIVE_RUN : AllowedAction.ARCHIVE_RUN);
-    return List.copyOf(withArchive);
+    return List.copyOf(result);
+  }
+
+  // Story 3f-4 (AC1) — the proposal-aware split overlay. A no-op outside the two gate/role
+  // combinations, so every other matrix row stays byte-identical.
+  private void appendSplitOverlay(
+      List<AllowedAction> actions,
+      WorkflowState state,
+      String actorRole,
+      boolean hasOpenSplitProposal,
+      boolean hasActiveSplitDispatch) {
+    boolean specGateReviewer =
+        state == WorkflowState.WAITING_FOR_SPEC_APPROVAL
+            && (ROLE_PRODUCT_REVIEWER.equals(actorRole) || ROLE_WORKFLOW_OWNER.equals(actorRole));
+    boolean reviewGateDeveloper =
+        state == WorkflowState.WAITING_FOR_REVIEW && ROLE_DEVELOPER.equals(actorRole);
+    if (!specGateReviewer && !reviewGateDeveloper) {
+      return;
+    }
+    // A split dispatch is in flight (the proposal row is created only at harvest): surface a
+    // pending state — neither request_split nor the open-proposal actions — matching proposalView
+    // (review 2026-06-29, Decision 2a). Without this the overlay would re-offer request_split mid
+    // dispatch.
+    if (hasActiveSplitDispatch) {
+      return;
+    }
+    if (hasOpenSplitProposal) {
+      actions.add(AllowedAction.REPROPOSE_SPLIT);
+      actions.add(AllowedAction.DECLINE_SPLIT);
+    } else {
+      actions.add(AllowedAction.REQUEST_SPLIT);
+    }
+  }
+
+  // Story 3f-4 review (Decision 2a): true when a split-mode REVIEW execution is PENDING/RUNNING for
+  // the run — mirrors SplitProposalService.hasActiveSplitDispatch so the action matrix and
+  // proposalView agree on the pending window.
+  private boolean hasActiveSplitDispatch(String workflowRunPublicId) {
+    for (RunnerExecutionSnapshot row :
+        runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
+            workflowRunPublicId,
+            List.of(RunnerExecutionStatus.PENDING, RunnerExecutionStatus.RUNNING))) {
+      if (row.stage() == org.dradgo.domain.registry.RunnerStage.REVIEW
+          && org.dradgo.application.workflow.SplitProposalService.isSplitDispatch(
+              row.idempotencyKey())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private List<AllowedAction> baseActionMatrix(

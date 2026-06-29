@@ -12,6 +12,7 @@ import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.domain.registry.ActorType;
@@ -52,7 +53,8 @@ class WorkflowInspectionServiceClarificationTest {
           clarifications,
           mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
           org.dradgo.application.runner.RunnerProperties.defaults(),
-          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults(),
+          mock(SplitProposalReadPort.class));
 
   @Test
   void getClarificationsProjectsOrderedRowsFromTheReadPort() {

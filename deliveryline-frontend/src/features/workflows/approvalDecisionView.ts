@@ -68,6 +68,13 @@ export type DecisionAction =
   | 'accept_implementation'
   | 'reject_implementation'
   | 'takeover_workflow'
+  // Story 3f-4 (advisory split-proposal channel) — the three governed split actions. The
+  // matrix advertises `request_split` when NO proposal is open, and `repropose_split` +
+  // `continue_as_single` when one IS open. They MUST also live in `KNOWN_ACTIONS` below or
+  // `coerceAction` drops them to `'unknown'` and the split affordances never render.
+  | 'request_split'
+  | 'repropose_split'
+  | 'continue_as_single'
   | 'unknown';
 
 /** The rework taxonomy (story 2.10) — the schema's UPPERCASE wire enum (T-TAGGED-UPPERCASE). */
@@ -220,6 +227,10 @@ const KNOWN_ACTIONS: ReadonlySet<string> = new Set<DecisionAction>([
   'accept_implementation',
   'reject_implementation',
   'takeover_workflow',
+  // Story 3f-4 — the advisory split-proposal channel actions.
+  'request_split',
+  'repropose_split',
+  'continue_as_single',
   'unknown',
 ]);
 
@@ -372,6 +383,10 @@ const CONSEQUENCE_HINTS: Readonly<
   spec_approval: {
     approve_spec: 'Approval will transition the run to Executing.',
     reject_spec: 'Rejection sends the specification back for rework.',
+    // Story 3f-4 — advisory split channel (front-half only; nothing is committed this epic).
+    request_split: 'Requests an advisory split proposal; nothing is committed.',
+    continue_as_single: 'Dismisses the proposal and keeps one ticket.',
+    repropose_split: 'Re-runs the proposal with your feedback.',
   },
   // Story 3.28 (AC2) — the short inline hints; takeover's FULL consequence text lives
   // in the confirm dialog (`CONFIRMATION_CATALOG.takeoverWorkflow`).
@@ -379,6 +394,10 @@ const CONSEQUENCE_HINTS: Readonly<
     accept_implementation: 'Accepting advances the run past technical review.',
     reject_implementation: 'Rejection sends the implementation back for rework.',
     takeover_workflow: 'Taking over stops orchestration and hands the run to a developer.',
+    // Story 3f-4 — advisory split channel (front-half only; nothing is committed this epic).
+    request_split: 'Requests an advisory split proposal; nothing is committed.',
+    continue_as_single: 'Dismisses the proposal and keeps one ticket.',
+    repropose_split: 'Re-runs the proposal with your feedback.',
   },
   // Story 3.30 (AC3) — the short inline hint; the FULL consequence text lives in the
   // retry confirmation dialog (`CONFIRMATION_CATALOG.retryOrRecoverConsequential`).

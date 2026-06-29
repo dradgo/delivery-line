@@ -28,6 +28,7 @@ import { RunDependencyPanel } from '@/features/workflows/components/RunDependenc
 import { ManualExecutionSurface } from '@/features/workflows/components/ManualExecutionSurface';
 import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
 import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
+import { SplitProposalPanelContainer } from '@/features/workflows/components/SplitProposalPanel';
 import { useAllowedActions } from '@/features/workflows/hooks/useAllowedActions';
 import {
   GenericErrorState,
@@ -295,6 +296,15 @@ function WorkflowDetailRoute() {
       {data?.currentState === 'WaitingForReview' ||
       data?.currentState === 'WaitingForSpecApproval' ? (
         <ReviewerVerdictPanelContainer workflowRunId={workflowRunId} />
+      ) : null}
+      {/* Story 3f-4 (advisory split-proposal channel) — beside the Decision Bar at the same two
+          gates (WaitingForSpecApproval / WaitingForReview). Front-half / advisory ONLY: surfaces a
+          model-proposed decomposition + the governed request / re-propose / continue-as-single
+          loop actions (allowed-actions-driven). Renders nothing when no proposal exists and no
+          split action is advertised. */}
+      {data?.currentState === 'WaitingForReview' ||
+      data?.currentState === 'WaitingForSpecApproval' ? (
+        <SplitProposalPanelContainer workflowRunId={workflowRunId} />
       ) : null}
       <WorkflowDecisionBar workflowRunId={workflowRunId} />
       {/* Story 3d-5 (AC4/AC6) — the Step Execution Log Viewer: live-follow + finished replay of

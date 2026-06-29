@@ -28,6 +28,7 @@ import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactV
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventStreamView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
@@ -80,7 +81,8 @@ class WorkflowInspectionServiceTest {
           clarifications,
           mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
           org.dradgo.application.runner.RunnerProperties.defaults(),
-          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults(),
+          mock(SplitProposalReadPort.class));
 
   private void stubNonFailedDescribe(
       String runId, WorkflowState currentState, String nextSafeAction) {

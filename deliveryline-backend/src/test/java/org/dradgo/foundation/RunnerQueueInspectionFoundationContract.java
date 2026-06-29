@@ -27,6 +27,7 @@ import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.RunnerQueueStatus;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkerStatus;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -95,7 +96,8 @@ class RunnerQueueInspectionFoundationContract {
             mock(ClarificationReadPort.class),
             mock(org.dradgo.application.recovery.spi.RecoveryActionRecordPort.class),
             RunnerProperties.defaults(),
-            RunnerWorkerPoolProperties.defaults());
+            RunnerWorkerPoolProperties.defaults(),
+            mock(SplitProposalReadPort.class));
 
     RunnerQueueStatus view = service.getRunnerQueueStatus(null);
 

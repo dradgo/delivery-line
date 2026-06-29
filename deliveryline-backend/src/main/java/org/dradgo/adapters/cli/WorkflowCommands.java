@@ -762,6 +762,296 @@ public class WorkflowCommands {
     }
   }
 
+  // Story 3f-4 — optional setter injection for the split-proposal service (same pattern as
+  // setRunDependencyService) so the telescoping WorkflowCommands ctors + their unit-test call sites
+  // stay unchanged. Present in production; null in lean test ctors, where the split commands
+  // surface
+  // a clear "not wired" error.
+  private org.dradgo.application.workflow.SplitProposalService splitProposalService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSplitProposalService(
+      org.dradgo.application.workflow.SplitProposalService splitProposalService) {
+    this.splitProposalService = splitProposalService;
+  }
+
+  @Command(
+      name = "split-proposal-show",
+      description =
+          "Inspect the advisory split proposal for a run: state (none|pending|available|"
+              + "unavailable), the proposed subtasks + dependency edges when available, and the"
+              + " re-propose loop count (story 3f-4).",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String splitProposalShow(
+      @Option(longName = "run", description = "Workflow run public id (run_...)", required = true)
+          String runId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireSplitWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      org.dradgo.application.workflow.SplitProposalStatusView view =
+          splitProposalService.proposalView(runId);
+      String rendered = renderSplitProposal(runId, view, format);
+      emitSuccess("workflow split-proposal-show", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow split-proposal-show", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure(
+          "workflow split-proposal-show", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "split-request",
+      description =
+          "Request an advisory LLM split proposal at the spec/review gate (story 3f-4). The parent"
+              + " stays at its gate; an unbound reviewer model degrades to state=unavailable.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String splitRequest(
+      @Option(longName = "run", description = "Workflow run public id (run_...)", required = true)
+          String runId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireSplitWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      org.dradgo.application.workflow.SplitProposalStatusView view =
+          splitProposalService.request(
+              new org.dradgo.application.workflow.SplitProposalCommands.RequestSplitCommand(
+                  runId, resolvedActor, ActorType.HUMAN, resolvedKey, resolvedCorrelation));
+      String rendered = renderSplitProposal(runId, view, format);
+      emitSuccess("workflow split-request", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow split-request", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow split-request", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "split-repropose",
+      description =
+          "Re-run the split proposal with operator feedback (story 3f-4). Supersedes the prior open"
+              + " proposal, bumps the loop counter, and honors the escalation marker at threshold.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String splitRepropose(
+      @Option(longName = "run", description = "Workflow run public id (run_...)", required = true)
+          String runId,
+      @Option(longName = "feedback", description = "Free-text re-propose feedback", required = true)
+          String feedback,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireSplitWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      org.dradgo.application.workflow.SplitProposalStatusView view =
+          splitProposalService.repropose(
+              new org.dradgo.application.workflow.SplitProposalCommands.ReproposeSplitCommand(
+                  runId,
+                  feedback,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedKey,
+                  resolvedCorrelation));
+      String rendered = renderSplitProposal(runId, view, format);
+      emitSuccess("workflow split-repropose", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow split-repropose", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow split-repropose", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  @Command(
+      name = "split-decline",
+      description =
+          "Decline the split — continue as one ticket (story 3f-4). Dismisses the open proposal;"
+              + " the normal gate actions are restored.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String splitDecline(
+      @Option(longName = "run", description = "Workflow run public id (run_...)", required = true)
+          String runId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireSplitWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      org.dradgo.application.workflow.SplitProposalStatusView view =
+          splitProposalService.decline(
+              new org.dradgo.application.workflow.SplitProposalCommands.DeclineSplitCommand(
+                  runId, resolvedActor, ActorType.HUMAN, resolvedKey, resolvedCorrelation));
+      String rendered = renderSplitProposal(runId, view, format);
+      emitSuccess("workflow split-decline", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow split-decline", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow split-decline", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  private String renderSplitProposal(
+      String runId, org.dradgo.application.workflow.SplitProposalStatusView view, String format) {
+    String normalizedFormat = normalizeFormat(format);
+    org.dradgo.application.workflow.SplitProposalView proposal = view.proposal();
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      try {
+        com.fasterxml.jackson.databind.node.ObjectNode root = jsonMapper().createObjectNode();
+        root.put("runId", runId);
+        root.put("state", view.state());
+        root.put("loopCount", view.loopCount());
+        if (proposal == null) {
+          root.putNull("proposal");
+        } else {
+          com.fasterxml.jackson.databind.node.ObjectNode p = jsonMapper().createObjectNode();
+          p.put("splitProposalId", proposal.publicId());
+          p.put("status", proposal.status());
+          p.put("selfReview", proposal.selfReview());
+          com.fasterxml.jackson.databind.node.ArrayNode subtasks = jsonMapper().createArrayNode();
+          for (org.dradgo.application.workflow.SplitSubtaskView s : proposal.subtasks()) {
+            com.fasterxml.jackson.databind.node.ObjectNode sn = jsonMapper().createObjectNode();
+            sn.put("ordinal", s.ordinal());
+            sn.put("title", s.title());
+            sn.put("scope", s.scope());
+            subtasks.add(sn);
+          }
+          p.set("subtasks", subtasks);
+          com.fasterxml.jackson.databind.node.ArrayNode deps = jsonMapper().createArrayNode();
+          for (org.dradgo.application.workflow.SplitDependencyView d : proposal.dependencies()) {
+            com.fasterxml.jackson.databind.node.ObjectNode dn = jsonMapper().createObjectNode();
+            dn.put("fromOrdinal", d.fromOrdinal());
+            dn.put("toOrdinal", d.toOrdinal());
+            deps.add(dn);
+          }
+          p.set("dependencies", deps);
+          root.set("proposal", p);
+        }
+        return jsonMapper().writeValueAsString(root);
+      } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "split_proposal_json_render_failed");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR, "Failed to render split proposal JSON", details);
+      }
+    }
+    StringBuilder out = new StringBuilder();
+    out.append("split-proposal ")
+        .append(runId)
+        .append(": state=")
+        .append(view.state())
+        .append(" loopCount=")
+        .append(view.loopCount());
+    if (proposal != null) {
+      out.append(System.lineSeparator())
+          .append("  proposal ")
+          .append(proposal.publicId())
+          .append(" [")
+          .append(proposal.status())
+          .append("] selfReview=")
+          .append(proposal.selfReview());
+      for (org.dradgo.application.workflow.SplitSubtaskView s : proposal.subtasks()) {
+        out.append(System.lineSeparator())
+            .append("    ")
+            .append(s.ordinal())
+            .append(". ")
+            .append(s.title());
+      }
+      if (proposal.dependencies() != null && !proposal.dependencies().isEmpty()) {
+        out.append(System.lineSeparator()).append("  dependencies: ");
+        out.append(
+            proposal.dependencies().stream()
+                .map(d -> d.fromOrdinal() + "->" + d.toOrdinal())
+                .collect(java.util.stream.Collectors.joining(", ")));
+      }
+    }
+    return out.toString();
+  }
+
+  private void requireSplitWired() {
+    if (splitProposalService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_split_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without SplitProposalService; inject it to use"
+              + " split-request / split-repropose / split-decline / split-proposal-show",
+          details);
+    }
+  }
+
   @Command(
       name = "provider-usage",
       description =

@@ -23,6 +23,7 @@ import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService.ClarificationStatusView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowRunDetailedSummaryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
+import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
@@ -77,7 +78,8 @@ class WorkflowInspectionServiceClarificationStatusTest {
           clarifications,
           recoveryActions,
           org.dradgo.application.runner.RunnerProperties.defaults(),
-          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults());
+          org.dradgo.application.runner.RunnerWorkerPoolProperties.defaults(),
+          mock(SplitProposalReadPort.class));
 
   {
     service.setProjectStore(projects);

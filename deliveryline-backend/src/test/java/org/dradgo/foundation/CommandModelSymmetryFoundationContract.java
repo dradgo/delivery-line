@@ -116,6 +116,10 @@ class CommandModelSymmetryFoundationContract {
   // bean must exist for this @WebMvcTest slice to construct the controller.
   @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
 
+  // Story 3f-4 — WorkflowController gained the split-proposal service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.SplitProposalService splitProposalService;
+
   @org.junit.jupiter.api.BeforeEach
   void stubActorResolver() {
     when(localActorIdentityResolver.resolve(any())).thenReturn("alex");

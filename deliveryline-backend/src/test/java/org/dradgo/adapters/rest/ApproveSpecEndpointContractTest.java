@@ -69,6 +69,10 @@ class ApproveSpecEndpointContractTest {
   // bean must exist for this @WebMvcTest slice to construct the controller.
   @MockitoBean private org.dradgo.application.workflow.RunDependencyService runDependencyService;
 
+  // Story 3f-4 — WorkflowController gained the split-proposal service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private org.dradgo.application.workflow.SplitProposalService splitProposalService;
+
   @BeforeEach
   void stubActorResolver() {
     // Story 2.13 round-4 D-R4-1 + P-R4-12: delegate to a real LocalActorIdentityResolver so the

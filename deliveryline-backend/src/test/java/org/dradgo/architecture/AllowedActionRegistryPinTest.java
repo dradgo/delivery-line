@@ -86,4 +86,31 @@ class AllowedActionRegistryPinTest {
     assertThat(AllowedAction.REGENERATE_SPEC.value())
         .isEqualTo("regenerate_spec_with_clarifications");
   }
+
+  @Test
+  void requestSplitWireValueIsPinned() {
+    // Story 3f-4 AC1 — SplitProposalService.request is the canonical executor; surfaced as an
+    // advisory overlay at the WAITING_FOR_SPEC_APPROVAL / WAITING_FOR_REVIEW gate when no open
+    // proposal exists. Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json
+    // + RegistryContractTest).
+    assertThat(AllowedAction.REQUEST_SPLIT.value()).isEqualTo("request_split");
+  }
+
+  @Test
+  void declineSplitWireValueIsPinned() {
+    // Story 3f-4 AC1/AC5 — SplitProposalService.decline ("continue as one ticket") is the canonical
+    // executor; surfaced when an open proposal exists. NOTE the wire value is continue_as_single
+    // (not decline_split). Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.DECLINE_SPLIT.value()).isEqualTo("continue_as_single");
+  }
+
+  @Test
+  void reproposeSplitWireValueIsPinned() {
+    // Story 3f-4 AC1/AC4 — SplitProposalService.repropose is the canonical executor; surfaced when
+    // an open proposal exists. Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.REPROPOSE_SPLIT.value()).isEqualTo("repropose_split");
+  }
 }

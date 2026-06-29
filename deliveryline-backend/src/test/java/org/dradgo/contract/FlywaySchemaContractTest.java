@@ -44,7 +44,9 @@ class FlywaySchemaContractTest {
           "project_credentials",
           "step_reviews",
           "provider_usage_snapshots",
-          "spec_clarification_acknowledgements");
+          "spec_clarification_acknowledgements",
+          "split_proposals",
+          "split_proposal_feedback");
 
   // Story 3e-4 / V26: project_runner_kinds is a pure mapping/association table (composite PK
   // (project_id, step)) — NOT a core table: it deliberately carries no bigserial id / public_id /
@@ -76,7 +78,9 @@ class FlywaySchemaContractTest {
           Map.entry("project_credentials", "cred_"),
           Map.entry("step_reviews", "rev_"),
           Map.entry("provider_usage_snapshots", "pul_"),
-          Map.entry("spec_clarification_acknowledgements", "sca_"));
+          Map.entry("spec_clarification_acknowledgements", "sca_"),
+          Map.entry("split_proposals", "splprop_"),
+          Map.entry("split_proposal_feedback", "splfb_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -376,7 +380,7 @@ class FlywaySchemaContractTest {
 				  and tc.table_schema = 'public'
 				""");
 
-    // Sanity: every workflow_run_id FK must point to workflow_runs.id and be RESTRICT on delete.
+    // Sanity: every workflow_run_id FK must point to workflow_runs and be RESTRICT on delete.
     long workflowRunFks =
         fks.stream()
             .filter(row -> "workflow_run_id".equals(row.get("child_column")))
@@ -389,7 +393,12 @@ class FlywaySchemaContractTest {
                           "FK on "
                               + row.get("child_table")
                               + ".workflow_run_id must point to workflow_runs");
-                  assertEquals("id", row.get("parent_column"));
+                  // Story 3f-4 / V29: split_proposals.workflow_run_id references
+                  // workflow_runs.public_id (text) — the 3f-2/3f-3 convention for new Epic-3f
+                  // tables that store the opaque run public id — whereas the other 9 reference .id.
+                  String expectedParentColumn =
+                      "split_proposals".equals(row.get("child_table")) ? "public_id" : "id";
+                  assertEquals(expectedParentColumn, row.get("parent_column"));
                   assertEquals(
                       "RESTRICT",
                       row.get("delete_rule"),
@@ -400,10 +409,10 @@ class FlywaySchemaContractTest {
                 })
             .count();
     assertEquals(
-        9,
+        10,
         workflowRunFks,
         () ->
-            "Expected 9 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews). Found "
+            "Expected 10 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews, split_proposals). Found "
                 + workflowRunFks);
 
     // recovery_actions soft event references: SET NULL.
@@ -967,6 +976,148 @@ class FlywaySchemaContractTest {
     jdbcTemplate.update("delete from run_dependencies where run_id = ?", dependent);
     jdbcTemplate.update(
         "delete from workflow_runs where public_id in (?, ?)", dependent, prerequisite);
+  }
+
+  @Test
+  void splitProposalsSchemaCarriesExpectedColumnsConstraintsChecksForeignKeyAndOpenIndex() {
+    // Story 3f-4 / V29: advisory split-proposal table. The id/public_id/created_at/archived_at
+    // retention shape + the uq/ck public_id format are asserted by the CORE_TABLES tests above
+    // (split_proposals is a core table with prefix splprop_). Probe the story-specific columns, the
+    // status + loop_count CHECKs, the workflow_runs.public_id FK (ON DELETE RESTRICT ON UPDATE
+    // CASCADE — 3f-3 review lesson), and the partial unique "one open proposal per run" index.
+    assertColumnType("split_proposals", "workflow_run_id", "text");
+    assertColumnNullable("split_proposals", "workflow_run_id", false);
+    assertColumnType("split_proposals", "reviewed_artifact_id", "text");
+    assertColumnNullable("split_proposals", "reviewed_artifact_id", true);
+    assertColumnType("split_proposals", "reviewed_artifact_version", "integer");
+    assertColumnNullable("split_proposals", "reviewed_artifact_version", true);
+    assertColumnType("split_proposals", "status", "text");
+    assertColumnNullable("split_proposals", "status", false);
+    assertColumnType("split_proposals", "loop_count", "integer");
+    assertColumnNullable("split_proposals", "loop_count", false);
+    assertColumnType("split_proposals", "proposal_json", "text");
+    assertColumnNullable("split_proposals", "proposal_json", false);
+    assertColumnType("split_proposals", "reviewer_model_identity", "text");
+    assertColumnNullable("split_proposals", "reviewer_model_identity", true);
+    assertColumnType("split_proposals", "producer_model_identity", "text");
+    assertColumnNullable("split_proposals", "producer_model_identity", true);
+
+    // Lifecycle CHECK (status value-set) + non-negative loop_count CHECK.
+    assertConstraintDefinitionContains("ck_split_proposals_status", "open");
+    assertConstraintDefinitionContains("ck_split_proposals_status", "superseded");
+    assertConstraintDefinitionContains("ck_split_proposals_status", "dismissed");
+    assertConstraintDefinitionContains("ck_split_proposals_status", "approved");
+    assertConstraintDefinitionContains("ck_split_proposals_loop_count_nonneg", "loop_count");
+
+    // FK to workflow_runs.public_id, ON DELETE RESTRICT ON UPDATE CASCADE (3f-3 review P8 lesson).
+    assertConstraintDefinitionContains("fk_split_proposals_workflow_runs", "workflow_run_id");
+    assertConstraintDefinitionContains("fk_split_proposals_workflow_runs", "public_id");
+    assertConstraintDefinitionContains("fk_split_proposals_workflow_runs", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains("fk_split_proposals_workflow_runs", "ON UPDATE CASCADE");
+
+    // New re-propose loop counter on workflow_runs (mirrors spec_rejection_loop_count, V7).
+    assertColumnType("workflow_runs", "split_proposal_loop_count", "integer");
+    assertColumnNullable("workflow_runs", "split_proposal_loop_count", false);
+    assertConstraintDefinitionContains(
+        "ck_workflow_runs_split_proposal_loop_count_nonneg", "split_proposal_loop_count");
+
+    // Partial unique "one OPEN proposal per run" index (where status = 'open').
+    List<Map<String, Object>> openIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'split_proposals'
+              and indexname = 'uq_split_proposals_open_per_run'
+            """);
+    assertEquals(
+        1,
+        openIndex.size(),
+        () -> "Missing V29 partial unique index uq_split_proposals_open_per_run");
+    String openIndexDef = ((String) openIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(openIndexDef.contains("unique"), () -> "must be UNIQUE: " + openIndexDef);
+    assertTrue(
+        openIndexDef.contains("workflow_run_id"),
+        () -> "must cover workflow_run_id: " + openIndexDef);
+    assertTrue(
+        openIndexDef.contains("status = 'open'") || openIndexDef.contains("(status = 'open'"),
+        () -> "must be partial on status = 'open': " + openIndexDef);
+
+    // Functional probe: the partial unique index allows at most one OPEN proposal per run but
+    // unlimited superseded/dismissed/approved rows.
+    String n = uniqueRowSuffix();
+    String run = "run_split_schema" + n;
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, 'WaitingForSpecApproval')",
+        run);
+    jdbcTemplate.update(
+        "insert into split_proposals (public_id, workflow_run_id, status, proposal_json)"
+            + " values (?, ?, 'open', '{}')",
+        "splprop_first" + n,
+        run);
+    // A second OPEN proposal for the same run is rejected by the partial unique index.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into split_proposals (public_id, workflow_run_id, status, proposal_json)"
+                    + " values (?, ?, 'open', '{}')",
+                "splprop_second" + n,
+                run),
+        "Expected uq_split_proposals_open_per_run to reject a second open proposal");
+    // A superseded row alongside the open one is fine (the loop accumulates history).
+    jdbcTemplate.update(
+        "insert into split_proposals (public_id, workflow_run_id, status, proposal_json)"
+            + " values (?, ?, 'superseded', '{}')",
+        "splprop_superseded" + n,
+        run);
+    // FK rejects a dangling run id.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into split_proposals (public_id, workflow_run_id, status, proposal_json)"
+                    + " values (?, 'run_missing_split', 'open', '{}')",
+                "splprop_dangling" + n),
+        "Expected fk_split_proposals_workflow_runs to reject a dangling run id");
+    // status CHECK rejects an out-of-set value.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into split_proposals (public_id, workflow_run_id, status, proposal_json)"
+                    + " values (?, ?, 'bogus', '{}')",
+                "splprop_badstatus" + n,
+                run),
+        "Expected ck_split_proposals_status to reject an out-of-set status");
+
+    // Clean up the probe rows BEFORE deleting the workflow_runs row — the ON DELETE RESTRICT FK
+    // would otherwise leak the edge into every later contract test's `delete from workflow_runs`
+    // (the FlywaySchema RESTRICT-FK probe-row leak lesson).
+    jdbcTemplate.update("delete from split_proposals where workflow_run_id = ?", run);
+    jdbcTemplate.update("delete from workflow_runs where public_id = ?", run);
+  }
+
+  @Test
+  void splitProposalFeedbackSchemaCarriesColumnsAndRunnerExecutionForeignKey() {
+    // Story 3f-4 / V29: the redacted re-propose feedback store, keyed by the reviewer execution
+    // that carries the dispatch (R3 materialize-by-reference). Core retention shape + public_id
+    // format are asserted by the CORE_TABLES tests above (prefix splfb_). Probe the story-specific
+    // column + the runner_executions FK (ON DELETE RESTRICT ON UPDATE CASCADE).
+    assertColumnType("split_proposal_feedback", "runner_execution_id", "text");
+    assertColumnNullable("split_proposal_feedback", "runner_execution_id", false);
+    assertColumnType("split_proposal_feedback", "feedback_text", "text");
+    assertColumnNullable("split_proposal_feedback", "feedback_text", false);
+    assertConstraintDefinitionContains(
+        "fk_split_proposal_feedback_runner_executions", "runner_execution_id");
+    assertConstraintDefinitionContains("fk_split_proposal_feedback_runner_executions", "public_id");
+    assertConstraintDefinitionContains(
+        "fk_split_proposal_feedback_runner_executions", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains(
+        "fk_split_proposal_feedback_runner_executions", "ON UPDATE CASCADE");
+    assertIndexDefinitionContains(
+        "idx_split_proposal_feedback_runner_execution_id", "runner_execution_id");
   }
 
   @Test

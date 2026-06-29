@@ -570,6 +570,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/split-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current split proposal (story 3f-4)
+         * @description The advisory split proposal channel state (none|pending|available|unavailable), the current proposal when available, and the re-propose loop count.
+         */
+        get: operations["getSplitProposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/split/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline the split — continue as one ticket (story 3f-4)
+         * @description Dismiss the current open proposal; the parent stays at its gate and the normal gate actions are restored byte-identically.
+         */
+        post: operations["declineSplit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/split/repropose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-propose a split with operator feedback (story 3f-4)
+         * @description Re-run the proposal call with free-text feedback (materialized by reference). Supersedes the prior open proposal, bumps the loop counter, and honors the escalation marker at the configured threshold.
+         */
+        post: operations["reproposeSplit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/split/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request an advisory split proposal (story 3f-4)
+         * @description Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model degrades to state=unavailable (the gate is never blocked).
+         */
+        post: operations["requestSplit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/takeover": {
         parameters: {
             query?: never;
@@ -1138,6 +1218,13 @@ export interface components {
             /** @enum {string} */
             taggedFeedback: "MISSING_SCOPE" | "UNCLEAR_SPECIFICATION" | "MISUNDERSTOOD_IMPLEMENTATION" | "INCORRECT_APPROACH" | "INCOMPLETE_IMPLEMENTATION" | "QUALITY_ISSUE" | "BREAKS_EXISTING_FUNCTIONALITY" | "OUT_OF_SCOPE";
         };
+        ReproposeSplitRequest: {
+            /**
+             * @description Free-text feedback steering the re-proposal.
+             * @example Split the persistence layer out as its own subtask.
+             */
+            feedbackText: string;
+        };
         RetryWorkflowRequest: {
             actorIdentity: string;
             /** @enum {string} */
@@ -1245,6 +1332,69 @@ export interface components {
             role?: string;
             /** @example configured */
             status?: string;
+        };
+        SplitDependencyPayload: {
+            /**
+             * Format: int32
+             * @example 2
+             */
+            fromOrdinal?: number;
+            /**
+             * Format: int32
+             * @example 1
+             */
+            toOrdinal?: number;
+        };
+        SplitProposalPayload: {
+            dependencies?: components["schemas"]["SplitDependencyPayload"][];
+            /** @example claude:latest */
+            producerModelIdentity?: string;
+            /** @example art_spec123 */
+            reviewedArtifactId?: string;
+            /**
+             * Format: int32
+             * @example 1
+             */
+            reviewedArtifactVersion?: number;
+            /** @example claude:latest */
+            reviewerModelIdentity?: string;
+            /**
+             * @description True when the proposing model equals the reviewed-artifact producer.
+             * @example false
+             */
+            selfReview?: boolean;
+            /** @example splprop_abc123 */
+            splitProposalId?: string;
+            /** @example open */
+            status?: string;
+            subtasks?: components["schemas"]["SplitSubtaskPayload"][];
+        };
+        SplitProposalResponse: {
+            /**
+             * Format: int32
+             * @description The run's re-propose loop counter.
+             * @example 0
+             */
+            loopCount?: number;
+            /** @description The current proposal (only when state=available). */
+            proposal?: components["schemas"]["SplitProposalPayload"];
+            /**
+             * @description Proposal channel state.
+             * @example available
+             * @enum {string}
+             */
+            state?: "none" | "pending" | "available" | "unavailable";
+        };
+        SplitSubtaskPayload: {
+            /**
+             * Format: int32
+             * @example 1
+             */
+            ordinal?: number;
+            /** @example Move the auth handlers into a dedicated module. */
+            scope?: string;
+            /** @example Extract the auth module */
+            title?: string;
         };
         SseEmitter: {
             /** Format: int64 */
@@ -3165,6 +3315,116 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getSplitProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Split proposal state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SplitProposalResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    declineSplit: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SplitProposalResponse"];
+                };
+            };
+        };
+    };
+    reproposeSplit: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReproposeSplitRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SplitProposalResponse"];
+                };
+            };
+        };
+    };
+    requestSplit: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SplitProposalResponse"];
                 };
             };
         };

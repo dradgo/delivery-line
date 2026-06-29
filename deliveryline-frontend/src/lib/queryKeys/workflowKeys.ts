@@ -106,6 +106,13 @@ export const workflowKeys = {
    */
   reviewerVerdict: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'reviewerVerdict'] as const,
+  /**
+   * A run's advisory split proposal (story 3f-4). A PREFIX child of `detail(id)`, so a
+   * split request/repropose/decline mutation's `detail(id)` invalidation cascade refreshes
+   * the proposal channel (+ the gate's allowed-actions) for free.
+   */
+  splitProposal: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'splitProposal'] as const,
 
   /**
    * A run's parked manual-execution input bundle (story 3d-4). A PREFIX child of `detail(id)`, so a

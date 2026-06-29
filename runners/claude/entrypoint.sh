@@ -547,16 +547,39 @@ fi
 # commandBuild's `review` arm reads `VERDICT: pass|concern|fail`; absent a marker it defaults to
 # `concern`). Read-only: no repo changes, no push.
 if [ "$ARTIFACT_TYPE" = review ]; then
-  {
-    printf '\n\n--- ADVISORY REVIEW TASK ---\n'
-    printf 'Act as an independent reviewer. The output artifact produced for this ticket is\n'
-    printf 'available under /workspace/input alongside the approved specification. Review it for\n'
-    printf 'correctness and completeness against the specification. Do NOT modify any files.\n'
-    printf 'End your response with EXACTLY one line, nothing after it:\n'
-    printf 'VERDICT: pass   (no blocking concerns)\n'
-    printf 'VERDICT: concern (non-blocking concerns the human reviewer should weigh)\n'
-    printf 'VERDICT: fail   (a blocking defect)\n'
-  } >>"$PROMPT_FILE"
+  if [ "${DL_SPLIT_PROPOSAL_REQUESTED:-}" = "true" ]; then
+    # Story 3f-4 — SPLIT-PROPOSAL mode (the bundle set splitProposalRequested=true). Ask the
+    # reviewer model to DECOMPOSE the reviewed artifact into smaller subtasks and emit a fenced
+    # ```split block (split-proposal.v1) INSTEAD of a pass/concern/fail verdict — lib/runner.mjs
+    # commandBuild's split arm lifts it. Export the NON-SECRET marker so the offline mock emits its
+    # deterministic proposal. Read-only: no repo changes, no push.
+    export DELIVERYLINE_SPLIT_PROPOSAL_REQUESTED=true
+    {
+      printf '\n\n--- ADVISORY SPLIT PROPOSAL TASK ---\n'
+      printf 'Act as an independent reviewer. The output artifact produced for this ticket is\n'
+      printf 'available under /workspace/input alongside the approved specification. Propose how to\n'
+      printf 'split it into smaller, independently-deliverable subtasks. Do NOT modify any files.\n'
+      printf 'Append your proposal as the VERY LAST thing in your response, as a fenced block in\n'
+      printf 'EXACTLY this form (a single JSON object on the line between the fences):\n'
+      printf '```split\n'
+      printf '{"schemaVersion": 1, "subtasks": [{"ordinal": 1, "title": "...", "scope": "..."}], "dependencies": [{"fromOrdinal": 2, "toOrdinal": 1}]}\n'
+      printf '```\n'
+      printf 'Each subtask carries a 1-based ordinal, a short title, and a one-sentence scope.\n'
+      printf 'dependencies are OPTIONAL ordering edges (the subtask at fromOrdinal depends on the\n'
+      printf 'one at toOrdinal). Propose 2..8 subtasks; omit dependencies for a flat fan-out.\n'
+    } >>"$PROMPT_FILE"
+  else
+    {
+      printf '\n\n--- ADVISORY REVIEW TASK ---\n'
+      printf 'Act as an independent reviewer. The output artifact produced for this ticket is\n'
+      printf 'available under /workspace/input alongside the approved specification. Review it for\n'
+      printf 'correctness and completeness against the specification. Do NOT modify any files.\n'
+      printf 'End your response with EXACTLY one line, nothing after it:\n'
+      printf 'VERDICT: pass   (no blocking concerns)\n'
+      printf 'VERDICT: concern (non-blocking concerns the human reviewer should weigh)\n'
+      printf 'VERDICT: fail   (a blocking defect)\n'
+    } >>"$PROMPT_FILE"
+  fi
 fi
 # Story 3e — OPEN CLARIFYING QUESTIONS directive. Appended to the prepared prompt for a SPEC
 # (investigation) dispatch ONLY — the one stage that writes the design specification a human

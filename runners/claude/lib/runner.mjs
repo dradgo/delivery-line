@@ -196,6 +196,11 @@ function commandPrepare(args) {
       `DL_TICKET_REF=${shellQuote(ticketForId.ticketRef ?? '')}`,
       `DL_SPEC_REF_PATH=${shellQuote(referencePathOf(specRefOut))}`,
       `DL_PLAN_REF_PATH=${shellQuote(referencePathOf(planRefOut))}`,
+      // Story 3f-4 — surface the additive split-proposal marker so the entrypoint can append the
+      // decomposition directive (instead of the verdict directive) at a split-mode REVIEW dispatch
+      // and the offline mock can emit the deterministic ```split fence. 'true' only when the bundle
+      // sets splitProposalRequested=true; '' otherwise (byte-identical legacy path).
+      `DL_SPLIT_PROPOSAL_REQUESTED=${shellQuote(doc.splitProposalRequested === true ? 'true' : '')}`,
       '',
     ].join('\n'),
   );
@@ -467,6 +472,103 @@ function splitClarificationAcknowledgementsFence(stdout) {
 }
 // ===== end clarificationAcknowledgements fence split =====
 
+// ===== Story 3f-4 — split-proposal fence split (BYTE-IDENTICAL in both runner.mjs files) =====
+// Sibling of splitClarificationsFence. In SPLIT mode (a REVIEW dispatch whose bundle carries
+// splitProposalRequested=true) the model proposes how to decompose the gate's reviewed artifact,
+// emitting a fenced ```split block holding a single JSON OBJECT (not an array):
+//   ```split
+//   {"schemaVersion":1,"subtasks":[{"ordinal":1,"title":"...","scope":"..."}],"dependencies":[{"fromOrdinal":2,"toOrdinal":1}]}
+//   ```
+// This helper lifts that block out of the agent stdout: it returns the parsed `subtasks` array
+// (each coerced to {ordinal,title,scope}; malformed entries dropped), the parsed `dependencies`
+// array (each coerced to {fromOrdinal,toOrdinal}; malformed entries dropped), and the
+// `strippedStdout` with the fence removed. Same NEVER-BLOCKS + byte-identical-strip discipline as
+// splitClarificationsFence: a missing/malformed/empty/zero-subtask block is NON-FATAL and returns
+// the original stdout UNCHANGED (the strip happens ONLY on >=1 usable subtask); a successful strip
+// slices the ORIGINAL string at the fence-line boundaries (preserving CRLF + the trailing newline).
+function splitSplitProposalFence(stdout) {
+  if (typeof stdout !== 'string' || stdout.length === 0) {
+    return {
+      subtasks: [],
+      dependencies: [],
+      strippedStdout: typeof stdout === 'string' ? stdout : '',
+    };
+  }
+  const OPEN = /^```split\s*$/;
+  const CLOSE = /^```\s*$/;
+  let blockStart = -1;
+  let bodyStart = -1;
+  let bodyEnd = -1;
+  let blockEnd = -1;
+  let pos = 0;
+  while (pos < stdout.length) {
+    const nl = stdout.indexOf('\n', pos);
+    const eol = nl === -1 ? stdout.length : nl;
+    const nextPos = nl === -1 ? stdout.length : nl + 1;
+    const contentEnd = eol > pos && stdout[eol - 1] === '\r' ? eol - 1 : eol;
+    const line = stdout.slice(pos, contentEnd);
+    if (blockStart === -1) {
+      if (OPEN.test(line)) {
+        blockStart = pos;
+        bodyStart = nextPos;
+      }
+    } else if (CLOSE.test(line)) {
+      bodyEnd = pos;
+      blockEnd = nextPos;
+      break;
+    }
+    pos = nextPos;
+  }
+  if (blockStart === -1 || blockEnd === -1) {
+    return { subtasks: [], dependencies: [], strippedStdout: stdout };
+  }
+  let subtasks = [];
+  let dependencies = [];
+  try {
+    const parsed = JSON.parse(stdout.slice(bodyStart, bodyEnd));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      if (Array.isArray(parsed.subtasks)) {
+        subtasks = parsed.subtasks
+          .filter(
+            (s) =>
+              s &&
+              typeof s === 'object' &&
+              Number.isInteger(s.ordinal) &&
+              s.ordinal >= 1 &&
+              typeof s.title === 'string' &&
+              s.title.length > 0 &&
+              typeof s.scope === 'string' &&
+              s.scope.length > 0,
+          )
+          .map((s) => ({ ordinal: s.ordinal, title: s.title, scope: s.scope }));
+      }
+      if (Array.isArray(parsed.dependencies)) {
+        dependencies = parsed.dependencies
+          .filter(
+            (d) =>
+              d &&
+              typeof d === 'object' &&
+              Number.isInteger(d.fromOrdinal) &&
+              d.fromOrdinal >= 1 &&
+              Number.isInteger(d.toOrdinal) &&
+              d.toOrdinal >= 1,
+          )
+          .map((d) => ({ fromOrdinal: d.fromOrdinal, toOrdinal: d.toOrdinal }));
+      }
+    }
+  } catch {
+    process.stderr.write('runner.mjs: split fence is not valid JSON — ignoring (no proposal)\n');
+    subtasks = [];
+    dependencies = [];
+  }
+  if (subtasks.length === 0) {
+    return { subtasks: [], dependencies: [], strippedStdout: stdout };
+  }
+  const strippedStdout = stdout.slice(0, blockStart) + stdout.slice(blockEnd);
+  return { subtasks, dependencies, strippedStdout };
+}
+// ===== end split-proposal fence split =====
+
 function commandBuild(args) {
   const doc = readBundle(args.bundle);
   const stage = args.stage;
@@ -497,6 +599,30 @@ function commandBuild(args) {
   const artifactId = deriveArtifactId(runnerExecutionId, stage);
   // SHA-256 over the raw Claude output bytes — 64 lowercase hex chars (schema checksum).
   const hexDigest = createHash('sha256').update(rawOutput, 'utf8').digest('hex');
+
+  // Story 3f-4 (AC2/R1) — advisory SPLIT-PROPOSAL mode: a REVIEW dispatch whose bundle carries
+  // splitProposalRequested=true emits a split-proposal.v1 DECOMPOSITION (subtasks[]+dependencies[]),
+  // NOT a review-result.v1 verdict (R1: reuse REVIEW *dispatch*, not its verdict harvest). The model
+  // writes a fenced ```split block; splitSplitProposalFence lifts it. >=1 usable subtask => a valid
+  // proposal; none => a failure-shaped result the backend SplitProposalHarvester degrades to
+  // "proposal unavailable" (R5: the gate is NEVER blocked). Checked BEFORE the plain review arm.
+  if (stage === 'review' && doc.splitProposalRequested === true) {
+    const { subtasks, dependencies } = splitSplitProposalFence(rawOutput);
+    const splitProposal = {
+      schemaVersion: 1,
+      workflowRunId,
+      runnerExecutionId,
+      subtasks,
+      dependencies,
+      summary,
+      reviewerModelIdentity: 'claude',
+      classification,
+      failureCategory: subtasks.length > 0 ? null : 'runner_malformed_output',
+    };
+    writeAtomically(out, `${JSON.stringify(splitProposal, null, 2)}\n`);
+    process.stdout.write(`${summary}\n`);
+    process.exit(0);
+  }
 
   // Story 3d-2 — advisory REVIEW stage emits a review-result.v1 verdict (NOT a runner-result.v1
   // artifact): the reviewer reads the embedded artifactReferences[0] content and produces a

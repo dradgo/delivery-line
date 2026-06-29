@@ -48,6 +48,15 @@ public class WorkflowRunPersistenceAdapter
        where public_id = :publicId
        returning implementation_rejection_loop_count
       """;
+  // Story 3f-4 — the split-proposal re-propose loop twin (drives a DISTINCT dispatch idempotency
+  // key per attempt + the shared escalation marker).
+  private static final String INCREMENT_SPLIT_PROPOSAL_LOOP_COUNT_SQL =
+      """
+      update workflow_runs
+         set split_proposal_loop_count = split_proposal_loop_count + 1
+       where public_id = :publicId
+       returning split_proposal_loop_count
+      """;
   private static final String MARK_ESCALATION_SQL =
       // RETURNING an int literal (not the boolean escalation_marker_set column) so the int row
       // mapper below reads cleanly — a returned row means this call just-flipped the marker, zero
@@ -215,6 +224,29 @@ public class WorkflowRunPersistenceAdapter
     }
     log.debug(
         "incrementAndReadImplementationLoopCount publicId={} newLoopCount={}",
+        workflowRunPublicId,
+        newCount);
+    return newCount;
+  }
+
+  @Override
+  public int incrementAndReadSplitProposalLoopCount(String workflowRunPublicId) {
+    Integer newCount =
+        jdbcTemplate.query(
+            INCREMENT_SPLIT_PROPOSAL_LOOP_COUNT_SQL,
+            params(workflowRunPublicId),
+            rs -> rs.next() ? rs.getInt(1) : null);
+    if (newCount == null) {
+      log.warn(
+          "incrementAndReadSplitProposalLoopCount workflowRunNotFound publicId={}",
+          workflowRunPublicId);
+      throw new DomainException(
+          DomainErrorCode.RUN_NOT_FOUND,
+          "Workflow run not found: " + workflowRunPublicId,
+          Map.of("runId", workflowRunPublicId));
+    }
+    log.debug(
+        "incrementAndReadSplitProposalLoopCount publicId={} newLoopCount={}",
         workflowRunPublicId,
         newCount);
     return newCount;
