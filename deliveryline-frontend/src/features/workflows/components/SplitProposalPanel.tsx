@@ -26,11 +26,7 @@ import {
 } from '../approvalDecisionView';
 import { useAllowedActions } from '../hooks/useAllowedActions';
 import { useSplitProposal, type SplitProposalResponse } from '../hooks/useSplitProposal';
-import {
-  useDeclineSplit,
-  useReproposeSplit,
-  useRequestSplit,
-} from '../hooks/useSplitActions';
+import { useDeclineSplit, useReproposeSplit, useRequestSplit } from '../hooks/useSplitActions';
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
 import { StateSignifierChip } from './WorkflowStateBadge';
 
@@ -73,9 +69,7 @@ export function SplitProposalPanel({ proposal, className }: SplitProposalPanelPr
     >
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-medium">Split proposal</h3>
-        <span className="text-xs text-muted-foreground">
-          Advisory only — nothing is committed
-        </span>
+        <span className="text-xs text-muted-foreground">Advisory only — nothing is committed</span>
       </div>
 
       {signifier !== null ? (

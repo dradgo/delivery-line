@@ -79,9 +79,13 @@ describe('SplitProposalPanel', () => {
   });
 
   it('flags a same-model self-review without refusing the proposal', () => {
-    render(<SplitProposalPanel proposal={available({
-      proposal: { ...available().proposal, selfReview: true },
-    })} />);
+    render(
+      <SplitProposalPanel
+        proposal={available({
+          proposal: { ...available().proposal, selfReview: true },
+        })}
+      />,
+    );
     expect(screen.getByTestId('split-proposal-self-review')).toBeInTheDocument();
     // Still shows the subtasks — surfaced, not blocked.
     expect(screen.getByTestId('split-proposal-subtasks')).toBeInTheDocument();
