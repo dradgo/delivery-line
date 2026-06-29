@@ -846,7 +846,7 @@ public class WorkflowCommands {
       String resolvedActor = resolveActorIdentity(actorIdentity);
       org.dradgo.application.workflow.SplitProposalStatusView view =
           splitProposalService.request(
-              new org.dradgo.application.workflow.SplitProposalCommands.RequestSplitCommand(
+              new org.dradgo.application.workflow.SplitProposalCommandSet.RequestSplitCommand(
                   runId, resolvedActor, ActorType.HUMAN, resolvedKey, resolvedCorrelation));
       String rendered = renderSplitProposal(runId, view, format);
       emitSuccess("workflow split-request", runId, resolvedCorrelation, start);
@@ -895,7 +895,7 @@ public class WorkflowCommands {
       String resolvedActor = resolveActorIdentity(actorIdentity);
       org.dradgo.application.workflow.SplitProposalStatusView view =
           splitProposalService.repropose(
-              new org.dradgo.application.workflow.SplitProposalCommands.ReproposeSplitCommand(
+              new org.dradgo.application.workflow.SplitProposalCommandSet.ReproposeSplitCommand(
                   runId,
                   feedback,
                   resolvedActor,
@@ -947,7 +947,7 @@ public class WorkflowCommands {
       String resolvedActor = resolveActorIdentity(actorIdentity);
       org.dradgo.application.workflow.SplitProposalStatusView view =
           splitProposalService.decline(
-              new org.dradgo.application.workflow.SplitProposalCommands.DeclineSplitCommand(
+              new org.dradgo.application.workflow.SplitProposalCommandSet.DeclineSplitCommand(
                   runId, resolvedActor, ActorType.HUMAN, resolvedKey, resolvedCorrelation));
       String rendered = renderSplitProposal(runId, view, format);
       emitSuccess("workflow split-decline", runId, resolvedCorrelation, start);

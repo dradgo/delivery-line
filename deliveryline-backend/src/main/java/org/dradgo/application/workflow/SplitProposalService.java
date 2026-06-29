@@ -5,16 +5,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.queue.QueuedRunnerExecution;
-import org.dradgo.application.runner.queue.RunnerExecutionQueue;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.security.RedactionPolicyService;
-import org.dradgo.application.workflow.SplitProposalCommands.DeclineSplitCommand;
-import org.dradgo.application.workflow.SplitProposalCommands.ReproposeSplitCommand;
-import org.dradgo.application.workflow.SplitProposalCommands.RequestSplitCommand;
+import org.dradgo.application.workflow.SplitProposalCommandSet.DeclineSplitCommand;
+import org.dradgo.application.workflow.SplitProposalCommandSet.ReproposeSplitCommand;
+import org.dradgo.application.workflow.SplitProposalCommandSet.RequestSplitCommand;
 import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.SplitProposalWritePort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
@@ -59,13 +57,12 @@ public class SplitProposalService {
   private static final Logger log = LoggerFactory.getLogger(SplitProposalService.class);
 
   static final String DISPATCH_KEY_PREFIX = "split-proposal:";
-  private static final int DEFAULT_QUEUE_PRIORITY = 100;
   private static final List<RunnerExecutionStatus> ACTIVE_STATUSES =
       List.of(RunnerExecutionStatus.PENDING, RunnerExecutionStatus.RUNNING);
 
   private final WorkflowRunReadPort workflowRunReadPort;
   private final ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
-  private final RunnerExecutionQueue runnerExecutionQueue;
+  private final WorkflowOrchestrationService orchestrationService;
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final SplitProposalReadPort splitProposalReadPort;
   private final SplitProposalWritePort splitProposalWritePort;
@@ -77,7 +74,7 @@ public class SplitProposalService {
   public SplitProposalService(
       WorkflowRunReadPort workflowRunReadPort,
       ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
-      RunnerExecutionQueue runnerExecutionQueue,
+      WorkflowOrchestrationService orchestrationService,
       RunnerExecutionRecordPort runnerExecutionRecordPort,
       SplitProposalReadPort splitProposalReadPort,
       SplitProposalWritePort splitProposalWritePort,
@@ -87,7 +84,7 @@ public class SplitProposalService {
       RedactionPolicyService redactionPolicyService) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
-    this.runnerExecutionQueue = runnerExecutionQueue;
+    this.orchestrationService = orchestrationService;
     this.runnerExecutionRecordPort = runnerExecutionRecordPort;
     this.splitProposalReadPort = splitProposalReadPort;
     this.splitProposalWritePort = splitProposalWritePort;
@@ -280,12 +277,11 @@ public class SplitProposalService {
 
   private QueuedRunnerExecution enqueueSplitDispatch(
       String workflowRunId, int loopCount, String correlationId) {
-    return runnerExecutionQueue.enqueue(
-        workflowRunId,
-        RunnerStage.REVIEW,
-        splitDispatchKey(workflowRunId, loopCount),
-        new ActorContext("system", org.dradgo.domain.registry.ActorType.SYSTEM, correlationId),
-        DEFAULT_QUEUE_PRIORITY);
+    // Route through the orchestration service: it is the single allowed enqueue seam (ArchUnit
+    // only_orchestration_recovery_and_worker_pool_may_enqueue). The split-mode marker is the
+    // dispatch idempotency key, minted here.
+    return orchestrationService.enqueueSplitProposalDispatch(
+        workflowRunId, splitDispatchKey(workflowRunId, loopCount), correlationId);
   }
 
   private boolean reviewerBound(String workflowRunId) {

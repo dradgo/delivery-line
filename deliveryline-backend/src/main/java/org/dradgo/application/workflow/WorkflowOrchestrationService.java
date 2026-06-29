@@ -825,6 +825,24 @@ public class WorkflowOrchestrationService {
   }
 
   /**
+   * Story 3f-4 — enqueue the advisory split-proposal dispatch through the single allowed enqueue
+   * seam (ArchUnit {@code only_orchestration_recovery_and_worker_pool_may_enqueue}). It is an
+   * ordinary split-mode {@code RunnerStage.REVIEW} execution; the split-vs-verdict distinction
+   * lives entirely in the {@code split-proposal:<runId>:<loop>} idempotency key minted by {@code
+   * SplitProposalService}. Unlike {@link #enqueueReviewerIfConfigured} it does NOT pin a reviewed
+   * artifact — the split compose/harvest key off the dispatch key, not a pinned artifact.
+   */
+  public org.dradgo.application.runner.queue.QueuedRunnerExecution enqueueSplitProposalDispatch(
+      String workflowRunId, String splitDispatchKey, String correlationId) {
+    return runnerExecutionQueue.enqueue(
+        workflowRunId,
+        RunnerStage.REVIEW,
+        splitDispatchKey,
+        systemActor(correlationId),
+        DEFAULT_QUEUE_PRIORITY);
+  }
+
+  /**
    * Story 3d-2 (code-review D1) — best-effort pin of the reviewed artifact (id+version+type) onto
    * the freshly-enqueued reviewer execution. Resolved via the SAME derivation the compose uses
    * ({@code latestAvailable(prOutput).or(implementationPlan)}), but ONCE, at enqueue, so the

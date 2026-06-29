@@ -378,7 +378,7 @@ public class WorkflowController {
     SplitProposalResponse response =
         SplitProposalResponse.from(
             splitProposalService.request(
-                new org.dradgo.application.workflow.SplitProposalCommands.RequestSplitCommand(
+                new org.dradgo.application.workflow.SplitProposalCommandSet.RequestSplitCommand(
                     workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
     log.info(
         "REST split request success workflowRunId={} state={}", workflowRunId, response.state());
@@ -411,7 +411,7 @@ public class WorkflowController {
     SplitProposalResponse response =
         SplitProposalResponse.from(
             splitProposalService.repropose(
-                new org.dradgo.application.workflow.SplitProposalCommands.ReproposeSplitCommand(
+                new org.dradgo.application.workflow.SplitProposalCommandSet.ReproposeSplitCommand(
                     workflowRunId,
                     request.feedbackText(),
                     actorIdentity,
@@ -449,7 +449,7 @@ public class WorkflowController {
     SplitProposalResponse response =
         SplitProposalResponse.from(
             splitProposalService.decline(
-                new org.dradgo.application.workflow.SplitProposalCommands.DeclineSplitCommand(
+                new org.dradgo.application.workflow.SplitProposalCommandSet.DeclineSplitCommand(
                     workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
     log.info(
         "REST split decline success workflowRunId={} state={}", workflowRunId, response.state());

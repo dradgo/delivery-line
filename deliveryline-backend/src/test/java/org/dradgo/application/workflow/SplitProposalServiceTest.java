@@ -3,7 +3,6 @@ package org.dradgo.application.workflow;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,14 +12,13 @@ import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.queue.QueuedRunnerExecution;
-import org.dradgo.application.runner.queue.RunnerExecutionQueue;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
-import org.dradgo.application.workflow.SplitProposalCommands.DeclineSplitCommand;
-import org.dradgo.application.workflow.SplitProposalCommands.ReproposeSplitCommand;
-import org.dradgo.application.workflow.SplitProposalCommands.RequestSplitCommand;
+import org.dradgo.application.workflow.SplitProposalCommandSet.DeclineSplitCommand;
+import org.dradgo.application.workflow.SplitProposalCommandSet.ReproposeSplitCommand;
+import org.dradgo.application.workflow.SplitProposalCommandSet.RequestSplitCommand;
 import org.dradgo.application.workflow.spi.SplitProposalReadPort;
 import org.dradgo.application.workflow.spi.SplitProposalWritePort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
@@ -49,7 +47,8 @@ class SplitProposalServiceTest {
   private final WorkflowRunReadPort runReadPort = Mockito.mock(WorkflowRunReadPort.class);
   private final ProjectRuntimeConfigResolver configResolver =
       Mockito.mock(ProjectRuntimeConfigResolver.class);
-  private final RunnerExecutionQueue queue = Mockito.mock(RunnerExecutionQueue.class);
+  private final WorkflowOrchestrationService orchestration =
+      Mockito.mock(WorkflowOrchestrationService.class);
   private final RunnerExecutionRecordPort recordPort =
       Mockito.mock(RunnerExecutionRecordPort.class);
   private final SplitProposalReadPort readPort = Mockito.mock(SplitProposalReadPort.class);
@@ -63,7 +62,7 @@ class SplitProposalServiceTest {
     return new SplitProposalService(
         runReadPort,
         configResolver,
-        queue,
+        orchestration,
         recordPort,
         readPort,
         writePort,
@@ -78,7 +77,7 @@ class SplitProposalServiceTest {
     when(runReadPort.findByPublicId(RUN))
         .thenReturn(Optional.of(runAt(WorkflowState.WAITING_FOR_SPEC_APPROVAL)));
     when(readPort.currentSplitProposalLoopCount(RUN)).thenReturn(0);
-    when(queue.enqueue(eq(RUN), eq(RunnerStage.REVIEW), any(), any(), anyInt()))
+    when(orchestration.enqueueSplitProposalDispatch(eq(RUN), any(), any()))
         .thenReturn(
             new QueuedRunnerExecution(REX, RUN, RunnerStage.REVIEW, 100, "corr", 0L, "evt_x"));
     RedactionResult clean = Mockito.mock(RedactionResult.class);
@@ -105,7 +104,7 @@ class SplitProposalServiceTest {
     assertThat(view.loopCount()).isEqualTo(1);
     verify(loopPort).incrementAndReadSplitProposalLoopCount(RUN);
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-    verify(queue).enqueue(eq(RUN), eq(RunnerStage.REVIEW), key.capture(), any(), anyInt());
+    verify(orchestration).enqueueSplitProposalDispatch(eq(RUN), key.capture(), any());
     assertThat(key.getValue()).isEqualTo("split-proposal:" + RUN + ":1");
   }
 
@@ -125,7 +124,7 @@ class SplitProposalServiceTest {
 
     // No second dispatch, no double loop-count bump (review 2026-06-29, Decision 1 idempotency).
     assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_PENDING);
-    verify(queue, never()).enqueue(any(), any(), any(), any(), anyInt());
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
     verify(loopPort, never()).incrementAndReadSplitProposalLoopCount(any());
   }
 
@@ -138,7 +137,7 @@ class SplitProposalServiceTest {
         service(3).request(new RequestSplitCommand(RUN, "alex", ActorType.HUMAN, "idem", "corr"));
 
     assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_UNAVAILABLE);
-    verify(queue, never()).enqueue(any(), any(), any(), any(), anyInt());
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
   }
 
   @Test
@@ -152,7 +151,7 @@ class SplitProposalServiceTest {
         .isInstanceOf(DomainException.class)
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
-    verify(queue, never()).enqueue(any(), any(), any(), any(), anyInt());
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
   }
 
   @Test
@@ -172,7 +171,7 @@ class SplitProposalServiceTest {
     assertThat(view.loopCount()).isEqualTo(1);
     verify(writePort).supersedeOpenForRun(RUN);
     ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-    verify(queue).enqueue(eq(RUN), eq(RunnerStage.REVIEW), key.capture(), any(), anyInt());
+    verify(orchestration).enqueueSplitProposalDispatch(eq(RUN), key.capture(), any());
     assertThat(key.getValue()).isEqualTo("split-proposal:" + RUN + ":1");
     // Feedback is redacted before persistence and keyed by the reviewer execution.
     verify(redaction).redact(eq("split the db layer"), any());
@@ -229,7 +228,7 @@ class SplitProposalServiceTest {
         .extracting(e -> ((DomainException) e).errorCode())
         .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
     verify(loopPort, never()).incrementAndReadSplitProposalLoopCount(any());
-    verify(queue, never()).enqueue(any(), any(), any(), any(), anyInt());
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
   }
 
   @Test
