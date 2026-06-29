@@ -163,6 +163,8 @@ class WorkflowInspectionServiceTest {
     assertEquals("await_outcome", view.nextSafeAction());
     assertEquals("run_parent1234", view.parentRunId());
     assertEquals(List.of("run_childA1234"), view.childRunIds());
+    // Story 3f-7 (AC6/AC7) — a non-Split run never reports a decomposition status.
+    assertNull(view.decompositionStatus());
     assertNull(view.failedStage());
     assertNull(view.lastSuccessfulStage());
     assertNull(view.failureTimestamp());
@@ -196,6 +198,32 @@ class WorkflowInspectionServiceTest {
     assertNull(view.linkedTicket());
     assertNull(view.failedStage());
     assertEquals("await_outcome", view.nextSafeAction());
+  }
+
+  @Test
+  void getStatusReportsDecompositionStatusForSplitParent() {
+    // Story 3f-7 (AC6) — a Split parent reports "decomposed — N of M descendants complete" over its
+    // direct children (one Completed of two here).
+    when(runs.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.SPLIT, null, 2L, 0, false)));
+    when(runs.findByParentRunId(RUN))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot(
+                    "run_childA1234", WorkflowState.COMPLETED, null, 1L, 0, false, null, RUN),
+                new WorkflowRunSnapshot(
+                    "run_childB1234", WorkflowState.EXECUTING, null, 1L, 0, false, null, RUN)));
+    when(events.findLatestByWorkflowRunPublicId(RUN)).thenReturn(Optional.empty());
+    when(artifacts.findLatestByWorkflowRunIdAndArtifactType(eq(RUN), any()))
+        .thenReturn(Optional.empty());
+    when(links.findActiveLinkByWorkflowRun(RUN)).thenReturn(Optional.empty());
+    stubNonFailedDescribe(RUN, WorkflowState.SPLIT, "view_only");
+
+    WorkflowStatusView view = service.getStatus(RUN);
+
+    assertEquals(WorkflowState.SPLIT, view.currentState());
+    assertEquals("decomposed — 1 of 2 descendants complete", view.decompositionStatus());
   }
 
   @Test

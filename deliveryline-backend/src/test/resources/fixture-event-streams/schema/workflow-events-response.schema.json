@@ -129,7 +129,10 @@
         "manual.executionRequested",
         "manual.artifactSubmitted",
         "console.opened",
-        "console.closed"
+        "console.closed",
+        "workflow.archived",
+        "workflow.unarchived",
+        "workflow.splitDepthOverride"
       ]
     },
     "artifactVariant": {

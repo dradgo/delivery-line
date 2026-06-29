@@ -367,23 +367,34 @@ public class WorkflowController {
       description =
           "Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under"
               + " Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model"
-              + " degrades to state=unavailable (the gate is never blocked).")
+              + " degrades to state=unavailable (the gate is never blocked). Story 3f-7: a run at or"
+              + " beyond complex-ticket-flow.max-split-depth is refused with"
+              + " SPLIT_DEPTH_LIMIT_EXCEEDED unless X-Allow-Deep-Split:true overrides the cap (the"
+              + " override is recorded in the governed history).")
   public SplitProposalResponse requestSplit(
       @PathVariable String workflowRunId,
       @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
       @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      @RequestHeader(name = "X-Allow-Deep-Split", required = false, defaultValue = "false")
+          boolean allowDeepSplit,
       HttpServletRequest httpRequest) {
     String actorIdentity = resolveHumanActor(idempotencyKey, actorIdentityHeader, httpRequest);
     String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
     log.info(
-        "REST split request received workflowRunId={} actorIdentity={}",
+        "REST split request received workflowRunId={} actorIdentity={} allowDeepSplit={}",
         MdcKeys.sanitizeForLog(workflowRunId),
-        MdcKeys.sanitizeForLog(actorIdentity));
+        MdcKeys.sanitizeForLog(actorIdentity),
+        allowDeepSplit);
     SplitProposalResponse response =
         SplitProposalResponse.from(
             splitProposalService.request(
                 new org.dradgo.application.workflow.SplitProposalCommandSet.RequestSplitCommand(
-                    workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    allowDeepSplit)));
     log.info(
         "REST split request success workflowRunId={} state={}", workflowRunId, response.state());
     return response;

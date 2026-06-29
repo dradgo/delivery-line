@@ -67,7 +67,15 @@ public record WorkflowDetailResponse(
             description =
                 "This run's position in the run-dependency DAG (story 3f-3): prerequisites,"
                     + " dependents, the unfinished blocking subset, and a blocked boolean.")
-        RunDependencies dependencies) {
+        RunDependencies dependencies,
+    @Schema(
+            description =
+                "Story 3f-7 (AC6): for a Split parent, the decomposition progress (\"decomposed — N"
+                    + " of M descendants complete\"); null for any non-Split run. Flips to a"
+                    + " Completed currentState when the parent rolls up.",
+            nullable = true,
+            example = "decomposed — 1 of 2 descendants complete")
+        String decompositionStatus) {
 
   public static WorkflowDetailResponse from(WorkflowStatusView view) {
     return new WorkflowDetailResponse(
@@ -94,7 +102,8 @@ public record WorkflowDetailResponse(
         view.projectId(),
         view.projectName(),
         view.projectSlug(),
-        RunDependencies.from(view.dependencyGraph()));
+        RunDependencies.from(view.dependencyGraph()),
+        view.decompositionStatus());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

@@ -81,6 +81,14 @@ deliveryline:
     # request body supplies a non-blank `reviewerRole`, it is used verbatim; otherwise this value
     # is stamped on the persisted approvals row and the approval.approved audit event.
     default-reviewer-role: product_reviewer
+  complex-ticket-flow:
+    # Story 3f-7 (AC5): recursive-split depth cap. A run whose split depth (distance from the
+    # lineage root, walking parentRunId; root = depth 0) is already >= this value is refused with
+    # SPLIT_DEPTH_LIMIT_EXCEEDED when REQUEST_SPLIT is invoked, UNLESS the request carries the
+    # allowDeepSplit override (X-Allow-Deep-Split header / --allow-deep-split CLI flag), in which
+    # case the deep split is permitted and the override is recorded in the governed history. Default
+    # 3 (a depth-3 run is refused — its children would be depth 4); <=0 normalized to 3.
+    max-split-depth: 3
   workflow:
     # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
     # escalation marker. The escalation event is appended exactly once (when the counter crosses

@@ -25,6 +25,7 @@ import { FailureEventSurface } from '@/features/workflows/components/FailureEven
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
 import { ProviderLimitStatus } from '@/features/workflows/components/ProviderLimitStatus';
 import { RunDependencyPanel } from '@/features/workflows/components/RunDependencyPanel';
+import { SplitLineagePanel } from '@/features/workflows/components/SplitLineagePanel';
 import { ManualExecutionSurface } from '@/features/workflows/components/ManualExecutionSurface';
 import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
 import { ReviewerVerdictPanelContainer } from '@/features/workflows/components/ReviewerVerdictPanel';
@@ -202,6 +203,10 @@ function WorkflowDetailRoute() {
           waiting on it, and an explicit blocked-on signifier. Reads the embedded
           `WorkflowDetail.dependencies` read model; renders nothing for ordinary unlinked runs. */}
       <RunDependencyPanel dependencies={data?.dependencies} />
+      {/* Story 3f-7 (AC6) — the Split Lineage panel: a Split parent's "decomposed — N of M
+          descendants complete" progress. Reads the embedded `WorkflowDetail.decompositionStatus`;
+          renders nothing for non-Split runs and disappears once the parent rolls up to Completed. */}
+      <SplitLineagePanel decompositionStatus={data?.decompositionStatus} />
       {/* Story 3d-7 (AC5) — the Provider Limit Status indicator: latest provider 5h/weekly usage
           status (or the documented "not exposed" state), gated on the backend
           `view_provider_usage_status` action. Color-independent signifier; provider-reported + as-of. */}

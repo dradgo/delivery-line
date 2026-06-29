@@ -28,6 +28,12 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  complex-ticket-flow:
+    # Story 3f-7 (AC5 / Trap) — mirror deliveryline.complex-ticket-flow.* so the validated
+    # ComplexTicketFlowProperties binding does not shadow the default to a surprising value in the
+    # @SpringBootTest tier (memory: validated-config-needs-test-yaml — the test yaml shadows main).
+    # Recursive-split depth cap; SplitProposalServiceTest depth cases drive it via construction.
+    max-split-depth: 3
   workflow:
     # Story 3.9 Trap T2 — mirror the deliveryline.workflow.* keys so the validated WorkflowProperties
     # binding does not shadow defaults to surprising values in the @SpringBootTest tier (memory:

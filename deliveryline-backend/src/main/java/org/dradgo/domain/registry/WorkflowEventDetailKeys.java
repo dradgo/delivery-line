@@ -32,6 +32,16 @@ public final class WorkflowEventDetailKeys {
   public static final String CONTEXT_VERSION = "contextVersion";
   public static final String CORRELATION_ID = "correlationId";
   public static final String CHILD_RUN_IDS = "childRunIds";
+  // Story 3f-7 (AC6) — allow-listed boolean detail flag on the WORKFLOW_STATE_CHANGED event emitted
+  // when a Split parent rolls up to Completed because all of its direct children completed (driven
+  // by RunSplitCompletionRollupService, never by an operator action). NO new event type (NFR43);
+  // the rollup reuses the existing run-completed event and marks it with this key.
+  public static final String VIA_SPLIT_ROLLUP = "viaSplitRollup";
+  // Story 3f-7 (AC5) — allow-listed detail keys on the SPLIT_DEPTH_OVERRIDE governance event
+  // appended when an operator bypasses the recursive-split depth cap. Ids/counts only — no secrets.
+  public static final String DEEP_SPLIT_OVERRIDE = "deepSplitOverride";
+  public static final String SPLIT_DEPTH = "splitDepth";
+  public static final String MAX_SPLIT_DEPTH = "maxSplitDepth";
 
   // Recovery-event audit keys (added story 1.18 review F530)
   public static final String FAILED_STAGE = "failedStage";
@@ -109,6 +119,10 @@ public final class WorkflowEventDetailKeys {
           CONTEXT_VERSION,
           CORRELATION_ID,
           CHILD_RUN_IDS,
+          VIA_SPLIT_ROLLUP,
+          DEEP_SPLIT_OVERRIDE,
+          SPLIT_DEPTH,
+          MAX_SPLIT_DEPTH,
           FAILED_STAGE,
           TRIGGERING_EVENT_ID,
           REASON,

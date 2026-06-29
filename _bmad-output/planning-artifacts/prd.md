@@ -756,6 +756,61 @@ These functional requirements define the Phase 1 capability contract for one gov
 - **FR72:** Authorized users can see each run's project attribution in the run review queue and
   filter the queue by project.
 
+### Run Provenance & Token Accounting (Epic 3g)
+
+- **FR73:** Authorized users can see a governed run's originating ticket title and a link back to the
+  source ticket, from both the run review queue and the run detail view; the title is snapshotted at
+  run creation so it reflects how the run started.
+- **FR74:** Authorized users can see the agent token consumption of each workflow step execution, with
+  a run-level total, where the agent reports it.
+
+### Pre-Review Quality Gates & Delivery-Tail Governance (Epic 3h)
+
+- **FR75:** The workflow can validate that produced code builds before it reaches review, and on a
+  build failure can attempt a bounded automatic fix before escalating to a human.
+- **FR76:** The workflow can run CPU-only static analysis (linters) on produced code before the
+  language-model review, and can hold the run for operator approval or fixes when critical findings
+  are present.
+- **FR77:** Operators can select a deeper multi-layer adversarial code-review mode per project in
+  addition to the single-pass advisory reviewer.
+- **FR78:** Operators can configure, per project, whether a branch is pushed and a pull/merge request
+  is created automatically, manually, or behind an explicit delivery-approval action.
+- **FR79:** The workflow can read the continuous-integration build result of a pushed branch and
+  investigate a failed build, attempting a bounded automatic fix.
+
+### Connector Expansion (Epic 3i)
+
+- **FR80:** Operators can use JIRA as a governed ticket source on par with the existing reference
+  ticket connector.
+- **FR81:** Operators can browse and select candidate tickets for governed runs filtered by assignee
+  and components.
+- **FR82:** Operators can use Bitbucket as a governed repository host, including reading Bitbucket
+  Pipelines build results.
+- **FR83:** Operators can ingest Sentry issues and promote selected issues into governed bug tickets.
+
+### Ticket-Type Workflows (Epic 3j)
+
+- **FR84:** A governed run follows a workflow profile selected by its ticket type, resolved from the
+  connector with a per-project mapping and an operator override at intake.
+- **FR85:** A bug-type run follows a distinct path that reproduces and root-causes the defect before a
+  lightweight fix-plan gate, while a feature-type run follows the full specification path.
+
+### Runner Platform / VM Execution (Epic 3k)
+
+- **FR86:** Governed runner work can execute on a remote, operator-provisioned runner service rather
+  than only on the orchestrator host.
+- **FR87:** A full-access (unsandboxed) agent runner is permitted only on an isolated remote runner,
+  and is refused on the orchestrator host.
+
+### Project Memory & Artifact Lineage (Epic 3l)
+
+- **FR88:** Authorized users can query and visualize a project-scoped memory graph of how tickets
+  relate and what artifacts they produced.
+- **FR89:** Authorized users can assert governed relations between tickets and runs (such as
+  duplicate-of, caused-by, and relates-to).
+- **FR90:** The workflow can retrieve related prior memory into the context bundle used by agent
+  steps, so agents leverage relevant history.
+
 ## Non-Functional Requirements
 
 The following non-functional requirements define the trust floor for the MVP: inspectability, recovery, identity integrity, safe local operation, and clear handoff context.

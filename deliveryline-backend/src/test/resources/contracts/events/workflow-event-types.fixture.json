@@ -38,6 +38,7 @@
     "console.opened",
     "console.closed",
     "workflow.archived",
-    "workflow.unarchived"
+    "workflow.unarchived",
+    "workflow.splitDepthOverride"
   ]
 }

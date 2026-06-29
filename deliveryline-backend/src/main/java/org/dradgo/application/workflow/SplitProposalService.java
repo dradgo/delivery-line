@@ -26,6 +26,7 @@ import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
@@ -70,6 +71,7 @@ public class SplitProposalService {
   private final WorkflowEventWritePort workflowEventWritePort;
   private final SplitProposalEscalationThresholdProvider escalationThresholdProvider;
   private final RedactionPolicyService redactionPolicyService;
+  private final ComplexTicketFlowProperties complexTicketFlowProperties;
 
   public SplitProposalService(
       WorkflowRunReadPort workflowRunReadPort,
@@ -81,7 +83,8 @@ public class SplitProposalService {
       WorkflowRunRejectionLoopPort workflowRunLoopPort,
       WorkflowEventWritePort workflowEventWritePort,
       SplitProposalEscalationThresholdProvider escalationThresholdProvider,
-      RedactionPolicyService redactionPolicyService) {
+      RedactionPolicyService redactionPolicyService,
+      ComplexTicketFlowProperties complexTicketFlowProperties) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
     this.orchestrationService = orchestrationService;
@@ -92,6 +95,7 @@ public class SplitProposalService {
     this.workflowEventWritePort = workflowEventWritePort;
     this.escalationThresholdProvider = escalationThresholdProvider;
     this.redactionPolicyService = redactionPolicyService;
+    this.complexTicketFlowProperties = complexTicketFlowProperties;
   }
 
   /** The dispatch idempotency key marking a split-mode REVIEW execution. */
@@ -112,6 +116,17 @@ public class SplitProposalService {
         command.actorIdentity(),
         command.idempotencyKey());
     WorkflowRunSnapshot run = requireGateRun(command.workflowRunId());
+
+    // Story 3f-7 (AC5) — recursive-split depth cap. Evaluated at the TOP of request(), BEFORE the
+    // reviewer-bound check and BEFORE any enqueue/LLM dispatch (3f-4 AC1), by walking parentRunId
+    // from this run to the lineage root (root = depth 0). A run already at or beyond the configured
+    // cap is refused HERE with SPLIT_DEPTH_LIMIT_EXCEEDED unless the operator supplied the
+    // allowDeepSplit override. The rejection stays at the top (error precedence preserved), but the
+    // governed-history override event is NOT appended yet: it is recorded only on the proceed path
+    // below, so a replay (already-open proposal), a degrade (reviewer unbound), or an in-flight
+    // no-op never pollutes the audit with a duplicate/phantom override (review 2026-06-29,
+    // Decision 1). A null result means within the cap; non-null carries the bypass to record.
+    DeepSplitOverride deepSplitOverride = evaluateSplitDepthCap(command, run);
 
     // Idempotent: a replayed request with an already-open proposal is a no-op (the action is only
     // surfaced when none is open).
@@ -150,6 +165,12 @@ public class SplitProposalService {
     // stays a re-propose concept: request does NOT call maybeFlipEscalation.
     int loopCount =
         workflowRunLoopPort.incrementAndReadSplitProposalLoopCount(command.workflowRunId());
+    // Record the deep-split override ONLY now that the request actually proceeds to enqueue — same
+    // @Transactional as the dispatch, so it commits or rolls back atomically with the split attempt
+    // (review 2026-06-29, Decision 1).
+    if (deepSplitOverride != null) {
+      recordDeepSplitOverride(command, deepSplitOverride.depth(), deepSplitOverride.maxDepth());
+    }
     enqueueSplitDispatch(command.workflowRunId(), loopCount, command.correlationId());
     log.info(
         "split request enqueued workflowRunId={} loopCount={} state={}",
@@ -343,6 +364,100 @@ public class SplitProposalService {
         command.workflowRunId(),
         newLoopCount,
         threshold);
+  }
+
+  /** An at-or-beyond-cap split the operator explicitly authorized via {@code allowDeepSplit}. */
+  private record DeepSplitOverride(int depth, int maxDepth) {}
+
+  /**
+   * Story 3f-7 (AC5) — evaluate the recursive-split depth cap. Throws {@code
+   * SPLIT_DEPTH_LIMIT_EXCEEDED} when the run is at or beyond {@code max-split-depth} without the
+   * {@code allowDeepSplit} override (rejection stays at the top of {@code request()} so error
+   * precedence is unchanged). Returns a {@link DeepSplitOverride} to be recorded in the governed
+   * history by the caller — but only once the request actually proceeds to enqueue, so a replay,
+   * degrade, or in-flight no-op never appends a duplicate/phantom override event (review
+   * 2026-06-29, Decision 1). Returns {@code null} when the run is within the cap.
+   */
+  private DeepSplitOverride evaluateSplitDepthCap(
+      RequestSplitCommand command, WorkflowRunSnapshot run) {
+    int maxDepth = complexTicketFlowProperties.maxSplitDepth();
+    int depth = computeSplitDepth(run, maxDepth);
+    if (depth < maxDepth) {
+      return null;
+    }
+    if (!command.allowDeepSplit()) {
+      log.warn(
+          "split refused (depth limit) workflowRunId={} depth={} max={}",
+          command.workflowRunId(),
+          depth,
+          maxDepth);
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("runId", command.workflowRunId());
+      details.put("currentDepth", depth);
+      details.put("maxDepth", maxDepth);
+      details.put("reason", "depth_limit_exceeded");
+      throw new DomainException(
+          DomainErrorCode.SPLIT_DEPTH_LIMIT_EXCEEDED,
+          "Split depth "
+              + depth
+              + " is at or beyond the configured maximum "
+              + maxDepth
+              + "; supply allowDeepSplit to override",
+          details);
+    }
+    return new DeepSplitOverride(depth, maxDepth);
+  }
+
+  /**
+   * Compute the run's split depth = number of ancestors reached by walking {@code parentRunId}
+   * (root run = depth 0). Non-locking reads (request() runs in a normal REQUIRED tx). The walk is
+   * bounded to {@code maxDepth + 1} hops so a malformed/cyclic lineage chain cannot spin — that is
+   * already past the cap, so reporting the bound is sufficient for the rejection decision.
+   */
+  private int computeSplitDepth(WorkflowRunSnapshot run, int maxDepth) {
+    int depth = 0;
+    String parentId = run.parentRunId();
+    int safety = maxDepth + 1;
+    while (parentId != null && safety-- > 0) {
+      depth++;
+      Optional<WorkflowRunSnapshot> parent = workflowRunReadPort.findByPublicId(parentId);
+      if (parent.isEmpty()) {
+        break;
+      }
+      parentId = parent.get().parentRunId();
+    }
+    return depth;
+  }
+
+  /**
+   * Record an operator's deliberate bypass of the split depth cap as a governed-history event
+   * (interventionMarker = true, no state change) so the audit reflects who overrode the safety cap.
+   */
+  private void recordDeepSplitOverride(RequestSplitCommand command, int depth, int maxDepth) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put(WorkflowEventDetailKeys.DEEP_SPLIT_OVERRIDE, true);
+    details.put(WorkflowEventDetailKeys.SPLIT_DEPTH, depth);
+    details.put(WorkflowEventDetailKeys.MAX_SPLIT_DEPTH, maxDepth);
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            PublicIdPrefixes.WORKFLOW_EVENT.next(),
+            command.workflowRunId(),
+            WorkflowEventType.SPLIT_DEPTH_OVERRIDE,
+            null,
+            null,
+            command.actorIdentity(),
+            command.actorType(),
+            "deep_split_override",
+            null,
+            true,
+            OffsetDateTime.now(),
+            details));
+    log.warn(
+        "deep-split override applied workflowRunId={} depth={} max={} actorIdentity={}",
+        command.workflowRunId(),
+        depth,
+        maxDepth,
+        command.actorIdentity());
   }
 
   private WorkflowRunSnapshot requireGateRun(String workflowRunId) {

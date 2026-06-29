@@ -49,6 +49,11 @@ public class WorkflowTransitionService {
   // injected lazily (ObjectProvider, resolved at afterCommit time) to break the cycle, mirroring
   // orchestrationProvider above.
   private final ObjectProvider<RunDependencyReleaseService> dependencyReleaseProvider;
+  // Story 3f-7 (AC2) — the split-completion-rollup collaborator. Like the two providers above it
+  // depends on THIS service, so it is injected lazily (ObjectProvider, resolved at afterCommit
+  // time)
+  // to break the DI cycle.
+  private final ObjectProvider<RunSplitCompletionRollupService> splitRollupProvider;
   private final WorkflowProperties workflowProperties;
 
   public WorkflowTransitionService(
@@ -59,6 +64,7 @@ public class WorkflowTransitionService {
       ObjectProvider<WorkflowTransitionConcurrencyProbe> concurrencyProbeProvider,
       ObjectProvider<WorkflowOrchestrationService> orchestrationProvider,
       ObjectProvider<RunDependencyReleaseService> dependencyReleaseProvider,
+      ObjectProvider<RunSplitCompletionRollupService> splitRollupProvider,
       WorkflowProperties workflowProperties) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunStatePort = workflowRunStatePort;
@@ -69,6 +75,7 @@ public class WorkflowTransitionService {
         concurrencyProbeProvider.getIfAvailable(WorkflowTransitionConcurrencyProbe::noop);
     this.orchestrationProvider = orchestrationProvider;
     this.dependencyReleaseProvider = dependencyReleaseProvider;
+    this.splitRollupProvider = splitRollupProvider;
     this.workflowProperties = workflowProperties;
   }
 
@@ -129,6 +136,7 @@ public class WorkflowTransitionService {
                 runId, targetState, actor, reason, idempotencyKey, failureCategory, eventDetails);
             registerCompletionSyncHookIfApplicable(runId, targetState);
             registerDependencyReleaseHookIfApplicable(runId, targetState);
+            registerSplitCompletionRollupHookIfApplicable(runId, targetState);
           });
     } catch (OptimisticLockingFailureException exception) {
       throw concurrentConflict(runId, targetState, idempotencyKey, exception);
@@ -230,6 +238,57 @@ public class WorkflowTransitionService {
               // is best-effort (AC6) so any escape is swallowed with a WARN.
               log.warn(
                   "dependency-release hook swallowed an error (completion intact) completedRunId={} cause={}",
+                  runId,
+                  error.getClass().getSimpleName());
+            }
+          }
+        });
+  }
+
+  /**
+   * Story 3f-7 (AC2, Task 1) — when this transition commits a run into {@code Completed}, register
+   * a post-commit {@link TransactionSynchronization} that rolls up the run's split parent ({@code
+   * Split -> Completed}) once all of the parent's direct children have completed. The hook resolves
+   * {@link RunSplitCompletionRollupService} lazily and runs AFTER commit, so the {@code Completed}
+   * transition is already durable and a rollup failure cannot roll it back (best-effort, AC2). Like
+   * the dependency-release hook this is NOT gated on a feature flag; the rollup itself returns
+   * immediately for a run whose {@code parentRunId} is null (every non-split run — parity, AC7).
+   *
+   * <p>The parent's own {@code Split -> Completed} transition re-enters this same registration, so
+   * the recursion to the grandparent and the AC3 cross-split dependency release both fall out of
+   * the hook chain with no explicit upward walk.
+   */
+  private void registerSplitCompletionRollupHookIfApplicable(
+      String runId, WorkflowState targetState) {
+    if (targetState != WorkflowState.COMPLETED) {
+      return;
+    }
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      log.warn(
+          "split-rollup hook not registered (no active transaction synchronization) workflowRunId={}",
+          runId);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            RunSplitCompletionRollupService rollup = splitRollupProvider.getIfAvailable();
+            if (rollup == null) {
+              log.warn(
+                  "split-rollup hook fired but RunSplitCompletionRollupService is unavailable; "
+                      + "skipping workflowRunId={}",
+                  runId);
+              return;
+            }
+            log.info("split-rollup hook fired completedRunId={} (post-commit)", runId);
+            try {
+              rollup.rollupParentOf(runId, null);
+            } catch (RuntimeException error) {
+              // afterCommit cannot roll back the (already committed) Completed transition; the
+              // rollup is best-effort (AC2) so any escape is swallowed with a WARN.
+              log.warn(
+                  "split-rollup hook swallowed an error (completion intact) completedRunId={} cause={}",
                   runId,
                   error.getClass().getSimpleName());
             }

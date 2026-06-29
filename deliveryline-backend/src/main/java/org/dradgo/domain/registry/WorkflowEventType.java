@@ -74,7 +74,15 @@ public enum WorkflowEventType implements RegistryValue {
   // state and interventionMarker = true (a human/governed triage action). Detail keys are the
   // already-allow-listed idempotencyKey / correlationId / reason. No row is ever deleted (FR47).
   WORKFLOW_ARCHIVED("workflow.archived"),
-  WORKFLOW_UNARCHIVED("workflow.unarchived");
+  WORKFLOW_UNARCHIVED("workflow.unarchived"),
+  // Story 3f-7 (AC5) — appended (in the same transaction as the split request) when an operator
+  // bypasses the recursive-split depth cap via the allowDeepSplit/--allow-deep-split override. It
+  // is a governance action, NOT a workflow-state change (priorState == resultingState == null, like
+  // ESCALATION_REQUIRED) and carries interventionMarker = true so the deliberate safety-cap bypass
+  // is auditable in the governed history. Detail keys: deepSplitOverride / splitDepth /
+  // maxSplitDepth. NFR43 ("justify each new concept") is satisfied — an operator deliberately
+  // overriding a safety cap is exactly what the governed history exists to record.
+  SPLIT_DEPTH_OVERRIDE("workflow.splitDepthOverride");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

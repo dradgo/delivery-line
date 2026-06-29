@@ -517,6 +517,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Run dependency cycle",
         false);
+    // Story 3f-7 (AC5) — a recursive split deeper than the configured cap (without the
+    // allowDeepSplit override) is a malformed request, not a transient fault; mirror
+    // RUN_DEPENDENCY_CYCLE's CONFLICT + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.SPLIT_DEPTH_LIMIT_EXCEEDED,
+        HttpStatus.CONFLICT,
+        "Split depth limit exceeded",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

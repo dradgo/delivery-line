@@ -195,7 +195,15 @@ public enum DomainErrorCode implements RegistryValue {
   // depends, transitively, on the dependent). CONFLICT (409) + non-retryable: a malformed
   // declaration, not a transient fault (mirrors ILLEGAL_TRANSITION). Carries runId, dependsOnRunId,
   // and reason=cycle_detected.
-  RUN_DEPENDENCY_CYCLE("RUN_DEPENDENCY_CYCLE");
+  RUN_DEPENDENCY_CYCLE("RUN_DEPENDENCY_CYCLE"),
+  // Story 3f-7 (AC5) — three-sites code (enum + ProblemDetailsCatalog + manifest). Raised by
+  // SplitProposalService.request() at the TOP of the method (before any reviewer-bound check or
+  // LLM dispatch) when the run's split depth (distance from the lineage root, walking parentRunId;
+  // root = depth 0) is already >= deliveryline.complex-ticket-flow.max-split-depth and the request
+  // does NOT carry the allowDeepSplit override. A recursive split deeper than the configured cap is
+  // a malformed request, not a transient fault; mirror RUN_DEPENDENCY_CYCLE's CONFLICT (409) +
+  // non-retryable mapping. Carries runId, currentDepth, maxDepth, and reason=depth_limit_exceeded.
+  SPLIT_DEPTH_LIMIT_EXCEEDED("SPLIT_DEPTH_LIMIT_EXCEEDED");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

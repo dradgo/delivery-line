@@ -59,6 +59,10 @@ class SplitProposalServiceTest {
   private final RedactionPolicyService redaction = Mockito.mock(RedactionPolicyService.class);
 
   private SplitProposalService service(int escalationThreshold) {
+    return service(escalationThreshold, ComplexTicketFlowProperties.DEFAULT_MAX_SPLIT_DEPTH);
+  }
+
+  private SplitProposalService service(int escalationThreshold, int maxSplitDepth) {
     return new SplitProposalService(
         runReadPort,
         configResolver,
@@ -69,7 +73,8 @@ class SplitProposalServiceTest {
         loopPort,
         eventWritePort,
         new SplitProposalEscalationThresholdProvider(escalationThreshold),
-        redaction);
+        redaction,
+        new ComplexTicketFlowProperties(maxSplitDepth));
   }
 
   @BeforeEach
@@ -275,5 +280,138 @@ class SplitProposalServiceTest {
     SplitProposalStatusView view = service(3).proposalView(RUN);
 
     assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_PENDING);
+  }
+
+  // --- Story 3f-7 (AC5) — recursive-split depth cap ---------------------------------------------
+
+  private static final String PARENT = "run_split_parent_cc";
+  private static final String ROOT = "run_split_root_dddd";
+
+  /** Chain ROOT(depth 0) <- PARENT(depth 1) <- RUN(depth 2). RUN's split depth is 2. */
+  private void wireDepth2Lineage() {
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN,
+                    WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+                    null,
+                    1L,
+                    0,
+                    false,
+                    null,
+                    PARENT)));
+    when(runReadPort.findByPublicId(PARENT))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    PARENT, WorkflowState.SPLIT, null, 1L, 0, false, null, ROOT)));
+    when(runReadPort.findByPublicId(ROOT))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    ROOT, WorkflowState.SPLIT, null, 1L, 0, false, null, null)));
+  }
+
+  @Test
+  void requestRejectsWhenSplitDepthAtCapWithoutOverride() {
+    when(configResolver.hasReviewerBinding(RUN)).thenReturn(true);
+    when(readPort.findOpenForRun(RUN)).thenReturn(Optional.empty());
+    wireDepth2Lineage();
+
+    assertThatThrownBy(
+            () ->
+                service(3, 2)
+                    .request(new RequestSplitCommand(RUN, "alex", ActorType.HUMAN, "idem", "corr")))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.SPLIT_DEPTH_LIMIT_EXCEEDED);
+    // The guard fires BEFORE any enqueue/LLM dispatch (AC1/AC5).
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
+    verify(loopPort, never()).incrementAndReadSplitProposalLoopCount(any());
+    // No override event appended on a plain rejection.
+    verify(eventWritePort, never()).append(any());
+  }
+
+  @Test
+  void requestProceedsBelowCap() {
+    when(configResolver.hasReviewerBinding(RUN)).thenReturn(true);
+    when(readPort.findOpenForRun(RUN)).thenReturn(Optional.empty());
+    when(loopPort.incrementAndReadSplitProposalLoopCount(RUN)).thenReturn(1);
+    wireDepth2Lineage();
+
+    // max=5: depth 2 < 5, so the request proceeds unchanged (no depth event, normal enqueue).
+    SplitProposalStatusView view =
+        service(3, 5)
+            .request(new RequestSplitCommand(RUN, "alex", ActorType.HUMAN, "idem", "corr"));
+
+    assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_PENDING);
+    verify(orchestration).enqueueSplitProposalDispatch(eq(RUN), any(), any());
+    verify(eventWritePort, never()).append(any());
+  }
+
+  @Test
+  void requestAtCapWithOverrideProceedsAndRecordsGovernedHistoryEvent() {
+    when(configResolver.hasReviewerBinding(RUN)).thenReturn(true);
+    when(readPort.findOpenForRun(RUN)).thenReturn(Optional.empty());
+    when(loopPort.incrementAndReadSplitProposalLoopCount(RUN)).thenReturn(1);
+    wireDepth2Lineage();
+
+    SplitProposalStatusView view =
+        service(3, 2)
+            .request(new RequestSplitCommand(RUN, "alex", ActorType.HUMAN, "idem", "corr", true));
+
+    assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_PENDING);
+    // The deep split proceeds (enqueues) AND the override is recorded in the governed history.
+    verify(orchestration).enqueueSplitProposalDispatch(eq(RUN), any(), any());
+    ArgumentCaptor<WorkflowEventRecord> evt = ArgumentCaptor.forClass(WorkflowEventRecord.class);
+    verify(eventWritePort).append(evt.capture());
+    WorkflowEventRecord recorded = evt.getValue();
+    assertThat(recorded.eventType()).isEqualTo(WorkflowEventType.SPLIT_DEPTH_OVERRIDE);
+    assertThat(recorded.interventionMarker()).isTrue();
+    assertThat(recorded.priorState()).isNull();
+    assertThat(recorded.resultingState()).isNull();
+    assertThat(recorded.details())
+        .containsEntry("deepSplitOverride", true)
+        .containsEntry("splitDepth", 2)
+        .containsEntry("maxSplitDepth", 2);
+  }
+
+  @Test
+  void requestAtCapWithOverrideDoesNotRecordOverrideWhenProposalAlreadyOpen() {
+    // Review 2026-06-29 (Decision 1): the depth-cap rejection stays at the top, but the override
+    // event must be recorded ONLY on the proceed path. A replayed deep-split request that finds an
+    // already-open proposal is a no-op and must NOT append a duplicate SPLIT_DEPTH_OVERRIDE event.
+    when(configResolver.hasReviewerBinding(RUN)).thenReturn(true);
+    when(readPort.findOpenForRun(RUN))
+        .thenReturn(Optional.of(Mockito.mock(SplitProposalView.class)));
+    wireDepth2Lineage();
+
+    SplitProposalStatusView view =
+        service(3, 2)
+            .request(new RequestSplitCommand(RUN, "alex", ActorType.HUMAN, "idem", "corr", true));
+
+    assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_AVAILABLE);
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
+    verify(loopPort, never()).incrementAndReadSplitProposalLoopCount(any());
+    // No phantom override appended for a split that never proceeded.
+    verify(eventWritePort, never()).append(any());
+  }
+
+  @Test
+  void requestAtCapWithOverrideDoesNotRecordOverrideWhenReviewerUnbound() {
+    // Review 2026-06-29 (Decision 1): a deep-split request that degrades to unavailable (reviewer
+    // unbound) performs no split, so it must NOT append a phantom SPLIT_DEPTH_OVERRIDE event.
+    when(configResolver.hasReviewerBinding(RUN)).thenReturn(false);
+    when(readPort.findOpenForRun(RUN)).thenReturn(Optional.empty());
+    wireDepth2Lineage();
+
+    SplitProposalStatusView view =
+        service(3, 2)
+            .request(new RequestSplitCommand(RUN, "alex", ActorType.HUMAN, "idem", "corr", true));
+
+    assertThat(view.state()).isEqualTo(SplitProposalStatusView.STATE_UNAVAILABLE);
+    verify(orchestration, never()).enqueueSplitProposalDispatch(any(), any(), any());
+    verify(eventWritePort, never()).append(any());
   }
 }

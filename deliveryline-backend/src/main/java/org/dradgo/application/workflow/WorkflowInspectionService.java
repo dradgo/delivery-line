@@ -1270,14 +1270,14 @@ public class WorkflowInspectionService {
       FailureDescription failure = recoveryService.describeFailure(workflowRunPublicId);
 
       ProjectAttribution project = projectAttributionFor(run.projectId());
-      List<String> childRunIds =
-          workflowRunReadPort.findByParentRunId(run.publicId()).stream()
-              .map(WorkflowRunSnapshot::publicId)
-              .toList();
+      List<WorkflowRunSnapshot> children = workflowRunReadPort.findByParentRunId(run.publicId());
+      List<String> childRunIds = children.stream().map(WorkflowRunSnapshot::publicId).toList();
+      String decompositionStatus = computeDecompositionStatus(run.currentState(), children);
       log.debug(
-          "inspecting workflow_run children workflowRunId={} childCount={}",
+          "inspecting workflow_run children workflowRunId={} childCount={} decompositionStatus={}",
           run.publicId(),
-          childRunIds.size());
+          childRunIds.size(),
+          decompositionStatus);
 
       RunDependencyGraphView dependencyGraph =
           runDependencyPort == null
@@ -1307,7 +1307,8 @@ public class WorkflowInspectionService {
               project == null ? null : project.projectId(),
               project == null ? null : project.projectName(),
               project == null ? null : project.projectSlug(),
-              dependencyGraph);
+              dependencyGraph,
+              decompositionStatus);
       log.info(
           "inspecting workflow_run snapshot success workflowRunId={} currentState={}",
           workflowRunPublicId,
@@ -1498,6 +1499,24 @@ public class WorkflowInspectionService {
     details.put("projectId", projectFilter);
     return new DomainException(
         DomainErrorCode.PROJECT_NOT_FOUND, "Project not found: " + projectFilter, details);
+  }
+
+  /**
+   * Story 3f-7 (AC6) — render a Split parent's decomposition progress ("decomposed — N of M
+   * descendants complete") so the UI shows it as decomposed-and-pending rather than finished, and
+   * flips it to Completed on rollup. Returns {@code null} for any non-Split run (parity). N/M is
+   * over DIRECT children (a split child reaches Completed only via its own rollup, so direct-child
+   * doneness equals subtree doneness — no transitive grandchild count).
+   */
+  private static String computeDecompositionStatus(
+      WorkflowState currentState, List<WorkflowRunSnapshot> children) {
+    if (currentState != WorkflowState.SPLIT) {
+      return null;
+    }
+    int total = children.size();
+    long completed =
+        children.stream().filter(c -> c.currentState() == WorkflowState.COMPLETED).count();
+    return "decomposed — " + completed + " of " + total + " descendants complete";
   }
 
   private record ProjectAttribution(String projectId, String projectName, String projectSlug) {}
@@ -2448,7 +2467,12 @@ public class WorkflowInspectionService {
       // Story 3f-3 (AC8) — this run's position in the run-dependency DAG (prerequisites,
       // dependents,
       // blocked-on subset, and a blocked boolean). Never null; defaults to an empty graph.
-      RunDependencyGraphView dependencyGraph) {
+      RunDependencyGraphView dependencyGraph,
+      // Story 3f-7 (AC6) — human-readable decomposition progress for a Split parent
+      // ("decomposed — N of M descendants complete"), or null for any non-Split run. N/M is over
+      // DIRECT children (findByParentRunId): a split child reaches Completed only via its own
+      // rollup, so direct-children doneness equals whole-subtree doneness.
+      String decompositionStatus) {
 
     public WorkflowStatusView(
         String workflowRunId,
@@ -2489,7 +2513,8 @@ public class WorkflowInspectionService {
           null,
           null,
           null,
-          RunDependencyGraphView.empty());
+          RunDependencyGraphView.empty(),
+          null);
     }
   }
 

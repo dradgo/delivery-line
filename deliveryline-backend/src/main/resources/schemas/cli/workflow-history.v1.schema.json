@@ -88,6 +88,10 @@
                 "maxItems": 100,
                 "items": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{4,}$" }
               },
+              "viaSplitRollup": { "type": "boolean" },
+              "deepSplitOverride": { "type": "boolean" },
+              "splitDepth": { "type": "integer" },
+              "maxSplitDepth": { "type": "integer" },
               "githubPrReference": { "type": "string" },
               "repositoryFullName": { "type": "string" },
               "branch": { "type": "string" },

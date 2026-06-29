@@ -438,6 +438,54 @@ The governed workflow moves beyond the single linear *one-ticket → one-run →
 
 **FRs covered:** FR70 (split/decompose a governed run, lineage-preserving — extended by 3f-7 to recursive split + completion rollup), FR71 (run dependencies / sequenced execution — extended by 3f-7 to rollup satisfaction across a split prerequisite), FR72 (run review queue project attribution + filter; completes the deferred 3c-9 AC6).
 
+### Epic 3g: Run Provenance & Token Accounting
+
+A governed run becomes human-identifiable and cost-visible. Each run carries its originating ticket's title (snapshotted at creation) and a link back to the source ticket, surfaced in both the run review queue and the detail view; each step execution records the agent's token consumption with a run-level rollup. Pure additive read-model work on existing seams (the already-fetched `TicketSummary`, the runner result contract, the 3d-5 step view) — no new state, action, event, or error code.
+
+**Positioning:** first of the 3g–3l family inserted between Epic 3f and Epic 4 (sprint-change-proposal-2026-06-29; avoids renumbering E4–E6). The warm-up epic — pins the DTO/persistence conventions the heavier epics reuse. Detailed epic: `epic-03g-provenance-token-accounting.md`.
+
+**FRs covered:** FR73 (run origin/title visibility), FR74 (per-step token accounting).
+
+### Epic 3h: Pre-Review Quality Gates & Delivery-Tail Governance
+
+The delivery tail becomes governed and configurable. Cheap CPU quality gates run before expensive LLM review — a build-validation stage (with a bounded auto-fix loop) and a linter stage (a hard gate for critical findings) — a deeper BMAD-style multi-layer review mode augments the single-pass reviewer, and the push/PR tail is lifted out of the implementation result into an explicit per-project delivery gate (auto / manual / approve), with post-push CI build-error investigation. The structural crux is relocating `captureAndPush` from `RunnerBroker.onResult` to the end of the tail.
+
+**Positioning:** the richest epic of the family; establishes the BUILD/LINT stages, the delivery gate, and the CI-checks port that 3i and 3j build on. ADR-0030. Detailed epic: `epic-03h-pre-review-quality-gates.md`.
+
+**FRs covered:** FR75 (build validation + auto-fix), FR76 (CPU lint gate), FR77 (BMAD review mode), FR78 (push-mode + PR/MR governance), FR79 (CI build-error investigation).
+
+### Epic 3i: Connector Expansion — JIRA, Bitbucket, Sentry
+
+Three new connectors land on the vendor-neutral abstractions: JIRA as a first-class ticket source (with an interactive intake browse filtered by assignee + components — the one genuinely new capability, a filtered ticket query), Bitbucket as a repository host including Pipelines CI, and Sentry as a new error-source category whose issues an operator promotes into governed bug tickets.
+
+**Positioning:** consumes 3h's CI-checks port (Bitbucket Pipelines) and feeds 3j (Sentry → bug profile); otherwise independent. Reuses connector-kind resolution, the encrypted credential store, connectivity probes, and the doctor-probe pattern. Detailed epic: `epic-03i-connector-expansion.md`.
+
+**FRs covered:** FR80 (JIRA ticket source), FR81 (filtered ticket intake), FR82 (Bitbucket repo host + Pipelines), FR83 (Sentry error ingest → bug promotion).
+
+### Epic 3j: Ticket-Type Workflows — Bug vs Feature
+
+The workflow spine branches by ticket type. Two built-in profiles (`bug`, `feature`, feature default) are selected from the connector ticket type via a per-project mapping with an operator override at intake; the bug path reproduces and root-causes the defect before a lightweight fix-plan gate, while the feature path keeps the full specification flow.
+
+**Positioning:** the one epic that touches the core stage-selection logic in `RunnerBroker.onResult` — must be serialized against in-flight 3f work and Epic 3h, which share that path. Consumes 3i (Sentry → bug profile). Detailed epic: `epic-03j-ticket-type-workflows.md`.
+
+**FRs covered:** FR84 (workflow profile by ticket type), FR85 (distinct bug path).
+
+### Epic 3k: Runner Platform / VM Execution
+
+Runner execution moves off the orchestrator host. A standalone runner service running in an operator-provisioned VM pulls governed work over the network (extending the existing dequeue-lease queue substrate), enabling a full-access (unsandboxed) agent runner that is permitted only on an isolated remote runner and refused on the host. Includes a feasibility spike for Kimi agents.
+
+**Positioning:** the highest-risk epic of the family — ADR-0031 (remote runner architecture + security boundary) and a dedicated security review for full-access execution. Mostly independent (default routing stays local for parity); can run on a parallel track. Detailed epic: `epic-03k-runner-platform-vm.md`.
+
+**FRs covered:** FR86 (remote runner execution), FR87 (full-access runner remote-only); Kimi spike (no FR — investigation).
+
+### Epic 3l: Project Memory & Artifact Lineage
+
+A project-scoped memory organizes how tickets relate and what artifacts they produced. Part A builds the relationship/artifact graph (a projection over existing lineage, dependencies, integration links, and artifacts, plus a few operator-assertable relations) with a query API and an FE graph/timeline view; Part B retrieves related prior memory into agent context bundles so agents leverage relevant history. Complements (does not duplicate) Epic 4's audit-by-ticket query — audit is the event stream, memory is the relationship graph + agent-context feed.
+
+**Positioning:** depends on the relational data the earlier 3g–3k epics enrich (3i links, 3j profiles); sequenced last, Part A before Part B. Detailed epic: `epic-03l-project-memory-artifact-lineage.md`.
+
+**FRs covered:** FR88 (memory graph query + visualization), FR89 (operator-assertable relations), FR90 (memory retrieval into context bundles).
+
 ### Epic 4: Failure Handling, Recovery & Reconciliation (Workflow Owner + Compare Mode)
 
 A Workflow Owner opens the run queue, selects a failed or stalled run, inspects container logs, current failed stage, artifact status, and integration conflict state — then retries, reruns, reconciles, or classifies the failure, with every recovery action appended to the same governed history. Reviewers gain Compare Mode to verify what changed between revisions before approving. Delivers the governed failure taxonomy, artifact reconciliation for DB/file drift, and integration conflict detection for Linear/GitHub.

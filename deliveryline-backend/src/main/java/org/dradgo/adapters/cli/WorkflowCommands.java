@@ -844,6 +844,14 @@ public class WorkflowCommands {
           String actorIdentity,
       @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
           String idempotencyKey,
+      @Option(
+              longName = "allow-deep-split",
+              description =
+                  "Override the recursive-split depth cap (story 3f-7). Records the bypass in the"
+                      + " governed history.",
+              required = false,
+              defaultValue = "false")
+          boolean allowDeepSplit,
       @Option(longName = "correlation-id", description = "Correlation ID", required = false)
           String correlationId) {
     requireSplitWired();
@@ -857,7 +865,12 @@ public class WorkflowCommands {
       org.dradgo.application.workflow.SplitProposalStatusView view =
           splitProposalService.request(
               new org.dradgo.application.workflow.SplitProposalCommandSet.RequestSplitCommand(
-                  runId, resolvedActor, ActorType.HUMAN, resolvedKey, resolvedCorrelation));
+                  runId,
+                  resolvedActor,
+                  ActorType.HUMAN,
+                  resolvedKey,
+                  resolvedCorrelation,
+                  allowDeepSplit));
       String rendered = renderSplitProposal(runId, view, format);
       emitSuccess("workflow split-request", runId, resolvedCorrelation, start);
       return rendered;

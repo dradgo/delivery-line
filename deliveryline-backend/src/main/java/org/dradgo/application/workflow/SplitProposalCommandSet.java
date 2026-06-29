@@ -11,13 +11,33 @@ public final class SplitProposalCommandSet {
 
   private SplitProposalCommandSet() {}
 
-  /** {@code request_split} — request an advisory proposal at the spec/review gate. */
+  /**
+   * {@code request_split} — request an advisory proposal at the spec/review gate.
+   *
+   * <p>Story 3f-7 (AC5): {@code allowDeepSplit} is the operator override that bypasses the
+   * recursive-split depth cap ({@code X-Allow-Deep-Split} header / {@code --allow-deep-split} CLI
+   * flag). When {@code false} (the default) a request on a run already at or beyond {@code
+   * complex-ticket-flow.max-split-depth} is refused with {@code SPLIT_DEPTH_LIMIT_EXCEEDED}; when
+   * {@code true} the deep split proceeds and the override is recorded in the governed history.
+   */
   public record RequestSplitCommand(
       String workflowRunId,
       String actorIdentity,
       ActorType actorType,
       String idempotencyKey,
-      String correlationId) {}
+      String correlationId,
+      boolean allowDeepSplit) {
+
+    /** Back-compatible factory for the no-override (default) path used by most call sites. */
+    public RequestSplitCommand(
+        String workflowRunId,
+        String actorIdentity,
+        ActorType actorType,
+        String idempotencyKey,
+        String correlationId) {
+      this(workflowRunId, actorIdentity, actorType, idempotencyKey, correlationId, false);
+    }
+  }
 
   /** {@code repropose_split} — re-run the proposal with operator feedback. */
   public record ReproposeSplitCommand(

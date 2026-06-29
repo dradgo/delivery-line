@@ -1890,6 +1890,14 @@
             "example" : "WaitingForSpecApproval",
             "type" : "string"
           },
+          "decompositionStatus" : {
+            "description" : "Story 3f-7 (AC6): for a Split parent, the decomposition progress (\"decomposed — N of M descendants complete\"); null for any non-Split run. Flips to a Completed currentState when the parent rolls up.",
+            "example" : "decomposed — 1 of 2 descendants complete",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "dependencies" : {
             "$ref" : "#/components/schemas/RunDependencies",
             "description" : "This run's position in the run-dependency DAG (story 3f-3): prerequisites, dependents, the unfinished blocking subset, and a blocked boolean."
@@ -4906,7 +4914,7 @@
     },
     "/api/v1/workflows/{workflowRunId}/split/request" : {
       "post" : {
-        "description" : "Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model degrades to state=unavailable (the gate is never blocked).",
+        "description" : "Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model degrades to state=unavailable (the gate is never blocked). Story 3f-7: a run at or beyond complex-ticket-flow.max-split-depth is refused with SPLIT_DEPTH_LIMIT_EXCEEDED unless X-Allow-Deep-Split:true overrides the cap (the override is recorded in the governed history).",
         "operationId" : "requestSplit",
         "parameters" : [
           {
@@ -4931,6 +4939,15 @@
             "required" : false,
             "schema" : {
               "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Allow-Deep-Split",
+            "required" : false,
+            "schema" : {
+              "default" : false,
+              "type" : "boolean"
             }
           }
         ],

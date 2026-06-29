@@ -661,7 +661,7 @@ export interface paths {
         put?: never;
         /**
          * Request an advisory split proposal (story 3f-4)
-         * @description Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model degrades to state=unavailable (the gate is never blocked).
+         * @description Enqueue an advisory LLM split proposal at the spec/review gate. Idempotent under Idempotency-Key. The parent stays parked at its gate; an unbound reviewer model degrades to state=unavailable (the gate is never blocked). Story 3f-7: a run at or beyond complex-ticket-flow.max-split-depth is refused with SPLIT_DEPTH_LIMIT_EXCEEDED unless X-Allow-Deep-Split:true overrides the cap (the override is recorded in the governed history).
          */
         post: operations["requestSplit"];
         delete?: never;
@@ -1556,6 +1556,11 @@ export interface components {
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
             currentState?: string;
+            /**
+             * @description Story 3f-7 (AC6): for a Split parent, the decomposition progress ("decomposed — N of M descendants complete"); null for any non-Split run. Flips to a Completed currentState when the parent rolls up.
+             * @example decomposed — 1 of 2 descendants complete
+             */
+            decompositionStatus?: string | null;
             /** @description This run's position in the run-dependency DAG (story 3f-3): prerequisites, dependents, the unfinished blocking subset, and a blocked boolean. */
             dependencies?: components["schemas"]["RunDependencies"];
             /**
@@ -3491,6 +3496,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Actor-Identity"?: string;
+                "X-Allow-Deep-Split"?: boolean;
             };
             path: {
                 workflowRunId: string;
