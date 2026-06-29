@@ -775,6 +775,16 @@ public class WorkflowCommands {
     this.splitProposalService = splitProposalService;
   }
 
+  // Story 3f-5 — optional setter injection for the split-commit service (same pattern as
+  // setSplitProposalService) so the telescoping ctors + their unit-test call sites stay unchanged.
+  private org.dradgo.application.workflow.SplitCommitService splitCommitService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSplitCommitService(
+      org.dradgo.application.workflow.SplitCommitService splitCommitService) {
+    this.splitCommitService = splitCommitService;
+  }
+
   @Command(
       name = "split-proposal-show",
       description =
@@ -961,6 +971,135 @@ public class WorkflowCommands {
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
     }
+  }
+
+  @Command(
+      name = "split-approve",
+      description =
+          "Commit the open split proposal (story 3f-5): best-effort fan-out into child runs"
+              + " (sub-tickets where supported, else internal-only), wire dependency edges, and"
+              + " decompose the parent into Split when ≥1 child is created. Idempotent under the"
+              + " idempotency key.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String splitApprove(
+      @Option(longName = "run", description = "Workflow run public id (run_...)", required = true)
+          String runId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              required = false,
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId) {
+    requireSplitCommitWired();
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      String resolvedKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      org.dradgo.application.workflow.SplitCommitResult result =
+          splitCommitService.commit(
+              new org.dradgo.application.workflow.ApproveSplitCommand(
+                  runId, resolvedActor, ActorType.HUMAN, resolvedKey, resolvedCorrelation));
+      String rendered = renderSplitCommit(runId, result, format);
+      emitSuccess("workflow split-approve", runId, resolvedCorrelation, start);
+      return rendered;
+    } catch (DomainException de) {
+      emitFailure("workflow split-approve", runId, resolvedCorrelation, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitFailure("workflow split-approve", runId, resolvedCorrelation, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  private void requireSplitCommitWired() {
+    if (splitCommitService == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "legacy_constructor_invoked_for_split_commit_command");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowCommands was constructed without SplitCommitService; inject it to use"
+              + " split-approve",
+          details);
+    }
+  }
+
+  private String renderSplitCommit(
+      String runId, org.dradgo.application.workflow.SplitCommitResult result, String format) {
+    String normalizedFormat = normalizeFormat(format);
+    if (FORMAT_JSON.equals(normalizedFormat)) {
+      try {
+        com.fasterxml.jackson.databind.node.ObjectNode root = jsonMapper().createObjectNode();
+        root.put("runId", runId);
+        root.put("splitProposalId", result.splitProposalId());
+        root.put("parentDecomposed", result.parentDecomposed());
+        root.put("outcome", result.outcome());
+        com.fasterxml.jackson.databind.node.ArrayNode children = jsonMapper().createArrayNode();
+        result.childRunIds().forEach(children::add);
+        root.set("childRunIds", children);
+        com.fasterxml.jackson.databind.node.ArrayNode subtasks = jsonMapper().createArrayNode();
+        for (org.dradgo.application.workflow.SplitCommitResult.SubtaskCommitOutcome o :
+            result.subtasks()) {
+          com.fasterxml.jackson.databind.node.ObjectNode sn = jsonMapper().createObjectNode();
+          sn.put("ordinal", o.ordinal());
+          sn.put("status", o.status());
+          if (o.childRunId() == null) {
+            sn.putNull("childRunId");
+          } else {
+            sn.put("childRunId", o.childRunId());
+          }
+          if (o.childTicketRef() == null) {
+            sn.putNull("childTicketRef");
+          } else {
+            sn.put("childTicketRef", o.childTicketRef());
+          }
+          if (o.reason() == null) {
+            sn.putNull("reason");
+          } else {
+            sn.put("reason", o.reason());
+          }
+          subtasks.add(sn);
+        }
+        root.set("subtasks", subtasks);
+        return jsonMapper().writeValueAsString(root);
+      } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reason", "split_commit_json_render_failed");
+        throw new DomainException(
+            DomainErrorCode.INTERNAL_ERROR, "Failed to render split commit JSON", details);
+      }
+    }
+    StringBuilder out = new StringBuilder();
+    out.append("split-approve ")
+        .append(runId)
+        .append(": outcome=")
+        .append(result.outcome())
+        .append(" parentDecomposed=")
+        .append(result.parentDecomposed())
+        .append(" children=")
+        .append(result.childRunIds().size());
+    for (org.dradgo.application.workflow.SplitCommitResult.SubtaskCommitOutcome o :
+        result.subtasks()) {
+      out.append(System.lineSeparator())
+          .append("    ")
+          .append(o.ordinal())
+          .append(". ")
+          .append(o.status());
+      if (o.childRunId() != null) {
+        out.append(" -> ").append(o.childRunId());
+      }
+    }
+    return out.toString();
   }
 
   private String renderSplitProposal(

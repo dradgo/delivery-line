@@ -75,6 +75,9 @@ export type DecisionAction =
   | 'request_split'
   | 'repropose_split'
   | 'continue_as_single'
+  // Story 3f-5 — commit the open split proposal (fan-out into child runs + decompose parent).
+  // Advertised alongside `repropose_split` + `continue_as_single` when a proposal IS open.
+  | 'approve_split'
   | 'unknown';
 
 /** The rework taxonomy (story 2.10) — the schema's UPPERCASE wire enum (T-TAGGED-UPPERCASE). */
@@ -231,6 +234,8 @@ const KNOWN_ACTIONS: ReadonlySet<string> = new Set<DecisionAction>([
   'request_split',
   'repropose_split',
   'continue_as_single',
+  // Story 3f-5 — commit the open split proposal.
+  'approve_split',
   'unknown',
 ]);
 
@@ -383,10 +388,12 @@ const CONSEQUENCE_HINTS: Readonly<
   spec_approval: {
     approve_spec: 'Approval will transition the run to Executing.',
     reject_spec: 'Rejection sends the specification back for rework.',
-    // Story 3f-4 — advisory split channel (front-half only; nothing is committed this epic).
+    // Story 3f-4 — advisory split channel (front-half).
     request_split: 'Requests an advisory split proposal; nothing is committed.',
     continue_as_single: 'Dismisses the proposal and keeps one ticket.',
     repropose_split: 'Re-runs the proposal with your feedback.',
+    // Story 3f-5 — commits the split: creates the child runs and decomposes this run.
+    approve_split: 'Commits the split — creates the child runs and decomposes this run.',
   },
   // Story 3.28 (AC2) — the short inline hints; takeover's FULL consequence text lives
   // in the confirm dialog (`CONFIRMATION_CATALOG.takeoverWorkflow`).
@@ -394,10 +401,12 @@ const CONSEQUENCE_HINTS: Readonly<
     accept_implementation: 'Accepting advances the run past technical review.',
     reject_implementation: 'Rejection sends the implementation back for rework.',
     takeover_workflow: 'Taking over stops orchestration and hands the run to a developer.',
-    // Story 3f-4 — advisory split channel (front-half only; nothing is committed this epic).
+    // Story 3f-4 — advisory split channel (front-half).
     request_split: 'Requests an advisory split proposal; nothing is committed.',
     continue_as_single: 'Dismisses the proposal and keeps one ticket.',
     repropose_split: 'Re-runs the proposal with your feedback.',
+    // Story 3f-5 — commits the split: creates the child runs and decomposes this run.
+    approve_split: 'Commits the split — creates the child runs and decomposes this run.',
   },
   // Story 3.30 (AC3) — the short inline hint; the FULL consequence text lives in the
   // retry confirmation dialog (`CONFIRMATION_CATALOG.retryOrRecoverConsequential`).

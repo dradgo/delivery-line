@@ -138,6 +138,26 @@ class SplitProposalPersistenceAdapterIT {
   }
 
   @Test
+  void approveOpenForRunFlipsOpenToApprovedAndIsReplaySafe() {
+    // Story 3f-5 (R6) — the CAS guard. First call flips the one open row (returns 1); a replay
+    // finds no open row (returns 0) so the parent decomposition short-circuits.
+    String run = newRun();
+    NewSplitProposal only = proposal(run, "claude:latest", "claude:latest");
+    writePort.insertOpen(only);
+
+    int flipped = writePort.approveOpenForRun(run);
+    assertThat(flipped).isEqualTo(1);
+    assertThat(readPort.hasOpenForRun(run)).isFalse();
+    assertThat(readPort.findLatestForRun(run))
+        .get()
+        .extracting(SplitProposalView::status)
+        .isEqualTo(SplitProposalView.STATUS_APPROVED);
+
+    // Replay: the row is already approved, so no open row matches → 0 rows updated.
+    assertThat(writePort.approveOpenForRun(run)).isZero();
+  }
+
+  @Test
   void currentSplitProposalLoopCountReadsTheRunColumn() {
     String run = newRun();
     assertThat(readPort.currentSplitProposalLoopCount(run)).isZero();

@@ -26,6 +26,7 @@ import { useWorkflowMutation, type WorkflowMutationResult } from './useWorkflowM
 
 type SplitProposalResponse = components['schemas']['SplitProposalResponse'];
 type ReproposeSplitRequest = components['schemas']['ReproposeSplitRequest'];
+type SplitCommitResponse = components['schemas']['SplitCommitResponse'];
 
 /** The variables a caller passes to re-propose a split. */
 export interface ReproposeSplitVariables {
@@ -39,6 +40,7 @@ export type ReproposeSplitResult = WorkflowMutationResult<
   ReproposeSplitVariables
 >;
 export type DeclineSplitResult = WorkflowMutationResult<SplitProposalResponse, void>;
+export type ApproveSplitResult = WorkflowMutationResult<SplitCommitResponse, void>;
 
 /** Request an advisory split proposal (matrix offers this when no proposal is open). */
 export function useRequestSplit(workflowRunId: string): RequestSplitResult {
@@ -83,6 +85,29 @@ export function useDeclineSplit(workflowRunId: string): DeclineSplitResult {
     mutationFn: async ({ idempotencyKey }) => {
       return unwrap(
         await apiClient.POST('/api/v1/workflows/{workflowRunId}/split/decline', {
+          params: {
+            path: { workflowRunId },
+            header: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+          },
+        }),
+      );
+    },
+  });
+}
+
+/**
+ * Story 3f-5 — commit the open split proposal (offered when a proposal is open). UNLIKE the three
+ * advisory mutations above this one COMMITS the decomposition: it fans the proposal out into child
+ * runs and transitions this run to Split. Idempotent under the minted `Idempotency-Key`; on success
+ * the detail/events/allowed-actions/splitProposal queries + run-queue lists refetch (the run leaves
+ * its gate, so the panel + bar tear down to the new state).
+ */
+export function useApproveSplit(workflowRunId: string): ApproveSplitResult {
+  return useWorkflowMutation<void, SplitCommitResponse>({
+    workflowRunId,
+    mutationFn: async ({ idempotencyKey }) => {
+      return unwrap(
+        await apiClient.POST('/api/v1/workflows/{workflowRunId}/split/approve', {
           params: {
             path: { workflowRunId },
             header: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },

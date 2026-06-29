@@ -60,6 +60,7 @@ class RunDependencyEndpointContractTest {
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
   @MockitoBean private RunDependencyService runDependencyService;
   @MockitoBean private SplitProposalService splitProposalService;
+  @MockitoBean private org.dradgo.application.workflow.SplitCommitService splitCommitService;
 
   @BeforeEach
   void stubActorResolver() {

@@ -23,6 +23,7 @@
     "regenerate_spec_with_clarifications",
     "request_split",
     "continue_as_single",
-    "repropose_split"
+    "repropose_split",
+    "approve_split"
   ]
 }

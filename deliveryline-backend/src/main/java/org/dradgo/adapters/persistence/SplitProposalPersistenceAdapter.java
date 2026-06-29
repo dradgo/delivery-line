@@ -56,6 +56,12 @@ public class SplitProposalPersistenceAdapter
        where workflow_run_id = :workflowRunId and status = 'open'
       """;
 
+  private static final String APPROVE_OPEN_SQL =
+      """
+      update split_proposals set status = 'approved'
+       where workflow_run_id = :workflowRunId and status = 'open'
+      """;
+
   private static final String SELECT_COLUMNS =
       """
       select public_id, workflow_run_id, reviewed_artifact_id, reviewed_artifact_version,
@@ -141,6 +147,15 @@ public class SplitProposalPersistenceAdapter
         jdbcTemplate.update(
             DISMISS_OPEN_SQL, new MapSqlParameterSource("workflowRunId", workflowRunId));
     log.info("split_proposals dismiss workflowRunId={} updated={}", workflowRunId, updated);
+    return updated;
+  }
+
+  @Override
+  public int approveOpenForRun(String workflowRunId) {
+    int updated =
+        jdbcTemplate.update(
+            APPROVE_OPEN_SQL, new MapSqlParameterSource("workflowRunId", workflowRunId));
+    log.info("split_proposals approve workflowRunId={} updated={}", workflowRunId, updated);
     return updated;
   }
 

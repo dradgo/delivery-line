@@ -74,8 +74,14 @@ public enum AllowedAction implements RegistryValue {
   DECLINE_SPLIT("continue_as_single"),
   // Story 3f-4 (AC1/AC4) — re-run the proposal call with operator feedback (materialized by
   // reference). Canonical executor is SplitProposalService.repropose; surfaced when an open
-  // proposal exists. (APPROVE_SPLIT("approve_split") is owned by story 3f-5 — do NOT add it here.)
-  REPROPOSE_SPLIT("repropose_split");
+  // proposal exists.
+  REPROPOSE_SPLIT("repropose_split"),
+  // Story 3f-5 (AC1) — commit the current open split proposal: best-effort fan-out into child runs
+  // (sub-tickets where supported, else internal-only), dependency edges, and a parent decomposition
+  // into the non-terminal SPLIT state. Canonical executor is SplitCommitService.commit; surfaced
+  // alongside repropose_split/continue_as_single when an open proposal exists at the gate role.
+  // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only).
+  APPROVE_SPLIT("approve_split");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

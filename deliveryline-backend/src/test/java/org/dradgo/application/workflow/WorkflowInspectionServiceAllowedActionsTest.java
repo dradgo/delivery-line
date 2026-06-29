@@ -387,9 +387,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void specApprovalWithOpenSplitProposalOffersReproposeAndDeclineNotRequest() {
-    // Story 3f-4 (AC1/AC8): an OPEN split proposal flips the overlay from request_split to the
-    // two-action repropose/decline loop at the spec gate.
+  void specApprovalWithOpenSplitProposalOffersApproveReproposeAndDeclineNotRequest() {
+    // Story 3f-4 (AC1/AC8) + 3f-5 (AC1): an OPEN split proposal flips the overlay from
+    // request_split
+    // to the approve/repropose/decline action set at the spec gate.
     stubRunWithState(WorkflowState.WAITING_FOR_SPEC_APPROVAL, 0);
     stubNoLatestSpec();
     stubLatestEvent(LATEST_EVT);
@@ -398,13 +399,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
 
     assertThat(view.actions())
-        .contains(AllowedAction.REPROPOSE_SPLIT, AllowedAction.DECLINE_SPLIT)
+        .contains(
+            AllowedAction.APPROVE_SPLIT, AllowedAction.REPROPOSE_SPLIT, AllowedAction.DECLINE_SPLIT)
         .doesNotContain(AllowedAction.REQUEST_SPLIT);
   }
 
   @Test
-  void waitingForReviewWithOpenSplitProposalOffersReproposeAndDeclineNotRequest() {
-    // Story 3f-4 (AC1/AC8): same flip for the developer at the review gate.
+  void waitingForReviewWithOpenSplitProposalOffersApproveReproposeAndDeclineNotRequest() {
+    // Story 3f-4 (AC1/AC8) + 3f-5 (AC1): same flip for the developer at the review gate.
     stubRunWithState(WorkflowState.WAITING_FOR_REVIEW, 0);
     stubNoLatestSpec();
     stubLatestEvent(LATEST_EVT);
@@ -413,8 +415,26 @@ class WorkflowInspectionServiceAllowedActionsTest {
     AllowedActionsView view = service.getAllowedActions(RUN, "developer");
 
     assertThat(view.actions())
-        .contains(AllowedAction.REPROPOSE_SPLIT, AllowedAction.DECLINE_SPLIT)
+        .contains(
+            AllowedAction.APPROVE_SPLIT, AllowedAction.REPROPOSE_SPLIT, AllowedAction.DECLINE_SPLIT)
         .doesNotContain(AllowedAction.REQUEST_SPLIT);
+  }
+
+  @Test
+  void noOpenSplitProposalDoesNotOfferApproveSplit() {
+    // Story 3f-5 (AC1): approve_split appears ONLY when an open proposal exists; the no-open
+    // overlay
+    // offers request_split and never approve_split.
+    stubRunWithState(WorkflowState.WAITING_FOR_SPEC_APPROVAL, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+    when(splitProposals.hasOpenForRun(RUN)).thenReturn(false);
+
+    AllowedActionsView view = service.getAllowedActions(RUN, "product_reviewer");
+
+    assertThat(view.actions())
+        .contains(AllowedAction.REQUEST_SPLIT)
+        .doesNotContain(AllowedAction.APPROVE_SPLIT);
   }
 
   // ---------------------------------------------------------------------------

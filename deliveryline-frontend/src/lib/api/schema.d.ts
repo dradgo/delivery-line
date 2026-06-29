@@ -590,6 +590,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/split/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Commit the split — fan out into child runs (story 3f-5)
+         * @description Commit the current open split proposal: best-effort fan-out into child runs (sub-tickets where the connector supports it, else internal-only), wire dependency edges, and decompose the parent into the non-terminal Split state when ≥1 child is created. Idempotent under Idempotency-Key. A zero-child commit returns parentDecomposed=false + outcome=aborted_no_children with the parent untouched.
+         */
+        post: operations["approveSplit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/split/decline": {
         parameters: {
             query?: never;
@@ -1333,6 +1353,23 @@ export interface components {
             /** @example configured */
             status?: string;
         };
+        SplitCommitResponse: {
+            /** @description The created child run ids, in subtask ordinal order. */
+            childRunIds?: string[];
+            /**
+             * @description Aggregate outcome.
+             * @example decomposed
+             * @enum {string}
+             */
+            outcome?: "decomposed" | "aborted_no_children";
+            /** @description True when ≥1 child was created and the parent transitioned to Split. */
+            parentDecomposed?: boolean;
+            /** @example splprop_abc123 */
+            splitProposalId?: string;
+            subtasks?: components["schemas"]["SplitSubtaskOutcomePayload"][];
+            /** @example run_abc123 */
+            workflowRunId?: string;
+        };
         SplitDependencyPayload: {
             /**
              * Format: int32
@@ -1384,6 +1421,25 @@ export interface components {
              * @enum {string}
              */
             state?: "none" | "pending" | "available" | "unavailable";
+        };
+        SplitSubtaskOutcomePayload: {
+            /** @example run_child123 */
+            childRunId?: string;
+            /** @example LIN-456 */
+            childTicketRef?: string;
+            /**
+             * Format: int32
+             * @example 1
+             */
+            ordinal?: number;
+            /** @description Failure cause class (only when status=failed). */
+            reason?: string;
+            /**
+             * @description Per-subtask outcome.
+             * @example created
+             * @enum {string}
+             */
+            status?: "created" | "internal_only" | "failed";
         };
         SplitSubtaskPayload: {
             /**
@@ -3346,6 +3402,31 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    approveSplit: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SplitCommitResponse"];
                 };
             };
         };

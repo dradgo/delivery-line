@@ -1394,6 +1394,45 @@
         },
         "type" : "object"
       },
+      "SplitCommitResponse" : {
+        "properties" : {
+          "childRunIds" : {
+            "description" : "The created child run ids, in subtask ordinal order.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "outcome" : {
+            "description" : "Aggregate outcome.",
+            "enum" : [
+              "decomposed",
+              "aborted_no_children"
+            ],
+            "example" : "decomposed",
+            "type" : "string"
+          },
+          "parentDecomposed" : {
+            "description" : "True when ≥1 child was created and the parent transitioned to Split.",
+            "type" : "boolean"
+          },
+          "splitProposalId" : {
+            "example" : "splprop_abc123",
+            "type" : "string"
+          },
+          "subtasks" : {
+            "items" : {
+              "$ref" : "#/components/schemas/SplitSubtaskOutcomePayload"
+            },
+            "type" : "array"
+          },
+          "workflowRunId" : {
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "SplitDependencyPayload" : {
         "properties" : {
           "fromOrdinal" : {
@@ -1477,6 +1516,38 @@
               "unavailable"
             ],
             "example" : "available",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "SplitSubtaskOutcomePayload" : {
+        "properties" : {
+          "childRunId" : {
+            "example" : "run_child123",
+            "type" : "string"
+          },
+          "childTicketRef" : {
+            "example" : "LIN-456",
+            "type" : "string"
+          },
+          "ordinal" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "reason" : {
+            "description" : "Failure cause class (only when status=failed).",
+            "type" : "string"
+          },
+          "status" : {
+            "description" : "Per-subtask outcome.",
+            "enum" : [
+              "created",
+              "internal_only",
+              "failed"
+            ],
+            "example" : "created",
             "type" : "string"
           }
         },
@@ -4674,6 +4745,54 @@
           }
         },
         "summary" : "Get the current split proposal (story 3f-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/split/approve" : {
+      "post" : {
+        "description" : "Commit the current open split proposal: best-effort fan-out into child runs (sub-tickets where the connector supports it, else internal-only), wire dependency edges, and decompose the parent into the non-terminal Split state when ≥1 child is created. Idempotent under Idempotency-Key. A zero-child commit returns parentDecomposed=false + outcome=aborted_no_children with the parent untouched.",
+        "operationId" : "approveSplit",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SplitCommitResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "summary" : "Commit the split — fan out into child runs (story 3f-5)",
         "tags" : [
           "Workflows"
         ]

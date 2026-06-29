@@ -14,9 +14,11 @@
  * {@link ReviewerVerdictPanel}.
  */
 import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import type { components } from '@/lib/api/schema';
 import type { StateName } from '@/lib/state-signifiers';
 
 import {
@@ -26,9 +28,17 @@ import {
 } from '../approvalDecisionView';
 import { useAllowedActions } from '../hooks/useAllowedActions';
 import { useSplitProposal, type SplitProposalResponse } from '../hooks/useSplitProposal';
-import { useDeclineSplit, useReproposeSplit, useRequestSplit } from '../hooks/useSplitActions';
+import {
+  useApproveSplit,
+  useDeclineSplit,
+  useReproposeSplit,
+  useRequestSplit,
+} from '../hooks/useSplitActions';
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
 import { StateSignifierChip } from './WorkflowStateBadge';
+
+/** Story 3f-5 — the commit result the approve action returns. */
+export type SplitCommitResponse = components['schemas']['SplitCommitResponse'];
 
 /** The channel-state → color-independent signifier mapping (icon + label). */
 const STATE_SIGNIFIER: Record<
@@ -151,10 +161,9 @@ export function SplitProposalPanel({ proposal, className }: SplitProposalPanelPr
           </dl>
 
           {/*
-            STORY 3f-5 PLACEHOLDER — the commit affordance ("approve_split") lands here: a
-            governed primary that commits the proposed subtasks as child runs, moves the parent
-            to the non-terminal Split state, and wires the run-dependency edges. It is
-            intentionally absent in 3f-4 (advisory front-half ONLY).
+            Story 3f-5 — the governed commit affordance ("approve_split") is rendered by the
+            SplitActionBar below the panel (allowed-actions-driven), and the commit RESULT is
+            rendered by SplitCommitResultPanel once the approve lands.
           */}
         </div>
       ) : null}
@@ -162,6 +171,86 @@ export function SplitProposalPanel({ proposal, className }: SplitProposalPanelPr
       <p className="text-meta text-text-tertiary" data-testid="split-proposal-loop-count">
         Re-propose attempts: {proposal.loopCount ?? 0}
       </p>
+    </section>
+  );
+}
+
+/** The per-subtask outcome status → color-independent signifier mapping. */
+const FAILED_SUBTASK_SIGNIFIER: { stateName: StateName; label: string } = {
+  stateName: 'warning',
+  label: 'Failed',
+};
+const SUBTASK_STATUS_SIGNIFIER: Record<string, { stateName: StateName; label: string }> = {
+  created: { stateName: 'informational', label: 'Sub-ticket created' },
+  internal_only: { stateName: 'informational', label: 'Internal-only' },
+  failed: FAILED_SUBTASK_SIGNIFIER,
+};
+
+export interface SplitCommitResultPanelProps {
+  result: SplitCommitResponse | undefined;
+  className?: string | undefined;
+}
+
+/**
+ * Story 3f-5 — renders the commit result: each subtask's outcome (created / internal-only /
+ * failed), whether the parent decomposed, and the parent → child links. A zero-child commit
+ * (outcome=aborted_no_children) is surfaced with a color-independent warning signifier (the
+ * parent stays at its gate). Returns `null` before any approve has landed.
+ */
+export function SplitCommitResultPanel({ result, className }: SplitCommitResultPanelProps) {
+  if (result == null) {
+    return null;
+  }
+  const childRunIds = result.childRunIds ?? [];
+  const subtasks = result.subtasks ?? [];
+  const aborted = result.parentDecomposed !== true;
+
+  return (
+    <section
+      aria-label="Split commit result"
+      data-testid="split-commit-result"
+      data-split-outcome={result.outcome}
+      data-parent-decomposed={String(result.parentDecomposed === true)}
+      className={cn('flex flex-col gap-2 rounded-md border p-3 text-sm', className)}
+    >
+      <h3 className="font-medium">Split committed</h3>
+      <StateSignifierChip
+        stateName={aborted ? 'warning' : 'informational'}
+        label={
+          aborted
+            ? 'No subtasks could be created — the run stays at its gate'
+            : `Decomposed into ${childRunIds.length} child run${childRunIds.length === 1 ? '' : 's'}`
+        }
+        testId={`split-commit-${aborted ? 'aborted' : 'decomposed'}`}
+      />
+
+      <ol className="flex flex-col gap-1" data-testid="split-commit-subtasks">
+        {subtasks.map((subtask, index) => {
+          const status = subtask.status ?? 'failed';
+          const signifier = SUBTASK_STATUS_SIGNIFIER[status] ?? FAILED_SUBTASK_SIGNIFIER;
+          return (
+            <li
+              key={subtask.ordinal ?? index}
+              className="flex items-center gap-2"
+              data-testid="split-commit-subtask"
+              data-subtask-status={status}
+            >
+              <span className="font-medium">{subtask.ordinal ?? index + 1}.</span>
+              <span className="text-meta text-text-secondary">{signifier.label}</span>
+              {subtask.childRunId != null && subtask.childRunId !== '' ? (
+                <Link
+                  to="/workflows/$workflowRunId"
+                  params={{ workflowRunId: subtask.childRunId }}
+                  className="text-meta underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+                  data-testid="split-commit-child-link"
+                >
+                  {subtask.childRunId}
+                </Link>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
@@ -175,11 +264,14 @@ export interface SplitActionBarProps {
   canRepropose: boolean;
   /** Advertised when a proposal IS open (decline → continue as one ticket). */
   canDecline: boolean;
+  /** Story 3f-5 — advertised when a proposal IS open (approve → commit the split). */
+  canApprove: boolean;
   /** A split mutation is in flight — disable the controls. */
   pending: boolean;
   onRequest: () => void;
   onRepropose: (feedbackText: string) => void;
   onDecline: () => void;
+  onApprove: () => void;
 }
 
 /**
@@ -191,23 +283,46 @@ export function SplitActionBar({
   canRequest,
   canRepropose,
   canDecline,
+  canApprove,
   pending,
   onRequest,
   onRepropose,
   onDecline,
+  onApprove,
 }: SplitActionBarProps) {
   const [feedbackText, setFeedbackText] = useState('');
 
-  if (!canRequest && !canRepropose && !canDecline) {
+  if (!canRequest && !canRepropose && !canDecline && !canApprove) {
     return null;
   }
 
   const requestHint = resolveConsequenceHint(mode, 'request_split');
   const reproposeHint = resolveConsequenceHint(mode, 'repropose_split');
   const declineHint = resolveConsequenceHint(mode, 'continue_as_single');
+  const approveHint = resolveConsequenceHint(mode, 'approve_split');
 
   return (
     <div className="flex flex-col gap-2" data-testid="split-action-bar">
+      {canApprove ? (
+        <div className="flex flex-col gap-1">
+          <div>
+            <Button
+              type="button"
+              variant="default"
+              data-primary="true"
+              disabled={pending}
+              onClick={onApprove}
+              data-testid="split-approve-button"
+            >
+              Approve split
+            </Button>
+          </div>
+          {approveHint !== undefined ? (
+            <p className="text-meta text-text-tertiary">{approveHint}</p>
+          ) : null}
+        </div>
+      ) : null}
+
       {canRequest ? (
         <div className="flex flex-col gap-1">
           <div>
@@ -301,13 +416,21 @@ export function SplitProposalPanelContainer({
   const requestSplit = useRequestSplit(workflowRunId);
   const reproposeSplit = useReproposeSplit(workflowRunId);
   const declineSplit = useDeclineSplit(workflowRunId);
+  const approveSplit = useApproveSplit(workflowRunId);
+  // Hold the last commit result so the per-subtask outcomes + parent → child links survive the
+  // allowed-actions/detail refetch that tears the proposal panel down once the run leaves its gate.
+  const [commitResult, setCommitResult] = useState<SplitCommitResponse | undefined>(undefined);
 
   const actions = normalizeActions(allowedActionsQuery.data?.actions);
   const mode: ApprovalBarMode =
     detailQuery.data?.currentState === 'WaitingForReview'
       ? 'implementation_review'
       : 'spec_approval';
-  const pending = requestSplit.isPending || reproposeSplit.isPending || declineSplit.isPending;
+  const pending =
+    requestSplit.isPending ||
+    reproposeSplit.isPending ||
+    declineSplit.isPending ||
+    approveSplit.isPending;
 
   // Field-only structured logging (T-LOG-PII): the resulting channel state ONLY — NEVER
   // feedbackText / ids. Mirrors the sibling decision-bar containers.
@@ -321,11 +444,13 @@ export function SplitProposalPanelContainer({
   return (
     <div className={cn('flex flex-col gap-3', className)} data-testid="split-proposal-region">
       <SplitProposalPanel proposal={proposal} />
+      <SplitCommitResultPanel result={commitResult} />
       <SplitActionBar
         mode={mode}
         canRequest={actions.includes('request_split')}
         canRepropose={actions.includes('repropose_split')}
         canDecline={actions.includes('continue_as_single')}
+        canApprove={actions.includes('approve_split')}
         pending={pending}
         onRequest={() =>
           requestSplit.mutate(undefined, {
@@ -346,6 +471,21 @@ export function SplitProposalPanelContainer({
           declineSplit.mutate(undefined, {
             onSuccess: logResult('split.declineSubmit'),
             onError: logError('split.declineError'),
+          })
+        }
+        onApprove={() =>
+          approveSplit.mutate(undefined, {
+            onSuccess: (data) => {
+              setCommitResult(data);
+              // Field-only logging: the aggregate outcome + counts ONLY — NEVER ids/titles.
+              console.info({
+                event: 'split.approveSubmit',
+                outcome: data.outcome,
+                parentDecomposed: data.parentDecomposed,
+                childCount: data.childRunIds?.length ?? 0,
+              });
+            },
+            onError: logError('split.approveError'),
           })
         }
       />

@@ -1015,3 +1015,8 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 ## Deferred from: code review of 3f-3-run-dependency-graph-and-waiting-for-dependencies-gating (2026-06-28)
 
 - No liveness guard for never-satisfiable prerequisites — a prerequisite left in `Inbox` (never submitted) blocks its dependent indefinitely; only direct transitive cycles are checked, not reachability-to-completion. Deferred: by-design per AC3 (Inbox prerequisites are permitted). [RunDependencyService.java]
+
+## Deferred from: code review of 3f-5-split-commit-fan-out (2026-06-29)
+
+- replay() fabricates per-subtask outcomes [SplitCommitService.java:477-483] -- same-key replay reconstructs every surviving child as status=created with synthetic ascending ordinals and childTicketRef=null; cannot reproduce internal_only/failed outcomes, causing CLI/REST subtasks[] shape drift on replay. Acknowledged best-effort in code; a real fix needs durable per-subtask outcome persistence.
+- AC9 test-completeness deviations [SplitCommitServiceIT] -- no single full-loop IT driving request_split -> approve (proposal seeded directly via insertOpen); "mixed sub-ticket + internal-only" assertion split across the mixedOutcomes unit test + IntegrationLinkSplitChildIT instead of one IT; full-loop IT tagged @Tag("integration") not the prescribed docker-runner-it tier; application.* >=80% coverage not independently verifiable from the diff (claimed green in Completion Notes). Partially reconciled in Debug Log (spec-stage.auto-dispatch=false). Verify coverage in CI.

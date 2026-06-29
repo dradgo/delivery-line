@@ -73,6 +73,14 @@ public class IntegrationLinkService {
 
   static final String LINEAR_INTEGRATION_TYPE = "linear";
   static final String GITHUB_PR_INTEGRATION_TYPE = "github_pr";
+  // Story 3f-5 — links a split child run to its ticket. UNLIKE `linear` this type is exempt from
+  // the
+  // V6/V30 cross-run uniqueness index (uq_integration_links_active_external_ref), so many internal-
+  // only children of one parent may share the parent's external_ref; the V1 per-run uniqueness
+  // still
+  // blocks a single child from double-linking on replay. Outside the polling/completion-sync
+  // surface.
+  static final String INTERNAL_SUBTASK_INTEGRATION_TYPE = "internal_subtask";
   static final String COMMAND_TYPE = "IntegrationLinkService.linkTicket";
 
   private final IntegrationLinkRecordPort integrationLinkRecordPort;
@@ -356,6 +364,78 @@ public class IntegrationLinkService {
         workflowRunPublicId,
         inserted.publicId(),
         redacted.effectiveClassification().value());
+    return inserted;
+  }
+
+  /**
+   * Story 3f-5 (AC3/AC5/AC8) — associate a split child run with its ticket via an {@code
+   * internal_subtask} {@code integration_links} row. {@code ticketReference} is the child's own
+   * freshly-created sub-ticket reference when the connector could create one ({@code CREATED}),
+   * else the PARENT's ticket reference for the internal-only fallback ({@code
+   * INTERNAL_ONLY_SKIPPED} / {@code NO_TICKET_SOURCE}) — in which case many children of the same
+   * parent legally share the parent ref (the {@code internal_subtask} type is exempt from the V30
+   * cross-run uniqueness index; the V1 per-run uniqueness still makes a replay an idempotent
+   * no-op).
+   *
+   * <p>Runs inside the caller's transaction ({@link Propagation#MANDATORY}) — the 3f-5 per-subtask
+   * {@code REQUIRES_NEW} template provides it, so a child mint + its link commit or roll back as
+   * one unit. Does NOT fetch the ticket from a source adapter (the sub-ticket creation, if any,
+   * already happened upstream and the internal-only ref is the already-linked parent's) and does
+   * NOT take part in the polling/completion-sync surface.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public IntegrationLink linkSplitChildTicket(
+      String childRunPublicId, String ticketReference, ActorContext actor) {
+    PublicIdPrefixes.require(childRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    if (ticketReference == null || ticketReference.isBlank()) {
+      throw new IllegalArgumentException("ticketReference must be non-blank");
+    }
+    Objects.requireNonNull(actor, "actor");
+
+    // Idempotent on replay: a child already linked to the same ticket is a no-op. The per-ordinal
+    // idempotency key upstream guarantees the same ref on replay; a present-but-different ref is a
+    // defensive surprise — keep the first linkage rather than churn it.
+    Optional<IntegrationLink> existing =
+        integrationLinkRecordPort.findActiveByTypeAndWorkflowRunForUpdate(
+            INTERNAL_SUBTASK_INTEGRATION_TYPE, childRunPublicId);
+    if (existing.isPresent()) {
+      IntegrationLink link = existing.get();
+      if (!ticketReference.equals(link.externalRef())) {
+        log.warn(
+            "linkSplitChildTicket existing_link_different_ref childRunId={} existingRef={} requestedRef={}",
+            childRunPublicId,
+            MdcKeys.sanitizeForLog(link.externalRef()),
+            MdcKeys.sanitizeForLog(ticketReference));
+      } else {
+        log.info(
+            "linkSplitChildTicket idempotent_no_op childRunId={} integrationLinkPublicId={}",
+            childRunPublicId,
+            link.publicId());
+      }
+      return link;
+    }
+
+    String publicId = PublicIdPrefixes.INTEGRATION_LINK.next();
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("linkType", INTERNAL_SUBTASK_INTEGRATION_TYPE);
+    byte[] metadataBytes = serializeRedactedMetadata(objectMapper.valueToTree(metadata));
+
+    Instant now = Instant.now();
+    IntegrationLink inserted =
+        integrationLinkRecordPort.insert(
+            new NewIntegrationLink(
+                publicId,
+                childRunPublicId,
+                INTERNAL_SUBTASK_INTEGRATION_TYPE,
+                ticketReference,
+                metadataBytes,
+                now,
+                now));
+    log.info(
+        "linkSplitChildTicket success childRunId={} integrationLinkPublicId={} ticketRef={}",
+        childRunPublicId,
+        inserted.publicId(),
+        MdcKeys.sanitizeForLog(ticketReference));
     return inserted;
   }
 

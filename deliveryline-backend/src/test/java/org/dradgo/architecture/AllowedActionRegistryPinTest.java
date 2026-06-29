@@ -113,4 +113,13 @@ class AllowedActionRegistryPinTest {
     // allowed-actions.placeholder.json + RegistryContractTest).
     assertThat(AllowedAction.REPROPOSE_SPLIT.value()).isEqualTo("repropose_split");
   }
+
+  @Test
+  void approveSplitWireValueIsPinned() {
+    // Story 3f-5 AC1 — SplitCommitService.commit is the canonical executor; surfaced alongside
+    // repropose_split/continue_as_single when an open proposal exists at the gate role. Guard
+    // against a silent rename (lockstep with allowed-actions.placeholder.json +
+    // RegistryContractTest).
+    assertThat(AllowedAction.APPROVE_SPLIT.value()).isEqualTo("approve_split");
+  }
 }

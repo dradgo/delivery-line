@@ -966,6 +966,9 @@ public class WorkflowInspectionService {
       return;
     }
     if (hasOpenSplitProposal) {
+      // Story 3f-5 (AC1) — approve_split commits the open proposal; offered alongside the 3f-4
+      // iterate/dismiss actions for the same gate role.
+      actions.add(AllowedAction.APPROVE_SPLIT);
       actions.add(AllowedAction.REPROPOSE_SPLIT);
       actions.add(AllowedAction.DECLINE_SPLIT);
     } else {

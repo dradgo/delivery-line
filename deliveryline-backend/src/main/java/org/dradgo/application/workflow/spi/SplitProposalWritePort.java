@@ -30,6 +30,14 @@ public interface SplitProposalWritePort {
   int dismissOpenForRun(String workflowRunId);
 
   /**
+   * Story 3f-5 (R6) — compare-and-set the run's current {@code open} proposal to {@code approved}
+   * during the split commit. Returns the number of rows updated (0 or 1 given the partial unique
+   * index). A replayed approve finds 0 (already {@code approved}) — one of the three independent
+   * replay guards that make a double-decomposition impossible.
+   */
+  int approveOpenForRun(String workflowRunId);
+
+  /**
    * Story 3f-4 (AC4/R3) — persist the redacted re-propose operator feedback, keyed by the reviewer
    * execution that carries the dispatch, so the context-bundle compose can materialize it
    * by-reference (kind {@code split.feedback}). The {@code feedbackText} is ALREADY redacted by the

@@ -103,6 +103,8 @@ public class WorkflowController {
   private final org.dradgo.application.workflow.RunDependencyService runDependencyService;
   // Story 3f-4 — advisory split-proposal channel (request/repropose/decline + GET split-proposal).
   private final org.dradgo.application.workflow.SplitProposalService splitProposalService;
+  // Story 3f-5 — commit the open split proposal (best-effort fan-out + parent decomposition).
+  private final org.dradgo.application.workflow.SplitCommitService splitCommitService;
   // Used ONLY to re-serialize the already-parsed manual-artifact `result` tree (a Map/List tree the
   // Jackson 3 HTTP converter produced) back to bytes for validation/ingest — a config-independent
   // tree round-trip, so a local mapper is safe. Cross-channel idempotency parity does NOT depend on
@@ -122,7 +124,8 @@ public class WorkflowController {
       WorkflowArchiveService workflowArchiveService,
       ManualArtifactSubmissionService manualArtifactSubmissionService,
       org.dradgo.application.workflow.RunDependencyService runDependencyService,
-      org.dradgo.application.workflow.SplitProposalService splitProposalService) {
+      org.dradgo.application.workflow.SplitProposalService splitProposalService,
+      org.dradgo.application.workflow.SplitCommitService splitCommitService) {
     this.workflowCommandService = workflowCommandService;
     this.workflowInspectionService = workflowInspectionService;
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
@@ -132,6 +135,7 @@ public class WorkflowController {
     this.manualArtifactSubmissionService = manualArtifactSubmissionService;
     this.runDependencyService = runDependencyService;
     this.splitProposalService = splitProposalService;
+    this.splitCommitService = splitCommitService;
   }
 
   // ---------------------------------------------------------------------------
@@ -453,6 +457,43 @@ public class WorkflowController {
                     workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
     log.info(
         "REST split decline success workflowRunId={} state={}", workflowRunId, response.state());
+    return response;
+  }
+
+  @PostMapping(
+      value = "/{workflowRunId}/split/approve",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "approveSplit",
+      summary = "Commit the split — fan out into child runs (story 3f-5)",
+      description =
+          "Commit the current open split proposal: best-effort fan-out into child runs (sub-tickets"
+              + " where the connector supports it, else internal-only), wire dependency edges, and"
+              + " decompose the parent into the non-terminal Split state when ≥1 child is created."
+              + " Idempotent under Idempotency-Key. A zero-child commit returns parentDecomposed="
+              + "false + outcome=aborted_no_children with the parent untouched.")
+  public SplitCommitResponse approveSplit(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest) {
+    String actorIdentity = resolveHumanActor(idempotencyKey, actorIdentityHeader, httpRequest);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    log.info(
+        "REST split approve received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    SplitCommitResponse response =
+        SplitCommitResponse.from(
+            splitCommitService.commit(
+                new org.dradgo.application.workflow.ApproveSplitCommand(
+                    workflowRunId, actorIdentity, ActorType.HUMAN, idempotencyKey, correlationId)));
+    log.info(
+        "REST split approve success workflowRunId={} parentDecomposed={} childCount={} outcome={}",
+        workflowRunId,
+        response.parentDecomposed(),
+        response.childRunIds().size(),
+        response.outcome());
     return response;
   }
 
