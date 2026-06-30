@@ -96,6 +96,47 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRunEntity, 
   List<WorkflowRunEntity> findByCurrentStateAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(
       String currentState, Pageable pageable);
 
+  // Story 3f-8 (AC1) — stranded split parents: runs in `Split` (=:splitState) that have at least
+  // one
+  // direct child AND no direct child in a non-`Completed` (<>:completedState) state, i.e. every
+  // child
+  // is done but the parent never rolled up (a transient failure of the 3f-7 afterCommit rollup
+  // hook).
+  // The child link is parent_run_id == parent.publicId (the parent's public id, not its bigint id).
+  // Oldest-first (created_at asc, id tiebreak) so the longest-stranded parents heal first; Pageable
+  // caps the batch (the sweep WARNs when the result fills the limit — no silent truncation). The
+  // two
+  // correlated EXISTS/NOT-EXISTS subqueries are index-supported by parent_run_id (V27); `Split` is
+  // a
+  // low-cardinality slice of current_state so no dedicated state index is required (scope guard).
+  // Code-review 2026-06-30: exclude ARCHIVED parents (archived_at is null).
+  // WorkflowTransitionService
+  // rejects a transition on an archived run, so an archived Split parent would be re-discovered
+  // every
+  // tick, throw inside the swallowed rollup, never flip, and WARN-spam forever while head-of-line
+  // blocking recoverable strands at the front of the bounded oldest-first scan. The child
+  // subqueries
+  // stay archive-unfiltered to mirror the 3f-7 rollup gate's own all-children-Completed check.
+  @Query(
+      """
+      select parent
+      from WorkflowRunEntity parent
+      where parent.currentState = :splitState
+        and parent.archivedAt is null
+        and exists (
+          select 1 from WorkflowRunEntity child
+          where child.parentRunId = parent.publicId)
+        and not exists (
+          select 1 from WorkflowRunEntity child
+          where child.parentRunId = parent.publicId
+            and child.currentState <> :completedState)
+      order by parent.createdAt asc, parent.id asc
+      """)
+  List<WorkflowRunEntity> findStrandedSplitParents(
+      @Param("splitState") String splitState,
+      @Param("completedState") String completedState,
+      Pageable pageable);
+
   @Query(
       """
       select workflowRun

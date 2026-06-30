@@ -19,6 +19,26 @@ public interface WorkflowRunReadPort {
   }
 
   /**
+   * Story 3f-8 (AC1) — discovery query backing the split-rollup reconciliation sweep. Returns
+   * parent runs currently in {@code Split} whose direct children are <strong>all {@code
+   * Completed}</strong> (and that have at least one child), capped at {@code limit} rows. These are
+   * exactly the parents that a transient failure of the 3f-7 {@code afterCommit} completion-rollup
+   * hook stranded in non-terminal {@code Split}: every child is done but the parent never rolled
+   * up. The sweep re-invokes the idempotent 3f-7 rollup for each, driving {@code Split ->
+   * Completed}.
+   *
+   * <p>Bounded by {@code limit} so a single tick never scans unboundedly; the sweep logs a {@code
+   * WARN} when the result fills the batch (no silent truncation) and the remainder heals on the
+   * next tick. Default no-op so test doubles need not implement it.
+   *
+   * @param limit maximum stranded parents to return (the adapter clamps to {@code >= 1})
+   * @return stranded {@code Split} parents (possibly empty, never {@code null})
+   */
+  default List<WorkflowRunSnapshot> findStrandedSplitParents(int limit) {
+    return List.of();
+  }
+
+  /**
    * List workflow runs newest-first (by {@code created_at} descending, id tiebreak), optionally
    * filtered by current state, capped at {@code limit} rows (story 6.9 — backs {@code GET
    * /api/v1/workflows}). Ordering is performed in the database so the returned order is

@@ -97,12 +97,32 @@ public class RunSplitCompletionRollupService {
     }
   }
 
-  private void doRollup(String completedRunId, String correlationId) {
-    // Take the run-dependency advisory lock FIRST so two siblings completing near-simultaneously
-    // serialize: the first rolls the parent up, the second re-reads parent == Completed and returns
-    // (review 3f-3 D1/D2 — 3f-7 rollup MUST take the RDEP lock). Tx-scoped: released on commit.
-    runDependencyPort.lockDependencyGraph();
+  /**
+   * Story 3f-8 (AC1/AC2/AC3) — <strong>parent-targeted</strong> sibling of {@link
+   * #rollupParentOf(String, String)} for the reconciliation sweep, which already holds the parent
+   * id. Runs the <em>identical</em> {@link #doRollupForParent} gate keyed on {@code parentId}
+   * directly (no fake-child synthesis), in the same {@code REQUIRES_NEW} transaction with the same
+   * {@code lockDependencyGraph()}-first discipline and the same swallow+log. Safe to call
+   * repeatedly and alongside the live child-driven hook for the same parent: the advisory lock +
+   * the deterministic {@code split-rollup:<parentId>} transition key + the state machine rejecting
+   * a second {@code -> Completed} make a double-transition / double-emit impossible. A successful
+   * rollup re-fires the standard 3f-7 hook chain (grandparent recursion + 3f-3 dependency release),
+   * so the sweep need only poke the lowest stranded parent.
+   */
+  public void rollupParent(String parentId, String correlationId) {
+    try {
+      requiresNewTx.executeWithoutResult(status -> doRollupForParent(parentId, correlationId));
+    } catch (RuntimeException error) {
+      // Best-effort (AC2): mirror the child-driven swallow — one stuck parent must not abort the
+      // sweep's remaining parents (the sweep loop continues; the next tick retries this one).
+      log.warn(
+          "split-rollup swallowed an error (sweep) parentRunId={} cause={}",
+          parentId,
+          error.getClass().getSimpleName());
+    }
+  }
 
+  private void doRollup(String completedRunId, String correlationId) {
     Optional<WorkflowRunSnapshot> completed = workflowRunReadPort.findByPublicId(completedRunId);
     if (completed.isEmpty()) {
       return;
@@ -110,8 +130,24 @@ public class RunSplitCompletionRollupService {
     String parentId = completed.get().parentRunId();
     if (parentId == null) {
       // Parity (AC7): a top-level run has no parent — nothing to roll up. One cheap lineage read.
+      // (The child's parentRunId is immutable, so this resolution read needs no lock; the shared
+      // gate below takes the advisory lock as its first statement before the parent state-read.)
       return;
     }
+    doRollupForParent(parentId, correlationId);
+  }
+
+  // Story 3f-8 — the ONE shared rollup gate, keyed on the PARENT id. Both the child-driven
+  // (rollupParentOf -> doRollup resolves parentId) and the sweep-driven (rollupParent) entries
+  // delegate here so there is no forked gate logic (AC1). Same REQUIRES_NEW tx (the caller's
+  // TransactionTemplate), same lock-first ordering, same transition.
+  private void doRollupForParent(String parentId, String correlationId) {
+    // Take the run-dependency advisory lock FIRST so two near-simultaneous rollup attempts for the
+    // same parent (sibling completions and/or a sweep racing the live hook) serialize: the first
+    // rolls the parent up, the second re-reads parent == Completed and returns (review 3f-3 D1/D2 —
+    // the 3f-7 rollup MUST take the RDEP lock). Tx-scoped: released on commit.
+    runDependencyPort.lockDependencyGraph();
+
     Optional<WorkflowRunSnapshot> parentLookup = workflowRunReadPort.findByPublicId(parentId);
     if (parentLookup.isEmpty()) {
       return;
@@ -120,10 +156,10 @@ public class RunSplitCompletionRollupService {
     if (parent.currentState() != WorkflowState.SPLIT) {
       // Idempotent: an already-rolled-up parent (Completed) or a parent not in Split is a no-op.
       log.debug(
-          "split-rollup no-op (parent not Split) parentRunId={} parentState={} completedRunId={}",
+          "split-rollup no-op (parent not Split) parentRunId={} parentState={} correlationId={}",
           parentId,
           parent.currentState() == null ? "null" : parent.currentState().value(),
-          completedRunId);
+          correlationId);
       return;
     }
 
@@ -138,11 +174,11 @@ public class RunSplitCompletionRollupService {
       // Split, its dependents stay blocked, and there is NO cascade. Resolving the laggard to
       // COMPLETED (retry/takeover) re-fires this hook and resumes the rollup.
       log.info(
-          "split-rollup parent NOT ready parentRunId={} completedChildren={} of {} completedRunId={}",
+          "split-rollup parent NOT ready parentRunId={} completedChildren={} of {} correlationId={}",
           parentId,
           completedCount,
           total,
-          completedRunId);
+          correlationId);
       return;
     }
 
@@ -150,10 +186,10 @@ public class RunSplitCompletionRollupService {
     // state write) so the parent's own Completed transition re-fires the rollup hook (recursion to
     // the grandparent) AND the unchanged 3f-3 dependency-release hook (AC3 cross-split unblock).
     log.info(
-        "split-rollup hook firing parentRunId={} children={} completedRunId={}",
+        "split-rollup gate firing parentRunId={} children={} correlationId={}",
         parentId,
         total,
-        completedRunId);
+        correlationId);
     workflowTransitionService.transition(
         parentId,
         WorkflowState.COMPLETED,

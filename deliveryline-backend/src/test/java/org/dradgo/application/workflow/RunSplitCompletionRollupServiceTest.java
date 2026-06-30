@@ -181,6 +181,70 @@ class RunSplitCompletionRollupServiceTest {
                     && e.getFormattedMessage().contains("split-rollup swallowed an error"));
   }
 
+  // ---- Story 3f-8: parent-targeted entry (the reconciliation sweep's reuse of the same gate) ----
+
+  @Test
+  void rollupParentRollsUpThroughTheSameGate() {
+    when(readPort.findByPublicId(PARENT))
+        .thenReturn(Optional.of(run(PARENT, WorkflowState.SPLIT, null)));
+    when(readPort.findByParentRunId(PARENT))
+        .thenReturn(
+            List.of(
+                run(CHILD, WorkflowState.COMPLETED, PARENT),
+                run(SIBLING, WorkflowState.COMPLETED, PARENT)));
+
+    service.rollupParent(PARENT, "corr-sweep");
+
+    dependencyPortLockTaken();
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> details = ArgumentCaptor.forClass(Map.class);
+    verify(transitions)
+        .transition(
+            eq(PARENT),
+            eq(WorkflowState.COMPLETED),
+            any(),
+            eq("split_rollup"),
+            eq("split-rollup:" + PARENT),
+            details.capture());
+    assertThat(details.getValue()).containsEntry("viaSplitRollup", true);
+  }
+
+  @Test
+  void rollupParentIsNoOpWhenParentNotInSplit() {
+    when(readPort.findByPublicId(PARENT))
+        .thenReturn(Optional.of(run(PARENT, WorkflowState.COMPLETED, null)));
+
+    service.rollupParent(PARENT, "corr-sweep");
+
+    verify(transitions, never()).transition(any(), any(), any(), any(), any(), anyMap());
+  }
+
+  @Test
+  void rollupParentSwallowsAndLogsRuntimeException() {
+    when(readPort.findByPublicId(PARENT))
+        .thenReturn(Optional.of(run(PARENT, WorkflowState.SPLIT, null)));
+    when(readPort.findByParentRunId(PARENT))
+        .thenReturn(List.of(run(CHILD, WorkflowState.COMPLETED, PARENT)));
+    doThrow(new RuntimeException("boom"))
+        .when(transitions)
+        .transition(
+            eq(PARENT),
+            eq(WorkflowState.COMPLETED),
+            any(),
+            eq("split_rollup"),
+            eq("split-rollup:" + PARENT),
+            anyMap());
+
+    // Must NOT propagate — the sweep loop continues to the next stranded parent.
+    service.rollupParent(PARENT, "corr-sweep");
+
+    assertThat(appender.list)
+        .anyMatch(
+            e ->
+                e.getLevel() == Level.WARN
+                    && e.getFormattedMessage().contains("split-rollup swallowed an error (sweep)"));
+  }
+
   private void dependencyPortLockTaken() {
     verify(dependencyPort).lockDependencyGraph();
   }

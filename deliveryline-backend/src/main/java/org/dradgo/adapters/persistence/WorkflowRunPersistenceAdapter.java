@@ -96,6 +96,22 @@ public class WorkflowRunPersistenceAdapter
         .toList();
   }
 
+  // Story 3f-8 (AC1) — the reconciliation-sweep discovery query. Read-only; the sweep then
+  // re-invokes
+  // the idempotent 3f-7 rollup (its own REQUIRES_NEW tx) per returned parent. Limit clamped to >=
+  // 1.
+  @Override
+  @Transactional(readOnly = true)
+  public List<WorkflowRunSnapshot> findStrandedSplitParents(int limit) {
+    Pageable page = PageRequest.of(0, Math.max(1, limit));
+    return workflowRunRepository
+        .findStrandedSplitParents(
+            WorkflowState.SPLIT.value(), WorkflowState.COMPLETED.value(), page)
+        .stream()
+        .map(workflowRunEntityMapper::toSnapshot)
+        .toList();
+  }
+
   @Override
   @Transactional(readOnly = true)
   public List<WorkflowRunSnapshot> listRuns(

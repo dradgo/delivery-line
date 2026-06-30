@@ -89,6 +89,22 @@ deliveryline:
     # case the deep split is permitted and the override is recorded in the governed history. Default
     # 3 (a depth-3 run is refused — its children would be depth 4); <=0 normalized to 3.
     max-split-depth: 3
+    # Story 3f-8 (AC4) - split-rollup reconciliation sweep: durability for the 3f-7 completion-rollup
+    # hook. That SPLIT->COMPLETED rollup is driven SOLELY by the afterCommit hook on the LAST child's
+    # COMPLETED transition; a transient failure (advisory-lock timeout/deadlock/optimistic-lock/DB
+    # blip) of that one best-effort REQUIRES_NEW execution permanently strands the parent in Split
+    # with cross-split dependents blocked (no later event re-fires it). When enabled, a scheduled,
+    # advisory-locked sweep periodically finds Split parents whose direct children are ALL Completed
+    # and re-invokes the idempotent rollup (Split->Completed). `enabled` gates the scheduler bean via
+    # @ConditionalOnProperty - when false/absent NO scheduled bean is registered (the hook path is
+    # byte-identical to today). `interval-ms` is the fixed delay between ticks (<=0 normalized to
+    # 60000). `batch-limit` caps stranded parents scanned per tick - the sweep WARNs when a tick fills
+    # the batch (no silent truncation) and the remainder heals on the next tick (<=0 normalized to
+    # 100). Default OFF: the sweep is a safety net for a rare transient strand, opted in per-deploy.
+    rollup-sweep:
+      enabled: false
+      interval-ms: 60000
+      batch-limit: 100
   workflow:
     # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
     # escalation marker. The escalation event is appended exactly once (when the counter crosses
