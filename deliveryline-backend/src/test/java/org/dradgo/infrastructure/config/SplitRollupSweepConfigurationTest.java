@@ -3,7 +3,7 @@ package org.dradgo.infrastructure.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
-import org.dradgo.application.workflow.SplitRollupReconciliationSweep;
+import org.dradgo.application.workflow.SplitRollupReconciliationSweepService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -18,8 +18,8 @@ class SplitRollupSweepConfigurationTest {
   private final ApplicationContextRunner runner =
       new ApplicationContextRunner()
           .withBean(
-              SplitRollupReconciliationSweep.class,
-              () -> mock(SplitRollupReconciliationSweep.class))
+              SplitRollupReconciliationSweepService.class,
+              () -> mock(SplitRollupReconciliationSweepService.class))
           .withUserConfiguration(SplitRollupSweepConfiguration.class);
 
   @Test

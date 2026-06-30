@@ -42,15 +42,16 @@ import org.springframework.stereotype.Service;
  * infrastructure scheduler, keeping the application layer free of Spring scheduling annotations.
  */
 @Service
-public class SplitRollupReconciliationSweep {
+public class SplitRollupReconciliationSweepService {
 
-  private static final Logger log = LoggerFactory.getLogger(SplitRollupReconciliationSweep.class);
+  private static final Logger log =
+      LoggerFactory.getLogger(SplitRollupReconciliationSweepService.class);
 
   private final WorkflowRunReadPort workflowRunReadPort;
   private final RunSplitCompletionRollupService rollupService;
   private final RollupSweepProperties properties;
 
-  public SplitRollupReconciliationSweep(
+  public SplitRollupReconciliationSweepService(
       WorkflowRunReadPort workflowRunReadPort,
       RunSplitCompletionRollupService rollupService,
       RollupSweepProperties properties) {

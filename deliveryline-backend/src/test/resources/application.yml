@@ -37,7 +37,8 @@ deliveryline:
     # Story 3f-8 (AC4 / Trap) - mirror deliveryline.complex-ticket-flow.rollup-sweep.* (the test yaml
     # SHADOWS, does not merge with, main). Sweep is DISABLED in the shared test profile so no
     # @Scheduled trigger bean is registered and no always-on sweep fires during unrelated
-    # @SpringBootTests; SplitRollupReconciliationSweepIT invokes sweep() directly (no scheduler wait),
+    # @SpringBootTests; SplitRollupReconciliationSweepServiceIT invokes sweep() directly (no scheduler
+    # wait),
     # and the disabled-flag config test asserts the absence of the bean.
     rollup-sweep:
       enabled: false

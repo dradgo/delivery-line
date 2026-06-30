@@ -32,11 +32,11 @@ import org.springframework.test.context.ActiveProfiles;
 @SpringBootTest
 @ActiveProfiles({"test", "linear-mock"})
 @Tag("integration")
-class SplitRollupReconciliationSweepIT {
+class SplitRollupReconciliationSweepServiceIT {
 
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private WorkflowRunCreatePort createPort;
-  @Autowired private SplitRollupReconciliationSweep sweep;
+  @Autowired private SplitRollupReconciliationSweepService sweep;
   @Autowired private RunSplitCompletionRollupService rollupService;
 
   @AfterEach
@@ -79,7 +79,7 @@ class SplitRollupReconciliationSweepIT {
     newRun(WorkflowState.COMPLETED, parent);
     newRun(WorkflowState.COMPLETED, parent);
 
-    SplitRollupReconciliationSweep.SweepResult result = sweep.sweep();
+    SplitRollupReconciliationSweepService.SweepResult result = sweep.sweep();
 
     assertThat(result.found()).isEqualTo(1);
     assertThat(result.recovered()).isEqualTo(1);
@@ -93,7 +93,7 @@ class SplitRollupReconciliationSweepIT {
     newRun(WorkflowState.COMPLETED, parent);
     newRun(WorkflowState.WAITING_FOR_REVIEW, parent);
 
-    SplitRollupReconciliationSweep.SweepResult result = sweep.sweep();
+    SplitRollupReconciliationSweepService.SweepResult result = sweep.sweep();
 
     assertThat(result.found()).isZero();
     assertThat(currentState(parent)).isEqualTo("Split");
@@ -106,7 +106,7 @@ class SplitRollupReconciliationSweepIT {
     String notSplit = newRun(WorkflowState.WAITING_FOR_REVIEW, null);
     newRun(WorkflowState.COMPLETED, notSplit);
 
-    SplitRollupReconciliationSweep.SweepResult result = sweep.sweep();
+    SplitRollupReconciliationSweepService.SweepResult result = sweep.sweep();
 
     assertThat(result.found()).isZero();
     assertThat(currentState(notSplit)).isEqualTo("WaitingForReview");
@@ -123,7 +123,7 @@ class SplitRollupReconciliationSweepIT {
     newRun(WorkflowState.COMPLETED, parent);
     jdbcTemplate.update("update workflow_runs set archived_at = now() where public_id = ?", parent);
 
-    SplitRollupReconciliationSweep.SweepResult result = sweep.sweep();
+    SplitRollupReconciliationSweepService.SweepResult result = sweep.sweep();
 
     assertThat(result.found()).isZero();
     assertThat(currentState(parent)).isEqualTo("Split");
@@ -139,7 +139,7 @@ class SplitRollupReconciliationSweepIT {
     String parent = newRun(WorkflowState.SPLIT, grandparent);
     newRun(WorkflowState.COMPLETED, parent);
 
-    SplitRollupReconciliationSweep.SweepResult result = sweep.sweep();
+    SplitRollupReconciliationSweepService.SweepResult result = sweep.sweep();
 
     assertThat(result.found()).isEqualTo(1);
     assertThat(currentState(parent)).isEqualTo("Completed");
@@ -162,7 +162,7 @@ class SplitRollupReconciliationSweepIT {
 
     // A second tick finds nothing (parent no longer Split); a late hook for an already-rolled-up
     // parent is a no-op.
-    SplitRollupReconciliationSweep.SweepResult second = sweep.sweep();
+    SplitRollupReconciliationSweepService.SweepResult second = sweep.sweep();
     assertThat(second.found()).isZero();
     rollupService.rollupParentOf(childA, "corr-late-hook");
 

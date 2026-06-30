@@ -12,7 +12,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.util.List;
 import java.util.Optional;
-import org.dradgo.application.workflow.SplitRollupReconciliationSweep.SweepResult;
+import org.dradgo.application.workflow.SplitRollupReconciliationSweepService.SweepResult;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.registry.WorkflowState;
@@ -20,8 +20,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Story 3f-8 (AC1/AC4/AC5) — unit coverage of {@link SplitRollupReconciliationSweep}. */
-class SplitRollupReconciliationSweepTest {
+/** Story 3f-8 (AC1/AC4/AC5) — unit coverage of {@link SplitRollupReconciliationSweepService}. */
+class SplitRollupReconciliationSweepServiceTest {
 
   private static final String PARENT_A = "run_split_parentA";
   private static final String PARENT_B = "run_split_parentB";
@@ -39,7 +39,8 @@ class SplitRollupReconciliationSweepTest {
   void attachAppender() {
     appender = new ListAppender<>();
     appender.start();
-    logger = (Logger) org.slf4j.LoggerFactory.getLogger(SplitRollupReconciliationSweep.class);
+    logger =
+        (Logger) org.slf4j.LoggerFactory.getLogger(SplitRollupReconciliationSweepService.class);
     logger.addAppender(appender);
   }
 
@@ -53,8 +54,8 @@ class SplitRollupReconciliationSweepTest {
     return new WorkflowRunSnapshot(id, state, null, 1L, 0, false, null, parentId);
   }
 
-  private SplitRollupReconciliationSweep newSweep(RollupSweepProperties properties) {
-    return new SplitRollupReconciliationSweep(readPort, rollupService, properties);
+  private SplitRollupReconciliationSweepService newSweep(RollupSweepProperties properties) {
+    return new SplitRollupReconciliationSweepService(readPort, rollupService, properties);
   }
 
   @Test
