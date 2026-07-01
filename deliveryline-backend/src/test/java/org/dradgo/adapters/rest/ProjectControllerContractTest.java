@@ -128,6 +128,8 @@ class ProjectControllerContractTest {
         .andExpect(jsonPath("$.credentials[0].status").value("configured"))
         .andExpect(jsonPath("$.credentials[1].role").value("repo_host"))
         .andExpect(jsonPath("$.credentials[1].status").value("not_configured"))
+        .andExpect(jsonPath("$.credentials[2].role").value("reviewer"))
+        .andExpect(jsonPath("$.credentials[2].status").value("not_configured"))
         .andExpect(jsonPath("$.secret").doesNotExist());
   }
 
@@ -311,6 +313,39 @@ class ProjectControllerContractTest {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
+  }
+
+  @Test
+  void updateProjectSurfacesReviewerModelKind() throws Exception {
+    Project bound =
+        new Project(
+            PROJECT_ID,
+            "Acme Widgets",
+            "acme-widgets",
+            ProjectStatus.ACTIVE,
+            "https://github.com/acme/widgets",
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            "claude",
+            false,
+            null,
+            OffsetDateTime.parse("2026-06-21T00:00:00Z"),
+            null);
+    when(projectManagementService.updateProject(eq(PROJECT_ID), any())).thenReturn(bound);
+    when(projectCredentialService.isConfigured(anyString(), any())).thenReturn(false);
+
+    mockMvc
+        .perform(
+            put("/api/v1/projects/{id}", PROJECT_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"name\":\"Renamed\",\"ticketSourceKind\":\"linear\","
+                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,"
+                        + "\"reviewerModelKind\":\"claude\"}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.reviewerModelKind").value("claude"));
   }
 
   @Test

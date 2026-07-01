@@ -15,6 +15,9 @@ public record UpdateProjectCommand(
     String repoHostKind,
     boolean openspecEnabled,
     String runnerKind,
+    // Story 3d-2 — optional advisory-reviewer model binding (raw wire string). null/blank clears
+    // the binding; a non-blank value is validated to a non-MANUAL RunnerKind by the service.
+    String reviewerModelKind,
     // Story 3e-4 (AC6) — optional per-step runner mapping (raw wire strings), full-replace on
     // update.
     java.util.Map<String, String> stepRunnerKinds,
@@ -32,6 +35,7 @@ public record UpdateProjectCommand(
         ticketSourceKind,
         repoHostKind,
         openspecEnabled,
+        null,
         null,
         null,
         actorIdentity);

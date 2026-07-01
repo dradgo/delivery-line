@@ -1,7 +1,6 @@
 package org.dradgo.adapters.runner;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -20,12 +19,10 @@ import org.dradgo.application.project.ProjectRuntimeConfigResolver;
 import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerDispatchRequest;
 import org.dradgo.application.runner.RunnerProperties;
-import org.dradgo.domain.DomainException;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DataClassification;
-import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
@@ -35,11 +32,14 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * Story 3d-2 (AC1, Task 10) — the reviewer dispatch resolves its provider key from the PER-PROJECT
- * reviewer credential (through {@link ProjectConnectorResolver}), injects it under the kind's
- * preferred env-var name, and NEVER logs the secret value. A configured reviewer with no active
- * reviewer credential fails fast with {@code DOCTOR_RUNNER_SECRET_MISSING} (the worker then
- * degrades — AC6). A non-REVIEW dispatch is byte-identical to the story-3.5 host-key path.
+ * Story 3d-2 (AC1, Task 10) — the reviewer dispatch PREFERS the PER-PROJECT reviewer credential
+ * (through {@link ProjectConnectorResolver}), injects it under the kind's preferred env-var name,
+ * and NEVER logs the secret value. When the project has no reviewer credential, the dispatch falls
+ * back to the HOST runner secret (the same live {@link
+ * org.dradgo.application.runner.RunnerSecretsService} path non-REVIEW runs use) so the advisory
+ * reviewer works in a single-project / subscription-auth deployment without duplicating
+ * credentials; a per-project credential still overrides. A non-REVIEW dispatch is byte-identical to
+ * the story-3.5 host-key path.
  */
 class DockerRunnerAdapterReviewerCredentialTest {
 
@@ -66,7 +66,7 @@ class DockerRunnerAdapterReviewerCredentialTest {
             properties,
             new org.dradgo.application.runner.RunnerSecretsService(
                 new org.springframework.mock.env.MockEnvironment()
-                    .withProperty("CLAUDE_CODE_OAUTH_TOKEN", "host-token-should-not-be-used"),
+                    .withProperty("CLAUDE_CODE_OAUTH_TOKEN", "host-token-value"),
                 properties),
             mock(org.dradgo.application.runner.RunnerLogCaptureService.class),
             mock(org.dradgo.application.runner.RunnerExecutionService.class),
@@ -99,17 +99,19 @@ class DockerRunnerAdapterReviewerCredentialTest {
   }
 
   @Test
-  void reviewerWithoutCredentialFailsFast() {
+  void reviewerWithoutCredentialFallsBackToHostSecret() {
     when(runtimeResolver.resolveForRun("run_revcred0001")).thenReturn(project("claude"));
     when(connectorResolver.resolveConnectorSecret(any(), eq(ConnectorRole.REVIEWER.value())))
         .thenReturn(java.util.Optional.empty());
 
-    assertThatThrownBy(() -> adapter.resolveSecretEnv(reviewRequest(), RunnerKind.CLAUDE))
-        .isInstanceOf(DomainException.class)
-        .satisfies(
-            e ->
-                assertThat(((DomainException) e).errorCode())
-                    .isEqualTo(DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING));
+    Map<String, String> env = adapter.resolveSecretEnv(reviewRequest(), RunnerKind.CLAUDE);
+
+    // No per-project reviewer credential → the dispatch uses the HOST runner secret (the same path
+    // non-REVIEW runs use) instead of failing — the per-project credential is an OVERRIDE, not a
+    // hard requirement. The host token never appears in any log line.
+    assertThat(env).containsEntry("CLAUDE_CODE_OAUTH_TOKEN", "host-token-value").hasSize(1);
+    assertThat(appender.list)
+        .noneMatch(event -> event.getFormattedMessage().contains("host-token-value"));
   }
 
   @Test
@@ -127,7 +129,7 @@ class DockerRunnerAdapterReviewerCredentialTest {
             RunnerKind.CLAUDE);
 
     // The host CLAUDE_CODE_OAUTH_TOKEN resolves; the per-project resolvers are never consulted.
-    assertThat(env).containsEntry("CLAUDE_CODE_OAUTH_TOKEN", "host-token-should-not-be-used");
+    assertThat(env).containsEntry("CLAUDE_CODE_OAUTH_TOKEN", "host-token-value");
     org.mockito.Mockito.verifyNoInteractions(connectorResolver);
   }
 

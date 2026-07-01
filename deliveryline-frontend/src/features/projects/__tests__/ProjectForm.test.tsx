@@ -175,14 +175,17 @@ describe('ProjectForm — edit', () => {
       ...defaultProjectFixture,
       id: 'prj_runner',
       runnerKind: 'claude' as const,
+      reviewerModelKind: 'codex' as const,
       stepRunnerKinds: { spec: 'codex', prOutput: 'manual' },
     };
     renderForm(<ProjectForm mode={{ kind: 'edit', project }} open onClose={onClose} />);
     fireEvent.click(screen.getByTestId('project-form-submit'));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    // Full-replace: the prefilled project-wide default + per-step map ride the PUT body verbatim.
+    // Full-replace: the prefilled project-wide default + per-step map + reviewer binding ride the
+    // PUT body verbatim (story 3e-4 + 3d-2).
     expect(captured).toMatchObject({
       runnerKind: 'claude',
+      reviewerModelKind: 'codex',
       stepRunnerKinds: { spec: 'codex', prOutput: 'manual' },
     });
   });

@@ -72,6 +72,15 @@ public class ReviewResultHarvester {
   // with REQUIRED it would mark the ambient poll tx rollback-only and the poll commit would then
   // fail with UnexpectedRollbackException for an advisory side-effect. REQUIRES_NEW suspends the
   // ambient tx and isolates the verdict write entirely.
+  //
+  // DEADLOCK DEPENDENCY (2026-07-01): this REQUIRES_NEW re-locks the runner_executions row
+  // (recordCompleted/recordFailed → findByPublicIdForUpdate) on a SECOND pooled connection. It is
+  // only deadlock-free because the ambient poll tx does NOT hold this row's lock across the
+  // harvest:
+  // the completed-container raw-output capture (RunnerExecutionPersistenceAdapter.recordRawOutput)
+  // is PROPAGATION_REQUIRES_NEW and releases before the harvest. Do NOT make recordRawOutput join
+  // the ambient tx (REQUIRED) — that reintroduces a self-deadlock on the single scheduler thread
+  // (see SplitProposalHarvestPollDeadlockIT).
   private final TransactionTemplate reviewVerdictTransactionTemplate;
 
   // Story 3d-2 (code-review F1 residual) — the duplicate-verdict catch finalizes the reviewer

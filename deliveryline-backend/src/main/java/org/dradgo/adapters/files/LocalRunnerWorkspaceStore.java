@@ -264,6 +264,58 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   }
 
   @Override
+  public Path writeInputArtifact(
+      String runnerExecutionId, String relativeReference, byte[] content) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    if (relativeReference == null || relativeReference.isBlank()) {
+      throw new IllegalArgumentException("relativeReference must not be blank");
+    }
+    if (content == null) {
+      throw new IllegalArgumentException("content must not be null");
+    }
+    Path requested = Path.of(relativeReference);
+    if (requested.isAbsolute()) {
+      throw pathTraversal(runnerExecutionId, relativeReference);
+    }
+    Path inputDir = subdirPath(runnerExecutionId, INPUT_SUBDIR);
+    Path target = inputDir.resolve(requested).normalize();
+    // Containment: the resolved reference (which may contain nested dirs) must stay under input/.
+    if (!target.startsWith(inputDir) || target.equals(inputDir)) {
+      throw pathTraversal(runnerExecutionId, relativeReference);
+    }
+    Path tempTarget = target.resolveSibling(target.getFileName().toString() + TEMP_SUFFIX);
+    try {
+      Files.createDirectories(target.getParent());
+      Files.write(tempTarget, content);
+      try {
+        Files.move(
+            tempTarget,
+            target,
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING);
+      } catch (AtomicMoveNotSupportedException atomicUnsupported) {
+        Files.move(tempTarget, target, StandardCopyOption.REPLACE_EXISTING);
+      }
+      setPosixPermissionsIfSupported(target, RUNNER_READABLE_FILE_PERMS);
+    } catch (IOException error) {
+      try {
+        Files.deleteIfExists(tempTarget);
+      } catch (IOException ignored) {
+        // best-effort temp cleanup
+      }
+      throw new IllegalStateException(
+          "Failed to write input artifact " + relativeReference + " for " + runnerExecutionId,
+          error);
+    }
+    log.info(
+        "input artifact materialized runnerExecutionId={} reference={} bytes={}",
+        runnerExecutionId,
+        relativeReference,
+        content.length);
+    return target;
+  }
+
+  @Override
   public Optional<byte[]> tryReadResult(String runnerExecutionId) {
     Path outputDir = subdirPath(runnerExecutionId, OUTPUT_SUBDIR);
     Path target = outputDir.resolve(RUNNER_RESULT_FILENAME).normalize();

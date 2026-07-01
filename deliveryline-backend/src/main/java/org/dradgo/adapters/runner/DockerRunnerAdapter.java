@@ -108,6 +108,21 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
   }
 
+  // Story 3d-2/3f-4 (2026-07-01) — materializes referenced artifact content into input/ for REVIEW
+  // dispatches so the reviewer/split runner can read the reviewed artifact from the mounted input
+  // dir. Optional setter injection (like the resolvers above) keeps the ctor signatures stable and
+  // dodges the [[docker-adapter-ctor-dep-fans-out]] trap; null in lean unit slices / mock profiles.
+  @Nullable
+  private org.dradgo.application.runner.ReviewInputArtifactMaterializer
+      reviewInputArtifactMaterializer;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setReviewInputArtifactMaterializer(
+      org.dradgo.application.runner.ReviewInputArtifactMaterializer
+          reviewInputArtifactMaterializer) {
+    this.reviewInputArtifactMaterializer = reviewInputArtifactMaterializer;
+  }
+
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setProjectConnectorResolver(
       org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver) {
@@ -240,6 +255,18 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
                             + " — broker contract violated (RunnerBroker.dispatch must write the"
                             + " bundle to scratch before delegating to the adapter)"));
     workspaceStore.writeInputBundle(rexId, bundleBytes);
+
+    // Story 3d-2/3f-4 (2026-07-01) — a REVIEW dispatch (advisory reviewer AND split-proposal) has
+    // the reviewed artifact referenced BY PATH in the bundle; the runner reads its content from the
+    // mounted input dir (ContextBundleService.assembleForReview). Materialize that content into
+    // input/<referencePath> now, before the container is created. Without it the reviewer sees a
+    // dangling reference and emits a fail-verdict -> RUNNER_CONTRACT_VIOLATION. Gated to REVIEW to
+    // keep every other stage byte-identical; skipped in lean slices where the materializer is
+    // unwired.
+    if (request.stage() == org.dradgo.domain.registry.RunnerStage.REVIEW
+        && reviewInputArtifactMaterializer != null) {
+      reviewInputArtifactMaterializer.materialize(rexId, bundleBytes);
+    }
 
     Map<String, String> labels = new LinkedHashMap<>();
     labels.put("deliveryline.runnerExecutionId", rexId);
@@ -622,14 +649,20 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
 
   /**
    * Story 3d-2 (AC1) — resolve the {@code env-var → value} map for the dispatch. For a REVIEW
-   * dispatch the reviewer uses the PER-PROJECT reviewer credential (resolved through {@link
+   * dispatch the reviewer PREFERS the PER-PROJECT reviewer credential (resolved through {@link
    * org.dradgo.application.project.ProjectConnectorResolver}, decrypted in-memory only, injected
-   * under the kind's preferred env-var name, NEVER logged) — NOT the kind's host key. A configured
-   * reviewer with no active reviewer credential fails fast with {@code
-   * DOCTOR_RUNNER_SECRET_MISSING} so the worker degrades the reviewer execution (the run stays
-   * human-reviewable, AC6); there is no host-key fallback (the reviewer is strictly opt-in per
-   * project, AC5). Every non-REVIEW dispatch is byte-identical to story 3.5 (the kind's host key
-   * via {@link RunnerSecretsService}).
+   * under the kind's preferred env-var name, NEVER logged).
+   *
+   * <p>When the project has NO reviewer credential, the dispatch falls back to the HOST runner
+   * secret — the same live {@link RunnerSecretsService} resolution every non-REVIEW run uses (for
+   * codex that re-reads the host {@code auth.json} file fresh each dispatch, avoiding the stale
+   * single-use-refresh-token problem a frozen credential-store copy would hit). This makes the
+   * advisory reviewer + split-proposal usable in a single-project / subscription-auth deployment
+   * without duplicating credentials; a project that DOES set a reviewer credential still overrides
+   * the host key, preserving multi-project isolation. (This relaxes the original strictly-no-host-
+   * fallback stance of story 3d-2 AC5 to a per-project OVERRIDE, host DEFAULT.) The worker still
+   * degrades gracefully (AC6) if even the host secret is absent. Every non-REVIEW dispatch is
+   * byte-identical to story 3.5 (the kind's host key via {@link RunnerSecretsService}).
    */
   // Package-private for focused AC1 coverage (DockerRunnerAdapterReviewerCredentialTest).
   Map<String, String> resolveSecretEnv(RunnerDispatchRequest request, RunnerKind kind) {
@@ -650,14 +683,20 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
           projectConnectorResolver.resolveConnectorSecret(
               project, org.dradgo.domain.registry.ConnectorRole.REVIEWER.value());
       if (reviewerSecret.isEmpty() || reviewerSecret.get().isBlank()) {
-        Map<String, Object> details = new LinkedHashMap<>();
-        details.put("runnerKind", kind.value());
-        details.put("role", org.dradgo.domain.registry.ConnectorRole.REVIEWER.value());
-        details.put("projectId", project.publicId());
-        throw new org.dradgo.domain.DomainException(
-            org.dradgo.domain.registry.DomainErrorCode.DOCTOR_RUNNER_SECRET_MISSING,
-            "reviewer credential not configured for project " + project.publicId(),
-            details);
+        // No per-project reviewer credential → fall back to the HOST runner secret (the same live
+        // resolution non-REVIEW runs use; for codex that reads the host auth.json file fresh each
+        // dispatch). A per-project reviewer credential, when set, overrides this above. Lets the
+        // advisory reviewer + split-proposal work in a single-project/subscription deployment
+        // without a frozen, staleness-prone auth.json copy in the credential store.
+        log.info(
+            "reviewer dispatch host-secret fallback (no per-project reviewer credential)"
+                + " runnerExecutionId={} workflowRunId={} kind={} projectId={}",
+            request.runnerExecutionId(),
+            request.workflowRunId(),
+            kind.value(),
+            project.publicId());
+        return runnerSecretsService.resolveSecretsForRunner(
+            kind, request.stage(), request.workflowRunId());
       }
       java.util.List<String> names = runnerProperties.secretEnvNamesFor(kind);
       if (names.isEmpty()) {

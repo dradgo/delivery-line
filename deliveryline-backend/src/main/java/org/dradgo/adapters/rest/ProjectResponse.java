@@ -42,6 +42,13 @@ public record ProjectResponse(
         String runnerKind,
     @Schema(
             description =
+                "Advisory-reviewer model binding (story 3d-2); null = no reviewer bound. Gates "
+                    + "reviewer execution and the split-proposal channel (3f-4).",
+            nullable = true,
+            allowableValues = {"codex", "claude"})
+        String reviewerModelKind,
+    @Schema(
+            description =
                 "Per-step runner mapping (step → runner kind). Keys: spec, implementationPlan, "
                     + "prOutput. Values: codex, claude, manual. Empty when no per-step mapping is "
                     + "configured. Resolves more specifically than runnerKind.",
@@ -69,6 +76,7 @@ public record ProjectResponse(
         project.repoHostKind().value(),
         project.openspecEnabled(),
         project.runnerKind() == null ? null : project.runnerKind().value(),
+        project.reviewerModelKind(),
         toWireStepRunnerKinds(project.stepRunnerKinds()),
         project.createdAt(),
         credentials,

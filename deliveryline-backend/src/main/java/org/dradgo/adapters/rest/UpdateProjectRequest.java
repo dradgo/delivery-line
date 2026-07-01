@@ -34,6 +34,14 @@ public record UpdateProjectRequest(
         String runnerKind,
     @Schema(
             description =
+                "Optional advisory-reviewer model binding (story 3d-2). Gates reviewer execution and "
+                    + "the split-proposal channel (3f-4): null/empty = no reviewer bound. 'manual' is "
+                    + "not a valid reviewer.",
+            nullable = true,
+            allowableValues = {"codex", "claude"})
+        String reviewerModelKind,
+    @Schema(
+            description =
                 "Optional per-step runner mapping (step → runner kind), full-replace on update. "
                     + "Keys: spec, implementationPlan, prOutput. Values: codex, claude, manual. "
                     + "Omit or send empty to clear all per-step mappings.",

@@ -135,6 +135,7 @@ public class ProjectManagementService {
         ConnectorKind.fromValue(command.ticketSourceKind(), "ticketSourceKind");
     ConnectorKind repoHostKind = ConnectorKind.fromValue(command.repoHostKind(), "repoHostKind");
     RunnerKind runnerKind = parseRunnerKind(command.runnerKind());
+    String reviewerModelKind = parseReviewerModelKind(command.reviewerModelKind());
     Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds =
         parseStepRunnerKinds(command.stepRunnerKinds());
     Project mutated =
@@ -147,8 +148,10 @@ public class ProjectManagementService {
             ticketSourceKind,
             repoHostKind,
             command.openspecEnabled(),
-            // Reviewer binding is not yet editable through this surface (3d-2 owns it); preserve.
-            existing.reviewerModelKind(),
+            // Story 3d-2 — the advisory-reviewer binding is now editable here: null/blank clears
+            // it,
+            // a non-blank value is validated to a non-MANUAL RunnerKind by parseReviewerModelKind.
+            reviewerModelKind,
             existing.reviewerGatingEnabled(),
             // The update surface replaces or clears the nullable per-project runner override.
             runnerKind,
@@ -288,6 +291,32 @@ public class ProjectManagementService {
 
   private static RunnerKind parseRunnerKind(String runnerKind) {
     return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "runnerKind");
+  }
+
+  /**
+   * Story 3d-2 — parse/validate the advisory-reviewer binding for persistence. null/blank clears it
+   * (the canonical "no reviewer" value the domain stores as NULL). A non-blank value must resolve
+   * to a real reviewer model: an unknown kind surfaces a typed {@code UNKNOWN_REGISTRY_VALUE} 400
+   * (via {@code RunnerKind.fromValue}), and {@code manual} is rejected with {@code
+   * INVALID_COMMAND_PAYLOAD} because a manual reviewer is nonsensical (it would park, not produce a
+   * verdict — mirrors {@code ProjectRuntimeConfigResolver.resolveReviewerKind}). The stored value
+   * is the canonical kind value.
+   */
+  private static String parseReviewerModelKind(String reviewerModelKind) {
+    if (reviewerModelKind == null || reviewerModelKind.isBlank()) {
+      return null;
+    }
+    RunnerKind kind = RunnerKind.fromValue(reviewerModelKind, "reviewerModelKind");
+    if (kind == RunnerKind.MANUAL) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reviewerModelKind", reviewerModelKind);
+      details.put("reason", "manual is not a valid reviewer model");
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+          "reviewerModelKind 'manual' is not a valid reviewer",
+          details);
+    }
+    return kind.value();
   }
 
   /**

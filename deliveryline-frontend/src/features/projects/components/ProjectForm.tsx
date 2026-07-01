@@ -41,10 +41,12 @@ import {
   emptyProjectFormFields,
   projectErrorCode,
   projectErrorMessage,
+  reviewerModelKindOptions,
   runnerKindOptions,
   RUNNER_STEP_LABELS,
   RUNNER_STEPS,
   toProjectFormFields,
+  toWireReviewerModelKind,
   toWireRunnerKind,
   toWireStepRunnerKinds,
   validateProjectForm,
@@ -153,6 +155,8 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
           openspecEnabled: fields.openspecEnabled,
           // Full-replace runner config (story 3e-4): always send so an edit preserves/clears both.
           runnerKind: toWireRunnerKind(fields.runnerKind),
+          // Story 3d-2 — advisory-reviewer binding (gates the split-proposal channel, 3f-4).
+          reviewerModelKind: toWireReviewerModelKind(fields.reviewerModelKind),
           stepRunnerKinds: toWireStepRunnerKinds(fields.stepRunnerKinds),
         },
         { onSuccess: onClose, onSettled },
@@ -376,6 +380,42 @@ export function ProjectForm({ mode, open, onClose }: ProjectFormProps) {
               );
             })}
           </fieldset>
+
+          {/* Story 3d-2 — advisory-reviewer binding. Edit-only: project creation always starts
+              unbound (the create endpoint does not accept a reviewer). Binding a reviewer here is
+              what makes advisory review and the split-proposal channel (3f-4) available; "None"
+              clears it (those features degrade to "unavailable", the gate is never blocked). */}
+          {isEdit ? (
+            <fieldset className="flex flex-col gap-3 rounded-md border border-border p-3">
+              <legend className="px-1 text-sm font-medium">Advisory reviewer</legend>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="project-reviewer-model-kind">Reviewer model</Label>
+                <Select
+                  value={fields.reviewerModelKind}
+                  onValueChange={(value) => update('reviewerModelKind', value)}
+                >
+                  <SelectTrigger
+                    id="project-reviewer-model-kind"
+                    aria-label="Reviewer model"
+                    data-testid="project-reviewer-model-kind"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {reviewerModelKindOptions(fields.reviewerModelKind).map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-meta text-text-tertiary">
+                  Binds an advisory reviewer model. Required for the spec/review reviewer panel and
+                  the split-proposal channel; leave as “None” to keep both off.
+                </p>
+              </div>
+            </fieldset>
+          ) : null}
 
           {showGeneralError ? (
             <p

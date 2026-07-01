@@ -17,9 +17,12 @@ import {
   projectErrorCode,
   projectErrorMessage,
   resolveProjectActions,
+  REVIEWER_NONE,
+  reviewerModelKindOptions,
   runnerKindOptions,
   RUNNER_USE_DEFAULT,
   toProjectFormFields,
+  toWireReviewerModelKind,
   toWireRunnerKind,
   toWireStepRunnerKinds,
   validateProjectForm,
@@ -28,6 +31,7 @@ import {
 
 const defaultRunnerFields = {
   runnerKind: RUNNER_USE_DEFAULT,
+  reviewerModelKind: REVIEWER_NONE,
   stepRunnerKinds: {
     spec: RUNNER_USE_DEFAULT,
     implementationPlan: RUNNER_USE_DEFAULT,
@@ -122,6 +126,15 @@ describe('toProjectFormFields', () => {
     });
   });
 
+  it('prefills reviewerModelKind from the project; null degrades to the None sentinel', () => {
+    expect(toProjectFormFields({ name: 'X', reviewerModelKind: 'claude' }).reviewerModelKind).toBe(
+      'claude',
+    );
+    expect(toProjectFormFields({ name: 'X', reviewerModelKind: null }).reviewerModelKind).toBe(
+      REVIEWER_NONE,
+    );
+  });
+
   it('prefills runnerKind + per-step mapping from the project', () => {
     const fields = toProjectFormFields({
       name: 'X',
@@ -166,6 +179,25 @@ describe('runner mapping helpers (story 3e-4)', () => {
     expect(toWireRunnerKind(RUNNER_USE_DEFAULT)).toBeNull();
     expect(toWireRunnerKind('')).toBeNull();
     expect(toWireRunnerKind('manual')).toBe('manual');
+  });
+
+  it('reviewerModelKindOptions leads with None then codex/claude (no manual)', () => {
+    const options = reviewerModelKindOptions();
+    expect(options[0]).toEqual({ value: REVIEWER_NONE, label: 'None (no reviewer)' });
+    expect(options.map((option) => option.value)).toEqual([REVIEWER_NONE, 'codex', 'claude']);
+  });
+
+  it('reviewerModelKindOptions appends an unknown current value (forward drift)', () => {
+    expect(reviewerModelKindOptions('gpt-9000').at(-1)).toEqual({
+      value: 'gpt-9000',
+      label: 'gpt-9000',
+    });
+  });
+
+  it('toWireReviewerModelKind nulls the None sentinel and passes a real kind through', () => {
+    expect(toWireReviewerModelKind(REVIEWER_NONE)).toBeNull();
+    expect(toWireReviewerModelKind('')).toBeNull();
+    expect(toWireReviewerModelKind('claude')).toBe('claude');
   });
 
   it('toWireStepRunnerKinds omits "use default" steps and keeps bound ones', () => {
