@@ -64,14 +64,20 @@ export function connectorKindOptions(current: string): ConnectorKindOption[] {
 
 // ---- Connector-role vocabulary (write-only credentials) ------------------------
 
-/** The two connector roles (underscored wire form), in display order. */
-export const CONNECTOR_ROLES = ['ticket_source', 'repo_host'] as const;
+/**
+ * The connector roles a credential can be set for (underscored wire form), in display order.
+ * `reviewer` (story 3d-2) is the per-project advisory-reviewer model credential: a REVIEW-stage
+ * dispatch (advisory reviewer + the 3f-4 split-proposal) resolves THIS secret with no host-key
+ * fallback, so it must be settable here. Mirrors the backend `ConnectorRole` registry.
+ */
+export const CONNECTOR_ROLES = ['ticket_source', 'repo_host', 'reviewer'] as const;
 export type ConnectorRole = (typeof CONNECTOR_ROLES)[number];
 
 /** Human labels for each credential role. */
 export const CONNECTOR_ROLE_LABELS: Record<ConnectorRole, string> = {
   ticket_source: 'Ticket source',
   repo_host: 'Repository host',
+  reviewer: 'Reviewer model',
 };
 
 // ---- Connection-check vocabulary ----------------------------------------------
@@ -159,6 +165,63 @@ export function runnerKindOptions(defaultLabel: string, current?: string): Runne
   return base;
 }
 
+// ---- Reviewer-model vocabulary (story 3d-2; gates split-proposal, 3f-4) --------
+
+/**
+ * Frontend constant mirroring the advisory-reviewer kinds the backend accepts as a
+ * project's `reviewerModelKind` binding. NOTE this is a strict subset of `RUNNER_KINDS`:
+ * `manual` is NOT a valid reviewer (the backend rejects it with INVALID_COMMAND_PAYLOAD),
+ * so it is intentionally absent. Source of truth: the `reviewerModelKind` allowableValues
+ * in `UpdateProjectRequest`/`Project`.
+ */
+export const REVIEWER_MODEL_KINDS = ['codex', 'claude'] as const;
+export type ReviewerModelKind = (typeof REVIEWER_MODEL_KINDS)[number];
+
+/** Human labels for each reviewer-model kind (the wire value stays the lowercase id). */
+export const REVIEWER_MODEL_KIND_LABELS: Record<ReviewerModelKind, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+};
+
+const REVIEWER_MODEL_KIND_SET = new Set<string>(REVIEWER_MODEL_KINDS);
+
+/**
+ * Sentinel `Select` value meaning "no reviewer model bound" (the cleared state). Radix
+ * `Select` forbids an empty-string item value, so this stands in for the unbound state in
+ * form state; the wire mapper translates it back to `null`. While unbound, advisory review
+ * and the split-proposal channel (3f-4) degrade to "unavailable" — the gate is never blocked.
+ */
+export const REVIEWER_NONE = '__none__';
+
+/**
+ * Options for the reviewer-model `Select`: the "None" sentinel first, then the known
+ * reviewer kinds. When `current` is a value the frontend list does NOT know (forward
+ * drift), it is appended verbatim so an edit form preserves rather than silently drops it.
+ */
+export function reviewerModelKindOptions(current?: string): RunnerKindOption[] {
+  const base: RunnerKindOption[] = [
+    { value: REVIEWER_NONE, label: 'None (no reviewer)' },
+    ...REVIEWER_MODEL_KINDS.map((kind) => ({
+      value: kind,
+      label: REVIEWER_MODEL_KIND_LABELS[kind],
+    })),
+  ];
+  if (
+    current !== undefined &&
+    current !== '' &&
+    current !== REVIEWER_NONE &&
+    !REVIEWER_MODEL_KIND_SET.has(current)
+  ) {
+    return [...base, { value: current, label: current }];
+  }
+  return base;
+}
+
+/** The reviewer-model binding for the wire — `null` when "None (no reviewer)". */
+export function toWireReviewerModelKind(reviewerModelKind: string): string | null {
+  return reviewerModelKind === REVIEWER_NONE || reviewerModelKind === '' ? null : reviewerModelKind;
+}
+
 // ---- Form fields + validation -------------------------------------------------
 
 /** The values the create/edit form holds (all strings + the OpenSpec boolean). */
@@ -171,6 +234,8 @@ export interface ProjectFormFields {
   openspecEnabled: boolean;
   /** Project-wide runner default (the 3d-3 override); `RUNNER_USE_DEFAULT` = use global. */
   runnerKind: string;
+  /** Advisory-reviewer binding (3d-2); `REVIEWER_NONE` = no reviewer bound. */
+  reviewerModelKind: string;
   /** Per-step runner mapping; each `RUNNER_USE_DEFAULT` = use the project-wide default. */
   stepRunnerKinds: Record<RunnerStep, string>;
 }
@@ -194,6 +259,7 @@ export function emptyProjectFormFields(): ProjectFormFields {
     repoHostKind: 'github',
     openspecEnabled: false,
     runnerKind: RUNNER_USE_DEFAULT,
+    reviewerModelKind: REVIEWER_NONE,
     stepRunnerKinds: {
       spec: RUNNER_USE_DEFAULT,
       implementationPlan: RUNNER_USE_DEFAULT,
@@ -289,6 +355,8 @@ export function toProjectFormFields(project: Project): ProjectFormFields {
     openspecEnabled: project.openspecEnabled ?? false,
     // A nullable wire field serializes as JSON null → coalesce to the "use default" sentinel.
     runnerKind: project.runnerKind ?? RUNNER_USE_DEFAULT,
+    // null reviewerModelKind = no reviewer bound → the "None" sentinel.
+    reviewerModelKind: project.reviewerModelKind ?? REVIEWER_NONE,
     stepRunnerKinds: {
       spec: stepMap.spec ?? RUNNER_USE_DEFAULT,
       implementationPlan: stepMap.implementationPlan ?? RUNNER_USE_DEFAULT,

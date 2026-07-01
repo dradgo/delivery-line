@@ -64,6 +64,18 @@ public interface RunnerWorkspaceStore {
   Path writeInputBundle(String runnerExecutionId, byte[] bundleBytes);
 
   /**
+   * Story 3d-2/3f-4 (2026-07-01 review-materialization fix) — atomically write a referenced
+   * artifact's (already-redacted) content under {@code input/} at {@code relativeReference} (the
+   * bundle's {@code referencePath}, e.g. {@code artifacts/run_…/art_…/v1/spec.md}), creating any
+   * intermediate directories. The review/split context bundle references the reviewed artifact by
+   * path and the runner reads its content from the mounted input dir; without this materialization
+   * the reviewer sees a dangling reference and cannot review. Same temp-file + rename + containment
+   * (no absolute path, no {@code ..} escape, stays under {@code input/}) + runner-readable-perms
+   * guards as {@link #writeInputBundle}. Returns the absolute path of the written file.
+   */
+  Path writeInputArtifact(String runnerExecutionId, String relativeReference, byte[] content);
+
+  /**
    * Read {@code output/runner-result.v1.json} for the runner execution if the file exists. Returns
    * {@link Optional#empty()} for any of: workspace not prepared, file missing, file is a symlink
    * whose real path escapes {@code deliveryline.home}, IO failure. Never throws on a missing or

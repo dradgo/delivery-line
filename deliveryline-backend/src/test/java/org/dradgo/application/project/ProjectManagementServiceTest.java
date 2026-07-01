@@ -201,6 +201,7 @@ class ProjectManagementServiceTest {
             "github",
             false,
             null,
+            null,
             Map.of("implementationPlan", "claude"),
             "alex"));
 
@@ -282,9 +283,71 @@ class ProjectManagementServiceTest {
         service.updateProject(
             "prj_acme0001",
             new UpdateProjectCommand(
-                "Acme", null, "linear", "github", false, "claude", null, "alex"));
+                "Acme", null, "linear", "github", false, "claude", null, null, "alex"));
 
     assertThat(updated.runnerKind()).isEqualTo(RunnerKind.CLAUDE);
+  }
+
+  @Test
+  void updateProjectBindsReviewerModelKind() {
+    Project existing = project("prj_acme0001", "acme", ProjectStatus.ACTIVE);
+    when(store.findByPublicId("prj_acme0001")).thenReturn(Optional.of(existing));
+    when(store.update(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    Project updated =
+        service.updateProject(
+            "prj_acme0001",
+            new UpdateProjectCommand(
+                "Acme", null, "linear", "github", false, null, "claude", null, "alex"));
+
+    assertThat(updated.reviewerModelKind()).isEqualTo("claude");
+  }
+
+  @Test
+  void updateProjectClearsReviewerModelKindOnBlank() {
+    Project existing =
+        new Project(
+            "prj_acme0001",
+            "Acme",
+            "acme",
+            ProjectStatus.ACTIVE,
+            null,
+            ConnectorKind.LINEAR,
+            ConnectorKind.GITHUB,
+            false,
+            "claude",
+            false,
+            null,
+            OffsetDateTime.parse("2026-06-25T00:00:00Z"),
+            null,
+            Map.of());
+    when(store.findByPublicId("prj_acme0001")).thenReturn(Optional.of(existing));
+    when(store.update(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    Project updated =
+        service.updateProject(
+            "prj_acme0001",
+            new UpdateProjectCommand(
+                "Acme", null, "linear", "github", false, null, "  ", null, "alex"));
+
+    assertThat(updated.reviewerModelKind()).isNull();
+  }
+
+  @Test
+  void updateProjectRejectsManualReviewerModelKind() {
+    Project existing = project("prj_acme0001", "acme", ProjectStatus.ACTIVE);
+    when(store.findByPublicId("prj_acme0001")).thenReturn(Optional.of(existing));
+
+    assertThatThrownBy(
+            () ->
+                service.updateProject(
+                    "prj_acme0001",
+                    new UpdateProjectCommand(
+                        "Acme", null, "linear", "github", false, null, "manual", null, "alex")))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    verify(store, never()).update(any());
   }
 
   @Test

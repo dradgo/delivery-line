@@ -1137,6 +1137,11 @@ export interface components {
              */
             repositoryUrl?: string | null;
             /**
+             * @description Advisory-reviewer model binding (story 3d-2); null = no reviewer bound. Gates reviewer execution and the split-proposal channel (3f-4).
+             * @enum {string|null}
+             */
+            reviewerModelKind?: "codex" | "claude" | null;
+            /**
              * @description Per-project runner override; null uses defaults.
              * @enum {string|null}
              */
@@ -1522,6 +1527,11 @@ export interface components {
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
             repositoryUrl?: string | null;
+            /**
+             * @description Optional advisory-reviewer model binding (story 3d-2). Gates reviewer execution and the split-proposal channel (3f-4): null/empty = no reviewer bound. 'manual' is not a valid reviewer.
+             * @enum {string|null}
+             */
+            reviewerModelKind?: "codex" | "claude" | null;
             /**
              * @description Optional per-project runner override; null uses defaults.
              * @enum {string|null}

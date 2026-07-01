@@ -103,6 +103,31 @@ class LocalRunnerWorkspaceStoreTest {
   }
 
   @Test
+  void writeInputArtifactMaterializesNestedReferenceUnderInput() throws IOException {
+    WorkspaceLayout layout = store.prepare(REX_ID);
+    String reference = "artifacts/run_abc/art_def/v1/spec.md";
+
+    Path written = store.writeInputArtifact(REX_ID, reference, "# spec body".getBytes());
+
+    assertThat(written).isEqualTo(layout.input().resolve(reference).normalize());
+    assertThat(Files.readString(written)).isEqualTo("# spec body");
+    assertThat(written.startsWith(layout.input())).isTrue();
+  }
+
+  @Test
+  void writeInputArtifactRejectsAbsoluteAndTraversalReferences() {
+    store.prepare(REX_ID);
+
+    assertThatThrownBy(() -> store.writeInputArtifact(REX_ID, "../../escape.md", "x".getBytes()))
+        .isInstanceOf(DomainException.class);
+    assertThatThrownBy(
+            () ->
+                store.writeInputArtifact(
+                    REX_ID, tempHome.resolve("abs.md").toAbsolutePath().toString(), "x".getBytes()))
+        .isInstanceOf(DomainException.class);
+  }
+
+  @Test
   void prepareIsIdempotent() {
     WorkspaceLayout first = store.prepare(REX_ID);
     Path canary = first.input().resolve("seen");

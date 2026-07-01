@@ -34,6 +34,12 @@ export interface UpdateProjectVariables {
    */
   runnerKind?: string | null | undefined;
   /**
+   * Advisory-reviewer binding (3d-2). Full-replace on update: send `null` to clear it (no
+   * reviewer bound → advisory review + the split-proposal channel degrade to "unavailable"),
+   * or `"codex"`/`"claude"` to bind. Always sent by the edit form.
+   */
+  reviewerModelKind?: string | null | undefined;
+  /**
    * Per-step runner mapping (step → kind), full-replace on update: the submitted map is
    * authoritative. Send `{}` to clear all per-step mappings. Always sent by the edit form.
    */
@@ -61,6 +67,10 @@ export function useUpdateProject(projectId: string): UpdateProjectResult {
         // them explicitly (omitting runnerKind would clear the override; omitting the map clears it).
         runnerKind: (variables.runnerKind ?? null) as Exclude<
           UpdateProjectRequest['runnerKind'],
+          undefined
+        >,
+        reviewerModelKind: (variables.reviewerModelKind ?? null) as Exclude<
+          UpdateProjectRequest['reviewerModelKind'],
           undefined
         >,
         stepRunnerKinds: variables.stepRunnerKinds ?? {},

@@ -25,7 +25,7 @@ type SetCredentialResponse = components['schemas']['SetCredentialResponse'];
 
 /** The variables a caller passes to set a credential. The secret is write-only. */
 export interface SetCredentialVariables {
-  /** Underscored connector role wire form (`ticket_source` / `repo_host`). */
+  /** Underscored connector role wire form (`ticket_source` / `repo_host` / `reviewer`). */
   role: string;
   /** The plaintext secret — write-only, never returned/logged. */
   secret: string;

@@ -900,6 +900,17 @@
               "null"
             ]
           },
+          "reviewerModelKind" : {
+            "description" : "Advisory-reviewer model binding (story 3d-2); null = no reviewer bound. Gates reviewer execution and the split-proposal channel (3f-4).",
+            "enum" : [
+              "codex",
+              "claude"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "runnerKind" : {
             "description" : "Per-project runner override; null uses defaults.",
             "enum" : [
@@ -1799,6 +1810,17 @@
             "example" : "https://github.com/acme/widgets",
             "maxLength" : 2048,
             "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "reviewerModelKind" : {
+            "description" : "Optional advisory-reviewer model binding (story 3d-2). Gates reviewer execution and the split-proposal channel (3f-4): null/empty = no reviewer bound. 'manual' is not a valid reviewer.",
+            "enum" : [
+              "codex",
+              "claude"
+            ],
             "type" : [
               "string",
               "null"

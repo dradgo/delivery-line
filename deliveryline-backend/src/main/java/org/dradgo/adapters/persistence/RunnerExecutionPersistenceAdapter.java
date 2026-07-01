@@ -33,6 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
@@ -808,9 +809,22 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
   // needs an active one for its pessimistic lock. METADATA-ONLY: no state-machine guard, no status
   // mutation; an already-terminal row is the normal case (logs are captured after the row
   // completed)
-  // and must be tolerated. REQUIRED joins an ambient transaction when one is already active.
+  // and must be tolerated.
+  //
+  // PROPAGATION_REQUIRES_NEW (2026-07-01 deadlock fix): this pessimistic FOR UPDATE lock MUST NOT
+  // be
+  // held in the caller's ambient transaction across the subsequent result harvest. DockerRunner
+  // Adapter.poll() calls this (via captureRunnerLogs) INSIDE RunnerBroker.pollActiveExecutions's
+  // per-item tx, then the poll harvests the result — and the REVIEW harvesters (SplitProposal
+  // Harvester / ReviewResultHarvester) finalize the SAME runner_executions row in their own
+  // REQUIRES_NEW tx (a second pooled connection). If capture joined the ambient tx (REQUIRED), that
+  // ambient lock + the harvester's second-connection re-lock SELF-DEADLOCK on one scheduler thread
+  // (no lock_timeout -> hangs forever, wedging every @Scheduled runner task). Committing this
+  // metadata write in its own tx releases the row lock before the harvest. No caller holds this
+  // row's lock BEFORE calling capture (poll/timeout/recovery all capture first, then lock), so the
+  // new tx never self-conflicts.
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public RunnerExecutionSnapshot recordRawOutput(
       String publicId,
       String reference,

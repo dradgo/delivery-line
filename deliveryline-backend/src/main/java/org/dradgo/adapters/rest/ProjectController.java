@@ -235,6 +235,7 @@ public class ProjectController {
             request.repoHostKind(),
             request.openspecEnabled(),
             request.runnerKind(),
+            request.reviewerModelKind(),
             request.stepRunnerKinds(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
@@ -420,10 +421,17 @@ public class ProjectController {
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.TICKET_SOURCE);
     boolean repoConfigured =
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.REPO_HOST);
+    // Story 3d-2 — the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A REVIEW
+    // dispatch (advisory reviewer + the 3f-4 split-proposal) resolves THIS secret with no host-key
+    // fallback, so its presence must be surfaced for the UI to set it. Appended last so the
+    // existing ticket_source/repo_host array indices are unchanged.
+    boolean reviewerConfigured =
+        projectCredentialService.isConfigured(project.publicId(), ConnectorRole.REVIEWER);
     List<CredentialPresenceResponse> credentials =
         List.of(
             CredentialPresenceResponse.of(ConnectorRole.TICKET_SOURCE.value(), ticketConfigured),
-            CredentialPresenceResponse.of(ConnectorRole.REPO_HOST.value(), repoConfigured));
+            CredentialPresenceResponse.of(ConnectorRole.REPO_HOST.value(), repoConfigured),
+            CredentialPresenceResponse.of(ConnectorRole.REVIEWER.value(), reviewerConfigured));
     return ProjectResponse.from(
         project, credentials, ProjectManagementService.allowedActionsFor(project));
   }

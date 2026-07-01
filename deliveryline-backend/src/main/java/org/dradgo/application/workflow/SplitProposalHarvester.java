@@ -41,9 +41,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>Sibling of {@code ReviewResultHarvester}: VALIDATE → PARSE → CHECK self-reported failure →
  * RESOLVE reviewed artifact + identities → REDACT → supersede-then-insert the {@code open} proposal
- * + finalize the execution, ALL in one REQUIRES_NEW tx. Every failure mode degrades gracefully
- * (R5): the execution is marked failed, NO proposal row is written (its absence + the failed
- * execution is the panel's "unavailable" state), and the gate is never blocked.
+ * + finalize the execution, ALL in one REQUIRES_NEW tx (isolates a unique-index conflict; see the
+ * field comment — the poll path must NOT hold this row's lock across the harvest, or the
+ * REQUIRES_NEW re-lock self-deadlocks). Every failure mode degrades gracefully (R5): the execution
+ * is marked failed, NO proposal row is written (its absence + the failed execution is the panel's
+ * "unavailable" state), and the gate is never blocked.
  */
 @Component
 public class SplitProposalHarvester {
@@ -64,7 +66,15 @@ public class SplitProposalHarvester {
   // The proposal insert + the reviewer-execution finalize ride ONE REQUIRES_NEW tx (mirrors
   // ReviewResultHarvester) so a crash never leaves a persisted proposal beside a still-RUNNING
   // execution, and a unique-index conflict rolls back THIS tx only (never poisons the ambient poll
-  // tx).
+  // tx). REQUIRES_NEW is only safe because the poll path no longer holds a PESSIMISTIC_WRITE lock
+  // on
+  // this runner_executions row across the harvest: the completed-container log/raw-output capture
+  // (RunnerExecutionService.recordRawOutput) runs in its OWN REQUIRES_NEW tx and releases before
+  // the
+  // harvest — see RunnerExecutionPersistenceAdapter.recordRawOutput. Were the ambient poll tx to
+  // hold that row lock, recordFailed/recordCompleted here (findByPublicIdForUpdate on the SAME row,
+  // second connection) would self-deadlock on it and hang forever, wedging the single scheduler
+  // thread so the timeout/stale reaper could never run.
   private final TransactionTemplate persistTransactionTemplate;
   private final TransactionTemplate degradeTransactionTemplate;
 
