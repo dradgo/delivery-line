@@ -102,7 +102,10 @@ deliveryline:
     # the batch (no silent truncation) and the remainder heals on the next tick (<=0 normalized to
     # 100). Default OFF: the sweep is a safety net for a rare transient strand, opted in per-deploy.
     rollup-sweep:
-      enabled: false
+      # Enabled per Epic 3f retrospective (2026-07-01): the 3f-7 completion-rollup is driven solely by
+      # the last child's afterCommit hook; a transient failure strands the parent in Split with no
+      # re-fire. Turning the safety-net sweep on for the pilot so a stranded parent self-heals.
+      enabled: true
       interval-ms: 60000
       batch-limit: 100
   workflow:
