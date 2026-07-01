@@ -382,10 +382,20 @@ public class IntegrationLinkService {
    * one unit. Does NOT fetch the ticket from a source adapter (the sub-ticket creation, if any,
    * already happened upstream and the internal-only ref is the already-linked parent's) and does
    * NOT take part in the polling/completion-sync surface.
+   *
+   * <p>{@code title}/{@code summary} carry the decomposed subtask's title + scope (from the
+   * approved split proposal) into {@code external_metadata} under the same keys {@link
+   * org.dradgo.application.integration.linear.IntegrationLinkTicketSummaryProvider} reads — so the
+   * child run's context bundle describes the real subtask instead of the {@code "Pending ticket
+   * summary"} placeholder. Blank/null values are omitted (the provider's fallback still applies).
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public IntegrationLink linkSplitChildTicket(
-      String childRunPublicId, String ticketReference, ActorContext actor) {
+      String childRunPublicId,
+      String ticketReference,
+      String title,
+      String summary,
+      ActorContext actor) {
     PublicIdPrefixes.require(childRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
     if (ticketReference == null || ticketReference.isBlank()) {
       throw new IllegalArgumentException("ticketReference must be non-blank");
@@ -416,9 +426,21 @@ public class IntegrationLinkService {
     }
 
     String publicId = PublicIdPrefixes.INTEGRATION_LINK.next();
+    // Persist the decomposed subtask's title/scope under the SAME metadata keys the production
+    // TicketSummaryProvider reads ("title"/"summary"). Without them a split child resolves to the
+    // "Pending ticket summary" placeholder and its runner produces a strange refusal spec (3f-5
+    // review follow-up). Redacted like every other integration_links writer (SHAREABLE_REDACTED).
     Map<String, Object> metadata = new LinkedHashMap<>();
     metadata.put("linkType", INTERNAL_SUBTASK_INTEGRATION_TYPE);
-    byte[] metadataBytes = serializeRedactedMetadata(objectMapper.valueToTree(metadata));
+    if (title != null && !title.isBlank()) {
+      metadata.put("title", title);
+    }
+    if (summary != null && !summary.isBlank()) {
+      metadata.put("summary", summary);
+    }
+    RedactionResult redacted =
+        redactionPolicyService.redact(metadata, DataClassification.SHAREABLE_REDACTED.value());
+    byte[] metadataBytes = serializeRedactedMetadata(redacted.sanitizedJson());
 
     Instant now = Instant.now();
     IntegrationLink inserted =

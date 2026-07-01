@@ -1005,7 +1005,8 @@ public class WorkflowInspectionService {
         {
           // AC3 semantic: "open" = status literally 'open' (unanswered). This is DIFFERENT from
           // story 2.12's pendingClarifications gate which counts NOT-in-{incorporated,
-          // rejected_invalid}. The AC4 gate (below) uses the 2.12 definition; this AC3 row asks
+          // rejected_invalid, superseded} (i.e. non-terminal per Clarification.isTerminal(); V31
+          // added superseded). The AC4 gate (below) uses the 2.12 definition; this AC3 row asks
           // "are there unanswered questions on the latest in-flight spec?".
           //
           // Story 3e-5 (AC1/AC2): INVESTIGATING is a live spec-runner state

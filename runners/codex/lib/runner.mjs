@@ -207,6 +207,16 @@ function commandPrepare(args) {
     doc.ticketSummary && typeof doc.ticketSummary === 'object' ? doc.ticketSummary : {};
   const specRefOut = doc.approvedSpecificationReference;
   const planRefOut = doc.approvedImplementationPlanReference;
+  // Spec-phase advisory review (story 3e-3 follow-up) — the reviewed artifact is the SOLE
+  // artifactReferences entry in a REVIEW bundle. Surface its type so the entrypoint's review arm can
+  // pick a SPEC-appropriate prompt (review the specification itself) instead of the
+  // implementation-review prompt that hunts for a non-existent patch/repo at the spec gate.
+  const reviewedRefOut =
+    Array.isArray(doc.artifactReferences) &&
+    doc.artifactReferences[0] &&
+    typeof doc.artifactReferences[0] === 'object'
+      ? doc.artifactReferences[0].artifactType ?? ''
+      : '';
   process.stdout.write(
     [
       `DL_SCHEMA_VERSION=${shellQuote(doc.schemaVersion ?? '')}`,
@@ -222,6 +232,10 @@ function commandPrepare(args) {
       // and the offline mock can emit the deterministic ```split fence. 'true' only when the bundle
       // sets splitProposalRequested=true; '' otherwise (byte-identical legacy path).
       `DL_SPLIT_PROPOSAL_REQUESTED=${shellQuote(doc.splitProposalRequested === true ? 'true' : '')}`,
+      // Story 3e-3 follow-up — reviewed artifact type ('spec' at the spec gate, 'prOutput' /
+      // 'implementationPlan' at the execution gate; '' on non-review bundles). Selects the review
+      // prompt so a spec review reviews the SPEC, not a non-existent implementation.
+      `DL_REVIEWED_ARTIFACT_TYPE=${shellQuote(reviewedRefOut)}`,
       '',
     ].join('\n'),
   );

@@ -158,7 +158,7 @@ class ClarificationReadPersistenceAdapterContractTest {
   }
 
   @Test
-  void countPendingByWorkflowRunExcludesArchivedAndTerminalRows() {
+  void countPendingByWorkflowRunExcludesArchivedAndAllTerminalRows() {
     insertRun("run_clrcount123", WorkflowState.WAITING_FOR_SPEC_APPROVAL);
     Long artifactId = insertArtifact("run_clrcount123", "art_clrcount123", 1);
     insertClarification(
@@ -195,7 +195,12 @@ class ClarificationReadPersistenceAdapterContractTest {
 
     int pending = clarificationReadPort.countPendingByWorkflowRun("run_clrcount123");
 
-    assertEquals(4, pending);
+    // Pending counts only NON-terminal, non-archived rows: open + answered + accepted = 3.
+    // `superseded` is terminal per Clarification.isTerminal() (a superseded clarification is no
+    // longer the active question — either replaced by a newer version or resolved not-addressed
+    // during a regenerate sweep), so it must NOT block approve_spec. The two terminal rows
+    // (rejected_invalid, incorporated), the superseded row, and the archived row are all excluded.
+    assertEquals(3, pending);
   }
 
   private void insertRun(String publicId, WorkflowState state) {

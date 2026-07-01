@@ -568,6 +568,47 @@ if [ "$ARTIFACT_TYPE" = review ]; then
       printf 'dependencies are OPTIONAL ordering edges (the subtask at fromOrdinal depends on the\n'
       printf 'one at toOrdinal). Propose 2..8 subtasks; omit dependencies for a flat fan-out.\n'
     } >>"$PROMPT_FILE"
+  elif [ "${DL_REVIEWED_ARTIFACT_TYPE:-}" = "spec" ]; then
+    # Story 3e-3 follow-up — SPEC-PHASE advisory review. The reviewed artifact is the DESIGN
+    # SPECIFICATION itself: at this gate there is no implementation, patch, or repo checkout and no
+    # approved-spec baseline. The generic ADVISORY REVIEW task made the model hunt for build output /
+    # a git repo and fail (false negative); review the SPECIFICATION's own quality instead.
+    {
+      printf '\n\n--- ADVISORY SPECIFICATION REVIEW TASK ---\n'
+      printf 'Act as an independent reviewer. A DESIGN SPECIFICATION authored for this ticket is\n'
+      printf 'available under /workspace/input (the reviewed artifact). This is the\n'
+      printf 'specification-approval gate: there is NO implementation, patch, code change, or\n'
+      printf 'repository checkout to inspect, and the specification is NOT yet approved — do NOT look\n'
+      printf 'for or require any of them, and their absence is NEVER a defect. Review the\n'
+      printf 'SPECIFICATION ITSELF: does it correctly and completely address the ticket, is the\n'
+      printf 'proposed approach sound, are the affected modules/files and acceptance criteria clear\n'
+      printf 'and appropriately scoped, and does it leave any listed open clarification questions\n'
+      printf 'unresolved. Do NOT modify any files. End your response with EXACTLY one line, nothing\n'
+      printf 'after it:\n'
+      printf 'VERDICT: pass   (no blocking concerns)\n'
+      printf 'VERDICT: concern (non-blocking concerns the human reviewer should weigh)\n'
+      printf 'VERDICT: fail   (a blocking defect in the specification itself)\n'
+    } >>"$PROMPT_FILE"
+  elif [ "${DL_REVIEWED_ARTIFACT_TYPE:-}" = "implementationPlan" ]; then
+    # Story 3e-3 follow-up — PLAN-phase advisory review. The reviewed artifact is the IMPLEMENTATION
+    # PLAN (a design document), reviewed against the approved spec before human approval. The plan is
+    # NOT the implementation: no patch, code change, or repo checkout exists yet, so the generic
+    # ADVISORY REVIEW task made the model demand a modified pom.xml / repo and fail (false negative).
+    # Review the PLAN's fidelity to the approved specification instead.
+    {
+      printf '\n\n--- ADVISORY IMPLEMENTATION-PLAN REVIEW TASK ---\n'
+      printf 'Act as an independent reviewer. An IMPLEMENTATION PLAN authored for this ticket is\n'
+      printf 'available under /workspace/input (the reviewed artifact), to be reviewed against the\n'
+      printf 'approved specification. This is the plan-approval gate: NO implementation, patch, code\n'
+      printf 'change, or repository checkout exists yet — do NOT look for or require any of them, and\n'
+      printf 'their absence is NEVER a defect. Review the PLAN ITSELF: does it fully and faithfully\n'
+      printf 'realize the approved specification, are the steps concrete, ordered, and complete, and\n'
+      printf 'does it omit or contradict anything the specification requires. Do NOT modify any\n'
+      printf 'files. End your response with EXACTLY one line, nothing after it:\n'
+      printf 'VERDICT: pass   (no blocking concerns)\n'
+      printf 'VERDICT: concern (non-blocking concerns the human reviewer should weigh)\n'
+      printf 'VERDICT: fail   (a blocking defect in the plan itself)\n'
+    } >>"$PROMPT_FILE"
   else
     {
       printf '\n\n--- ADVISORY REVIEW TASK ---\n'

@@ -106,15 +106,20 @@ public interface ClarificationRepository extends JpaRepository<ClarificationEnti
   /**
    * Story 2.12 AC9 — count of non-terminal clarifications for the supplied workflow run. Native
    * query so Postgres can use the V9 partial index {@code
-   * idx_clarifications_pending_by_workflow_run} directly. Filter mirrors the partial-index WHERE
-   * clause.
+   * idx_clarifications_pending_by_workflow_run} directly (V31 re-narrowed that index to the same
+   * predicate). The excluded set is EXACTLY {@link
+   * org.dradgo.application.clarification.Clarification#isTerminal()} — {@code incorporated}, {@code
+   * rejected_invalid}, AND {@code superseded}. A superseded clarification is no longer the active
+   * question (replaced by a newer version, or resolved not-addressed during a regenerate sweep), so
+   * it MUST NOT keep gating {@code approve_spec} — otherwise a run whose spec was regenerated is
+   * wedged: valid spec, but leftover superseded rows block approval forever.
    */
   @Query(
       value =
           "select count(*) from clarifications c "
               + "where c.workflow_run_id = (select id from workflow_runs where public_id = :runPublicId) "
               + "  and c.archived_at is null "
-              + "  and c.status not in ('incorporated', 'rejected_invalid')",
+              + "  and c.status not in ('incorporated', 'rejected_invalid', 'superseded')",
       nativeQuery = true)
   long countPendingByWorkflowRunPublicId(@Param("runPublicId") String runPublicId);
 }
