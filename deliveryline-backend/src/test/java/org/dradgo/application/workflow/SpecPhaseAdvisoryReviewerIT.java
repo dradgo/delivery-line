@@ -14,6 +14,9 @@ import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.queue.RunnerExecutionQueue;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowInspectionService.ReviewerVerdictView;
+import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
+import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
+import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.RunnerStage;
@@ -29,14 +32,20 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 /**
- * Story 3e-3 (AC1/AC2/AC3/AC4/AC6/AC9, Task 5) — the full spec-phase advisory-reviewer loop over
- * the real wiring (Testcontainers Postgres + the offline mock runner), proving the 3d-2 reviewer
- * now also fires at the {@code WaitingForSpecApproval} gate:
+ * Story 3e-3 (AC1/AC3/AC4/AC6/AC9, Task 5) + the review follow-up that DEFERS the reviewer until
+ * the spec is actually approvable — the full spec-phase advisory-reviewer loop over the real wiring
+ * (Testcontainers Postgres + the offline mock runner), proving the 3d-2 reviewer fires at the
+ * {@code WaitingForSpecApproval} gate ONLY once the run's clarifications are resolved:
  *
  * <ol>
  *   <li>a reviewer-bound project drives {@code Investigating → WaitingForSpecApproval} ({@code
- *       onSpecStageSucceeded}) → a {@link RunnerStage#REVIEW} execution is enqueued over the SPEC
- *       artifact (AC1), its spec-review bundle inlines the run's open clarification (AC2);
+ *       onSpecStageSucceeded}) with an OPEN clarification on the drafted spec ⇒ NO {@link
+ *       RunnerStage#REVIEW} is enqueued yet (the spec is not approvable — reviewing it would only
+ *       yield a misleading "fail" on the unanswered question);
+ *   <li>the user answers + accepts the clarification and {@code
+ *       regenerate_spec_with_clarifications} re-dispatches; the rebuilt spec acknowledges the
+ *       question (pending → 0) ⇒ NOW a {@code REVIEW} execution is enqueued over the SPEC artifact
+ *       (AC1);
  *   <li>dispatching+harvesting that REVIEW execution (mock {@code happy-review}) persists a {@code
  *       step_reviews} row whose reviewed artifact is the SPEC (AC3), served stage-agnostically by
  *       {@code getReviewerVerdict} for the WaitingForSpecApproval run (AC4/AC9);
@@ -46,7 +55,8 @@ import org.springframework.test.context.TestPropertySource;
  *
  * <p>Drives the async results deterministically exactly like {@code SpecRebuildIncorporationIT}:
  * lease+dispatch each queued row as a worker would, then harvest via {@code pollActiveExecutions}.
- * The reviewer is enqueued DURING the spec harvest, so a second drain dispatches+harvests it.
+ * The reviewer is enqueued DURING the regenerated-spec harvest, so a further drain dispatches+
+ * harvests it.
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
@@ -107,23 +117,55 @@ class SpecPhaseAdvisoryReviewerIT {
   }
 
   @Test
-  void specReviewerEnqueuesOnSpecGateAndPersistsVerdictAgainstTheSpec() {
+  void specReviewerDeferredWhileClarificationOpenThenFiresOnRegeneratedSpec() {
     bindReviewer("claude");
 
     String runId = submit("idem-submit-specrev-bound", "corr-specrev-bound");
-    // Drain #1: dispatch + harvest the INVESTIGATION spec → WaitingForSpecApproval + reviewer
-    // enqueued (during the spec harvest) over the spec artifact.
+    // Drain #1: dispatch + harvest the INVESTIGATION spec → WaitingForSpecApproval. The drafted
+    // spec
+    // carries an OPEN clarification, so the spec is NOT approvable and the reviewer is DEFERRED.
     drainAndHarvest();
 
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), currentState(runId));
-    // AC1 — a REVIEW execution was enqueued at the spec gate.
-    Integer reviewExecCount = reviewExecutionCount(runId);
-    assertEquals(1, reviewExecCount, "exactly one reviewer execution enqueued at the spec gate");
-    // AC2 — an open clarification exists (it is inlined into the spec-review bundle).
     Clarification open = clarificationReadPort.listByWorkflowRunId(runId).get(0);
     assertEquals(Clarification.STATUS_OPEN, open.status());
+    // The fix — NO reviewer enqueued while a clarification is still open (reviewing this spec would
+    // only produce a misleading "fail" on the unanswered question).
+    assertEquals(
+        0,
+        reviewExecutionCount(runId),
+        "reviewer must be deferred while a clarification is open (spec not yet approvable)");
 
-    // Drain #2: dispatch + harvest the reviewer execution (mock happy-review → review-result.v1).
+    // The user answers + accepts the clarification, then regenerates: the rebuild acknowledges the
+    // question (addressed:true) so the clarification is incorporated (pending → 0).
+    answerAndAccept(runId, open);
+    scenarioRegistry.register(
+        new MockRunnerScenario(
+            SCENARIO,
+            RunnerStage.INVESTIGATION,
+            MockRunnerScenario.Behaviour.HAPPY,
+            "runner-scenarios/happy-spec-rebuild-acknowledged.json",
+            null));
+    commandService.regenerateSpecWithClarifications(
+        new RegenerateSpecCommand(
+            runId, "alex", ActorType.HUMAN, "idem-regenerate-specrev-0001", "corr-regen"));
+
+    // Drain #2: dispatch + harvest the regenerated INVESTIGATION spec → WaitingForSpecApproval.
+    // The rebuilt spec has zero pending clarifications, so NOW the reviewer is enqueued (during the
+    // regenerated-spec harvest) over the SPEC artifact (AC1).
+    drainAndHarvest();
+
+    assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL.value(), currentState(runId));
+    assertEquals(
+        Clarification.STATUS_INCORPORATED,
+        clarificationReadPort.findByPublicId(open.publicId()).orElseThrow().status(),
+        "the accepted clarification must be incorporated by the acknowledged rebuild");
+    assertEquals(
+        1,
+        reviewExecutionCount(runId),
+        "exactly one reviewer execution enqueued once the spec is approvable");
+
+    // Drain #3: dispatch + harvest the reviewer execution (mock happy-review → review-result.v1).
     drainAndHarvest();
 
     // AC3 — a step_reviews row persists, reviewed artifact = the SPEC (no schema change).
@@ -150,10 +192,37 @@ class SpecPhaseAdvisoryReviewerIT {
         "the verdict is advisory-only — the spec gate is not auto-advanced");
   }
 
+  /** Answer + accept the open clarification so a subsequent regenerate can incorporate it. */
+  private void answerAndAccept(String runId, Clarification open) {
+    commandService.answerClarification(
+        new SubmitClarificationCommand(
+            runId,
+            open.publicId(),
+            open.artifactId(),
+            open.artifactVersion(),
+            "Yes — include archived records.",
+            "alex",
+            ActorType.HUMAN,
+            "idem-answer-specrev-0001",
+            "corr-answer-specrev"));
+    commandService.acceptClarification(
+        new AcceptClarificationCommand(
+            runId,
+            open.publicId(),
+            "alex",
+            ActorType.HUMAN,
+            "idem-accept-specrev-0001",
+            "corr-accept-specrev"));
+  }
+
   @Test
   void noReviewerBindingEnqueuesNoReviewerAtSpecGateParity() {
     // AC6 — no reviewer binding on the project ⇒ NO reviewer execution at the spec gate, byte-
-    // identical to pre-3e-3 (the parity hot path).
+    // identical to pre-3e-3 (the parity hot path). NB: this run's drafted spec also carries an open
+    // clarification, so the deferral gate would ALSO suppress the reviewer here; the no-binding
+    // path
+    // is isolated cleanly (clean spec, pending == 0) by the unit test
+    // onSpecStageSucceededEnqueuesNoReviewerForDefaultProjectParity.
     String runId = submit("idem-submit-specrev-parity", "corr-specrev-parity");
     drainAndHarvest();
 

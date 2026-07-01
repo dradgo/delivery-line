@@ -60,6 +60,7 @@ class WorkflowOrchestrationServiceTest {
   private org.dradgo.application.approval.spi.ApprovalReadPort approvalReadPort;
   private org.dradgo.application.workflow.spi.WorkflowEventReadPort workflowEventReadPort;
   private org.dradgo.application.workflow.spi.WorkflowEventWritePort workflowEventWritePort;
+  private org.dradgo.application.clarification.spi.ClarificationReadPort clarificationReadPort;
   private WorkflowProperties workflowProperties;
   private ListAppender<ILoggingEvent> logAppender;
 
@@ -104,6 +105,8 @@ class WorkflowOrchestrationServiceTest {
     approvalReadPort = mock(org.dradgo.application.approval.spi.ApprovalReadPort.class);
     workflowEventReadPort = mock(org.dradgo.application.workflow.spi.WorkflowEventReadPort.class);
     workflowEventWritePort = mock(org.dradgo.application.workflow.spi.WorkflowEventWritePort.class);
+    clarificationReadPort =
+        mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class);
     workflowProperties =
         WorkflowProperties.defaults(); // completion-sync enabled + default template
     Logger logger = (Logger) LoggerFactory.getLogger(WorkflowOrchestrationService.class);
@@ -182,7 +185,8 @@ class WorkflowOrchestrationServiceTest {
         artifactRecordPort,
         approvalReadPort,
         workflowEventReadPort,
-        workflowEventWritePort);
+        workflowEventWritePort,
+        clarificationReadPort);
   }
 
   private void stubRun(WorkflowState state, int rejectionLoopCount) {
@@ -286,6 +290,9 @@ class WorkflowOrchestrationServiceTest {
     // falling through to the spec since no plan/prOutput exists at the spec gate) onto it. Mirrors
     // the 3d-2 execution-phase enqueue exactly — same helper, same key shape, spec-typed pin.
     when(projectRuntimeConfigResolver.hasReviewerBinding(RUN_ID)).thenReturn(true);
+    // Story 3e-3 review follow-up — the reviewer only fires on an APPROVABLE spec (zero pending
+    // clarifications). countPendingByWorkflowRun defaults to 0 (unstubbed int mock), so this spec
+    // is clean and the reviewer enqueues immediately.
     String reviewerRex = "rex_reviewer00002";
     when(runnerExecutionQueue.enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), any(), any(), anyInt()))
         .thenReturn(
@@ -315,6 +322,51 @@ class WorkflowOrchestrationServiceTest {
     verify(recordPort)
         .pinReviewedArtifact(eq(reviewerRex), eq("art_specrev00001"), eq(1), eq("spec"));
     assertLoggedAt(Level.INFO, "enqueuing reviewer review for run");
+  }
+
+  @Test
+  void onSpecStageSucceededDefersReviewerWhileClarificationsPending() {
+    // Story 3e-3 review follow-up — the just-produced spec still carries open/unresolved
+    // clarifications (pending > 0), so it is NOT approvable (the pending-clarification gate blocks
+    // approve_spec) and reviewing it would only yield a misleading "fail" on unanswered questions.
+    // Even with a reviewer binding present, NO REVIEW is enqueued: the reviewer re-fires on the
+    // regenerated (post-answer) spec once the clarifications are incorporated (pending == 0).
+    when(projectRuntimeConfigResolver.hasReviewerBinding(RUN_ID)).thenReturn(true);
+    when(clarificationReadPort.countPendingByWorkflowRun(RUN_ID)).thenReturn(2);
+
+    service(true).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verify(runnerExecutionQueue, never())
+        .enqueue(any(), eq(RunnerStage.REVIEW), any(), any(), anyInt());
+    verify(recordPort, never()).pinReviewedArtifact(any(), any(), anyInt(), any());
+    assertLoggedAt(Level.INFO, "spec-phase advisory reviewer deferred for run");
+  }
+
+  @Test
+  void onSpecStageSucceededEnqueuesReviewerWhenPendingClarificationReadFailsFailOpen() {
+    // Story 3e-3 review follow-up — a transient pending-clarification read fault must never
+    // silently
+    // drop the advisory review. The gate fails OPEN: on a read exception it treats the spec as
+    // clean (count 0) and enqueues the reviewer, logging a WARN.
+    when(projectRuntimeConfigResolver.hasReviewerBinding(RUN_ID)).thenReturn(true);
+    when(clarificationReadPort.countPendingByWorkflowRun(RUN_ID))
+        .thenThrow(new RuntimeException("db down"));
+    when(runnerExecutionQueue.enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), any(), any(), anyInt()))
+        .thenReturn(
+            new QueuedRunnerExecution(
+                "rex_reviewer00003",
+                RUN_ID,
+                RunnerStage.REVIEW,
+                100,
+                "corr-s",
+                1L,
+                "evt_q-review0003"));
+
+    service(true).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verify(runnerExecutionQueue)
+        .enqueue(eq(RUN_ID), eq(RunnerStage.REVIEW), eq("review:" + REX_ID), any(), anyInt());
+    assertLoggedAt(Level.WARN, "pending-clarification read failed for run");
   }
 
   @Test

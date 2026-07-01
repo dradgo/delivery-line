@@ -16,6 +16,7 @@ import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
@@ -172,6 +173,7 @@ public class WorkflowOrchestrationService {
   private final ApprovalReadPort approvalReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
   private final WorkflowEventWritePort workflowEventWritePort;
+  private final ClarificationReadPort clarificationReadPort;
 
   public WorkflowOrchestrationService(
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
@@ -189,7 +191,8 @@ public class WorkflowOrchestrationService {
       ArtifactRecordPort artifactRecordPort,
       ApprovalReadPort approvalReadPort,
       WorkflowEventReadPort workflowEventReadPort,
-      WorkflowEventWritePort workflowEventWritePort) {
+      WorkflowEventWritePort workflowEventWritePort,
+      ClarificationReadPort clarificationReadPort) {
     this.runnerExecutionQueue =
         Objects.requireNonNull(runnerExecutionQueue, "runnerExecutionQueue");
     this.manualExecutionDispatcher =
@@ -217,6 +220,8 @@ public class WorkflowOrchestrationService {
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
     this.workflowEventWritePort =
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
+    this.clarificationReadPort =
+        Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
   }
 
   /**
@@ -382,7 +387,28 @@ public class WorkflowOrchestrationService {
       // reviewer binding is run-level (no per-stage field), the reviewed-artifact derivation falls
       // through to the spec (resolveReviewedArtifact), and every failure mode degrades to "no
       // verdict" inside the helper (the spec gate is never blocked, AC6/AC7).
-      enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
+      //
+      // Story 3e-3 review follow-up — DEFER the reviewer while the just-produced spec still carries
+      // open/unresolved clarifications. Such a spec is not approvable: the story-2.12
+      // pending-clarification gate (countPendingByWorkflowRun) already blocks approve_spec, so
+      // reviewing it only produces a misleading "fail" on questions the user has not answered yet.
+      // The reviewer re-fires on the REGENERATED spec — regenerateSpecWithClarifications (3e-2)
+      // re-runs the spec runner, which lands back here via onSpecStageSucceeded — where the
+      // accepted
+      // clarifications are incorporated (pending == 0) and the spec is finally the one being
+      // approved. Read failure degrades to "not pending" (enqueue), so a transient fault never
+      // silently drops the advisory review; the gate only SUPPRESSES on a confirmed positive count.
+      int pendingClarifications = pendingClarificationCountForSpecGate(workflowRunId);
+      if (pendingClarifications > 0) {
+        log.info(
+            "spec-phase advisory reviewer deferred for run {} runnerExecutionId={} — {} pending "
+                + "clarification(s); it will run on the regenerated spec once they are resolved",
+            workflowRunId,
+            runnerExecutionId,
+            pendingClarifications);
+      } else {
+        enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
+      }
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
@@ -775,6 +801,27 @@ public class WorkflowOrchestrationService {
    * can never block or fail the run's review entry (AC6): a fault here degrades to "no verdict",
    * logged WARN.
    */
+  /**
+   * Story 3e-3 review follow-up — the pending-clarification count that gates the spec-phase
+   * advisory reviewer, mirroring the story-2.12 {@code approve_spec} gate exactly (non-terminal,
+   * non-archived clarifications). A positive count means the just-produced spec is not approvable
+   * and a review of it would only mislead, so the caller defers. Best-effort: a read failure
+   * returns {@code 0} (fail OPEN — enqueue the review) so a transient DB fault never silently drops
+   * the advisory review; only a confirmed positive count suppresses it.
+   */
+  private int pendingClarificationCountForSpecGate(String workflowRunId) {
+    try {
+      return clarificationReadPort.countPendingByWorkflowRun(workflowRunId);
+    } catch (RuntimeException readError) {
+      log.warn(
+          "pending-clarification read failed for run {} at the spec gate cause={} — enqueuing the"
+              + " advisory reviewer anyway (fail-open; never silently drop the review)",
+          workflowRunId,
+          readError.toString());
+      return 0;
+    }
+  }
+
   private void enqueueReviewerIfConfigured(
       String workflowRunId, String producingRunnerExecutionId, String correlationId) {
     boolean hasBinding;
