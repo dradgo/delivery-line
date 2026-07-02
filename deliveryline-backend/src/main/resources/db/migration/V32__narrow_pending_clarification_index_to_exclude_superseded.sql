@@ -1,4 +1,6 @@
--- V31: Re-narrow the pending-clarification partial index so `superseded` no longer counts as pending.
+-- V32: Re-narrow the pending-clarification partial index so `superseded` no longer counts as pending.
+-- (Renumbered from V31 on merge into main: main's V31 is add_runner_execution_token_columns; this
+--  index migration follows it as V32. No environment recorded the old V31 form of this migration.)
 --
 -- The V9 index idx_clarifications_pending_by_workflow_run backs the story-2.12 approve_spec gate:
 -- countPendingByWorkflowRunPublicId counts non-terminal, non-archived clarifications, and the gate
