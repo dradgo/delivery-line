@@ -37,6 +37,21 @@ class CliGitAdapterTest {
         .isEqualTo(IntegrationFailureCategory.GIT_AUTH_FAILED);
     assertThat(CliGitAdapter.classifyPushFailure("The requested URL returned error: 403"))
         .isEqualTo(IntegrationFailureCategory.GIT_AUTH_FAILED);
+    assertThat(
+            CliGitAdapter.classifyPushFailure("remote: HTTP Basic: Access denied\n403 Forbidden"))
+        .isEqualTo(IntegrationFailureCategory.GIT_AUTH_FAILED);
+  }
+
+  @Test
+  void nonFastForwardRejectionIsNotMisreadAsAuthWhenPathDigitsContain403() {
+    // A rejected push echoes the remote path; an incidental "403"/"401" in a JUnit @TempDir name
+    // (e.g. /tmp/junit-3679854037.../remoteBare) must not be mistaken for an HTTP auth status.
+    assertThat(
+            CliGitAdapter.classifyPushFailure(
+                "To /tmp/junit-3679854037697941104/remoteBare\n"
+                    + " ! [rejected]        branch -> branch (fetch first)\n"
+                    + "error: failed to push some refs to '/tmp/junit-3679854037697941104/remoteBare'"))
+        .isEqualTo(IntegrationFailureCategory.GIT_PUSH_REJECTED);
   }
 
   @Test

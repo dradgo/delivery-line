@@ -508,8 +508,12 @@ public class CliGitAdapter implements GitCommandPort {
     if (lower.contains("authentication failed")
         || lower.contains("could not read username")
         || lower.contains("permission denied")
-        || lower.contains("403")
-        || lower.contains("401")
+        // Match git's HTTP auth signals by phrase, not a bare "403"/"401" substring, which
+        // otherwise collides with incidental digits in echoed temp paths / object SHAs.
+        || lower.contains("error: 403")
+        || lower.contains("error: 401")
+        || lower.contains("403 forbidden")
+        || lower.contains("401 unauthorized")
         || lower.contains("access denied")) {
       return IntegrationFailureCategory.GIT_AUTH_FAILED;
     }
