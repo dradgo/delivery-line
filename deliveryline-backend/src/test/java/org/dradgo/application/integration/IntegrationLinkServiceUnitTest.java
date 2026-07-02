@@ -35,6 +35,7 @@ import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
+import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -92,6 +93,13 @@ class IntegrationLinkServiceUnitTest {
             gitHubAdapterProvider(gitHubAdapter),
             workflowEventWritePort,
             callthroughTemplate());
+    // Story 3g-1 — default the ticket-source capabilities + URL builder so the Linear link paths
+    // (which now resolve a source-ticket URL) have a non-null capability set. Individual tests
+    // override these to exercise the false-capability path. No strict stubbing here (plain mocks),
+    // so unused defaults on non-Linear-link tests are harmless.
+    when(linearAdapter.getCapabilities()).thenReturn(TicketSourceCapabilities.linearDefaults());
+    when(linearAdapter.buildSourceTicketUrl(any()))
+        .thenReturn(Optional.of("https://linear.app/issue/LIN-101"));
   }
 
   @SuppressWarnings("unchecked")
@@ -310,6 +318,60 @@ class IntegrationLinkServiceUnitTest {
     assertTrue(sent.containsKey("summary"));
     assertTrue(sent.containsKey("labels"));
     assertTrue(sent.containsKey("authorIdentity"));
+  }
+
+  @Test
+  void linkTicketSnapshotsSourceUrlAndTitleIntoExternalMetadataWhenCapabilitySupported() {
+    // Story 3g-1 (AC1/AC5) — the origin title (preserved) + a new url key are snapshotted into the
+    // metadata map that flows through the SHAREABLE_REDACTED redaction pass.
+    when(idempotencyService.checkAndReserve(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(sampleTicket()));
+    when(linearAdapter.buildSourceTicketUrl(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of("https://linear.app/issue/LIN-101"));
+    when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
+        .thenReturn(Optional.empty());
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleLink("ilk_inserted000001", RUN_ID));
+
+    service.linkTicket(RUN_ID, TICKET_REF, ACTOR, IDEMPOTENCY_KEY);
+
+    ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+    verify(redactionService)
+        .redact(captor.capture(), eq(DataClassification.SHAREABLE_REDACTED.value()));
+    Map<String, Object> sent = captor.getValue();
+    assertTrue(sent.containsKey("title"), "origin title preserved");
+    assertEquals("https://linear.app/issue/LIN-101", sent.get("url"));
+  }
+
+  @Test
+  void linkTicketOmitsUrlKeyAndSkipsBuilderWhenCapabilityUnsupported() {
+    // Story 3g-1 (AC1/AC2/AC6) — a false-capability source produces no url key and the builder is
+    // never called (caller must gate on supportsSourceTicketUrl()).
+    when(linearAdapter.getCapabilities())
+        .thenReturn(TicketSourceCapabilities.noCreation(true, true, true));
+    when(idempotencyService.checkAndReserve(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(sampleTicket()));
+    when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
+        .thenReturn(Optional.empty());
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleLink("ilk_inserted000001", RUN_ID));
+
+    service.linkTicket(RUN_ID, TICKET_REF, ACTOR, IDEMPOTENCY_KEY);
+
+    verify(linearAdapter, never()).buildSourceTicketUrl(any());
+    ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+    verify(redactionService)
+        .redact(captor.capture(), eq(DataClassification.SHAREABLE_REDACTED.value()));
+    assertTrue(captor.getValue().containsKey("title"), "origin title still preserved");
+    assertTrue(!captor.getValue().containsKey("url"), "no url key when capability unsupported");
   }
 
   @Test
@@ -694,6 +756,53 @@ class IntegrationLinkServiceUnitTest {
         .thenReturn(Optional.empty());
 
     assertTrue(service.findActiveGitHubPrLinkView(RUN_ID).isEmpty());
+  }
+
+  // ===== Story 3g-1 review — origin title/url decoded from the REAL external_metadata bytes =====
+
+  @Test
+  void findActiveTicketOriginViewDecodesTitleAndUrlFromExternalMetadata() {
+    // Exercises the real decode path (parseExternalMetadata / metadataString) instead of stubbing
+    // the view — proves AC3/AC6 "title + url sourced from external_metadata" end to end.
+    when(port.findActiveTicketOriginByWorkflowRun(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkRecordPort.TicketOriginProjection(
+                    "linear",
+                    TICKET_REF,
+                    IntegrationSyncStatus.LINKED.value(),
+                    "{\"title\":\"Add caching\",\"url\":\"https://linear.app/acme/issue/LIN-101\"}"
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+
+    Optional<IntegrationLinkService.TicketOriginView> view =
+        service.findActiveTicketOriginView(RUN_ID);
+
+    assertTrue(view.isPresent());
+    assertEquals(TICKET_REF, view.get().externalRef());
+    assertEquals("Add caching", view.get().title());
+    assertEquals("https://linear.app/acme/issue/LIN-101", view.get().url());
+  }
+
+  @Test
+  void findActiveTicketOriginViewYieldsNullTitleAndUrlForPre3gMetadata() {
+    // Pre-3g / no-URL parity — metadata missing the title/url keys decodes to null for both (the
+    // read model then serializes them as null; the summary exact-field contract stays green).
+    when(port.findActiveTicketOriginByWorkflowRun(RUN_ID))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkRecordPort.TicketOriginProjection(
+                    "linear",
+                    TICKET_REF,
+                    IntegrationSyncStatus.LINKED.value(),
+                    "{\"summary\":\"Bounded feature\"}"
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+
+    Optional<IntegrationLinkService.TicketOriginView> view =
+        service.findActiveTicketOriginView(RUN_ID);
+
+    assertTrue(view.isPresent());
+    org.junit.jupiter.api.Assertions.assertNull(view.get().title());
+    org.junit.jupiter.api.Assertions.assertNull(view.get().url());
   }
 
   private static Ticket sampleTicket() {

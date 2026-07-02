@@ -14,28 +14,35 @@ package org.dradgo.domain.integration.ticketsource;
  *   <li>{@code supportsTicketStateUpdates} - the source exposes a ticket workflow-state the adapter
  *       can surface (drives status-gated behavior such as auto-ingest).
  *   <li>{@code supportsTicketCreation} - the source can create linked child/sub-tickets.
+ *   <li>{@code supportsSourceTicketUrl} - the source can build a link-back URL to the originating
+ *       ticket ({@code buildSourceTicketUrl}), snapshotted into the run's origin metadata (story
+ *       3g-1).
  * </ul>
  */
 public record TicketSourceCapabilities(
     boolean supportsCommentOnTicket,
     boolean supportsPolling,
     boolean supportsTicketStateUpdates,
-    boolean supportsTicketCreation) {
+    boolean supportsTicketCreation,
+    boolean supportsSourceTicketUrl) {
 
-  /** Helper for connectors that intentionally do not support source ticket creation yet. */
+  /**
+   * Helper for connectors that intentionally do not support source ticket creation yet. Such
+   * connectors also do not build a source-ticket URL ({@code supportsSourceTicketUrl == false}).
+   */
   public static TicketSourceCapabilities noCreation(
       boolean supportsCommentOnTicket,
       boolean supportsPolling,
       boolean supportsTicketStateUpdates) {
     return new TicketSourceCapabilities(
-        supportsCommentOnTicket, supportsPolling, supportsTicketStateUpdates, false);
+        supportsCommentOnTicket, supportsPolling, supportsTicketStateUpdates, false, false);
   }
 
   /**
-   * The Linear capability set - Linear supports comment-posting, polling, state ids, and source
-   * sub-ticket creation.
+   * The Linear capability set - Linear supports comment-posting, polling, state ids, source
+   * sub-ticket creation, and source-ticket URL building.
    */
   public static TicketSourceCapabilities linearDefaults() {
-    return new TicketSourceCapabilities(true, true, true, true);
+    return new TicketSourceCapabilities(true, true, true, true, true);
   }
 }

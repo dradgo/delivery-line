@@ -1033,6 +1033,16 @@ export interface components {
             /** @example linear */
             integrationType?: string;
             syncStatus?: string;
+            /**
+             * @description Originating ticket title snapshotted at link time (story 3g-1, FR73). Null for a pre-3g link.
+             * @example Fix flaky checkout test
+             */
+            title?: string | null;
+            /**
+             * @description Link-back URL to the source ticket, snapshotted at link time (story 3g-1, FR73). Null when the connector cannot build one or for a pre-3g link.
+             * @example https://linear.app/issue/DEL-1234
+             */
+            url?: string | null;
         };
         ManualArtifactSubmissionRequest: {
             /** @description Optional map of contentReference -> base64-encoded artifact bytes (e.g. a spec's markdown), materialized into scratch before ingest. */
@@ -1756,6 +1766,11 @@ export interface components {
              * @example DEL-1234
              */
             ticketRef?: string;
+            /**
+             * @description Originating ticket title snapshotted at link time (story 3g-1, FR73). Null for an unlinked or pre-3g run.
+             * @example Fix flaky checkout test
+             */
+            ticketTitle?: string | null;
             /**
              * @description Run public id.
              * @example run_abc123

@@ -425,6 +425,61 @@ class WorkflowInspectionServiceClarificationStatusTest {
   }
 
   @Test
+  void listRunsSurfacesTicketTitleFromWidenedOriginReadWithoutN1() {
+    // Story 3g-1 (AC3/AC6) — the queue summary carries the snapshotted origin title, sourced from
+    // the SAME single per-run active-link read as ticketRef (exactly one read per run — no N+1).
+    when(runs.listRuns(null, false, 2))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot(
+                    "run_list_1", WorkflowState.EXECUTING, null, 1L, 0, false)));
+    when(events.findLatestByWorkflowRunPublicId("run_list_1")).thenReturn(Optional.empty());
+    when(links.findActiveTicketOriginView("run_list_1"))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkService.TicketOriginView(
+                    "linear",
+                    "LIN-101",
+                    "linked",
+                    "Fix flaky checkout test",
+                    "https://linear.app/issue/LIN-101")));
+    when(clarifications.countPendingByWorkflowRun("run_list_1")).thenReturn(0);
+
+    List<WorkflowInspectionService.WorkflowRunSummaryView> result =
+        service.listRuns(null, false, 2);
+
+    assertEquals(1, result.size());
+    assertEquals("LIN-101", result.get(0).ticketRef());
+    assertEquals("Fix flaky checkout test", result.get(0).ticketTitle());
+    // Exactly one active-link read per run, and NOT a second lookup via
+    // findActiveLinkByWorkflowRun.
+    org.mockito.Mockito.verify(links, org.mockito.Mockito.times(1))
+        .findActiveTicketOriginView("run_list_1");
+    org.mockito.Mockito.verify(links, org.mockito.Mockito.never())
+        .findActiveLinkByWorkflowRun("run_list_1");
+  }
+
+  @Test
+  void listRunsLeavesTicketTitleNullForUnlinkedOrPre3gRun() {
+    // Story 3g-1 — unlinked / pre-3g parity: no active link (or no title key) ⇒ ticketRef +
+    // ticketTitle both null, no break.
+    when(runs.listRuns(null, false, 1))
+        .thenReturn(
+            List.of(
+                new WorkflowRunSnapshot("run_list_1", WorkflowState.INBOX, null, 1L, 0, false)));
+    when(events.findLatestByWorkflowRunPublicId("run_list_1")).thenReturn(Optional.empty());
+    when(links.findActiveTicketOriginView("run_list_1")).thenReturn(Optional.empty());
+    when(clarifications.countPendingByWorkflowRun("run_list_1")).thenReturn(0);
+
+    List<WorkflowInspectionService.WorkflowRunSummaryView> result =
+        service.listRuns(null, false, 1);
+
+    assertEquals(1, result.size());
+    assertNull(result.get(0).ticketRef());
+    assertNull(result.get(0).ticketTitle());
+  }
+
+  @Test
   void listRunsResolvesProjectSlugFilterAndAddsProjectAttribution() {
     Project alpha = project("prj_alpha", "Alpha Project", "alpha");
     when(projects.findBySlug("alpha")).thenReturn(Optional.of(alpha));

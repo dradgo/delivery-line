@@ -439,6 +439,11 @@ class ProjectConnectorResolverTest {
     }
 
     @Override
+    public Optional<String> buildSourceTicketUrl(TicketRef ref) {
+      return Optional.empty();
+    }
+
+    @Override
     public TicketSourceCapabilities getCapabilities() {
       return capabilities;
     }

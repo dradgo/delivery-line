@@ -23,6 +23,7 @@ import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.IntegrationLinkService.TicketOriginView;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.recovery.FailureDescription;
@@ -1261,9 +1262,11 @@ public class WorkflowInspectionService {
                         snapshot.publicId())));
       }
 
+      // Story 3g-1: source the linked-ticket view from the widened origin projection so the detail
+      // surface carries the snapshotted title + link-back url alongside integrationType/ref/status.
       LinkedTicketView linkedTicket =
           integrationLinkService
-              .findActiveLinkByWorkflowRun(workflowRunPublicId)
+              .findActiveTicketOriginView(workflowRunPublicId)
               .map(WorkflowInspectionService::toLinkedTicket)
               .orElse(null);
 
@@ -1411,11 +1414,12 @@ public class WorkflowInspectionService {
     for (WorkflowRunSnapshot run : runs) {
       Optional<WorkflowEventRecord> latest =
           workflowEventReadPort.findLatestByWorkflowRunPublicId(run.publicId());
-      String ticketRef =
-          integrationLinkService
-              .findActiveLinkByWorkflowRun(run.publicId())
-              .map(IntegrationLink::externalRef)
-              .orElse(null);
+      // Story 3g-1: widen the existing single per-run active-link read to also carry the
+      // snapshotted origin title (no second query — no N+1 regression on the queue surface).
+      Optional<TicketOriginView> origin =
+          integrationLinkService.findActiveTicketOriginView(run.publicId());
+      String ticketRef = origin.map(TicketOriginView::externalRef).orElse(null);
+      String ticketTitle = origin.map(TicketOriginView::title).orElse(null);
       int pendingClarifications = clarificationReadPort.countPendingByWorkflowRun(run.publicId());
       ProjectAttribution project = projectAttributionFor(run.projectId(), projectsById);
       summaries.add(
@@ -1432,7 +1436,8 @@ public class WorkflowInspectionService {
               run.parentRunId(),
               project == null ? null : project.projectId(),
               project == null ? null : project.projectName(),
-              project == null ? null : project.projectSlug()));
+              project == null ? null : project.projectSlug(),
+              ticketTitle));
     }
     log.info(
         "listing workflow_runs success count={} projectFilterPresent={} resolvedProjectId={}",
@@ -2412,9 +2417,13 @@ public class WorkflowInspectionService {
     return filtered;
   }
 
-  private static LinkedTicketView toLinkedTicket(IntegrationLink link) {
+  private static LinkedTicketView toLinkedTicket(TicketOriginView origin) {
     return new LinkedTicketView(
-        link.integrationType(), link.externalRef(), link.syncStatus().value());
+        origin.integrationType(),
+        origin.externalRef(),
+        origin.syncStatus(),
+        origin.title(),
+        origin.url());
   }
 
   private static DomainException runNotFound(String workflowRunPublicId) {
@@ -2560,7 +2569,19 @@ public class WorkflowInspectionService {
       // read time; null for spec/prOutput (never co-populated with the prOutput fields above).
       List<String> steps) {}
 
-  public record LinkedTicketView(String integrationType, String externalRef, String syncStatus) {}
+  /**
+   * Detail linked-ticket view. Story 3g-1 appends the nullable snapshotted originating-ticket
+   * {@code title} and link-back {@code url} (both {@code null} for a pre-3g row or a connector that
+   * builds no URL). The 3-arg convenience constructor (title/url ⇒ {@code null}) preserves existing
+   * call-sites that predate the origin fields.
+   */
+  public record LinkedTicketView(
+      String integrationType, String externalRef, String syncStatus, String title, String url) {
+
+    public LinkedTicketView(String integrationType, String externalRef, String syncStatus) {
+      this(integrationType, externalRef, syncStatus, null, null);
+    }
+  }
 
   public record WorkflowHistoryView(String workflowRunId, List<WorkflowEventView> events) {}
 
@@ -2601,7 +2622,11 @@ public class WorkflowInspectionService {
       String parentRunId,
       String projectId,
       String projectName,
-      String projectSlug) {
+      String projectSlug,
+      // Story 3g-1 (FR73) — the snapshotted originating-ticket title, appended at the END of the
+      // field list (nullable; null for an unlinked or pre-3g run). Sourced from the same widened
+      // per-run active-link read as ticketRef (no second query).
+      String ticketTitle) {
 
     public WorkflowRunSummaryView(
         String workflowRunId,
@@ -2623,6 +2648,7 @@ public class WorkflowInspectionService {
           escalationMarker,
           pendingClarifications,
           archivedAt,
+          null,
           null,
           null,
           null,

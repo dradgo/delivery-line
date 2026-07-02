@@ -231,7 +231,8 @@ public class IntegrationLinkService {
         throw adapterFailure(linearTicketRef, error);
       }
 
-      Map<String, Object> rawMetadata = buildExternalMetadata(ticket);
+      String sourceTicketUrl = resolveSourceTicketUrl(TicketRef.of(linearTicketRef));
+      Map<String, Object> rawMetadata = buildExternalMetadata(ticket, sourceTicketUrl);
       RedactionResult redacted =
           redactionPolicyService.redact(rawMetadata, DataClassification.SHAREABLE_REDACTED.value());
       byte[] metadataBytes = serializeRedactedMetadata(redacted.sanitizedJson());
@@ -250,10 +251,11 @@ public class IntegrationLinkService {
       idempotencyService.complete(
           idempotencyKey, inserted.publicId(), IdempotencyRecordStatus.COMPLETED);
       log.info(
-          "linkTicket success workflowRunId={} integrationLinkPublicId={} effectiveClassification={}",
+          "linkTicket success workflowRunId={} integrationLinkPublicId={} effectiveClassification={} originUrlSnapshotted={}",
           workflowRunPublicId,
           inserted.publicId(),
-          redacted.effectiveClassification().value());
+          redacted.effectiveClassification().value(),
+          sourceTicketUrl != null);
       return inserted;
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
@@ -343,7 +345,8 @@ public class IntegrationLinkService {
       throw adapterFailure(linearTicketRef, error);
     }
 
-    Map<String, Object> rawMetadata = buildExternalMetadata(ticket);
+    String sourceTicketUrl = resolveSourceTicketUrl(TicketRef.of(linearTicketRef));
+    Map<String, Object> rawMetadata = buildExternalMetadata(ticket, sourceTicketUrl);
     RedactionResult redacted =
         redactionPolicyService.redact(rawMetadata, DataClassification.SHAREABLE_REDACTED.value());
     byte[] metadataBytes = serializeRedactedMetadata(redacted.sanitizedJson());
@@ -360,10 +363,11 @@ public class IntegrationLinkService {
                 now,
                 now));
     log.info(
-        "linkTicketWithinTransaction success workflowRunId={} integrationLinkPublicId={} effectiveClassification={}",
+        "linkTicketWithinTransaction success workflowRunId={} integrationLinkPublicId={} effectiveClassification={} originUrlSnapshotted={}",
         workflowRunPublicId,
         inserted.publicId(),
-        redacted.effectiveClassification().value());
+        redacted.effectiveClassification().value(),
+        sourceTicketUrl != null);
     return inserted;
   }
 
@@ -786,6 +790,62 @@ public class IntegrationLinkService {
    */
   public record GitHubPrLinkView(String prReference, String prState) {}
 
+  /**
+   * Story 3g-1 — the active link's origin projection (integration type + external ref + sync status
+   * + the snapshotted originating-ticket {@code title} and link-back {@code url}) for the run
+   * review read models, resolved in a SINGLE query so the summary/detail surfaces can widen their
+   * existing per-run active-link read in place (no N+1). {@code title} / {@code url} are read back
+   * from the already-redacted {@code external_metadata} snapshot — no fresh redaction pass and no
+   * adapter call — matching the {@code ticketRef} "trusted persisted value, sanitize only at log
+   * sites" posture. Either may be {@code null} (a pre-3g row, or a connector that builds no URL).
+   * Empty Optional when the run has no active link.
+   */
+  @Transactional(readOnly = true)
+  public Optional<TicketOriginView> findActiveTicketOriginView(String workflowRunPublicId) {
+    return integrationLinkRecordPort
+        .findActiveTicketOriginByWorkflowRun(workflowRunPublicId)
+        .map(
+            projection -> {
+              // Story 3g-1 review — parse the metadata bytes ONCE per run, then pull both keys from
+              // the same tree (this runs inside the listRuns per-run loop; re-parsing per key was
+              // redundant work).
+              com.fasterxml.jackson.databind.JsonNode metadata =
+                  parseExternalMetadata(projection.externalMetadata());
+              return new TicketOriginView(
+                  projection.integrationType(),
+                  projection.externalRef(),
+                  projection.syncStatus(),
+                  metadataString(metadata, "title"),
+                  metadataString(metadata, "url"));
+            });
+  }
+
+  private com.fasterxml.jackson.databind.JsonNode parseExternalMetadata(byte[] externalMetadata) {
+    if (externalMetadata == null || externalMetadata.length == 0) {
+      return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+    }
+    try {
+      return objectMapper.readTree(externalMetadata);
+    } catch (java.io.IOException error) {
+      log.warn("findActiveTicketOriginView metadata parse failed (treating all keys as null)");
+      return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+    }
+  }
+
+  private static String metadataString(
+      com.fasterxml.jackson.databind.JsonNode metadata, String key) {
+    com.fasterxml.jackson.databind.JsonNode node = metadata.path(key);
+    return (node.isTextual() && !node.asText().isBlank()) ? node.asText() : null;
+  }
+
+  /**
+   * Story 3g-1 — the active link's origin fields for the run review read models: integration type /
+   * external ref / sync status plus the snapshotted originating-ticket {@code title} and link-back
+   * {@code url} (either {@code null} for a pre-3g row or a connector that builds no URL).
+   */
+  public record TicketOriginView(
+      String integrationType, String externalRef, String syncStatus, String title, String url) {}
+
   /** Transition {@code sync_status} {@code linked → synced} and refresh {@code last_sync_at}. */
   @Transactional
   public IntegrationLink markSynced(String integrationLinkPublicId, Instant syncedAt) {
@@ -833,7 +893,7 @@ public class IntegrationLinkService {
     }
   }
 
-  private static Map<String, Object> buildExternalMetadata(Ticket ticket) {
+  private static Map<String, Object> buildExternalMetadata(Ticket ticket, String sourceTicketUrl) {
     Map<String, Object> metadata = new LinkedHashMap<>();
     metadata.put("title", ticket.title());
     metadata.put("summary", ticket.summary());
@@ -841,7 +901,26 @@ public class IntegrationLinkService {
     metadata.put("labels", ticket.labels());
     metadata.put("ticketCreatedAt", ticket.createdAt().toString());
     metadata.put("ticketUpdatedAt", ticket.updatedAt().toString());
+    // Story 3g-1: origin link-back URL, snapshotted once at link time. Omit the key entirely when
+    // the connector cannot build a URL so a no-URL row is indistinguishable from a pre-3g row (both
+    // read `url == null`). Flows through the SAME SHAREABLE_REDACTED pass that wraps this map.
+    if (sourceTicketUrl != null) {
+      metadata.put("url", sourceTicketUrl);
+    }
     return metadata;
+  }
+
+  /**
+   * Story 3g-1: resolve the originating-ticket link-back URL, capability-gated. Returns {@code
+   * null} when the active ticket source does not advertise {@code supportsSourceTicketUrl} or
+   * cannot form a URL for {@code ref}. Purely local (no network) — the URL is derived from the ref.
+   * Never logs the URL itself.
+   */
+  private String resolveSourceTicketUrl(TicketRef ref) {
+    if (!linearAdapter.getCapabilities().supportsSourceTicketUrl()) {
+      return null;
+    }
+    return linearAdapter.buildSourceTicketUrl(ref).orElse(null);
   }
 
   private byte[] serializeRedactedMetadata(JsonNode sanitizedJson) {

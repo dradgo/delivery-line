@@ -31,6 +31,17 @@ class LinearMockAdapterUnitTest {
   }
 
   @Test
+  void buildSourceTicketUrlIsDeterministicAndNonEmpty() {
+    // Story 3g-1 — the mock builds a deterministic stub URL (no randomness/wall-clock).
+    Optional<String> first = adapter.buildSourceTicketUrl(TicketRef.of("LIN-101"));
+    Optional<String> second = adapter.buildSourceTicketUrl(TicketRef.of("LIN-101"));
+    assertTrue(first.isPresent(), "mock advertises supportsSourceTicketUrl=true → builds a URL");
+    assertEquals(first.get(), second.get(), "deterministic: same ref → same URL");
+    assertTrue(first.get().contains("LIN-101"), "URL carries the ref");
+    assertTrue(adapter.getCapabilities().supportsSourceTicketUrl());
+  }
+
+  @Test
   void fetchReturnsHappyFixtureForLowRiskFeature() {
     Optional<Ticket> ticket =
         adapter.fetchTicketByReference(

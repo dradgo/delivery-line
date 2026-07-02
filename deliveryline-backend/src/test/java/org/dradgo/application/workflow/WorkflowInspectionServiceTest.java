@@ -140,6 +140,16 @@ class WorkflowInspectionServiceTest {
                     Instant.now(),
                     Instant.now(),
                     null)));
+    // Story 3g-1 — the detail linked-ticket is sourced from the widened origin projection.
+    when(links.findActiveTicketOriginView(RUN))
+        .thenReturn(
+            Optional.of(
+                new IntegrationLinkService.TicketOriginView(
+                    "linear",
+                    "LIN-101",
+                    "linked",
+                    "Fix flaky checkout test",
+                    "https://linear.app/issue/LIN-101")));
     stubNonFailedDescribe(RUN, WorkflowState.EXECUTING, "await_outcome");
 
     WorkflowStatusView view = service.getStatus(RUN);
@@ -160,6 +170,9 @@ class WorkflowInspectionServiceTest {
     assertEquals("art_spec2", spec.artifactId());
     assertNotNull(view.linkedTicket());
     assertEquals("LIN-101", view.linkedTicket().externalRef());
+    // Story 3g-1 — detail surfaces the snapshotted origin title + link-back url.
+    assertEquals("Fix flaky checkout test", view.linkedTicket().title());
+    assertEquals("https://linear.app/issue/LIN-101", view.linkedTicket().url());
     assertEquals("await_outcome", view.nextSafeAction());
     assertEquals("run_parent1234", view.parentRunId());
     assertEquals(List.of("run_childA1234"), view.childRunIds());

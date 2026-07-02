@@ -706,6 +706,22 @@
           },
           "syncStatus" : {
             "type" : "string"
+          },
+          "title" : {
+            "description" : "Originating ticket title snapshotted at link time (story 3g-1, FR73). Null for a pre-3g link.",
+            "example" : "Fix flaky checkout test",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "url" : {
+            "description" : "Link-back URL to the source ticket, snapshotted at link time (story 3g-1, FR73). Null when the connector cannot build one or for a pre-3g link.",
+            "example" : "https://linear.app/issue/DEL-1234",
+            "type" : [
+              "string",
+              "null"
+            ]
           }
         },
         "type" : "object"
@@ -2411,6 +2427,14 @@
             "description" : "Linear ticket reference, if linked.",
             "example" : "DEL-1234",
             "type" : "string"
+          },
+          "ticketTitle" : {
+            "description" : "Originating ticket title snapshotted at link time (story 3g-1, FR73). Null for an unlinked or pre-3g run.",
+            "example" : "Fix flaky checkout test",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "workflowRunId" : {
             "description" : "Run public id.",

@@ -17,6 +17,7 @@ import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkStateMachine;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort;
+import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.TicketOriginProjection;
 import org.dradgo.application.integration.spi.IntegrationLinkRecordPort.TicketSummaryProjection;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.DomainException;
@@ -210,6 +211,23 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
   }
 
   @Override
+  public Optional<TicketOriginProjection> findActiveTicketOriginByWorkflowRun(
+      String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    return integrationLinkRepository
+        .findActiveByWorkflowRunPublicIdLinearFirst(workflowRunPublicId)
+        .stream()
+        .findFirst()
+        .map(
+            entity ->
+                new TicketOriginProjection(
+                    entity.getIntegrationType(),
+                    entity.getExternalRef(),
+                    entity.getSyncStatus().value(),
+                    encodeMetadata(entity.getExternalMetadata())));
+  }
+
+  @Override
   public Optional<TicketSummaryProjection> findActiveTicketSummaryByTypeAndWorkflowRun(
       String integrationType, String workflowRunPublicId) {
     if (integrationType == null || integrationType.isBlank()) {
@@ -233,9 +251,10 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
     try {
       return objectMapper.writeValueAsBytes(metadata);
     } catch (java.io.IOException error) {
-      // Shouldn't happen for a Hibernate-managed Map; treat as recoverable empty.
+      // Shouldn't happen for a Hibernate-managed Map; treat as recoverable empty. Shared by the
+      // summary AND origin (story 3g-1) projections, so the message stays caller-agnostic.
       log.warn(
-          "findActiveTicketSummaryByWorkflowRun metadata_serialize_failed workflowRunId={}",
+          "encodeMetadata metadata_serialize_failed workflowRunId={}",
           workflowRunPublicId(metadata));
       return new byte[0];
     }

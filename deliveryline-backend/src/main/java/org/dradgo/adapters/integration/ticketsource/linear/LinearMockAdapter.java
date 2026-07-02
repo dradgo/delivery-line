@@ -13,6 +13,7 @@ import java.util.stream.Collectors;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
 import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
@@ -203,6 +204,18 @@ public class LinearMockAdapter implements TicketSourceAdapter {
   @Override
   public ConnectorKind connectorKind() {
     return ConnectorKind.LINEAR;
+  }
+
+  @Override
+  public Optional<String> buildSourceTicketUrl(TicketRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    // Deterministic stub URL (no randomness, no wall-clock): a fixed mock base + the ref. Distinct
+    // host from the real adapter so a mock-sourced origin URL is never mistaken for a live link.
+    String url = "https://linear.mock/issue/" + ref.value();
+    log.debug(
+        "linear_mock build_source_ticket_url ticketRef={} present=true",
+        MdcKeys.sanitizeForLog(ref.value()));
+    return Optional.of(url);
   }
 
   @Override

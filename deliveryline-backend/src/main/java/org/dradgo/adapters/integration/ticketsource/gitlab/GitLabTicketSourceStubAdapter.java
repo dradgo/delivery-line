@@ -77,6 +77,14 @@ public class GitLabTicketSourceStubAdapter implements TicketSourceAdapter {
   }
 
   @Override
+  public Optional<String> buildSourceTicketUrl(TicketRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    // supportsSourceTicketUrl=false (via noCreation) — capability-gating callers never reach here;
+    // return empty so a non-gating caller still degrades safely (never fabricates a URL).
+    return Optional.empty();
+  }
+
+  @Override
   public TicketSourceCapabilities getCapabilities() {
     // Deliberately degraded — all optional operations unsupported (exercises AC4 degradation).
     return TicketSourceCapabilities.noCreation(false, false, false);

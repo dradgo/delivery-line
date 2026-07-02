@@ -83,6 +83,18 @@ public interface TicketSourceAdapter {
   CreateSubticketResult createSubticket(TicketRef parentRef, SubticketDraft draft);
 
   /**
+   * Optional operation (story 3g-1): build a stable link-back URL to the originating ticket from
+   * its {@link TicketRef}. Consumers MUST check {@link
+   * TicketSourceCapabilities#supportsSourceTicketUrl()} before invoking; adapters that do not
+   * advertise the capability return {@link Optional#empty()}. The URL is derived purely from the
+   * {@code ref} (no network call, no auth) so it can be snapshotted into the run's origin metadata
+   * at link time. Returns {@link Optional#empty()} when the ref cannot form a URL. The result is a
+   * plain {@link String} — no vendor type crosses the port ({@code
+   * TICKET_SOURCE_TYPES_MUST_NOT_LEAK_THROUGH_PORT}) — and MUST NOT embed tokens or query secrets.
+   */
+  Optional<String> buildSourceTicketUrl(TicketRef ref);
+
+  /**
    * Declare which optional operations this ticket source supports (story 3.32 AC3). Consuming
    * services gate optional calls (e.g. comment write-back) on the relevant capability flag.
    */

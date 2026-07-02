@@ -40,6 +40,7 @@ import org.dradgo.domain.integration.repohost.PullRequestRef;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
 import org.dradgo.domain.integration.ticketsource.Ticket;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
+import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -92,6 +93,9 @@ class IntegrationLoggingContractTest {
         .thenReturn(Optional.empty());
     when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
         .thenReturn(Optional.of(sampleTicket()));
+    // Story 3g-1 — capability-gated URL resolution runs on the happy path; the URL is never logged.
+    when(linearAdapter.getCapabilities()).thenReturn(TicketSourceCapabilities.linearDefaults());
+    when(linearAdapter.buildSourceTicketUrl(any())).thenReturn(Optional.empty());
     when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
         .thenReturn(sampleRedactionResult());
     when(port.insert(any(NewIntegrationLink.class)))
@@ -111,6 +115,48 @@ class IntegrationLoggingContractTest {
         serviceAppender.list.stream()
             .noneMatch(event -> event.getFormattedMessage().contains(TICKET_REF)),
         "raw external ticket references must not reach the log surface");
+  }
+
+  @Test
+  void linkTicketLogsOriginUrlPresenceFlagButNeverTheUrlItself() {
+    // Story 3g-1 (AC5) — the success log records only a boolean presence flag; the source URL
+    // (which may carry sensitive query material) is never written to the log surface.
+    String sourceUrl = "https://linear.app/issue/LIN-101";
+    IntegrationLinkRecordPort port = mock(IntegrationLinkRecordPort.class);
+    TicketSourceAdapter linearAdapter = mock(TicketSourceAdapter.class);
+    IdempotencyService idempotencyService = mock(IdempotencyService.class);
+    RedactionPolicyService redactionService = mock(RedactionPolicyService.class);
+    IntegrationLinkService service =
+        new IntegrationLinkService(
+            port,
+            linearAdapter,
+            idempotencyService,
+            redactionService,
+            gitHubAdapterProvider(null),
+            mock(WorkflowEventWritePort.class),
+            callthroughTemplate());
+
+    when(idempotencyService.checkAndReserve(
+            eq(IDEMPOTENCY_KEY), anyString(), eq(ACTOR.actorIdentity()), anyString()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+    when(port.findActiveByTypeAndExternalRefForUpdate("linear", TICKET_REF))
+        .thenReturn(Optional.empty());
+    when(linearAdapter.fetchTicketByReference(TicketRef.of(TICKET_REF)))
+        .thenReturn(Optional.of(sampleTicket()));
+    when(linearAdapter.getCapabilities()).thenReturn(TicketSourceCapabilities.linearDefaults());
+    when(linearAdapter.buildSourceTicketUrl(any())).thenReturn(Optional.of(sourceUrl));
+    when(redactionService.redact(any(Map.class), eq(DataClassification.SHAREABLE_REDACTED.value())))
+        .thenReturn(sampleRedactionResult());
+    when(port.insert(any(NewIntegrationLink.class)))
+        .thenReturn(sampleLink("ilk_log12345678", RUN_ID));
+
+    service.linkTicket(RUN_ID, TICKET_REF, ACTOR, IDEMPOTENCY_KEY);
+
+    assertContains(serviceAppender.list, Level.INFO, "originUrlSnapshotted=true");
+    assertTrue(
+        serviceAppender.list.stream()
+            .noneMatch(event -> event.getFormattedMessage().contains(sourceUrl)),
+        "the source ticket URL must never reach the log surface");
   }
 
   @Test

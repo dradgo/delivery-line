@@ -135,10 +135,25 @@ public record WorkflowDetailResponse(
   public record LinkedTicket(
       @Schema(example = "linear") String integrationType,
       @Schema(example = "DEL-1234") String externalRef,
-      String syncStatus) {
+      String syncStatus,
+      @Schema(
+              description =
+                  "Originating ticket title snapshotted at link time (story 3g-1, FR73). Null for a"
+                      + " pre-3g link.",
+              nullable = true,
+              example = "Fix flaky checkout test")
+          String title,
+      @Schema(
+              description =
+                  "Link-back URL to the source ticket, snapshotted at link time (story 3g-1, FR73)."
+                      + " Null when the connector cannot build one or for a pre-3g link.",
+              nullable = true,
+              example = "https://linear.app/issue/DEL-1234")
+          String url) {
 
     static LinkedTicket from(LinkedTicketView view) {
-      return new LinkedTicket(view.integrationType(), view.externalRef(), view.syncStatus());
+      return new LinkedTicket(
+          view.integrationType(), view.externalRef(), view.syncStatus(), view.title(), view.url());
     }
   }
 

@@ -16,6 +16,8 @@ class TicketSourceCapabilitiesTest {
     assertTrue(capabilities.supportsPolling());
     assertTrue(capabilities.supportsTicketStateUpdates());
     assertFalse(capabilities.supportsTicketCreation());
+    // Story 3g-1 — a no-creation connector also cannot build a source-ticket URL.
+    assertFalse(capabilities.supportsSourceTicketUrl());
   }
 
   @Test
@@ -23,6 +25,8 @@ class TicketSourceCapabilitiesTest {
     TicketSourceCapabilities capabilities = TicketSourceCapabilities.linearDefaults();
 
     assertTrue(capabilities.supportsTicketCreation());
+    // Story 3g-1 — Linear can build a source-ticket URL.
+    assertTrue(capabilities.supportsSourceTicketUrl());
   }
 
   @Test

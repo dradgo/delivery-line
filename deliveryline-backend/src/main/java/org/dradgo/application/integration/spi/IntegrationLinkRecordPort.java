@@ -146,6 +146,34 @@ public interface IntegrationLinkRecordPort {
   }
 
   /**
+   * Story 3g-1 — project the active integration link for a workflow run as a {@link
+   * TicketOriginProjection} carrying everything the read models need to render the run's origin in
+   * a SINGLE query: the {@code integration_type} + {@code external_ref} + {@code sync_status} (for
+   * the detail {@code LinkedTicket}) plus the raw redacted {@code external_metadata} bytes (the
+   * application decodes the snapshotted {@code title} / {@code url} keys via Jackson). Resolves the
+   * same active {@code linear}-first row as {@link #findActiveTicketSummaryByWorkflowRun}, so the
+   * summary/detail surfaces can widen their existing per-run active-link read in place (no N+1).
+   */
+  Optional<TicketOriginProjection> findActiveTicketOriginByWorkflowRun(String workflowRunPublicId);
+
+  /**
+   * Narrow projection over the active {@code integration_links} row carrying the origin fields the
+   * read models surface (story 3g-1). {@code syncStatus} is the persisted registry value; {@code
+   * externalMetadata} is the raw redacted JSON the application reads via Jackson (no JPA types
+   * cross the port).
+   */
+  record TicketOriginProjection(
+      String integrationType, String externalRef, String syncStatus, byte[] externalMetadata) {
+
+    public TicketOriginProjection {
+      if (externalRef == null || externalRef.isBlank()) {
+        throw new IllegalArgumentException("externalRef must be non-blank");
+      }
+      externalMetadata = externalMetadata == null ? new byte[0] : externalMetadata;
+    }
+  }
+
+  /**
    * Input payload for {@link #insert(NewIntegrationLink)}. Kept as a small record so the port does
    * not leak entity types. {@code externalMetadata} is opaque JSON bytes; the persistence adapter
    * stores it in the {@code external_metadata} jsonb column (V1 CHECK: {@code < 64KB}). The

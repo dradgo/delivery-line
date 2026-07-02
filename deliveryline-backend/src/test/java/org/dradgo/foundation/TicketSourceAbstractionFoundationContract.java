@@ -261,6 +261,7 @@ class TicketSourceAbstractionFoundationContract {
             2.0d,
             new LinearProperties.Polling(true),
             null,
+            null,
             null);
     return new RealHarness(server, new LinearRealAdapter(builder.build(), properties));
   }

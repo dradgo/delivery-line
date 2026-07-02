@@ -23,6 +23,7 @@ import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.linear.LinearProperties;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.domain.integration.ticketsource.CommentResult;
 import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
@@ -109,6 +110,17 @@ public class LinearRealAdapter implements TicketSourceAdapter {
    * digits, underscore — Linear team keys are typically 3–5 letters); group 2 = ticket number.
    */
   private static final Pattern TICKET_REF_PATTERN = Pattern.compile("^([A-Z][A-Z0-9_]*)-([0-9]+)$");
+
+  /**
+   * Host for the Linear issue deep-link (story 3g-1). Linear's canonical issue URL is
+   * workspace-scoped ({@code https://linear.app/<workspace-slug>/issue/<identifier>}); a
+   * workspace-agnostic {@code /issue/<id>} form does not reliably resolve. The slug is not
+   * derivable from the {@link TicketRef} alone, so it is supplied via {@code
+   * deliveryline.linear.workspace-slug} ({@link LinearProperties#workspaceSlug()}). When no slug is
+   * configured we snapshot no URL (the capability stays advertised, {@link #buildSourceTicketUrl}
+   * returns empty) rather than emit a link that 404s. Carries no auth or query material.
+   */
+  private static final String LINEAR_APP_HOST = "https://linear.app/";
 
   private final RestClient linearRestClient;
   private final LinearProperties properties;
@@ -408,6 +420,28 @@ public class LinearRealAdapter implements TicketSourceAdapter {
   @Override
   public ConnectorKind connectorKind() {
     return ConnectorKind.LINEAR;
+  }
+
+  @Override
+  public Optional<String> buildSourceTicketUrl(TicketRef ref) {
+    Objects.requireNonNull(ref, "ref");
+    Matcher matcher = TICKET_REF_PATTERN.matcher(ref.value());
+    String workspaceSlug = properties.workspaceSlug();
+    if (!matcher.matches() || workspaceSlug == null || workspaceSlug.isBlank()) {
+      // Unformable ref (does not match the Linear team-key/number shape), OR no workspace slug is
+      // configured — a workspace-less Linear URL does not reliably resolve, so snapshot no deep
+      // link rather than emit a 404-prone one.
+      log.debug(
+          "linear_real build_source_ticket_url ticketRef={} present=false",
+          MdcKeys.sanitizeForLog(ref.value()));
+      return Optional.empty();
+    }
+    String url = LINEAR_APP_HOST + workspaceSlug + "/issue/" + ref.value();
+    // Never log the URL itself — only presence and the (already non-secret) ref.
+    log.debug(
+        "linear_real build_source_ticket_url ticketRef={} present=true",
+        MdcKeys.sanitizeForLog(ref.value()));
+    return Optional.of(url);
   }
 
   @Override

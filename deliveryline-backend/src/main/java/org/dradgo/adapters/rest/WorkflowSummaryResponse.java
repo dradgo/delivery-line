@@ -54,7 +54,14 @@ public record WorkflowSummaryResponse(
             example = "Default project")
         String projectName,
     @Schema(description = "Project slug for the run.", nullable = true, example = "default")
-        String projectSlug) {
+        String projectSlug,
+    @Schema(
+            description =
+                "Originating ticket title snapshotted at link time (story 3g-1, FR73). Null for an"
+                    + " unlinked or pre-3g run.",
+            nullable = true,
+            example = "Fix flaky checkout test")
+        String ticketTitle) {
 
   // NOTE: Story 2.12 added `pendingClarifications` to the application-layer
   // {@link WorkflowRunSummaryView} but the REST surface does NOT yet expose it — the OpenAPI
@@ -76,7 +83,8 @@ public record WorkflowSummaryResponse(
         view.parentRunId(),
         view.projectId(),
         view.projectName(),
-        view.projectSlug());
+        view.projectSlug(),
+        view.ticketTitle());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

@@ -64,6 +64,14 @@ class LinearRealAdapterUnitTest {
   }
 
   private static LinearProperties scopedProperties(String teamKey, String projectId) {
+    // Story 3g-1 review — a workspace slug must be configured for a source-ticket URL to be built
+    // (Linear's canonical issue URL is workspace-scoped). The three existing poll tests do not
+    // depend on the slug.
+    return scopedProperties(teamKey, projectId, "acme");
+  }
+
+  private static LinearProperties scopedProperties(
+      String teamKey, String projectId, String workspaceSlug) {
     return new LinearProperties(
         "test-token",
         BASE_URL,
@@ -73,7 +81,38 @@ class LinearRealAdapterUnitTest {
         2.0d,
         new LinearProperties.Polling(true),
         teamKey,
-        projectId);
+        projectId,
+        workspaceSlug);
+  }
+
+  @Test
+  void buildSourceTicketUrlMapsFormedRefToWorkspaceScopedDeepLinkWithNoSecrets() {
+    // Story 3g-1 — a pure (no-network) deep link derived from the ref + configured workspace slug;
+    // no token/query material.
+    Optional<String> url = adapter.buildSourceTicketUrl(TicketRef.of("LIN-123"));
+    assertTrue(url.isPresent());
+    assertEquals("https://linear.app/acme/issue/LIN-123", url.get());
+    assertFalse(url.get().contains("?"), "no query material");
+    assertFalse(url.get().contains("test-token"), "no token material");
+    assertTrue(adapter.getCapabilities().supportsSourceTicketUrl());
+    // The builder performs no HTTP — verifyNoOutstanding would pass with no expectations set.
+    mockServer.verify();
+  }
+
+  @Test
+  void buildSourceTicketUrlIsEmptyForUnformableRef() {
+    // Story 3g-1 — a ref that does not match the Linear team-key/number shape yields no URL.
+    assertTrue(adapter.buildSourceTicketUrl(TicketRef.of("not a linear ref")).isEmpty());
+  }
+
+  @Test
+  void buildSourceTicketUrlIsEmptyWhenNoWorkspaceSlugConfigured() {
+    // Story 3g-1 review — a workspace-less Linear URL does not reliably resolve, so with no
+    // configured slug the builder snapshots no deep link (the capability stays advertised).
+    LinearRealAdapter noSlug =
+        new LinearRealAdapter(restClient, scopedProperties(null, null, null));
+    assertTrue(noSlug.buildSourceTicketUrl(TicketRef.of("LIN-123")).isEmpty());
+    assertTrue(noSlug.getCapabilities().supportsSourceTicketUrl());
   }
 
   @Test

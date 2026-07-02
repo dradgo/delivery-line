@@ -29,6 +29,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * test {@code application.yml} needs no mirroring entry. A Linear "workspace" is determined by the
  * API token and is NOT a filterable GraphQL field; the configurable lever is team/project scoping
  * <em>within</em> the token's workspace (these are non-secret identifiers, safe to log).
+ *
+ * <p>Story 3g-1 adds a third <strong>optional, unvalidated</strong> field appended at the END,
+ * {@code workspaceSlug}, following the same pattern. Linear's canonical issue URL is
+ * workspace-scoped ({@code https://linear.app/<slug>/issue/<id>}) and the slug is not derivable
+ * from a {@code TicketRef} or the API token; when set, {@code LinearRealAdapter} builds the
+ * source-ticket deep link from it, and when absent it snapshots no URL rather than emit a
+ * workspace-less link that does not reliably resolve. The slug is a non-secret identifier (safe to
+ * log).
  */
 @ConfigurationProperties("deliveryline.linear")
 public record LinearProperties(
@@ -40,7 +48,8 @@ public record LinearProperties(
     double staleThresholdMultiplier,
     Polling polling,
     String teamKey,
-    String projectId) {
+    String projectId,
+    String workspaceSlug) {
 
   /**
    * Story 3c-8 (P1) — per-request RestClient attribute key carrying a one-off credential override
@@ -73,6 +82,9 @@ public record LinearProperties(
     // `eq:" FIN "` filter that Linear never matches → silent empty poll.
     teamKey = teamKey == null || teamKey.isBlank() ? null : teamKey.strip();
     projectId = projectId == null || projectId.isBlank() ? null : projectId.strip();
+    // Story 3g-1 — same blank⇒null normalization as the scope identifiers so a stray quoted/env
+    // slug is not spliced into a deep link that Linear never resolves.
+    workspaceSlug = workspaceSlug == null || workspaceSlug.isBlank() ? null : workspaceSlug.strip();
   }
 
   public static LinearProperties defaults() {
@@ -84,6 +96,7 @@ public record LinearProperties(
         Timeout.defaults(),
         2.0d,
         Polling.defaults(),
+        null,
         null,
         null);
   }
@@ -112,6 +125,8 @@ public record LinearProperties(
         + teamKey
         + ", projectId="
         + projectId
+        + ", workspaceSlug="
+        + workspaceSlug
         + ", apiToken=<redacted>}";
   }
 

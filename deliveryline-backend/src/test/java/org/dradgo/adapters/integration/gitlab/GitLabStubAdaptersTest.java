@@ -35,6 +35,14 @@ class GitLabStubAdaptersTest {
     assertThat(ticketSource.getCapabilities().supportsCommentOnTicket()).isFalse();
     assertThat(ticketSource.getCapabilities().supportsPolling()).isFalse();
     assertThat(ticketSource.getCapabilities().supportsTicketStateUpdates()).isFalse();
+    // Story 3g-1 — the degraded stub does not build source-ticket URLs.
+    assertThat(ticketSource.getCapabilities().supportsSourceTicketUrl()).isFalse();
+  }
+
+  @Test
+  void ticketSourceStubBuildsNoSourceTicketUrl() {
+    // Story 3g-1 — buildSourceTicketUrl is empty for the degraded stub (capability false).
+    assertThat(ticketSource.buildSourceTicketUrl(TicketRef.of("GL-1"))).isEmpty();
   }
 
   @Test

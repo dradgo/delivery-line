@@ -196,7 +196,8 @@ class WorkflowReadEndpointsContractTest {
             "parentRunId",
             "projectId",
             "projectName",
-            "projectSlug");
+            "projectSlug",
+            "ticketTitle");
     // Newest-first: OTHER_RUN was created after HAPPY_RUN.
     assertThat(first.get("workflowRunId").asText()).isEqualTo(OTHER_RUN);
 
