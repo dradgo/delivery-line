@@ -78,6 +78,13 @@ public class WorkflowInspectionService {
 
   private static final Logger log = LoggerFactory.getLogger(WorkflowInspectionService.class);
 
+  // Story 3g-4 (FR74) — the "all executions for a run" status filter used by the per-step token
+  // read (getStepExecutions) and the run-level rollup (getStatus). Mirrors the same
+  // List.of(values()) predicate findLatestRunnerExecutionId uses; the port applies no ordering, so
+  // callers sort in-service.
+  private static final List<RunnerExecutionStatus> ALL_RUNNER_EXECUTION_STATUSES =
+      List.of(RunnerExecutionStatus.values());
+
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
   private final ArtifactRecordPort artifactRecordPort;
@@ -369,6 +376,99 @@ public class WorkflowInspectionService {
       boolean selfReview,
       String unavailableReason,
       OffsetDateTime createdAt) {}
+
+  /**
+   * Story 3g-4 (FR74, AC1) — the per-step token read leg backing {@code GET
+   * /api/v1/workflows/{id}/steps}. Projects every runner execution of the run (all statuses;
+   * oldest-first by {@code createdAt}) to a {@link StepExecutionView} carrying its {@code
+   * stage/status/createdAt} plus 3g-3's three nullable token counts. Read-only, prefix-validated
+   * only — no governed action (mirrors {@link #getReviewerVerdict}). The three token counts pass
+   * through verbatim: {@code null} means "not reported" (never coalesced to {@code 0}); {@code 0}
+   * would mean "the agent reported zero".
+   */
+  @Transactional(readOnly = true)
+  public List<StepExecutionView> getStepExecutions(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      log.info("getStepExecutions entry workflowRunId={}", workflowRunPublicId);
+      workflowRunReadPort
+          .findByPublicId(workflowRunPublicId)
+          .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+      // The port applies no ordering (findLatestRunnerExecutionId maxes manually), so sort
+      // oldest-first here. Null createdAt sorts first defensively (should never occur for a
+      // persisted row).
+      List<StepExecutionView> steps =
+          runnerExecutionRecordPort
+              .findByWorkflowRunPublicIdAndStatusIn(
+                  workflowRunPublicId, ALL_RUNNER_EXECUTION_STATUSES)
+              .stream()
+              .sorted(
+                  java.util.Comparator.comparing(
+                      RunnerExecutionSnapshot::createdAt,
+                      java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+              .map(WorkflowInspectionService::toStepExecutionView)
+              .toList();
+      log.info(
+          "getStepExecutions success workflowRunId={} count={}", workflowRunPublicId, steps.size());
+      return steps;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private static StepExecutionView toStepExecutionView(RunnerExecutionSnapshot row) {
+    return new StepExecutionView(
+        row.publicId(),
+        row.stage() == null ? null : row.stage().value(),
+        row.status() == null ? null : row.status().value(),
+        row.createdAt(),
+        row.inputTokens(),
+        row.outputTokens(),
+        row.totalTokens());
+  }
+
+  /**
+   * Story 3g-4 (FR74, AC2) — sum the NON-NULL per-step {@code totalTokens} over the run's
+   * executions. Returns {@code null} when NO row reported a {@code totalTokens} (parity with the
+   * 3d-7 "not reported" posture — never {@code 0}); do NOT synthesize from input+output. Token
+   * columns are only ever set on terminal rows, so non-terminal rows contribute {@code null} and
+   * are skipped. Guards int32 overflow defensively: each column is int4 (3g-3 caps each at {@code
+   * Integer.MAX_VALUE}), so a run with many maxed steps could overflow — the accumulator clamps at
+   * {@code Integer.MAX_VALUE} (WARN once) rather than wrapping negative.
+   */
+  // Package-private (not private) so the same-package unit test can exercise the sum / null-parity /
+  // overflow-clamp branches directly without driving the full getStatus mock graph.
+  static Integer rollupTotalTokens(List<RunnerExecutionSnapshot> rows) {
+    Integer sum = null;
+    boolean warned = false;
+    for (RunnerExecutionSnapshot row : rows) {
+      Integer stepTotal = row.totalTokens();
+      if (stepTotal == null) {
+        continue;
+      }
+      if (sum == null) {
+        sum = stepTotal;
+        continue;
+      }
+      long candidate = (long) sum + (long) stepTotal;
+      if (candidate > Integer.MAX_VALUE) {
+        if (!warned) {
+          log.warn(
+              "rollupTotalTokens int32 overflow — clamping run token total at Integer.MAX_VALUE"
+                  + " (accumulated={} nextStep={})",
+              sum,
+              stepTotal);
+          warned = true;
+        }
+        sum = Integer.MAX_VALUE;
+      } else {
+        sum = (int) candidate;
+      }
+    }
+    return sum;
+  }
 
   /**
    * Story 3d-7 (FR69, AC5) — {@code application.workflow} projection of the latest provider
@@ -1287,6 +1387,13 @@ public class WorkflowInspectionService {
               ? RunDependencyGraphView.empty()
               : runDependencyPort.graphView(run.publicId());
 
+      // Story 3g-4 (FR74, AC2) — run-level token rollup: sum the non-null per-step totalTokens over
+      // ALL executions of the run. Null when no execution reported any (never 0).
+      Integer runTotalTokens =
+          rollupTotalTokens(
+              runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
+                  run.publicId(), ALL_RUNNER_EXECUTION_STATUSES));
+
       WorkflowStatusView view =
           new WorkflowStatusView(
               run.publicId(),
@@ -1311,11 +1418,14 @@ public class WorkflowInspectionService {
               project == null ? null : project.projectName(),
               project == null ? null : project.projectSlug(),
               dependencyGraph,
-              decompositionStatus);
+              decompositionStatus,
+              runTotalTokens);
       log.info(
-          "inspecting workflow_run snapshot success workflowRunId={} currentState={}",
+          "inspecting workflow_run snapshot success workflowRunId={} currentState={}"
+              + " totalTokensPresent={}",
           workflowRunPublicId,
-          run.currentState().value());
+          run.currentState().value(),
+          runTotalTokens != null);
       return view;
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
@@ -2481,7 +2591,11 @@ public class WorkflowInspectionService {
       // ("decomposed — N of M descendants complete"), or null for any non-Split run. N/M is over
       // DIRECT children (findByParentRunId): a split child reaches Completed only via its own
       // rollup, so direct-children doneness equals whole-subtree doneness.
-      String decompositionStatus) {
+      String decompositionStatus,
+      // Story 3g-4 (FR74, AC2) — run-level token consumption: sum of the non-null per-step
+      // totalTokens over ALL executions of the run. Null when no step reported any (never 0); not
+      // synthesized from input+output.
+      Integer totalTokens) {
 
     public WorkflowStatusView(
         String workflowRunId,
@@ -2523,6 +2637,7 @@ public class WorkflowInspectionService {
           null,
           null,
           RunDependencyGraphView.empty(),
+          null,
           null);
     }
   }
@@ -2541,6 +2656,22 @@ public class WorkflowInspectionService {
       this(artifactType, version, status, null);
     }
   }
+
+  /**
+   * Story 3g-4 (FR74, AC1) — per-step read projection for {@code GET
+   * /api/v1/workflows/{id}/steps}. One row per runner execution: {@code stage}/{@code status} are
+   * the enum {@code .value()} strings (null-safe), {@code createdAt} orders the list oldest-first,
+   * and the three token counts are 3g-3's nullable columns passed through verbatim ({@code null} =
+   * "not reported", never {@code 0}; {@code totalTokens} is NOT synthesized from input+output).
+   */
+  public record StepExecutionView(
+      String runnerExecutionId,
+      String stage,
+      String status,
+      OffsetDateTime createdAt,
+      Integer inputTokens,
+      Integer outputTokens,
+      Integer totalTokens) {}
 
   /**
    * Story 3a-9 (Gate 3) read view for a single artifact's content. {@code body} is the persisted,

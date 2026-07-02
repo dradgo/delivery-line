@@ -279,6 +279,114 @@ class WorkflowReadEndpointsContractTest {
   }
 
   @Test
+  void detailCarriesRunLevelTotalTokensSummedOverReportedSteps(CapturedOutput output)
+      throws Exception {
+    // Story 3g-4 (AC2) — two token-bearing terminal executions roll up to their non-null sum on
+    // the detail; a third with null tokens contributes nothing (never a 0).
+    long happyId = runDbId(HAPPY_RUN);
+    OffsetDateTime base = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(5);
+    insertRunnerExecution(
+        "rex_read_tok0001", happyId, "execution", "completed", base, 100, 200, 300);
+    insertRunnerExecution(
+        "rex_read_tok0002", happyId, "review", "completed", base.plusMinutes(1), 3, 8, 11);
+    insertRunnerExecution(
+        "rex_read_tok0003", happyId, "execution", "running", base.plusMinutes(2), null, null, null);
+
+    HttpResponse<String> response = get("/api/v1/workflows/" + HAPPY_RUN, null);
+    assertThat(response.statusCode()).isEqualTo(200);
+    JsonNode body = mapper.readTree(response.body());
+    assertThat(body.get("totalTokens").asInt()).isEqualTo(311);
+    // Logging contract — getStatus success line reports token presence (non-secret boolean).
+    assertThat(output.getOut()).contains("totalTokensPresent=true");
+  }
+
+  @Test
+  void detailTotalTokensNullWhenNoStepReportedTokens() throws Exception {
+    // A run whose only execution reported no tokens → totalTokens is JSON null (never 0/absent).
+    long otherId = runDbId(OTHER_RUN);
+    insertRunnerExecution(
+        "rex_read_tok0004",
+        otherId,
+        "execution",
+        "completed",
+        OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(5),
+        null,
+        null,
+        null);
+
+    HttpResponse<String> response = get("/api/v1/workflows/" + OTHER_RUN, null);
+    assertThat(response.statusCode()).isEqualTo(200);
+    JsonNode body = mapper.readTree(response.body());
+    assertThat(body.has("totalTokens")).isTrue();
+    assertThat(body.get("totalTokens").isNull())
+        .as("null when no step reported tokens (never 0)")
+        .isTrue();
+  }
+
+  @Test
+  void stepsReturnsPerExecutionTokensOldestFirst(CapturedOutput output) throws Exception {
+    // Story 3g-4 (AC1) — /steps returns each runner execution oldest-first with its nullable token
+    // counts. Seed out of createdAt order to prove the service sorts.
+    long happyId = runDbId(HAPPY_RUN);
+    OffsetDateTime base = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(5);
+    insertRunnerExecution(
+        "rex_step_newer1", happyId, "review", "completed", base.plusMinutes(2), 5, 6, 11);
+    insertRunnerExecution(
+        "rex_step_older1", happyId, "execution", "completed", base, 100, 200, 300);
+    insertRunnerExecution(
+        "rex_step_noreps", happyId, "execution", "running", base.plusMinutes(1), null, null, null);
+
+    HttpResponse<String> response = get("/api/v1/workflows/" + HAPPY_RUN + "/steps", null);
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(contentType(response)).contains("application/json");
+
+    JsonNode body = mapper.readTree(response.body());
+    assertThat(body.isArray()).as("/steps is a direct JSON array").isTrue();
+    assertThat(body).hasSize(3);
+
+    // Oldest-first ordering.
+    assertThat(body.get(0).get("runnerExecutionId").asText()).isEqualTo("rex_step_older1");
+    assertThat(body.get(1).get("runnerExecutionId").asText()).isEqualTo("rex_step_noreps");
+    assertThat(body.get(2).get("runnerExecutionId").asText()).isEqualTo("rex_step_newer1");
+
+    JsonNode oldest = body.get(0);
+    assertThat(oldest.fieldNames())
+        .toIterable()
+        .containsExactlyInAnyOrder(
+            "runnerExecutionId",
+            "stage",
+            "status",
+            "createdAt",
+            "inputTokens",
+            "outputTokens",
+            "totalTokens");
+    assertThat(oldest.get("stage").asText()).isEqualTo("execution");
+    assertThat(oldest.get("status").asText()).isEqualTo("completed");
+    assertThat(oldest.get("inputTokens").asInt()).isEqualTo(100);
+    assertThat(oldest.get("outputTokens").asInt()).isEqualTo(200);
+    assertThat(oldest.get("totalTokens").asInt()).isEqualTo(300);
+    assertThat(oldest.get("createdAt").asText()).endsWith("Z");
+
+    // The no-report step surfaces null token counts (never 0).
+    JsonNode noReport = body.get(1);
+    assertThat(noReport.get("inputTokens").isNull()).isTrue();
+    assertThat(noReport.get("outputTokens").isNull()).isTrue();
+    assertThat(noReport.get("totalTokens").isNull()).isTrue();
+
+    // Logging contract — the /steps success line carries the result count.
+    assertThat(output.getOut()).contains("REST list step-executions success");
+    assertThat(output.getOut()).contains("count=3");
+  }
+
+  @Test
+  void stepsUnknownRunYieldsRunNotFound() throws Exception {
+    HttpResponse<String> response = get("/api/v1/workflows/run_doesnotexist999/steps", null);
+    assertThat(response.statusCode()).isEqualTo(404);
+    JsonNode body = mapper.readTree(response.body());
+    assertThat(body.get("code").asText()).isEqualTo("RUN_NOT_FOUND");
+  }
+
+  @Test
   void malformedIdYieldsInvalidIdPrefixProblem() throws Exception {
     HttpResponse<String> response = get("/api/v1/workflows/not_a_run_id", null);
     assertThat(response.statusCode()).isEqualTo(400);
@@ -351,6 +459,55 @@ class WorkflowReadEndpointsContractTest {
       throw new AssertionError("failed to insert workflow_run " + publicId);
     }
     return id;
+  }
+
+  private long runDbId(String publicId) {
+    Long id =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_runs where public_id = ?", Long.class, publicId);
+    if (id == null) {
+      throw new AssertionError("no workflow_run " + publicId);
+    }
+    return id;
+  }
+
+  /**
+   * Seeds a runner_executions row with 3g-3's token columns. A terminal status stamps completed_at
+   * (the {@code ck_runner_executions_completed_correlation} biconditional); a non-terminal status
+   * leaves it null. timeout_at is pinned {@code >= last_activity_at} ({@code
+   * ck_runner_executions_timeout_after_activity}). Tokens are nullable and passed through verbatim.
+   */
+  private void insertRunnerExecution(
+      String publicId,
+      long runId,
+      String stage,
+      String status,
+      OffsetDateTime createdAt,
+      Integer inputTokens,
+      Integer outputTokens,
+      Integer totalTokens) {
+    boolean terminal =
+        List.of("completed", "failed", "timed_out", "orphaned", "cancelled_for_takeover")
+            .contains(status);
+    jdbcTemplate.update(
+        """
+        insert into runner_executions
+          (public_id, workflow_run_id, stage, status, context_bundle_version,
+           last_activity_at, timeout_at, completed_at, created_at,
+           input_tokens, output_tokens, total_tokens)
+        values (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        publicId,
+        runId,
+        stage,
+        status,
+        createdAt,
+        createdAt.plusMinutes(30),
+        terminal ? createdAt : null,
+        createdAt,
+        inputTokens,
+        outputTokens,
+        totalTokens);
   }
 
   private void insertIntegrationLink(String publicId, long runId, String externalRef) {

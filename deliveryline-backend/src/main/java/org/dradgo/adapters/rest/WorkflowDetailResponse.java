@@ -75,7 +75,14 @@ public record WorkflowDetailResponse(
                     + " Completed currentState when the parent rolls up.",
             nullable = true,
             example = "decomposed — 1 of 2 descendants complete")
-        String decompositionStatus) {
+        String decompositionStatus,
+    @Schema(
+            description =
+                "Run-level token consumption: sum of per-step totalTokens where reported (story"
+                    + " 3g-4, FR74). Null when no step reported tokens.",
+            nullable = true,
+            example = "12345")
+        Integer totalTokens) {
 
   public static WorkflowDetailResponse from(WorkflowStatusView view) {
     return new WorkflowDetailResponse(
@@ -103,7 +110,8 @@ public record WorkflowDetailResponse(
         view.projectName(),
         view.projectSlug(),
         RunDependencies.from(view.dependencyGraph()),
-        view.decompositionStatus());
+        view.decompositionStatus(),
+        view.totalTokens());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

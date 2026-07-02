@@ -666,6 +666,56 @@ public class WorkflowController {
     return response;
   }
 
+  /**
+   * Story 3g-4 (FR74, AC1) — per-step token usage for the run: each runner execution's
+   * stage/status/createdAt plus its input/output/total token counts (3g-3's columns), oldest-first.
+   * Read-only diagnostic surface (mirrors reviewer-verdict): NO governed action, prefix-validated
+   * only. Returns a direct JSON array (the {@code GET /workflows} list precedent — no envelope).
+   * Token counts are nullable — {@code null} = "not reported" (never 0).
+   */
+  @GetMapping(value = "/{workflowRunId}/steps", produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "listStepExecutions",
+      summary = "List per-step token usage for a workflow run",
+      description =
+          "Returns each runner execution (step) of the run with its stage/status/createdAt and the "
+              + "agent's input/output/total token counts (story 3g-4, FR74), oldest-first. Token "
+              + "counts are null when the step reported nothing (never 0). Read-only and advisory.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Per-step token usage, oldest-first."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public List<StepExecutionResponse> listStepExecutions(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info(
+        "REST list step-executions received workflowRunId={}",
+        MdcKeys.sanitizeForLog(workflowRunId));
+    List<StepExecutionResponse> response =
+        workflowInspectionService.getStepExecutions(workflowRunId).stream()
+            .map(StepExecutionResponse::from)
+            .toList();
+    log.info(
+        "REST list step-executions success workflowRunId={} count={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.size());
+    return response;
+  }
+
   @GetMapping(
       value = "/{workflowRunId}/artifacts/{artifactId}",
       produces = MediaType.APPLICATION_JSON_VALUE)
