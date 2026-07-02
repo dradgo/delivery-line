@@ -104,6 +104,56 @@ class RunnerExecutionPersistenceAdapterManualTest {
   }
 
   @Test
+  void recordTokenUsageSetsTheThreeColumnsAndReturnsMappedSnapshot() {
+    // Story 3g-3 (FR74) — recordTokenUsage sets the three nullable V31 columns and returns the
+    // remapped snapshot. Column existence/types are pinned by FlywaySchemaContractTest; this pins
+    // the adapter mapping logic (metadata-only, no status mutation).
+    RunnerExecutionRepository executionRepository = mock(RunnerExecutionRepository.class);
+    WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);
+    RunnerExecutionEntityMapper mapper = mock(RunnerExecutionEntityMapper.class);
+    RunnerExecutionEntity row = new RunnerExecutionEntity();
+    row.setPublicId("rex_tokenusage001");
+    when(executionRepository.findByPublicIdForUpdate("rex_tokenusage001"))
+        .thenReturn(Optional.of(row));
+    when(executionRepository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
+    RunnerExecutionSnapshot mapped = mock(RunnerExecutionSnapshot.class);
+    when(mapper.toSnapshot(any())).thenReturn(mapped);
+    RunnerExecutionPersistenceAdapter adapter =
+        new RunnerExecutionPersistenceAdapter(
+            executionRepository,
+            runRepository,
+            mapper,
+            mock(NamedParameterJdbcTemplate.class),
+            Clock.systemUTC());
+
+    RunnerExecutionSnapshot result = adapter.recordTokenUsage("rex_tokenusage001", 1200, 800, 2000);
+
+    org.junit.jupiter.api.Assertions.assertSame(mapped, result);
+    org.junit.jupiter.api.Assertions.assertEquals(1200, row.getInputTokens());
+    org.junit.jupiter.api.Assertions.assertEquals(800, row.getOutputTokens());
+    org.junit.jupiter.api.Assertions.assertEquals(2000, row.getTotalTokens());
+    verify(executionRepository).saveAndFlush(row);
+  }
+
+  @Test
+  void recordTokenUsageThrowsWhenRowMissing() {
+    RunnerExecutionRepository executionRepository = mock(RunnerExecutionRepository.class);
+    WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);
+    when(executionRepository.findByPublicIdForUpdate("rex_tokenusage404"))
+        .thenReturn(Optional.empty());
+    RunnerExecutionPersistenceAdapter adapter =
+        new RunnerExecutionPersistenceAdapter(
+            executionRepository,
+            runRepository,
+            mock(RunnerExecutionEntityMapper.class),
+            mock(NamedParameterJdbcTemplate.class),
+            Clock.systemUTC());
+
+    assertThatThrownBy(() -> adapter.recordTokenUsage("rex_tokenusage404", 1, 2, 3))
+        .isInstanceOf(DomainException.class);
+  }
+
+  @Test
   void allocatedInsertRejectsRunAlreadyWaitingForManualBeforeVersionSelection() {
     RunnerExecutionRepository executionRepository = mock(RunnerExecutionRepository.class);
     WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);

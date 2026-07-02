@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": "run_abcd1234",
+  "runnerExecutionId": "rex_valid_usage",
+  "artifactReferences": [
+    {
+      "artifactId": "art_spec0004",
+      "artifactType": "spec",
+      "contentReference": "artifacts/run_abcd1234/spec-v4.md"
+    }
+  ],
+  "normalizedOutput": {
+    "summary": "Generated specification artifact",
+    "outcome": "success",
+    "usage": {
+      "inputTokens": 1200,
+      "outputTokens": 800,
+      "totalTokens": 2000
+    }
+  },
+  "checksum": {
+    "algorithm": "SHA-256",
+    "hexDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "classification": "shareable-redacted",
+  "failureCategory": null
+}

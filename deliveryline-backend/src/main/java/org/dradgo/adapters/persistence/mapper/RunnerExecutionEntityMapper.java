@@ -39,6 +39,9 @@ public class RunnerExecutionEntityMapper {
         entity.getCorrelationId(),
         entity.getIdempotencyKey(),
         entity.getActorIdentity(),
-        entity.getActorType());
+        entity.getActorType(),
+        entity.getInputTokens(),
+        entity.getOutputTokens(),
+        entity.getTotalTokens());
   }
 }

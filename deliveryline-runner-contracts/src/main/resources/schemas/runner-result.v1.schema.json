@@ -64,6 +64,9 @@
         },
         "providerUsage": {
           "$ref": "#/$defs/providerUsage"
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
         }
       }
     },
@@ -104,6 +107,28 @@
     }
   },
   "$defs": {
+    "usage": {
+      "$comment": "Story 3g-3 (FR74) — OPTIONAL additive per-execution token accounting: the agent's input/output/total token counts for THIS runner execution (distinct from providerUsage, which is rolling subscription-window status). NOT the same as providerUsage: these are per-execution counts persisted as columns on runner_executions, whereas providerUsage is a separate rolling-quota snapshot. Each field is INDEPENDENTLY optional (no `required`) — persist only what the agent reported; never synthesize totalTokens from input+output. Additive-optional pattern (3d-7 providerUsage / 3e-1 questions) — declared here because normalizedOutput is additionalProperties:false, but NOT in required and NO schemaVersion bump. Omitted entirely (never {} nor null) when no counts are available, so a no-usage result stays byte-identical to pre-3g output.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      }
+    },
     "providerUsage": {
       "$comment": "Story 3d-7 (FR69) — OPTIONAL additive metadata: the agent provider's post-execution 5h/weekly window status. NEVER carries secret material — only window numbers, timestamps, and a NON-SECRET account label (e.g. 'claude:oauth'). signalState 'not_exposed' is a first-class state (the provider does not surface the window headless), never a fabricated number.",
       "type": "object",

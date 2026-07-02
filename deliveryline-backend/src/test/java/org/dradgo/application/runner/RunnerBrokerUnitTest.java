@@ -1073,6 +1073,185 @@ class RunnerBrokerUnitTest {
         .formatted(RUN_ID, REX_ID, normalized);
   }
 
+  // Story 3g-3 — success payload carrying an OPTIONAL normalizedOutput.usage block (null => omit).
+  private String onResultSuccessPayloadWithUsage(String usageJson) {
+    String normalized =
+        usageJson == null
+            ? "{\"summary\": \"ok\", \"outcome\": \"success\"}"
+            : "{\"summary\": \"ok\", \"outcome\": \"success\", \"usage\": " + usageJson + "}";
+    return """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "%s",
+          "runnerExecutionId": "%s",
+          "artifactReferences": [
+            {"artifactId": "art_test01234567", "artifactType": "spec", "contentReference": "spec/v1.json"}
+          ],
+          "normalizedOutput": %s,
+          "checksum": {"algorithm": "SHA-256", "hexDigest": "0000000000000000000000000000000000000000000000000000000000000001"},
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """
+        .formatted(RUN_ID, REX_ID, normalized);
+  }
+
+  @Test
+  void onResultCapturesTokenUsageWhenPresent() {
+    // AC3/AC6 — the three reported counts are persisted via the metadata-only recordTokenUsage
+    // write.
+    wireHappyOnResultWithProviderUsageCapture();
+    String usage = "{\"inputTokens\": 1200, \"outputTokens\": 800, \"totalTokens\": 2000}";
+    broker.onResult(
+        REX_ID, onResultSuccessPayloadWithUsage(usage).getBytes(StandardCharsets.UTF_8));
+    verify(recordPort).recordTokenUsage(REX_ID, 1200, 800, 2000);
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultWithoutUsageWritesNoTokenUsage() {
+    // AC4 — a legacy/no-usage result is a byte-identical no-op (no key => no write).
+    wireHappyOnResultWithProviderUsageCapture();
+    broker.onResult(REX_ID, onResultSuccessPayloadWithUsage(null).getBytes(StandardCharsets.UTF_8));
+    verify(recordPort, never()).recordTokenUsage(any(), any(), any(), any());
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultPartialUsageRecordsOnlyReportedCounts() {
+    // AC4 — only totalTokens reported: input/output stay null (never synthesized from the total).
+    wireHappyOnResultWithProviderUsageCapture();
+    String usage = "{\"totalTokens\": 2000}";
+    broker.onResult(
+        REX_ID, onResultSuccessPayloadWithUsage(usage).getBytes(StandardCharsets.UTF_8));
+    verify(recordPort).recordTokenUsage(REX_ID, null, null, 2000);
+  }
+
+  @Test
+  void onResultInputAndOutputWithoutTotalDoesNotSynthesizeTotal() {
+    // AC4 (anti-synthesis, risky direction) — input+output reported but NO total: totalTokens must
+    // stay null and is NEVER synthesized as input+output (would fabricate governed data). The twin
+    // of onResultPartialUsageRecordsOnlyReportedCounts, pinning the direction where synthesis is
+    // the
+    // tempting bug.
+    wireHappyOnResultWithProviderUsageCapture();
+    String usage = "{\"inputTokens\": 1200, \"outputTokens\": 800}";
+    broker.onResult(
+        REX_ID, onResultSuccessPayloadWithUsage(usage).getBytes(StandardCharsets.UTF_8));
+    verify(recordPort).recordTokenUsage(REX_ID, 1200, 800, null);
+  }
+
+  @Test
+  void onResultDoesNotCaptureTokenUsageWhenSecretLeakDetected() {
+    // AC5 — token capture runs AFTER the secret scan (right beside captureProviderUsage), so a
+    // leaked/quarantined execution never persists token columns. Twin of
+    // onResultDoesNotCaptureProviderUsageWhenSecretLeakDetected.
+    wireHappyOnResultWithProviderUsageCapture();
+    when(secretScanService.scanWorkspace(any(), any(), any(), any()))
+        .thenReturn(
+            new RunnerSecretScanService.ScanOutcome(
+                true, "leak.txt", List.of("authorization_header")));
+    String usage = "{\"inputTokens\": 1200, \"outputTokens\": 800, \"totalTokens\": 2000}";
+    broker.onResult(
+        REX_ID, onResultSuccessPayloadWithUsage(usage).getBytes(StandardCharsets.UTF_8));
+    verify(recordPort, never()).recordTokenUsage(any(), any(), any(), any());
+  }
+
+  @Test
+  void onResultEmptyUsageObjectWritesNothingAndCompletes() {
+    // AC4 — an empty (but schema-valid) usage object carries no usable counts: the write is skipped
+    // and the run still completes. (A negative / non-integer / non-object usage is schema-INVALID
+    // and is rejected by the RunnerContractValidator BEFORE handleSuccess — the same posture as
+    // providerUsage — so the broker's tokenCount negative-drop + isObject guard are
+    // defense-in-depth,
+    // exercised at the JS emit tier where a malformed source is sanitized before it is ever
+    // emitted.)
+    wireHappyOnResultWithProviderUsageCapture();
+    broker.onResult(REX_ID, onResultSuccessPayloadWithUsage("{}").getBytes(StandardCharsets.UTF_8));
+    verify(recordPort, never()).recordTokenUsage(any(), any(), any(), any());
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultTokenUsageWriteFailureDoesNotUnwindCompletedRun() {
+    // Best-effort: a write failure must NEVER unwind a successfully-completed run.
+    wireHappyOnResultWithProviderUsageCapture();
+    when(recordPort.recordTokenUsage(any(), any(), any(), any()))
+        .thenThrow(new RuntimeException("db down"));
+    String usage = "{\"inputTokens\": 1200, \"outputTokens\": 800, \"totalTokens\": 2000}";
+    broker.onResult(
+        REX_ID, onResultSuccessPayloadWithUsage(usage).getBytes(StandardCharsets.UTF_8));
+    verify(recordPort).recordTokenUsage(REX_ID, 1200, 800, 2000);
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void onResultTokenUsagePersistLogsCountsAtInfo() {
+    // Logging contract — the happy path emits an INFO "token-usage persisted" line carrying the
+    // non-secret counts + ids; a secret-shaped token planted in the free summary must not surface.
+    wireHappyOnResultWithProviderUsageCapture();
+    String usage = "{\"inputTokens\": 1200, \"outputTokens\": 800, \"totalTokens\": 2000}";
+    String payload =
+        onResultSuccessPayloadWithUsage(usage)
+            .replace("\"summary\": \"ok\"", "\"summary\": \"sk-ant-api03-PLANTEDSECRETVALUE\"");
+
+    Logger brokerLog = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    brokerLog.addAppender(appender);
+    try {
+      broker.onResult(REX_ID, payload.getBytes(StandardCharsets.UTF_8));
+    } finally {
+      brokerLog.detachAppender(appender);
+    }
+
+    assertTrue(
+        appender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel() == Level.INFO
+                        && e.getFormattedMessage().contains("token-usage persisted")
+                        && e.getFormattedMessage().contains("input=1200")
+                        && e.getFormattedMessage().contains("total=2000")),
+        "expected an INFO token-usage persist line carrying the non-secret counts");
+    assertTrue(
+        appender.list.stream().noneMatch(e -> e.getFormattedMessage().contains("sk-ant-")),
+        "no broker log line may carry secret-shaped material from an adjacent payload field");
+  }
+
+  @Test
+  void onResultTokenUsageWriteFailureLogsBestEffortWarnAndCompletesRun() {
+    // Best-effort WARN on a swallowed write failure; the run still completes.
+    wireHappyOnResultWithProviderUsageCapture();
+    when(recordPort.recordTokenUsage(any(), any(), any(), any()))
+        .thenThrow(new RuntimeException("db down\r\nINJECTED forged-log-line"));
+    String usage = "{\"inputTokens\": 1200, \"outputTokens\": 800, \"totalTokens\": 2000}";
+
+    Logger brokerLog = (Logger) LoggerFactory.getLogger(RunnerBroker.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    brokerLog.addAppender(appender);
+    try {
+      broker.onResult(
+          REX_ID, onResultSuccessPayloadWithUsage(usage).getBytes(StandardCharsets.UTF_8));
+    } finally {
+      brokerLog.detachAppender(appender);
+    }
+
+    verify(executionService).recordCompleted(REX_ID);
+    ILoggingEvent warn =
+        appender.list.stream()
+            .filter(
+                e ->
+                    e.getLevel() == Level.WARN
+                        && e.getFormattedMessage().contains("token-usage capture failed"))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected a best-effort capture-failure WARN"));
+    assertFalse(
+        warn.getFormattedMessage().contains("\n") || warn.getFormattedMessage().contains("\r"),
+        "capture-failure WARN must neutralize CRLF in the cause (log-injection guard)");
+  }
+
   @Test
   void onResultGitPushFailureRecordsFailedAndDrivesWorkflowFailed() {
     RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);

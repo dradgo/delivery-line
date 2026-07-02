@@ -122,6 +122,19 @@ public class RunnerExecutionEntity {
   @Column(name = "reviewed_artifact_type")
   private String reviewedArtifactType;
 
+  // Story 3g-3 (FR74) V31 — per-execution agent token accounting. All nullable: populated by a
+  // metadata-only recordTokenUsage update at result ingest when the agent reported counts; stay
+  // null for pre-3g rows and any no-usage / command-only / no-LLM execution (null = "not reported",
+  // never 0). Each count is persisted independently as reported (total is NOT input+output).
+  @Column(name = "input_tokens")
+  private Integer inputTokens;
+
+  @Column(name = "output_tokens")
+  private Integer outputTokens;
+
+  @Column(name = "total_tokens")
+  private Integer totalTokens;
+
   public Long getId() {
     return id;
   }
@@ -338,6 +351,30 @@ public class RunnerExecutionEntity {
 
   public void setReviewedArtifactType(String reviewedArtifactType) {
     this.reviewedArtifactType = reviewedArtifactType;
+  }
+
+  public Integer getInputTokens() {
+    return inputTokens;
+  }
+
+  public void setInputTokens(Integer inputTokens) {
+    this.inputTokens = inputTokens;
+  }
+
+  public Integer getOutputTokens() {
+    return outputTokens;
+  }
+
+  public void setOutputTokens(Integer outputTokens) {
+    this.outputTokens = outputTokens;
+  }
+
+  public Integer getTotalTokens() {
+    return totalTokens;
+  }
+
+  public void setTotalTokens(Integer totalTokens) {
+    this.totalTokens = totalTokens;
   }
 
   @PrePersist

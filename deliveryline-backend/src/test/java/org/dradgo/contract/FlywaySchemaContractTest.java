@@ -250,6 +250,20 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void runnerExecutionsCarriesTheV31TokenColumns() {
+    // Story 3g-3 (FR74) V31: per-execution agent token accounting. All three columns are plain
+    // nullable integers — no default, no CHECK (a CHECK would surface as a swallowed
+    // DataIntegrityViolation in the broker's best-effort capture); pre-3g rows + no-usage results
+    // stay NULL (null = "not reported", never 0).
+    assertColumnType("runner_executions", "input_tokens", "integer");
+    assertColumnType("runner_executions", "output_tokens", "integer");
+    assertColumnType("runner_executions", "total_tokens", "integer");
+    assertColumnNullable("runner_executions", "input_tokens", true);
+    assertColumnNullable("runner_executions", "output_tokens", true);
+    assertColumnNullable("runner_executions", "total_tokens", true);
+  }
+
+  @Test
   void clarificationsSchemaCarriesTheExpectedV8ColumnsConstraintsAndIndexes() {
     assertColumnType("clarifications", "artifact_version", "integer");
     assertColumnType("clarifications", "question_id", "text");

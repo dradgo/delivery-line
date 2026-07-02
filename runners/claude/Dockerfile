@@ -62,7 +62,8 @@ ENV CLAUDE_CLI_VERSION=${CLAUDE_CLI_VERSION} \
     CLAUDE_CLI_BIN=claude \
     NODE_BIN=node \
     DELIVERYLINE_RUNNER_LIB=/opt/deliveryline/lib/runner.mjs \
-    DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE=/opt/deliveryline/test/provider-usage.mock.json
+    DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE=/opt/deliveryline/test/provider-usage.mock.json \
+    DELIVERYLINE_USAGE_MOCK_FILE=/opt/deliveryline/test/usage.mock.json
 
 WORKDIR /opt/deliveryline
 
@@ -110,6 +111,13 @@ RUN set -eu; \
       # the conformance ITs. Production builds never create this file, so the real path correctly
       # emits the `not_exposed` marker (spike outcome) — never a fabricated number. NO secret here.
       printf '%s\n' '{"signalState":"available","fiveHour":{"usedFraction":0.62,"used":62,"limit":100,"resetsAt":"2030-01-01T05:00:00Z"},"weekly":{"usedFraction":0.18,"used":126,"limit":700,"resetsAt":"2030-01-06T00:00:00Z"}}' > /opt/deliveryline/test/provider-usage.mock.json; \
+      # Story 3g-3 — bake the deterministic per-execution TOKEN usage ONLY into the offline/mock
+      # build (DELIVERYLINE_USAGE_MOCK_FILE points here). runner.mjs reads it and emits the
+      # normalizedOutput.usage block so the capture->persist happy path is covered offline + in the
+      # conformance ITs. Production builds never create this file, so the real path omits `usage`
+      # entirely (the honest "not reported" state) — never a fabricated count. Token counts are
+      # non-secret numeric governed data; NO secret here.
+      printf '%s\n' '{"inputTokens":1200,"outputTokens":800,"totalTokens":2000}' > /opt/deliveryline/test/usage.mock.json; \
     fi; \
     chmod +x /opt/deliveryline/entrypoint.sh /opt/deliveryline/lib/runner.mjs; \
     groupadd --gid 1001 claude; \

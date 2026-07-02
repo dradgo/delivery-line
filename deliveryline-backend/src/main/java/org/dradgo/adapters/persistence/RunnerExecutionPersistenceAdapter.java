@@ -858,6 +858,34 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     return mapper.toSnapshot(saved);
   }
 
+  // Story 3g-3 (FR74) — persist per-execution token counts (V31 columns). METADATA-ONLY update
+  // mirroring recordRawOutput: REQUIRES_NEW so the write commits in its own tx (releasing the row
+  // lock) without joining the ambient/harvest tx, no state-machine guard (the row is terminal by
+  // result-ingest time), tolerant of an already-terminal row. Each count is nullable and stored
+  // exactly as passed (the broker already dropped absent/malformed values to null). Throws only
+  // when the row is missing.
+  @Override
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public RunnerExecutionSnapshot recordTokenUsage(
+      String publicId, Integer inputTokens, Integer outputTokens, Integer totalTokens) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setInputTokens(inputTokens);
+    entity.setOutputTokens(outputTokens);
+    entity.setTotalTokens(totalTokens);
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "persisting token usage runnerExecutionId={} input={} output={} total={}",
+        publicId,
+        inputTokens,
+        outputTokens,
+        totalTokens);
+    return mapper.toSnapshot(saved);
+  }
+
   // Story 3d-2 (code-review D1) — pin the reviewed artifact onto a REVIEW execution at enqueue.
   // METADATA-ONLY (no state-machine guard, no status mutation): the pin is written on a `queued`
   // reviewer row right after enqueue. enqueue and pin run as SEPARATE transactions (the

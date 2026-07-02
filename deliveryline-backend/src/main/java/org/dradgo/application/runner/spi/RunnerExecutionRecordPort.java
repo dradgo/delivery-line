@@ -250,6 +250,19 @@ public interface RunnerExecutionRecordPort {
       int redactionCount);
 
   /**
+   * Story 3g-3 (FR74) — persist the agent's per-execution token counts onto the row. Like {@link
+   * #recordRawOutput} this is a METADATA-ONLY update: it never changes {@code status} (no
+   * state-machine guard) and is status-agnostic — capture runs during result ingest BEFORE the row
+   * transitions to a terminal state, so it tolerates a still-{@code running} row as well as an
+   * already-terminal one. Throws {@link org.dradgo.domain.DomainException} only when the row is
+   * missing. Each count is nullable and persisted independently as reported — the caller has
+   * already sanitized/dropped any absent or malformed value to {@code null}, and never synthesizes
+   * {@code totalTokens} from input+output.
+   */
+  RunnerExecutionSnapshot recordTokenUsage(
+      String publicId, Integer inputTokens, Integer outputTokens, Integer totalTokens);
+
+  /**
    * Story 3d-2 (code-review D1) — pin the reviewed artifact onto a {@link RunnerStage#REVIEW}
    * execution at enqueue. The advisory reviewer's reviewed artifact is resolved ONCE (at enqueue,
    * before any newer artifact can land) and stored here so both the dispatch-time compose and the

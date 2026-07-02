@@ -1704,6 +1704,52 @@ public class RunnerBroker {
     }
   }
 
+  // Story 3g-3 (FR74) — capture the OPTIONAL per-execution token counts emitted on
+  // normalizedOutput.usage and persist them onto the runner_executions row (V31 columns) via the
+  // metadata-only recordTokenUsage write. Distinct from providerUsage (rolling subscription window,
+  // separate table): these are this-execution input/output/total token counts on the row itself.
+  // Tolerant of absence (legacy/default runner / no-usage / command-only run → no key, AC4) and of
+  // a malformed block (each field sanitized independently to null; a non-object is skipped). Each
+  // count is persisted exactly as reported — totalTokens is NEVER synthesized from input+output.
+  // Best-effort: any failure is logged WARN and swallowed so a successfully-executed run is never
+  // unwound by a token-capture error. Token COUNTS are non-secret numeric governed data and are
+  // safe to log; the raw agent payload is NEVER logged.
+  private void captureTokenUsage(String workflowRunId, String runnerExecutionId, JsonNode parsed) {
+    JsonNode usage = parsed.path("normalizedOutput").path("usage");
+    if (usage.isMissingNode() || !usage.isObject()) {
+      return;
+    }
+    try {
+      Integer inputTokens = tokenCount(usage, "inputTokens");
+      Integer outputTokens = tokenCount(usage, "outputTokens");
+      Integer totalTokens = tokenCount(usage, "totalTokens");
+      if (inputTokens == null && outputTokens == null && totalTokens == null) {
+        log.warn(
+            "onResult token-usage present but no usable counts runnerExecutionId={} "
+                + "workflowRunId={} — skipping write",
+            runnerExecutionId,
+            workflowRunId);
+        return;
+      }
+      recordPort.recordTokenUsage(runnerExecutionId, inputTokens, outputTokens, totalTokens);
+      log.info(
+          "onResult token-usage persisted runnerExecutionId={} workflowRunId={} input={} "
+              + "output={} total={}",
+          runnerExecutionId,
+          workflowRunId,
+          inputTokens,
+          outputTokens,
+          totalTokens);
+    } catch (RuntimeException error) {
+      log.warn(
+          "onResult token-usage capture failed (best-effort) runnerExecutionId={} "
+              + "workflowRunId={} cause={}",
+          runnerExecutionId,
+          workflowRunId,
+          MdcKeys.sanitizeForLog(error.toString()));
+    }
+  }
+
   // usedFraction is a 0..1 ratio; drop non-finite or out-of-range values rather than persisting a
   // fabricated/contradictory figure (symmetric with the runner's sanitizeUsageWindow). Review
   // 2026-06-24.
@@ -1714,6 +1760,15 @@ public class RunnerBroker {
     }
     double value = node.doubleValue();
     return (Double.isFinite(value) && value >= 0.0d && value <= 1.0d) ? value : null;
+  }
+
+  // Story 3g-3 — a non-negative int reader for token counts: reuses the shared providerUsageInt
+  // parsing (int/long/integral-double, rejects fractional + out-of-range) then drops a NEGATIVE
+  // count to null (the runner-contract asserts minimum:0, but a hostile/garbage payload could still
+  // carry -1; AC4 sanitizes each field independently rather than rejecting the block wholesale).
+  private static Integer tokenCount(JsonNode usage, String field) {
+    Integer value = providerUsageInt(usage, field);
+    return (value != null && value >= 0) ? value : null;
   }
 
   private static Integer providerUsageInt(JsonNode window, String field) {
@@ -2077,6 +2132,13 @@ public class RunnerBroker {
     // failure NEVER unwinds the successfully-ingested run (the method swallows all
     // RuntimeExceptions).
     captureProviderUsage(workflowRunId, runnerExecutionId, parsed);
+
+    // Story 3g-3 (FR74, AC3/AC4) — capture the OPTIONAL per-execution token counts emitted on
+    // normalizedOutput.usage onto the row (V31 columns). Same best-effort positioning as
+    // captureProviderUsage: AFTER the secret scan, tolerant of absence (byte-identical no-op for a
+    // legacy/no-usage result), and it NEVER unwinds a successfully-ingested run (swallows all
+    // RuntimeExceptions).
+    captureTokenUsage(workflowRunId, runnerExecutionId, parsed);
 
     // Story 3.9 (Decision D0 / OQ-2): if this run had a repo workspace, commit the runner-produced
     // changes, push the branch, and open/update the PR BEFORE marking the execution completed. A

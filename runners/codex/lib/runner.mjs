@@ -326,6 +326,44 @@ function buildProviderUsage(authVar) {
   return { signalState: 'not_exposed', accountLabel, asOf };
 }
 
+// ===== Story 3g-3 (FR74) — per-execution token accounting (BYTE-IDENTICAL in both runner.mjs) =====
+// Defensively rebuild a per-execution token-usage block from arbitrary input, copying ONLY the three
+// allowed non-negative integer keys — so even a hostile/garbage mock file can never smuggle a
+// secret-shaped string into the emitted/persisted `usage` (AC5). Each count is INDEPENDENT: a
+// missing/bad sub-field is dropped to absent (never fabricated, never synthesised from the others).
+// A count must be a non-negative int32 (0..2147483647) to match the `integer` runner_executions
+// columns it lands on — an out-of-range value is dropped here rather than silently coerced to null
+// downstream (contract mirrors this with `maximum:2147483647`).
+// Returns undefined when nothing usable remains, so `usage` is omitted entirely (AC1 byte-identical).
+function sanitizeUsage(raw) {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out = {};
+  const inRange = (v) => Number.isInteger(v) && v >= 0 && v <= 2147483647;
+  if (inRange(raw.inputTokens)) out.inputTokens = raw.inputTokens;
+  if (inRange(raw.outputTokens)) out.outputTokens = raw.outputTokens;
+  if (inRange(raw.totalTokens)) out.totalTokens = raw.totalTokens;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// Story 3g-3 SCOPE (mirror the 3d-7 providerUsage spike posture): the text-mode (`-p`) headless
+// invocation does NOT surface token usage on agent stdout (verified — no parsing exists), so real
+// token extraction is a documented forward option, out of scope here. The deterministic path reads
+// an env-injected mock file (the exact DELIVERYLINE_PROVIDER_USAGE_MOCK_FILE seam) so the happy path
+// is exercised offline + in CI. Best-effort: NEVER throws, NEVER fails the run; returns a sanitized
+// {inputTokens?,outputTokens?,totalTokens?} or undefined (unset/unreadable/malformed/no-counts) —
+// the honest "not reported" state 3g-4 renders. NEVER emits usage:{} or usage:null.
+function buildUsage() {
+  const mockFile = process.env.DELIVERYLINE_USAGE_MOCK_FILE;
+  if (!mockFile) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(mockFile, 'utf8'));
+    return sanitizeUsage(parsed);
+  } catch {
+    // fall through to undefined — capture is best-effort and must never throw.
+    return undefined;
+  }
+}
+
 // ===== Story 3e-1 — clarifications fence split (BYTE-IDENTICAL in both runner.mjs files) =====
 // The spec (investigation) stage agent may raise OPEN CLARIFYING QUESTIONS alongside the
 // specification it writes to stdout, using a fence convention mirroring the OpenSpec fence (3a-8):
@@ -704,12 +742,20 @@ function commandBuild(args) {
   // this stay byte-identical and the backend treats absence as a no-op.
   const providerUsage = buildProviderUsage(args['auth-var']);
 
+  // Story 3g-3 (FR74) — attach the OPTIONAL per-execution token counts when available. Omitted
+  // entirely when absent (best-effort, never throws) so a no-usage result stays byte-identical.
+  const usage = buildUsage();
+  process.stderr.write(`runner.mjs: built usage present=${usage !== undefined}\n`);
+
+  const normalizedOutput = { summary, outcome: 'success', providerUsage };
+  if (usage) normalizedOutput.usage = usage;
+
   const result = {
     schemaVersion: 1,
     workflowRunId,
     runnerExecutionId,
     artifactReferences: [artifact],
-    normalizedOutput: { summary, outcome: 'success', providerUsage },
+    normalizedOutput,
     checksum: { algorithm: 'SHA-256', hexDigest },
     classification,
     failureCategory: null,

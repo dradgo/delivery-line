@@ -42,7 +42,76 @@ public record RunnerExecutionSnapshot(
     // rows the legacy synchronous dispatch path created (it never enqueues).
     String idempotencyKey,
     String actorIdentity,
-    String actorType) {
+    String actorType,
+    // Story 3g-3 (FR74) V31 — per-execution agent token accounting. All nullable: populated only by
+    // the recordTokenUsage metadata write at result ingest when the agent reported counts; null for
+    // pre-3g rows and any no-usage / command-only execution (null = "not reported", never 0). Each
+    // count is carried independently as reported (total is NOT synthesized from input+output).
+    Integer inputTokens,
+    Integer outputTokens,
+    Integer totalTokens) {
+
+  /**
+   * Pre-3g-3 callsite shim: derives a snapshot whose three token-accounting fields are null.
+   * Carries today's (through-3.17b) 24-arg shape so every existing {@code new
+   * RunnerExecutionSnapshot(...)} call site (the broker / recovery / cleanup tests + the
+   * persistence mapper before it was widened) compiles unchanged — only the persistence mapper
+   * populates the full 27-field shape with the real token columns.
+   */
+  public RunnerExecutionSnapshot(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      RunnerExecutionStatus status,
+      int contextBundleVersion,
+      OffsetDateTime lastActivityAt,
+      OffsetDateTime timeoutAt,
+      FailureCategory failureCategory,
+      OffsetDateTime completedAt,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      OffsetDateTime heartbeatStaleEmittedAt,
+      String rawOutputReference,
+      DataClassification rawOutputClassification,
+      Long rawOutputByteSize,
+      Integer redactionCount,
+      OffsetDateTime dispatchedAt,
+      String workerId,
+      int queuePriority,
+      int queueAttemptCount,
+      String correlationId,
+      String idempotencyKey,
+      String actorIdentity,
+      String actorType) {
+    this(
+        publicId,
+        workflowRunPublicId,
+        stage,
+        status,
+        contextBundleVersion,
+        lastActivityAt,
+        timeoutAt,
+        failureCategory,
+        completedAt,
+        createdAt,
+        archivedAt,
+        heartbeatStaleEmittedAt,
+        rawOutputReference,
+        rawOutputClassification,
+        rawOutputByteSize,
+        redactionCount,
+        dispatchedAt,
+        workerId,
+        queuePriority,
+        queueAttemptCount,
+        correlationId,
+        idempotencyKey,
+        actorIdentity,
+        actorType,
+        null,
+        null,
+        null);
+  }
 
   /** Pre-3.2 callsite shim: derives a snapshot whose {@code heartbeatStaleEmittedAt} is null. */
   public RunnerExecutionSnapshot(
@@ -153,6 +222,9 @@ public record RunnerExecutionSnapshot(
         null,
         100,
         0,
+        null,
+        null,
+        null,
         null,
         null,
         null,
