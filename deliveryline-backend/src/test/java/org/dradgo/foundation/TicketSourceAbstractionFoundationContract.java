@@ -232,7 +232,8 @@ class TicketSourceAbstractionFoundationContract {
         mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class),
         mock(org.dradgo.application.approval.spi.ApprovalReadPort.class),
         mock(WorkflowEventReadPort.class),
-        eventWritePort);
+        eventWritePort,
+        mock(org.dradgo.application.clarification.spi.ClarificationReadPort.class));
   }
 
   private static IntegrationLink linearLink() {
