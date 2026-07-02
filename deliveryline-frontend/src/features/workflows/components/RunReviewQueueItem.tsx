@@ -185,7 +185,9 @@ function composeAriaLabel(
   // Story 3g-2 (AC1/AC6) — the human title leads the identity segment WHEN present, but the
   // machine `linearTicketReference` stays in the aria identity (it is the stable id reviewers
   // search by). `.filter(Boolean)` drops absent parts so the literal "undefined" never leaks.
-  const identity = [row.ticketTitle, row.linearTicketReference, row.runId].filter(Boolean).join(' ');
+  const identity = [row.ticketTitle, row.linearTicketReference, row.runId]
+    .filter(Boolean)
+    .join(' ');
   if (identity !== '') {
     parts.push(identity);
   }

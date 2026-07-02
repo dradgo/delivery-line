@@ -53,10 +53,7 @@ describe('RunOriginBlock', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     // AC4 — the accessible name distinguishes it as the external source ticket + new tab.
-    expect(link).toHaveAttribute(
-      'aria-label',
-      'Open source ticket DEL-1234 (opens in a new tab)',
-    );
+    expect(link).toHaveAttribute('aria-label', 'Open source ticket DEL-1234 (opens in a new tab)');
   });
 
   it('AC2 — omits the link-out entirely when url is null (no dead/# anchor)', () => {
