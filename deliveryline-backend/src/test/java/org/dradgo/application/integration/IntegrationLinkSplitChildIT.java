@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.integration.linear.IntegrationLinkTicketSummaryProvider;
+import org.dradgo.application.runner.TicketSummary;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
@@ -37,9 +39,14 @@ class IntegrationLinkSplitChildIT {
   private static final String PARENT_TICKET = "LIN-PARENT-3f5";
   private static final ActorContext ACTOR = new ActorContext("alex", ActorType.HUMAN, "corr-3f5");
 
+  private static final String SUBTASK_TITLE = "Filter planned-purchase list to OPEN status";
+  private static final String SUBTASK_SUMMARY =
+      "Restrict the active planned-purchase list query to PurchaseStatus.OPEN.";
+
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private IntegrationLinkService integrationLinkService;
   @Autowired private WorkflowRunCreatePort createPort;
+  @Autowired private IntegrationLinkTicketSummaryProvider ticketSummaryProvider;
 
   private String newChild() {
     String id = PublicIdPrefixes.WORKFLOW_RUN.next();
@@ -63,9 +70,11 @@ class IntegrationLinkSplitChildIT {
     String childB = newChild();
 
     IntegrationLink linkA =
-        integrationLinkService.linkSplitChildTicket(childA, PARENT_TICKET, ACTOR);
+        integrationLinkService.linkSplitChildTicket(
+            childA, PARENT_TICKET, SUBTASK_TITLE, SUBTASK_SUMMARY, ACTOR);
     IntegrationLink linkB =
-        integrationLinkService.linkSplitChildTicket(childB, PARENT_TICKET, ACTOR);
+        integrationLinkService.linkSplitChildTicket(
+            childB, PARENT_TICKET, SUBTASK_TITLE, SUBTASK_SUMMARY, ACTOR);
 
     // Both children link to the SAME parent ref under the internal_subtask type (V30 exemption from
     // the cross-run uniqueness index) — no INTEGRATION_LINK_CONFLICT.
@@ -77,13 +86,31 @@ class IntegrationLinkSplitChildIT {
   }
 
   @Test
+  void childLinkCarriesSubtaskTitleAndSummaryForTheRunner() {
+    String child = newChild();
+
+    integrationLinkService.linkSplitChildTicket(
+        child, PARENT_TICKET, SUBTASK_TITLE, SUBTASK_SUMMARY, ACTOR);
+
+    // The runner resolves the child's ticket content through this provider when it builds the
+    // context bundle. It MUST see the decomposed subtask's real title/scope — not the
+    // "Pending ticket summary" placeholder that produced the strange refusal specs.
+    TicketSummary resolved = ticketSummaryProvider.fetchByWorkflowRun(child);
+    assertThat(resolved.title()).isEqualTo(SUBTASK_TITLE);
+    assertThat(resolved.summary()).isEqualTo(SUBTASK_SUMMARY);
+    assertThat(resolved.ticketRef()).isEqualTo(PARENT_TICKET);
+  }
+
+  @Test
   void replayOfTheSameChildIsAnIdempotentNoOp() {
     String child = newChild();
 
     IntegrationLink first =
-        integrationLinkService.linkSplitChildTicket(child, PARENT_TICKET, ACTOR);
+        integrationLinkService.linkSplitChildTicket(
+            child, PARENT_TICKET, SUBTASK_TITLE, SUBTASK_SUMMARY, ACTOR);
     IntegrationLink replay =
-        integrationLinkService.linkSplitChildTicket(child, PARENT_TICKET, ACTOR);
+        integrationLinkService.linkSplitChildTicket(
+            child, PARENT_TICKET, SUBTASK_TITLE, SUBTASK_SUMMARY, ACTOR);
 
     // The V1 per-run uniqueness makes a replay return the existing row, never a second insert.
     assertThat(replay.publicId()).isEqualTo(first.publicId());

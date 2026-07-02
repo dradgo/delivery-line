@@ -364,10 +364,11 @@ public class SplitCommitService {
                 String childId = PublicIdPrefixes.WORKFLOW_RUN.next();
                 workflowRunCreatePort.create(childId, WorkflowState.INBOX, parentProjectId, runId);
                 if (created) {
-                  integrationLinkService.linkSplitChildTicket(childId, childTicketRef, actor);
+                  integrationLinkService.linkSplitChildTicket(
+                      childId, childTicketRef, subtask.title(), subtask.scope(), actor);
                 } else if (parentTicketRef != null) {
                   integrationLinkService.linkSplitChildTicket(
-                      childId, parentTicketRef.value(), actor);
+                      childId, parentTicketRef.value(), subtask.title(), subtask.scope(), actor);
                 }
                 return childId;
               });
