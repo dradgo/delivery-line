@@ -1,6 +1,6 @@
 # Story 3g.2: FE — Ticket Title in Queue + Origin Block
 
-Status: ready-for-dev
+Status: done
 
 <!-- 2026-07-02 bmad-create-story context-engine pass (Opus 4.8 [1m]). Target sprint key: 3g-2-fe-ticket-title-in-queue-and-origin-block. Second Epic 3g story (FR73 FE half). Source: epic-03g-provenance-token-accounting.md (Story 3g-2) + the delivered 3g-1 backend (3g-1-ticket-origin-snapshot-and-read-model.md, status review). Consumes 3g-1's already-regenerated schema.d.ts. -->
 
@@ -29,37 +29,37 @@ so that runs are human-identifiable at a glance and I can click through to the s
 
 ## Tasks / Subtasks
 
-- [ ] **Task 0 — Verify the consumed contract is already in place (no regen)** (AC: 1, 2)
-  - [ ] Confirm `WorkflowSummary.ticketTitle`, `LinkedTicket.title`, `LinkedTicket.url` exist in `deliveryline-frontend/src/lib/api/schema.d.ts` (they do — 3g-1 committed them). Run `npm run check:api` and confirm green. **Do NOT run `generate-api` / regenerate** — 3g-1 owns that regen; re-running it here would produce a spurious diff.
+- [x] **Task 0 — Verify the consumed contract is already in place (no regen)** (AC: 1, 2)
+  - [x] Confirm `WorkflowSummary.ticketTitle`, `LinkedTicket.title`, `LinkedTicket.url` exist in `deliveryline-frontend/src/lib/api/schema.d.ts` (they do — 3g-1 committed them). Run `npm run check:api` and confirm green. **Do NOT run `generate-api` / regenerate** — 3g-1 owns that regen; re-running it here would produce a spurious diff.
 
-- [ ] **Task 1 — Queue: surface `ticketTitle` with `ticketRef` fallback** (AC: 1, 5, 6)
-  - [ ] `features/workflows/runQueueRow.ts`: add a nullable `ticketTitle?: string | undefined` field to the `RunQueueRow` interface (place it next to `linearTicketReference`, `:35`), and in `toRunQueueRow` (`:117`) map `ticketTitle: summary.ticketTitle ?? undefined` (the `?? undefined` collapses the wire `null` — the `exactOptionalPropertyTypes` pattern already used for `projectId`/`projectName` at `:127-129`).
-  - [ ] `features/workflows/components/RunReviewQueueItem.tsx` — the `Identity` component (`:207`): render the **human label** preferring `row.ticketTitle`, falling back to `row.linearTicketReference` when the title is absent (never a blank label). Keep `linearTicketReference` visible as the machine identity (it currently is the bold label + feeds `<code>{row.runId}</code>` and the aria-label). Suggested anatomy: `«Human title»  ·  DEL-1234  ·  run_abc…` — title prominent, ref as secondary text. When there is no title, the ref takes the prominent slot (today's exact behavior — parity). Title is React-escaped plain text (Trap T6).
-  - [ ] `composeAriaLabel` (`:179`): include the human title in the identity segment when present, but **keep `linearTicketReference` in the aria identity** (it is the stable machine id reviewers search by). Never emit the literal `"undefined"` (existing `.filter(Boolean)` idiom).
-  - [ ] Any new pure helper (e.g. a `queueRowLabel(row)` picker) → put it in `runQueueRow.ts` (a `.ts`), not the `.tsx` (react-refresh rule). Prefer inline expression if trivial.
+- [x] **Task 1 — Queue: surface `ticketTitle` with `ticketRef` fallback** (AC: 1, 5, 6)
+  - [x] `features/workflows/runQueueRow.ts`: add a nullable `ticketTitle?: string | undefined` field to the `RunQueueRow` interface (place it next to `linearTicketReference`, `:35`), and in `toRunQueueRow` (`:117`) map `ticketTitle: summary.ticketTitle ?? undefined` (the `?? undefined` collapses the wire `null` — the `exactOptionalPropertyTypes` pattern already used for `projectId`/`projectName` at `:127-129`).
+  - [x] `features/workflows/components/RunReviewQueueItem.tsx` — the `Identity` component (`:207`): render the **human label** preferring `row.ticketTitle`, falling back to `row.linearTicketReference` when the title is absent (never a blank label). Keep `linearTicketReference` visible as the machine identity (it currently is the bold label + feeds `<code>{row.runId}</code>` and the aria-label). Suggested anatomy: `«Human title»  ·  DEL-1234  ·  run_abc…` — title prominent, ref as secondary text. When there is no title, the ref takes the prominent slot (today's exact behavior — parity). Title is React-escaped plain text (Trap T6).
+  - [x] `composeAriaLabel` (`:179`): include the human title in the identity segment when present, but **keep `linearTicketReference` in the aria identity** (it is the stable machine id reviewers search by). Never emit the literal `"undefined"` (existing `.filter(Boolean)` idiom).
+  - [x] Any new pure helper (e.g. a `queueRowLabel(row)` picker) → put it in `runQueueRow.ts` (a `.ts`), not the `.tsx` (react-refresh rule). Prefer inline expression if trivial.
 
-- [ ] **Task 2 — Detail: the Origin view mapper (sibling `.ts`)** (AC: 2, 3, 5)
-  - [ ] Add `features/workflows/runOriginView.ts` — a pure mapper `toRunOriginView(detail: WorkflowDetail): RunOriginView | undefined` mirroring the `runContextView.ts` / `prLinkageView.ts` sibling-mapper pattern. It reads **only** `detail.linkedTicket` (`title`, `externalRef`, `integrationType`, `url`); returns `undefined` when there is no `linkedTicket` **or** `title == null` (nothing meaningful to show — AC2 "render nothing" gate). `RunOriginView` carries exactly: `title: string`, `ticketRef: string | undefined`, `integrationType: string | undefined`, `url: string | undefined` (all coalesced via a `!= null` guard). **Do NOT** add body/prompt fields (AC3, locked origin depth).
-  - [ ] Optional hardening: only surface `url` when it is an `http(s)` absolute URL (defensive against a stored non-http scheme). 3g-1 builds `https://linear.app/...` / `https://linear.mock/...` and passes it through `SHAREABLE_REDACTED`, so this is belt-and-suspenders — a one-line `url.startsWith('http')` guard, not a full parser.
+- [x] **Task 2 — Detail: the Origin view mapper (sibling `.ts`)** (AC: 2, 3, 5)
+  - [x] Add `features/workflows/runOriginView.ts` — a pure mapper `toRunOriginView(detail: WorkflowDetail): RunOriginView | undefined` mirroring the `runContextView.ts` / `prLinkageView.ts` sibling-mapper pattern. It reads **only** `detail.linkedTicket` (`title`, `externalRef`, `integrationType`, `url`); returns `undefined` when there is no `linkedTicket` **or** `title == null` (nothing meaningful to show — AC2 "render nothing" gate). `RunOriginView` carries exactly: `title: string`, `ticketRef: string | undefined`, `integrationType: string | undefined`, `url: string | undefined` (all coalesced via a `!= null` guard). **Do NOT** add body/prompt fields (AC3, locked origin depth).
+  - [x] Optional hardening: only surface `url` when it is an `http(s)` absolute URL (defensive against a stored non-http scheme). 3g-1 builds `https://linear.app/...` / `https://linear.mock/...` and passes it through `SHAREABLE_REDACTED`, so this is belt-and-suspenders — a one-line `url.startsWith('http')` guard, not a full parser.
 
-- [ ] **Task 3 — Detail: the `RunOriginBlock` component** (AC: 2, 3, 4, 5, 6)
-  - [ ] Add `features/workflows/components/RunOriginBlock.tsx` — a pure-presentational block taking `{ detail: WorkflowDetail | undefined }` (or `{ linkedTicket }`) as a prop, mapping via `toRunOriginView`, and **rendering nothing** (`return null`) when the mapper returns `undefined` (parity with `RunDependencyPanel` / the `PrLinkageDetails` T-ABSENT discipline). Label the block as a landmark: a `<section aria-label="Origin">` (implicit region, no redundant `role`) with a small uppercase "Origin" label — mirror the `Item`/section idiom in `RunContextStrip.tsx:73-96,225-228`.
-  - [ ] Render: the `title` (human text), the `ticketRef` (as `<code>` or a labeled Item), the `integrationType` (small chip/label — reuse `StateSignifierChip stateName="informational"` or a plain labeled Item). Title/ref/type only (AC3).
-  - [ ] Link-out: render an `<a href={url} target="_blank" rel="noopener noreferrer">` **only when `view.url !== undefined`** (omit entirely otherwise — AC2). Give it a distinguishing accessible name (`aria-label={`Open source ticket ${ticketRef ?? ''} (opens in a new tab)`}`) and the shared external-link treatment from `PrLinkageDetails.tsx:133-139` (`underline-offset`, focus ring). Never a `#`/`javascript:` fallback anchor.
-  - [ ] Mount it on the detail route `routes/workflows/$workflowRunId/index.tsx` — pass the already-warmed `data` from `useWorkflowDetail` (do **not** add a second fetch; reuse the route's `data`, as `RunDependencyPanel`/`SplitLineagePanel` do at `:205,:209`). Place it near the top of the `<Stack>` (e.g. just under `<RunContextStrip>` at `:197`) so origin sits with run identity. It self-hides for unlinked runs.
+- [x] **Task 3 — Detail: the `RunOriginBlock` component** (AC: 2, 3, 4, 5, 6)
+  - [x] Add `features/workflows/components/RunOriginBlock.tsx` — a pure-presentational block taking `{ detail: WorkflowDetail | undefined }` (or `{ linkedTicket }`) as a prop, mapping via `toRunOriginView`, and **rendering nothing** (`return null`) when the mapper returns `undefined` (parity with `RunDependencyPanel` / the `PrLinkageDetails` T-ABSENT discipline). Label the block as a landmark: a `<section aria-label="Origin">` (implicit region, no redundant `role`) with a small uppercase "Origin" label — mirror the `Item`/section idiom in `RunContextStrip.tsx:73-96,225-228`.
+  - [x] Render: the `title` (human text), the `ticketRef` (as `<code>` or a labeled Item), the `integrationType` (small chip/label — reuse `StateSignifierChip stateName="informational"` or a plain labeled Item). Title/ref/type only (AC3).
+  - [x] Link-out: render an `<a href={url} target="_blank" rel="noopener noreferrer">` **only when `view.url !== undefined`** (omit entirely otherwise — AC2). Give it a distinguishing accessible name (`aria-label={`Open source ticket ${ticketRef ?? ''} (opens in a new tab)`}`) and the shared external-link treatment from `PrLinkageDetails.tsx:133-139` (`underline-offset`, focus ring). Never a `#`/`javascript:` fallback anchor.
+  - [x] Mount it on the detail route `routes/workflows/$workflowRunId/index.tsx` — pass the already-warmed `data` from `useWorkflowDetail` (do **not** add a second fetch; reuse the route's `data`, as `RunDependencyPanel`/`SplitLineagePanel` do at `:205,:209`). Place it near the top of the `<Stack>` (e.g. just under `<RunContextStrip>` at `:197`) so origin sits with run identity. It self-hides for unlinked runs.
 
-- [ ] **Task 4 — FE structured logging (field-only)** (AC: 5)
-  - [ ] If (and only if) you add a click handler on the link-out, emit a field-only `console.info({ event: 'runOrigin.openSource', integrationType })` — mirror the `queueItem.open` / `runContext.*` field-only log discipline (`RunReviewQueueItem.tsx:441`, `RunContextStrip.tsx:378`). **Never** log the `title`, the `url`, or the `ticketRef` free text. Logging is otherwise not required for a presentational read-only block.
+- [x] **Task 4 — FE structured logging (field-only)** (AC: 5)
+  - [x] If (and only if) you add a click handler on the link-out, emit a field-only `console.info({ event: 'runOrigin.openSource', integrationType })` — mirror the `queueItem.open` / `runContext.*` field-only log discipline (`RunReviewQueueItem.tsx:441`, `RunContextStrip.tsx:378`). **Never** log the `title`, the `url`, or the `ticketRef` free text. Logging is otherwise not required for a presentational read-only block.
 
-- [ ] **Task 5 — Tests** (AC: 1–6)
-  - [ ] `features/workflows/__tests__/runQueueRow.test.ts`: `toRunQueueRow` maps `ticketTitle` from the summary; maps to `undefined` when the summary omits/`null`s it (mirror the `archivedAt` null cases at `:77-82`).
-  - [ ] `features/workflows/components/__tests__/RunReviewQueueItem.test.tsx`: the human title renders when present; **falls back to `ticketRef`** when `ticketTitle` is absent; the ref/machine identity is still present in both cases; the row is axe-clean (`expectNoA11yViolations`, mirror the existing axe blocks).
-  - [ ] `features/workflows/__tests__/runOriginView.test.ts` (new, render-free): maps title/ref/type/url; returns `undefined` for no `linkedTicket` and for a `null` title; coalesces a `null` url to `undefined`; (if added) drops a non-http url.
-  - [ ] `features/workflows/components/__tests__/RunOriginBlock.test.tsx` (new): renders title + ref + integrationType; **link-out present when `url` set, absent when `url` null**; renders **nothing** when there is no linked ticket; link-out has the external accessible name + `rel="noopener noreferrer"`; block is axe-clean. Build the `WorkflowDetail` prop via a constructed fixture (mirror `RunContextStrip.test.tsx` detail fixtures).
-  - [ ] Green gates: `npm run test` (vitest), `npm run build` (tsc + vite), `npm run lint` (max-warnings=0), `npm run check:api`.
+- [x] **Task 5 — Tests** (AC: 1–6)
+  - [x] `features/workflows/__tests__/runQueueRow.test.ts`: `toRunQueueRow` maps `ticketTitle` from the summary; maps to `undefined` when the summary omits/`null`s it (mirror the `archivedAt` null cases at `:77-82`).
+  - [x] `features/workflows/components/__tests__/RunReviewQueueItem.test.tsx`: the human title renders when present; **falls back to `ticketRef`** when `ticketTitle` is absent; the ref/machine identity is still present in both cases; the row is axe-clean (`expectNoA11yViolations`, mirror the existing axe blocks).
+  - [x] `features/workflows/__tests__/runOriginView.test.ts` (new, render-free): maps title/ref/type/url; returns `undefined` for no `linkedTicket` and for a `null` title; coalesces a `null` url to `undefined`; (if added) drops a non-http url.
+  - [x] `features/workflows/components/__tests__/RunOriginBlock.test.tsx` (new): renders title + ref + integrationType; **link-out present when `url` set, absent when `url` null**; renders **nothing** when there is no linked ticket; link-out has the external accessible name + `rel="noopener noreferrer"`; block is axe-clean. Build the `WorkflowDetail` prop via a constructed fixture (mirror `RunContextStrip.test.tsx` detail fixtures).
+  - [x] Green gates: `npm run test` (vitest), `npm run build` (tsc + vite), `npm run lint` (max-warnings=0), `npm run check:api`.
 
-- [ ] **Logging instrumentation** (cross-cutting standard — FE-adapted)
-  - [ ] This is a FE-only presentational story; the SLF4J/backend logging surface does not apply. The FE equivalent is the **field-only `console` discipline** in Task 4: structured `{ event, ...primitiveFields }` only, **never** the ticket title / source URL / free-text ref content. No new backend log surface is introduced.
+- [x] **Logging instrumentation** (cross-cutting standard — FE-adapted)
+  - [x] This is a FE-only presentational story; the SLF4J/backend logging surface does not apply. The FE equivalent is the **field-only `console` discipline** in Task 4: structured `{ event, ...primitiveFields }` only, **never** the ticket title / source URL / free-text ref content. No new backend log surface is introduced.
 
 ## Dev Notes
 
@@ -125,20 +125,52 @@ This story touches no backend service, so the SLF4J/MDC surface in the template 
 - Seams: `schema.d.ts:1030,1040,1045,1773`; `runQueueRow.ts:32,35,117,120`; `RunReviewQueueItem.tsx:179,185,207`; `runContextView.ts:169`; `PrLinkageDetails.tsx:85-139`; `routes/workflows/$workflowRunId/index.tsx:194,197,205,209`; `routes/workflows/index.tsx:82`; `RunContextStrip.test.tsx:28,314`.
 - Traps: `frontend-react-refresh-no-fn-exports`; `workflowdetail-wire-sends-null-not-undefined`; `livesnnouncement-defers-one-commit-test-flake`; `artifactview-variant-field-fanout` (FE §4 view-model discipline); `openapi-regen-frontend-client-drift-cascade` (why 3g-1 regenerated — do not re-run here).
 
+## Review Findings
+
+<!-- 2026-07-02 bmad-code-review (Opus 4.8 [1m]): 3 adversarial layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor). Acceptance Auditor: all 6 ACs PASS. Blind+Edge independently converged on the empty/whitespace-title blank-label defect. 3 patches, 1 dismissed (type-precluded null guard). -->
+
+- [x] [Review][Patch] Empty/whitespace `ticketTitle` renders a BLANK prominent queue label (AC1 "never a blank label" violation) — `toRunQueueRow` uses `summary.ticketTitle ?? undefined`, which collapses only null/undefined; an empty/whitespace `""` survives, and in `Identity` `prominent = row.ticketTitle ?? row.linearTicketReference` keeps `""` (nullish `??` does not collapse `''`), so the prominent label renders empty AND the real ref is demoted to a secondary chip behind a dangling `·`. The sibling `runOriginView.ts` guards the identical `string | null` field via `presentOrUndefined` (trim + empty-check) — the two seams disagree. Fix: apply the same present/trim guard in the queue mapper (or in `Identity`). Also fixes the aria/visual divergence (aria `.filter(Boolean)` drops `''` but the visual label does not). [deliveryline-frontend/src/features/workflows/runQueueRow.ts:126; deliveryline-frontend/src/features/workflows/components/RunReviewQueueItem.tsx:211]
+- [x] [Review][Patch] `presentOrUndefined` returns the UNTRIMMED value — it gates on `value.trim() !== ''` but returns the original `value`, so whitespace-padded title/ref render verbatim (into the visible label, the `title=` tooltip, and the aria name), and a leading-whitespace URL (`"  https://x"`) passes the present-check then fails the `startsWith('https://')` prefix test → link-out silently dropped. Fix: return the trimmed value. [deliveryline-frontend/src/features/workflows/runOriginView.ts:40]
+- [x] [Review][Patch] `httpUrlOrUndefined` scheme check is case-sensitive — `startsWith('https://') || startsWith('http://')` drops a valid case-varied scheme (`HTTPS://…`, RFC 3986 schemes are case-insensitive), silently losing a legitimate source-ticket link-out. Low likelihood (3g-1 emits lowercase `https://`) but a cheap, correct hardening. Fix: lowercase the scheme prefix before comparison. [deliveryline-frontend/src/features/workflows/runOriginView.ts:54]
+
 ## Dev Agent Record
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Opus 4.8 (1M context) — `claude-opus-4-8[1m]`
 
 ### Debug Log References
 
+- `npm run check:api` → in sync (no regen; consumed 3g-1's committed `schema.d.ts`).
+- Targeted Vitest (4 files) → 95 passed / 0 failed.
+- `npm run lint` (max-warnings=0) → No issues found.
+- `npm run build` (tsc + vite) → EXIT=0, `✓ built`.
+- Full `npm run test` → 116 files / 1250 tests passed, 0 failed (no regressions).
+
 ### Completion Notes List
 
+FE-only, read-only consumption of 3g-1's already-committed schema — NO backend/OpenAPI/contract change, NO `schema.d.ts` regen (verified `check:api` only).
+
+- **Queue (Task 1):** added a LIVE nullable `ticketTitle` to `RunQueueRow` + mapped it in `toRunQueueRow` (`summary.ticketTitle ?? undefined` — the exactOptionalPropertyTypes seam, collapsing the wire `null`). `Identity` now renders the human title as the prominent label with `linearTicketReference` demoted to a secondary chip; when the title is absent the ref stays in the prominent slot (today's exact parity — never a blank label). `composeAriaLabel` prepends the title to the identity segment while keeping the ref + run id (machine identity) in the aria name.
+- **Detail (Tasks 2–3):** new sibling pure mapper `runOriginView.ts` (`toRunOriginView`) reading ONLY `detail.linkedTicket` (title/ref/type/url), returning `undefined` when there is no linked ticket or a null/blank title (AC2 render-nothing gate). It coalesces wire `null` via `!= null` and drops any non-`http(s)` url scheme (belt-and-suspenders). New `RunOriginBlock.tsx` self-hides (`return null`) via the mapper, renders title + ref + integrationType + a link-out gated on a present `url` (`target="_blank" rel="noopener noreferrer"` + distinguishing `aria-label`; omitted entirely — no `#`/`javascript:` anchor — when url is null). Mounted on the detail route just under `<RunContextStrip>`, fed the route's already-warmed `useWorkflowDetail` `data` (no second fetch).
+- **Task 4 (logging):** no link-out click handler added (not required for a presentational read-only block) → no `console` event emitted.
+- **Anti-patterns respected:** guarded wire fields with `!= null` (never `=== undefined`); title/url are React-escaped plain text (no `dangerouslySetInnerHTML`/`SafeMarkdownRenderer`); pure mappers live in sibling `.ts` (react-refresh rule); `ticketRef` never dropped from the queue row; no second detail fetch; origin depth locked to title+ref+link.
+
 ### File List
+
+- `deliveryline-frontend/src/features/workflows/runQueueRow.ts` (modified — `ticketTitle` field + mapper line)
+- `deliveryline-frontend/src/features/workflows/components/RunReviewQueueItem.tsx` (modified — `Identity` label anatomy + `composeAriaLabel` identity segment)
+- `deliveryline-frontend/src/features/workflows/runOriginView.ts` (new — pure mapper)
+- `deliveryline-frontend/src/features/workflows/components/RunOriginBlock.tsx` (new — self-hiding Origin block)
+- `deliveryline-frontend/src/routes/workflows/$workflowRunId/index.tsx` (modified — import + mount `<RunOriginBlock detail={data} />`)
+- `deliveryline-frontend/src/features/workflows/__tests__/runQueueRow.test.ts` (modified — ticketTitle mapping cases)
+- `deliveryline-frontend/src/features/workflows/components/__tests__/RunReviewQueueItem.test.tsx` (modified — title label / ref fallback / aria / axe)
+- `deliveryline-frontend/src/features/workflows/__tests__/runOriginView.test.ts` (new — mapper unit tests)
+- `deliveryline-frontend/src/features/workflows/components/__tests__/RunOriginBlock.test.tsx` (new — component + axe tests)
 
 ## Change Log
 
 | Date | Version | Description | Author |
 | ---- | ------- | ----------- | ------ |
 | 2026-07-02 | 0.1 | Drafted FR73 FE story: consume 3g-1's `WorkflowSummary.ticketTitle` (queue human label with `ticketRef` fallback) + `LinkedTicket.title`/`url` (new self-hiding detail Origin block: title + ref + integrationType + gated external link-out). Read-only FE consumption — no backend/OpenAPI/contract change, no `schema.d.ts` regen. Status → ready-for-dev. | Bob (Opus 4.8) |
+| 2026-07-02 | 1.0 | Implemented all 6 tasks: queue `ticketTitle` human label with `ticketRef` fallback (view-model + mapper + `Identity` + aria); new sibling `runOriginView.ts` mapper + self-hiding `RunOriginBlock` (title/ref/type + `url`-gated external link-out), mounted on the detail route from the warmed `useWorkflowDetail` data. Verified `check:api` (no regen), lint (0 warnings), build (tsc+vite), full Vitest 1250/1250. Status → review. | Amelia (Opus 4.8 [1m]) |

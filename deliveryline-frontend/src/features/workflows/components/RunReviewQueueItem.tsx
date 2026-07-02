@@ -182,7 +182,10 @@ function composeAriaLabel(
   relativeTime: string | null,
 ): string {
   const parts: string[] = [];
-  const identity = [row.linearTicketReference, row.runId].filter(Boolean).join(' ');
+  // Story 3g-2 (AC1/AC6) — the human title leads the identity segment WHEN present, but the
+  // machine `linearTicketReference` stays in the aria identity (it is the stable id reviewers
+  // search by). `.filter(Boolean)` drops absent parts so the literal "undefined" never leaks.
+  const identity = [row.ticketTitle, row.linearTicketReference, row.runId].filter(Boolean).join(' ');
   if (identity !== '') {
     parts.push(identity);
   }
@@ -203,14 +206,41 @@ function composeAriaLabel(
   return parts.join(', ');
 }
 
-/** Identity cluster: `DEL-1234 · run_abc…` (run id as `<code>`); run id alone when no ticket. */
+/**
+ * Identity cluster. Story 3g-2 (AC1): the human ticket title is the prominent label when
+ * present (`«title» · DEL-1234 · run_abc…`); when absent it falls back to the ref in the
+ * prominent slot (`DEL-1234 · run_abc…` — today's exact parity, never a blank label). The
+ * `linearTicketReference` stays visible as the machine identity even alongside the title.
+ * Title/ref are untrusted plain text — React-escaped (Trap T6).
+ */
 function Identity({ row }: { row: RunQueueRow }) {
+  // Prefer the title; fall back to the ref (AC1 — title→ref, never blank).
+  const prominent = row.ticketTitle ?? row.linearTicketReference;
+  // The ref demotes to secondary text ONLY when the title occupies the prominent slot;
+  // otherwise the ref IS the prominent slot (parity), so we do not repeat it.
+  const showRefAsSecondary =
+    row.ticketTitle !== undefined && row.linearTicketReference !== undefined;
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
-      {row.linearTicketReference !== undefined ? (
-        <span className="font-medium text-text-primary">{row.linearTicketReference}</span>
+      {prominent !== undefined ? (
+        <span
+          className="min-w-0 truncate font-medium text-text-primary"
+          data-testid="queue-item-identity-label"
+        >
+          {prominent}
+        </span>
       ) : null}
-      {row.linearTicketReference !== undefined && row.runId !== undefined ? (
+      {showRefAsSecondary ? (
+        <>
+          <span aria-hidden className="text-text-tertiary">
+            ·
+          </span>
+          <span className="text-meta text-text-secondary" data-testid="queue-item-ticket-ref">
+            {row.linearTicketReference}
+          </span>
+        </>
+      ) : null}
+      {prominent !== undefined && row.runId !== undefined ? (
         <span aria-hidden className="text-text-tertiary">
           ·
         </span>

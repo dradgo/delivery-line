@@ -34,6 +34,13 @@ export interface RunQueueRow {
   runId?: string | undefined;
   /** Linear ticket reference (`ticketRef`, e.g. `DEL-1234`); absent ⇒ no ticket chip. */
   linearTicketReference?: string | undefined;
+  /**
+   * Story 3g-2 (FR73) — LIVE originating ticket title from the summary read model
+   * (`WorkflowSummary.ticketTitle`). The queue's human label PREFERS this over the
+   * machine `linearTicketReference`; absent (pre-3g / unlinked) ⇒ the label falls back
+   * to the ref (never a blank cell). Untrusted plain text (React-escaped at render).
+   */
+  ticketTitle?: string | undefined;
   /** Short scannable summary line — DORMANT (no live source); render only when present. */
   summary?: string | undefined;
   /** Backend `currentState` enum → `WorkflowStateBadge`. */
@@ -118,6 +125,14 @@ export function toRunQueueRow(summary: WorkflowSummary): RunQueueRow {
   return {
     runId: summary.workflowRunId,
     linearTicketReference: summary.ticketRef,
+    // Story 3g-2 (FR73) — LIVE: prefer the human ticket title; collapse a wire `null` OR a
+    // blank/whitespace-only title to `undefined` so the queue label falls back to the ref
+    // (AC1 "never a blank label"). A bare `?? undefined` would let `""` survive and render an
+    // empty prominent label — mirror the sibling `runOriginView.ts` present/trim posture.
+    ticketTitle:
+      summary.ticketTitle != null && summary.ticketTitle.trim() !== ''
+        ? summary.ticketTitle
+        : undefined,
     currentState: summary.currentState,
     lastTransitionAt: summary.lastEventAt,
     escalationMarker: summary.escalationMarker,

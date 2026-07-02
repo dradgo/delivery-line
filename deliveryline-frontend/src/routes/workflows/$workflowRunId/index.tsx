@@ -18,6 +18,7 @@ import {
   resolveSpecArtifactId,
 } from '@/features/workflows/approvalDecisionView';
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
+import { RunOriginBlock } from '@/features/workflows/components/RunOriginBlock';
 import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
 import { ClarificationRegionContainer } from '@/features/workflows/components/ClarificationRegionContainer';
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
@@ -195,6 +196,10 @@ function WorkflowDetailRoute() {
       {/* Story 2.16 — persistent run-context orientation strip, above the (future
           2.17) artifact body. Reads the same warmed `useWorkflowDetail` cache. */}
       <RunContextStrip workflowRunId={workflowRunId} />
+      {/* Story 3g-2 (FR73) — the self-hiding Origin block: the originating ticket's title,
+          ref, connector, and a gated link-out to the source ticket. Reads the same warmed
+          `useWorkflowDetail` cache (no second fetch); renders nothing for an unlinked run. */}
+      <RunOriginBlock detail={data} />
       {/* Story 3.30 (AC1/AC6) — the minimal failure-event surface + diagnostics panel.
           Renders nothing unless the run's event stream carries failure / recovery
           events (scope discipline — Epic 4 owns the full timeline). */}

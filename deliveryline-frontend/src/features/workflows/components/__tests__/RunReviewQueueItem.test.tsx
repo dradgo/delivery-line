@@ -643,3 +643,43 @@ describe('RunReviewQueueItem - project attribution (story 3f-6)', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 3g-2 (FR73) — the human ticket title as the queue's prominent label.
+// ---------------------------------------------------------------------------
+describe('RunReviewQueueItem - ticket title (story 3g-2)', () => {
+  it('AC1 - renders the human title as the prominent label AND keeps the ref visible', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, ticketTitle: 'Fix flaky checkout test' }} />);
+    // The title is the prominent identity label.
+    expect(screen.getByTestId('queue-item-identity-label')).toHaveTextContent(
+      'Fix flaky checkout test',
+    );
+    // The machine ref stays visible as secondary identity (must not disappear).
+    expect(screen.getByTestId('queue-item-ticket-ref')).toHaveTextContent('DEL-1234');
+    // The run id (machine identity) is still rendered.
+    expect(screen.getByText('run_abc123')).toBeInTheDocument();
+  });
+
+  it('AC1 - falls back to the ref in the prominent slot when the title is absent (never blank)', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} />);
+    // With no title, the ref occupies the prominent label (today's parity behavior).
+    expect(screen.getByTestId('queue-item-identity-label')).toHaveTextContent('DEL-1234');
+    // No duplicated secondary ref chip when the ref is already the prominent label.
+    expect(screen.queryByTestId('queue-item-ticket-ref')).toBeNull();
+  });
+
+  it('AC6 - the aria identity carries the title AND the machine ref + run id', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, ticketTitle: 'Fix flaky checkout test' }} />);
+    const label = row().getAttribute('aria-label') ?? '';
+    expect(label).toContain('Fix flaky checkout test');
+    expect(label).toContain('DEL-1234');
+    expect(label).toContain('run_abc123');
+  });
+
+  it('AC4/AC6 - a titled row has zero axe violations', async () => {
+    const { container } = render(
+      <RunReviewQueueItem run={{ ...BASE_ROW, ticketTitle: 'Fix flaky checkout test' }} />,
+    );
+    await expectNoA11yViolations(container);
+  });
+});

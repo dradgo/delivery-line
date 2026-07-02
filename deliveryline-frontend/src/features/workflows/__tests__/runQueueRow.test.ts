@@ -38,7 +38,7 @@ describe('toRunQueueRow', () => {
     expect(row.specRejectionLoopCount).toBe(2);
   });
 
-  it('Story 3f-6 � maps live project attribution fields from the workflow summary', () => {
+  it('Story 3f-6 � maps live project attribution fields from the workflow summary', () => {
     const row = toRunQueueRow({
       ...LIVE_SUMMARY,
       projectId: 'prj_alpha',
@@ -80,6 +80,26 @@ describe('toRunQueueRow', () => {
     // A live run (null/absent archivedAt) is not archived.
     expect(toRunQueueRow({ ...LIVE_SUMMARY, archivedAt: null }).archived).toBe(false);
     expect(toRunQueueRow(LIVE_SUMMARY).archived).toBe(false);
+  });
+
+  it('Story 3g-2 (FR73) — maps the LIVE ticketTitle from the summary', () => {
+    expect(
+      toRunQueueRow({ ...LIVE_SUMMARY, ticketTitle: 'Fix flaky checkout test' }).ticketTitle,
+    ).toBe('Fix flaky checkout test');
+  });
+
+  it('Story 3g-2 (FR73) — collapses an absent/null ticketTitle to undefined (never fabricated)', () => {
+    // Wire `null` (pre-3g / unlinked) → undefined (the `?? undefined` exactOptionalProps seam).
+    expect(toRunQueueRow({ ...LIVE_SUMMARY, ticketTitle: null }).ticketTitle).toBeUndefined();
+    // Omitted entirely → undefined.
+    expect(toRunQueueRow(LIVE_SUMMARY).ticketTitle).toBeUndefined();
+  });
+
+  it('Story 3g-2 (review) — collapses an empty/whitespace ticketTitle to undefined (AC1 never a blank label)', () => {
+    // A bare `?? undefined` would let `""`/`"   "` survive and render a blank prominent label
+    // while demoting the ref — the label must fall back to the ref instead.
+    expect(toRunQueueRow({ ...LIVE_SUMMARY, ticketTitle: '' }).ticketTitle).toBeUndefined();
+    expect(toRunQueueRow({ ...LIVE_SUMMARY, ticketTitle: '   ' }).ticketTitle).toBeUndefined();
   });
 });
 
