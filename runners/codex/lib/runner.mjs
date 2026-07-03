@@ -426,8 +426,11 @@ function parseCodexEvents(text) {
       if (sanitized) usage = sanitized; // last turn wins
     }
   }
-  // No JSON at all => a plain-text stream (legacy/mock): use it verbatim as the message.
-  const messageText = sawJson ? messages.join('\n\n') : text;
+  // The deliverable is the FINAL agent_message (codex streams progress commentary as EARLIER
+  // agent_message items — concatenating them would pollute the artifact/review-rationale with the
+  // running monologue). Matches codex's own --output-last-message notion of "the answer". No JSON at
+  // all => a plain-text stream (legacy/mock): use it verbatim.
+  const messageText = sawJson ? messages[messages.length - 1] ?? '' : text;
   return { messageText, usage };
 }
 

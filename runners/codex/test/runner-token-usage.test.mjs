@@ -175,6 +175,42 @@ test('codex --json events -> real input/output/total lifted from turn.completed.
   }
 });
 
+test('codex --json with MULTIPLE agent_messages -> artifact is the FINAL message, not the running narration', () => {
+  // Codex streams progress commentary as SEPARATE agent_message items ("reading the spec now", "jq
+  // not installed", ...) and its actual deliverable as the FINAL agent_message. Concatenating them
+  // all pollutes the artifact/review-rationale with the running monologue — reconstruct from the
+  // LAST agent_message only (matching codex's own --output-last-message notion of "the answer").
+  const eventsContent = [
+    JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'Progress: reading the spec now.' },
+    }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'jq is not installed; falling back to shell reads.' },
+    }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'The final reviewed specification content.' },
+    }),
+    JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 20 } }),
+  ].join('\n');
+  const { dir, outPath, result } = build({ eventsContent });
+  try {
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    const normalizedOutput = JSON.parse(readFileSync(outPath, 'utf8')).normalizedOutput;
+    assert.equal(normalizedOutput.summary, 'The final reviewed specification content.');
+    assert.ok(
+      !normalizedOutput.summary.includes('jq is not installed'),
+      'progress narration must not leak into the artifact',
+    );
+    assert.ok(!normalizedOutput.summary.includes('Progress: reading'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('codex --json events with NO turn.completed usage -> usage omitted, message still reconstructed', () => {
   const eventsContent = [
     JSON.stringify({ type: 'turn.started' }),

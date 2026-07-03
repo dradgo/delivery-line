@@ -91,12 +91,14 @@ RUN set -eu; \
       # stays cert-free + offline.
       # Agent-side exploration tooling: `ripgrep` (the agent's default file/content search —
       # it reaches for `rg` first, falling back to slow, non-.gitignore-aware `find`/`grep`
-      # without it) and `git` (the cloned /workspace/repo carries a real `.git`, so
+      # without it), `git` (the cloned /workspace/repo carries a real `.git`, so
       # status/diff/log/ls-files/grep work — notably `git diff` for self-review at
-      # pr-output). Real build only; the mock/echo agent does not explore. Mirrors the
+      # pr-output), and `jq` (the agent reaches for it to inspect the JSON context-bundle /
+      # review inputs under /workspace/input; without it, it degrades to fragile shell reads).
+      # Real build only; the mock/echo agent does not explore. Mirrors the
       # codex runner per the RUNNER_CONTRACT tooling-parity rule.
       apt-get update; \
-      apt-get install -y --no-install-recommends ca-certificates git ripgrep; \
+      apt-get install -y --no-install-recommends ca-certificates git ripgrep jq; \
       update-ca-certificates; \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"; \
       # Story 3a-6 — agent-side tooling: pure-JS OpenSpec CLI, pinned, same layer.
