@@ -26,6 +26,7 @@ import { FailureEventSurface } from '@/features/workflows/components/FailureEven
 import { StepExecutionLogViewer } from '@/features/workflows/components/StepExecutionLogViewer';
 import { ProviderLimitStatus } from '@/features/workflows/components/ProviderLimitStatus';
 import { RunDependencyPanel } from '@/features/workflows/components/RunDependencyPanel';
+import { RunStepTokensPanel } from '@/features/workflows/components/RunStepTokensPanel';
 import { SplitLineagePanel } from '@/features/workflows/components/SplitLineagePanel';
 import { ManualExecutionSurface } from '@/features/workflows/components/ManualExecutionSurface';
 import { ReadOnlyDiagnosticConsole } from '@/features/workflows/components/ReadOnlyDiagnosticConsole';
@@ -216,6 +217,12 @@ function WorkflowDetailRoute() {
           status (or the documented "not exposed" state), gated on the backend
           `view_provider_usage_status` action. Color-independent signifier; provider-reported + as-of. */}
       {canViewProviderUsage ? <ProviderLimitStatus workflowRunId={workflowRunId} /> : null}
+      {/* Story 3g-4 (FR74, AC1/AC2/AC3) — per-step token usage + the run-level total. Read-only
+          diagnostic surface (no AllowedAction gate — mirrors reviewer-verdict); the panel owns its
+          own GET /steps query and the run total is the backend-computed `WorkflowDetail.totalTokens`
+          (never re-summed on the FE). Self-hides when the run has no runner executions yet. */}
+      <RunStepTokensPanel workflowRunId={workflowRunId} totalTokens={data?.totalTokens} />
+
       {/* Story 3d-4 (AC7) — the Manual Execution Surface: for a run parked in
           WaitingForManualExecution, download/copy the input bundle + submit the operator-produced
           artifact. Gated on the backend `obtain_manual_bundle` / `submit_manual_artifact` actions. */}

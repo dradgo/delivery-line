@@ -1607,6 +1607,61 @@
         },
         "type" : "object"
       },
+      "StepExecution" : {
+        "description" : "A runner execution (step) of a workflow run.",
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "inputTokens" : {
+            "description" : "Agent input tokens for this step; null when not reported (never 0).",
+            "example" : 1024,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "outputTokens" : {
+            "description" : "Agent output tokens for this step; null when not reported (never 0).",
+            "example" : 512,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "runnerExecutionId" : {
+            "example" : "rex_abc123",
+            "type" : "string"
+          },
+          "stage" : {
+            "example" : "implement",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "status" : {
+            "example" : "completed",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "totalTokens" : {
+            "description" : "Agent total tokens for this step; null when not reported (never 0).",
+            "example" : 1536,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type" : "object"
+      },
       "SubmitWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -2019,6 +2074,15 @@
             "example" : 0,
             "format" : "int32",
             "type" : "integer"
+          },
+          "totalTokens" : {
+            "description" : "Run-level token consumption: sum of per-step totalTokens where reported (story 3g-4, FR74). Null when no step reported tokens.",
+            "example" : 12345,
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
           },
           "workflowRunId" : {
             "example" : "run_abc123",
@@ -5010,6 +5074,63 @@
           }
         },
         "summary" : "Request an advisory split proposal (story 3f-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/steps" : {
+      "get" : {
+        "description" : "Returns each runner execution (step) of the run with its stage/status/createdAt and the agent's input/output/total token counts (story 3g-4, FR74), oldest-first. Token counts are null when the step reported nothing (never 0). Read-only and advisory.",
+        "operationId" : "listStepExecutions",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "items" : {
+                    "$ref" : "#/components/schemas/StepExecution"
+                  },
+                  "type" : "array"
+                }
+              }
+            },
+            "description" : "Per-step token usage, oldest-first."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "List per-step token usage for a workflow run",
         "tags" : [
           "Workflows"
         ]

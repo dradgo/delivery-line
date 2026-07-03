@@ -398,7 +398,9 @@ public class WorkflowInspectionService {
 
       // The port applies no ordering (findLatestRunnerExecutionId maxes manually), so sort
       // oldest-first here. Null createdAt sorts first defensively (should never occur for a
-      // persisted row).
+      // persisted row). Tie-break on publicId so equal-createdAt rows (same-millisecond
+      // executions) get a deterministic order across requests — the port is unordered, so
+      // Stream.sorted's stability cannot be relied on for equal keys.
       List<StepExecutionView> steps =
           runnerExecutionRecordPort
               .findByWorkflowRunPublicIdAndStatusIn(
@@ -406,8 +408,9 @@ public class WorkflowInspectionService {
               .stream()
               .sorted(
                   java.util.Comparator.comparing(
-                      RunnerExecutionSnapshot::createdAt,
-                      java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+                          RunnerExecutionSnapshot::createdAt,
+                          java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                      .thenComparing(RunnerExecutionSnapshot::publicId))
               .map(WorkflowInspectionService::toStepExecutionView)
               .toList();
       log.info(
@@ -438,8 +441,9 @@ public class WorkflowInspectionService {
    * Integer.MAX_VALUE}), so a run with many maxed steps could overflow — the accumulator clamps at
    * {@code Integer.MAX_VALUE} (WARN once) rather than wrapping negative.
    */
-  // Package-private (not private) so the same-package unit test can exercise the sum / null-parity /
-  // overflow-clamp branches directly without driving the full getStatus mock graph.
+  // Package-private (not private) so the same-package unit test can exercise the sum, the
+  // null-parity, and the overflow-clamp branches directly without driving the full getStatus mock
+  // graph.
   static Integer rollupTotalTokens(List<RunnerExecutionSnapshot> rows) {
     Integer sum = null;
     boolean warned = false;
@@ -2659,11 +2663,11 @@ public class WorkflowInspectionService {
   }
 
   /**
-   * Story 3g-4 (FR74, AC1) — per-step read projection for {@code GET
-   * /api/v1/workflows/{id}/steps}. One row per runner execution: {@code stage}/{@code status} are
-   * the enum {@code .value()} strings (null-safe), {@code createdAt} orders the list oldest-first,
-   * and the three token counts are 3g-3's nullable columns passed through verbatim ({@code null} =
-   * "not reported", never {@code 0}; {@code totalTokens} is NOT synthesized from input+output).
+   * Story 3g-4 (FR74, AC1) — per-step read projection for {@code GET /api/v1/workflows/{id}/steps}.
+   * One row per runner execution: {@code stage}/{@code status} are the enum {@code .value()}
+   * strings (null-safe), {@code createdAt} orders the list oldest-first, and the three token counts
+   * are 3g-3's nullable columns passed through verbatim ({@code null} = "not reported", never
+   * {@code 0}; {@code totalTokens} is NOT synthesized from input+output).
    */
   public record StepExecutionView(
       String runnerExecutionId,

@@ -670,6 +670,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List per-step token usage for a workflow run
+         * @description Returns each runner execution (step) of the run with its stage/status/createdAt and the agent's input/output/total token counts (story 3g-4, FR74), oldest-first. Token counts are null when the step reported nothing (never 0). Read-only and advisory.
+         */
+        get: operations["listStepExecutions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/takeover": {
         parameters: {
             query?: never;
@@ -1471,6 +1491,35 @@ export interface components {
             /** Format: int64 */
             timeout?: number;
         };
+        /** @description A runner execution (step) of a workflow run. */
+        StepExecution: {
+            /** Format: date-time */
+            createdAt?: string;
+            /**
+             * Format: int32
+             * @description Agent input tokens for this step; null when not reported (never 0).
+             * @example 1024
+             */
+            inputTokens?: number | null;
+            /**
+             * Format: int32
+             * @description Agent output tokens for this step; null when not reported (never 0).
+             * @example 512
+             */
+            outputTokens?: number | null;
+            /** @example rex_abc123 */
+            runnerExecutionId?: string;
+            /** @example implement */
+            stage?: string | null;
+            /** @example completed */
+            status?: string | null;
+            /**
+             * Format: int32
+             * @description Agent total tokens for this step; null when not reported (never 0).
+             * @example 1536
+             */
+            totalTokens?: number | null;
+        };
         SubmitWorkflowRequest: {
             actorIdentity: string;
             /** @enum {string} */
@@ -1628,6 +1677,12 @@ export interface components {
              * @example 0
              */
             specRejectionLoopCount?: number;
+            /**
+             * Format: int32
+             * @description Run-level token consumption: sum of per-step totalTokens where reported (story 3g-4, FR74). Null when no step reported tokens.
+             * @example 12345
+             */
+            totalTokens?: number | null;
             /** @example run_abc123 */
             workflowRunId?: string;
         };
@@ -3537,6 +3592,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SplitProposalResponse"];
+                };
+            };
+        };
+    };
+    listStepExecutions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-step token usage, oldest-first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StepExecution"][];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
                 };
             };
         };

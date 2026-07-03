@@ -97,7 +97,8 @@ class WorkflowInspectionServiceStepTokensTest {
 
     List<StepExecutionView> steps = service.getStepExecutions(RUN_ID);
 
-    assertThat(steps).extracting(StepExecutionView::runnerExecutionId)
+    assertThat(steps)
+        .extracting(StepExecutionView::runnerExecutionId)
         .containsExactly("rex_older", "rex_newer");
     StepExecutionView older = steps.get(0);
     assertThat(older.stage()).isEqualTo("execution");
@@ -187,8 +188,7 @@ class WorkflowInspectionServiceStepTokensTest {
   void rollupClampsInt32OverflowAtMaxValue() {
     Integer sum =
         WorkflowInspectionService.rollupTotalTokens(
-            List.of(
-                stepTotal(Integer.MAX_VALUE), stepTotal(Integer.MAX_VALUE), stepTotal(1)));
+            List.of(stepTotal(Integer.MAX_VALUE), stepTotal(Integer.MAX_VALUE), stepTotal(1)));
     assertThat(sum).isEqualTo(Integer.MAX_VALUE);
   }
 

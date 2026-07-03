@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3g-4 (2026-07-02)
+
+- **Verify tertiary small-text contrast on the token panel labels meets WCAG 2.1 AA.** The "Step token usage" heading and "Run total" label render at `text-meta text-text-tertiary` on `bg-surface`; jest-axe does not compute contrast ratios, so the axe-clean gate does not prove AC5's 4.5:1 threshold. Advisory, design-system-wide (not specific to this change). **Follow-up:** one-time manual/token-level contrast check of the tertiary label colors. [`RunStepTokensPanel.tsx:55-57`]
+
 ## Deferred from: code review of story-3f-7 (2026-06-29)
 
 - **`computeSplitDepth` undercounts depth on a broken/missing-ancestor lineage.** `if (parent.isEmpty()) break;` returns the partial distance to root, so a run whose true depth exceeds `max-split-depth` is computed as shallow and allowed to split — silently bypassing the cap. Also the `maxDepth+1` safety bound clamps the `currentDepth` surfaced in the 409 body (cosmetic; acknowledged in-comment). Low likelihood: `parent_run_id` is an FK and archival is soft (`archived_at`, rows remain). **Follow-up:** verify `findByPublicId` does not filter archived ancestors; treat a missing ancestor conservatively (reject) if it can occur. [`SplitProposalService.java:408`]

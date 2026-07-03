@@ -130,6 +130,13 @@ export const workflowKeys = {
   providerUsageStatus: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'providerUsageStatus'] as const,
 
+  /**
+   * A run's per-step token usage (story 3g-4). A PREFIX child of `detail(id)`, so a detail
+   * invalidation cascade refreshes the per-step token panel for free as the run advances.
+   */
+  stepExecutions: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'stepExecutions'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
 } as const;
