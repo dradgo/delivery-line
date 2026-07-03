@@ -17,6 +17,7 @@ import {
   resolveImplementationArtifact,
   resolveSpecArtifactId,
 } from '@/features/workflows/approvalDecisionView';
+import { RunArchiveControl } from '@/features/workflows/components/RunArchiveControl';
 import { RunContextStrip } from '@/features/workflows/components/RunContextStrip';
 import { RunOriginBlock } from '@/features/workflows/components/RunOriginBlock';
 import { ContextPanelSlot } from '@/features/workflows/ContextPanelSlot';
@@ -271,6 +272,9 @@ function WorkflowDetailRoute() {
           </>
         ) : null}
       </p>
+      {/* Story 3d-8 FE gap — run Archive / Unarchive control. Self-hiding: renders only when
+          the workflow_owner allowed-actions matrix advertises archive_run / unarchive_run. */}
+      <RunArchiveControl workflowRunId={workflowRunId} />
       <p className="text-body text-text-secondary max-w-prose">
         Navigation skeleton (story 2.5) now backed by the live data layer (story 2.6) and hosted in
         the tri-pane shell (story 2.7). The Artifact Review Panel (story 2.17) renders in the
