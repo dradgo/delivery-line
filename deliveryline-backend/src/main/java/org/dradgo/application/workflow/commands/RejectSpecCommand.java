@@ -21,7 +21,8 @@ import org.dradgo.domain.registry.RejectionTaxonomy;
  * {@code taggedFeedback} ARE in the fingerprint — changing either is a semantic shift.
  *
  * <p>{@code reasonText} cap widened to 1024 chars in story 2.10 to match {@link
- * ApproveSpecCommand#reason()}.
+ * ApproveSpecCommand#reason()}, then raised to 16384 to accommodate detailed multi-point rejection
+ * feedback (the persisted {@code approvals.reason} column is unbounded {@code text}).
  */
 public record RejectSpecCommand(
     @NotBlank @Size(max = 128) String workflowRunId,
@@ -34,5 +35,5 @@ public record RejectSpecCommand(
     @Size(max = 128) String correlationId,
     @NotBlank @Size(max = 128) String reviewerRole,
     @NotNull RejectionTaxonomy taggedFeedback,
-    @NotBlank @Size(max = 1024) String reasonText)
+    @NotBlank @Size(max = 16384) String reasonText)
     implements WorkflowCommand {}

@@ -46,4 +46,4 @@ public record RejectImplementationRequest(
     @NotNull @Positive Integer expectedContextBundleVersion,
     @Size(max = 128) String reviewerRole,
     @NotNull RejectionTaxonomy taggedFeedback,
-    @NotBlank @Size(max = 1024) String reasonText) {}
+    @NotBlank @Size(max = 16384) String reasonText) {}

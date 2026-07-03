@@ -1079,7 +1079,7 @@
             "type" : "integer"
           },
           "reasonText" : {
-            "maxLength" : 1024,
+            "maxLength" : 16384,
             "minLength" : 0,
             "type" : "string"
           },
@@ -1127,7 +1127,7 @@
             "type" : "integer"
           },
           "reasonText" : {
-            "maxLength" : 1024,
+            "maxLength" : 16384,
             "minLength" : 0,
             "type" : "string"
           },
