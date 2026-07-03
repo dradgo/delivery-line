@@ -649,21 +649,84 @@ if [ "$ARTIFACT_TYPE" = spec ]; then
     printf 'advisory and never blocks delivery.\n'
   } >>"$PROMPT_FILE"
 fi
-log INFO "claude invocation start bin=$CLAUDE_CLI_BIN subcommand=$CLAUDE_SUBCOMMAND repoDir=$CLAUDE_REPO_DIR argCount=$#"
+# Finished-but-hung guard (INACTIVITY-based — never a wall-clock cap; mirror of the Codex
+# entrypoint). A CLI can complete a large turn (full output flushed) yet never exit, wedging the
+# run until the broker's stdout-silence timeout fires and DISCARDS the completed artifact. Run the
+# CLI in the background and watch runner.stdout for growth; if it stays idle for
+# CLAUDE_STALL_SECONDS while the process is still alive, terminate it and salvage the captured
+# output into the normal build below. Trigger is INACTIVITY so a legitimately long, actively
+# STREAMING turn is never truncated. Default sits below the broker's inactivity timeout so the
+# runner reclaims + salvages before the broker discards. CLAUDE_STALL_SECONDS=0 disables it.
+CLAUDE_STALL_SECONDS="${CLAUDE_STALL_SECONDS:-900}"
+CLAUDE_STALL_POLL_SECONDS="${CLAUDE_STALL_POLL_SECONDS:-2}"
+CLAUDE_STALLED=0
+
+log INFO "claude invocation start bin=$CLAUDE_CLI_BIN subcommand=$CLAUDE_SUBCOMMAND repoDir=$CLAUDE_REPO_DIR stallSeconds=$CLAUDE_STALL_SECONDS argCount=$#"
 set +e
 if [ -d "$CLAUDE_REPO_DIR" ]; then
   # Run with the repo as cwd (Claude Code's project root). The subshell isolates the
   # cd; every mount path used after this is absolute, so the rest of the script is
-  # unaffected. exec lets the redirections + cwd reach the CLI and $? be its exit.
+  # unaffected. exec lets the redirections + cwd reach the CLI AND makes $! the CLI PID
+  # (the exec replaces the subshell), so the inactivity guard can signal it.
   ( cd "$CLAUDE_REPO_DIR" && exec "$CLAUDE_CLI_BIN" "$@" ) \
-    <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+    <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
 else
-  "$CLAUDE_CLI_BIN" "$@" <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+  "$CLAUDE_CLI_BIN" "$@" <"$PROMPT_FILE" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
 fi
+CLAUDE_PID=$!
+
+if [ "${CLAUDE_STALL_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+  _last_size=-1
+  _idle=0
+  while kill -0 "$CLAUDE_PID" 2>/dev/null; do
+    sleep "$CLAUDE_STALL_POLL_SECONDS"
+    kill -0 "$CLAUDE_PID" 2>/dev/null || break
+    _cur_size=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ')
+    [ -n "$_cur_size" ] || _cur_size=0
+    if [ "$_cur_size" -gt "$_last_size" ]; then
+      _last_size="$_cur_size"
+      _idle=0
+    else
+      _idle=$((_idle + CLAUDE_STALL_POLL_SECONDS))
+    fi
+    if [ "$_idle" -ge "$CLAUDE_STALL_SECONDS" ]; then
+      log WARN "claude stdout idle ${_idle}s (>= ${CLAUDE_STALL_SECONDS}s) while pid=$CLAUDE_PID alive — treating as finished-but-hung; terminating to salvage captured output"
+      CLAUDE_STALLED=1
+      kill -TERM "$CLAUDE_PID" 2>/dev/null
+      _grace=0
+      while [ "$_grace" -lt 10 ] && kill -0 "$CLAUDE_PID" 2>/dev/null; do
+        sleep 1
+        _grace=$((_grace + 1))
+      done
+      kill -KILL "$CLAUDE_PID" 2>/dev/null
+      break
+    fi
+  done
+fi
+
+wait "$CLAUDE_PID"
 CLAUDE_RC=$?
 set -e
-log INFO "claude invocation finished rc=$CLAUDE_RC stdoutBytes=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
-if [ "$CLAUDE_RC" -ne 0 ]; then
+
+_stdout_bytes=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ')
+[ -n "$_stdout_bytes" ] || _stdout_bytes=0
+log INFO "claude invocation finished rc=$CLAUDE_RC stalled=$CLAUDE_STALLED stdoutBytes=$_stdout_bytes"
+
+if [ "$CLAUDE_STALLED" -eq 1 ]; then
+  # Finished-but-hung: salvage the captured output (fall through to the normal build) when it
+  # produced something; a stall with EMPTY output is a genuine timeout with nothing to recover.
+  if [ "$_stdout_bytes" -lt 1 ]; then
+    log ERROR "claude stalled with EMPTY output — nothing to salvage (runner_timeout)"
+    "$NODE_BIN" "$RUNNER_LIB" build-failure \
+      --bundle "$BUNDLE_FILE" \
+      --stage "$ARTIFACT_TYPE" \
+      --category runner_timeout \
+      --summary "Claude produced no output before stalling (terminated by the runner inactivity guard)" \
+      --out "$RESULT_FILE" >/dev/null || true
+    exit 30
+  fi
+  log WARN "salvaging ${_stdout_bytes} bytes of completed output after claude stall — building the result from captured stdout"
+elif [ "$CLAUDE_RC" -ne 0 ]; then
   log ERROR "claude CLI exited non-zero rc=$CLAUDE_RC (see runner.stderr)"
   "$NODE_BIN" "$RUNNER_LIB" build-failure \
     --bundle "$BUNDLE_FILE" \
