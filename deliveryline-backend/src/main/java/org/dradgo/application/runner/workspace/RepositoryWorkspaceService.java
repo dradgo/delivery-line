@@ -427,18 +427,52 @@ public class RepositoryWorkspaceService {
               stage,
               push.commitSha());
 
+      // Capture the unified diff of the pushed changes vs the default branch so the broker can
+      // materialize it for the OFFLINE pr-output advisory reviewer (best-effort: a diff-capture
+      // failure NEVER fails a successful push+PR — the reviewer just degrades to "not reviewable").
+      String diff = captureDiffBestEffort(repoDir, defaultBranch, workflowRunId, runnerExecutionId);
+
       log.info(
-          "captureAndPush ok workflowRunId={} runnerExecutionId={} branch={} commitSha={} committed={} prRef={}",
+          "captureAndPush ok workflowRunId={} runnerExecutionId={} branch={} commitSha={} committed={} prRef={} diffBytes={}",
           workflowRunId,
           runnerExecutionId,
           branch,
           push.commitSha(),
           committed,
-          prRef);
-      return Optional.of(new RepositoryPushOutcome(push.commitSha(), branch, prRef, committed));
+          prRef,
+          diff == null ? 0 : diff.length());
+      return Optional.of(
+          new RepositoryPushOutcome(push.commitSha(), branch, prRef, committed, diff));
     } finally {
       MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Best-effort unified diff of the pushed changes vs {@code defaultBranch}. Returns {@code null}
+   * (never throws) when there is no default branch to diff against or the diff command fails — a
+   * successful push+PR must never be undone by a diff-capture problem; the reviewer degrades.
+   */
+  private String captureDiffBestEffort(
+      Path repoDir, String defaultBranch, String workflowRunId, String runnerExecutionId) {
+    if (defaultBranch == null || defaultBranch.isBlank()) {
+      log.info(
+          "captureAndPush diff skipped workflowRunId={} runnerExecutionId={} reason=no_default_branch",
+          workflowRunId,
+          runnerExecutionId);
+      return null;
+    }
+    try {
+      return git.diff(repoDir, defaultBranch);
+    } catch (RuntimeException diffFailure) {
+      log.warn(
+          "captureAndPush diff capture failed (best-effort, non-fatal) workflowRunId={} runnerExecutionId={} baseRef={} reason={}",
+          workflowRunId,
+          runnerExecutionId,
+          defaultBranch,
+          diffFailure.toString());
+      return null;
     }
   }
 
@@ -893,7 +927,13 @@ public class RepositoryWorkspaceService {
   public record RepositoryMount(
       Path repoHostPath, String containerMountPath, String defaultBranch, String branch) {}
 
-  /** Result of {@link #captureAndPush} — commit SHA + branch + PR ref for the prOutput artifact. */
+  /**
+   * Result of {@link #captureAndPush} — commit SHA + branch + PR ref for the prOutput artifact,
+   * plus the unified {@code diff} of the pushed changes against the default branch (story 3g
+   * follow-up), which the broker materializes so the offline pr-output advisory reviewer can
+   * inspect the code. {@code diff} is {@code null} when no repo workspace / no changes were
+   * captured.
+   */
   public record RepositoryPushOutcome(
-      String commitSha, String branchRef, String prRef, boolean committed) {}
+      String commitSha, String branchRef, String prRef, boolean committed, String diff) {}
 }

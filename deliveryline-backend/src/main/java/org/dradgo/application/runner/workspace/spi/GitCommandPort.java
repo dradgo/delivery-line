@@ -81,6 +81,17 @@ public interface GitCommandPort {
   PushResult push(Path repoDir, String branch, String githubToken);
 
   /**
+   * Story 3g follow-up (FR69/pr-output review) — the unified diff of {@code HEAD} against {@code
+   * baseRef} (typically the repo's default branch), i.e. {@code git diff baseRef...HEAD}. Used by
+   * {@code captureAndPush} to materialize the pushed changes so the OFFLINE pr-output advisory
+   * reviewer can inspect them (its container has no network + no repo checkout). Returns the raw
+   * unified diff text (possibly empty when there are no changes vs {@code baseRef}); failures
+   * surface as {@link GitCommandException} and every line is routed through the adapter's redaction
+   * pass like all other git output.
+   */
+  String diff(Path repoDir, String baseRef);
+
+  /**
    * Story 3a-2 (AC6) — deterministic, {@code .gitignore}-respecting, depth-bounded top-level tree
    * listing of the cloned working tree at {@code HEAD}, for the spec-stage repo-context summary.
    *

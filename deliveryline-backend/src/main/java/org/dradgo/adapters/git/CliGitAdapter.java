@@ -312,6 +312,25 @@ public class CliGitAdapter implements GitCommandPort {
   }
 
   @Override
+  public String diff(Path repoDir, String baseRef) {
+    Objects.requireNonNull(repoDir, "repoDir");
+    Objects.requireNonNull(baseRef, "baseRef");
+    // `git diff baseRef...HEAD` — changes on HEAD since it diverged from baseRef (three-dot:
+    // against
+    // the merge base, so unrelated baseRef advances don't pollute the diff). Local op (no network).
+    GitResult result =
+        runGit(repoDir, null, localTimeoutSeconds, List.of("diff", baseRef + "...HEAD"));
+    if (!result.succeeded()) {
+      throw new GitCommandException(
+          IntegrationFailureCategory.GIT_NETWORK_FAILURE,
+          "git diff " + baseRef + "...HEAD failed: " + result.redactedOutput());
+    }
+    // Return the full redacted diff (not just the first line); may be empty when there are no
+    // changes vs the base.
+    return result.redactedOutput() == null ? "" : result.redactedOutput();
+  }
+
+  @Override
   public PushResult push(Path repoDir, String branch, String githubToken) {
     Objects.requireNonNull(repoDir, "repoDir");
     requireBranch(branch);
