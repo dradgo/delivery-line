@@ -29,6 +29,8 @@ Substrates to reuse rather than re-derive:
 
 **7. CI build-error investigation reads the pushed branch's result and bounded-fixes it.** A new `RepositoryHostAdapter` CI-status port method + `supportsCiStatusReads` capability (GitHub Actions first; Bitbucket Pipelines in Epic 3i) lets a pushed run poll its CI build; a failed build triggers a bounded investigation/fix loop (distinct from the local build loop, same machinery). `supportsRequiredStatusChecks` becomes meaningfully backed where the new capability is true.
 
+**Substrate — ADR 0032 (shared replay-safe afterCommit helper).** The bounded auto-fix / lint-fix / CI-investigation loops in decisions 2, 3, and 7 re-dispatch work from post-commit side effects. They **MUST** consume the `AfterCommitSideEffectRunner` helper (story 3h-0) for their `REQUIRES_NEW` + advisory-lock + swallow/log + idempotent re-invoke machinery — do NOT re-derive it inline. See [ADR 0032](0032-replay-safe-aftercommit-helper.md).
+
 ## Alternatives Considered
 
 ### Alt 1 — Build/lint as application-layer steps rather than runner stages

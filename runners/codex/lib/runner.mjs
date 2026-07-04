@@ -773,6 +773,13 @@ function commandBuild(args) {
       classification,
       failureCategory: null,
     };
+    // Story 3g-3 follow-up (FR74) — attach the OPTIONAL reviewer token usage. A REVIEW invocation
+    // emits review-result.v1 (not runner-result.v1), so this is the ONLY path by which the
+    // reviewer's per-turn token counts reach the runner_executions V31 columns (the backend harvest
+    // persists it). Real usage from the codex `--json` events; DELIVERYLINE_USAGE_MOCK_FILE overrides
+    // for offline/CI. Omitted entirely when absent so a no-usage verdict stays byte-identical.
+    const reviewUsage = buildUsage() ?? eventsUsage;
+    if (reviewUsage) reviewResult.usage = reviewUsage;
     writeAtomically(out, `${JSON.stringify(reviewResult, null, 2)}\n`);
     process.stdout.write(`${summary}\n`);
     process.exit(0);

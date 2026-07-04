@@ -55,6 +55,12 @@ public class WorkflowTransitionService {
   // to break the DI cycle.
   private final ObjectProvider<RunSplitCompletionRollupService> splitRollupProvider;
   private final WorkflowProperties workflowProperties;
+  // Story 3h-0 — the shared replay-safe afterCommit helper (B1 extraction). A leaf bean (only
+  // PlatformTransactionManager), injected directly. The split-rollup hook below is retrofitted onto
+  // its Layer A; the completion-sync (3.16) and dependency-release (3f-3) hooks are left on their
+  // inline registration for now (optional/forward retrofit — recorded in the 3h-0 Dev Agent
+  // Record).
+  private final AfterCommitSideEffectRunner afterCommitSideEffectRunner;
 
   public WorkflowTransitionService(
       WorkflowRunReadPort workflowRunReadPort,
@@ -65,7 +71,8 @@ public class WorkflowTransitionService {
       ObjectProvider<WorkflowOrchestrationService> orchestrationProvider,
       ObjectProvider<RunDependencyReleaseService> dependencyReleaseProvider,
       ObjectProvider<RunSplitCompletionRollupService> splitRollupProvider,
-      WorkflowProperties workflowProperties) {
+      WorkflowProperties workflowProperties,
+      AfterCommitSideEffectRunner afterCommitSideEffectRunner) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunStatePort = workflowRunStatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -77,6 +84,7 @@ public class WorkflowTransitionService {
     this.dependencyReleaseProvider = dependencyReleaseProvider;
     this.splitRollupProvider = splitRollupProvider;
     this.workflowProperties = workflowProperties;
+    this.afterCommitSideEffectRunner = afterCommitSideEffectRunner;
   }
 
   public void transition(
@@ -263,36 +271,27 @@ public class WorkflowTransitionService {
     if (targetState != WorkflowState.COMPLETED) {
       return;
     }
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      log.warn(
-          "split-rollup hook not registered (no active transaction synchronization) workflowRunId={}",
-          runId);
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            RunSplitCompletionRollupService rollup = splitRollupProvider.getIfAvailable();
-            if (rollup == null) {
-              log.warn(
-                  "split-rollup hook fired but RunSplitCompletionRollupService is unavailable; "
-                      + "skipping workflowRunId={}",
-                  runId);
-              return;
-            }
-            log.info("split-rollup hook fired completedRunId={} (post-commit)", runId);
-            try {
-              rollup.rollupParentOf(runId, null);
-            } catch (RuntimeException error) {
-              // afterCommit cannot roll back the (already committed) Completed transition; the
-              // rollup is best-effort (AC2) so any escape is swallowed with a WARN.
-              log.warn(
-                  "split-rollup hook swallowed an error (completion intact) completedRunId={} cause={}",
-                  runId,
-                  error.getClass().getSimpleName());
-            }
+    // Story 3h-0 — retrofitted onto the shared replay-safe afterCommit helper (Layer A). The
+    // sync-inactive guard, the INFO "fired" line, and the best-effort swallow-and-WARN now live in
+    // AfterCommitSideEffectRunner; only the lazy-collaborator null-guard stays here at the call
+    // site
+    // (the helper is domain-agnostic and never resolves the provider). Behavior is unchanged: the
+    // hook fires only on a genuine commit into Completed, and a rollup failure can never roll the
+    // already-committed transition back. The rollup's own REQUIRES_NEW + RDEP-lock + swallow is
+    // Layer B, retrofitted in RunSplitCompletionRollupService#rollupParentOf.
+    afterCommitSideEffectRunner.runAfterCommit(
+        "split-rollup hook",
+        runId,
+        () -> {
+          RunSplitCompletionRollupService rollup = splitRollupProvider.getIfAvailable();
+          if (rollup == null) {
+            log.warn(
+                "split-rollup hook fired but RunSplitCompletionRollupService is unavailable; "
+                    + "skipping workflowRunId={}",
+                runId);
+            return;
           }
+          rollup.rollupParentOf(runId, null);
         });
   }
 

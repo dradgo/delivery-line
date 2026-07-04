@@ -117,6 +117,17 @@ public class RunnerExecutionService {
   }
 
   /**
+   * Story 3g-3 (FR74) — persist the per-execution token counts onto the row (V31 columns).
+   * Metadata-only: never changes {@code status}, tolerates an already-terminal row. Used by the
+   * REVIEW harvest (the reviewer emits a review-result.v1, not a runner-result.v1, so its usage
+   * cannot flow through the broker's {@code captureTokenUsage}).
+   */
+  public RunnerExecutionSnapshot recordTokenUsage(
+      String runnerExecutionId, Integer inputTokens, Integer outputTokens, Integer totalTokens) {
+    return recordPort.recordTokenUsage(runnerExecutionId, inputTokens, outputTokens, totalTokens);
+  }
+
+  /**
    * Story 3.6 AC3/AC6 / Trap T10 — persist the durable redacted-log capture reference + metrics
    * onto the row. Metadata-only: never changes {@code status}, tolerates an already-terminal row.
    */

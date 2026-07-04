@@ -17,8 +17,18 @@ import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
+import org.hibernate.annotations.DynamicUpdate;
 
+// @DynamicUpdate — this row is written by SEVERAL independent transactions during a single result
+// ingest: the ambient onResult tx marks it running→completed while a REQUIRES_NEW metadata write
+// (recordTokenUsage / recordRawOutput) commits token/output columns on the SAME row out-of-band. A
+// full-row UPDATE from a stale managed entity (loaded before the REQUIRES_NEW write) would clobber
+// those freshly-committed columns back to NULL — this is exactly what silently dropped ALL token
+// usage (0/N rows populated) even though the write logged success. Narrowing every UPDATE to the
+// dirty columns lets the concurrent per-column metadata writes coexist without overwriting one
+// another. See RunnerExecutionTokenUsagePersistenceIT#terminalTransitionDoesNotClobberTokenUsage.
 @Entity
+@DynamicUpdate
 @Table(name = "runner_executions")
 public class RunnerExecutionEntity {
 

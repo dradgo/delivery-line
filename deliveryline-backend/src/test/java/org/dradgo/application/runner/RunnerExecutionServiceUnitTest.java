@@ -58,6 +58,19 @@ class RunnerExecutionServiceUnitTest {
   }
 
   @Test
+  void recordTokenUsageDelegatesTheThreeCountsToPort() {
+    RunnerExecutionRecordPort port = mock(RunnerExecutionRecordPort.class);
+    RunnerExecutionSnapshot terminal = snapshot(RunnerExecutionStatus.COMPLETED);
+    when(port.recordTokenUsage(REX, 1200, 800, 2000)).thenReturn(terminal);
+
+    RunnerExecutionService service = new RunnerExecutionService(port, FIXED_CLOCK);
+    RunnerExecutionSnapshot result = service.recordTokenUsage(REX, 1200, 800, 2000);
+
+    assertNotNull(result);
+    verify(port).recordTokenUsage(REX, 1200, 800, 2000);
+  }
+
+  @Test
   void recordFailedPassesFailureCategoryThroughAndRejectsNull() {
     RunnerExecutionRecordPort port = mock(RunnerExecutionRecordPort.class);
     when(port.markFailed(eq(REX), eq(FailureCategory.RUNNER_CRASH), any(OffsetDateTime.class)))

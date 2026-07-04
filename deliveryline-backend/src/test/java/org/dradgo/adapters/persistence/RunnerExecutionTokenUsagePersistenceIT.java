@@ -2,6 +2,8 @@ package org.dradgo.adapters.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import org.dradgo.TestcontainersConfiguration;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
@@ -14,6 +16,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Story 3g-3 (FR74, AC2/AC3/AC4) — real-Postgres round-trip for {@link
@@ -33,6 +37,7 @@ class RunnerExecutionTokenUsagePersistenceIT {
 
   @Autowired private RunnerExecutionRecordPort recordPort;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @AfterEach
   void tearDown() {
@@ -90,6 +95,50 @@ class RunnerExecutionTokenUsagePersistenceIT {
     assertThat(snapshot.inputTokens()).isNull();
     assertThat(snapshot.outputTokens()).isNull();
     assertThat(snapshot.totalTokens()).isEqualTo(2000);
+  }
+
+  /**
+   * Regression for the silent token-usage clobber (0/N rows ever populated in production). Faithful
+   * to the broker's {@code onResult} flow: an AMBIENT transaction first loads the row (caching a
+   * managed entity with NULL tokens), THEN {@code recordTokenUsage} commits the counts in its
+   * REQUIRES_NEW tx, THEN the terminal {@code markCompleted} re-saves the SAME row from the ambient
+   * (now-stale) entity. Before {@code @DynamicUpdate} on the entity, that terminal full-row UPDATE
+   * wrote every column from the stale entity — overwriting the freshly-committed token columns back
+   * to NULL. With per-column (dynamic) updates the token columns are left untouched and survive.
+   */
+  @Test
+  void terminalTransitionDoesNotClobberTokenUsage() {
+    String rex = seedRunningExecution();
+    TransactionTemplate ambient = new TransactionTemplate(transactionManager);
+
+    ambient.executeWithoutResult(
+        status -> {
+          // Ambient load — caches a managed entity with NULL tokens in this tx's persistence
+          // context
+          // (mirrors `row = findByPublicId(rex)` at the top of onResult).
+          recordPort.findByPublicId(rex).orElseThrow();
+          // REQUIRES_NEW: commits the token counts on the row out-of-band.
+          recordPort.recordTokenUsage(rex, 1200, 800, 2000);
+          // Terminal transition in the ambient tx — re-saves the SAME row from the stale entity.
+          recordPort.markCompleted(rex, OffsetDateTime.now(ZoneOffset.UTC));
+        });
+
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "select total_tokens from runner_executions where public_id = ?",
+                Integer.class,
+                rex))
+        .isEqualTo(2000);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "select input_tokens from runner_executions where public_id = ?",
+                Integer.class,
+                rex))
+        .isEqualTo(1200);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "select status from runner_executions where public_id = ?", String.class, rex))
+        .isEqualTo("completed");
   }
 
   private String seedRunningExecution() {

@@ -24,8 +24,9 @@ import { fileURLToPath } from 'node:url';
 const RUNNER = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'runner.mjs');
 const SECRET = 'sk-ant-supersecrettokenvalue';
 
-// Runs `build --stage spec` against a minimal bundle and returns the parsed result document.
-function build({ mockFile, mockContent } = {}) {
+// Runs `build --stage <stage>` (default spec) against a minimal bundle and returns the parsed
+// result document.
+function build({ mockFile, mockContent, stage = 'spec' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'token-usage-'));
   const bundlePath = join(dir, 'context-bundle.v1.json');
   const summaryPath = join(dir, 'summary.txt');
@@ -54,7 +55,7 @@ function build({ mockFile, mockContent } = {}) {
     '--bundle',
     bundlePath,
     '--stage',
-    'spec',
+    stage,
     '--summary-file',
     summaryPath,
     '--out',
@@ -100,6 +101,37 @@ test('partial mock (only totalTokens) -> only that field emitted, others absent 
     assert.equal(result.status, 0, `stderr=${result.stderr}`);
     const usage = JSON.parse(readFileSync(outPath, 'utf8')).normalizedOutput.usage;
     assert.deepEqual(usage, { totalTokens: 2000 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Story 3g-3 follow-up (FR74) — the REVIEW arm also carries reviewer token usage. A REVIEW
+// invocation emits review-result.v1 (not runner-result.v1), so its usage rides on the top-level
+// `usage` key — the ONLY channel by which a reviewer's counts reach the runner_executions columns.
+test('review stage with mock usage -> counts emitted onto review-result.v1 top-level usage', () => {
+  const mockContent = JSON.stringify({ inputTokens: 1200, outputTokens: 800, totalTokens: 2000 });
+  const { dir, outPath, result } = build({ mockFile: true, mockContent, stage: 'review' });
+  try {
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    const doc = JSON.parse(readFileSync(outPath, 'utf8'));
+    assert.equal(doc.schemaVersion, 1);
+    assert.deepEqual(doc.usage, { inputTokens: 1200, outputTokens: 800, totalTokens: 2000 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review stage with NO usage -> usage key ABSENT (byte-identical to pre-follow-up)', () => {
+  const { dir, outPath, result } = build({ stage: 'review' });
+  try {
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    const doc = JSON.parse(readFileSync(outPath, 'utf8'));
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(doc, 'usage'),
+      false,
+      'usage must be omitted entirely when no counts are available',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

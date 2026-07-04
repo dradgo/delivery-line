@@ -693,6 +693,13 @@ function commandBuild(args) {
       classification,
       failureCategory: null,
     };
+    // Story 3g-3 follow-up (FR74) — attach the OPTIONAL reviewer token usage (lock-step with the
+    // codex runner). A REVIEW invocation emits review-result.v1 (not runner-result.v1), so this is
+    // the ONLY path by which the reviewer's token counts reach the runner_executions V31 columns.
+    // Mirrors this runner's artifact path (buildUsage() only; real --json capture is a tracked
+    // follow-up), so absence stays byte-identical.
+    const reviewUsage = buildUsage();
+    if (reviewUsage) reviewResult.usage = reviewUsage;
     writeAtomically(out, `${JSON.stringify(reviewResult, null, 2)}\n`);
     process.stdout.write(`${summary}\n`);
     process.exit(0);

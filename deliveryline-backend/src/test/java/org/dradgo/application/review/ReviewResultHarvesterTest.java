@@ -293,6 +293,33 @@ class ReviewResultHarvesterTest {
     verify(runnerExecutionService, never()).recordFailed(any(), any());
   }
 
+  @Test
+  void reviewerTokenUsageIsPersistedOntoTheReviewerExecution() {
+    // Story 3g-3 follow-up (FR74) — a review-result.v1 carrying `usage` persists the reviewer's
+    // per-execution token counts (the ONLY channel for a REVIEW step, which emits review-result.v1
+    // rather than runner-result.v1 and so never flows through the broker's captureTokenUsage).
+    when(resolver.resolveReviewerKind(RUN_ID)).thenReturn(Optional.of(RunnerKind.CLAUDE));
+    when(resolver.resolveRunnerKind(any(), any(), any())).thenReturn(RunnerKind.CODEX);
+
+    String outcome =
+        harvester.harvest(REX_ID, RUN_ID, reviewWithUsage("pass", 173092, 1868, 174960));
+
+    assertThat(outcome).isEqualTo("success");
+    verify(runnerExecutionService).recordTokenUsage(REX_ID, 173092, 1868, 174960);
+    verify(runnerExecutionService).recordCompleted(REX_ID);
+  }
+
+  @Test
+  void noUsageVerdictNeverTouchesTokenColumns() {
+    when(resolver.resolveReviewerKind(RUN_ID)).thenReturn(Optional.of(RunnerKind.CLAUDE));
+    when(resolver.resolveRunnerKind(any(), any(), any())).thenReturn(RunnerKind.CODEX);
+
+    String outcome = harvester.harvest(REX_ID, RUN_ID, review("pass", "ok", null));
+
+    assertThat(outcome).isEqualTo("success");
+    verify(runnerExecutionService, never()).recordTokenUsage(any(), any(), any(), any());
+  }
+
   private static ArtifactRecordSnapshot reviewedArtifact() {
     return ArtifactRecordSnapshot.withoutFailureMetadata(
         "art_reviewed0001",
@@ -325,5 +352,23 @@ class ReviewResultHarvesterTest {
     }
     sb.append("}");
     return sb.toString().getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] reviewWithUsage(String outcome, int input, int output, int total) {
+    String json =
+        "{\"schemaVersion\":1,\"workflowRunId\":\""
+            + RUN_ID
+            + "\",\"runnerExecutionId\":\""
+            + REX_ID
+            + "\",\"outcome\":\""
+            + outcome
+            + "\",\"classification\":\"shareable-redacted\",\"usage\":{\"inputTokens\":"
+            + input
+            + ",\"outputTokens\":"
+            + output
+            + ",\"totalTokens\":"
+            + total
+            + "}}";
+    return json.getBytes(StandardCharsets.UTF_8);
   }
 }

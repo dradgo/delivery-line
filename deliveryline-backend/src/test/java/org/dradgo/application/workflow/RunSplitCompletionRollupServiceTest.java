@@ -39,9 +39,15 @@ class RunSplitCompletionRollupServiceTest {
   private final RunDependencyPort dependencyPort = mock(RunDependencyPort.class);
   private final org.springframework.transaction.PlatformTransactionManager txManager =
       mock(org.springframework.transaction.PlatformTransactionManager.class);
+  // Story 3h-0 — the child-driven rollupParentOf now runs through the shared helper's Layer B; use
+  // a
+  // REAL helper over the same stub tx manager so the REQUIRES_NEW body still runs synchronously.
+  private final AfterCommitSideEffectRunner sideEffectRunner =
+      new AfterCommitSideEffectRunner(txManager);
 
   private final RunSplitCompletionRollupService service =
-      new RunSplitCompletionRollupService(readPort, transitions, dependencyPort, txManager);
+      new RunSplitCompletionRollupService(
+          readPort, transitions, dependencyPort, sideEffectRunner, txManager);
 
   {
     // The REQUIRES_NEW TransactionTemplate needs a non-null status to commit; the body still runs
@@ -52,6 +58,13 @@ class RunSplitCompletionRollupServiceTest {
 
   private ListAppender<ILoggingEvent> appender;
   private Logger logger;
+  // Story 3h-0 — the child-driven swallow-and-WARN moved into AfterCommitSideEffectRunner (Layer
+  // B),
+  // so it logs on the helper's logger, not the service's. The sweep-driven swallow ("(sweep)")
+  // stays
+  // on the service logger.
+  private ListAppender<ILoggingEvent> helperAppender;
+  private Logger helperLogger;
 
   @BeforeEach
   void attachAppender() {
@@ -59,12 +72,18 @@ class RunSplitCompletionRollupServiceTest {
     appender.start();
     logger = (Logger) LoggerFactory.getLogger(RunSplitCompletionRollupService.class);
     logger.addAppender(appender);
+    helperAppender = new ListAppender<>();
+    helperAppender.start();
+    helperLogger = (Logger) LoggerFactory.getLogger(AfterCommitSideEffectRunner.class);
+    helperLogger.addAppender(helperAppender);
   }
 
   @AfterEach
   void detachAppender() {
     logger.detachAppender(appender);
     appender.stop();
+    helperLogger.detachAppender(helperAppender);
+    helperAppender.stop();
   }
 
   private static WorkflowRunSnapshot run(String id, WorkflowState state, String parentId) {
@@ -174,11 +193,14 @@ class RunSplitCompletionRollupServiceTest {
     // Must NOT propagate (the completing run's callback stays intact).
     service.rollupParentOf(CHILD, null);
 
-    assertThat(appender.list)
+    // Story 3h-0 — the child-driven swallow now lives in the helper (Layer B), so it logs on the
+    // helper's logger with the shared "(completion intact)" wording.
+    assertThat(helperAppender.list)
         .anyMatch(
             e ->
                 e.getLevel() == Level.WARN
-                    && e.getFormattedMessage().contains("split-rollup swallowed an error"));
+                    && e.getFormattedMessage()
+                        .contains("split-rollup swallowed an error (completion intact)"));
   }
 
   // ---- Story 3f-8: parent-targeted entry (the reconciliation sweep's reuse of the same gate) ----

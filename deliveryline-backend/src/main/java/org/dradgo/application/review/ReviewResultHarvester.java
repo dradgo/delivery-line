@@ -183,6 +183,15 @@ public class ReviewResultHarvester {
           "review result carried an unparseable outcome");
     }
 
+    // Story 3g-3 follow-up (FR74) — persist the OPTIONAL reviewer token usage onto the row. A
+    // reviewer emits review-result.v1 (not runner-result.v1), so this is the ONLY channel by which
+    // its usage reaches the V31 columns. Written HERE — before the verdict tx that finalizes the
+    // reviewer execution — so the REQUIRES_NEW metadata write contends no row lock, and the later
+    // recordCompleted (its own REQUIRES_NEW tx) loads the row fresh WITH these counts. Best-effort:
+    // tolerant of absence (byte-identical no-op for a no-usage verdict) and it NEVER fails the
+    // harvest (swallows all RuntimeExceptions).
+    persistReviewerTokenUsage(workflowRunId, runnerExecutionId, parsed);
+
     // Story 3d-2 (code-review D1) — reuse the reviewed artifact PINNED on the reviewer execution at
     // enqueue, so the verdict references the exact artifact the reviewer saw. Only when no pin
     // exists
@@ -486,5 +495,55 @@ public class ReviewResultHarvester {
   private static String textOrNull(JsonNode node, String field) {
     JsonNode child = node.get(field);
     return child != null && child.isTextual() && !child.asText().isBlank() ? child.asText() : null;
+  }
+
+  // Story 3g-3 follow-up (FR74) — lift the OPTIONAL review-result.v1 `usage` counts and persist
+  // them
+  // onto the reviewer execution row. Mirrors RunnerBroker.captureTokenUsage: each count
+  // independently
+  // optional, stored exactly as reported (never synthesized), and the whole thing is a best-effort
+  // no-op on absence/malformed input. NEVER throws — a usage problem must never fail a verdict.
+  private void persistReviewerTokenUsage(
+      String workflowRunId, String runnerExecutionId, JsonNode parsed) {
+    JsonNode usage = parsed.path("usage");
+    if (usage.isMissingNode() || !usage.isObject()) {
+      return;
+    }
+    try {
+      Integer inputTokens = tokenCount(usage, "inputTokens");
+      Integer outputTokens = tokenCount(usage, "outputTokens");
+      Integer totalTokens = tokenCount(usage, "totalTokens");
+      if (inputTokens == null && outputTokens == null && totalTokens == null) {
+        return;
+      }
+      runnerExecutionService.recordTokenUsage(
+          runnerExecutionId, inputTokens, outputTokens, totalTokens);
+      log.info(
+          "reviewer token-usage persisted runnerExecutionId={} workflowRunId={} input={} output={}"
+              + " total={}",
+          runnerExecutionId,
+          workflowRunId,
+          inputTokens,
+          outputTokens,
+          totalTokens);
+    } catch (RuntimeException best) {
+      log.warn(
+          "reviewer token-usage capture failed (best-effort) runnerExecutionId={} workflowRunId={}",
+          runnerExecutionId,
+          workflowRunId,
+          best);
+    }
+  }
+
+  // A non-negative int32 reader (mirrors the runner's sanitizeUsage bound):
+  // absent/non-int/negative/
+  // out-of-int-range yields null so a malformed count is dropped rather than persisted.
+  private static Integer tokenCount(JsonNode usage, String field) {
+    JsonNode node = usage.get(field);
+    if (node == null || !node.isIntegralNumber() || !node.canConvertToInt()) {
+      return null;
+    }
+    int value = node.asInt();
+    return value >= 0 ? value : null;
   }
 }

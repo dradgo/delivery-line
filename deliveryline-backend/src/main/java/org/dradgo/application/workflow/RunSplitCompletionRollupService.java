@@ -55,25 +55,29 @@ public class RunSplitCompletionRollupService {
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowTransitionService workflowTransitionService;
   private final RunDependencyPort runDependencyPort;
-  // Story 3f-7 (AC2) — the rollup runs in its OWN new transaction. It is invoked from a post-commit
-  // hook (the completing run's tx is already done, its JPA resources still bound to the thread
-  // until
-  // afterCompletion), so REQUIRES_NEW suspends those stale resources and binds a fresh persistence
-  // context — a plain REQUIRED would throw InvalidDataAccessApiUsageException (the exact 3f-3 bug).
-  // WorkflowTransitionService.transition() uses REQUIRED, so it JOINS this tx: the tx-scoped
-  // advisory
-  // lock taken as the first statement covers both the children-check and the parent transition
-  // atomically, serializing concurrent sibling completions.
+  // Story 3h-0 — the child-driven rollup (rollupParentOf, the 3f-7 hook path) is retrofitted onto
+  // the shared replay-safe afterCommit helper's Layer B (runInNewTransaction), which owns the
+  // REQUIRES_NEW template + best-effort swallow. The tx-scoped RDEP advisory lock is still taken as
+  // the FIRST statement inside doRollupForParent (the helper stays domain-agnostic).
+  private final AfterCommitSideEffectRunner afterCommitSideEffectRunner;
+  // Story 3f-8 — the sweep-driven parent entry (rollupParent) keeps its OWN REQUIRES_NEW template
+  // so
+  // its distinct "(sweep)" swallow signal is preserved (that retrofit is optional/forward per 3h-0;
+  // recorded in the Dev Agent Record). Same REQUIRES_NEW rationale as the child-driven path:
+  // invoked
+  // from the reconciliation sweep, it must suspend any stale resources and bind a fresh context.
   private final TransactionTemplate requiresNewTx;
 
   public RunSplitCompletionRollupService(
       WorkflowRunReadPort workflowRunReadPort,
       WorkflowTransitionService workflowTransitionService,
       RunDependencyPort runDependencyPort,
+      AfterCommitSideEffectRunner afterCommitSideEffectRunner,
       PlatformTransactionManager transactionManager) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowTransitionService = workflowTransitionService;
     this.runDependencyPort = runDependencyPort;
+    this.afterCommitSideEffectRunner = afterCommitSideEffectRunner;
     this.requiresNewTx = new TransactionTemplate(transactionManager);
     this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
@@ -86,15 +90,12 @@ public class RunSplitCompletionRollupService {
    * run's post-commit callback must stay intact).
    */
   public void rollupParentOf(String completedRunId, String correlationId) {
-    try {
-      requiresNewTx.executeWithoutResult(status -> doRollup(completedRunId, correlationId));
-    } catch (RuntimeException error) {
-      // Best-effort (AC2): one stuck ancestor must not hide the completed transition. Swallow WARN.
-      log.warn(
-          "split-rollup swallowed an error (completion intact) completedRunId={} cause={}",
-          completedRunId,
-          error.getClass().getSimpleName());
-    }
+    // Story 3h-0 — Layer B of the shared helper owns the REQUIRES_NEW template + best-effort
+    // swallow-and-WARN. doRollup keeps resolving the parent and taking the RDEP advisory lock
+    // inside
+    // doRollupForParent exactly as before; the helper never references the lock.
+    afterCommitSideEffectRunner.runInNewTransaction(
+        "split-rollup", completedRunId, () -> doRollup(completedRunId, correlationId));
   }
 
   /**

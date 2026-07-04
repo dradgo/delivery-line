@@ -62,6 +62,28 @@
       "pattern": "^art_[A-Za-z0-9_-]{4,64}$",
       "description": "OPTIONAL echo of the reviewed artifact's public id (read from the bundle artifactReferences). The backend re-derives the reviewed artifact + version from the run to pin the step_reviews composite FK (it never trusts a runner-supplied FK); this echo is advisory/diagnostic only."
     },
+    "usage": {
+      "$comment": "Story 3g-3 follow-up (FR74) — OPTIONAL per-execution token accounting for the REVIEWER invocation, mirroring runner-result.v1 normalizedOutput.usage. A reviewer emits review-result.v1 (not runner-result.v1), so this is the ONLY channel by which its token counts reach the runner_executions V31 columns; the harvest persists it via recordTokenUsage. Each field INDEPENDENTLY optional (persist only what the agent reported; never synthesize totalTokens from input+output). Omitted entirely (never {} nor null) when no counts are available, so a no-usage verdict stays byte-identical to pre-follow-up output.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      }
+    },
     "classification": {
       "type": "string",
       "enum": [
