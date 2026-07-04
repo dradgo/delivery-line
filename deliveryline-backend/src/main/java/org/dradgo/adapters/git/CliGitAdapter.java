@@ -518,6 +518,18 @@ public class CliGitAdapter implements GitCommandPort {
    */
   static IntegrationFailureCategory classifyPushFailure(String redactedOutput) {
     String lower = redactedOutput == null ? "" : redactedOutput.toLowerCase(Locale.ROOT);
+    // Most-specific signal first: a receive-pack rejection of a push that touches
+    // `.github/workflows/**` when the token lacks the `workflow` scope (classic PAT) /
+    // `workflows` permission (App). It arrives as "[remote rejected] ... (refusing to allow ...)"
+    // — no "permission denied"/"403" phrase — so it would otherwise fall through to the
+    // GIT_PUSH_REJECTED default and drive a misleading (non-actionable) `retry`.
+    if ((lower.contains("refusing to allow") && lower.contains("workflow"))
+        || lower.contains("without `workflow` scope")
+        || lower.contains("without workflow scope")
+        || lower.contains("`workflows` permission")
+        || lower.contains("workflows permission")) {
+      return IntegrationFailureCategory.GIT_WORKFLOW_SCOPE_MISSING;
+    }
     if (lower.contains("protected branch")
         || lower.contains("branch protection")
         || lower.contains("protected-branch")

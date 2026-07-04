@@ -28,6 +28,7 @@ import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
@@ -832,8 +833,22 @@ public class RecoveryService {
       // operator instead of telling them to run a command that will error.
       // (review E5 + E6 / 2026-05-16)
       boolean retryWouldBeRejected = failureEvent.isEmpty() || lastFailedRunner.isEmpty();
+      // A git push rejected for a missing `workflow` token scope is a permission wall — retrying
+      // with the same token hits it identically. The broker records the git category in the failure
+      // event details (RunnerBroker#appendGitPushFailedEvent); when it is the non-retryable
+      // workflow-scope category, recommend manual remediation instead of `retry` even though the
+      // coarse FailureCategory is the generic RUNNER_CONTRACT_VIOLATION.
+      boolean nonRetryableGitFailure =
+          failureEvent
+              .map(
+                  event ->
+                      IntegrationFailureCategory.GIT_WORKFLOW_SCOPE_MISSING
+                          .value()
+                          .equals(event.details().get("gitFailureCategory")))
+              .orElse(false);
       String safeAction;
       if (retryWouldBeRejected
+          || nonRetryableGitFailure
           || artifactOperationPort.hasFailedOrFailedOrphanForRun(workflowRunId)) {
         safeAction = NEXT_SAFE_ACTION_AWAIT_MANUAL_RECONCILIATION;
       } else {
