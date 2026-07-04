@@ -517,7 +517,14 @@ case "$CLAUDE_SUBCOMMAND" in
     ;;
 esac
 # Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
-set -- "$CLAUDE_SUBCOMMAND" --dangerously-skip-permissions
+# Story 3g-5 (FR74) — `--output-format stream-json` makes Claude emit a JSONL event stream on stdout,
+# the only mode that surfaces per-turn token usage (the terminal result event's
+# usage{input_tokens,output_tokens}). STREAMING (not the single buffered `json` object) so
+# runner.stdout grows incrementally and the finished-but-hung inactivity guard below stays valid —
+# a buffered `json` run would look idle for the whole turn and trip the guard. `--verbose` is
+# required by the CLI to combine print mode (-p) with stream-json. The build step reconstructs the
+# artifact text + lifts usage from it via `--events-file` (mirrors the codex `--json` twin).
+set -- "$CLAUDE_SUBCOMMAND" --dangerously-skip-permissions --output-format stream-json --verbose
 CLAUDE_REPO_DIR="${DELIVERYLINE_REPO_DIR:-/workspace/repo}"
 # Story 3a-8 — opt-in OpenSpec authoring layer (default OFF). Flag off => none of this runs
 # (byte-identical legacy path). Flag on => append the fence-convention authoring instructions
@@ -742,7 +749,7 @@ log INFO "building runner-result.v1 artifactType=$ARTIFACT_TYPE result=$RESULT_F
 set -- "$NODE_BIN" "$RUNNER_LIB" build \
   --bundle "$BUNDLE_FILE" \
   --stage "$ARTIFACT_TYPE" \
-  --summary-file "$STDOUT_LOG" \
+  --events-file "$STDOUT_LOG" \
   --auth-var "${AUTH_KEY_VAR:-}" \
   --out "$RESULT_FILE"
 # Story 3a-8 (AC5/D4): surface the OpenSpec validate outcome in the result summary, ONLY on

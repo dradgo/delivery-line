@@ -356,6 +356,101 @@ function buildUsage() {
   }
 }
 
+// Story 3g-5 (FR74) — parse a Claude `--output-format {json|stream-json}` output. Returns the
+// reconstructed FINAL agent answer text (the artifact / review rationale the downstream
+// fence/verdict logic parses) plus the per-turn token usage. Twin of the codex parseCodexEvents; the
+// ONLY differences are content-not-contract (Claude's event/usage schema vs codex's). Claude reports
+// usage in snake_case (`input_tokens`/`output_tokens`) with NO blended total field, so this maps to
+// the runner's camelCase and sets `totalTokens` to the blended `input_tokens + output_tokens` (the
+// codex precedent — matches codex's own footer total; `cache_creation_input_tokens`/
+// `cache_read_input_tokens` are informational subsets the 3-field schema drops). The final answer is
+// the top-level `result` string of a `type:"result"` event (the single object emitted by
+// `--output-format json`, or the LAST such event of a streaming `stream-json` run). Best-effort:
+// NEVER throws. When the input contains NO parseable JSON at all it is a plain-text stream (a
+// legacy/mock text-mode invocation) — returned verbatim so those callers keep working (the mandatory
+// plain-text fallback that keeps every offline mock + *.test.mjs green).
+function parseClaudeEvents(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { messageText: '', usage: undefined };
+  }
+
+  // Lift Claude's snake_case usage into the runner's sanitized camelCase block. `totalTokens` is the
+  // blended input+output (codex precedent); a missing/bad sub-field is dropped, never synthesised.
+  const liftUsage = (u) => {
+    if (!u || typeof u !== 'object') return undefined;
+    const input = u.input_tokens;
+    const output = u.output_tokens;
+    const built = {};
+    if (Number.isInteger(input) && input >= 0) built.inputTokens = input;
+    if (Number.isInteger(output) && output >= 0) built.outputTokens = output;
+    if (Number.isInteger(input) && Number.isInteger(output) && input >= 0 && output >= 0) {
+      built.totalTokens = input + output;
+    }
+    return sanitizeUsage(built);
+  };
+
+  let resultText; // final answer — the `result` string of a `type:"result"` event
+  let assistantText; // fallback — the last streamed `assistant` message text
+  let usage;
+  let sawJson = false;
+
+  const consume = (evt) => {
+    if (!evt || typeof evt !== 'object') return;
+    // Only recognized Claude event shapes switch the parser out of plain-text fallback mode. A
+    // legacy/mock artifact may itself contain JSON; unrelated JSON must stay raw artifact text.
+    if (evt.type !== 'result' && evt.type !== 'assistant' && evt.type !== 'system') return;
+    sawJson = true;
+    // The terminal result event carries the final answer + cumulative usage (the single object of
+    // `--output-format json`; the LAST such event of a streaming `stream-json` run).
+    if (evt.type === 'result') {
+      if (typeof evt.result === 'string') resultText = evt.result;
+      const lifted = liftUsage(evt.usage);
+      if (lifted) usage = lifted; // last result event wins
+    }
+    // Streaming `stream-json` assistant events carry the message text under message.content[].text
+    // and incremental usage under message.usage — a fallback when no terminal result event arrives.
+    if (evt.type === 'assistant' && evt.message && typeof evt.message === 'object') {
+      const content = evt.message.content;
+      if (Array.isArray(content)) {
+        const texts = content
+          .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
+          .map((c) => c.text);
+        if (texts.length > 0) assistantText = texts.join('');
+      }
+
+    }
+  };
+
+  // `--output-format json` emits ONE object (compact or pretty-printed across many lines): parse the
+  // whole text first. If that fails it is streaming `stream-json` JSONL (or plain text): scan lines.
+  let whole;
+  try {
+    whole = JSON.parse(text.trim());
+  } catch {
+    whole = undefined;
+  }
+  if (whole && typeof whole === 'object' && !Array.isArray(whole)) {
+    consume(whole);
+  } else {
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      let evt;
+      try {
+        evt = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      consume(evt);
+    }
+  }
+
+  // Prefer the terminal result answer; fall back to the last assistant message; NO JSON at all =>
+  // a plain-text stream (legacy/mock text mode): use it verbatim.
+  const messageText = sawJson ? resultText ?? assistantText ?? '' : text;
+  return { messageText, usage };
+}
+
 function readTemplate(path) {
   try {
     return readFileSync(path, 'utf8');
@@ -627,9 +722,26 @@ function commandBuild(args) {
   const out = args.out;
   if (!out) fail(2, 'missing --out');
   const summaryFile = args['summary-file'];
+  const eventsFile = args['events-file'];
 
+  // Story 3g-5 (FR74) — the entrypoint runs Claude with `--output-format stream-json`, so the
+  // captured stdout is a JSONL event stream. `--events-file` points at it: reconstruct the agent's
+  // final answer text (the artifact) AND lift the per-turn token usage from it. Legacy/mock callers
+  // still pass `--summary-file` (raw text). parseClaudeEvents treats a non-JSON stream as plain text,
+  // so a plain-text mock routed through --events-file also works (mandatory plain-text fallback).
   let rawOutput = '';
-  if (summaryFile) {
+  let eventsUsage;
+  if (eventsFile) {
+    let jsonl = '';
+    try {
+      jsonl = readFileSync(eventsFile, 'utf8');
+    } catch {
+      jsonl = '';
+    }
+    const parsed = parseClaudeEvents(jsonl);
+    rawOutput = parsed.messageText;
+    eventsUsage = parsed.usage;
+  } else if (summaryFile) {
     try {
       rawOutput = readFileSync(summaryFile, 'utf8');
     } catch {
@@ -696,9 +808,9 @@ function commandBuild(args) {
     // Story 3g-3 follow-up (FR74) — attach the OPTIONAL reviewer token usage (lock-step with the
     // codex runner). A REVIEW invocation emits review-result.v1 (not runner-result.v1), so this is
     // the ONLY path by which the reviewer's token counts reach the runner_executions V31 columns.
-    // Mirrors this runner's artifact path (buildUsage() only; real --json capture is a tracked
-    // follow-up), so absence stays byte-identical.
-    const reviewUsage = buildUsage();
+    // Real usage from the Claude `--output-format stream-json` events; DELIVERYLINE_USAGE_MOCK_FILE
+    // overrides for offline/CI. Omitted entirely when absent so a no-usage verdict stays byte-identical.
+    const reviewUsage = buildUsage() ?? eventsUsage;
     if (reviewUsage) reviewResult.usage = reviewUsage;
     writeAtomically(out, `${JSON.stringify(reviewResult, null, 2)}\n`);
     process.stdout.write(`${summary}\n`);
@@ -758,7 +870,9 @@ function commandBuild(args) {
 
   // Story 3g-3 (FR74) — attach the OPTIONAL per-execution token counts when available. Omitted
   // entirely when absent (best-effort, never throws) so a no-usage result stays byte-identical.
-  const usage = buildUsage();
+  // Real per-turn usage parsed from the Claude `--output-format stream-json` events (3g-5); the
+  // DELIVERYLINE_USAGE_MOCK_FILE seam still overrides for deterministic offline/CI tests.
+  const usage = buildUsage() ?? eventsUsage;
   process.stderr.write(`runner.mjs: built usage present=${usage !== undefined}\n`);
 
   const normalizedOutput = { summary, outcome: 'success', providerUsage };

@@ -7,6 +7,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -30,6 +34,7 @@ import org.dradgo.runnercontracts.RunnerContractValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 /**
  * Story 3d-2 (AC2/AC4/AC6/AC7, Task 10) — fast unit coverage for {@link ReviewResultHarvester}
@@ -301,12 +306,34 @@ class ReviewResultHarvesterTest {
     when(resolver.resolveReviewerKind(RUN_ID)).thenReturn(Optional.of(RunnerKind.CLAUDE));
     when(resolver.resolveRunnerKind(any(), any(), any())).thenReturn(RunnerKind.CODEX);
 
-    String outcome =
-        harvester.harvest(REX_ID, RUN_ID, reviewWithUsage("pass", 173092, 1868, 174960));
+    // Story 3g-5 (Task 5) — pin the reviewer-usage-persisted INFO line (values are governed-numeric
+    // counts, never secret) with a focused Logback ListAppender assertion.
+    Logger harvesterLogger = (Logger) LoggerFactory.getLogger(ReviewResultHarvester.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    harvesterLogger.addAppender(appender);
+    String outcome;
+    try {
+      outcome = harvester.harvest(REX_ID, RUN_ID, reviewWithUsage("pass", 173092, 1868, 174960));
+    } finally {
+      harvesterLogger.detachAppender(appender);
+    }
 
     assertThat(outcome).isEqualTo("success");
     verify(runnerExecutionService).recordTokenUsage(REX_ID, 173092, 1868, 174960);
     verify(runnerExecutionService).recordCompleted(REX_ID);
+    assertThat(appender.list)
+        .anySatisfy(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(Level.INFO);
+              assertThat(event.getFormattedMessage())
+                  .isEqualTo(
+                      "reviewer token-usage persisted runnerExecutionId="
+                          + REX_ID
+                          + " workflowRunId="
+                          + RUN_ID
+                          + " input=173092 output=1868 total=174960");
+            });
   }
 
   @Test

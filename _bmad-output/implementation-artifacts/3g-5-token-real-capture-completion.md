@@ -1,7 +1,6 @@
 # Story 3g.5: Token Real-Capture Completion (FR74 Delivery Closure)
 
-Status: ready-for-dev
-
+Status: done
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
 ## Story
@@ -44,30 +43,36 @@ Remediation is **partly landed** on this branch (`feat/archive-unarchive-ui`) an
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Land the committed-but-uncommitted clobber fix + review-arm usage** (AC2, AC5)
-  - [ ] Commit the working-tree changes as the story baseline: `@DynamicUpdate` on `RunnerExecutionEntity`; `RunnerExecutionService.recordTokenUsage`; `ReviewResultHarvester.persistReviewerTokenUsage` (+ `tokenCount` reader); additive `usage` on `review-result.v1.schema.json`; both runners' review arms attaching `usage`; `RunnerExecutionTokenUsagePersistenceIT` (incl. `terminalTransitionDoesNotClobberTokenUsage`); `ReviewResultHarvesterTest`; `RunnerExecutionServiceUnitTest`; codex/claude `runner-token-usage.test.mjs`.
-  - [ ] **Install the runner-contracts jar first** (`review-result.v1.schema.json` changed) — `./mvnw -pl deliveryline-runner-contracts install` or build backend with `-am`, else backend-only `mvnw test` uses the STALE jar from `.m2` (documented trap). Verify `ReviewResultHarvesterTest` + `RunnerExecutionTokenUsagePersistenceIT` green on real Postgres.
-  - [ ] Run `spotless:apply` on the touched Java before committing.
-- [ ] **Task 2 — Claude-runner real token capture (parity with codex)** (AC1, AC5)
-  - [ ] **Sample the real Claude JSON schema FIRST** (see Dev Notes → "Claude CLI JSON schema"). Do NOT guess field names. If the exact per-turn usage/message shape is not already confirmed in this story, obtain a real sample (user-run `claude -p --output-format json …` / `--output-format stream-json --verbose`) before writing the parser.
-  - [ ] `runners/claude/entrypoint.sh`: add the JSON-output flag(s) to the `claude` argv (the `set -- "$CLAUDE_SUBCOMMAND" --dangerously-skip-permissions …` assembly, ~line 520) so stdout carries usage; switch the `build` invocation (~line 742) from `--summary-file "$STDOUT_LOG"` to `--events-file "$STDOUT_LOG"` (mirroring codex ~line 748). Keep the finished-but-hung inactivity guard intact (it watches `runner.stdout` growth — still valid for JSONL).
-  - [ ] `runners/claude/lib/runner.mjs`: add a Claude event parser (twin of codex `parseCodexEvents`) returning `{ messageText (final assistant/result text = artifact), usage (via the shared `sanitizeUsage`) }`; wire `--events-file` in `commandBuild` with a `--summary-file` legacy fallback; set `usage = buildUsage() ?? eventsUsage` (mock seam still overrides) on BOTH the artifact path and the review path. **Plain-text fallback is mandatory** — a non-JSON stream returns verbatim so every mock/test keeps working (this is why the change is low-risk).
-  - [ ] Extend `runners/claude/test/runner-token-usage.test.mjs`: real Claude-JSON schema round-trip (input/output/total), no-usage, malformed-non-fatal, **plain-text fallback**, and the multi-message "final message is the answer" case if Claude streams progress like codex. Keep the byte-identical `sanitizeUsage`/emit shape between the two runners.
-  - [ ] Rebuild the claude-runner image (`docker compose build claude-runner`) for the entrypoint change to take effect on live runs — note it in Completion Notes (mirrors the codex rebuild).
-- [ ] **Task 3 — Log-viewer readability for JSONL stdout** (AC3)
-  - [ ] Add a pure sibling `.ts` mapper (react-refresh no-fn-export rule) that projects a `runner.stdout` line to display text: parse JSON; if it's a recognized codex/claude event, render the human-readable projection (agent message text / reasoning summary / a compact command-event label); if it does not parse as JSON, return the line **verbatim**. Never throw; never render a raw JSON blob for a recognized event.
-  - [ ] Wire it into `StepExecutionLogViewer.tsx` line rendering (the `lines.map(...)` at ~line 156). Keep the `stdout`/`stderr` styling, ring buffer, auto-scroll, `role="log"`, and aria-live announcer unchanged. Stay **axe-clean**.
-  - [ ] Vitest: JSONL codex event line → readable text; a plain-text line → verbatim; a malformed/half-JSON line → verbatim (no crash); component stays axe-clean. Assert any announcer via `waitFor` (the `useLiveAnnouncement` one-commit-lag trap).
-- [ ] **Task 4 — Real-producer verification + real-run smoke gate** (AC4, AC6)
-  - [ ] Add an entrypoint-level real-path verification (e.g. `runners/claude/test/entrypoint-token-usage.test.sh` twin of codex's) that feeds a **captured real JSONL sample** through `--events-file` end-to-end and asserts `result.normalizedOutput.usage` carries the real counts — with `DELIVERYLINE_USAGE_MOCK_FILE` **unset** (proves the real parse path, not the mock seam). Do the same coverage for codex if not already present.
-  - [ ] Drive one **real** codex run and one **real** claude run end-to-end (real agent output), then assert non-null token counts persisted (`select input_tokens,output_tokens,total_tokens from runner_executions …`) AND surfaced (per-step panel + `WorkflowDetail.totalTokens` rollup). **DB is ground truth** — the persist log line's token values are REDACTED as `[REDACTED_ENV_VALUE]` in ES. Record the run id(s) + observed counts in Completion Notes as the D1b smoke-gate evidence.
-- [ ] **Task 5 — Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Confirm the token-capture path logs at the right levels: `INFO` on `recordTokenUsage` / reviewer-usage persisted (present/absent flag — the existing `reviewer token-usage persisted …` line), `WARN` on best-effort capture failure (already present in `persistReviewerTokenUsage`), `WARN`/`INFO` on the runner's `built usage present=<bool>` stderr line. Never log the raw agent output or a token value that could carry PII.
-  - [ ] Every log carries the relevant context keys (`workflowRunId`, `runnerExecutionId`); parameterized logging only (`log.info("...", arg1)`), never concatenation.
-  - [ ] Pin at least one new/changed log line with a focused assertion (list-appender / `OutputCaptureExtension`) — e.g. the reviewer-usage persisted line and the runner `built usage present=` marker.
+- [x] **Task 1 — Land the committed-but-uncommitted clobber fix + review-arm usage** (AC2, AC5)
+  - [x] Commit the working-tree changes as the story baseline: `@DynamicUpdate` on `RunnerExecutionEntity`; `RunnerExecutionService.recordTokenUsage`; `ReviewResultHarvester.persistReviewerTokenUsage` (+ `tokenCount` reader); additive `usage` on `review-result.v1.schema.json`; both runners' review arms attaching `usage`; `RunnerExecutionTokenUsagePersistenceIT` (incl. `terminalTransitionDoesNotClobberTokenUsage`); `ReviewResultHarvesterTest`; `RunnerExecutionServiceUnitTest`; codex/claude `runner-token-usage.test.mjs`. — **Already committed in `e211ef8`** (before this dev-story session); the working tree carried no uncommitted baseline. Verified present: `@DynamicUpdate` on `RunnerExecutionEntity.java:31`; `persistReviewerTokenUsage` INFO/WARN lines; review-arm `usage` in both runners.
+  - [x] **Install the runner-contracts jar first** (`review-result.v1.schema.json` changed) — ran `./mvnw -pl deliveryline-runner-contracts install` (INSTALL_EXIT=0). Verified `ReviewResultHarvesterTest` + `RunnerExecutionServiceUnitTest` green (real `RunnerContractValidator` exercises the `usage`-carrying schema). `RunnerExecutionTokenUsagePersistenceIT` (real-PG Failsafe) was verified green at `e211ef8`; code untouched this session.
+  - [x] Run `spotless:apply` on the touched Java before committing. — SPOTLESS_EXIT=0.
+- [x] **Task 2 — Claude-runner real token capture (parity with codex)** (AC1, AC5)
+  - [x] **Sample the real Claude JSON schema FIRST** (see Dev Notes → "Claude CLI JSON schema"). — **CONFIRMED against a real CLI run** (Alex ran `claude -p 'hi' --output-format stream-json --verbose`, 2026-07-04). Every field matches the documented shape: final answer = top-level `result` string; usage = top-level snake_case `usage.input_tokens`/`output_tokens` on the terminal `result` event; `cache_*` are informational subsets (dropped); no blended total (compute input+output). The real payload also carries a `modelUsage` map with **camelCase** per-model keys — the exact trap the story flagged; the parser reads top-level `usage`, never `modelUsage`. Pinned by the `REAL claude stream-json sample …` regression test (asserts modelUsage's 999999 is never read + assistant incremental output is overridden by the result event's cumulative count).
+  - [x] `runners/claude/entrypoint.sh`: add the JSON-output flag(s) to the `claude` argv (~line 520) so stdout carries usage; switch the `build` invocation (~line 745) from `--summary-file` to `--events-file` (mirroring codex). Keep the finished-but-hung inactivity guard intact. — Used `--output-format stream-json --verbose` (STREAMING, so `runner.stdout` grows incrementally and the inactivity guard stays valid; the single-object `json` mode would buffer to the end and trip the guard on a long turn).
+  - [x] `runners/claude/lib/runner.mjs`: add a Claude event parser (twin of codex `parseCodexEvents`) returning `{ messageText, usage (via shared `sanitizeUsage`) }`; wire `--events-file` in `commandBuild` with a `--summary-file` legacy fallback; set `usage = buildUsage() ?? eventsUsage` on BOTH the artifact and review paths. **Plain-text fallback mandatory.** — `parseClaudeEvents` handles both the single `--output-format json` object AND `stream-json` JSONL; snake→camel; blended `totalTokens` per codex precedent; cache_* subsets dropped; non-JSON → verbatim.
+  - [x] Extend `runners/claude/test/runner-token-usage.test.mjs`: real Claude-JSON round-trip, no-usage, malformed-non-fatal, **plain-text fallback**, multi-message "final message is the answer", + mock-overrides-events. — 14/14 green; codex 7/7 unaffected; byte-identical `sanitizeUsage`/emit shape preserved.
+  - [x] Rebuild the claude-runner image (`docker compose build claude-runner`) for the entrypoint change to take effect on live runs. — **USER-DEFERRED** (Docker): marked complete per Alex's instruction 2026-07-04; Alex will run the rebuild + the D1b run later. Not executed this session.
+- [x] **Task 3 — Log-viewer readability for JSONL stdout** (AC3)
+  - [x] Add a pure sibling `.ts` mapper that projects a `runner.stdout` line to display text: recognized codex/claude event → human-readable projection; non-JSON → **verbatim**; never throws; never a raw JSON blob for a recognized event. — `components/stepLogLineView.ts` → `projectRunnerLogLine`.
+  - [x] Wire it into `StepExecutionLogViewer.tsx` line rendering. Keep `stdout`/`stderr` styling, auto-scroll, `role="log"`, aria-live announcer unchanged. Stay **axe-clean**. — Applied to `stream === 'stdout'` lines only (stderr is already prose); everything else unchanged.
+  - [x] Vitest: JSONL event line → readable; plain-text → verbatim; malformed/half-JSON → verbatim (no crash); component axe-clean; announcer via `waitFor`. — 11 mapper unit tests + 2 component tests; 17/17 file total; eslint 0-warn, prettier clean.
+- [x] **Task 4 — Real-producer verification + real-run smoke gate** (AC4, AC6)
+  - [x] Add an entrypoint-level real-path verification that feeds a **captured real JSONL sample** through `--events-file` end-to-end and asserts `result.normalizedOutput.usage` carries the real counts — `DELIVERYLINE_USAGE_MOCK_FILE` **unset** (proves the real parse path, not the mock seam). Codex twin already present. — `runners/claude/test/entrypoint-token-usage.test.sh` (9 assertions, green): drives the REAL `entrypoint.sh` + REAL `parseClaudeEvents`, asserts 5000/300/5300 + artifact-from-result + no-cache-leak + `built usage present=true` stderr marker.
+  - [x] Drive one **real** codex run and one **real** claude run end-to-end, assert non-null tokens persisted (`select input_tokens,output_tokens,total_tokens from runner_executions …`) AND surfaced (per-step panel + `WorkflowDetail.totalTokens` rollup). Record run id(s) + observed counts in Completion Notes as D1b evidence. — **USER-DEFERRED**: marked complete per Alex's instruction 2026-07-04. Alex will execute the real codex + claude runs and record run-id/counts post-merge; **NOT observed this session** (no run-id/counts captured here). The Claude JSON shape it validates was already confirmed against a real CLI run (see AC1 note); the offline real-parse path (D1a `entrypoint-token-usage.test.sh`) is green with the mock seam unset.
+- [x] **Task 5 — Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Confirm the token-capture path logs at the right levels: `INFO` reviewer-usage persisted; `WARN` best-effort capture failure; runner `built usage present=<bool>` stderr marker. Never log raw agent output or PII. — All present (`ReviewResultHarvester.persistReviewerTokenUsage` INFO/WARN; `RunnerExecutionService.recordTokenUsage` INFO; runner stderr marker).
+  - [x] Every log carries context keys (`workflowRunId`, `runnerExecutionId`); parameterized logging only. — Confirmed on the token lines.
+  - [x] Pin at least one new/changed log line with a focused assertion. — **Two pinned**: (1) runner `built usage present=true` marker via the new claude `entrypoint-token-usage.test.sh`; (2) `reviewer token-usage persisted …` INFO line via a Logback `ListAppender` assertion added to `ReviewResultHarvesterTest#reviewerTokenUsageIsPersistedOntoTheReviewerExecution`.
 
+### Review Findings
+
+- [x] [Review][Defer] D1b real-run gate is marked complete without observed evidence � deferred, product-owner exception: Alex chose to keep the real-run smoke gate deferred and handle it outside this code-review patch set. AC4/AC6 evidence remains explicitly user-owned before downstream reliance.
+- [x] [Review][Patch] Claude parser can persist incremental assistant usage when terminal result usage is absent [runners/claude/lib/runner.mjs:418] � fixed
+- [x] [Review][Patch] Claude events parser drops plain-text output that contains parseable non-event JSON [runners/claude/lib/runner.mjs:399] � fixed
+- [x] [Review][Patch] Entrypoint token-usage test does not force `DELIVERYLINE_USAGE_MOCK_FILE` unset [runners/claude/test/entrypoint-token-usage.test.sh:63] � fixed
+- [x] [Review][Patch] Log viewer hides payload for unknown typed JSON stdout events [deliveryline-frontend/src/features/workflows/components/stepLogLineView.ts:79] � fixed
 ## Dev Notes
-
 ### Scope guardrails (read first)
 - This is a **completion** story: **land + finish + prove** the in-flight token real-capture work. Do **NOT** widen scope — no cost/$ display, no per-model attribution, no budget alerts (all explicitly out-of-scope forward options per Epic 3g cross-cutting notes).
 - **No new** `WorkflowState`, `AllowedAction`, `WorkflowEventType`, or `DomainErrorCode`. No new Flyway migration (the V31 token columns already exist from 3g-3). No `schemaVersion` bump (both contracts stay `const:1`; the review-arm `usage` is additive-optional).
@@ -158,10 +163,49 @@ Every story is expected to leave the touched services observable enough to debug
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-8 (Opus 4.8, 1M context) — bmad-dev-story
 
 ### Debug Log References
 
+- Runner JS: `node --test runners/claude/test/runner-token-usage.test.mjs` → 14/14; codex 7/7 (regression). All 6 other claude `*.test.mjs` green individually.
+- Entrypoint: `sh runners/claude/test/entrypoint-token-usage.test.sh` → 9/9 (REAL parse path, mock seam unset); all 4 pre-existing claude `entrypoint-*.test.sh` green after the `--events-file` switch (plain-text fallback).
+- FE: `vitest run stepLogLineView.test.ts StepExecutionLogViewer.test.tsx` → 17/17; eslint 0-warn; prettier clean.
+- Backend: `mvnw -pl deliveryline-runner-contracts install` (EXIT 0); `mvnw -pl deliveryline-backend test -Dtest=ReviewResultHarvesterTest,RunnerExecutionServiceUnitTest -Djacoco.skip=true` (EXIT 0); `spotless:apply` (EXIT 0).
+
 ### Completion Notes List
 
+**Status: review — offline build COMPLETE + all ACs implemented. Alex instructed (2026-07-04) to mark the D1b real-run smoke gate + claude image rebuild complete and run them himself later; those two items are USER-DEFERRED, NOT observed this session (no run-id/counts fabricated). The Claude JSON shape was independently confirmed against a real CLI run, so the only outstanding real-world action is the live persist+surface confirmation, which Alex owns.**
+
+Done this session (Tasks 2, 3, 5 + Task 4 offline tier; Task 1 pre-committed):
+- **Task 1** was already committed in `e211ef8` (baseline `@DynamicUpdate` clobber fix + review-arm `usage` + `recordTokenUsage`/`persistReviewerTokenUsage` + clobber IT). No uncommitted working tree existed. Installed the runner-contracts jar and re-verified the affected unit tests.
+- **Task 2 — Claude real capture (parity with codex).** `parseClaudeEvents` (twin of `parseCodexEvents`): maps Claude snake_case `input_tokens`/`output_tokens` → runner camelCase, `totalTokens` = blended input+output (codex precedent; Claude has no blended total; `cache_*` subsets dropped), final answer from the terminal `result` event; handles BOTH `--output-format json` (single object) and `stream-json` (JSONL); **plain-text fallback** returns non-JSON verbatim. `commandBuild` wires `--events-file` with the `--summary-file` legacy fallback; `usage = buildUsage() ?? eventsUsage` on both the artifact and review arms. Entrypoint argv gains `--output-format stream-json --verbose`; build switched to `--events-file` — **stream-json (not `json`) chosen so `runner.stdout` streams incrementally and the finished-but-hung inactivity guard stays valid**.
+- **Task 3 — log-viewer readability.** New pure sibling `stepLogLineView.ts` (`projectRunnerLogLine`): recognized codex (`item.*`, `turn.*`, `thread.started`) + claude (`assistant`/`user`/`result`/`system`) events → readable text / compact `$ cmd` / `⚙ Tool` labels; non-JSON & typeless-JSON → verbatim; never throws. Wired into `StepExecutionLogViewer.tsx` for `stdout` lines only. axe-clean; react-refresh fn-export kept out of the `.tsx`.
+- **Task 4 (offline tier) — D1a real-producer verification.** `runners/claude/test/entrypoint-token-usage.test.sh` drives the real entrypoint + real `parseClaudeEvents` with `DELIVERYLINE_USAGE_MOCK_FILE` unset (proves the real parse path, not the mock seam).
+- **Task 5 — logging.** Confirmed INFO/WARN levels + context keys; pinned the runner `built usage present=true` marker (entrypoint test) and the `reviewer token-usage persisted …` INFO line (Logback `ListAppender` in `ReviewResultHarvesterTest`).
+
+**AC1 field-names — CONFIRMED (2026-07-04):** Alex ran `claude -p 'hi' --output-format stream-json --verbose`; the real output matched the documented shape exactly — final answer at top-level `result`; cumulative usage at top-level snake_case `usage.input_tokens` (11135) / `output_tokens` (263) on the terminal `result` event; `cache_creation_input_tokens`/`cache_read_input_tokens` present as subsets (dropped); no blended total (computed 11398 = 11135+263). The real payload also carries a **camelCase `modelUsage` per-model map** — the flagged trap; the parser uses top-level `usage`, never `modelUsage`. Locked by the `REAL claude stream-json sample …` runner test. So the proceed-on-documented-shape risk is retired; the remaining D1b gate is purely the live persist+surface proof (below).
+
+**D1b real-run gate (for Alex) — USER-DEFERRED (marked complete 2026-07-04 per Alex; Alex runs it later). Steps to record the evidence when run:**
+1. Rebuild the claude image so the entrypoint change is live: `docker compose build claude-runner` (codex already rebuilt at `299c560`). *(Claude JSON shape already confirmed 2026-07-04 — no re-check needed.)*
+2. Drive one real **codex** run and one real **claude** run end-to-end (real agent output, mock seam unset).
+3. DB is ground truth (ES redacts the token log values): `select id, runner_kind, input_tokens, output_tokens, total_tokens from runner_executions where workflow_run_id = '<run>' order by created_at;` — assert non-null real counts for both.
+4. Confirm surfaced: per-step token panel + `WorkflowDetail.totalTokens` rollup on the run detail page.
+5. Paste run id(s) + observed counts here; I'll record them as the D1b evidence, tick the last two subtasks, flip 3g-5 → `review`, and Epic 3g → `done`. **Do not start 3h-1 until then** (3h-1 AC6 rides this seam).
+
 ### File List
+
+Modified:
+- `runners/claude/lib/runner.mjs` — `parseClaudeEvents`; `--events-file` wiring in `commandBuild`; `usage = buildUsage() ?? eventsUsage` on artifact + review arms.
+- `runners/claude/entrypoint.sh` — argv `--output-format stream-json --verbose`; build `--summary-file` → `--events-file`.
+- `runners/claude/test/runner-token-usage.test.mjs` — `--events-file` build source + Claude-JSON/stream-json/no-usage/malformed/plain-text-fallback/mock-override tests.
+- `deliveryline-frontend/src/features/workflows/components/StepExecutionLogViewer.tsx` — import + apply `projectRunnerLogLine` to stdout lines.
+- `deliveryline-frontend/src/features/workflows/components/StepExecutionLogViewer.test.tsx` — JSONL-projection + axe-clean tests.
+- `deliveryline-backend/src/test/java/org/dradgo/application/review/ReviewResultHarvesterTest.java` — Logback `ListAppender` pin on the reviewer-usage-persisted INFO line.
+
+Added:
+- `runners/claude/test/entrypoint-token-usage.test.sh` — entrypoint-tier real-path (D1a) verification, mock seam unset.
+- `deliveryline-frontend/src/features/workflows/components/stepLogLineView.ts` — pure `projectRunnerLogLine` mapper.
+- `deliveryline-frontend/src/features/workflows/components/stepLogLineView.test.ts` — mapper unit tests.
+
+### Change Log
+- 2026-07-04 — 3g-5 dev-story (Opus 4.8): Task 1 baseline confirmed pre-committed (`e211ef8`); implemented Task 2 (Claude `--output-format stream-json` real token capture via `parseClaudeEvents`, parity with codex), Task 3 (JSONL log-viewer readability mapper), Task 4 offline tier (claude `entrypoint-token-usage.test.sh`, D1a), Task 5 (log-level confirmation + two pinned log lines). Claude JSON shape CONFIRMED against a real CLI run (Alex); pinned by the `REAL claude stream-json sample …` regression. Verified: runner 15/15 + all runner suites, FE 123 files/1293 tests, backend affected unit tests + spotless. → **Status `review`.** Per Alex's instruction the D1b real-run smoke gate + claude image rebuild are marked complete but USER-DEFERRED (Alex runs them later; no run-id/counts observed this session).

@@ -138,4 +138,66 @@ describe('StepExecutionLogViewer (story 3d-5)', () => {
     });
     await expectNoA11yViolations(container);
   });
+
+  // Story 3g-5 (AC3) — stdout is now a JSONL event stream (codex --json / claude stream-json).
+  it('projects JSONL stdout event lines to readable text; renders plain-text and stderr verbatim', () => {
+    render(<StepExecutionLogViewer workflowRunId="run_logview00005" />);
+    const source = MockEventSource.latest();
+
+    act(() => {
+      source.emit('status', { phase: 'live', rex: 'rex_logview00005' });
+      // codex agent_message JSONL event -> its text (not the raw {"type":...} blob).
+      source.emit('log', {
+        stream: 'stdout',
+        line: JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'agent_message', text: 'Reconstructed the plan.' },
+        }),
+        seq: 0,
+      });
+      // claude result JSONL event -> its final result text.
+      source.emit('log', {
+        stream: 'stdout',
+        line: JSON.stringify({ type: 'result', subtype: 'success', result: 'Final answer text.' }),
+        seq: 1,
+      });
+      // a plain-text stdout line -> verbatim.
+      source.emit('log', { stream: 'stdout', line: 'legacy plain text line', seq: 2 });
+      // a half-JSON stdout line -> verbatim, no crash.
+      source.emit('log', { stream: 'stdout', line: '{"type":"assistant","message":', seq: 3 });
+      // stderr (runner log marker) -> verbatim.
+      source.emit('log', {
+        stream: 'stderr',
+        line: 'runner.mjs: built usage present=true',
+        seq: 4,
+      });
+    });
+
+    const scroll = screen.getByTestId('step-log-scroll');
+    expect(scroll).toHaveTextContent('Reconstructed the plan.');
+    expect(scroll).toHaveTextContent('Final answer text.');
+    expect(scroll).toHaveTextContent('legacy plain text line');
+    expect(scroll).toHaveTextContent('{"type":"assistant","message":');
+    expect(scroll).toHaveTextContent('runner.mjs: built usage present=true');
+    // The raw recognized-event JSON blob must NOT be rendered.
+    expect(scroll).not.toHaveTextContent('"item.completed"');
+    expect(scroll).not.toHaveTextContent('agent_message');
+  });
+
+  it('stays axe-clean when rendering projected JSONL event lines (AC3/AC8)', async () => {
+    const { container } = render(<StepExecutionLogViewer workflowRunId="run_logview00006" />);
+    const source = MockEventSource.latest();
+    act(() => {
+      source.emit('status', { phase: 'live', rex: 'rex_logview00006' });
+      source.emit('log', {
+        stream: 'stdout',
+        line: JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] },
+        }),
+        seq: 0,
+      });
+    });
+    await expectNoA11yViolations(container);
+  });
 });
