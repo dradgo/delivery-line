@@ -163,3 +163,16 @@ describe('WorkflowDetail route — spec-phase reviewer verdict panel (story 3e-3
     expect(screen.queryByTestId('reviewer-verdict-panel')).not.toBeInTheDocument();
   });
 });
+
+describe('WorkflowDetail route — archive control wiring (story 3d-8 FE gap)', () => {
+  it('renders the Archive run button when the workflow_owner matrix advertises archive_run', async () => {
+    server.use(
+      http.get(`http://localhost/api/v1/workflows/:workflowRunId/allowed-actions`, () =>
+        HttpResponse.json({ actions: ['archive_run'] }),
+      ),
+      http.get(DETAIL_URL, () => detailWith([SPEC_ARTIFACT])),
+    );
+    renderRoute();
+    expect(await screen.findByRole('button', { name: 'Archive run' })).toBeInTheDocument();
+  });
+});

@@ -411,6 +411,52 @@ class RepositoryWorkspaceServiceTest {
   }
 
   @Test
+  void captureAndPushCapturesUnifiedDiffAgainstDefaultBranch() {
+    // The pr-output advisory reviewer runs offline and can only inspect its mounted input; it needs
+    // the actual code changes. captureAndPush (which holds the repo checkout + committed changes)
+    // must therefore also capture the unified diff of the pushed branch against the default branch
+    // and expose it on the outcome, so the broker can materialize it for the reviewer.
+    when(store.resolveRepositoryDir(REX)).thenReturn(Optional.of(REPO_DIR));
+    when(recordPort.findByPublicId(REX)).thenReturn(Optional.of(snapshot()));
+    when(git.currentBranch(REPO_DIR)).thenReturn("deliveryline/DEL-9/stage-ef123456");
+    when(git.getLocalConfig(REPO_DIR, "deliveryline.repoRef")).thenReturn(Optional.of(REPO_REF));
+    when(git.getLocalConfig(REPO_DIR, "deliveryline.ticketRef")).thenReturn(Optional.of("DEL-9"));
+    when(git.getLocalConfig(REPO_DIR, "deliveryline.ticketSummary"))
+        .thenReturn(Optional.of("Fix flaky dispatch"));
+    when(git.getLocalConfig(REPO_DIR, "deliveryline.stage")).thenReturn(Optional.of("prOutput"));
+    when(git.getLocalConfig(REPO_DIR, "deliveryline.defaultBranch"))
+        .thenReturn(Optional.of("main"));
+    when(git.hasUncommittedChanges(REPO_DIR)).thenReturn(true);
+    when(git.commitAll(any())).thenReturn("abc1234");
+    when(git.push(eq(REPO_DIR), anyString(), any()))
+        .thenReturn(
+            new GitCommandPort.PushResult(
+                "abc1234", "deliveryline/DEL-9/stage-ef123456", "git://remote"));
+    when(gitHubAdapter.createPullRequest(any(), anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(
+            new PullRequest(
+                PullRequestRef.of("PR-1"),
+                RepositoryRef.of(REPO_REF),
+                1,
+                "b",
+                "open",
+                "u",
+                Instant.now()));
+    when(git.diff(REPO_DIR, "main"))
+        .thenReturn(
+            "diff --git a/pom.xml b/pom.xml\n"
+                + "+<hibernate.version>5.6.15.Final</hibernate.version>\n");
+
+    Optional<RepositoryWorkspaceService.RepositoryPushOutcome> outcome =
+        service.captureAndPush(REX);
+
+    assertThat(outcome).isPresent();
+    assertThat(outcome.get().diff())
+        .contains("diff --git a/pom.xml b/pom.xml")
+        .contains("<hibernate.version>5.6.15.Final</hibernate.version>");
+  }
+
+  @Test
   void captureAndPushSkipsPushAndPrWhenWorktreeIsClean() {
     when(store.resolveRepositoryDir(REX)).thenReturn(Optional.of(REPO_DIR));
     when(recordPort.findByPublicId(REX)).thenReturn(Optional.of(snapshot()));

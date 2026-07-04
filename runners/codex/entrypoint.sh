@@ -636,7 +636,12 @@ if [ "$ARTIFACT_TYPE" = spec ]; then
 ${CLARIFICATIONS_DIRECTIVE}"
 fi
 # Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
-set -- "$CODEX_SUBCOMMAND" --skip-git-repo-check --sandbox "$CODEX_SANDBOX"
+# Story 3g-3 follow-up (FR74) — `--json` makes codex emit a JSONL event stream on stdout, which is
+# the only mode that surfaces per-turn token usage (turn.completed.usage{input_tokens,output_tokens}).
+# The trade-off is that STDOUT_LOG (runner.stdout) is now JSONL rather than streaming prose; the build
+# step reconstructs the artifact text + lifts usage from it via `--events-file` below. (Making the
+# JSONL logs human-readable in the log viewer is a tracked follow-up.)
+set -- "$CODEX_SUBCOMMAND" --skip-git-repo-check --sandbox "$CODEX_SANDBOX" --json
 if [ -d "$CODEX_REPO_DIR" ]; then
   set -- "$@" -C "$CODEX_REPO_DIR"
 fi
@@ -645,16 +650,86 @@ CODEX_MODEL="${CODEX_MODEL:-${DELIVERYLINE_CODEX_MODEL:-}}"
 if [ -n "$CODEX_MODEL" ]; then
   set -- "$@" --model "$CODEX_MODEL"
 fi
-log INFO "codex invocation start bin=$CODEX_CLI_BIN subcommand=$CODEX_SUBCOMMAND stage=$ARTIFACT_TYPE sandbox=$CODEX_SANDBOX repoDir=$CODEX_REPO_DIR argCount=$#"
-# Prepend the stage instruction to the ticket prompt on stdin. $? after the pipeline is
-# the Codex exit status (the last command), which is what we capture.
+# Combine the stage instruction + ticket prompt into ONE prompt FILE fed to Codex via a
+# stdin redirect (not a pipe). A backgrounded pipeline's $! is the subshell PID, which cannot
+# reliably signal the CLI; running Codex as a direct child keeps $! pointing at Codex itself
+# so the inactivity guard below can terminate it.
+COMBINED_PROMPT="$LOGS_DIR/codex.combined-prompt"
+{ printf '%s\n\n' "$PROMPT_INSTRUCTION"; cat "$PROMPT_FILE"; } >"$COMBINED_PROMPT"
+
+# Finished-but-hung guard (INACTIVITY-based — never a wall-clock cap). Codex has been observed
+# to complete a large turn (full output flushed, "tokens used" footer) yet never exit, wedging
+# the run until the broker's stdout-silence timeout fires ~20 min later and DISCARDS the
+# already-complete artifact. Run Codex in the background and watch runner.stdout for growth; if
+# it stays idle for CODEX_STALL_SECONDS while Codex is still alive, treat the turn as
+# finished-but-hung, terminate Codex, and salvage the captured output into the normal build
+# below. Because the trigger is INACTIVITY (not elapsed time), a legitimately long, actively
+# STREAMING turn is never truncated. The default sits below the broker's inactivity timeout so
+# the runner reclaims + salvages before the broker discards. CODEX_STALL_SECONDS=0 disables it
+# (blocking behaviour, identical to the pre-guard entrypoint).
+CODEX_STALL_SECONDS="${CODEX_STALL_SECONDS:-900}"
+CODEX_STALL_POLL_SECONDS="${CODEX_STALL_POLL_SECONDS:-2}"
+CODEX_STALLED=0
+
+log INFO "codex invocation start bin=$CODEX_CLI_BIN subcommand=$CODEX_SUBCOMMAND stage=$ARTIFACT_TYPE sandbox=$CODEX_SANDBOX repoDir=$CODEX_REPO_DIR stallSeconds=$CODEX_STALL_SECONDS argCount=$#"
 set +e
-{ printf '%s\n\n' "$PROMPT_INSTRUCTION"; cat "$PROMPT_FILE"; } \
-  | "$CODEX_CLI_BIN" "$@" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+"$CODEX_CLI_BIN" "$@" <"$COMBINED_PROMPT" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+CODEX_PID=$!
+
+if [ "${CODEX_STALL_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+  _last_size=-1
+  _idle=0
+  while kill -0 "$CODEX_PID" 2>/dev/null; do
+    sleep "$CODEX_STALL_POLL_SECONDS"
+    kill -0 "$CODEX_PID" 2>/dev/null || break
+    _cur_size=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ')
+    [ -n "$_cur_size" ] || _cur_size=0
+    if [ "$_cur_size" -gt "$_last_size" ]; then
+      _last_size="$_cur_size"
+      _idle=0
+    else
+      _idle=$((_idle + CODEX_STALL_POLL_SECONDS))
+    fi
+    if [ "$_idle" -ge "$CODEX_STALL_SECONDS" ]; then
+      log WARN "codex stdout idle ${_idle}s (>= ${CODEX_STALL_SECONDS}s) while pid=$CODEX_PID alive — treating as finished-but-hung; terminating to salvage captured output"
+      CODEX_STALLED=1
+      kill -TERM "$CODEX_PID" 2>/dev/null
+      _grace=0
+      while [ "$_grace" -lt 10 ] && kill -0 "$CODEX_PID" 2>/dev/null; do
+        sleep 1
+        _grace=$((_grace + 1))
+      done
+      kill -KILL "$CODEX_PID" 2>/dev/null
+      break
+    fi
+  done
+fi
+
+wait "$CODEX_PID"
 CODEX_RC=$?
 set -e
-log INFO "codex invocation finished rc=$CODEX_RC stdoutBytes=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
-if [ "$CODEX_RC" -ne 0 ]; then
+rm -f "$COMBINED_PROMPT" 2>/dev/null || true
+
+_stdout_bytes=$(wc -c <"$STDOUT_LOG" 2>/dev/null | tr -d ' ')
+[ -n "$_stdout_bytes" ] || _stdout_bytes=0
+log INFO "codex invocation finished rc=$CODEX_RC stalled=$CODEX_STALLED stdoutBytes=$_stdout_bytes"
+
+if [ "$CODEX_STALLED" -eq 1 ]; then
+  # Finished-but-hung: Codex was force-killed AFTER its output went quiet. Salvage the captured
+  # output (fall through to the normal build) when it produced something; a stall with EMPTY
+  # output is a genuine timeout with no artifact to recover.
+  if [ "$_stdout_bytes" -lt 1 ]; then
+    log ERROR "codex stalled with EMPTY output — nothing to salvage (runner_timeout)"
+    "$NODE_BIN" "$RUNNER_LIB" build-failure \
+      --bundle "$BUNDLE_FILE" \
+      --stage "$ARTIFACT_TYPE" \
+      --category runner_timeout \
+      --summary "Codex produced no output before stalling (terminated by the runner inactivity guard)" \
+      --out "$RESULT_FILE" >/dev/null || true
+    exit 30
+  fi
+  log WARN "salvaging ${_stdout_bytes} bytes of completed output after codex stall — building the result from captured stdout"
+elif [ "$CODEX_RC" -ne 0 ]; then
   log ERROR "codex CLI exited non-zero rc=$CODEX_RC (see runner.stderr)"
   "$NODE_BIN" "$RUNNER_LIB" build-failure \
     --bundle "$BUNDLE_FILE" \
@@ -670,7 +745,7 @@ log INFO "building runner-result.v1 artifactType=$ARTIFACT_TYPE result=$RESULT_F
 set -- "$NODE_BIN" "$RUNNER_LIB" build \
   --bundle "$BUNDLE_FILE" \
   --stage "$ARTIFACT_TYPE" \
-  --summary-file "$STDOUT_LOG" \
+  --events-file "$STDOUT_LOG" \
   --auth-var "${AUTH_KEY_VAR:-}" \
   --out "$RESULT_FILE"
 # Story 3a-8 (AC5/D4): surface the OpenSpec validate outcome in the result summary, ONLY on

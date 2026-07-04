@@ -378,6 +378,62 @@ function buildUsage() {
   }
 }
 
+// Story 3g-3 follow-up (FR74) — parse a codex `--json` JSONL event stream. Returns the reconstructed
+// final agent message text (the concatenated `agent_message` item texts — this IS the artifact the
+// downstream fence/verdict/spec logic parses) plus the per-turn token usage lifted from the LAST
+// `turn.completed` event's `usage` object. Codex reports `input_tokens` + `output_tokens`;
+// `totalTokens` is their blended sum (matches codex's own "tokens used" footer;
+// `cached_input_tokens`/`reasoning_output_tokens` are informational subsets the 3-field schema drops).
+// Best-effort: NEVER throws. When the input contains NO parseable JSON at all it is a plain-text
+// stream (a legacy/mock non-json invocation) — returned verbatim so those callers keep working.
+function parseCodexEvents(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { messageText: '', usage: undefined };
+  }
+  const messages = [];
+  let usage;
+  let sawJson = false;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!evt || typeof evt !== 'object') continue;
+    sawJson = true;
+    const item = evt.item;
+    if (
+      evt.type === 'item.completed' &&
+      item &&
+      item.type === 'agent_message' &&
+      typeof item.text === 'string'
+    ) {
+      messages.push(item.text);
+    }
+    if (evt.type === 'turn.completed' && evt.usage && typeof evt.usage === 'object') {
+      const input = evt.usage.input_tokens;
+      const output = evt.usage.output_tokens;
+      const built = {};
+      if (Number.isInteger(input) && input >= 0) built.inputTokens = input;
+      if (Number.isInteger(output) && output >= 0) built.outputTokens = output;
+      if (Number.isInteger(input) && Number.isInteger(output) && input >= 0 && output >= 0) {
+        built.totalTokens = input + output;
+      }
+      const sanitized = sanitizeUsage(built);
+      if (sanitized) usage = sanitized; // last turn wins
+    }
+  }
+  // The deliverable is the FINAL agent_message (codex streams progress commentary as EARLIER
+  // agent_message items — concatenating them would pollute the artifact/review-rationale with the
+  // running monologue). Matches codex's own --output-last-message notion of "the answer". No JSON at
+  // all => a plain-text stream (legacy/mock): use it verbatim.
+  const messageText = sawJson ? messages[messages.length - 1] ?? '' : text;
+  return { messageText, usage };
+}
+
 // ===== Story 3e-1 — clarifications fence split (BYTE-IDENTICAL in both runner.mjs files) =====
 // The spec (investigation) stage agent may raise OPEN CLARIFYING QUESTIONS alongside the
 // specification it writes to stdout, using a fence convention mirroring the OpenSpec fence (3a-8):
@@ -635,9 +691,26 @@ function commandBuild(args) {
   const out = args.out;
   if (!out) fail(2, 'missing --out');
   const summaryFile = args['summary-file'];
+  const eventsFile = args['events-file'];
 
+  // Story 3g-3 follow-up (FR74) — the entrypoint runs codex with `--json`, so the captured stdout is
+  // a JSONL event stream. `--events-file` points at it: reconstruct the agent's final message text
+  // (the artifact) AND lift the per-turn token usage from it. Legacy/mock callers still pass
+  // `--summary-file` (raw text). parseCodexEvents treats a non-JSON stream as plain text, so a
+  // plain-text mock routed through --events-file also works.
   let rawOutput = '';
-  if (summaryFile) {
+  let eventsUsage;
+  if (eventsFile) {
+    let jsonl = '';
+    try {
+      jsonl = readFileSync(eventsFile, 'utf8');
+    } catch {
+      jsonl = '';
+    }
+    const parsed = parseCodexEvents(jsonl);
+    rawOutput = parsed.messageText;
+    eventsUsage = parsed.usage;
+  } else if (summaryFile) {
     try {
       rawOutput = readFileSync(summaryFile, 'utf8');
     } catch {
@@ -758,7 +831,9 @@ function commandBuild(args) {
 
   // Story 3g-3 (FR74) — attach the OPTIONAL per-execution token counts when available. Omitted
   // entirely when absent (best-effort, never throws) so a no-usage result stays byte-identical.
-  const usage = buildUsage();
+  // Real per-turn usage parsed from the codex `--json` events; the DELIVERYLINE_USAGE_MOCK_FILE seam
+  // still overrides for deterministic offline/CI tests.
+  const usage = buildUsage() ?? eventsUsage;
   process.stderr.write(`runner.mjs: built usage present=${usage !== undefined}\n`);
 
   const normalizedOutput = { summary, outcome: 'success', providerUsage };

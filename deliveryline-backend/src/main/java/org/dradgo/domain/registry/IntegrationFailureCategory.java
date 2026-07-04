@@ -39,7 +39,14 @@ public enum IntegrationFailureCategory implements RegistryValue {
   GIT_PUSH_REJECTED("git_push_rejected"),
   GIT_BRANCH_PROTECTION_VIOLATION("git_branch_protection_violation"),
   GIT_NETWORK_FAILURE("git_network_failure"),
-  GIT_AUTH_FAILED("git_auth_failed");
+  GIT_AUTH_FAILED("git_auth_failed"),
+  // Server-side receive-pack rejection of a push that creates/updates a `.github/workflows/**`
+  // file when the push token lacks the `workflow` scope (classic PAT) / Workflows:write (App).
+  // Distinct from GIT_AUTH_FAILED so the operator sees the exact remediation (grant the scope)
+  // rather than a generic auth failure, and NON-RETRYABLE — a plain retry with the same token
+  // hits the identical wall. GitHub's message: "refusing to allow a Personal Access Token to
+  // create or update workflow `.github/workflows/build.yml` without `workflow` scope".
+  GIT_WORKFLOW_SCOPE_MISSING("git_workflow_scope_missing");
 
   private static final Map<String, IntegrationFailureCategory> LOOKUP =
       RegistryParsers.index(values());

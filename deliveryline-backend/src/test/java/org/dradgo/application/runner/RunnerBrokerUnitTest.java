@@ -2555,6 +2555,39 @@ class RunnerBrokerUnitTest {
     verify(orchestration, never()).onSpecStageSucceeded(any(), any(), any());
   }
 
+  @Test
+  void planReExecutionGraftsOntoExistingLineageAsUpdate() {
+    // An implementation-plan REJECTION re-runs the execution stage to produce a revised plan. When
+    // the run already has an active implementationPlan lineage (a prior execution produced v1), the
+    // re-produced plan MUST graft onto that lineage as UPDATE (createNextVersion -> v2), NOT
+    // CREATE:
+    // a duplicate CREATE is rejected by the domain (ARTIFACT_LINEAGE_ALREADY_EXISTS), which wedged
+    // the whole implementation-rejection re-plan loop. Regression guard for the spec-only graft
+    // bug.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RunnerBroker orchBroker = brokerWithOrchestration(orchestration);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.IMPLEMENTATION_PLAN);
+    stubArtifactRecordSuccess();
+    when(artifactOperationService.hasActiveLineage(
+            RUN_ID, org.dradgo.domain.registry.ArtifactType.IMPLEMENTATION_PLAN))
+        .thenReturn(true);
+
+    orchBroker.onResult(REX_ID, implementationPlanResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<RecordArtifactOperationCommand> commands =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService).recordOperation(commands.capture());
+    assertEquals(
+        org.dradgo.domain.registry.ArtifactOperationType.UPDATE,
+        commands.getValue().operationType(),
+        "a re-produced implementationPlan with an existing lineage must ingest as UPDATE (v2), not CREATE");
+    verify(executionService).recordCompleted(REX_ID);
+  }
+
   // ===== Story 3.12 — EXECUTION (pr-output) success auto-advance + ref validation/enrichment =====
 
   @Test
@@ -2604,7 +2637,7 @@ class RunnerBrokerUnitTest {
         .thenReturn(
             Optional.of(
                 new RepositoryWorkspaceService.RepositoryPushOutcome(
-                    commitSha, branch, prRef, true)));
+                    commitSha, branch, prRef, true, null)));
 
     broker.onResult(
         REX_ID, prOutputResultPayload(branch, commitSha, prRef).getBytes(StandardCharsets.UTF_8));
@@ -2683,7 +2716,7 @@ class RunnerBrokerUnitTest {
         .thenReturn(
             Optional.of(
                 new RepositoryWorkspaceService.RepositoryPushOutcome(
-                    commitSha, branch, prRef, true)));
+                    commitSha, branch, prRef, true, null)));
     org.mockito.Mockito.doThrow(
             new org.dradgo.domain.DomainException(
                 org.dradgo.domain.registry.DomainErrorCode.INTEGRATION_LINK_CONFLICT, "conflict"))
@@ -2768,7 +2801,8 @@ class RunnerBrokerUnitTest {
                     "16f794959cf755886c6b4929db16940ae5440185",
                     "deliveryline/FIN-30/stage-0a4c10f2",
                     "dradgo/financemonitor.2019#3",
-                    true)));
+                    true,
+                    null)));
     RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
     when(recordPort.findByPublicId(REX_ID))
         .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
@@ -2822,7 +2856,7 @@ class RunnerBrokerUnitTest {
         .thenReturn(
             Optional.of(
                 new RepositoryWorkspaceService.RepositoryPushOutcome(
-                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true)));
+                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true, null)));
     RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
     when(recordPort.findByPublicId(REX_ID))
         .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
@@ -2851,6 +2885,51 @@ class RunnerBrokerUnitTest {
         enriched.contains("feature/x"), () -> "enriched payload missing branch: " + enriched);
     assertTrue(
         enriched.contains("PR-1"), () -> "enriched payload missing prReference: " + enriched);
+  }
+
+  @Test
+  void prOutputEnrichmentEmbedsCaptureAndPushDiffForReviewer() {
+    // The OFFLINE pr-output advisory reviewer needs the code changes. captureAndPush now captures
+    // the
+    // unified diff; the broker must embed it in the enriched prOutput payload so the reviewer
+    // (reading
+    // the artifact) can inspect it instead of failing "not reviewable" on an absent diffReference
+    // file. Regression guard for proutput-advisory-review-missing-diff.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    RepositoryWorkspaceService repoService = mock(RepositoryWorkspaceService.class);
+    when(repoService.captureAndPush(REX_ID))
+        .thenReturn(
+            Optional.of(
+                new RepositoryWorkspaceService.RepositoryPushOutcome(
+                    "abcdef1234567890abcdef1234567890abcdef12",
+                    "feature/x",
+                    "PR-1",
+                    true,
+                    "diff --git a/pom.xml b/pom.xml\n"
+                        + "+<hibernate.version>5.6.15.Final</hibernate.version>\n")));
+    RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
+    when(recordPort.findByPublicId(REX_ID))
+        .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
+    when(contextBundleService.deriveExecutionSubStage(RUN_ID))
+        .thenReturn(ExecutionSubStage.PR_OUTPUT);
+    stubArtifactRecordSuccess();
+
+    orchBroker.onResult(REX_ID, prOutputResultPayload().getBytes(StandardCharsets.UTF_8));
+
+    ArgumentCaptor<RecordArtifactOperationCommand> commands =
+        ArgumentCaptor.forClass(RecordArtifactOperationCommand.class);
+    verify(artifactOperationService, times(2)).recordOperation(commands.capture());
+    RecordArtifactOperationCommand update =
+        commands.getAllValues().stream()
+            .filter(
+                c -> c.operationType() == org.dradgo.domain.registry.ArtifactOperationType.UPDATE)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected an enrichment UPDATE operation"));
+    String enriched = new String(update.payloadContent(), StandardCharsets.UTF_8);
+    assertTrue(
+        enriched.contains("<hibernate.version>5.6.15.Final</hibernate.version>"),
+        () -> "enriched prOutput payload must embed the captureAndPush diff: " + enriched);
   }
 
   // ===== Story 3b-3 — ingest-stage availability marking generalized to plan / pr-output =====
@@ -2983,7 +3062,7 @@ class RunnerBrokerUnitTest {
         .thenReturn(
             Optional.of(
                 new RepositoryWorkspaceService.RepositoryPushOutcome(
-                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true)));
+                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true, null)));
     RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
     when(recordPort.findByPublicId(REX_ID))
         .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));
@@ -3067,7 +3146,7 @@ class RunnerBrokerUnitTest {
         .thenReturn(
             Optional.of(
                 new RepositoryWorkspaceService.RepositoryPushOutcome(
-                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true)));
+                    "abcdef1234567890abcdef1234567890abcdef12", "feature/x", "PR-1", true, null)));
     RunnerBroker orchBroker = brokerWithOrchestrationAndRepo(orchestration, repoService);
     when(recordPort.findByPublicId(REX_ID))
         .thenReturn(Optional.of(executionSnapshot(REX_ID, RunnerExecutionStatus.RUNNING)));

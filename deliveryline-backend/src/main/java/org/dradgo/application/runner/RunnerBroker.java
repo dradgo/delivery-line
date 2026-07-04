@@ -1905,33 +1905,42 @@ public class RunnerBroker {
       ArtifactPayload payload = maybePayload.get();
       String idempotencyKey =
           "runner-result:" + runnerExecutionId + ":" + ref.path("artifactId").asText();
-      // Story 3e-2 (AC5/R3) — GRAFT a re-ingested spec onto the prior spec lineage. When the run
-      // already has an active spec, route through UPDATE (createNextVersion sets parentArtifactId =
-      // priorSpec) so lineageArtifactIds(v2) contains v1 and the clarification sweep considers a
-      // v1-pinned accepted clarification when v2 becomes available. The FIRST spec (no prior
-      // lineage) stays CREATE; other artifact types are unaffected.
+      // Story 3e-2 (AC5/R3) — GRAFT a re-produced artifact onto its prior lineage. When the run
+      // already has an active lineage for THIS artifact type, route through UPDATE
+      // (createNextVersion
+      // sets parentArtifactId = prior head) instead of minting a FRESH lineage (CREATE) that the
+      // domain rejects with ARTIFACT_LINEAGE_ALREADY_EXISTS. The FIRST artifact of a type (no prior
+      // lineage) stays CREATE.
+      //
+      // Originally spec-only (the spec-regeneration loop needed lineageArtifactIds(v2) to contain
+      // v1
+      // for the clarification sweep). Generalized to ALL artifact types so a rejection-driven
+      // RE-EXECUTION of the implementationPlan / prOutput stage advances the lineage to v2 rather
+      // than failing ingestion on a duplicate CREATE (the implementation-rejection re-plan loop was
+      // otherwise unshippable). Type-specific post-update work stays gated downstream: the
+      // clarification sweep + spec payload-ref canonicalization only run for SPEC in
+      // ArtifactOperationService, so a non-spec UPDATE is a plain version advance.
       //
       // Story 3e-2 (review P1) — the CREATE-vs-UPDATE decision is computed from MUTABLE state
       // (hasActiveLineage), but the recordOperation replay key includes operation_type. On a
       // re-harvest of THIS result (at-least-once delivery, or the best-effort markArtifactAvailable
       // -failed re-mark path below), hasActiveLineage has flipped false->true because this
-      // execution's own spec is now recorded — so a naive recompute would pick UPDATE, the replay
-      // would MISS the stored CREATE row, and createNextVersion would mint a SPURIOUS v2. Guard by
-      // REUSING the operation_type a prior harvest already recorded for this idempotency key; only
-      // the FIRST harvest (no recorded op) computes the type fresh, so the decision is idempotent.
+      // execution's own artifact is now recorded — so a naive recompute would pick UPDATE, the
+      // replay would MISS the stored CREATE row, and createNextVersion would mint a SPURIOUS v2.
+      // Guard by REUSING the operation_type a prior harvest already recorded for this idempotency
+      // key; only the FIRST harvest (no recorded op) computes the type fresh, so it is idempotent.
       ArtifactOperationType operationType =
           artifactOperationService
               .recordedOperationType(workflowRunId, artifactType, idempotencyKey)
               .orElseGet(
                   () ->
-                      artifactType == ArtifactType.SPEC
-                              && artifactOperationService.hasActiveLineage(
-                                  workflowRunId, ArtifactType.SPEC)
+                      artifactOperationService.hasActiveLineage(workflowRunId, artifactType)
                           ? ArtifactOperationType.UPDATE
                           : ArtifactOperationType.CREATE);
       if (operationType == ArtifactOperationType.UPDATE) {
         log.info(
-            "onResult grafting rebuilt spec onto prior lineage runnerExecutionId={} workflowRunId={}",
+            "onResult grafting re-produced artifact onto prior lineage artifactType={} runnerExecutionId={} workflowRunId={}",
+            typeValue,
             runnerExecutionId,
             workflowRunId);
       }
@@ -2746,13 +2755,25 @@ public class RunnerBroker {
       // the
       // ACTUAL refs (follow-on UPDATE).
       RepositoryWorkspaceService.RepositoryPushOutcome actual = pushOutcome.get();
+      // Story 3g follow-up (proutput-advisory-review-missing-diff) — prefer the AUTHORITATIVE diff
+      // captured by captureAndPush (the backend owns git) over the runner's scratch diffReference
+      // (which today's runners never write). Embedding it lets the OFFLINE pr-output advisory
+      // reviewer inspect the changes instead of failing "not reviewable". Bounded to the same caps
+      // as
+      // the scratch path; falls back to the scratch-resolved diff when captureAndPush captured
+      // none.
+      String effectiveDiff =
+          actual.diff() != null && !actual.diff().isBlank()
+              ? boundPrOutputDiff(
+                  actual.diff(), runnerExecutionId, workflowRunId, prOutputArtifactId)
+              : resolvedDiff;
       enrichPrOutputArtifact(
           runnerExecutionId,
           workflowRunId,
           prOutputArtifactId,
           prRef,
           actual,
-          resolvedDiff,
+          effectiveDiff,
           correlationId);
       // Story 3.15 (Task 7) — promote the dormant linkage seam: write the durable github_pr
       // integration_links row + integration.linked event from the AUTHORITATIVE captureAndPush refs
@@ -3218,7 +3239,6 @@ public class RunnerBroker {
       return Optional.empty();
     }
     byte[] raw = maybeBytes.get();
-    int originalBytes = raw.length;
     String diff = new String(raw, StandardCharsets.UTF_8);
     if (diff.isBlank()) {
       // A present-but-empty/whitespace-only scratch file carries no diff to render. Treat it
@@ -3234,6 +3254,18 @@ public class RunnerBroker {
           diffReference);
       return Optional.empty();
     }
+    return Optional.of(boundPrOutputDiff(diff, runnerExecutionId, workflowRunId, artifactId));
+  }
+
+  /**
+   * Story 3b-5 — bound a raw prOutput unified diff to the embed caps (max lines/bytes + truncation
+   * marker) so the embedded payload stays within the runner-result size cap. Shared by the scratch
+   * diffReference path ({@link #resolvePrOutputDiff}) and the AUTHORITATIVE captureAndPush diff
+   * path (the pr-output enrichment) so both embed identically bounded content.
+   */
+  private String boundPrOutputDiff(
+      String rawDiff, String runnerExecutionId, String workflowRunId, String artifactId) {
+    String diff = rawDiff;
     int originalLines = countLines(diff);
     boolean truncated = false;
     if (originalLines > PR_OUTPUT_DIFF_MAX_LINES) {
@@ -3249,24 +3281,22 @@ public class RunnerBroker {
     if (truncated) {
       log.warn(
           "onResult prOutput diff truncated runnerExecutionId={} workflowRunId={} artifactId={} "
-              + "originalLines={} originalBytes={} storedBytes={}",
+              + "originalLines={} storedBytes={}",
           runnerExecutionId,
           workflowRunId,
           artifactId,
           originalLines,
-          originalBytes,
           storedBytes);
     }
     log.info(
         "onResult prOutput diff resolved runnerExecutionId={} workflowRunId={} artifactId={} "
-            + "diffReference={} lineCount={} byteSize={}",
+            + "lineCount={} byteSize={}",
         runnerExecutionId,
         workflowRunId,
         artifactId,
-        diffReference,
         Math.min(originalLines, PR_OUTPUT_DIFF_MAX_LINES),
         storedBytes);
-    return Optional.of(diff);
+    return diff;
   }
 
   private static int countLines(String value) {

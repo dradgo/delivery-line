@@ -312,6 +312,25 @@ public class CliGitAdapter implements GitCommandPort {
   }
 
   @Override
+  public String diff(Path repoDir, String baseRef) {
+    Objects.requireNonNull(repoDir, "repoDir");
+    Objects.requireNonNull(baseRef, "baseRef");
+    // `git diff baseRef...HEAD` — changes on HEAD since it diverged from baseRef (three-dot:
+    // against
+    // the merge base, so unrelated baseRef advances don't pollute the diff). Local op (no network).
+    GitResult result =
+        runGit(repoDir, null, localTimeoutSeconds, List.of("diff", baseRef + "...HEAD"));
+    if (!result.succeeded()) {
+      throw new GitCommandException(
+          IntegrationFailureCategory.GIT_NETWORK_FAILURE,
+          "git diff " + baseRef + "...HEAD failed: " + result.redactedOutput());
+    }
+    // Return the full redacted diff (not just the first line); may be empty when there are no
+    // changes vs the base.
+    return result.redactedOutput() == null ? "" : result.redactedOutput();
+  }
+
+  @Override
   public PushResult push(Path repoDir, String branch, String githubToken) {
     Objects.requireNonNull(repoDir, "repoDir");
     requireBranch(branch);
@@ -499,6 +518,18 @@ public class CliGitAdapter implements GitCommandPort {
    */
   static IntegrationFailureCategory classifyPushFailure(String redactedOutput) {
     String lower = redactedOutput == null ? "" : redactedOutput.toLowerCase(Locale.ROOT);
+    // Most-specific signal first: a receive-pack rejection of a push that touches
+    // `.github/workflows/**` when the token lacks the `workflow` scope (classic PAT) /
+    // `workflows` permission (App). It arrives as "[remote rejected] ... (refusing to allow ...)"
+    // — no "permission denied"/"403" phrase — so it would otherwise fall through to the
+    // GIT_PUSH_REJECTED default and drive a misleading (non-actionable) `retry`.
+    if ((lower.contains("refusing to allow") && lower.contains("workflow"))
+        || lower.contains("without `workflow` scope")
+        || lower.contains("without workflow scope")
+        || lower.contains("`workflows` permission")
+        || lower.contains("workflows permission")) {
+      return IntegrationFailureCategory.GIT_WORKFLOW_SCOPE_MISSING;
+    }
     if (lower.contains("protected branch")
         || lower.contains("branch protection")
         || lower.contains("protected-branch")

@@ -17,8 +17,9 @@ import org.dradgo.domain.registry.RejectionTaxonomy;
  *
  * <p>{@code reviewerRole} is optional — controller defaults via {@link
  * org.dradgo.application.workflow.ApprovalReviewerRoleResolver}. {@code taggedFeedback} (story 2.10
- * {@link RejectionTaxonomy}) is required and structured; {@code reasonText} (story 2.10 widened cap
- * 512 → 1024) is free-form justification and excluded from the idempotency fingerprint.
+ * {@link RejectionTaxonomy}) is required and structured; {@code reasonText} (cap widened 512 → 1024
+ * in story 2.10, then → 16384 to accommodate detailed multi-point rejection feedback) is free-form
+ * justification and excluded from the idempotency fingerprint.
  *
  * <p>Wire field renames vs the pre-2.13 shape: {@code artifactVersion} → {@code
  * expectedArtifactVersion}, {@code contextVersion} → {@code expectedContextBundleVersion}. The
@@ -34,4 +35,4 @@ public record RejectSpecRequest(
     @NotNull @Positive Integer expectedContextBundleVersion,
     @Size(max = 128) String reviewerRole,
     @NotNull RejectionTaxonomy taggedFeedback,
-    @NotBlank @Size(max = 1024) String reasonText) {}
+    @NotBlank @Size(max = 16384) String reasonText) {}

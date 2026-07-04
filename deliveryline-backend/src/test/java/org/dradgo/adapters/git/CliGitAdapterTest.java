@@ -55,6 +55,29 @@ class CliGitAdapterTest {
   }
 
   @Test
+  void workflowScopeRejectionMapsToWorkflowScopeMissing() {
+    // GitHub receive-pack rejects a push that creates/updates a .github/workflows/** file when the
+    // token lacks the `workflow` scope. This is a permission wall, NOT a generic push rejection —
+    // a plain retry with the same token fails identically, so it must not fall through to the
+    // GIT_PUSH_REJECTED default (which drives a misleading `retry` recommendation).
+    assertThat(
+            CliGitAdapter.classifyPushFailure(
+                "remote: error: GH013: Repository rule violations found for refs/heads/x\n"
+                    + " ! [remote rejected] deliveryline/fin-35/stage-c317a1d5 -> "
+                    + "deliveryline/fin-35/stage-c317a1d5 (refusing to allow a Personal Access "
+                    + "Token to create or update workflow `.github/workflows/build.yml` without "
+                    + "`workflow` scope)"))
+        .isEqualTo(IntegrationFailureCategory.GIT_WORKFLOW_SCOPE_MISSING);
+    // GitHub App variant of the same wall ("Workflows:write" is surfaced as `workflows`
+    // permission).
+    assertThat(
+            CliGitAdapter.classifyPushFailure(
+                " ! [remote rejected] main -> main (refusing to allow a GitHub App to create or "
+                    + "update workflow `.github/workflows/ci.yml` without `workflows` permission)"))
+        .isEqualTo(IntegrationFailureCategory.GIT_WORKFLOW_SCOPE_MISSING);
+  }
+
+  @Test
   void networkSignalMapsToNetworkFailure() {
     assertThat(
             CliGitAdapter.classifyPushFailure(

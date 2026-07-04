@@ -861,6 +861,38 @@ class RecoveryServiceUnitTest {
   }
 
   @Test
+  void describeFailureOnWorkflowScopeGitFailureReturnsAwaitManualReconciliation() {
+    // A push rejected for lacking the `workflow` token scope cannot be cleared by retrying with the
+    // same token — describeFailure must recommend manual remediation, not `retry`, even though the
+    // coarse FailureCategory is the usual RUNNER_CONTRACT_VIOLATION and no artifact-op conflict
+    // exists (the branch that would otherwise land on `retry`).
+    stubFailedRun();
+    when(eventReadPort.findLatestFailureEvent(RUN))
+        .thenReturn(
+            Optional.of(
+                new WorkflowEventRecord(
+                    "evt_failure-scope1",
+                    RUN,
+                    WorkflowEventType.RUNNER_FAILED,
+                    WorkflowState.EXECUTING,
+                    WorkflowState.FAILED,
+                    "system",
+                    ActorType.SYSTEM,
+                    "git_push_rejected",
+                    FailureCategory.RUNNER_CONTRACT_VIOLATION,
+                    false,
+                    FAILURE_AT,
+                    Map.of("gitFailureCategory", "git_workflow_scope_missing"))));
+    stubLastFailedRunner(RunnerStage.EXECUTION);
+    when(eventReadPort.findLatestCorrelationId(RUN)).thenReturn(Optional.empty());
+    when(artifactOperationPort.hasFailedOrFailedOrphanForRun(RUN)).thenReturn(false);
+
+    FailureDescription failure = service.describeFailure(RUN);
+
+    assertEquals("await_manual_reconciliation", failure.nextSafeAction());
+  }
+
+  @Test
   void describeFailureOnExecutingRunReturnsAwaitOutcomeAndNullDiagnostics() {
     when(runReadPort.findByPublicId(RUN))
         .thenReturn(
