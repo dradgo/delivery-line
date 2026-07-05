@@ -1089,6 +1089,38 @@ final class ArchitectureRuleCatalog {
               .haveNameMatching(
                   "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService\\$(RunnerQueueStatus|WorkerStatus)"));
 
+  /**
+   * Story 4.1 (AC9) — the operator fleet views ({@code
+   * WorkflowInspectionService.OperatorRunSummary} + {@code .OperatorRunRow}, nested in {@code
+   * application.workflow}) may be referenced ONLY from {@code WorkflowInspectionService} (the
+   * producer), the CLI {@code OperatorCommands} consumer, and the {@code WorkflowCommandOutputs}
+   * renderer. Mirror of {@link
+   * #RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS}. Keeps the {@code
+   * operator status} read on the single {@code getOperatorRunSummary} seam and the SPI-layer
+   * snapshots ({@code OperatorRunAggregate}/{@code OperatorRunRowSnapshot}) — which stay in {@code
+   * application.workflow.spi} — out of the CLI (story 4.1 Reconciliation 2). There is no REST
+   * translator in 4.1 (CLI-only), so unlike the 3.19 mirror the allow-list carries no {@code
+   * adapters.rest} entry.
+   */
+  static final ArchRule OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI =
+      namedRule(
+          "OperatorRunSummary / OperatorRunRow may only be referenced from WorkflowInspectionService (application) and the CLI operator-status surface (OperatorCommands + WorkflowCommandOutputs)",
+          "Remediation: route all operator fleet-view reading through WorkflowInspectionService.getOperatorRunSummary (story 4.1 AC9). The CLI must not reach the SPI snapshots (OperatorRunAggregate/OperatorRunRowSnapshot) — those stay in application.workflow.spi.",
+          noClasses()
+              .that()
+              .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.OperatorCommands(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkflowCommandOutputs(\\$.*)?")
+              .should()
+              .dependOnClassesThat()
+              .haveNameMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService\\$(OperatorRunSummary|OperatorRunRow)"));
+
   private ArchitectureRuleCatalog() {}
 
   private static ArchRule namedRule(String name, String remediationHint, ArchRule rule) {

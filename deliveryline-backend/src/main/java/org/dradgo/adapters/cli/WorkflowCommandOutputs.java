@@ -9,6 +9,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
+import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunRow;
+import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunSummary;
 import org.dradgo.application.workflow.WorkflowInspectionService.RunnerQueueStatus;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkerStatus;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventView;
@@ -16,6 +18,7 @@ import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistory
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -40,6 +43,7 @@ public class WorkflowCommandOutputs {
   static final int STATUS_SCHEMA_VERSION = 1;
   static final int HISTORY_SCHEMA_VERSION = 1;
   static final int QUEUE_STATUS_SCHEMA_VERSION = 1;
+  static final int OPERATOR_STATUS_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
   // rules in infra/observability/prometheus/alerts.yml (warn 50 / critical 200). The stale-count
@@ -51,6 +55,7 @@ public class WorkflowCommandOutputs {
   private static final String ESC = Character.toString((char) 27);
   private static final String ANSI_YELLOW = ESC + "[33m";
   private static final String ANSI_RED = ESC + "[31m";
+  private static final String ANSI_DIM = ESC + "[2m";
   private static final String ANSI_RESET = ESC + "[0m";
 
   private final ObjectMapper objectMapper;
@@ -332,6 +337,134 @@ public class WorkflowCommandOutputs {
     }
     payload.put("workers", workers);
     return writeJson(payload);
+  }
+
+  /**
+   * Story 4.1 (AC4) — text rendering of the operator fleet summary. A machine-friendly header
+   * (histograms + total + oldest-entry age) then one grep-safe line per run. {@code ansi} gates the
+   * color codes (red for failed/orphaned rows, yellow for stalled, dim for takenover) — the caller
+   * passes {@code true} only for an interactive TTY in text mode. The color-independent signifier
+   * is a leading UPPERCASE bracketed state label ({@code [FAILED]}/{@code [STALLED]}/{@code
+   * [ORPHANED]}/{@code [TAKENOVER]}) that survives ANSI stripping (story 2.3 AC5 convention —
+   * Reconciliation 9); every free-form field routes through {@link #escapeForText} for grep/awk
+   * safety.
+   */
+  public String renderOperatorSummaryText(OperatorRunSummary view, boolean ansi) {
+    StringBuilder out = new StringBuilder();
+    out.append("total: ").append(view.total()).append('\n');
+    out.append("oldest entry: ").append(formatTimestamp(view.oldestEntryAt())).append('\n');
+    out.append("by state:");
+    if (view.byState().isEmpty()) {
+      out.append(" (none)");
+    } else {
+      for (Map.Entry<WorkflowState, Integer> entry : view.byState().entrySet()) {
+        out.append("\n  ").append(entry.getKey().value()).append(": ").append(entry.getValue());
+      }
+    }
+    out.append('\n').append("by failure category:");
+    if (view.byFailureCategory().isEmpty()) {
+      out.append(" (none)");
+    } else {
+      view.byFailureCategory()
+          .forEach(
+              (category, count) ->
+                  out.append("\n  ").append(category.value()).append(": ").append(count));
+    }
+    out.append('\n').append("runs:");
+    if (view.runs().isEmpty()) {
+      out.append(" (none)");
+    } else {
+      for (OperatorRunRow row : view.runs()) {
+        out.append("\n  ")
+            .append(operatorLabel(row, ansi))
+            .append(' ')
+            .append(escapeForText(row.runId()))
+            .append(" state=")
+            .append(row.currentState().value())
+            .append(" failureCategory=")
+            .append(escapeForText(row.failureCategory()))
+            .append(" lastTransitionAt=")
+            .append(formatTimestamp(row.lastTransitionAt()))
+            .append(" actor=")
+            .append(escapeForText(row.actorIdentity()))
+            .append(" ticket=")
+            .append(escapeForText(row.linkedTicketRef()))
+            .append(" pr=")
+            .append(escapeForText(row.linkedPrRef()))
+            .append(" escalation=")
+            .append(row.escalationMarker())
+            .append(" oldestEventAt=")
+            .append(formatTimestamp(row.oldestEventAt()));
+      }
+    }
+    return out.toString();
+  }
+
+  /**
+   * Story 4.1 (AC5) — stable-schema JSON for the operator fleet summary. No ANSI ever; {@code
+   * schemaVersion} pins backward compatibility (additive within v1; any removal/rename bumps v2).
+   * The two histograms render as objects keyed by the state / failure-category wire strings.
+   */
+  public String renderOperatorSummaryJson(OperatorRunSummary view) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_STATUS_SCHEMA_VERSION);
+    payload.put("total", view.total());
+    payload.put(
+        "oldestEntryAt",
+        view.oldestEntryAt() == null ? null : canonicalUtcIso(view.oldestEntryAt()));
+    Map<String, Object> byState = new LinkedHashMap<>();
+    view.byState().forEach((state, count) -> byState.put(state.value(), count));
+    payload.put("byState", byState);
+    Map<String, Object> byFailureCategory = new LinkedHashMap<>();
+    view.byFailureCategory()
+        .forEach((category, count) -> byFailureCategory.put(category.value(), count));
+    payload.put("byFailureCategory", byFailureCategory);
+    java.util.List<Map<String, Object>> runs = new java.util.ArrayList<>();
+    for (OperatorRunRow row : view.runs()) {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("runId", row.runId());
+      entry.put("currentState", row.currentState().value());
+      entry.put("failureCategory", row.failureCategory());
+      entry.put(
+          "lastTransitionAt",
+          row.lastTransitionAt() == null ? null : canonicalUtcIso(row.lastTransitionAt()));
+      entry.put("actorIdentity", row.actorIdentity());
+      entry.put("linkedTicketRef", row.linkedTicketRef());
+      entry.put("linkedPrRef", row.linkedPrRef());
+      entry.put("escalationMarker", row.escalationMarker());
+      entry.put(
+          "oldestEventAt",
+          row.oldestEventAt() == null ? null : canonicalUtcIso(row.oldestEventAt()));
+      runs.add(entry);
+    }
+    payload.put("runs", runs);
+    return writeJson(payload);
+  }
+
+  /**
+   * The UPPERCASE bracketed signifier + its (optional) ANSI color. The label is the server-derived
+   * {@link OperatorRunRow#operatorSignifier()} (which knows the matched predicate — story 4.1 AC4 /
+   * Reconciliation 9), NOT re-derived from {@code currentState} here: that re-derivation could not
+   * emit {@code [OVERRIDDEN]} and mislabeled an active overridden run as {@code [STALLED]}. Color
+   * follows AC4 (red for failed/orphaned, yellow for stalled, dim for takenover); every other
+   * signifier — {@code OVERRIDDEN} and any raw state — is the bracketed label with no color. The
+   * bracketed UPPERCASE text is the color-independent signifier — it survives ANSI stripping.
+   */
+  private static String operatorLabel(OperatorRunRow row, boolean ansi) {
+    String label = row.operatorSignifier();
+    if (label == null || label.isBlank()) {
+      // Defensive fallback — the service always sets the signifier; never render an empty bracket.
+      label = row.currentState().value().toUpperCase(java.util.Locale.ROOT);
+    }
+    String color =
+        switch (label) {
+          case "FAILED", "ORPHANED" -> ANSI_RED;
+          case "STALLED" -> ANSI_YELLOW;
+          case "TAKENOVER" -> ANSI_DIM;
+          default -> null;
+        };
+    String bracketed = "[" + label + "]";
+    return ansi && color != null ? color + bracketed + ANSI_RESET : bracketed;
   }
 
   private static String colorStale(long value, boolean ansi) {

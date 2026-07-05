@@ -250,4 +250,8 @@ class ArchitectureBoundaryTest {
   static final ArchRule runner_queue_status_views_referenced_only_by_inspection_and_transports =
       ArchitectureRuleCatalog
           .RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS;
+
+  @ArchTest
+  static final ArchRule operator_run_views_referenced_only_by_inspection_and_cli =
+      ArchitectureRuleCatalog.OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI;
 }

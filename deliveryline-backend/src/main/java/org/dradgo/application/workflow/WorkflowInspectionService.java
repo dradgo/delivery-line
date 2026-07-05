@@ -5,12 +5,16 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ArtifactChecksum;
@@ -42,6 +46,10 @@ import org.dradgo.application.runner.spi.RunnerQueueCounts;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
+import org.dradgo.application.workflow.spi.OperatorRunAggregate;
+import org.dradgo.application.workflow.spi.OperatorRunQuery;
+import org.dradgo.application.workflow.spi.OperatorRunReadPort;
+import org.dradgo.application.workflow.spi.OperatorRunRowSnapshot;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
@@ -54,6 +62,7 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
@@ -183,6 +192,19 @@ public class WorkflowInspectionService {
   void setStepReviewReadPort(
       org.dradgo.application.review.spi.StepReviewReadPort stepReviewReadPort) {
     this.stepReviewReadPort = stepReviewReadPort;
+  }
+
+  // Story 4.1 (AC2/AC6) — the operator fleet read port, backing getOperatorRunSummary. Optional
+  // SETTER injection (mirroring stepReviewReadPort / runDependencyPort / projectStore) so the ~10
+  // lean `new WorkflowInspectionService(...)` unit ctors stay untouched
+  // ([[runnerproperties-record-component-fanout]]); production Spring wires
+  // OperatorRunPersistenceAdapter. Absent in lean ctors → getOperatorRunSummary throws
+  // INTERNAL_ERROR (requireOperatorPortWired), never a NullPointerException.
+  private OperatorRunReadPort operatorRunReadPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setOperatorRunReadPort(OperatorRunReadPort operatorRunReadPort) {
+    this.operatorRunReadPort = operatorRunReadPort;
   }
 
   // Story 3d-7 (FR69, AC5) — the provider-usage read service, backing getProviderUsageStatus.
@@ -854,6 +876,190 @@ public class WorkflowInspectionService {
       }
     }
     return max.isZero() ? Duration.ofSeconds(1) : max;
+  }
+
+  // Story 4.1 — operator fleet-view caps (AC3). Distinct from the listRuns 50/200 convention: an
+  // operator command can pull massive result sets, so we default 100 and hard-cap 500. Clamp (not
+  // reject) an out-of-range --limit, matching the listRuns clamp-limit convention (Dev Notes).
+  // The default limit (100) lives on the CLI @Option(defaultValue="100"); the service only clamps
+  // to
+  // [1, MAX] (listRuns convention) — no service-level default constant (removed as dead: review
+  // 4.1).
+  static final int OPERATOR_LIST_MAX_LIMIT = 500;
+
+  // Default operator-state selection when --state is omitted (AC3 / Reconciliation 5).
+  private static final Set<OperatorRunState> DEFAULT_OPERATOR_STATES =
+      Collections.unmodifiableSet(
+          EnumSet.of(OperatorRunState.FAILED, OperatorRunState.STALLED, OperatorRunState.ORPHANED));
+
+  // Story 4.1 Reconciliation 6 — the relative-duration grammar for --since. NOT ISO-8601
+  // Duration.parse (which needs `PT1H` and throws on `1h`); a small `(\d+)(m|h|d|w)` parser.
+  private static final Pattern RELATIVE_DURATION_PATTERN = Pattern.compile("(\\d+)([mhdw])");
+  private static final List<String> SINCE_SUPPORTED_FORMATS =
+      List.of("30m", "1h", "24h", "7d", "2w");
+
+  /**
+   * Story 4.1 (AC1/AC2/AC3) — the fleet-view read seam backing {@code deliveryline operator
+   * status}. Returns runs in non-happy operator states across ALL workflows with diagnostic
+   * summaries. READ-ONLY: touches no write / transition / queue / recovery path.
+   *
+   * <p>The five {@code --state} tokens are an OPERATOR-STATE vocabulary ({@link OperatorRunState}),
+   * NOT {@link WorkflowState} values (story 4.1 Reconciliation 1) — each maps to a derived
+   * predicate (Reconciliation 5). The two histograms ({@code byState} / {@code byFailureCategory}),
+   * {@code total}, and {@code oldestEntryAt} reflect the FULL matching set; {@code runs} is the
+   * {@code lastTransitionAt DESC} page capped by {@code --limit} (clamped to {@code [1,500]},
+   * default 100). All token / duration / limit resolution happens HERE so the CLI adapter stays
+   * thin (AC9).
+   *
+   * <p>AC8 (deferred): this is a prefix-free multi-run read like {@link #listRuns} — it carries NO
+   * governed {@code AllowedAction}. The {@code view_operator_status} action is deferred to E5+
+   * role-based access (Reconciliation 7); wire it into the {@code AllowedAction} registry then.
+   */
+  @Transactional(readOnly = true)
+  public OperatorRunSummary getOperatorRunSummary(OperatorRunFilter filter) {
+    Objects.requireNonNull(filter, "filter");
+    requireOperatorPortWired();
+    long start = System.nanoTime();
+    Set<OperatorRunState> states = resolveOperatorStates(filter.stateTokens());
+    Duration sinceWindow = parseRelativeDuration(filter.since());
+    int limit = Math.min(Math.max(filter.limit(), 1), OPERATOR_LIST_MAX_LIMIT);
+    Duration stallWindow = maxStaleWindow();
+    log.info(
+        "getOperatorRunSummary entry states={} sinceSeconds={} stallSeconds={} limit={}",
+        states,
+        sinceWindow == null ? null : sinceWindow.toSeconds(),
+        stallWindow.toSeconds(),
+        limit);
+
+    OperatorRunQuery query =
+        new OperatorRunQuery(
+            states.contains(OperatorRunState.FAILED),
+            states.contains(OperatorRunState.STALLED),
+            states.contains(OperatorRunState.ORPHANED),
+            states.contains(OperatorRunState.TAKENOVER),
+            states.contains(OperatorRunState.OVERRIDDEN),
+            sinceWindow,
+            stallWindow,
+            false);
+
+    OperatorRunAggregate aggregate = operatorRunReadPort.loadOperatorRunAggregate(query);
+    List<OperatorRunRowSnapshot> rows = operatorRunReadPort.listOperatorRuns(query, limit);
+
+    Map<WorkflowState, Integer> byState = new EnumMap<>(WorkflowState.class);
+    aggregate
+        .countsByState()
+        .forEach(
+            (wire, count) -> byState.put(WorkflowState.fromValue(wire, "currentState"), count));
+    Map<FailureCategory, Integer> byFailureCategory = new EnumMap<>(FailureCategory.class);
+    aggregate
+        .countsByFailureCategory()
+        .forEach(
+            (wire, count) ->
+                byFailureCategory.put(FailureCategory.fromValue(wire, "failureCategory"), count));
+
+    List<OperatorRunRow> runRows = new ArrayList<>(rows.size());
+    for (OperatorRunRowSnapshot row : rows) {
+      runRows.add(
+          new OperatorRunRow(
+              row.runId(),
+              WorkflowState.fromValue(row.currentState(), "currentState"),
+              row.failureCategory(),
+              row.lastTransitionAt(),
+              row.actorIdentity(),
+              row.linkedTicketRef(),
+              row.linkedPrRef(),
+              row.escalationMarker(),
+              row.oldestEventAt(),
+              row.operatorSignifier()));
+    }
+
+    OperatorRunSummary summary =
+        new OperatorRunSummary(
+            aggregate.total(), byState, byFailureCategory, aggregate.oldestEntryAt(), runRows);
+    log.info(
+        "getOperatorRunSummary success total={} returnedRows={} durationMs={}",
+        summary.total(),
+        runRows.size(),
+        (System.nanoTime() - start) / 1_000_000L);
+    return summary;
+  }
+
+  private void requireOperatorPortWired() {
+    if (operatorRunReadPort == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "operator_run_read_port_not_wired");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "OperatorRunReadPort is not wired; getOperatorRunSummary requires the persistence adapter",
+          details);
+    }
+  }
+
+  /**
+   * Resolve the raw comma-split {@code --state} tokens to the operator-state predicate set. Empty
+   * (no flag) → the default {@code {failed,stalled,orphaned}}; an unknown token raises {@code
+   * INVALID_COMMAND_PAYLOAD} (story 4.1 Reconciliation 7).
+   */
+  private Set<OperatorRunState> resolveOperatorStates(List<String> tokens) {
+    if (tokens == null || tokens.isEmpty()) {
+      return DEFAULT_OPERATOR_STATES;
+    }
+    Set<OperatorRunState> resolved = EnumSet.noneOf(OperatorRunState.class);
+    for (String token : tokens) {
+      if (token == null || token.isBlank()) {
+        continue;
+      }
+      resolved.add(OperatorRunState.fromToken(token.trim()));
+    }
+    return resolved.isEmpty() ? DEFAULT_OPERATOR_STATES : resolved;
+  }
+
+  /**
+   * Parse a relative {@code --since} token ({@code (\d+)(m|h|d|w)} → {@link Duration}); {@code
+   * null}/blank → no time filter. Invalid → {@code INVALID_COMMAND_PAYLOAD} with {@code
+   * details{since, supportedFormats}} (story 4.1 Reconciliation 6).
+   */
+  private Duration parseRelativeDuration(String since) {
+    if (since == null || since.isBlank()) {
+      return null;
+    }
+    String trimmed = since.trim();
+    Matcher matcher = RELATIVE_DURATION_PATTERN.matcher(trimmed);
+    if (!matcher.matches()) {
+      throw invalidSince(trimmed);
+    }
+    long amount;
+    try {
+      amount = Long.parseLong(matcher.group(1));
+    } catch (NumberFormatException overflow) {
+      throw invalidSince(trimmed);
+    }
+    if (amount <= 0) {
+      throw invalidSince(trimmed);
+    }
+    try {
+      // A big-but-parseable amount (e.g. 999999999999999d) overflows Duration's internal
+      // Math.multiplyExact — surface it as INVALID_COMMAND_PAYLOAD, not a raw ArithmeticException.
+      // The week case multiplies explicitly, so use multiplyExact there too (never a silent wrap).
+      return switch (matcher.group(2)) {
+        case "m" -> Duration.ofMinutes(amount);
+        case "h" -> Duration.ofHours(amount);
+        case "d" -> Duration.ofDays(amount);
+        case "w" -> Duration.ofDays(Math.multiplyExact(amount, 7L));
+        default -> throw invalidSince(trimmed);
+      };
+    } catch (ArithmeticException overflow) {
+      throw invalidSince(trimmed);
+    }
+  }
+
+  private DomainException invalidSince(String since) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("since", since);
+    details.put("supportedFormats", SINCE_SUPPORTED_FORMATS);
+    log.warn("getOperatorRunSummary invalid --since value since={}", MdcKeys.sanitizeForLog(since));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported --since value: " + since, details);
   }
 
   /**
@@ -3139,4 +3345,108 @@ public class WorkflowInspectionService {
       String currentWorkflowRunId,
       OffsetDateTime dispatchedAt,
       String currentStage) {}
+
+  /**
+   * Story 4.1 (AC1/AC3) — the OPERATOR-STATE filter vocabulary for {@code deliveryline operator
+   * status --state}. A plain application-layer enum, NOT a {@code domain.registry.RegistryValue}:
+   * it is a CLI filter vocabulary, not a wire-contract-governed value, so it needs no drift test /
+   * placeholder manifest / {@code RegistryContractTest} entry (avoids the
+   * [[new-domainerrorcode-three-sites]] fan-out — story 4.1 Reconciliation 1). Each token maps to a
+   * DERIVED query predicate (Reconciliation 5), NOT to a {@link WorkflowState} (there is no {@code
+   * Stalled}/{@code Orphaned}/{@code Overridden} state).
+   */
+  public enum OperatorRunState {
+    FAILED("failed"),
+    STALLED("stalled"),
+    ORPHANED("orphaned"),
+    TAKENOVER("takenover"),
+    OVERRIDDEN("overridden");
+
+    private final String token;
+
+    OperatorRunState(String token) {
+      this.token = token;
+    }
+
+    /** The lowercase wire token accepted on {@code --state}. */
+    public String token() {
+      return token;
+    }
+
+    /**
+     * Resolve a raw {@code --state} token; an unknown value raises {@code INVALID_COMMAND_PAYLOAD}
+     * with {@code details{state, supportedTokens}} (story 4.1 Reconciliation 7).
+     */
+    public static OperatorRunState fromToken(String raw) {
+      if (raw != null) {
+        String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        for (OperatorRunState candidate : values()) {
+          if (candidate.token.equals(normalized)) {
+            return candidate;
+          }
+        }
+      }
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("state", raw);
+      List<String> supported = new ArrayList<>();
+      for (OperatorRunState value : values()) {
+        supported.add(value.token);
+      }
+      details.put("supportedTokens", supported);
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported --state token: " + raw, details);
+    }
+  }
+
+  /**
+   * Story 4.1 (AC3) — the raw parsed CLI filter handed from {@code OperatorCommands} to {@link
+   * #getOperatorRunSummary}. Carries the un-resolved inputs (comma-split state tokens, the relative
+   * {@code --since} token, the requested limit); ALL token/duration/limit resolution happens inside
+   * the service so the adapter stays thin (AC9).
+   *
+   * @param stateTokens comma-split {@code --state} tokens (empty → default {@code
+   *     failed,stalled,orphaned})
+   * @param since the raw {@code --since} relative-duration token, or {@code null}/blank for no
+   *     window
+   * @param limit the requested row cap (clamped to {@code [1,500]} in the service)
+   */
+  public record OperatorRunFilter(List<String> stateTokens, String since, int limit) {}
+
+  /**
+   * Story 4.1 (AC2) — one fleet row. Nullable reference fields ({@code failureCategory}, {@code
+   * lastTransitionAt}, {@code actorIdentity}, {@code linkedTicketRef}, {@code linkedPrRef}, {@code
+   * oldestEventAt}) are plain nullable references (repo convention — NOT {@code
+   * Optional}/{@code @Nullable}). {@code currentState} is the {@link WorkflowState} enum so
+   * transports can format either the enum or its wire string. {@code operatorSignifier} is the
+   * server-derived UPPERCASE display token ({@code ORPHANED}/{@code FAILED}/{@code
+   * TAKENOVER}/{@code STALLED}/{@code OVERRIDDEN}/else the uppercased state) the text renderer
+   * brackets — carried on the row so the renderer never re-derives (and mislabels) from {@code
+   * currentState} alone.
+   */
+  public record OperatorRunRow(
+      String runId,
+      WorkflowState currentState,
+      String failureCategory,
+      OffsetDateTime lastTransitionAt,
+      String actorIdentity,
+      String linkedTicketRef,
+      String linkedPrRef,
+      boolean escalationMarker,
+      OffsetDateTime oldestEventAt,
+      String operatorSignifier) {}
+
+  /**
+   * Story 4.1 (AC2) — the operator fleet summary view. {@code byState} / {@code byFailureCategory}
+   * are {@code EnumMap}s over the FULL matching set (independent of {@code --limit}); {@code
+   * byFailureCategory} is populated only when the state filter includes {@code failed}/{@code
+   * orphaned}. {@code oldestEntryAt} is {@code null} when the matched set is empty (never coalesced
+   * to a synthetic value). {@code runs} is the {@code lastTransitionAt DESC} page capped by {@code
+   * --limit}.
+   */
+  public record OperatorRunSummary(
+      int total,
+      Map<WorkflowState, Integer> byState,
+      Map<FailureCategory, Integer> byFailureCategory,
+      OffsetDateTime oldestEntryAt,
+      List<OperatorRunRow> runs) {}
 }
