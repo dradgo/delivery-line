@@ -323,6 +323,31 @@ here.
 
 ---
 
+## Epic 3h vocabulary (pre-review quality gates)
+
+### build stage
+
+A pre-review **build-validation** gate (`RunnerStage.BUILD`, FR75, story 3h-1). When a governed
+project has a **build command** configured and the stage is enabled, the produced code is
+compiled/built **before it is pushed or reviewed**, so review and delivery only ever see buildable
+code. Per the [ADR 0030](adr/0030-governed-delivery-tail.md) amendment, BUILD executes
+**backend-side** — a `ProcessBuilder` (behind the `BuildCommandPort` SPI) runs the command in the
+already-materialized host workspace, **not** inside the runner container. It is still recorded as a
+`runner_executions` row (`stage = 'build'`) reusing the story-3.6 raw-output capture + the 3d-5
+per-step step/log view, but it runs **no LLM** and therefore records **zero token/provider usage**
+(its token columns stay `NULL`). **Default disabled** — a project with no build config skips BUILD
+entirely (byte-identical to pre-3h). A non-zero build exit drives a **bounded auto-fix loop**: the
+implementation runner is re-dispatched with the redaction-policed build-error log attached as a
+`build.failure` referenced feedback entry, capped by `build-fix-max-loops` (default 3); on the
+attempt that reaches the cap the run transitions to `FAILED` with the `runner_build_failed`
+`FailureCategory` and the shared per-run escalation marker is flipped once, leaving the run for
+Epic-4 recovery. The code is **never** pushed past an unresolved build failure.
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md),
+[`adr/0032-replay-safe-aftercommit-helper.md`](adr/0032-replay-safe-aftercommit-helper.md).
+
+---
+
 ## Linked from
 
 This glossary is referenced from:

@@ -135,6 +135,8 @@ public class ProjectController {
             request.openspecEnabled(),
             request.runnerKind(),
             request.stepRunnerKinds(),
+            request.buildStageEnabled(),
+            request.buildCommand(),
             idempotencyKey,
             actorIdentity);
     log.info(
@@ -237,6 +239,8 @@ public class ProjectController {
             request.runnerKind(),
             request.reviewerModelKind(),
             request.stepRunnerKinds(),
+            request.buildStageEnabled(),
+            request.buildCommand(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
   }
@@ -467,7 +471,11 @@ public class ProjectController {
             nullSafe(command.repoHostKind()),
             Boolean.toString(command.openspecEnabled()),
             nullSafe(command.runnerKind()),
-            canonicalStepRunnerKinds(command.stepRunnerKinds()));
+            canonicalStepRunnerKinds(command.stepRunnerKinds()),
+            // Story 3h-1 (AC2) — both build-config fields MUST be part of the create fingerprint,
+            // else two creates differing only in build config would collide as idempotent replays.
+            Boolean.toString(command.buildStageEnabled()),
+            nullSafe(command.buildCommand()));
     return sha256Hex(canonical);
   }
 

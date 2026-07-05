@@ -47,4 +47,17 @@ public record UpdateProjectRequest(
                     + "Omit or send empty to clear all per-step mappings.",
             nullable = true,
             example = "{\"spec\":\"codex\",\"prOutput\":\"manual\"}")
-        Map<String, String> stepRunnerKinds) {}
+        Map<String, String> stepRunnerKinds,
+    @Schema(
+            description =
+                "Story 3h-1 — whether the pre-review build-validation stage runs for this project. "
+                    + "Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.",
+            example = "false")
+        boolean buildStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-1 — optional build command run backend-side in the workspace before review "
+                    + "(null/empty = no build, BUILD skipped even if enabled).",
+            nullable = true,
+            example = "mvn -q -DskipTests package")
+        String buildCommand) {}

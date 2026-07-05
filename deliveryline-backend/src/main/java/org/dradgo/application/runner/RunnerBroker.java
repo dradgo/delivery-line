@@ -125,6 +125,14 @@ public class RunnerBroker {
   private final java.util.function.Supplier<
           org.dradgo.application.workflow.WorkflowOrchestrationService>
       workflowOrchestrationServiceSupplier;
+  // Story 3h-1 (AC3) — the pre-review build gate, resolved LAZILY through a Supplier so the
+  // broker↔build-stage constructor cycle is broken (BuildStageService reaches the broker's tail via
+  // a continuation lambda; the broker calls tryGateBehindBuild here). Supplies null in the
+  // package-private test ctors and lean contexts, so mock/no-build dispatches run the inline tail
+  // unchanged: handleSuccess gates behind BUILD only when the resolved value is present AND the
+  // terminal execution was a PR_OUTPUT sub-stage with build config + a workspace.
+  private final java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>
+      buildStageServiceSupplier;
   // Story 3.10 (OQ-1) — resolves the run's Linear ticketRef for the EXECUTION-stage deterministic
   // branch (story 3.9 AC2) so prepareWorkspace checks out the right branch and captureAndPush
   // pushes
@@ -306,7 +314,12 @@ public class RunnerBroker {
       // ctors stable; resolves to null when the bean is absent (lean/mock contexts) → no-op ingest.
       org.springframework.beans.factory.ObjectProvider<
               org.dradgo.application.clarification.ClarificationIngestService>
-          clarificationIngestServiceProvider) {
+          clarificationIngestServiceProvider,
+      // Story 3h-1 (AC3) — the pre-review build gate. ObjectProvider keeps the package-private test
+      // ctors stable; resolves to null when the bean is absent (lean/mock contexts) → inline tail.
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.BuildStageService>
+          buildStageServiceProvider) {
     this(
         recordPort,
         eventPort,
@@ -335,7 +348,10 @@ public class RunnerBroker {
         // broker), but kept lazy for ctor-stability symmetry with the other callbacks.
         (java.util.function.Supplier<
                 org.dradgo.application.clarification.ClarificationIngestService>)
-            clarificationIngestServiceProvider::getIfAvailable);
+            clarificationIngestServiceProvider::getIfAvailable,
+        // Story 3h-1 — lazy: resolved at handleSuccess time (breaks the broker↔build-stage cycle).
+        (java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>)
+            buildStageServiceProvider::getIfAvailable);
   }
 
   RunnerBroker(
@@ -373,6 +389,7 @@ public class RunnerBroker {
         null,
         () -> null,
         null,
+        () -> null,
         () -> null,
         () -> null);
   }
@@ -415,6 +432,7 @@ public class RunnerBroker {
         () -> null,
         null,
         () -> null,
+        () -> null,
         () -> null);
   }
 
@@ -441,7 +459,9 @@ public class RunnerBroker {
       java.util.function.Supplier<org.dradgo.application.integration.IntegrationLinkService>
           integrationLinkServiceSupplier,
       java.util.function.Supplier<org.dradgo.application.clarification.ClarificationIngestService>
-          clarificationIngestServiceSupplier) {
+          clarificationIngestServiceSupplier,
+      java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>
+          buildStageServiceSupplier) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -475,6 +495,8 @@ public class RunnerBroker {
         clarificationIngestServiceSupplier == null
             ? () -> null
             : clarificationIngestServiceSupplier;
+    this.buildStageServiceSupplier =
+        buildStageServiceSupplier == null ? () -> null : buildStageServiceSupplier;
     this.objectMapper = new ObjectMapper();
   }
 
@@ -518,6 +540,7 @@ public class RunnerBroker {
         repositoryWorkspaceService,
         () -> workflowOrchestrationService,
         null,
+        () -> null,
         () -> null,
         () -> null);
   }
@@ -2149,6 +2172,82 @@ public class RunnerBroker {
     // RuntimeExceptions).
     captureTokenUsage(workflowRunId, runnerExecutionId, parsed);
 
+    // Story 3.12 (AC1 / Task 3) — derive the EXECUTION sub-stage ONCE (drives the build-gate
+    // decision below + the deferred/inline delivery tail). Null for non-EXECUTION stages. The
+    // sub-stage is run-level (driven by "an approved plan exists") and stable mid-execution.
+    ExecutionSubStage executionSubStage =
+        row.stage() == RunnerStage.EXECUTION
+            ? contextBundleService.deriveExecutionSubStage(workflowRunId)
+            : null;
+
+    // Story 3h-1 (AC3) — when the build gate applies to a PR_OUTPUT success, defer the delivery
+    // tail
+    // (captureAndPush + WaitingForReview + reviewer enqueue) behind a backend-side BUILD run:
+    // BuildStageService reserves a BUILD execution row + registers the afterCommit build hook, and
+    // the tail runs (via the continuation below) only on BUILD success. When the gate does not
+    // apply
+    // (disabled / no command / no workspace / non-pr-output / no build service) the tail runs
+    // INLINE
+    // exactly where captureAndPush fired pre-3h (byte-identical). 3h-4 later moves this behind the
+    // WaitingForDelivery gate.
+    final String prOutputArtifactIdFinal = prOutputArtifactId;
+    final String prOutputResolvedDiffFinal = prOutputResolvedDiff;
+    final ExecutionSubStage executionSubStageFinal = executionSubStage;
+    org.dradgo.application.workflow.BuildStageService buildStageService =
+        buildStageServiceSupplier.get();
+    boolean gatedBehindBuild = false;
+    if (buildStageService != null
+        && row.stage() == RunnerStage.EXECUTION
+        && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+      gatedBehindBuild =
+          buildStageService.tryGateBehindBuild(
+              workflowRunId,
+              runnerExecutionId,
+              correlationId,
+              () ->
+                  completeExecutionTailAndAdvance(
+                      runnerExecutionId,
+                      workflowRunId,
+                      row,
+                      parsed,
+                      correlationId,
+                      prOutputArtifactIdFinal,
+                      prOutputResolvedDiffFinal,
+                      executionSubStageFinal));
+    }
+    if (!gatedBehindBuild) {
+      completeExecutionTailAndAdvance(
+          runnerExecutionId,
+          workflowRunId,
+          row,
+          parsed,
+          correlationId,
+          prOutputArtifactId,
+          prOutputResolvedDiff,
+          executionSubStage);
+    }
+  }
+
+  /**
+   * Story 3h-1 (Task 6, AC3) — the delivery tail extracted so a build gate can precede it:
+   * captureAndPush (with git-push-failure handling) + pr-output validate/enrich + recordCompleted +
+   * RUNNER_COMPLETED + the stage auto-advance (onSpecStageSucceeded / onPlanStageSucceeded /
+   * onPrOutputStageSucceeded). Runs INLINE where captureAndPush fired pre-3h (byte-identical) when
+   * the build gate does not apply, or as the deferred continuation invoked by {@code
+   * BuildStageService} on BUILD success when it does. Package-private so BuildStageService's
+   * continuation (a broker-side lambda) can reach it; 3h-4 later moves this seam behind the
+   * WaitingForDelivery gate — keep it a single clean call site.
+   */
+  void completeExecutionTailAndAdvance(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerExecutionSnapshot row,
+      JsonNode parsed,
+      String correlationId,
+      String prOutputArtifactId,
+      String prOutputResolvedDiff,
+      ExecutionSubStage executionSubStage) {
+    JsonNode artifactRefs = parsed.path("artifactReferences");
     // Story 3.9 (Decision D0 / OQ-2): if this run had a repo workspace, commit the runner-produced
     // changes, push the branch, and open/update the PR BEFORE marking the execution completed. A
     // push rejection surfaces as a typed GitCommandException (AC7) which we map onto the EXISTING
@@ -2193,16 +2292,6 @@ public class RunnerBroker {
         return;
       }
     }
-
-    // Story 3.12 (AC1 / Task 3) — derive the EXECUTION sub-stage ONCE here (reused by the pr-output
-    // validation/enrichment below AND by the success delegation at the bottom). Null for
-    // non-EXECUTION
-    // stages. The sub-stage is run-level (driven by "an approved plan exists") and stable
-    // mid-execution, so a single derivation is authoritative for both uses.
-    ExecutionSubStage executionSubStage =
-        row.stage() == RunnerStage.EXECUTION
-            ? contextBundleService.deriveExecutionSubStage(workflowRunId)
-            : null;
 
     // Story 3.12 (AC3/AC9, Task 3) — for the pr-output sub-stage: validate the runner-reported
     // branch/commitSha/prReference against the documented formats (AC9 — untrusted runner output,
@@ -2639,6 +2728,10 @@ public class RunnerBroker {
       // empty set is a belt-and-braces guard — any artifactReference on a review result is
       // rejected.
       case REVIEW -> java.util.EnumSet.noneOf(ArtifactType.class);
+      // Story 3h-1 (AC1) — BUILD is command-only and runs backend-side; it emits NO artifacts-table
+      // artifact (same as REVIEW). BUILD never flows through onResult/handleSuccess in the
+      // backend-side model, so this empty set is a belt-and-braces guard.
+      case BUILD -> java.util.EnumSet.noneOf(ArtifactType.class);
     };
   }
 
@@ -3551,7 +3644,10 @@ public class RunnerBroker {
           RUNNER_LATE_RESULT,
           // Story 3.5: a secret-leak failure means a result WAS harvested + scanned then rejected,
           // so a subsequent arrival is a duplicate (not a fresh result).
-          RUNNER_SECRET_LEAK ->
+          RUNNER_SECRET_LEAK,
+          // Story 3h-1 (AC5) — a build failure means the PR_OUTPUT runner DID produce a result that
+          // was harvested + built (then failed the gate), so a subsequent arrival is a duplicate.
+          RUNNER_BUILD_FAILED ->
           true;
       case RUNNER_CRASH, RUNNER_TIMEOUT, ORPHAN -> false;
     };

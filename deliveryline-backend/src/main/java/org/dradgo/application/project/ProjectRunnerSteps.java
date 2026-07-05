@@ -46,6 +46,9 @@ public final class ProjectRunnerSteps {
         };
       }
       case REVIEW -> Optional.empty();
+      // Story 3h-1 (AC1) — BUILD runs backend-side (BuildCommandPort), not via a per-step runner
+      // kind, so there is no per-step override to resolve; fall through to none.
+      case BUILD -> Optional.empty();
     };
   }
 }

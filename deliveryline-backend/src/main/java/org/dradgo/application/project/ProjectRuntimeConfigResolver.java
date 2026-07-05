@@ -110,6 +110,36 @@ public class ProjectRuntimeConfigResolver {
   }
 
   /**
+   * Story 3h-1 (AC2/AC3) — the effective build-stage opt-in for a run: the resolved project's
+   * {@code buildStageEnabled} (seeded from {@code deliveryline.runner.build-stage.enabled},
+   * per-project overridable). The {@code default} project seeds {@code false} unless the global
+   * prop is on, so a pre-3h deployment skips BUILD entirely. Read on the worker thread — {@code
+   * Project} is a detached POJO (no lazy proxy), so this is safe outside a transaction.
+   */
+  public boolean resolveBuildStageEnabled(String workflowRunId) {
+    return resolveForRun(workflowRunId).buildStageEnabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2/AC3) — the effective build command for a run: the resolved project's
+   * per-project {@code buildCommand} when present, else the global default ({@link
+   * RunnerProperties#buildCommand()}), normalized so a blank value is treated as absent. Empty ⇒ no
+   * build command configured, so BUILD is skipped even when {@link #resolveBuildStageEnabled} is
+   * true (mirrors the {@code resolveRunnerKind} project-then-global merge).
+   */
+  public Optional<String> resolveBuildCommand(String workflowRunId) {
+    String projectCommand = resolveForRun(workflowRunId).buildCommand();
+    String effective =
+        (projectCommand == null || projectCommand.isBlank())
+            ? runnerProperties.buildCommand()
+            : projectCommand;
+    if (effective == null || effective.isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(effective.trim());
+  }
+
+  /**
    * Story 3d-3 (AC1) — the effective runner kind for a run at {@code stage}: the resolved project's
    * per-project {@code runnerKind} override when present, else the existing global per-stage kind
    * ({@link RunnerProperties#kindForStage}). The {@code default} project seeds a null override, so

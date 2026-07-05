@@ -123,13 +123,24 @@ public class DefaultProjectSeeder {
     // time via the shared RepositoryRef.normalizeRepositoryUrl, exactly like the global path did.
     String repositoryUrl = workflowProperties.repos().url();
     boolean openspecEnabled = runnerProperties.openSpecEnabled();
+    // Story 3h-1 (AC2) — seed the default project's build config from the global build-stage props.
+    // Coerce a blank command to null (Project rejects a set-but-blank command); default OFF.
+    boolean buildStageEnabled = runnerProperties.buildStageEnabled();
+    String globalBuildCommand = runnerProperties.buildCommand();
+    String buildCommand =
+        (globalBuildCommand == null || globalBuildCommand.isBlank())
+            ? null
+            : globalBuildCommand.trim();
 
     log.info(
-        "seeding default project from global config repoRef={} ticketKind={} repoKind={} openspec={}",
+        "seeding default project from global config repoRef={} ticketKind={} repoKind={} openspec={} "
+            + "buildStageEnabled={} buildCommandPresent={}",
         repositoryUrl,
         ticketSourceKind.value(),
         repoHostKind.value(),
-        openspecEnabled);
+        openspecEnabled,
+        buildStageEnabled,
+        buildCommand != null);
 
     Project defaultProject =
         new Project(
@@ -149,7 +160,12 @@ public class DefaultProjectSeeder {
             // byte-identical to pre-3d (never parks, never emits manual.executionRequested).
             null,
             OffsetDateTime.now(ZoneOffset.UTC),
-            null);
+            null,
+            // Story 3h-1 (AC2) — seed build config from global props (full 16-arg ctor; no per-step
+            // map so pass an empty map).
+            java.util.Map.of(),
+            buildCommand,
+            buildStageEnabled);
     try {
       Project seeded = projectStore.insert(defaultProject);
       log.info("seeded default project publicId={}", seeded.publicId());

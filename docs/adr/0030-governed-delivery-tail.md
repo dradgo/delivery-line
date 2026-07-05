@@ -1,6 +1,6 @@
 # ADR 0030 — Governed Delivery Tail (Build/Lint Gates, Review Modes, Push & PR/MR Governance, CI Investigation)
 
-**Status:** Proposed (2026-06-29) — to be confirmed during Epic 3h story creation (3h-1..3h-6)
+**Status:** Proposed (2026-06-29); **Decision 1 + Alt 1 amended by story 3h-1 (2026-07-05)** — BUILD runs backend-side (see below). Remaining decisions to be confirmed during Epic 3h story creation (3h-1..3h-6).
 **Driver:** Epic 3h (PRD FR75 build validation + auto-fix, FR76 CPU lint gate, FR77 BMAD review mode, FR78 push-mode + PR/MR governance, FR79 CI build-error investigation). Today the delivery tail is rigid and ungated: produced code flows straight to an advisory review and is then auto-pushed with an auto-created PR, with no cheap quality gates in front of the expensive language-model review and no per-project control over whether/when work is pushed.
 
 ## Context
@@ -15,7 +15,9 @@ Substrates to reuse rather than re-derive:
 
 ## Decision
 
-**1. Build and lint are command-only, no-token runner stages that run before review.** New `RunnerStage` values `BUILD` and `LINT` execute the governed project's own configured build/lint commands in the materialized workspace, capturing output through the story-3.6 path and surfacing on the 3d-5 step view. Both are per-project and **default disabled** — a project with no build/lint command configured skips them (byte-identical parity). Every exhaustive `switch(stage)` consumer gains a BUILD/LINT arm.
+**1. Build and lint are no-token runner stages that run before review.** New `RunnerStage` values `BUILD` and `LINT` execute the governed project's own configured build/lint commands, capturing output through the story-3.6 path and surfacing on the 3d-5 step view. Both are per-project and **default disabled** — a project with no build/lint command configured skips them (byte-identical parity). Every exhaustive `switch(stage)` consumer gains a BUILD/LINT arm.
+
+> **Amendment (story 3h-1, 2026-07-05) — BUILD executes BACKEND-SIDE, not as a runner-container command.** As drafted, this decision (and Alt 1) assumed a command-only runner-execution mode inside the runner container. **That rests on a false premise: there is no shell-command execution mode in the runner today** — both `runners/codex/entrypoint.sh` and `runners/claude/entrypoint.sh` *always* invoke the LLM CLI (`"$CODEX_CLI_BIN" "$@"`). Adding a command mode would mean new branches in **both** entrypoints + **both** `runner.mjs` copies + **both** offline mocks + a `happy-build.json` scenario. **Product-owner decision:** BUILD executes backend-side via a `ProcessBuilder` (behind a new `BuildCommandPort` SPI mirroring `GitCommandPort`) in the **already-materialized host workspace directory** — the same directory `RepositoryWorkspaceService.captureAndPush` resolves via `workspaceStore.resolveRepositoryDir(...)`. It is **still** recorded as a `runner_executions` row with `stage = 'build'`, and it **still** reuses the story-3.6 raw-output capture + the 3d-5 per-step view (so "zero new persistence for the execution record" holds); only the **executor and trigger** differ from an LLM stage — no Docker dispatch, no runner image, no mock scenario. Because BUILD never produces a `runner-result.v1` and never flows through `RunnerBroker.onResult`/`DockerRunnerAdapter`, it cannot hit the empty-`artifactReferences → RUNNER_CONTRACT_VIOLATION` trap, and (backend-side, no LLM) it records ZERO token/provider usage. **LINT (3h-2) is expected to follow the same backend-side model.** The build→lint→review→deliver ordering (decisions 1/3/5/6) and the ADR-0032 substrate reference are unchanged.
 
 **2. A build failure triggers a bounded auto-fix loop, then escalates.** On BUILD failure the implementation runner is re-dispatched with the build error log as a redaction-policed `priorFeedbackReferences` input; a `build_fix_loop_count` (distinct idempotency keys) is tracked with an escalation marker and a configurable cap. Cap exceeded → the run fails with a build `FailureCategory` for Epic-4 recovery — never silently pushed.
 
@@ -33,8 +35,8 @@ Substrates to reuse rather than re-derive:
 
 ## Alternatives Considered
 
-### Alt 1 — Build/lint as application-layer steps rather than runner stages
-**Rejected.** Running build/lint outside the runner-execution substrate would re-derive log capture, status tracking, and the step view. A command-only runner execution reuses all of it; the only cost is the `switch(stage)` fan-out.
+### Alt 1 — Build/lint as application-layer (backend-side) execution rather than a runner-container command
+**Adopted for BUILD by story 3h-1 (amends this ADR).** The original rejection ("running build/lint outside the runner-execution substrate would re-derive log capture, status tracking, and the step view") rested on a false premise — that a command-only runner-execution *mode* exists to reuse. It does not: both entrypoints always invoke the LLM CLI, so a runner-container command mode would be *more* work (both images + both `runner.mjs` + both mocks + a scenario), not less. The backend-side executor (`ProcessBuilder` behind `BuildCommandPort`, in the materialized host workspace) **reuses** the exact substrates the original rejection wanted to protect — it is **still** a `runner_executions` row + the story-3.6 raw-output capture + the 3d-5 step view — while avoiding the whole runner-container fan-out and the empty-artifacts → contract-violation misroute. The only cost is the `switch(stage)` fan-out (unchanged) plus a new `BuildCommandPort` SPI + adapter. See the Decision-1 amendment above.
 
 ### Alt 2 — Lint as advisory-only (no gate)
 **Rejected per the requirement.** The point of a CPU-cheap gate is to avoid spending review tokens on code that fails static analysis; an advisory linter that still proceeds to review does not save that cost. Non-critical findings remain advisory.

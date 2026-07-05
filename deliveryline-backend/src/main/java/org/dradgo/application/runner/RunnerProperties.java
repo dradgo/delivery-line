@@ -63,6 +63,13 @@ public record RunnerProperties(
     // nesting precedent); a null/absent group falls back to disabled (default OFF) so the shared
     // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
     OpenSpec openspec,
+    // Story 3h-1 (AC2, FR75) — global default build-validation config seeded into the default
+    // project (deliveryline.runner.build-stage.{enabled,command,timeout}). OPTIONAL + UNVALIDATED
+    // nested record (mirrors the openspec() precedent); a null/absent group falls back to disabled
+    // (default OFF, no command) so the shared test application.yml needs no mirror entry (Trap:
+    // [[validated-config-needs-test-yaml]]). Per-project overrides live on the Project aggregate;
+    // this is only the seed default read by DefaultProjectSeeder.
+    BuildStage buildStage,
     // Story 3.17a (AC4 / AC7) — RunnerExecutionQueue backpressure cap. The maximum number of rows
     // that may sit in status='queued' at once; enqueue beyond it raises RUNNER_QUEUE_FULL and
     // writes
@@ -113,6 +120,7 @@ public record RunnerProperties(
     implementationStage =
         implementationStage == null ? ImplementationStage.defaults() : implementationStage;
     openspec = openspec == null ? OpenSpec.defaults() : openspec;
+    buildStage = buildStage == null ? BuildStage.defaults() : buildStage;
     // Story 3.17a AC4 — clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an unset
     // primitive that bound to 0) would reject every enqueue; coerce to the minimum useful depth so
     // a
@@ -141,6 +149,7 @@ public record RunnerProperties(
         PlanStage.defaults(),
         ImplementationStage.defaults(),
         OpenSpec.defaults(),
+        BuildStage.defaults(),
         100);
   }
 
@@ -170,6 +179,13 @@ public record RunnerProperties(
           throw new IllegalStateException(
               "kindForStage must not be called for RunnerStage.REVIEW; the reviewer kind is "
                   + "per-project — use ProjectRuntimeConfigResolver.resolveReviewerKind");
+      // Story 3h-1 (AC1) — BUILD runs BACKEND-SIDE via BuildCommandPort (ProcessBuilder in the
+      // materialized workspace), never through the Docker runner, so it is NEVER runner-kind
+      // dispatched. Reaching here for BUILD is a routing bug — fail loud (same posture as REVIEW).
+      case BUILD ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.BUILD; the build stage runs "
+                  + "backend-side via BuildCommandPort and is never runner-kind dispatched");
     };
   }
 
@@ -238,6 +254,33 @@ public record RunnerProperties(
    */
   public boolean openSpecEnabled() {
     return openspec.enabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2) — the GLOBAL default build-stage opt-in ({@code
+   * deliveryline.runner.build-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
+   * default project's per-project {@code buildStageEnabled}. Default {@code false} ⇒ pre-3h parity.
+   */
+  public boolean buildStageEnabled() {
+    return buildStage.enabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2) — the GLOBAL default build command ({@code
+   * deliveryline.runner.build-stage.command}) seeded into the default project's per-project {@code
+   * buildCommand}. {@code null}/absent ⇒ no build command (BUILD skipped even if enabled).
+   */
+  public String buildCommand() {
+    return buildStage.command();
+  }
+
+  /**
+   * Story 3h-1 (AC2 / Task 3) — the bound on the backend-side build process ({@code
+   * deliveryline.runner.build-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * to 10 minutes.
+   */
+  public Duration buildTimeout() {
+    return buildStage.timeout();
   }
 
   /**
@@ -451,6 +494,34 @@ public record RunnerProperties(
 
     public static OpenSpec defaults() {
       return new OpenSpec(false);
+    }
+  }
+
+  /**
+   * Story 3h-1 (AC2, FR75) — global default build-validation config ({@code
+   * deliveryline.runner.build-stage.{enabled,command,timeout}}). Seeds the default project's
+   * per-project build config via {@code DefaultProjectSeeder}; per-project overrides live on the
+   * {@code Project} aggregate. {@code enabled=false} (the default) ⇒ BUILD skipped entirely (pre-3h
+   * parity); {@code command} is the shell/build command run backend-side via {@code
+   * BuildCommandPort} in the materialized workspace; {@code timeout} bounds that process (kill →
+   * non-zero exit on overrun), defaulting to 10 minutes.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard): the shared test
+   * {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()}; a
+   * null/zero {@code timeout} falls back to the 10-minute default.
+   */
+  public record BuildStage(boolean enabled, String command, Duration timeout) {
+
+    public BuildStage {
+      timeout =
+          (timeout == null || timeout.isZero() || timeout.isNegative()) ? DEFAULT_TIMEOUT : timeout;
+    }
+
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(10);
+
+    public static BuildStage defaults() {
+      return new BuildStage(false, null, DEFAULT_TIMEOUT);
     }
   }
 

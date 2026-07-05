@@ -118,7 +118,7 @@ class ProjectControllerContractTest {
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"repositoryUrl\":\"https://github.com/acme/widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(PROJECT_ID))
@@ -160,7 +160,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"runnerKind\":\"manual\"}"))
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"runnerKind\":\"manual\"}"))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.runnerKind").value("manual"));
 
@@ -200,7 +200,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,"
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,"
                         + "\"stepRunnerKinds\":{\"spec\":\"codex\",\"prOutput\":\"manual\"}}"))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.stepRunnerKinds.spec").value("codex"))
@@ -230,7 +230,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
@@ -255,7 +255,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
@@ -278,7 +278,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isConflict())
         .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
@@ -309,7 +309,7 @@ class ProjectControllerContractTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     "{\"name\":\"Renamed\",\"ticketSourceKind\":\"linear\","
-                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true}")
+                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,\"buildStageEnabled\":false}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
@@ -341,7 +341,7 @@ class ProjectControllerContractTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     "{\"name\":\"Renamed\",\"ticketSourceKind\":\"linear\","
-                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,"
+                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,\"buildStageEnabled\":false,"
                         + "\"reviewerModelKind\":\"claude\"}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())

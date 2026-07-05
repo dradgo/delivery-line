@@ -1,11 +1,15 @@
 package org.dradgo.infrastructure.config;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerWorkerPoolProperties;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -68,6 +72,33 @@ public class RunnerConfiguration {
       return;
     }
     runnerBroker.scanForStaleExecutions();
+  }
+
+  /**
+   * Story 3h-1 (review fix) — the executor the {@code BuildStageService} offloads its (potentially
+   * minutes-long) backend-side build onto, so the {@code afterCommit} hook — which fires
+   * synchronously on the committing/poller thread — returns IMMEDIATELY and the single scheduled
+   * poller thread is never blocked for the build's duration. A virtual-thread-per-task executor:
+   * builds are few and mostly wait on a subprocess, so unbounded virtual threads are cheap and
+   * never starve a platform pool. Spring closes it (it is an {@code AutoCloseable ExecutorService})
+   * on context shutdown.
+   */
+  @Bean("buildStageExecutor")
+  @Profile("!test")
+  Executor buildStageExecutor() {
+    return Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("build-stage-", 0).factory());
+  }
+
+  /**
+   * Test-profile twin of {@link #buildStageExecutor()} — a SAME-THREAD executor so build-stage
+   * integration tests that drive the gate inside a transaction observe the build synchronously on
+   * commit (deterministic), instead of racing an async virtual thread. Same bean name, mutually
+   * exclusive profile ⇒ exactly one is registered.
+   */
+  @Bean("buildStageExecutor")
+  @Profile("test")
+  Executor buildStageExecutorForTests() {
+    return Runnable::run;
   }
 
   @EventListener(ApplicationReadyEvent.class)

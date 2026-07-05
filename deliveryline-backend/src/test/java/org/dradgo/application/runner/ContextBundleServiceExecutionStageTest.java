@@ -201,6 +201,83 @@ class ContextBundleServiceExecutionStageTest {
             .contains("apr_planreject01"));
   }
 
+  // Story 3h-1 (Task 7, AC4/AC7) — a regenerated execution bundle (after a BUILD failure) threads
+  // the failed BUILD execution back as a by-reference build.failure priorFeedbackReference so the
+  // re-dispatched runner sees why the build failed. Only BUILD-stage failed executions are
+  // referenced (a failed EXECUTION rex is not), and only the reference id is carried (never the
+  // body — the 256 KB reference-by-id invariant).
+  @Test
+  void executionSubStage_carriesBuildFailureReferenceForFailedBuildExecutionsOnly()
+      throws Exception {
+    TicketSummaryProvider ticketProvider = mock(TicketSummaryProvider.class);
+    ArtifactRecordPort artifactRecordPort = mock(ArtifactRecordPort.class);
+    ApprovalReadPort approvalReadPort = mock(ApprovalReadPort.class);
+    ClarificationReadPort clarificationReadPort = mock(ClarificationReadPort.class);
+    RedactionPolicyService redactionPolicyService = mock(RedactionPolicyService.class);
+    org.dradgo.application.runner.spi.RunnerExecutionRecordPort recordPort =
+        mock(org.dradgo.application.runner.spi.RunnerExecutionRecordPort.class);
+
+    when(ticketProvider.fetchByWorkflowRun(RUN_ID))
+        .thenReturn(new TicketSummary("DL-310", "Export pipeline", "Fix the build."));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(Optional.of(availableArtifact(ART_SPEC_ID, ArtifactType.SPEC, "spec/v1.json")));
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "implementationPlan"))
+        .thenReturn(Optional.empty());
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN_ID, "prOutput"))
+        .thenReturn(Optional.empty());
+    when(approvalReadPort.listByWorkflowRunAndArtifactType(RUN_ID, "spec"))
+        .thenReturn(List.of(approval("apr_specapprove1", true)));
+    when(approvalReadPort.listRejectionsByWorkflowRunAndArtifactType(RUN_ID, "implementationPlan"))
+        .thenReturn(List.of());
+    when(clarificationReadPort.listByWorkflowRunId(RUN_ID)).thenReturn(List.of());
+    when(redactionPolicyService.redact(any(JsonNode.class), eq("shareable-redacted")))
+        .thenAnswer(invocation -> redactionPassthrough(invocation.getArgument(0)));
+
+    org.dradgo.application.runner.spi.RunnerExecutionSnapshot failedBuild =
+        mock(org.dradgo.application.runner.spi.RunnerExecutionSnapshot.class);
+    when(failedBuild.stage()).thenReturn(RunnerStage.BUILD);
+    when(failedBuild.publicId()).thenReturn("rex_build0000001");
+    org.dradgo.application.runner.spi.RunnerExecutionSnapshot failedExecution =
+        mock(org.dradgo.application.runner.spi.RunnerExecutionSnapshot.class);
+    when(failedExecution.stage()).thenReturn(RunnerStage.EXECUTION);
+    when(failedExecution.publicId()).thenReturn("rex_exec0000fail");
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN_ID), any()))
+        .thenReturn(List.of(failedBuild, failedExecution));
+
+    ContextBundleService service =
+        new ContextBundleService(
+            ticketProvider,
+            artifactRecordPort,
+            approvalReadPort,
+            clarificationReadPort,
+            redactionPolicyService,
+            new RunnerContractValidator(),
+            recordPort);
+
+    ContextBundle bundle =
+        service.create(
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            REX_ID,
+            1,
+            CONSTRAINTS,
+            DataClassification.SHAREABLE_REDACTED,
+            ACTOR,
+            ExecutionSubStage.IMPLEMENTATION_PLAN,
+            null,
+            null);
+
+    JsonNode parsed = objectMapper.readTree(bundle.redactedPayload());
+    JsonNode refs = parsed.get("priorFeedbackReferences");
+    assertTrue(
+        refs.findValuesAsText("kind").contains("build.failure"),
+        "expected a build.failure priorFeedbackReference");
+    List<String> refIds = refs.findValuesAsText("referenceId");
+    assertTrue(refIds.contains("rex_build0000001"), "the failed BUILD rex must be referenced");
+    assertFalse(
+        refIds.contains("rex_exec0000fail"), "a failed EXECUTION rex must NOT be a build.failure");
+  }
+
   // ---------------------------------------------------------------------------------------------
   // AC2 — pr-output sub-stage + repo context + branch
   // ---------------------------------------------------------------------------------------------

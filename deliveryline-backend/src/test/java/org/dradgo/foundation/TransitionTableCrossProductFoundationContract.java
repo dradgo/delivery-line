@@ -126,7 +126,9 @@ class TransitionTableCrossProductFoundationContract {
           FailureCategory.RUNNER_TIMEOUT,
           FailureCategory.RUNNER_CRASH,
           FailureCategory.RUNNER_CONTRACT_VIOLATION,
-          FailureCategory.RUNNER_NON_ZERO_EXIT);
+          FailureCategory.RUNNER_NON_ZERO_EXIT,
+          // Story 3h-1 (AC5) — mirrors the WorkflowTransitionTable allow-list addition.
+          FailureCategory.RUNNER_BUILD_FAILED);
 
   @Test
   void everyIllegalTransitionRaisesIllegalTransitionAndEveryLegalTransitionPasses() {

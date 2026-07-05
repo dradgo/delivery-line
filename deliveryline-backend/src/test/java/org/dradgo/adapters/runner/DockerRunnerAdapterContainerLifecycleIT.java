@@ -104,6 +104,7 @@ class DockerRunnerAdapterContainerLifecycleIT {
             RunnerProperties.PlanStage.defaults(),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
             100);
 
     RunnerSecretsService secretsService =

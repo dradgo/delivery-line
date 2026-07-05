@@ -76,6 +76,17 @@ public class ProjectEntity {
   @Column(name = "reviewer_gating_enabled", nullable = false)
   private boolean reviewerGatingEnabled;
 
+  // Story 3h-1 (AC2, FR75) — per-project build-validation config (V33). build_command is nullable
+  // opaque text (NULL = no build command, BUILD skipped) mirroring reviewer_model_kind — no DB
+  // CHECK
+  // (validated by the resolver at execution time). build_stage_enabled mirrors openspec_enabled:
+  // NOT NULL, default false ⇒ pre-3h parity.
+  @Column(name = "build_command")
+  private String buildCommand;
+
+  @Column(name = "build_stage_enabled", nullable = false)
+  private boolean buildStageEnabled;
+
   // Story 3d-3 (AC1) — per-project runner-kind override. Nullable opaque text (NULL = no override);
   // the V20 CHECK pins a non-null value to the RunnerKind value set, so the getter parses through
   // RunnerKind.fromValue (fail fast on an unknown DB value, mirroring the status getter).
@@ -174,6 +185,22 @@ public class ProjectEntity {
 
   public void setReviewerGatingEnabled(boolean reviewerGatingEnabled) {
     this.reviewerGatingEnabled = reviewerGatingEnabled;
+  }
+
+  public String getBuildCommand() {
+    return buildCommand;
+  }
+
+  public void setBuildCommand(String buildCommand) {
+    this.buildCommand = buildCommand;
+  }
+
+  public boolean isBuildStageEnabled() {
+    return buildStageEnabled;
+  }
+
+  public void setBuildStageEnabled(boolean buildStageEnabled) {
+    this.buildStageEnabled = buildStageEnabled;
   }
 
   public RunnerKind getRunnerKind() {

@@ -811,7 +811,11 @@ function commandBuild(args) {
       artifact.clarificationAcknowledgements = acknowledgements;
     }
   } else if (stage === 'implementationPlan') {
-    const steps = nonEmptyLines.slice(0, 50);
+    // Carry EVERY non-empty plan line. A prior slice(0, 50) cap silently truncated any plan
+    // longer than 50 non-empty lines — the persisted artifact ended mid-file and the advisory
+    // plan reviewer (correctly) rejected it as "the plan is incomplete", looping the run to
+    // escalation. Real plans always exceed 50 lines; the schema places no maxItems on steps.
+    const steps = nonEmptyLines;
     artifact = {
       artifactId,
       artifactType: 'implementationPlan',

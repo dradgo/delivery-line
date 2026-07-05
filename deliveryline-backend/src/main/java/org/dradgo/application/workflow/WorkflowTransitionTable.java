@@ -17,7 +17,11 @@ public final class WorkflowTransitionTable {
           FailureCategory.RUNNER_TIMEOUT,
           FailureCategory.RUNNER_CRASH,
           FailureCategory.RUNNER_CONTRACT_VIOLATION,
-          FailureCategory.RUNNER_NON_ZERO_EXIT);
+          FailureCategory.RUNNER_NON_ZERO_EXIT,
+          // Story 3h-1 (AC5) — the bounded build auto-fix loop fails the run from EXECUTING with
+          // RUNNER_BUILD_FAILED once the fix cap is exhausted
+          // (BuildStageService.handleBuildFailure).
+          FailureCategory.RUNNER_BUILD_FAILED);
 
   private final Map<WorkflowState, Set<WorkflowState>> allowedTargets;
 

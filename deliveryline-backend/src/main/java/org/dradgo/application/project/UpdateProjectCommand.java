@@ -21,6 +21,10 @@ public record UpdateProjectCommand(
     // Story 3e-4 (AC6) — optional per-step runner mapping (raw wire strings), full-replace on
     // update.
     java.util.Map<String, String> stepRunnerKinds,
+    // Story 3h-1 (AC2) — per-project build-validation config, editable here. buildStageEnabled
+    // full-replaces (default false clears); buildCommand null/blank clears the command.
+    boolean buildStageEnabled,
+    String buildCommand,
     String actorIdentity) {
   public UpdateProjectCommand(
       String name,
@@ -37,6 +41,37 @@ public record UpdateProjectCommand(
         openspecEnabled,
         null,
         null,
+        null,
+        false,
+        null,
+        actorIdentity);
+  }
+
+  /**
+   * Story 3h-1 back-compat overload for the pre-3h 9-arg shape (canonical through {@code
+   * stepRunnerKinds}) — defaults the build-config fields to {@code (false, null)}. Keeps existing
+   * 9-arg callers (tests) compiling unchanged.
+   */
+  public UpdateProjectCommand(
+      String name,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      String reviewerModelKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      String actorIdentity) {
+    this(
+        name,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        reviewerModelKind,
+        stepRunnerKinds,
+        false,
         null,
         actorIdentity);
   }

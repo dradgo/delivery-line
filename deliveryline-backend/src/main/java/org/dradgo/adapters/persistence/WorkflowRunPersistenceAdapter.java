@@ -57,6 +57,15 @@ public class WorkflowRunPersistenceAdapter
        where public_id = :publicId
        returning split_proposal_loop_count
       """;
+  // Story 3h-1 — the build-validation auto-fix loop twin (distinct dispatch idempotency key per
+  // attempt + the cap check; shares the escalation marker with the other loops).
+  private static final String INCREMENT_BUILD_FIX_LOOP_COUNT_SQL =
+      """
+      update workflow_runs
+         set build_fix_loop_count = build_fix_loop_count + 1
+       where public_id = :publicId
+       returning build_fix_loop_count
+      """;
   private static final String MARK_ESCALATION_SQL =
       // RETURNING an int literal (not the boolean escalation_marker_set column) so the int row
       // mapper below reads cleanly — a returned row means this call just-flipped the marker, zero
@@ -263,6 +272,28 @@ public class WorkflowRunPersistenceAdapter
     }
     log.debug(
         "incrementAndReadSplitProposalLoopCount publicId={} newLoopCount={}",
+        workflowRunPublicId,
+        newCount);
+    return newCount;
+  }
+
+  @Override
+  public int incrementAndReadBuildFixLoopCount(String workflowRunPublicId) {
+    Integer newCount =
+        jdbcTemplate.query(
+            INCREMENT_BUILD_FIX_LOOP_COUNT_SQL,
+            params(workflowRunPublicId),
+            rs -> rs.next() ? rs.getInt(1) : null);
+    if (newCount == null) {
+      log.warn(
+          "incrementAndReadBuildFixLoopCount workflowRunNotFound publicId={}", workflowRunPublicId);
+      throw new DomainException(
+          DomainErrorCode.RUN_NOT_FOUND,
+          "Workflow run not found: " + workflowRunPublicId,
+          Map.of("runId", workflowRunPublicId));
+    }
+    log.debug(
+        "incrementAndReadBuildFixLoopCount publicId={} newLoopCount={}",
         workflowRunPublicId,
         newCount);
     return newCount;

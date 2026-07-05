@@ -57,7 +57,12 @@ public class ProjectEntityMapper {
         entity.getRunnerKind(),
         entity.getCreatedAt(),
         entity.getArchivedAt(),
-        stepRunnerKinds);
+        stepRunnerKinds,
+        // Story 3h-1 (AC2) — nullable per-project build command. Coerce blank to null on read
+        // (mirrors reviewerModelKind): build_command has no DB CHECK, so a blank row value would
+        // trip the Project record's non-blank-if-set invariant. NULL is the canonical "no build".
+        blankToNull(entity.getBuildCommand()),
+        entity.isBuildStageEnabled());
   }
 
   public ProjectEntity toNewEntity(Project project) {
@@ -73,6 +78,9 @@ public class ProjectEntityMapper {
     entity.setReviewerModelKind(project.reviewerModelKind());
     entity.setReviewerGatingEnabled(project.reviewerGatingEnabled());
     entity.setRunnerKind(project.runnerKind());
+    // Story 3h-1 (AC2) — per-project build config round-trips on insert.
+    entity.setBuildCommand(project.buildCommand());
+    entity.setBuildStageEnabled(project.buildStageEnabled());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -101,6 +109,10 @@ public class ProjectEntityMapper {
     // Runner-kind override is editable project config (no REST surface yet in 3d-3; a future story
     // owns editing). Threading it through update keeps a read-modify-write round-trip lossless.
     entity.setRunnerKind(project.runnerKind());
+    // Story 3h-1 (AC2) — build config is editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors reviewer binding / runner-kind).
+    entity.setBuildCommand(project.buildCommand());
+    entity.setBuildStageEnabled(project.buildStageEnabled());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }

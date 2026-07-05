@@ -980,6 +980,16 @@ export interface components {
         };
         /** @description Create a new project. */
         CreateProjectRequest: {
+            /**
+             * @description Story 3h-1 — optional build command run backend-side in the workspace before review (null/empty = no build, BUILD skipped even if enabled).
+             * @example mvn -q -DskipTests package
+             */
+            buildCommand?: string | null;
+            /**
+             * @description Story 3h-1 — whether the pre-review build-validation stage runs for this project. Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.
+             * @example false
+             */
+            buildStageEnabled?: boolean;
             /** @example Acme Widgets */
             name: string;
             /**
@@ -1137,6 +1147,13 @@ export interface components {
              *     ]
              */
             allowedActions?: string[];
+            /**
+             * @description Story 3h-1 — build command run backend-side before review; null = no build.
+             * @example mvn -q -DskipTests package
+             */
+            buildCommand?: string | null;
+            /** @description Story 3h-1 — whether the pre-review build-validation stage runs. */
+            buildStageEnabled?: boolean;
             /**
              * Format: date-time
              * @description Creation timestamp (UTC).
@@ -1575,6 +1592,16 @@ export interface components {
         };
         /** @description Edit a project's mutable configuration. */
         UpdateProjectRequest: {
+            /**
+             * @description Story 3h-1 — optional build command run backend-side in the workspace before review (null/empty = no build, BUILD skipped even if enabled).
+             * @example mvn -q -DskipTests package
+             */
+            buildCommand?: string | null;
+            /**
+             * @description Story 3h-1 — whether the pre-review build-validation stage runs for this project. Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.
+             * @example false
+             */
+            buildStageEnabled?: boolean;
             /** @example Acme Widgets */
             name: string;
             /**

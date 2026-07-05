@@ -271,6 +271,57 @@ public class CliGitAdapter implements GitCommandPort {
   }
 
   @Override
+  public List<String> listUntrackedFiles(Path repoDir) {
+    Objects.requireNonNull(repoDir, "repoDir");
+    GitResult result =
+        runGit(
+            repoDir,
+            null,
+            localTimeoutSeconds,
+            List.of("ls-files", "--others", "--exclude-standard"));
+    if (!result.succeeded()) {
+      throw new GitCommandException(
+          IntegrationFailureCategory.GIT_NETWORK_FAILURE,
+          "git ls-files --others --exclude-standard failed: " + result.redactedOutput());
+    }
+    String out = result.redactedOutput();
+    if (out == null || out.isBlank()) {
+      return List.of();
+    }
+    List<String> paths = new ArrayList<>();
+    for (String line : out.split("\\R")) {
+      String trimmed = line.strip();
+      if (!trimmed.isEmpty()) {
+        paths.add(trimmed);
+      }
+    }
+    return List.copyOf(paths);
+  }
+
+  @Override
+  public void removeUntrackedPaths(Path repoDir, java.util.Collection<String> relativePaths) {
+    Objects.requireNonNull(repoDir, "repoDir");
+    if (relativePaths == null || relativePaths.isEmpty()) {
+      return;
+    }
+    // `git clean -f -d -- <paths>` — force-remove the explicitly named untracked paths (incl.
+    // build-created directories via -d). No `-x`, so .gitignore'd content is left alone. The `--`
+    // pathspec restricts removal to exactly these paths; tracked/committed files are never touched.
+    List<String> args = new ArrayList<>(List.of("clean", "-f", "-d", "--"));
+    args.addAll(relativePaths);
+    GitResult result = runGit(repoDir, null, localTimeoutSeconds, args);
+    if (!result.succeeded()) {
+      throw new GitCommandException(
+          IntegrationFailureCategory.GIT_NETWORK_FAILURE,
+          "git clean -f -d failed: " + result.redactedOutput());
+    }
+    log.info(
+        "git clean removed {} build-created untracked path(s) repoDir={}",
+        relativePaths.size(),
+        repoDir);
+  }
+
+  @Override
   public String commitAll(CommitSpec spec) {
     Objects.requireNonNull(spec, "spec");
     GitResult add = runGit(spec.repoDir(), null, localTimeoutSeconds, List.of("add", "-A"));

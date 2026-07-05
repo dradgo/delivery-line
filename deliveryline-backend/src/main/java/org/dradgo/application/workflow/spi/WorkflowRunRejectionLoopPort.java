@@ -55,6 +55,22 @@ public interface WorkflowRunRejectionLoopPort {
   int incrementAndReadSplitProposalLoopCount(String workflowRunPublicId);
 
   /**
+   * Story 3h-1 (AC4) — atomically increments {@code workflow_runs.build_fix_loop_count} for the
+   * given run and returns the post-increment value. The build-validation twin of {@link
+   * #incrementAndReadImplementationLoopCount(String)}; same single-round-trip {@code UPDATE ...
+   * RETURNING} contract. Its purposes are a DISTINCT dispatch idempotency key per fix attempt
+   * ({@code build-fix:<run>:<count>}) AND the cap check against {@code build-fix-max-loops}; the
+   * escalation marker is SHARED with the spec / implementation / split loops (Decision D5), so
+   * {@link #markEscalationOnce(String)} / {@link #isEscalationMarkerSet(String)} are reused
+   * unchanged.
+   *
+   * @param workflowRunPublicId the run's public id (must exist)
+   * @return the new counter value (always {@code >= 1})
+   * @throws org.dradgo.domain.DomainException with {@code RUN_NOT_FOUND} if no row matches
+   */
+  int incrementAndReadBuildFixLoopCount(String workflowRunPublicId);
+
+  /**
    * Atomically flips {@code workflow_runs.escalation_marker_set} from {@code false} to {@code true}
    * using a {@code WHERE escalation_marker_set = false} guard so subsequent calls are no-ops.
    *

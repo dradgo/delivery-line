@@ -55,7 +55,15 @@ public record Project(
     // only. Defensive-copied to an unmodifiable map (null → empty) by the compact constructor; the
     // child rows live in project_runner_kinds (V26), loaded with the project by the persistence
     // adapter. NEVER null after construction.
-    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+    // Story 3h-1 (AC2, FR75) — per-project build-validation config (ADR 0030). buildCommand is a
+    // nullable opaque String (NULL / blank-cleared = "no build command", BUILD skipped) mirroring
+    // reviewerModelKind — its authoritative validation is ProjectRuntimeConfigResolver at execution
+    // time, so it carries no typed value here beyond the blank-if-set invariant below.
+    // buildStageEnabled mirrors openspecEnabled: a plain opt-in flag, default false ⇒ pre-3h parity
+    // (BUILD skipped entirely). Detached POJO fields — safe on the worker thread (no lazy proxy).
+    String buildCommand, // nullable
+    boolean buildStageEnabled) {
 
   /**
    * Back-compat constructor for the pre-3e-4 13-arg shape — defaults {@code stepRunnerKinds} to an
@@ -95,6 +103,47 @@ public record Project(
         Map.of());
   }
 
+  /**
+   * Story 3h-1 back-compat constructor for the pre-3h 14-arg shape (canonical through {@code
+   * stepRunnerKinds}) — defaults the two new build-stage fields to {@code (null, false)} ⇒ BUILD
+   * skipped (pre-3h parity). Keeps the many existing 14-arg {@code new Project(...)} call sites
+   * (tests, resolver fixtures) compiling unchanged; only the create/update/persistence/seed paths
+   * that actually carry build config use the full 16-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        null,
+        false);
+  }
+
   public Project {
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.PROJECT);
     if (name == null || name.isBlank()) {
@@ -109,6 +158,11 @@ public record Project(
     // A set-but-blank reviewer kind is a misconfiguration; null is the valid "no reviewer" value.
     if (reviewerModelKind != null && reviewerModelKind.isBlank()) {
       throw new IllegalArgumentException("Project reviewerModelKind must be non-blank when set");
+    }
+    // Story 3h-1 — a set-but-blank build command is a misconfiguration; null is the valid "no build
+    // command" value (BUILD skipped). Mirrors the reviewerModelKind blank-if-set invariant.
+    if (buildCommand != null && buildCommand.isBlank()) {
+      throw new IllegalArgumentException("Project buildCommand must be non-blank when set");
     }
     Objects.requireNonNull(createdAt, "Project createdAt must not be null");
     // Null-safe + immutable: an empty map is the canonical "no per-step mapping" value. Map.copyOf

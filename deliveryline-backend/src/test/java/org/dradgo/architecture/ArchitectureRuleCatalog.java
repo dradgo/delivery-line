@@ -65,6 +65,9 @@ final class ArchitectureRuleCatalog {
   private static final String DIAGNOSTICS_ADAPTER_PACKAGE = "org.dradgo.adapters.diagnostics..";
   // Story 3.9 — system-git CLI adapter slice (CliGitAdapter implements the GitCommandPort SPI).
   private static final String GIT_ADAPTER_PACKAGE = "org.dradgo.adapters.git..";
+  // Story 3h-1 — build-command adapter slice (ProcessBuildCommandAdapter implements
+  // BuildCommandPort).
+  private static final String BUILD_ADAPTER_PACKAGE = "org.dradgo.adapters.build..";
   private static final String REPOSITORY_WORKSPACE_PACKAGE =
       "org.dradgo.application.runner.workspace..";
   private static final String INFRASTRUCTURE_PACKAGE = "org.dradgo.infrastructure..";
@@ -108,7 +111,7 @@ final class ArchitectureRuleCatalog {
   static final ArchRule ADAPTER_PACKAGE_LAYOUT =
       namedRule(
           "adapter classes must stay inside the reserved adapter package layout",
-          "Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, adapters.diagnostics, or adapters.git.",
+          "Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, adapters.diagnostics, adapters.git, or adapters.build.",
           classes()
               .that()
               .resideInAPackage(ADAPTERS_PACKAGE)
@@ -121,7 +124,8 @@ final class ArchitectureRuleCatalog {
                   RUNNER_ADAPTER_PACKAGE,
                   INTEGRATION_ADAPTER_PACKAGE,
                   DIAGNOSTICS_ADAPTER_PACKAGE,
-                  GIT_ADAPTER_PACKAGE));
+                  GIT_ADAPTER_PACKAGE,
+                  BUILD_ADAPTER_PACKAGE));
 
   static final ArchRule DOMAIN_PACKAGE_MUST_EXIST =
       namedRule(

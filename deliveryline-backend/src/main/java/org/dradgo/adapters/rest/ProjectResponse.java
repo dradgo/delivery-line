@@ -54,6 +54,14 @@ public record ProjectResponse(
                     + "configured. Resolves more specifically than runnerKind.",
             example = "{\"spec\":\"codex\",\"prOutput\":\"manual\"}")
         Map<String, String> stepRunnerKinds,
+    @Schema(description = "Story 3h-1 — whether the pre-review build-validation stage runs.")
+        boolean buildStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-1 — build command run backend-side before review; null = no build.",
+            nullable = true,
+            example = "mvn -q -DskipTests package")
+        String buildCommand,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -78,6 +86,8 @@ public record ProjectResponse(
         project.runnerKind() == null ? null : project.runnerKind().value(),
         project.reviewerModelKind(),
         toWireStepRunnerKinds(project.stepRunnerKinds()),
+        project.buildStageEnabled(),
+        project.buildCommand(),
         project.createdAt(),
         credentials,
         allowedActions);

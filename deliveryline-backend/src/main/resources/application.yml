@@ -120,6 +120,13 @@ deliveryline:
     # the threshold from below); subsequent rejections continue to advance the counter and the
     # workflow stays in Executing — escalation does NOT terminate the workflow.
     implementation-rejection-escalation-threshold: 3
+    # Story 3h-1 (FR75): the bounded build auto-fix cap AND escalation threshold (one value; read by
+    # BuildFixEscalationThresholdProvider). On a BUILD failure the implementation runner is
+    # re-dispatched with the build-error log as referenced feedback for up to N (=this value) fix
+    # attempts; the run transitions to FAILED (runner_build_failed) on the (N+1)-th consecutive build
+    # failure (build_fix_loop_count > cap) and the SHARED per-run escalation marker is flipped once
+    # (same marker as the spec / implementation loops, D5).
+    build-fix-max-loops: 3
     # Story 3f-4 (AC4): threshold above which SplitProposalService.repropose raises the per-run
     # escalation marker (the SAME marker as the spec-rejection / implementation-rejection loops). The
     # escalation event is appended exactly once (when the split-proposal re-propose counter crosses
@@ -294,6 +301,17 @@ deliveryline:
     # the shared test application.yml needs no mirror entry. Uncomment + set true to opt in.
     # openspec:
     #   enabled: true
+    # Story 3h-1 (FR75) — pre-review build-validation stage. When enabled AND a command is set, the
+    # produced code is built backend-side (ProcessBuilder in the materialized host workspace, behind
+    # BuildCommandPort) before push + review; a non-zero exit drives a bounded auto-fix loop
+    # (build-fix-max-loops above). timeout bounds the build process (kill → non-zero on overrun).
+    # Default OFF (commented out) ⇒ byte-identical to pre-3h (BUILD skipped entirely). OPTIONAL +
+    # UNVALIDATED, so the shared test application.yml needs no mirror entry. Seeds the default
+    # project's per-project build config; per-project overrides live on the Project aggregate.
+    # build-stage:
+    #   enabled: true
+    #   command: "mvn -q -DskipTests package"
+    #   timeout: 10m
     recovery:
       batch-size: 100
     mock:

@@ -569,6 +569,7 @@ class RunnerBrokerUnitTest {
             () -> null,
             ticketProvider,
             () -> null,
+            () -> null,
             () -> null);
 
     RepositoryWorkspaceService.RepositoryMount mount =
@@ -2424,6 +2425,7 @@ class RunnerBrokerUnitTest {
             RunnerProperties.PlanStage.defaults(),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
             100);
     broker =
         new RunnerBroker(
@@ -3367,6 +3369,7 @@ class RunnerBrokerUnitTest {
         () -> orchestration,
         null,
         () -> linkService,
+        () -> null,
         () -> null);
   }
 

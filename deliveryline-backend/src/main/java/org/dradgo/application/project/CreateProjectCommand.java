@@ -23,6 +23,11 @@ public record CreateProjectCommand(
     // service parses them through ProjectRunnerStep/RunnerKind.fromValue so a bad value is a typed
     // 400, never a 500. Null/empty = no per-step mapping.
     java.util.Map<String, String> stepRunnerKinds,
+    // Story 3h-1 (AC2) — per-project build-validation config. buildStageEnabled defaults false ⇒
+    // BUILD skipped (pre-3h parity); buildCommand is a nullable raw wire string (blank cleared to
+    // null / no build). No enum validation needed (mirrors openspecEnabled + reviewerModelKind).
+    boolean buildStageEnabled,
+    String buildCommand,
     String idempotencyKey,
     String actorIdentity) {
   public CreateProjectCommand(
@@ -42,6 +47,39 @@ public record CreateProjectCommand(
         repoHostKind,
         openspecEnabled,
         null,
+        null,
+        false,
+        null,
+        idempotencyKey,
+        actorIdentity);
+  }
+
+  /**
+   * Story 3h-1 back-compat overload for the pre-3h 10-arg shape (canonical through {@code
+   * stepRunnerKinds}) — defaults the build-config fields to {@code (false, null)}. Keeps existing
+   * 10-arg callers (tests) compiling unchanged.
+   */
+  public CreateProjectCommand(
+      String name,
+      String slug,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      String idempotencyKey,
+      String actorIdentity) {
+    this(
+        name,
+        slug,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        stepRunnerKinds,
+        false,
         null,
         idempotencyKey,
         actorIdentity);

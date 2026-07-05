@@ -2,6 +2,12 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of story-3h-1 (2026-07-05, re-review #2)
+
+- **Deferred delivery tail pushes after the run has gone terminal (no state re-check before `captureAndPush`).** An operator cancel/fail during the minutes-long build leaves the deferred success tail to still run the irreversible `captureAndPush` (branch push + PR open) and only then throw `ILLEGAL_TRANSITION` on the `WaitingForReview` advance (swallowed) → code pushed + PR opened for a run whose DB state is terminal. **Follow-up:** re-check the run is still non-terminal immediately before `captureAndPush`; the push relocation completes behind the delivery gate in 3h-4, recovery is Epic-4. [`BuildStageService.java:244` → `RunnerBroker.completeExecutionTailAndAdvance`]
+- **Special-char / quoted / newline untracked filenames escape `git clean` artifact discard.** `git ls-files --others` runs without `-z` and with default `core.quotePath=true`, so a non-ASCII/space/`:`-magic path is C-quoted (or newline-split); the quoted literal passed to `git clean -- <path>` matches nothing and exits 0 (silent no-op) → the build-created file survives into `git add -A` and ships in the PR. Best-effort discard, rare filenames. **Follow-up:** harden `CliGitAdapter` untracked-file parsing (`-z` NUL-delimited, argv pathspecs). [`CliGitAdapter.java` listUntrackedFiles / removeUntrackedPaths]
+- **`handleBuildFailure` silently no-ops re-dispatch when the orchestration bean is absent.** Defensive-only residue of the CRITICAL path: in a fully-wired prod app `orchestrationSupplier.get()` is never null, but if it is, side effects have fired (PR_OUTPUT finalized, `build_fix_loop_count` bumped) with no re-dispatch and no FAILED transition → silent wedge. **Follow-up:** make the null-bean branch fail-loud in the Epic-4 hardening pass. [`BuildStageService.java:320-327`]
+
 ## Deferred from: code review of story-3g-4 (2026-07-02)
 
 - **Verify tertiary small-text contrast on the token panel labels meets WCAG 2.1 AA.** The "Step token usage" heading and "Run total" label render at `text-meta text-text-tertiary` on `bg-surface`; jest-axe does not compute contrast ratios, so the axe-clean gate does not prove AC5's 4.5:1 threshold. Advisory, design-system-wide (not specific to this change). **Follow-up:** one-time manual/token-level contrast check of the tertiary label colors. [`RunStepTokensPanel.tsx:55-57`]
@@ -1032,3 +1038,13 @@ _3 adversarial layers (Blind Hunter + Edge Case Hunter + Acceptance Auditor) ove
 
 - replay() fabricates per-subtask outcomes [SplitCommitService.java:477-483] -- same-key replay reconstructs every surviving child as status=created with synthetic ascending ordinals and childTicketRef=null; cannot reproduce internal_only/failed outcomes, causing CLI/REST subtasks[] shape drift on replay. Acknowledged best-effort in code; a real fix needs durable per-subtask outcome persistence.
 - AC9 test-completeness deviations [SplitCommitServiceIT] -- no single full-loop IT driving request_split -> approve (proposal seeded directly via insertOpen); "mixed sub-ticket + internal-only" assertion split across the mixedOutcomes unit test + IntegrationLinkSplitChildIT instead of one IT; full-loop IT tagged @Tag("integration") not the prescribed docker-runner-it tier; application.* >=80% coverage not independently verifiable from the diff (claimed green in Completion Notes). Partially reconciled in Debug Log (spec-stage.auto-dispatch=false). Verify coverage in CI.
+
+## Deferred from: code review of 3g-5-token-real-capture-completion (2026-07-04)
+
+- D1b real-run gate evidence remains user-owned: Alex chose to keep the real-run smoke gate deferred and handle it outside this code-review patch set. Capture run id(s), persisted non-null token counts, per-step panel, and WorkflowDetail.totalTokens rollup before downstream reliance.
+
+## Deferred from: code review of 3h-1-build-validation-stage-and-bounded-auto-fix-loop (2026-07-05)
+
+- **MED — Swallowed deferred side-effects can wedge a build-gated run with no reconciliation path.** `AfterCommitSideEffectRunner.swallow` catches RuntimeException in the capture/advance/fix-loop bodies; on throw the PR_OUTPUT rex stays `running`, run stays `Executing`, no retry/FAILED/escalation. No sweep re-drives a gated-but-unfinished build (cf. 3f-8 stranded-SPLIT sweep). [BuildStageService.java:191-228]
+- **LOW — `build.failure` feedback references accumulate unboundedly across fix-loop iterations.** `collectExecutionFeedbackReferences` references ALL failed BUILD rex rows (no latest-only bound); count grows each iteration. Benign but noisy. [ContextBundleService.java:1337-1345]
+- **LOW — Build gate reserves the BUILD rex row before confirming an active tx synchronization.** `insertPending` precedes `runAfterCommit`; if ever called outside a synchronization the row is orphaned and the run wedges. Not reachable via the current sole caller. [BuildStageService.java:142-169]

@@ -172,6 +172,9 @@ class FlywaySchemaContractTest {
     assertColumnNullable("workflow_runs", "spec_rejection_loop_count", false);
     assertColumnType("workflow_runs", "escalation_marker_set", "boolean");
     assertColumnNullable("workflow_runs", "escalation_marker_set", false);
+    // Story 3h-1 / V33: bounded build auto-fix loop counter (mirrors implementation loop count).
+    assertColumnType("workflow_runs", "build_fix_loop_count", "integer");
+    assertColumnNullable("workflow_runs", "build_fix_loop_count", false);
     assertColumnType("workflow_events", "stage_duration_ms", "bigint");
     assertColumnType("workflow_events", "rejection_taxonomy", "text");
     assertColumnType("approvals", "rejection_taxonomy", "text");
@@ -547,6 +550,9 @@ class FlywaySchemaContractTest {
     // V7 (story 2.10): non-negative guard on the spec rejection loop counter.
     assertConstraintDefinitionContains(
         "ck_workflow_runs_spec_rejection_loop_count_nonneg", "spec_rejection_loop_count");
+    // Story 3h-1 / V33: non-negative guard on the build-fix loop counter.
+    assertConstraintDefinitionContains(
+        "ck_workflow_runs_build_fix_loop_count_nonneg", "build_fix_loop_count");
   }
 
   @Test
@@ -600,6 +606,27 @@ class FlywaySchemaContractTest {
     assertColumnNullable("projects", "ticket_source_kind", false);
     assertColumnNullable("projects", "repo_host_kind", false);
     assertColumnNullable("projects", "openspec_enabled", false);
+
+    // Story 3h-1 / V33: per-project build config. build_command is nullable text (no CHECK);
+    // build_stage_enabled is a NOT NULL boolean defaulting false (mirrors openspec_enabled).
+    assertColumnType("projects", "build_command", "text");
+    assertColumnNullable("projects", "build_command", true);
+    assertColumnType("projects", "build_stage_enabled", "boolean");
+    assertColumnNullable("projects", "build_stage_enabled", false);
+    String buildStageDefault =
+        jdbcTemplate.queryForObject(
+            """
+				select column_default
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = 'projects'
+				  and column_name = 'build_stage_enabled'
+				""",
+            String.class);
+    assertEquals(
+        "false",
+        buildStageDefault,
+        () -> "projects.build_stage_enabled must default to false but was: " + buildStageDefault);
 
     // uq_projects_slug enforces a unique slug.
     assertTrue(

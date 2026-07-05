@@ -65,6 +65,27 @@ public interface GitCommandPort {
   boolean hasUncommittedChanges(Path repoDir);
 
   /**
+   * Story 3h-1 (build-artifact hygiene) — the repo-relative untracked, non-ignored paths ({@code
+   * git ls-files --others --exclude-standard}). Used by the build-validation stage to snapshot the
+   * worktree BEFORE a validation build so any files the build creates (and which are NOT already
+   * {@code .gitignore}d) can be discarded via {@link #removeUntrackedPaths} before {@code
+   * captureAndPush}'s {@code git add -A} — a validation-only BUILD must never push its own outputs.
+   * Empty when the tree has no untracked non-ignored files. Failures surface as {@link
+   * GitCommandException}.
+   */
+  List<String> listUntrackedFiles(Path repoDir);
+
+  /**
+   * Story 3h-1 (build-artifact hygiene) — remove the given repo-relative untracked paths ({@code
+   * git clean -f -d -- <paths>}). No-op for an empty/blank collection. Restricted to the EXPLICIT
+   * pathspecs — never a blanket clean — and, like {@code git clean} without {@code -x}, it only
+   * ever removes untracked, non-ignored files (never tracked/committed content). Callers pass ONLY
+   * the build-created delta (post-build untracked minus the pre-build snapshot) so runner-authored
+   * files are never touched. Failures surface as {@link GitCommandException}.
+   */
+  void removeUntrackedPaths(Path repoDir, java.util.Collection<String> relativePaths);
+
+  /**
    * Stage all changes + commit with {@code spec.message()} (trailers included) under the bot
    * identity. Returns the new commit SHA.
    */

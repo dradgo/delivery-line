@@ -11,6 +11,11 @@ public enum FailureCategory implements RegistryValue {
   RUNNER_DUPLICATE_RESULT("runner_duplicate_result"),
   RUNNER_MALFORMED_OUTPUT("runner_malformed_output"),
   RUNNER_SECRET_LEAK("runner_secret_leak"),
+  // Story 3h-1 (AC5, FR75) — the produced code failed the backend-side build gate after the bounded
+  // auto-fix loop exhausted its cap. Carried on the terminal FAILED transition (workflow_events
+  // row)
+  // for Epic-4 recovery; NOT DomainErrorCode-shaped (no ProblemDetails / SQL CHECK / API manifest).
+  RUNNER_BUILD_FAILED("runner_build_failed"),
   ORPHAN("orphan");
 
   private static final Map<String, FailureCategory> LOOKUP = RegistryParsers.index(values());

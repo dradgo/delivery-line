@@ -110,7 +110,11 @@ public class ProjectManagementService {
             OffsetDateTime.now(ZoneOffset.UTC),
             null,
             // Story 3e-4 (AC6) — the per-step runner mapping persisted to project_runner_kinds.
-            stepRunnerKinds);
+            stepRunnerKinds,
+            // Story 3h-1 (AC2) — per-project build config from the create command (blank command
+            // coerced to null so the Project non-blank-if-set invariant holds; no BUILD then).
+            normalizeBuildCommand(command.buildCommand()),
+            command.buildStageEnabled());
     Project created = projectStore.insert(project);
     log.info(
         "project created projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -158,7 +162,11 @@ public class ProjectManagementService {
             existing.createdAt(),
             existing.archivedAt(),
             // Story 3e-4 (AC6) — full-replace: the submitted per-step map is authoritative.
-            stepRunnerKinds);
+            stepRunnerKinds,
+            // Story 3h-1 (AC2) — build config is editable; full-replace from the update command
+            // (blank command clears to null / no build).
+            normalizeBuildCommand(command.buildCommand()),
+            command.buildStageEnabled());
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -213,7 +221,11 @@ public class ProjectManagementService {
             // Story 3e-4 — preserve the per-step map across a status-only change (update
             // full-replaces
             // it from the submitted aggregate, so a status flip must carry the existing mapping).
-            existing.stepRunnerKinds());
+            existing.stepRunnerKinds(),
+            // Story 3h-1 — preserve build config across a status-only change (the back-compat
+            // 14-arg ctor would default it to (null,false) and silently wipe it).
+            existing.buildCommand(),
+            existing.buildStageEnabled());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -249,7 +261,10 @@ public class ProjectManagementService {
             existing.archivedAt(),
             // Story 3e-4 — preserve the per-step map across the status-only re-enable
             // (full-replace).
-            existing.stepRunnerKinds());
+            existing.stepRunnerKinds(),
+            // Story 3h-1 — preserve build config across the status-only re-enable.
+            existing.buildCommand(),
+            existing.buildStageEnabled());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",
@@ -291,6 +306,19 @@ public class ProjectManagementService {
 
   private static RunnerKind parseRunnerKind(String runnerKind) {
     return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "runnerKind");
+  }
+
+  /**
+   * Story 3h-1 (AC2) — normalize the per-project build command for persistence: null/blank ⇒ null
+   * (the canonical "no build command" value the domain stores as NULL — BUILD skipped). No enum
+   * validation: the command is opaque and validated only at execution time.
+   */
+  private static String normalizeBuildCommand(String buildCommand) {
+    if (buildCommand == null) {
+      return null;
+    }
+    String trimmed = buildCommand.trim();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 
   /**
