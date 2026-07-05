@@ -260,10 +260,23 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     // the reviewed artifact referenced BY PATH in the bundle; the runner reads its content from the
     // mounted input dir (ContextBundleService.assembleForReview). Materialize that content into
     // input/<referencePath> now, before the container is created. Without it the reviewer sees a
-    // dangling reference and emits a fail-verdict -> RUNNER_CONTRACT_VIOLATION. Gated to REVIEW to
-    // keep every other stage byte-identical; skipped in lean slices where the materializer is
-    // unwired.
-    if (request.stage() == org.dradgo.domain.registry.RunnerStage.REVIEW
+    // dangling reference and emits a fail-verdict -> RUNNER_CONTRACT_VIOLATION.
+    //
+    // 2026-07-05 (run_08880e2c / FIN-40) — the SAME dangling-reference class also bit EXECUTION:
+    // the
+    // implementation-plan / pr-output bundle carries approvedSpecificationReference (and, on the
+    // PR_OUTPUT sub-stage, approvedImplementationPlanReference) BY PATH only. The 2026-07-01 fix
+    // was
+    // scoped to REVIEW, so the planning runner never found the approved spec in its checkout, wrote
+    // "spec file is not present", and produced a plan that DIVERGED from the approved design (three
+    // rejections + escalation). Extend the gate to EXECUTION so the planner reads the approved spec
+    // the same way the reviewer does — the materializer already handles those singular slots
+    // (ReviewInputArtifactMaterializer lines 88-89). INVESTIGATION has no approved-spec reference
+    // to
+    // mount and BUILD runs backend-side (never reaches this adapter), so both stay byte-identical.
+    // Skipped in lean slices where the materializer is unwired.
+    if ((request.stage() == org.dradgo.domain.registry.RunnerStage.REVIEW
+            || request.stage() == org.dradgo.domain.registry.RunnerStage.EXECUTION)
         && reviewInputArtifactMaterializer != null) {
       reviewInputArtifactMaterializer.materialize(rexId, bundleBytes);
     }

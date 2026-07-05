@@ -397,6 +397,43 @@ class DockerRunnerAdapterUnitTest {
   }
 
   @Test
+  void dispatchMaterializesReferencedArtifactsForExecutionStage() {
+    // Root-cause fix (run_08880e2c / FIN-40): the EXECUTION-stage (implementation-plan, pr-output)
+    // bundle references the approved spec BY PATH only; without materializing that content into the
+    // mounted input/ dir the planning runner sees a dangling reference, writes "spec file is not
+    // present", and reconstructs a plan that DIVERGES from the approved design. The materializer
+    // already ran for REVIEW — it must run for EXECUTION too (same dangling-reference class as the
+    // 2026-07-01 REVIEW fix, previously scoped too narrowly).
+    org.dradgo.application.runner.ReviewInputArtifactMaterializer materializer =
+        Mockito.mock(org.dradgo.application.runner.ReviewInputArtifactMaterializer.class);
+    adapter.setReviewInputArtifactMaterializer(materializer);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(dispatchRequest(RunnerStage.EXECUTION, ExecutionSubStage.IMPLEMENTATION_PLAN));
+
+    verify(materializer).materialize(eq(REX_ID), any(byte[].class));
+  }
+
+  @Test
+  void dispatchSkipsMaterializationForInvestigationStage() {
+    // Scope guard: the fix adds ONLY EXECUTION to REVIEW. INVESTIGATION (spec creation) and BUILD
+    // (runs backend-side, never reaches this adapter) stay unmaterialized — an investigation
+    // dispatch has no approved-spec reference to mount, so keep it byte-identical.
+    org.dradgo.application.runner.ReviewInputArtifactMaterializer materializer =
+        Mockito.mock(org.dradgo.application.runner.ReviewInputArtifactMaterializer.class);
+    adapter.setReviewInputArtifactMaterializer(materializer);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(dispatchRequest(RunnerStage.INVESTIGATION, null));
+
+    verify(materializer, never()).materialize(anyString(), any(byte[].class));
+  }
+
+  @Test
   void dispatchLogsResolvedStageTokenAtInfoForExecutionSubStage() {
     // Story 3b.1 (Logging task): the resolved wire token is observable at INFO (the exact field
     // that was wrong on run_ae258…), keyed by runnerExecutionId + workflowRunId.

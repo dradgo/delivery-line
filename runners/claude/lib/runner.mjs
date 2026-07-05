@@ -125,7 +125,14 @@ function commandPrepare(args) {
     const specRef = doc.approvedSpecificationReference;
     if (specRef && typeof specRef === 'object' && specRef.referencePath) {
       lines.push('');
-      lines.push(`Approved specification reference: ${specRef.referencePath}`);
+      // The backend materializes the approved spec into the read-only input mount at
+      // input/<referencePath>; name the resolvable in-container path (NOT the bare referencePath,
+      // which the model resolves against /workspace/repo, fails to find, and reports "spec not
+      // present" — run_08880e2c / FIN-40). /workspace/input matches the entrypoint's INPUT_DIR
+      // default and the review-stage prompt instructions.
+      lines.push(
+        `Approved specification is available at /workspace/input/${specRef.referencePath} — read the full specification from that read-only input mount (it is NOT in the repository checkout) and follow it.`,
+      );
     }
     const feedback = Array.isArray(doc.priorFeedbackReferences) ? doc.priorFeedbackReferences : [];
     if (feedback.length > 0) {
