@@ -78,6 +78,9 @@ class TransitionTableCrossProductFoundationContract {
               EnumSet.of(
                   WorkflowState.WAITING_FOR_REVIEW,
                   WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+                  // Story 3h-2 (AC4) — a CRITICAL lint finding parks the run at the pre-review
+                  // gate.
+                  WorkflowState.WAITING_FOR_LINT_APPROVAL,
                   WorkflowState.FAILED,
                   WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
@@ -106,6 +109,16 @@ class TransitionTableCrossProductFoundationContract {
           // spec generation once the last prerequisite completes.
           Map.entry(
               WorkflowState.WAITING_FOR_DEPENDENCIES, EnumSet.of(WorkflowState.INVESTIGATING)),
+          // Story 3h-2 (AC4 / AC5) — the pre-review lint gate: approve_lint -> WaitingForReview,
+          // request_lint_fix -> Executing, plus the recovery/safety edges. No -> Failed (Decision
+          // 3).
+          Map.entry(
+              WorkflowState.WAITING_FOR_LINT_APPROVAL,
+              EnumSet.of(
+                  WorkflowState.WAITING_FOR_REVIEW,
+                  WorkflowState.EXECUTING,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.COMPLETED, EnumSet.noneOf(WorkflowState.class)),
           Map.entry(
               WorkflowState.FAILED,

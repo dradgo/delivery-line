@@ -133,6 +133,15 @@ public class RunnerBroker {
   // terminal execution was a PR_OUTPUT sub-stage with build config + a workspace.
   private final java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>
       buildStageServiceSupplier;
+  // Story 3h-2 (AC3) — the pre-review lint gate, resolved LAZILY via optional SETTER injection (an
+  // ObjectProvider) so NONE of the broker's ctor sites (incl. the ~5 test ctors) change — the
+  // WorkflowInspectionService optional-setter precedent. Supplies null in lean contexts, so
+  // mock/no-lint dispatches run the tail unchanged. The broker↔lint-stage edge is one-way
+  // (LintStageService reaches the tail via a continuation lambda; the broker calls
+  // tryGateBehindLint
+  // here), so there is no construction cycle to break.
+  private java.util.function.Supplier<org.dradgo.application.workflow.LintStageService>
+      lintStageServiceSupplier = () -> null;
   // Story 3.10 (OQ-1) — resolves the run's Linear ticketRef for the EXECUTION-stage deterministic
   // branch (story 3.9 AC2) so prepareWorkspace checks out the right branch and captureAndPush
   // pushes
@@ -498,6 +507,20 @@ public class RunnerBroker {
     this.buildStageServiceSupplier =
         buildStageServiceSupplier == null ? () -> null : buildStageServiceSupplier;
     this.objectMapper = new ObjectMapper();
+  }
+
+  /**
+   * Story 3h-2 (AC3) — optional setter injection of the lint gate (via an {@link
+   * org.springframework.beans.factory.ObjectProvider} so the resolution is lazy + absent-tolerant).
+   * Keeps every broker ctor site untouched; production Spring wires the {@code LintStageService}
+   * bean, lean test contexts leave the default {@code () -> null} (no lint gate ⇒ tail unchanged).
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setLintStageServiceProvider(
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.LintStageService>
+          provider) {
+    this.lintStageServiceSupplier = provider::getIfAvailable;
   }
 
   // Story 3a-1 test ctor (repo seam + a resolved orchestration instance) — wraps the instance in a
@@ -2193,6 +2216,30 @@ public class RunnerBroker {
     final String prOutputArtifactIdFinal = prOutputArtifactId;
     final String prOutputResolvedDiffFinal = prOutputResolvedDiff;
     final ExecutionSubStage executionSubStageFinal = executionSubStage;
+    // The delivery tail continuation (captureAndPush + validate/enrich + recordCompleted +
+    // auto-advance), captured as a lambda so the BUILD and LINT gates can chain in front of it.
+    Runnable tail =
+        () ->
+            completeExecutionTailAndAdvance(
+                runnerExecutionId,
+                workflowRunId,
+                row,
+                parsed,
+                correlationId,
+                prOutputArtifactIdFinal,
+                prOutputResolvedDiffFinal,
+                executionSubStageFinal);
+    // Story 3h-2 (AC3) — the LINT gate chains AFTER the BUILD gate onto the SAME tail: BUILD's
+    // success continuation is not the tail itself but tryLintGateOrTail, which runs the
+    // backend-side
+    // lint (parking at WaitingForLintApproval on a critical finding) and only runs the tail when
+    // lint
+    // produces no critical finding (or the lint gate does not apply).
+    Runnable afterBuild =
+        () ->
+            tryLintGateOrTail(
+                workflowRunId, runnerExecutionId, correlationId, row, executionSubStageFinal, tail);
+
     org.dradgo.application.workflow.BuildStageService buildStageService =
         buildStageServiceSupplier.get();
     boolean gatedBehindBuild = false;
@@ -2201,32 +2248,185 @@ public class RunnerBroker {
         && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
       gatedBehindBuild =
           buildStageService.tryGateBehindBuild(
-              workflowRunId,
-              runnerExecutionId,
-              correlationId,
-              () ->
-                  completeExecutionTailAndAdvance(
-                      runnerExecutionId,
-                      workflowRunId,
-                      row,
-                      parsed,
-                      correlationId,
-                      prOutputArtifactIdFinal,
-                      prOutputResolvedDiffFinal,
-                      executionSubStageFinal));
+              workflowRunId, runnerExecutionId, correlationId, afterBuild);
     }
     if (!gatedBehindBuild) {
-      completeExecutionTailAndAdvance(
-          runnerExecutionId,
-          workflowRunId,
-          row,
-          parsed,
-          correlationId,
-          prOutputArtifactId,
-          prOutputResolvedDiff,
-          executionSubStage);
+      afterBuild.run();
     }
   }
+
+  /**
+   * Story 3h-2 (AC3/AC4) — the LINT gate seam: for a PR_OUTPUT success (post-BUILD), reserve a LINT
+   * execution + defer the backend-side lint run behind the tail. When the lint gate applies it
+   * takes ownership of the tail (running it only on no-critical findings, else parking at
+   * WaitingForLintApproval); when it does not apply (disabled / no commands / no workspace /
+   * non-pr-output / no lint service) the tail runs directly (byte-identical to pre-3h-2).
+   */
+  private void tryLintGateOrTail(
+      String workflowRunId,
+      String runnerExecutionId,
+      String correlationId,
+      RunnerExecutionSnapshot row,
+      ExecutionSubStage executionSubStage,
+      Runnable tail) {
+    org.dradgo.application.workflow.LintStageService lintStageService =
+        lintStageServiceSupplier.get();
+    boolean gatedBehindLint = false;
+    if (lintStageService != null
+        && row.stage() == RunnerStage.EXECUTION
+        && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+      gatedBehindLint =
+          lintStageService.tryGateBehindLint(workflowRunId, runnerExecutionId, correlationId, tail);
+    }
+    if (!gatedBehindLint) {
+      tail.run();
+    }
+  }
+
+  /**
+   * Story 3h-2 (AC5; code-review 2026-07-06, Decision 4 P1) — resume the delivery tail after an
+   * operator {@code approve_lint} dismissed the lint gate. Re-derivable from {@code
+   * (workflowRunId)} alone (the in-memory tail continuation is long gone by approval time): resolve
+   * the producing PR_OUTPUT execution, push its workspace, ENRICH the ingested pr-output artifact
+   * with the authoritative push refs + diff via the SAME {@link #enrichPrOutputArtifact} + {@link
+   * #linkGitHubPrBestEffort} helpers the pass path uses (one seam, two callers) — so the advisory
+   * reviewer reads an enriched/reviewable artifact rather than the diff-less v1
+   * ([[proutput-advisory-review-missing-diff]]) — finalize the producing execution, and enqueue the
+   * reviewer. The {@code WaitingForLintApproval -> WaitingForReview} transition is owned by {@code
+   * LintApprovalService.approveLint} (synchronous, in the command tx); by the time this runs the
+   * run is already {@code WaitingForReview}. Idempotent — {@code captureAndPush} self-gates on
+   * "workspace exists + uncommitted changes", the enrich UPDATE is keyed per rex, the finalize
+   * tolerates an already-terminal row, and the reviewer enqueue is idempotency-keyed — so a
+   * replayed approval neither double-pushes nor double-enqueues (AC8). Called post-commit by {@code
+   * LintApprovalService}.
+   */
+  public void resumeDeliveryTailFromGate(String workflowRunId, String correlationId) {
+    Optional<RunnerExecutionSnapshot> prOutput =
+        recordPort.findLatestByWorkflowRunPublicIdAndStage(workflowRunId, RunnerStage.EXECUTION);
+    if (prOutput.isEmpty()) {
+      log.warn(
+          "resumeDeliveryTailFromGate found no producing EXECUTION execution workflowRunId={} — "
+              + "cannot resume",
+          workflowRunId);
+      return;
+    }
+    String prOutputRunnerExecutionId = prOutput.get().publicId();
+
+    // captureAndPush — best-effort. The run has already left the lint gate (approve_lint
+    // transitioned
+    // it to WaitingForReview in-tx) and WaitingForReview has no ->Failed edge, so a push rejection
+    // is
+    // logged (operator/reconciliation owns an unpushed branch) rather than driving the run Failed.
+    Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome = Optional.empty();
+    if (repositoryWorkspaceService != null) {
+      try {
+        pushOutcome = repositoryWorkspaceService.captureAndPush(prOutputRunnerExecutionId);
+      } catch (GitCommandException pushFailure) {
+        log.warn(
+            "resumeDeliveryTailFromGate git push rejected workflowRunId={} runnerExecutionId={} "
+                + "category={} (proceeding to review)",
+            workflowRunId,
+            prOutputRunnerExecutionId,
+            pushFailure.failureCategory().value());
+      }
+    }
+
+    // Decision 4 (P1) — enrich the ingested pr-output artifact with the AUTHORITATIVE
+    // captureAndPush
+    // refs + diff, exactly as the pass path does (validateAndEnrichPrOutput ->
+    // enrichPrOutputArtifact
+    // + linkGitHubPrBestEffort). The in-memory runner result is gone by approve time, so the
+    // enrichment base (prRef) + artifact id are re-derived from the persisted latest pr-output
+    // artifact. Only runs when captureAndPush produced authoritative refs (a changes-bearing push);
+    // a clean/no-op push leaves the artifact as-is (no Fail drive — the run already left the gate).
+    if (pushOutcome.isPresent()) {
+      ResolvedPrOutputArtifact resolved = resolvePrOutputArtifactForResume(workflowRunId);
+      if (resolved != null) {
+        RepositoryWorkspaceService.RepositoryPushOutcome actual = pushOutcome.get();
+        String effectiveDiff =
+            actual.diff() != null && !actual.diff().isBlank()
+                ? boundPrOutputDiff(
+                    actual.diff(), prOutputRunnerExecutionId, workflowRunId, resolved.artifactId())
+                : null;
+        enrichPrOutputArtifact(
+            prOutputRunnerExecutionId,
+            workflowRunId,
+            resolved.artifactId(),
+            resolved.prRef(),
+            actual,
+            effectiveDiff,
+            correlationId);
+        linkGitHubPrBestEffort(prOutputRunnerExecutionId, workflowRunId, actual, correlationId);
+      } else {
+        log.warn(
+            "resumeDeliveryTailFromGate could not resolve the pr-output artifact to enrich "
+                + "workflowRunId={} — advancing to review without enrichment",
+            workflowRunId);
+      }
+    }
+
+    // Finalize the producing PR_OUTPUT execution (it was finalized at park; a terminal row is a
+    // no-op). Idempotent.
+    try {
+      executionService.recordCompleted(prOutputRunnerExecutionId);
+    } catch (DomainException alreadyTerminal) {
+      if (alreadyTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw alreadyTerminal;
+      }
+      log.info(
+          "resumeDeliveryTailFromGate producing execution already terminal runnerExecutionId={}",
+          prOutputRunnerExecutionId);
+    }
+
+    // Enqueue the reviewer over the now-enriched artifact. The run is ALREADY WaitingForReview
+    // (approve_lint transitioned it in-tx), so this only enqueues — no transition here.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        workflowOrchestrationServiceSupplier.get();
+    if (orchestration != null) {
+      orchestration.enqueueReviewerAfterLintApproval(
+          workflowRunId, prOutputRunnerExecutionId, correlationId);
+    } else {
+      log.warn(
+          "resumeDeliveryTailFromGate cannot enqueue reviewer (no orchestration bean) "
+              + "workflowRunId={}",
+          workflowRunId);
+    }
+  }
+
+  /**
+   * Story 3h-2 (code-review 2026-07-06) — re-derive the pr-output artifact id + enrichment base
+   * (prRef) for the {@code approve_lint} resume from persisted state (the in-memory runner result
+   * is gone). Returns {@code null} when no pr-output artifact exists; falls back to an empty prRef
+   * object when the body is missing/unparseable (enrichment still writes the authoritative refs +
+   * diff — only the runner-authored fields like a PR title are then absent).
+   */
+  private ResolvedPrOutputArtifact resolvePrOutputArtifactForResume(String workflowRunId) {
+    Optional<org.dradgo.application.artifact.ArtifactRecordSnapshot> latest =
+        artifactOperationService.findLatestArtifact(workflowRunId, ArtifactType.PR_OUTPUT);
+    if (latest.isEmpty()) {
+      return null;
+    }
+    String artifactId = latest.get().publicId();
+    JsonNode prRef = objectMapper.createObjectNode();
+    Optional<byte[]> body = artifactOperationService.readArtifactBytes(latest.get().storageRef());
+    if (body.isPresent() && body.get().length > 0) {
+      try {
+        JsonNode parsed = objectMapper.readTree(body.get());
+        if (parsed.isObject()) {
+          prRef = parsed;
+        }
+      } catch (java.io.IOException parseFailure) {
+        log.warn(
+            "resumeDeliveryTailFromGate pr-output artifact body unparseable workflowRunId={} "
+                + "artifactId={} — enriching a minimal ref",
+            workflowRunId,
+            artifactId);
+      }
+    }
+    return new ResolvedPrOutputArtifact(artifactId, prRef);
+  }
+
+  private record ResolvedPrOutputArtifact(String artifactId, JsonNode prRef) {}
 
   /**
    * Story 3h-1 (Task 6, AC3) — the delivery tail extracted so a build gate can precede it:
@@ -2732,6 +2932,10 @@ public class RunnerBroker {
       // artifact (same as REVIEW). BUILD never flows through onResult/handleSuccess in the
       // backend-side model, so this empty set is a belt-and-braces guard.
       case BUILD -> java.util.EnumSet.noneOf(ArtifactType.class);
+      // Story 3h-2 (AC1) — LINT is command-only and runs backend-side; it emits NO artifacts-table
+      // artifact (same as BUILD/REVIEW). LINT never flows through onResult/handleSuccess in the
+      // backend-side model, so this empty set is a belt-and-braces guard.
+      case LINT -> java.util.EnumSet.noneOf(ArtifactType.class);
     };
   }
 

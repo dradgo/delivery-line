@@ -1,6 +1,7 @@
 package org.dradgo.domain.project;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.dradgo.domain.id.PublicIdPrefixes;
@@ -63,7 +64,16 @@ public record Project(
     // buildStageEnabled mirrors openspecEnabled: a plain opt-in flag, default false ⇒ pre-3h parity
     // (BUILD skipped entirely). Detached POJO fields — safe on the worker thread (no lazy proxy).
     String buildCommand, // nullable
-    boolean buildStageEnabled) {
+    boolean buildStageEnabled,
+    // Story 3h-2 (AC2, FR76) — per-project lint-validation config (ADR 0030). lintCommands is a
+    // nullable list of CPU linter commands (null / empty = "no lint commands", LINT skipped);
+    // defensive-copied to an unmodifiable list (null → empty) by the compact constructor, NEVER
+    // null
+    // after construction. lintStageEnabled mirrors buildStageEnabled: a plain opt-in flag, default
+    // false ⇒ pre-3h-2 parity (LINT skipped entirely). Detached POJO fields — safe on the worker
+    // thread (no lazy proxy).
+    List<String> lintCommands,
+    boolean lintStageEnabled) {
 
   /**
    * Back-compat constructor for the pre-3e-4 13-arg shape — defaults {@code stepRunnerKinds} to an
@@ -144,6 +154,51 @@ public record Project(
         false);
   }
 
+  /**
+   * Story 3h-2 back-compat constructor for the pre-3h-2 16-arg shape (canonical through {@code
+   * buildStageEnabled}) — defaults the two new lint-stage fields to {@code (empty, false)} ⇒ LINT
+   * skipped (pre-3h-2 parity). Keeps the existing 16-arg {@code new Project(...)} call sites (build
+   * create/update/seed paths, tests, resolver fixtures) compiling unchanged; only the paths that
+   * actually carry lint config use the full 18-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        List.of(),
+        false);
+  }
+
   public Project {
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.PROJECT);
     if (name == null || name.isBlank()) {
@@ -168,5 +223,9 @@ public record Project(
     // Null-safe + immutable: an empty map is the canonical "no per-step mapping" value. Map.copyOf
     // rejects null keys/values, so a malformed map fails fast at construction.
     stepRunnerKinds = stepRunnerKinds == null ? Map.of() : Map.copyOf(stepRunnerKinds);
+    // Story 3h-2 — null-safe + immutable: an empty list is the canonical "no lint commands" value.
+    // List.copyOf rejects null elements, so a malformed list fails fast at construction (mirrors
+    // stepRunnerKinds).
+    lintCommands = lintCommands == null ? List.of() : List.copyOf(lintCommands);
   }
 }

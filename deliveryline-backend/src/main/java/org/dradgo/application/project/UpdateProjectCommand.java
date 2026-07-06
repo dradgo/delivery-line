@@ -25,6 +25,10 @@ public record UpdateProjectCommand(
     // full-replaces (default false clears); buildCommand null/blank clears the command.
     boolean buildStageEnabled,
     String buildCommand,
+    // Story 3h-2 (AC2) — per-project lint-validation config, editable here. lintStageEnabled
+    // full-replaces (default false clears); lintCommands null/empty clears all lint commands.
+    boolean lintStageEnabled,
+    java.util.List<String> lintCommands,
     String actorIdentity) {
   public UpdateProjectCommand(
       String name,
@@ -44,13 +48,15 @@ public record UpdateProjectCommand(
         null,
         false,
         null,
+        false,
+        null,
         actorIdentity);
   }
 
   /**
    * Story 3h-1 back-compat overload for the pre-3h 9-arg shape (canonical through {@code
-   * stepRunnerKinds}) — defaults the build-config fields to {@code (false, null)}. Keeps existing
-   * 9-arg callers (tests) compiling unchanged.
+   * stepRunnerKinds}) — defaults the build-config AND lint-config fields to {@code (false, null)}.
+   * Keeps existing 9-arg callers (tests) compiling unchanged.
    */
   public UpdateProjectCommand(
       String name,
@@ -71,6 +77,41 @@ public record UpdateProjectCommand(
         runnerKind,
         reviewerModelKind,
         stepRunnerKinds,
+        false,
+        null,
+        false,
+        null,
+        actorIdentity);
+  }
+
+  /**
+   * Story 3h-2 back-compat overload for the pre-3h-2 11-arg shape (canonical through {@code
+   * buildCommand}) — defaults the lint-config fields to {@code (false, null)}. Keeps existing
+   * 11-arg callers (build update tests) compiling unchanged.
+   */
+  public UpdateProjectCommand(
+      String name,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      String reviewerModelKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      boolean buildStageEnabled,
+      String buildCommand,
+      String actorIdentity) {
+    this(
+        name,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        reviewerModelKind,
+        stepRunnerKinds,
+        buildStageEnabled,
+        buildCommand,
         false,
         null,
         actorIdentity);

@@ -29,11 +29,13 @@ import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ArchiveRunCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -667,6 +669,56 @@ public class WorkflowController {
   }
 
   /**
+   * Story 3h-2 (AC6, FR76) — the severity-classified CPU-lint findings for the run's lint gate,
+   * backing the FE lint panel (3h-6). Read-only + advisory (mirrors reviewer-verdict): NO governed
+   * action, prefix-validated only, and never 5xx on missing findings (returns {@code
+   * state:"none"}).
+   */
+  @GetMapping(value = "/{workflowRunId}/lint-findings", produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getLintFindings",
+      summary = "Get the CPU-lint findings for a workflow run",
+      description =
+          "Returns the severity-classified findings the backend-side CPU lint gate produced over the "
+              + "run's implementation output (story 3h-2), with a server-derived state "
+              + "(none/advisory/gated). Advisory only: the operator gate actions ride the "
+              + "allowed-actions matrix, not this read.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Lint findings state (+ findings when present)."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public LintFindingsResponse getLintFindings(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info(
+        "REST get lint-findings received workflowRunId={}", MdcKeys.sanitizeForLog(workflowRunId));
+    LintFindingsResponse response =
+        LintFindingsResponse.from(workflowInspectionService.getLintFindings(workflowRunId));
+    log.info(
+        "REST get lint-findings success workflowRunId={} state={} findingCount={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.state(),
+        response.findings().size());
+    return response;
+  }
+
+  /**
    * Story 3g-4 (FR74, AC1) — per-step token usage for the run: each runner execution's
    * stage/status/createdAt plus its input/output/total token counts (3g-3's columns), oldest-first.
    * Read-only diagnostic surface (mirrors reviewer-verdict): NO governed action, prefix-validated
@@ -1208,6 +1260,159 @@ public class WorkflowController {
                     request.reasonText())));
     log.info(
         "REST reject-implementation success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  /**
+   * Story 3h-2 (AC5, FR76) — {@code approve_lint}: an operator (workflow_owner) dismisses the
+   * pre-review lint gate; the delivery tail resumes (push + WaitingForReview + reviewer enqueue).
+   * Idempotent under Idempotency-Key; workflow_owner-gated (mirrors the recovery-bar operator
+   * actions).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/approve-lint",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "approveLint",
+      summary = "Dismiss the pre-review lint gate (approve_lint)",
+      description =
+          "Operator (workflow_owner) action that dismisses a WaitingForLintApproval gate and resumes "
+              + "the delivery tail. Idempotent under Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Gate dismissed; resulting state returned."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse approveLint(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ApproveLintRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    requireWorkflowOwnerRole("approve-lint", request.role());
+    log.info(
+        "REST approve-lint received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.approveLint(
+                new ApproveLintCommand(
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    request.reasonText())));
+    log.info(
+        "REST approve-lint success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  /**
+   * Story 3h-2 (AC5, FR76) — {@code request_lint_fix}: an operator (workflow_owner) feeds the lint
+   * findings back to the implementation runner. Bumps the fix-loop counter, re-dispatches
+   * EXECUTION, and re-parks at the gate (never auto-fails). Idempotent under Idempotency-Key;
+   * workflow_owner-gated.
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/request-lint-fix",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "requestLintFix",
+      summary = "Feed the lint findings back to the implementation runner (request_lint_fix)",
+      description =
+          "Operator (workflow_owner) action that re-dispatches the implementation runner with the "
+              + "lint findings as referenced feedback and re-parks the run at WaitingForLintApproval. "
+              + "Never auto-fails the run. Idempotent under Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Fix re-dispatched; resulting state returned."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse requestLintFix(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody RequestLintFixRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    requireWorkflowOwnerRole("request-lint-fix", request.role());
+    log.info(
+        "REST request-lint-fix received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.requestLintFix(
+                new RequestLintFixCommand(
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    request.reasonText())));
+    log.info(
+        "REST request-lint-fix success workflowRunId={} currentState={}",
         workflowRunId,
         response.currentState());
     return response;
@@ -1924,6 +2129,34 @@ public class WorkflowController {
       throw new DomainException(
           DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
           "Reviewer role must be 'developer' for this endpoint",
+          details);
+    }
+    return trimmed;
+  }
+
+  /**
+   * Story 3h-2 (AC5) — the pre-review lint-gate endpoints (approve-lint / request-lint-fix) are
+   * operator-governance gates ({@code [recovery-bar-wrong-allowed-actions-role]}): the body {@code
+   * role} must equal {@code workflow_owner} verbatim; anything else — including null/blank — is
+   * rejected at the boundary as the typed {@link
+   * DomainErrorCode#INVALID_REVIEWER_ROLE_FOR_ENDPOINT} (do NOT route through a blank→default
+   * resolver, which would mask a role mismatch). Request-shape validation only (no domain
+   * decision), so it stays within the thin-controller ArchUnit rule.
+   */
+  private static String requireWorkflowOwnerRole(String action, String role) {
+    String trimmed = role == null ? null : role.trim();
+    if (!"workflow_owner".equals(trimmed)) {
+      log.warn(
+          "REST {} rejected: role must be 'workflow_owner' actualRole={}",
+          action,
+          MdcKeys.sanitizeForLog(role));
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("field", "role");
+      details.put("expected", "workflow_owner");
+      details.put("actual", role);
+      throw new DomainException(
+          DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
+          "Role must be 'workflow_owner' for this endpoint",
           details);
     }
     return trimmed;

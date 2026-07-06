@@ -62,7 +62,12 @@ public class ProjectEntityMapper {
         // (mirrors reviewerModelKind): build_command has no DB CHECK, so a blank row value would
         // trip the Project record's non-blank-if-set invariant. NULL is the canonical "no build".
         blankToNull(entity.getBuildCommand()),
-        entity.isBuildStageEnabled());
+        entity.isBuildStageEnabled(),
+        // Story 3h-2 (AC2) — split the newline-delimited lint_commands text back into the domain
+        // list (null/blank text → empty list; blank lines dropped). Project's compact ctor copies
+        // it.
+        splitLintCommands(entity.getLintCommands()),
+        entity.isLintStageEnabled());
   }
 
   public ProjectEntity toNewEntity(Project project) {
@@ -81,6 +86,9 @@ public class ProjectEntityMapper {
     // Story 3h-1 (AC2) — per-project build config round-trips on insert.
     entity.setBuildCommand(project.buildCommand());
     entity.setBuildStageEnabled(project.buildStageEnabled());
+    // Story 3h-2 (AC2) — per-project lint config round-trips on insert (list ↔ newline-delimited).
+    entity.setLintCommands(joinLintCommands(project.lintCommands()));
+    entity.setLintStageEnabled(project.lintStageEnabled());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -113,11 +121,43 @@ public class ProjectEntityMapper {
     // read-modify-write round-trip stays lossless (mirrors reviewer binding / runner-kind).
     entity.setBuildCommand(project.buildCommand());
     entity.setBuildStageEnabled(project.buildStageEnabled());
+    // Story 3h-2 (AC2) — lint config is editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors build config).
+    entity.setLintCommands(joinLintCommands(project.lintCommands()));
+    entity.setLintStageEnabled(project.lintStageEnabled());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }
 
   private static String blankToNull(String value) {
     return (value == null || value.isBlank()) ? null : value;
+  }
+
+  /**
+   * Story 3h-2 — the domain lint command list → the newline-delimited {@code lint_commands} text
+   * column. An empty/null list serializes to NULL (the canonical "no lint commands" value); blank
+   * entries are dropped so a stray newline never yields a blank command.
+   */
+  private static String joinLintCommands(java.util.List<String> lintCommands) {
+    if (lintCommands == null || lintCommands.isEmpty()) {
+      return null;
+    }
+    String joined =
+        lintCommands.stream()
+            .filter(command -> command != null && !command.isBlank())
+            .map(String::trim)
+            .collect(java.util.stream.Collectors.joining("\n"));
+    return joined.isBlank() ? null : joined;
+  }
+
+  /**
+   * Story 3h-2 — the newline-delimited {@code lint_commands} text column → the domain lint command
+   * list. A null/blank column reads back an empty list; blank lines are dropped.
+   */
+  private static java.util.List<String> splitLintCommands(String lintCommands) {
+    if (lintCommands == null || lintCommands.isBlank()) {
+      return java.util.List.of();
+    }
+    return lintCommands.lines().map(String::trim).filter(line -> !line.isBlank()).toList();
   }
 }

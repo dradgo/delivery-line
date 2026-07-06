@@ -114,7 +114,11 @@ public class ProjectManagementService {
             // Story 3h-1 (AC2) — per-project build config from the create command (blank command
             // coerced to null so the Project non-blank-if-set invariant holds; no BUILD then).
             normalizeBuildCommand(command.buildCommand()),
-            command.buildStageEnabled());
+            command.buildStageEnabled(),
+            // Story 3h-2 (AC2) — per-project lint config from the command (blank entries dropped;
+            // empty ⇒ no lint).
+            normalizeLintCommands(command.lintCommands()),
+            command.lintStageEnabled());
     Project created = projectStore.insert(project);
     log.info(
         "project created projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -166,7 +170,11 @@ public class ProjectManagementService {
             // Story 3h-1 (AC2) — build config is editable; full-replace from the update command
             // (blank command clears to null / no build).
             normalizeBuildCommand(command.buildCommand()),
-            command.buildStageEnabled());
+            command.buildStageEnabled(),
+            // Story 3h-2 (AC2) — per-project lint config from the command (blank entries dropped;
+            // empty ⇒ no lint).
+            normalizeLintCommands(command.lintCommands()),
+            command.lintStageEnabled());
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -225,7 +233,11 @@ public class ProjectManagementService {
             // Story 3h-1 — preserve build config across a status-only change (the back-compat
             // 14-arg ctor would default it to (null,false) and silently wipe it).
             existing.buildCommand(),
-            existing.buildStageEnabled());
+            existing.buildStageEnabled(),
+            // Story 3h-2 — preserve lint config across a status-only change (the back-compat 16-arg
+            // ctor would default it to (empty,false) and silently wipe it).
+            existing.lintCommands(),
+            existing.lintStageEnabled());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -264,7 +276,11 @@ public class ProjectManagementService {
             existing.stepRunnerKinds(),
             // Story 3h-1 — preserve build config across the status-only re-enable.
             existing.buildCommand(),
-            existing.buildStageEnabled());
+            existing.buildStageEnabled(),
+            // Story 3h-2 — preserve lint config across a status-only change (the back-compat 16-arg
+            // ctor would default it to (empty,false) and silently wipe it).
+            existing.lintCommands(),
+            existing.lintStageEnabled());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",
@@ -319,6 +335,21 @@ public class ProjectManagementService {
     }
     String trimmed = buildCommand.trim();
     return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  /**
+   * Story 3h-2 (AC2) — normalize the per-project lint commands for persistence: drop null/blank
+   * entries and trim the survivors (empty ⇒ the canonical "no lint commands" value — LINT skipped).
+   * No enum validation: the commands are opaque and validated only at execution time.
+   */
+  private static java.util.List<String> normalizeLintCommands(java.util.List<String> lintCommands) {
+    if (lintCommands == null) {
+      return java.util.List.of();
+    }
+    return lintCommands.stream()
+        .filter(command -> command != null && !command.isBlank())
+        .map(String::trim)
+        .toList();
   }
 
   /**

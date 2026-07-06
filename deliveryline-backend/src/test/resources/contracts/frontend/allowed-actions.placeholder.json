@@ -24,6 +24,8 @@
     "request_split",
     "continue_as_single",
     "repropose_split",
-    "approve_split"
+    "approve_split",
+    "approve_lint",
+    "request_lint_fix"
   ]
 }

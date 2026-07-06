@@ -84,6 +84,9 @@ public final class WorkflowTransitionTable {
         // Story 3d-3 (AC2 / R4) — the execution-stage (plan + pr-output) dispatching state parks
         // here when the run's resolved runner kind is `manual`.
         WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+        // Story 3h-2 (AC4) — a CRITICAL lint finding parks the run at the pre-review lint gate
+        // (entered from EXECUTING when the backend-side LINT stage classifies a critical finding).
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
         WorkflowState.FAILED,
         WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
@@ -115,6 +118,19 @@ public final class WorkflowTransitionTable {
     // into
     // the normal spec-generation path. No direct edges to approval/review/completed states.
     put(rules, WorkflowState.WAITING_FOR_DEPENDENCIES, WorkflowState.INVESTIGATING);
+    // Story 3h-2 (AC4 / AC5) — the pre-review lint gate. approve_lint resumes the delivery tail
+    // (-> WaitingForReview); request_lint_fix re-dispatches the implementation runner (->
+    // Executing).
+    // No -> Failed edge: the lint fix loop is operator-driven and never auto-fails (Decision 3).
+    // The
+    // recovery/safety edges (TakenOver / Reconciled) keep a parked run from ever wedging.
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.EXECUTING,
+        WorkflowState.TAKEN_OVER,
+        WorkflowState.RECONCILED);
     put(rules, WorkflowState.COMPLETED);
     put(
         rules,

@@ -12,7 +12,9 @@ public sealed interface WorkflowCommand
         AcceptClarificationCommand,
         RegenerateSpecCommand,
         RetryWorkflowCommand,
-        TakeoverWorkflowCommand {
+        TakeoverWorkflowCommand,
+        ApproveLintCommand,
+        RequestLintFixCommand {
 
   String actorIdentity();
 

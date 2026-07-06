@@ -3,6 +3,7 @@ package org.dradgo.adapters.rest;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -57,4 +58,18 @@ public record CreateProjectRequest(
                     + "(null/empty = no build, BUILD skipped even if enabled).",
             nullable = true,
             example = "mvn -q -DskipTests package")
-        String buildCommand) {}
+        String buildCommand,
+    @Schema(
+            description =
+                "Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default "
+                    + "false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.",
+            example = "false")
+        boolean lintStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-2 — optional CPU linter commands run backend-side in the workspace before "
+                    + "review (null/empty = no lint, LINT skipped even if enabled). Fail-fast: the "
+                    + "first command whose exit signals critical findings parks the run.",
+            nullable = true,
+            example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
+        List<String> lintCommands) {}

@@ -49,6 +49,9 @@ public final class ProjectRunnerSteps {
       // Story 3h-1 (AC1) — BUILD runs backend-side (BuildCommandPort), not via a per-step runner
       // kind, so there is no per-step override to resolve; fall through to none.
       case BUILD -> Optional.empty();
+      // Story 3h-2 (AC1) — LINT runs backend-side (BuildCommandPort), not via a per-step runner
+      // kind, so there is no per-step override to resolve; fall through to none.
+      case LINT -> Optional.empty();
     };
   }
 }

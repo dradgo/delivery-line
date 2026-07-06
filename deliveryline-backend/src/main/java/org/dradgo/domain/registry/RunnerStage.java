@@ -16,6 +16,20 @@ public enum RunnerStage implements RegistryValue {
   // artifact and records ZERO token/provider usage. It reuses the story-3.6 raw-output capture and
   // the 3d-5 per-step step/log view (zero new persistence for the execution record).
   BUILD("build"),
+  // Story 3h-2 (AC1, FR76) — the CPU lint gate rides the existing runner stack as its own stage,
+  // sitting BETWEEN BUILD and REVIEW. Like BUILD/REVIEW this is a CODE-ONLY enum value: {@code
+  // runner_executions.stage} is an un-CHECKed text column, so LINT needs NO Flyway migration and is
+  // NOT a RegistryContractTest / FlywaySchemaContractTest entry (both auto-derive the stage set
+  // from
+  // {@code values()}). The cost is the same exhaustive {@code switch (stage)} fan-out — every
+  // consumer adds an explicit LINT arm (no silent {@code default}) or a lint execution mis-routes.
+  // A LINT execution runs BACKEND-SIDE (the configured CPU linters via {@code BuildCommandPort} in
+  // the materialized host workspace, per the ADR-0030 amendment inherited from 3h-1), never through
+  // the Docker runner — so it emits NO artifacts-table artifact and records ZERO token/provider
+  // usage. It reuses the story-3.6 raw-output capture and the 3d-5 per-step step/log view, and
+  // persists its severity-classified findings as a nullable {@code lint_findings} jsonb column on
+  // the LINT execution row (zero new persistence tables).
+  LINT("lint"),
   // Story 3d-2 (AC1/AC2, ADR 0026, DD-1) — the advisory reviewer rides the existing runner stack
   // as its own stage. This is a CODE-ONLY enum: {@code runner_executions.stage} is an un-CHECKed
   // text column, so REVIEW needs NO Flyway migration and is NOT a RegistryContractTest /

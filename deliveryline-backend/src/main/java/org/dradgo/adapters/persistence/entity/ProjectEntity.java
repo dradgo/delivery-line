@@ -87,6 +87,16 @@ public class ProjectEntity {
   @Column(name = "build_stage_enabled", nullable = false)
   private boolean buildStageEnabled;
 
+  // Story 3h-2 (AC2, FR76) — per-project lint-validation config (V34). lint_commands is nullable
+  // opaque text: the lint command list serialized newline-delimited (NULL/empty = no lint commands,
+  // LINT skipped) — mirrors build_command's opaque-text posture, no DB CHECK. lint_stage_enabled
+  // mirrors build_stage_enabled: NOT NULL, default false ⇒ pre-3h-2 parity.
+  @Column(name = "lint_commands")
+  private String lintCommands;
+
+  @Column(name = "lint_stage_enabled", nullable = false)
+  private boolean lintStageEnabled;
+
   // Story 3d-3 (AC1) — per-project runner-kind override. Nullable opaque text (NULL = no override);
   // the V20 CHECK pins a non-null value to the RunnerKind value set, so the getter parses through
   // RunnerKind.fromValue (fail fast on an unknown DB value, mirroring the status getter).
@@ -201,6 +211,22 @@ public class ProjectEntity {
 
   public void setBuildStageEnabled(boolean buildStageEnabled) {
     this.buildStageEnabled = buildStageEnabled;
+  }
+
+  public String getLintCommands() {
+    return lintCommands;
+  }
+
+  public void setLintCommands(String lintCommands) {
+    this.lintCommands = lintCommands;
+  }
+
+  public boolean isLintStageEnabled() {
+    return lintStageEnabled;
+  }
+
+  public void setLintStageEnabled(boolean lintStageEnabled) {
+    this.lintStageEnabled = lintStageEnabled;
   }
 
   public RunnerKind getRunnerKind() {

@@ -131,16 +131,22 @@ public class DefaultProjectSeeder {
         (globalBuildCommand == null || globalBuildCommand.isBlank())
             ? null
             : globalBuildCommand.trim();
+    // Story 3h-2 (AC2) — seed the default project's lint config from the global lint-stage props.
+    // Blank entries are already dropped by RunnerProperties.LintStage; default OFF, empty list.
+    boolean lintStageEnabled = runnerProperties.lintStageEnabled();
+    java.util.List<String> lintCommands = runnerProperties.lintCommands();
 
     log.info(
         "seeding default project from global config repoRef={} ticketKind={} repoKind={} openspec={} "
-            + "buildStageEnabled={} buildCommandPresent={}",
+            + "buildStageEnabled={} buildCommandPresent={} lintStageEnabled={} lintCommandCount={}",
         repositoryUrl,
         ticketSourceKind.value(),
         repoHostKind.value(),
         openspecEnabled,
         buildStageEnabled,
-        buildCommand != null);
+        buildCommand != null,
+        lintStageEnabled,
+        lintCommands.size());
 
     Project defaultProject =
         new Project(
@@ -161,11 +167,14 @@ public class DefaultProjectSeeder {
             null,
             OffsetDateTime.now(ZoneOffset.UTC),
             null,
-            // Story 3h-1 (AC2) — seed build config from global props (full 16-arg ctor; no per-step
+            // Story 3h-1 (AC2) — seed build config from global props (full 18-arg ctor; no per-step
             // map so pass an empty map).
             java.util.Map.of(),
             buildCommand,
-            buildStageEnabled);
+            buildStageEnabled,
+            // Story 3h-2 (AC2) — seed lint config from global props.
+            lintCommands,
+            lintStageEnabled);
     try {
       Project seeded = projectStore.insert(defaultProject);
       log.info("seeded default project publicId={}", seeded.publicId());

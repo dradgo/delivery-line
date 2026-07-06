@@ -346,6 +346,36 @@ Epic-4 recovery. The code is **never** pushed past an unresolved build failure.
 **See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md),
 [`adr/0032-replay-safe-aftercommit-helper.md`](adr/0032-replay-safe-aftercommit-helper.md).
 
+### lint gate
+
+A pre-review **CPU lint** gate (`RunnerStage.LINT`, FR76, story 3h-2) that sits **between the
+[build stage](#build-stage) and review**. When a governed project has **lint commands** configured
+and the stage is enabled, the configured CPU linters run **backend-side** (each command via the same
+`BuildCommandPort` in the materialized workspace — a `runner_executions` row with `stage = 'lint'`,
+**no LLM**, **zero token/provider usage**) after a successful build and **before any LLM review or
+push**. Their aggregated output is **severity-classified**: a **critical** finding (linter `error`;
+baseline = any lint command exit ≠ 0) parks the run at [`WaitingForLintApproval`](#waitingforlintapproval);
+**non-critical** findings (`warning`/`info`) are attached as advisory and the delivery tail proceeds
+unchanged. The classified findings persist as a `lint_findings` jsonb payload on the LINT execution
+row and are served (advisory) at `GET /api/v1/workflows/{id}/lint-findings`. **Default disabled** — a
+project with no lint config skips LINT entirely (byte-identical to pre-3h-2). The point of the
+CPU-cheap gate is to never spend review tokens on code that fails static analysis.
+
+### WaitingForLintApproval
+
+A **non-terminal** workflow state (story 3h-2) a run parks in when the [lint gate](#lint-gate) finds
+a **critical** finding — **before** any LLM review or push. It surfaces two operator actions to the
+`workflow_owner` gate role: **`approve_lint`** (dismiss the gate → resume the delivery tail: push +
+`WaitingForReview` + reviewer enqueue) and **`request_lint_fix`** (feed the findings back to the
+implementation runner as a redaction-policed `lint.findings` reference, re-dispatch EXECUTION, and
+re-park). Unlike the build fix loop, the lint fix loop is **operator-driven and never auto-fails**
+the run: when `lint_fix_loop_count` reaches `lint-fix-max-loops` (default 3) the shared escalation
+marker is flipped once for **visibility only** — there is no `FAILED` transition, and no
+infinite-loop risk (each iteration requires a manual operator action).
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md),
+[`adr/0032-replay-safe-aftercommit-helper.md`](adr/0032-replay-safe-aftercommit-helper.md).
+
 ---
 
 ## Linked from

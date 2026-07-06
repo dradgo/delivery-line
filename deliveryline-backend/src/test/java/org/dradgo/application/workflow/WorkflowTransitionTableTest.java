@@ -30,6 +30,8 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             // Story 3f-3 — run-dependency gating park state.
             WorkflowState.WAITING_FOR_DEPENDENCIES,
+            // Story 3h-2 — pre-review lint gate park state.
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
             WorkflowState.SPLIT,
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
@@ -72,11 +74,13 @@ class WorkflowTransitionTableTest {
             WorkflowState.RECONCILED));
     // Story 3d-3: EXECUTING gains a WAITING_FOR_MANUAL_EXECUTION edge (execution-stage manual
     // park).
+    // Story 3h-2: EXECUTING gains a WAITING_FOR_LINT_APPROVAL edge (critical lint finding park).
     expectedTargets.put(
         WorkflowState.EXECUTING,
         Set.of(
             WorkflowState.WAITING_FOR_REVIEW,
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
             WorkflowState.FAILED,
             WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
@@ -104,6 +108,15 @@ class WorkflowTransitionTableTest {
     // (INVESTIGATING) once the last prerequisite reaches Completed — its sole out-edge.
     expectedTargets.put(
         WorkflowState.WAITING_FOR_DEPENDENCIES, Set.of(WorkflowState.INVESTIGATING));
+    // Story 3h-2: the lint gate resumes to WaitingForReview (approve_lint) or re-dispatches to
+    // Executing (request_lint_fix), plus the recovery/safety edges. No -> Failed edge (Decision 3).
+    expectedTargets.put(
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        Set.of(
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.EXECUTING,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.COMPLETED, Set.of());
     expectedTargets.put(
         WorkflowState.FAILED,

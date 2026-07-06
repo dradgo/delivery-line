@@ -1,5 +1,6 @@
 package org.dradgo.application.project;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.dradgo.application.runner.RunnerProperties;
@@ -137,6 +138,39 @@ public class ProjectRuntimeConfigResolver {
       return Optional.empty();
     }
     return Optional.of(effective.trim());
+  }
+
+  /**
+   * Story 3h-2 (AC2/AC3) — the effective lint-stage opt-in for a run: the resolved project's {@code
+   * lintStageEnabled} (seeded from {@code deliveryline.runner.lint-stage.enabled}, per-project
+   * overridable). The {@code default} project seeds {@code false} unless the global prop is on, so
+   * a pre-3h-2 deployment skips LINT entirely. Read on the worker thread — {@code Project} is a
+   * detached POJO (no lazy proxy), so this is safe outside a transaction.
+   */
+  public boolean resolveLintStageEnabled(String workflowRunId) {
+    return resolveForRun(workflowRunId).lintStageEnabled();
+  }
+
+  /**
+   * Story 3h-2 (AC2/AC3) — the effective lint command list for a run: the resolved project's
+   * per-project {@code lintCommands} when non-empty, else the global default ({@link
+   * RunnerProperties#lintCommands()}), with blank entries dropped and survivors trimmed. Empty ⇒ no
+   * lint commands configured, so LINT is skipped even when {@link #resolveLintStageEnabled} is true
+   * (mirrors {@link #resolveBuildCommand}'s project-then-global merge).
+   */
+  public List<String> resolveLintCommands(String workflowRunId) {
+    List<String> projectCommands = resolveForRun(workflowRunId).lintCommands();
+    List<String> effective =
+        (projectCommands == null || projectCommands.isEmpty())
+            ? runnerProperties.lintCommands()
+            : projectCommands;
+    if (effective == null) {
+      return List.of();
+    }
+    return effective.stream()
+        .filter(command -> command != null && !command.isBlank())
+        .map(String::trim)
+        .toList();
   }
 
   /**

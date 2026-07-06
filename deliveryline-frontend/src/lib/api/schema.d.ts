@@ -236,6 +236,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/approve-lint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the pre-review lint gate (approve_lint)
+         * @description Operator (workflow_owner) action that dismisses a WaitingForLintApproval gate and resumes the delivery tail. Idempotent under Idempotency-Key.
+         */
+        post: operations["approveLint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/approve-spec": {
         parameters: {
             query?: never;
@@ -408,6 +428,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/lint-findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the CPU-lint findings for a workflow run
+         * @description Returns the severity-classified findings the backend-side CPU lint gate produced over the run's implementation output (story 3h-2), with a server-derived state (none/advisory/gated). Advisory only: the operator gate actions ride the allowed-actions matrix, not this read.
+         */
+        get: operations["getLintFindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/manual-artifact": {
         parameters: {
             query?: never;
@@ -507,6 +547,26 @@ export interface paths {
         put?: never;
         /** Reject a run's specification (story 2.13 rebuild) */
         post: operations["rejectSpec"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/request-lint-fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Feed the lint findings back to the implementation runner (request_lint_fix)
+         * @description Operator (workflow_owner) action that re-dispatches the implementation runner with the lint findings as referenced feedback and re-parks the run at WaitingForLintApproval. Never auto-fails the run. Idempotent under Idempotency-Key.
+         */
+        post: operations["requestLintFix"];
         delete?: never;
         options?: never;
         head?: never;
@@ -805,6 +865,16 @@ export interface components {
             /** Format: int32 */
             expectedArtifactVersion: number;
         };
+        /** @description Dismiss the pre-review lint gate (approve_lint). */
+        ApproveLintRequest: {
+            /** @description Optional operator note. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
         ApproveSpecRequest: {
             artifactId: string;
             /** Format: int32 */
@@ -990,6 +1060,19 @@ export interface components {
              * @example false
              */
             buildStageEnabled?: boolean;
+            /**
+             * @description Story 3h-2 — optional CPU linter commands run backend-side in the workspace before review (null/empty = no lint, LINT skipped even if enabled). Fail-fast: the first command whose exit signals critical findings parks the run.
+             * @example [
+             *       "mvn -q -DskipTests checkstyle:check",
+             *       "npm run lint"
+             *     ]
+             */
+            lintCommands?: string[] | null;
+            /**
+             * @description Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.
+             * @example false
+             */
+            lintStageEnabled?: boolean;
             /** @example Acme Widgets */
             name: string;
             /**
@@ -1073,6 +1156,42 @@ export interface components {
              * @example https://linear.app/issue/DEL-1234
              */
             url?: string | null;
+        };
+        /** @description A single severity-classified lint finding. */
+        LintFinding: {
+            /** @description Source file (best-effort; null when not parseable). */
+            file?: string | null;
+            /**
+             * Format: int32
+             * @description Source line (best-effort; null when not parseable).
+             */
+            line?: number | null;
+            /** @description Redacted, truncated finding summary. */
+            message?: string | null;
+            /** @description Producing linter/command (null when unknown). */
+            rule?: string | null;
+            /**
+             * @description Finding severity.
+             * @example error
+             * @enum {string}
+             */
+            severity?: "error" | "warning" | "info";
+        };
+        /** @description Severity-classified CPU-lint findings surfaced beside the lint gate. */
+        LintFindings: {
+            /** @description The severity-classified findings; empty when state=none. */
+            findings?: components["schemas"]["LintFinding"][];
+            /**
+             * @description True when at least one critical (error) finding is present.
+             * @example true
+             */
+            hasCritical?: boolean;
+            /**
+             * @description Lint findings state.
+             * @example gated
+             * @enum {string}
+             */
+            state?: "none" | "advisory" | "gated";
         };
         ManualArtifactSubmissionRequest: {
             /** @description Optional map of contentReference -> base64-encoded artifact bytes (e.g. a spec's markdown), materialized into scratch before ingest. */
@@ -1166,6 +1285,16 @@ export interface components {
              * @example prj_abc123
              */
             id?: string;
+            /**
+             * @description Story 3h-2 — CPU linter commands run backend-side before review; empty = no lint.
+             * @example [
+             *       "mvn -q -DskipTests checkstyle:check",
+             *       "npm run lint"
+             *     ]
+             */
+            lintCommands?: string[];
+            /** @description Story 3h-2 — whether the pre-review CPU lint gate runs. */
+            lintStageEnabled?: boolean;
             /**
              * @description Human-readable project name.
              * @example Acme Widgets
@@ -1296,6 +1425,16 @@ export interface components {
              * @example Split the persistence layer out as its own subtask.
              */
             feedbackText: string;
+        };
+        /** @description Feed the lint findings back to the implementation runner (request_lint_fix). */
+        RequestLintFixRequest: {
+            /** @description Optional operator note for the fix re-dispatch. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
         };
         RetryWorkflowRequest: {
             actorIdentity: string;
@@ -1602,6 +1741,19 @@ export interface components {
              * @example false
              */
             buildStageEnabled?: boolean;
+            /**
+             * @description Story 3h-2 — optional CPU linter commands run backend-side in the workspace before review, full-replace on update (null/empty clears all lint commands, LINT skipped even if enabled).
+             * @example [
+             *       "mvn -q -DskipTests checkstyle:check",
+             *       "npm run lint"
+             *     ]
+             */
+            lintCommands?: string[] | null;
+            /**
+             * @description Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.
+             * @example false
+             */
+            lintStageEnabled?: boolean;
             /** @example Acme Widgets */
             name: string;
             /**
@@ -2490,6 +2642,62 @@ export interface operations {
             };
         };
     };
+    approveLint: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveLintRequest"];
+            };
+        };
+        responses: {
+            /** @description Gate dismissed; resulting state returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     approveSpec: {
         parameters: {
             query?: never;
@@ -3017,6 +3225,50 @@ export interface operations {
             };
         };
     };
+    getLintFindings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lint findings state (+ findings when present). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LintFindings"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     submitManualArtifact: {
         parameters: {
             query?: never;
@@ -3356,6 +3608,62 @@ export interface operations {
             };
             /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    requestLintFix: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequestLintFixRequest"];
+            };
+        };
+        responses: {
+            /** @description Fix re-dispatched; resulting state returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

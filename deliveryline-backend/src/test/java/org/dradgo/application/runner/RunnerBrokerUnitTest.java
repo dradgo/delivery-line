@@ -2426,6 +2426,7 @@ class RunnerBrokerUnitTest {
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
             100);
     broker =
         new RunnerBroker(

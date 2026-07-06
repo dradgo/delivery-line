@@ -61,6 +61,7 @@ class RunnerPropertiesTest {
         d.implementationStage(),
         d.openspec(),
         d.buildStage(),
+        d.lintStage(),
         queueMaxDepth);
   }
 
@@ -86,6 +87,7 @@ class RunnerPropertiesTest {
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
             100);
     assertEquals(true, enabled.allowShareableLogs());
   }
@@ -150,6 +152,7 @@ class RunnerPropertiesTest {
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
             100);
     assertEquals(
         RunnerKind.CLAUDE,
@@ -178,6 +181,7 @@ class RunnerPropertiesTest {
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
             100);
     assertEquals(
         RunnerKind.CLAUDE,
@@ -232,6 +236,7 @@ class RunnerPropertiesTest {
             new RunnerProperties.ImplementationStage(RunnerKind.CLAUDE, true),
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
             100);
     assertEquals(
         RunnerKind.CODEX, props.kindForExecutionSubStage(ExecutionSubStage.IMPLEMENTATION_PLAN));
@@ -262,6 +267,7 @@ class RunnerPropertiesTest {
                 RunnerProperties.ImplementationStage.defaults(),
                 RunnerProperties.OpenSpec.defaults(),
                 RunnerProperties.BuildStage.defaults(),
+                RunnerProperties.LintStage.defaults(),
                 100));
   }
 
@@ -288,6 +294,7 @@ class RunnerPropertiesTest {
                 RunnerProperties.ImplementationStage.defaults(),
                 RunnerProperties.OpenSpec.defaults(),
                 RunnerProperties.BuildStage.defaults(),
+                RunnerProperties.LintStage.defaults(),
                 100));
   }
 

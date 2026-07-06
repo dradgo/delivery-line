@@ -62,6 +62,13 @@ public record ProjectResponse(
             nullable = true,
             example = "mvn -q -DskipTests package")
         String buildCommand,
+    @Schema(description = "Story 3h-2 — whether the pre-review CPU lint gate runs.")
+        boolean lintStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-2 — CPU linter commands run backend-side before review; empty = no lint.",
+            example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
+        List<String> lintCommands,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -88,6 +95,8 @@ public record ProjectResponse(
         toWireStepRunnerKinds(project.stepRunnerKinds()),
         project.buildStageEnabled(),
         project.buildCommand(),
+        project.lintStageEnabled(),
+        project.lintCommands(),
         project.createdAt(),
         credentials,
         allowedActions);

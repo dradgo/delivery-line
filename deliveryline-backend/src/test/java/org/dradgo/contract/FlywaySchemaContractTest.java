@@ -175,6 +175,12 @@ class FlywaySchemaContractTest {
     // Story 3h-1 / V33: bounded build auto-fix loop counter (mirrors implementation loop count).
     assertColumnType("workflow_runs", "build_fix_loop_count", "integer");
     assertColumnNullable("workflow_runs", "build_fix_loop_count", false);
+    // Story 3h-2 / V34: operator-driven lint fix loop counter + jsonb findings on
+    // runner_executions.
+    assertColumnType("workflow_runs", "lint_fix_loop_count", "integer");
+    assertColumnNullable("workflow_runs", "lint_fix_loop_count", false);
+    assertColumnType("runner_executions", "lint_findings", "jsonb");
+    assertColumnNullable("runner_executions", "lint_findings", true);
     assertColumnType("workflow_events", "stage_duration_ms", "bigint");
     assertColumnType("workflow_events", "rejection_taxonomy", "text");
     assertColumnType("approvals", "rejection_taxonomy", "text");
@@ -202,6 +208,7 @@ class FlywaySchemaContractTest {
             "WaitingForReview",
             "WaitingForManualExecution",
             "WaitingForDependencies",
+            "WaitingForLintApproval",
             "Split",
             "Completed",
             "Failed",
@@ -553,6 +560,9 @@ class FlywaySchemaContractTest {
     // Story 3h-1 / V33: non-negative guard on the build-fix loop counter.
     assertConstraintDefinitionContains(
         "ck_workflow_runs_build_fix_loop_count_nonneg", "build_fix_loop_count");
+    // Story 3h-2 / V34: non-negative guard on the lint-fix loop counter.
+    assertConstraintDefinitionContains(
+        "ck_workflow_runs_lint_fix_loop_count_nonneg", "lint_fix_loop_count");
   }
 
   @Test
@@ -627,6 +637,27 @@ class FlywaySchemaContractTest {
         "false",
         buildStageDefault,
         () -> "projects.build_stage_enabled must default to false but was: " + buildStageDefault);
+
+    // Story 3h-2 / V34: per-project lint config. lint_commands is nullable text (no CHECK);
+    // lint_stage_enabled is a NOT NULL boolean defaulting false (mirrors build_stage_enabled).
+    assertColumnType("projects", "lint_commands", "text");
+    assertColumnNullable("projects", "lint_commands", true);
+    assertColumnType("projects", "lint_stage_enabled", "boolean");
+    assertColumnNullable("projects", "lint_stage_enabled", false);
+    String lintStageDefault =
+        jdbcTemplate.queryForObject(
+            """
+					select column_default
+					from information_schema.columns
+					where table_schema = 'public'
+					  and table_name = 'projects'
+					  and column_name = 'lint_stage_enabled'
+					""",
+            String.class);
+    assertEquals(
+        "false",
+        lintStageDefault,
+        () -> "projects.lint_stage_enabled must default to false but was: " + lintStageDefault);
 
     // uq_projects_slug enforces a unique slug.
     assertTrue(

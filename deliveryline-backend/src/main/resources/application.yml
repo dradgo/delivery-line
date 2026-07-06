@@ -127,6 +127,14 @@ deliveryline:
     # failure (build_fix_loop_count > cap) and the SHARED per-run escalation marker is flipped once
     # (same marker as the spec / implementation loops, D5).
     build-fix-max-loops: 3
+    # Story 3h-2 (FR76): the bounded lint auto-fix cap AND escalation threshold (one value; read by
+    # LintFixEscalationThresholdProvider). Unlike the build loop the lint loop is OPERATOR-DRIVEN
+    # (request_lint_fix) and NEVER auto-FAILs the run: on each request_lint_fix the run re-dispatches
+    # EXECUTION and re-parks at WaitingForLintApproval. When lint_fix_loop_count reaches this cap the
+    # SHARED per-run escalation marker is flipped once (visibility only — same marker as the other
+    # loops, D5); the run stays parked, so there is no infinite-loop risk (each iteration needs a
+    # manual operator action).
+    lint-fix-max-loops: 3
     # Story 3f-4 (AC4): threshold above which SplitProposalService.repropose raises the per-run
     # escalation marker (the SAME marker as the spec-rejection / implementation-rejection loops). The
     # escalation event is appended exactly once (when the split-proposal re-propose counter crosses
@@ -312,6 +320,21 @@ deliveryline:
     #   enabled: true
     #   command: "mvn -q -DskipTests package"
     #   timeout: 10m
+    # Story 3h-2 (FR76) — pre-review CPU lint gate. When enabled AND commands are set, the produced
+    # code is linted backend-side (each command via BuildCommandPort in the materialized host
+    # workspace) AFTER a successful BUILD and BEFORE push + review; a command whose exit signals
+    # critical findings parks the run at WaitingForLintApproval for operator approve_lint /
+    # request_lint_fix (the latter re-dispatches EXECUTION, bounded by lint-fix-max-loops above).
+    # timeout bounds each lint process (kill → non-zero on overrun). Default OFF (commented out) ⇒
+    # byte-identical to pre-3h-2 (LINT skipped entirely). OPTIONAL + UNVALIDATED, so the shared test
+    # application.yml needs no mirror entry. Seeds the default project's per-project lint config;
+    # per-project overrides live on the Project aggregate.
+    # lint-stage:
+    #   enabled: true
+    #   commands:
+    #     - "mvn -q -DskipTests checkstyle:check"
+    #     - "npm --prefix frontend run lint"
+    #   timeout: 5m
     recovery:
       batch-size: 100
     mock:

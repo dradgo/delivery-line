@@ -70,6 +70,15 @@ public record RunnerProperties(
     // [[validated-config-needs-test-yaml]]). Per-project overrides live on the Project aggregate;
     // this is only the seed default read by DefaultProjectSeeder.
     BuildStage buildStage,
+    // Story 3h-2 (AC2, FR76) — global default lint-validation config seeded into the default
+    // project (deliveryline.runner.lint-stage.{enabled,commands,timeout}). OPTIONAL + UNVALIDATED
+    // nested record (mirrors the buildStage() precedent); a null/absent group falls back to
+    // disabled
+    // (default OFF, no commands) so the shared test application.yml needs no mirror entry (Trap:
+    // [[validated-config-needs-test-yaml]]). Per-project overrides live on the Project aggregate;
+    // this is only the seed default read by DefaultProjectSeeder + the global fallback command
+    // list.
+    LintStage lintStage,
     // Story 3.17a (AC4 / AC7) — RunnerExecutionQueue backpressure cap. The maximum number of rows
     // that may sit in status='queued' at once; enqueue beyond it raises RUNNER_QUEUE_FULL and
     // writes
@@ -121,6 +130,7 @@ public record RunnerProperties(
         implementationStage == null ? ImplementationStage.defaults() : implementationStage;
     openspec = openspec == null ? OpenSpec.defaults() : openspec;
     buildStage = buildStage == null ? BuildStage.defaults() : buildStage;
+    lintStage = lintStage == null ? LintStage.defaults() : lintStage;
     // Story 3.17a AC4 — clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an unset
     // primitive that bound to 0) would reject every enqueue; coerce to the minimum useful depth so
     // a
@@ -150,6 +160,7 @@ public record RunnerProperties(
         ImplementationStage.defaults(),
         OpenSpec.defaults(),
         BuildStage.defaults(),
+        LintStage.defaults(),
         100);
   }
 
@@ -185,6 +196,14 @@ public record RunnerProperties(
       case BUILD ->
           throw new IllegalStateException(
               "kindForStage must not be called for RunnerStage.BUILD; the build stage runs "
+                  + "backend-side via BuildCommandPort and is never runner-kind dispatched");
+      // Story 3h-2 (AC1) — LINT runs BACKEND-SIDE via BuildCommandPort (the configured CPU linters
+      // in the materialized workspace), never through the Docker runner, so it is NEVER
+      // runner-kind dispatched. Reaching here for LINT is a routing bug — fail loud (same posture
+      // as BUILD/REVIEW).
+      case LINT ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.LINT; the lint stage runs "
                   + "backend-side via BuildCommandPort and is never runner-kind dispatched");
     };
   }
@@ -281,6 +300,36 @@ public record RunnerProperties(
    */
   public Duration buildTimeout() {
     return buildStage.timeout();
+  }
+
+  /**
+   * Story 3h-2 (AC2) — the GLOBAL default lint-stage opt-in ({@code
+   * deliveryline.runner.lint-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
+   * default project's per-project {@code lintStageEnabled}. Default {@code false} ⇒ pre-3h-2
+   * parity.
+   */
+  public boolean lintStageEnabled() {
+    return lintStage.enabled();
+  }
+
+  /**
+   * Story 3h-2 (AC2) — the GLOBAL default lint command list ({@code
+   * deliveryline.runner.lint-stage.commands}) that {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveLintCommands} falls back to
+   * when the resolved project binds no per-project {@code lintCommands}. Empty/absent ⇒ no lint
+   * commands (LINT skipped even if enabled).
+   */
+  public List<String> lintCommands() {
+    return lintStage.commands();
+  }
+
+  /**
+   * Story 3h-2 (AC2 / Task 3) — the bound on each backend-side lint process ({@code
+   * deliveryline.runner.lint-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * to 5 minutes.
+   */
+  public Duration lintTimeout() {
+    return lintStage.timeout();
   }
 
   /**
@@ -522,6 +571,40 @@ public record RunnerProperties(
 
     public static BuildStage defaults() {
       return new BuildStage(false, null, DEFAULT_TIMEOUT);
+    }
+  }
+
+  /**
+   * Story 3h-2 (AC2, FR76) — global default lint-validation config ({@code
+   * deliveryline.runner.lint-stage.{enabled,commands,timeout}}). Seeds the default project's
+   * per-project lint config via {@code DefaultProjectSeeder} and supplies the global fallback
+   * command list; per-project overrides live on the {@code Project} aggregate. {@code
+   * enabled=false} (the default) ⇒ LINT skipped entirely (pre-3h-2 parity); {@code commands} are
+   * the CPU linter commands run backend-side (fail-fast, one per configured command) via {@code
+   * BuildCommandPort} in the materialized workspace; {@code timeout} bounds each such process (kill
+   * → non-zero exit on overrun), defaulting to 5 minutes.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard beyond null/blank
+   * coercion): the shared test {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()};
+   * null/blank command entries are dropped, and a null/zero {@code timeout} falls back to the
+   * 5-minute default.
+   */
+  public record LintStage(boolean enabled, List<String> commands, Duration timeout) {
+
+    public LintStage {
+      commands =
+          (commands == null)
+              ? List.of()
+              : commands.stream().filter(c -> c != null && !c.isBlank()).map(String::trim).toList();
+      timeout =
+          (timeout == null || timeout.isZero() || timeout.isNegative()) ? DEFAULT_TIMEOUT : timeout;
+    }
+
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(5);
+
+    public static LintStage defaults() {
+      return new LintStage(false, List.of(), DEFAULT_TIMEOUT);
     }
   }
 

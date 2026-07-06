@@ -81,7 +81,18 @@ public enum AllowedAction implements RegistryValue {
   // into the non-terminal SPLIT state. Canonical executor is SplitCommitService.commit; surfaced
   // alongside repropose_split/continue_as_single when an open proposal exists at the gate role.
   // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only).
-  APPROVE_SPLIT("approve_split");
+  APPROVE_SPLIT("approve_split"),
+  // Story 3h-2 (AC5, FR76) — the CPU lint gate's two operator actions, surfaced ONLY at
+  // WAITING_FOR_LINT_APPROVAL for the workflow_owner gate role (other roles get view_only + the
+  // log/
+  // usage views). approve_lint dismisses the gate and resumes the delivery tail (capture-and-push +
+  // WaitingForReview + reviewer enqueue) via the resumable seam; request_lint_fix re-dispatches the
+  // EXECUTION runner with the lint findings as redaction-policed referenced feedback, bumps
+  // lint_fix_loop_count, and re-parks (never auto-FAILs — Decision 3). Canonical executor is
+  // LintApprovalService. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON
+  // only).
+  APPROVE_LINT("approve_lint"),
+  REQUEST_LINT_FIX("request_lint_fix");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

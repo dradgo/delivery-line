@@ -101,6 +101,30 @@ public class RunnerConfiguration {
     return Runnable::run;
   }
 
+  /**
+   * Story 3h-2 — the executor the {@code LintStageService} offloads its (potentially minutes-long)
+   * backend-side lint run onto, so the {@code afterCommit} hook returns immediately and the single
+   * scheduled poller thread is never blocked for the lint's duration (essential when BUILD is
+   * disabled and the lint gate fires directly from the poller thread). Virtual-thread-per-task, the
+   * exact twin of {@link #buildStageExecutor()}.
+   */
+  @Bean("lintStageExecutor")
+  @Profile("!test")
+  Executor lintStageExecutor() {
+    return Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("lint-stage-", 0).factory());
+  }
+
+  /**
+   * Test-profile twin of {@link #lintStageExecutor()} — a SAME-THREAD executor so lint-stage
+   * integration tests that drive the gate inside a transaction observe the lint synchronously on
+   * commit (deterministic). Same bean name, mutually exclusive profile ⇒ exactly one is registered.
+   */
+  @Bean("lintStageExecutor")
+  @Profile("test")
+  Executor lintStageExecutorForTests() {
+    return Runnable::run;
+  }
+
   @EventListener(ApplicationReadyEvent.class)
   public void recoverRunnerExecutionsOnStartup() {
     if (!runnerProperties.scheduling().enabled()) {

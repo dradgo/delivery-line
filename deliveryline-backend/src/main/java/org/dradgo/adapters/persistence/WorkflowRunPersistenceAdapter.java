@@ -66,6 +66,15 @@ public class WorkflowRunPersistenceAdapter
        where public_id = :publicId
        returning build_fix_loop_count
       """;
+  // Story 3h-2 — the operator-driven lint fix loop twin (distinct dispatch idempotency key per
+  // attempt + the cap check for the visibility-only escalation; shares the escalation marker).
+  private static final String INCREMENT_LINT_FIX_LOOP_COUNT_SQL =
+      """
+      update workflow_runs
+         set lint_fix_loop_count = lint_fix_loop_count + 1
+       where public_id = :publicId
+       returning lint_fix_loop_count
+      """;
   private static final String MARK_ESCALATION_SQL =
       // RETURNING an int literal (not the boolean escalation_marker_set column) so the int row
       // mapper below reads cleanly — a returned row means this call just-flipped the marker, zero
@@ -294,6 +303,28 @@ public class WorkflowRunPersistenceAdapter
     }
     log.debug(
         "incrementAndReadBuildFixLoopCount publicId={} newLoopCount={}",
+        workflowRunPublicId,
+        newCount);
+    return newCount;
+  }
+
+  @Override
+  public int incrementAndReadLintFixLoopCount(String workflowRunPublicId) {
+    Integer newCount =
+        jdbcTemplate.query(
+            INCREMENT_LINT_FIX_LOOP_COUNT_SQL,
+            params(workflowRunPublicId),
+            rs -> rs.next() ? rs.getInt(1) : null);
+    if (newCount == null) {
+      log.warn(
+          "incrementAndReadLintFixLoopCount workflowRunNotFound publicId={}", workflowRunPublicId);
+      throw new DomainException(
+          DomainErrorCode.RUN_NOT_FOUND,
+          "Workflow run not found: " + workflowRunPublicId,
+          Map.of("runId", workflowRunPublicId));
+    }
+    log.debug(
+        "incrementAndReadLintFixLoopCount publicId={} newLoopCount={}",
         workflowRunPublicId,
         newCount);
     return newCount;

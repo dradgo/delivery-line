@@ -128,6 +128,22 @@ public class RunnerExecutionService {
   }
 
   /**
+   * Story 3h-2 (AC6) — persist the severity-classified lint findings (already-serialized,
+   * already-redacted JSON) onto the LINT execution row's {@code lint_findings} jsonb column.
+   * Metadata-only: never changes {@code status}, tolerates a still-running row.
+   */
+  public RunnerExecutionSnapshot recordLintFindings(
+      String runnerExecutionId, String lintFindingsJson) {
+    RunnerExecutionSnapshot updated =
+        recordPort.recordLintFindings(runnerExecutionId, lintFindingsJson);
+    log.info(
+        "recordLintFindings runnerExecutionId={} payloadPresent={}",
+        runnerExecutionId,
+        lintFindingsJson != null);
+    return updated;
+  }
+
+  /**
    * Story 3.6 AC3/AC6 / Trap T10 — persist the durable redacted-log capture reference + metrics
    * onto the row. Metadata-only: never changes {@code status}, tolerates an already-terminal row.
    */

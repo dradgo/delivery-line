@@ -137,6 +137,8 @@ public class ProjectController {
             request.stepRunnerKinds(),
             request.buildStageEnabled(),
             request.buildCommand(),
+            request.lintStageEnabled(),
+            request.lintCommands(),
             idempotencyKey,
             actorIdentity);
     log.info(
@@ -241,6 +243,8 @@ public class ProjectController {
             request.stepRunnerKinds(),
             request.buildStageEnabled(),
             request.buildCommand(),
+            request.lintStageEnabled(),
+            request.lintCommands(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
   }
@@ -475,8 +479,27 @@ public class ProjectController {
             // Story 3h-1 (AC2) — both build-config fields MUST be part of the create fingerprint,
             // else two creates differing only in build config would collide as idempotent replays.
             Boolean.toString(command.buildStageEnabled()),
-            nullSafe(command.buildCommand()));
+            nullSafe(command.buildCommand()),
+            // Story 3h-2 (AC2) — both lint-config fields MUST be part of the create fingerprint,
+            // else two creates differing only in lint config would collide as idempotent replays.
+            Boolean.toString(command.lintStageEnabled()),
+            canonicalLintCommands(command.lintCommands()));
     return sha256Hex(canonical);
+  }
+
+  /**
+   * Story 3h-2 — deterministic canonical form of the lint command list for the create fingerprint:
+   * the commands joined in order (order is semantically meaningful — fail-fast runs first-to-last),
+   * newline-delimited. Two same-key creates with the same lint commands fingerprint identically
+   * (and replay); a different list (or order) is a distinct create.
+   */
+  private static String canonicalLintCommands(java.util.List<String> lintCommands) {
+    if (lintCommands == null || lintCommands.isEmpty()) {
+      return "";
+    }
+    return lintCommands.stream()
+        .map(ProjectController::nullSafe)
+        .collect(java.util.stream.Collectors.joining("\n"));
   }
 
   /**

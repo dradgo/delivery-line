@@ -25,6 +25,16 @@ public enum WorkflowState implements RegistryValue {
   // (WAITING_FOR_DEPENDENCIES -> INVESTIGATING). A run with zero/satisfied prerequisites never
   // enters this state. Wire value is PascalCase, matching the other states.
   WAITING_FOR_DEPENDENCIES("WaitingForDependencies"),
+  // Story 3h-2 (AC4 / FR76): non-terminal lint-gate state. A run with a CRITICAL lint finding parks
+  // HERE (entered from EXECUTING) BEFORE any LLM review or push runs. It leaves only on the
+  // operator
+  // gate actions — approve_lint (-> WaitingForReview, resuming the delivery tail) or
+  // request_lint_fix
+  // (-> Executing, re-dispatching the implementation runner with the findings as feedback) — or a
+  // recovery/safety edge (TakenOver / Reconciled). There is NO -> Failed edge: the lint fix loop is
+  // operator-driven and never auto-fails (Decision 3). Wire value is PascalCase, matching the other
+  // states.
+  WAITING_FOR_LINT_APPROVAL("WaitingForLintApproval"),
   COMPLETED("Completed"),
   FAILED("Failed"),
   PAUSED("Paused"),

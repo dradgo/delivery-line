@@ -53,4 +53,12 @@ class ProjectRunnerStepsTest {
     assertThat(ProjectRunnerSteps.of(RunnerStage.BUILD, null)).isEmpty();
     assertThat(ProjectRunnerSteps.of(RunnerStage.BUILD, ExecutionSubStage.PR_OUTPUT)).isEmpty();
   }
+
+  @Test
+  void lintStageHasNoStep() {
+    // Story 3h-2 — LINT runs backend-side (BuildCommandPort), never via a per-step runner kind,
+    // so it has no per-step override to resolve (a spurious sub-stage is ignored).
+    assertThat(ProjectRunnerSteps.of(RunnerStage.LINT, null)).isEmpty();
+    assertThat(ProjectRunnerSteps.of(RunnerStage.LINT, ExecutionSubStage.PR_OUTPUT)).isEmpty();
+  }
 }

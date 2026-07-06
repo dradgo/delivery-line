@@ -18,6 +18,8 @@ import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 // @DynamicUpdate — this row is written by SEVERAL independent transactions during a single result
 // ingest: the ambient onResult tx marks it running→completed while a REQUIRES_NEW metadata write
@@ -144,6 +146,14 @@ public class RunnerExecutionEntity {
 
   @Column(name = "total_tokens")
   private Integer totalTokens;
+
+  // Story 3h-2 (AC6) V34 — severity-classified lint findings as a jsonb payload on a LINT execution
+  // row. Null for non-LINT rows and for a LINT row before recordLintFindings runs. Metadata-only
+  // write (mirrors the token columns), never mutates status. Stored as the raw JSON string via
+  // @JdbcTypeCode(SqlTypes.JSON) (mirrors WorkflowEventEntity.details).
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(name = "lint_findings")
+  private String lintFindings;
 
   public Long getId() {
     return id;
@@ -385,6 +395,14 @@ public class RunnerExecutionEntity {
 
   public void setTotalTokens(Integer totalTokens) {
     this.totalTokens = totalTokens;
+  }
+
+  public String getLintFindings() {
+    return lintFindings;
+  }
+
+  public void setLintFindings(String lintFindings) {
+    this.lintFindings = lintFindings;
   }
 
   @PrePersist

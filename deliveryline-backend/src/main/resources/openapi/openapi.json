@@ -124,6 +124,30 @@
         ],
         "type" : "object"
       },
+      "ApproveLintRequest" : {
+        "description" : "Dismiss the pre-review lint gate (approve_lint).",
+        "properties" : {
+          "reasonText" : {
+            "description" : "Optional operator note.",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "role"
+        ],
+        "type" : "object"
+      },
       "ApproveSpecRequest" : {
         "properties" : {
           "artifactId" : {
@@ -574,6 +598,25 @@
             "example" : false,
             "type" : "boolean"
           },
+          "lintCommands" : {
+            "description" : "Story 3h-2 — optional CPU linter commands run backend-side in the workspace before review (null/empty = no lint, LINT skipped even if enabled). Fail-fast: the first command whose exit signals critical findings parks the run.",
+            "example" : [
+              "mvn -q -DskipTests checkstyle:check",
+              "npm run lint"
+            ],
+            "items" : {
+              "type" : "string"
+            },
+            "type" : [
+              "array",
+              "null"
+            ]
+          },
+          "lintStageEnabled" : {
+            "description" : "Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.",
+            "example" : false,
+            "type" : "boolean"
+          },
           "name" : {
             "example" : "Acme Widgets",
             "maxLength" : 256,
@@ -735,6 +778,79 @@
               "string",
               "null"
             ]
+          }
+        },
+        "type" : "object"
+      },
+      "LintFinding" : {
+        "description" : "A single severity-classified lint finding.",
+        "properties" : {
+          "file" : {
+            "description" : "Source file (best-effort; null when not parseable).",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "line" : {
+            "description" : "Source line (best-effort; null when not parseable).",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "message" : {
+            "description" : "Redacted, truncated finding summary.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "rule" : {
+            "description" : "Producing linter/command (null when unknown).",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "severity" : {
+            "description" : "Finding severity.",
+            "enum" : [
+              "error",
+              "warning",
+              "info"
+            ],
+            "example" : "error",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "LintFindings" : {
+        "description" : "Severity-classified CPU-lint findings surfaced beside the lint gate.",
+        "properties" : {
+          "findings" : {
+            "description" : "The severity-classified findings; empty when state=none.",
+            "items" : {
+              "$ref" : "#/components/schemas/LintFinding"
+            },
+            "type" : "array"
+          },
+          "hasCritical" : {
+            "description" : "True when at least one critical (error) finding is present.",
+            "example" : true,
+            "type" : "boolean"
+          },
+          "state" : {
+            "description" : "Lint findings state.",
+            "enum" : [
+              "none",
+              "advisory",
+              "gated"
+            ],
+            "example" : "gated",
+            "type" : "string"
           }
         },
         "type" : "object"
@@ -918,6 +1034,21 @@
             "description" : "Project public id.",
             "example" : "prj_abc123",
             "type" : "string"
+          },
+          "lintCommands" : {
+            "description" : "Story 3h-2 — CPU linter commands run backend-side before review; empty = no lint.",
+            "example" : [
+              "mvn -q -DskipTests checkstyle:check",
+              "npm run lint"
+            ],
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "lintStageEnabled" : {
+            "description" : "Story 3h-2 — whether the pre-review CPU lint gate runs.",
+            "type" : "boolean"
           },
           "name" : {
             "description" : "Human-readable project name.",
@@ -1195,6 +1326,30 @@
         },
         "required" : [
           "feedbackText"
+        ],
+        "type" : "object"
+      },
+      "RequestLintFixRequest" : {
+        "description" : "Feed the lint findings back to the implementation runner (request_lint_fix).",
+        "properties" : {
+          "reasonText" : {
+            "description" : "Optional operator note for the fix re-dispatch.",
+            "maxLength" : 16384,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "role"
         ],
         "type" : "object"
       },
@@ -1896,6 +2051,25 @@
           },
           "buildStageEnabled" : {
             "description" : "Story 3h-1 — whether the pre-review build-validation stage runs for this project. Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "lintCommands" : {
+            "description" : "Story 3h-2 — optional CPU linter commands run backend-side in the workspace before review, full-replace on update (null/empty clears all lint commands, LINT skipped even if enabled).",
+            "example" : [
+              "mvn -q -DskipTests checkstyle:check",
+              "npm run lint"
+            ],
+            "items" : {
+              "type" : "string"
+            },
+            "type" : [
+              "array",
+              "null"
+            ]
+          },
+          "lintStageEnabled" : {
+            "description" : "Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.",
             "example" : false,
             "type" : "boolean"
           },
@@ -3444,6 +3618,94 @@
         ]
       }
     },
+    "/api/v1/workflows/{workflowRunId}/approve-lint" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) action that dismisses a WaitingForLintApproval gate and resumes the delivery tail. Idempotent under Idempotency-Key.",
+        "operationId" : "approveLint",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ApproveLintRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "Gate dismissed; resulting state returned."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION."
+          }
+        },
+        "summary" : "Dismiss the pre-review lint gate (approve_lint)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
     "/api/v1/workflows/{workflowRunId}/approve-spec" : {
       "post" : {
         "operationId" : "approveSpec",
@@ -4199,6 +4461,60 @@
         ]
       }
     },
+    "/api/v1/workflows/{workflowRunId}/lint-findings" : {
+      "get" : {
+        "description" : "Returns the severity-classified findings the backend-side CPU lint gate produced over the run's implementation output (story 3h-2), with a server-derived state (none/advisory/gated). Advisory only: the operator gate actions ride the allowed-actions matrix, not this read.",
+        "operationId" : "getLintFindings",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/LintFindings"
+                }
+              }
+            },
+            "description" : "Lint findings state (+ findings when present)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get the CPU-lint findings for a workflow run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
     "/api/v1/workflows/{workflowRunId}/manual-artifact" : {
       "post" : {
         "operationId" : "submitManualArtifact",
@@ -4687,6 +5003,94 @@
           }
         },
         "summary" : "Reject a run's specification (story 2.13 rebuild)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/request-lint-fix" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) action that re-dispatches the implementation runner with the lint findings as referenced feedback and re-parks the run at WaitingForLintApproval. Never auto-fails the run. Idempotent under Idempotency-Key.",
+        "operationId" : "requestLintFix",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RequestLintFixRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WorkflowStateChangeResponse"
+                }
+              }
+            },
+            "description" : "Fix re-dispatched; resulting state returned."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION."
+          }
+        },
+        "summary" : "Feed the lint findings back to the implementation runner (request_lint_fix)",
         "tags" : [
           "Workflows"
         ]

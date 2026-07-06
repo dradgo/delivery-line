@@ -33,6 +33,13 @@ Substrates to reuse rather than re-derive:
 
 **Substrate — ADR 0032 (shared replay-safe afterCommit helper).** The bounded auto-fix / lint-fix / CI-investigation loops in decisions 2, 3, and 7 re-dispatch work from post-commit side effects. They **MUST** consume the `AfterCommitSideEffectRunner` helper (story 3h-0) for their `REQUIRES_NEW` + advisory-lock + swallow/log + idempotent re-invoke machinery — do NOT re-derive it inline. See [ADR 0032](0032-replay-safe-aftercommit-helper.md).
 
+**Amendment — story 3h-2 (CPU lint gate landed).** The lint gate of Decision 2 is now implemented, inheriting the Decision-1 backend-side amendment (a `LintStageService` runs the configured CPU linters through the existing `BuildCommandPort` in the materialized workspace — a `runner_executions` row with `stage='lint'`, zero token/provider usage — never a runner container). Divergences from BUILD, all firm:
+
+- **No new `FailureCategory`.** The lint fix loop is **operator-driven** (`request_lint_fix`, one REST action per press) and **never auto-fails** the run: it re-dispatches EXECUTION and re-parks at the gate. The LINT row records the existing `RUNNER_NON_ZERO_EXIT` on critical findings; the shared escalation marker flips once at `lint-fix-max-loops` for **visibility only**.
+- **A hard gate, not advisory.** A critical finding (linter `error`; classifier baseline = any lint command exit ≠ 0) parks the run in a new **non-terminal `WaitingForLintApproval`** state **before any LLM review or push**, surfacing `approve_lint` / `request_lint_fix` for the `workflow_owner` gate role. Non-critical (`warning`/`info`) findings stay advisory and the tail proceeds.
+- **Resumable delivery tail.** The lint gate parks the whole delivery tail, so `approve_lint` (arriving later via REST, after the in-memory continuation is gone) resumes it from `(runId)` alone via `RunnerBroker.resumeDeliveryTailFromGate` (re-derive the producing PR_OUTPUT execution → idempotent captureAndPush + finalize + `WorkflowOrchestrationService.onLintApproved` → WaitingForReview + reviewer enqueue). The producing execution is finalized at park time so it is never timeout-reaped while parked.
+- **Findings store.** The severity-classified findings persist as a nullable `lint_findings` jsonb column on the LINT `runner_executions` row (not `step_reviews`, whose hard outcome CHECK + mandatory artifact FK + missing payload column make it unfit) — no new table.
+
 ## Alternatives Considered
 
 ### Alt 1 — Build/lint as application-layer (backend-side) execution rather than a runner-container command

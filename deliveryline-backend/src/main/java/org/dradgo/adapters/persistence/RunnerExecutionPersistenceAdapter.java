@@ -886,6 +886,31 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     return mapper.toSnapshot(saved);
   }
 
+  // Story 3h-2 (AC6) — persist the lint findings jsonb (V34 column). METADATA-ONLY update mirroring
+  // recordTokenUsage: REQUIRES_NEW so the write commits in its own tx (releasing the row lock)
+  // without joining the ambient LINT-capture tx, no state-machine guard, tolerant of a
+  // still-running
+  // row (findings are written during capture before finalization). The payload is
+  // already-serialized,
+  // already-redacted JSON (ids/counts only — never raw secret bytes). Throws only when the row is
+  // missing.
+  @Override
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public RunnerExecutionSnapshot recordLintFindings(String publicId, String lintFindingsJson) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setLintFindings(lintFindingsJson);
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "persisting lint findings runnerExecutionId={} payloadPresent={}",
+        publicId,
+        lintFindingsJson != null);
+    return mapper.toSnapshot(saved);
+  }
+
   // Story 3d-2 (code-review D1) — pin the reviewed artifact onto a REVIEW execution at enqueue.
   // METADATA-ONLY (no state-machine guard, no status mutation): the pin is written on a `queued`
   // reviewer row right after enqueue. enqueue and pin run as SEPARATE transactions (the

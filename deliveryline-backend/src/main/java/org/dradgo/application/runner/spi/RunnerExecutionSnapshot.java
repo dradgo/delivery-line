@@ -49,7 +49,78 @@ public record RunnerExecutionSnapshot(
     // count is carried independently as reported (total is NOT synthesized from input+output).
     Integer inputTokens,
     Integer outputTokens,
-    Integer totalTokens) {
+    Integer totalTokens,
+    // Story 3h-2 (AC6) V34 — the severity-classified lint findings serialized as a jsonb string on
+    // a
+    // LINT execution row (null for non-LINT rows and for a LINT row before recordLintFindings
+    // runs).
+    // Read by WorkflowInspectionService.getLintFindings for the FE lint panel.
+    String lintFindings) {
+
+  /**
+   * Pre-3h-2 callsite shim: derives a snapshot whose {@code lintFindings} jsonb is null. Carries
+   * the through-3g-3 27-arg shape so every existing {@code new RunnerExecutionSnapshot(...)} call
+   * site (broker / recovery / cleanup tests + the shim chain) compiles unchanged — only the
+   * persistence mapper populates the full 28-field shape with the real lint-findings column.
+   */
+  public RunnerExecutionSnapshot(
+      String publicId,
+      String workflowRunPublicId,
+      RunnerStage stage,
+      RunnerExecutionStatus status,
+      int contextBundleVersion,
+      OffsetDateTime lastActivityAt,
+      OffsetDateTime timeoutAt,
+      FailureCategory failureCategory,
+      OffsetDateTime completedAt,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      OffsetDateTime heartbeatStaleEmittedAt,
+      String rawOutputReference,
+      DataClassification rawOutputClassification,
+      Long rawOutputByteSize,
+      Integer redactionCount,
+      OffsetDateTime dispatchedAt,
+      String workerId,
+      int queuePriority,
+      int queueAttemptCount,
+      String correlationId,
+      String idempotencyKey,
+      String actorIdentity,
+      String actorType,
+      Integer inputTokens,
+      Integer outputTokens,
+      Integer totalTokens) {
+    this(
+        publicId,
+        workflowRunPublicId,
+        stage,
+        status,
+        contextBundleVersion,
+        lastActivityAt,
+        timeoutAt,
+        failureCategory,
+        completedAt,
+        createdAt,
+        archivedAt,
+        heartbeatStaleEmittedAt,
+        rawOutputReference,
+        rawOutputClassification,
+        rawOutputByteSize,
+        redactionCount,
+        dispatchedAt,
+        workerId,
+        queuePriority,
+        queueAttemptCount,
+        correlationId,
+        idempotencyKey,
+        actorIdentity,
+        actorType,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        null);
+  }
 
   /**
    * Pre-3g-3 callsite shim: derives a snapshot whose three token-accounting fields are null.

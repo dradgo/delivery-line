@@ -6,10 +6,12 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -115,6 +117,13 @@ public class WorkflowCommandFingerprintFactory {
         append(digest, takeover.workflowRunId());
         append(digest, normalizeOptional(takeover.reasonText()));
       }
+      // Story 3h-2 (AC5) — the lint-gate operator actions. Fingerprint the run id only: the two
+      // actions are distinguished by their distinct COMMAND_* type constants at the reservation
+      // boundary, and reasonText is intentionally NOT fingerprinted (free-form, mirrors
+      // RetryWorkflowCommand.reasonText). A same-key retry with a different reason is an idempotent
+      // replay, not a distinct action.
+      case ApproveLintCommand approveLint -> append(digest, approveLint.workflowRunId());
+      case RequestLintFixCommand requestLintFix -> append(digest, requestLintFix.workflowRunId());
     }
     return HexFormat.of().formatHex(digest.digest());
   }

@@ -1,6 +1,7 @@
 package org.dradgo.application.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -398,6 +399,83 @@ public class WorkflowInspectionService {
       boolean selfReview,
       String unavailableReason,
       OffsetDateTime createdAt) {}
+
+  // Story 3h-2 (AC6) — deserialize the lint_findings jsonb payload. Reused (not a per-call new
+  // mapper); a malformed payload degrades to `none` rather than 5xx-ing an advisory read leg.
+  private static final ObjectMapper LINT_FINDINGS_MAPPER = new ObjectMapper();
+
+  /**
+   * Story 3h-2 (AC6, FR76) — server-derived lint-findings projection for the advisory {@code GET
+   * …/lint-findings} read leg backing the FE lint panel (3h-6). Mirrors {@link
+   * #getReviewerVerdict}: read-only, prefix-validated only, NO governed action, and NEVER 5xx on
+   * missing/malformed findings (returns {@code state:"none"}). {@code state} is derived from the
+   * latest {@link RunnerStage#LINT} execution's findings AND the run's current state:
+   *
+   * <ul>
+   *   <li>{@code none} — no LINT execution, no findings payload, or an empty findings list;
+   *   <li>{@code gated} — critical findings AND the run is currently parked at {@code
+   *       WaitingForLintApproval} (the gate is actively holding delivery);
+   *   <li>{@code advisory} — findings present but not currently gating (non-critical, or
+   *       critical-but-already-approved).
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public LintFindingsView getLintFindings(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    org.dradgo.application.workflow.spi.WorkflowRunSnapshot run =
+        workflowRunReadPort
+            .findByPublicId(workflowRunPublicId)
+            .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+    Optional<org.dradgo.application.runner.spi.RunnerExecutionSnapshot> lintExec =
+        runnerExecutionRecordPort.findLatestByWorkflowRunPublicIdAndStage(
+            workflowRunPublicId, org.dradgo.domain.registry.RunnerStage.LINT);
+    if (lintExec.isEmpty() || lintExec.get().lintFindings() == null) {
+      // No findings detail available (never ran, or a serialize-null persist). Still derive the
+      // gate from the run's current state so a run PARKED at WaitingForLintApproval with a null
+      // findings column reads as "gated" (the operator sees an active gate) instead of "none".
+      boolean gated = run.currentState() == WorkflowState.WAITING_FOR_LINT_APPROVAL;
+      log.debug(
+          "getLintFindings {} workflowRunId={} (no lint execution/findings)",
+          gated ? "gated-without-findings" : "none",
+          workflowRunPublicId);
+      return new LintFindingsView(gated ? "gated" : "none", gated, List.of());
+    }
+
+    LintFindings findings = parseLintFindings(lintExec.get().lintFindings());
+    if (findings.findings().isEmpty()) {
+      return new LintFindingsView("none", findings.hasCritical(), List.of());
+    }
+    String state =
+        (findings.hasCritical() && run.currentState() == WorkflowState.WAITING_FOR_LINT_APPROVAL)
+            ? "gated"
+            : "advisory";
+    log.info(
+        "getLintFindings workflowRunId={} state={} findingCount={} hasCritical={}",
+        workflowRunPublicId,
+        state,
+        findings.findings().size(),
+        findings.hasCritical());
+    return new LintFindingsView(state, findings.hasCritical(), findings.findings());
+  }
+
+  private static LintFindings parseLintFindings(String json) {
+    try {
+      return LINT_FINDINGS_MAPPER.readValue(json, LintFindings.class);
+    } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException parseFailure) {
+      log.warn(
+          "getLintFindings could not parse lint_findings payload (treating as none): {}",
+          parseFailure.getMessage());
+      return LintFindings.clean();
+    }
+  }
+
+  /**
+   * Story 3h-2 (Task 4) — server-derived lint-findings projection for the {@code GET
+   * …/lint-findings} read leg. {@code state} ∈ {@code none|advisory|gated}; {@code findings} is the
+   * severity-classified list (empty when {@code state == none}).
+   */
+  public record LintFindingsView(String state, boolean hasCritical, List<LintFinding> findings) {}
 
   /**
    * Story 3g-4 (FR74, AC1) — the per-step token read leg backing {@code GET
@@ -1156,8 +1234,12 @@ public class WorkflowInspectionService {
       // keeps the spec bundle (the spec-approval flow). Without this the implementation-review
       // accept/reject PERMANENTLY 409s APPROVAL_VERSION_MISMATCH (stamp says spec=1, binder demands
       // the execution bundle), unfixable by refresh.
+      // Story 3h-2 (AC5) — WAITING_FOR_LINT_APPROVAL sits on the IMPLEMENTATION (between EXECUTING
+      // and REVIEW), so it reuses the EXECUTION context-bundle version like WAITING_FOR_REVIEW (not
+      // the spec bundle).
       Integer bundleVersion =
-          state == WorkflowState.WAITING_FOR_REVIEW
+          (state == WorkflowState.WAITING_FOR_REVIEW
+                  || state == WorkflowState.WAITING_FOR_LINT_APPROVAL)
               ? resolveImplementationContextBundleVersion(workflowRunPublicId)
               : resolveSpecContextBundleVersion(latestSpecPublicId);
 
@@ -1436,6 +1518,23 @@ public class WorkflowInspectionService {
         // when its prerequisites complete, so no spec/plan/manual/approval actions are exposed. The
         // computeActionMatrix wrapper still appends archive/unarchive for the workflow owner.
         return List.of(AllowedAction.VIEW_ONLY);
+      case WAITING_FOR_LINT_APPROVAL:
+        // Story 3h-2 (AC5): the pre-review lint gate. Its two operator actions (approve_lint /
+        // request_lint_fix) are surfaced ONLY to the workflow_owner gate role
+        // ([recovery-bar-wrong-allowed-actions-role]); every other role gets view-only + the log/
+        // usage views (the LINT + producing runner execution logs are a primary diagnostic here).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.APPROVE_LINT,
+              AllowedAction.REQUEST_LINT_FIX,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+        }
+        return List.of(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
       case FAILED:

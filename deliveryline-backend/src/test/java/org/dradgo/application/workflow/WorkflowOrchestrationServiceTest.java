@@ -169,6 +169,7 @@ class WorkflowOrchestrationServiceTest {
                 org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch),
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
             100);
     return new WorkflowOrchestrationService(
         runnerExecutionQueue,

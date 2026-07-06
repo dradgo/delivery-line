@@ -28,6 +28,12 @@ public record CreateProjectCommand(
     // null / no build). No enum validation needed (mirrors openspecEnabled + reviewerModelKind).
     boolean buildStageEnabled,
     String buildCommand,
+    // Story 3h-2 (AC2) — per-project lint-validation config. lintStageEnabled defaults false ⇒ LINT
+    // skipped (pre-3h-2 parity); lintCommands is a nullable raw wire list (null/empty = no lint).
+    // No
+    // enum validation needed (mirrors buildStageEnabled/buildCommand).
+    boolean lintStageEnabled,
+    java.util.List<String> lintCommands,
     String idempotencyKey,
     String actorIdentity) {
   public CreateProjectCommand(
@@ -50,14 +56,16 @@ public record CreateProjectCommand(
         null,
         false,
         null,
+        false,
+        null,
         idempotencyKey,
         actorIdentity);
   }
 
   /**
    * Story 3h-1 back-compat overload for the pre-3h 10-arg shape (canonical through {@code
-   * stepRunnerKinds}) — defaults the build-config fields to {@code (false, null)}. Keeps existing
-   * 10-arg callers (tests) compiling unchanged.
+   * stepRunnerKinds}) — defaults the build-config AND lint-config fields to {@code (false, null)}.
+   * Keeps existing 10-arg callers (tests) compiling unchanged.
    */
   public CreateProjectCommand(
       String name,
@@ -79,6 +87,43 @@ public record CreateProjectCommand(
         openspecEnabled,
         runnerKind,
         stepRunnerKinds,
+        false,
+        null,
+        false,
+        null,
+        idempotencyKey,
+        actorIdentity);
+  }
+
+  /**
+   * Story 3h-2 back-compat overload for the pre-3h-2 12-arg shape (canonical through {@code
+   * buildCommand}) — defaults the lint-config fields to {@code (false, null)}. Keeps existing
+   * 12-arg callers (build create tests) compiling unchanged.
+   */
+  public CreateProjectCommand(
+      String name,
+      String slug,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      boolean buildStageEnabled,
+      String buildCommand,
+      String idempotencyKey,
+      String actorIdentity) {
+    this(
+        name,
+        slug,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        stepRunnerKinds,
+        buildStageEnabled,
+        buildCommand,
         false,
         null,
         idempotencyKey,

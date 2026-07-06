@@ -1340,6 +1340,13 @@ public class ContextBundleService {
                 workflowRunPublicId, List.of(RunnerExecutionStatus.FAILED))) {
           if (execution.stage() == RunnerStage.BUILD) {
             references.add(new PriorFeedbackReference(execution.publicId(), "build.failure"));
+          } else if (execution.stage() == RunnerStage.LINT) {
+            // Story 3h-2 (Task 7, AC5/AC6) — thread prior LINT gate findings into the regenerated
+            // execution bundle so the re-dispatched implementation runner (via request_lint_fix)
+            // sees which lint findings to fix. Reference-by-id ONLY (kind "lint.findings"): the
+            // referenced LINT execution's already-captured, redacted findings/raw-output are the
+            // body — NEVER inlined (the 256 KB reference-by-id invariant holds).
+            references.add(new PriorFeedbackReference(execution.publicId(), "lint.findings"));
           }
         }
       }

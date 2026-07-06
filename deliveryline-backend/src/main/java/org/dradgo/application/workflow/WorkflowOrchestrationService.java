@@ -1090,6 +1090,40 @@ public class WorkflowOrchestrationService {
   }
 
   /**
+   * Story 3h-2 (AC5; code-review 2026-07-06) — enqueue the advisory reviewer over the (now
+   * push-enriched) pr-output artifact after an operator {@code approve_lint} dismissed the lint
+   * gate. The {@code WaitingForLintApproval -> WaitingForReview} transition is owned by {@code
+   * LintApprovalService.approveLint} (synchronous, in the command tx — a wrong-state approve 409s
+   * instead of the old deferred/swallowed posture, P2). Called by {@code
+   * RunnerBroker.resumeDeliveryTailFromGate} AFTER the (idempotent) captureAndPush + pr-output
+   * enrichment + producing-execution finalize, so the reviewer sees the pushed, enriched artifact.
+   * Enqueue-only + idempotency-keyed, so a replayed approval never double-enqueues.
+   */
+  public void enqueueReviewerAfterLintApproval(
+      String workflowRunId, String runnerExecutionId, String correlationId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      // The WaitingForLintApproval -> WaitingForReview transition is owned by
+      // LintApprovalService.approveLint (SYNCHRONOUS, in the command tx, so a wrong-state approve
+      // 409s — code-review 2026-07-06 P2). By the time this runs post-commit the run is already
+      // WaitingForReview, so this ONLY enqueues the reviewer over the (now push-enriched) pr-output
+      // artifact. The enqueue is idempotency-keyed, so a replayed approval never double-enqueues.
+      log.info(
+          "enqueueReviewerAfterLintApproval workflowRunId={} runnerExecutionId={} "
+              + "(run already WaitingForReview — enqueue only)",
+          workflowRunId,
+          runnerExecutionId);
+      enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
    * AC6 (Task 2 — sub-stage-aware) — return a {@link RunnerDispatchResult.Replayed} for an
    * EXECUTION-stage runner execution that is already {@code pending}/{@code running} for the run
    * AND belongs to {@code expectedSubStage}, or {@code null} if none. With both the

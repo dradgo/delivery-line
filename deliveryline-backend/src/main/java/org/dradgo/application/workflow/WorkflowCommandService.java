@@ -30,10 +30,12 @@ import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -99,6 +101,8 @@ public class WorkflowCommandService {
   private final IntegrationLinkService integrationLinkService;
   private final ApprovalService approvalService;
   private final TechnicalApprovalService technicalApprovalService;
+  // Story 3h-2 (AC5) — the pre-review lint-gate operator-action executors.
+  private final LintApprovalService lintApprovalService;
   private final ClarificationService clarificationService;
   // Story 3e-2 (AC1) — canonical executor for accept_clarification (answered -> accepted).
   private final ClarificationLifecycleService clarificationLifecycleService;
@@ -127,6 +131,7 @@ public class WorkflowCommandService {
       IntegrationLinkService integrationLinkService,
       ApprovalService approvalService,
       TechnicalApprovalService technicalApprovalService,
+      LintApprovalService lintApprovalService,
       ClarificationService clarificationService,
       ClarificationLifecycleService clarificationLifecycleService,
       ClarificationReadPort clarificationReadPort,
@@ -145,6 +150,7 @@ public class WorkflowCommandService {
     this.integrationLinkService = integrationLinkService;
     this.approvalService = approvalService;
     this.technicalApprovalService = technicalApprovalService;
+    this.lintApprovalService = lintApprovalService;
     this.clarificationService = clarificationService;
     this.clarificationLifecycleService = clarificationLifecycleService;
     this.clarificationReadPort = clarificationReadPort;
@@ -240,6 +246,22 @@ public class WorkflowCommandService {
   @Transactional
   public WorkflowStateChangeResult takeoverWorkflow(TakeoverWorkflowCommand command) {
     return executeIdempotent(command, this::takeoverWorkflowInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult approveLint(ApproveLintCommand command) {
+    // Story 3h-2 (AC5): the resume-tail deferral is registered inside LintApprovalService,
+    // participating in this method's @Transactional idempotency boundary. Replay pins
+    // WaitingForReview (the invariant post-state).
+    return executeIdempotent(command, this::approveLintInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult requestLintFix(RequestLintFixCommand command) {
+    // Story 3h-2 (AC5): the counter bump + escalation + transition + re-dispatch happen inside
+    // LintApprovalService, participating in this method's @Transactional boundary (a re-dispatch
+    // failure rolls back the counter bump + transition). Replay pins Executing.
+    return executeIdempotent(command, this::requestLintFixInternal, this::replayStateChange);
   }
 
   private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
@@ -435,6 +457,74 @@ public class WorkflowCommandService {
           approvalResult.correlationId());
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  private WorkflowStateChangeResult approveLintInternal(ApproveLintCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      requireParkedAtLintGate(command.workflowRunId(), "approve_lint");
+      WorkflowState resultingState = lintApprovalService.approveLint(command);
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(), resultingState, normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  private WorkflowStateChangeResult requestLintFixInternal(RequestLintFixCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      requireParkedAtLintGate(command.workflowRunId(), "request_lint_fix");
+      WorkflowState resultingState = lintApprovalService.requestLintFix(command);
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(), resultingState, normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  /**
+   * Story 3h-2 (code-review 2026-07-06 re-review) — the executor gate for the pre-review lint-gate
+   * actions ({@code approve_lint} / {@code request_lint_fix}). These are surfaced ONLY at {@code
+   * WaitingForLintApproval}, so — mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
+   * REGENERATE_NOT_APPLICABLE} precedent (there is NO generic ACTION_NOT_ALLOWED guard) — the
+   * executor is the gate. This precondition is LOAD-BEARING, not defensive: both action targets are
+   * ALSO reachable from other live sources ({@code EXECUTING -> WaitingForReview} is the normal
+   * delivery tail; {@code WaitingForReview -> Executing} is reject-implementation), so
+   * transition-table legality ALONE does NOT reject a wrong-state call. Without this guard a
+   * wrong-state {@code approve_lint} (e.g. on a still-{@code EXECUTING} run — stale UI, double
+   * submit, direct API) would transition + push a mid-execution workspace, and a wrong-state {@code
+   * request_lint_fix} on a {@code WaitingForReview} run would hijack it back into {@code
+   * Executing}. Reject (ILLEGAL_TRANSITION → 409, non-retryable) unless the run is actually parked
+   * at the gate.
+   */
+  private void requireParkedAtLintGate(String workflowRunId, String action) {
+    WorkflowState currentState =
+        workflowRunReadPort
+            .findByPublicId(workflowRunId)
+            .map(WorkflowRunSnapshot::currentState)
+            .orElseThrow(
+                () ->
+                    new DomainException(
+                        DomainErrorCode.RUN_NOT_FOUND,
+                        "Workflow run not found: " + workflowRunId,
+                        Map.of("runId", workflowRunId)));
+    if (currentState != WorkflowState.WAITING_FOR_LINT_APPROVAL) {
+      throw new DomainException(
+          DomainErrorCode.ILLEGAL_TRANSITION,
+          "Lint-gate action '"
+              + action
+              + "' requires the run to be parked at WaitingForLintApproval",
+          Map.of(
+              "runId",
+              workflowRunId,
+              "action",
+              action,
+              "currentState",
+              currentState.value(),
+              "requiredState",
+              WorkflowState.WAITING_FOR_LINT_APPROVAL.value()));
     }
   }
 
@@ -832,6 +922,10 @@ public class WorkflowCommandService {
           // so a hard-coded replay state is correct (unlike acceptImplementation's type-dependent
           // target, which uses the dedicated replayAcceptImplementation re-read).
           case RejectImplementationCommand ignored -> WorkflowState.EXECUTING;
+          // Story 3h-2 (AC5): approve_lint resumes the tail to WaitingForReview; request_lint_fix
+          // re-dispatches to Executing. Both are invariant post-states, so a replay pins them here.
+          case ApproveLintCommand ignored -> WorkflowState.WAITING_FOR_REVIEW;
+          case RequestLintFixCommand ignored -> WorkflowState.EXECUTING;
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           case AcceptClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();

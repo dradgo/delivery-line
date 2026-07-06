@@ -263,6 +263,17 @@ public interface RunnerExecutionRecordPort {
       String publicId, Integer inputTokens, Integer outputTokens, Integer totalTokens);
 
   /**
+   * Story 3h-2 (AC6, FR76) — persist the severity-classified lint findings (an already-serialized,
+   * already-redacted JSON string) onto the LINT execution row's {@code lint_findings} jsonb column.
+   * Like {@link #recordRawOutput} / {@link #recordTokenUsage} this is a METADATA-ONLY update: it
+   * never changes {@code status} (no state-machine guard) and tolerates a still-{@code running} row
+   * (findings are recorded during the LINT capture, before the row is finalized). A {@code null}
+   * payload clears the column. Throws {@link org.dradgo.domain.DomainException} only when the row
+   * is missing.
+   */
+  RunnerExecutionSnapshot recordLintFindings(String publicId, String lintFindingsJson);
+
+  /**
    * Story 3d-2 (code-review D1) — pin the reviewed artifact onto a {@link RunnerStage#REVIEW}
    * execution at enqueue. The advisory reviewer's reviewed artifact is resolved ONCE (at enqueue,
    * before any newer artifact can land) and stored here so both the dispatch-time compose and the
