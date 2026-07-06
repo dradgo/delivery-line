@@ -38,7 +38,14 @@ done
 # from ~/.m2 — `target/classes/` from a prior invocation isn't visible
 # across process boundaries. CI hits this every run because ~/.m2 starts
 # empty; local devs typically already have runner-contracts installed.
-"${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend -am install -DskipTests
+#
+# Static analysis (Spotless/Checkstyle/SpotBugs) is intentionally skipped
+# here: this build only needs to produce a runnable backend for the doctor
+# smoke. Those checks are already gated by the dedicated format-static-checks
+# tier and the unit/contract test jobs, and running SpotBugs here (~30s) is
+# pure overhead that pushes the doctor smoke against its 300s CI timeout.
+"${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend -am install -DskipTests \
+  -Dspotbugs.skip=true -Dcheckstyle.skip=true -Dspotless.check.skip=true
 
 # Step 2 — run the backend only. No `-am`, so spring-boot:run is invoked
 # strictly on deliveryline-backend, which is the only module with a main
