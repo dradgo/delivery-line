@@ -391,28 +391,192 @@ function RowBody({ row, density, nowMs }: { row: RunQueueRow; density: Density; 
 }
 
 /**
- * AC4 / OQ-4 — the `operator` variant placeholder (E4). Renders the same identity +
- * badge but swaps the open-run affordance for a documented, non-navigable marker so
- * the variant contract compiles + holds without over-building.
+ * Story 4.2 (AC2/Reconciliation 5) — map the server-derived `operatorSignifier` to a signal color.
+ * The row renders the badge FROM the signifier, NEVER re-deriving from `currentState` (the 4.1
+ * review lesson: a state re-derivation mislabeled an active `overridden` run as `[STALLED]`).
  */
-function OperatorRow({ row, density }: { row: RunQueueRow; density: Density }) {
+const SIGNIFIER_STATE_NAME: Record<string, StateName> = {
+  FAILED: 'error',
+  ORPHANED: 'error',
+  STALLED: 'stale',
+  TAKENOVER: 'warning',
+  OVERRIDDEN: 'warning',
+};
+function signifierStateName(signifier: string): StateName {
+  return SIGNIFIER_STATE_NAME[signifier] ?? 'informational';
+}
+
+/** Compose the operator row's accessible label from PRESENT fields only (never "undefined"). */
+function composeOperatorAriaLabel(row: RunQueueRow, relativeTime: string | null): string {
+  const parts: string[] = [];
+  const identity = [row.ticketTitle, row.linearTicketReference, row.runId]
+    .filter(Boolean)
+    .join(' ');
+  if (identity !== '') {
+    parts.push(identity);
+  }
+  if (row.operatorSignifier !== undefined) {
+    parts.push(row.operatorSignifier.toLowerCase());
+  } else if (row.currentState !== undefined && row.currentState.trim() !== '') {
+    parts.push(row.currentState);
+  }
+  const failure = humanizeFailureCategory(row.failureCategory);
+  if (failure !== undefined) {
+    parts.push(failure);
+  }
+  if (row.runnerKind !== undefined) {
+    parts.push(`runner ${row.runnerKind}`);
+  }
+  if (row.escalationMarker === true) {
+    parts.push('escalated');
+  }
+  if (relativeTime !== null) {
+    parts.push(`last operator action ${relativeTime}`);
+  }
+  return parts.join(', ');
+}
+
+/** The operator row's inner content (AC2) — identity + signifier badge + operator metadata. */
+function OperatorRowBody({
+  row,
+  density,
+  nowMs,
+}: {
+  row: RunQueueRow;
+  density: Density;
+  nowMs: number;
+}) {
+  const relative = formatRelativeTime(row.lastOperatorActionAt ?? row.lastTransitionAt, nowMs);
+  const utc = formatUtcTimestamp(row.lastOperatorActionAt ?? row.lastTransitionAt);
+  const failure = humanizeFailureCategory(row.failureCategory);
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <Inline
+        gap="2"
+        wrap
+        align="center"
+        className={densityGap(density)}
+        data-testid="queue-item-anatomy"
+      >
+        <Identity row={row} />
+        {/* AC2/Reconciliation 5 — badge FROM the server signifier (fallback to the state badge
+            only when the signifier is absent, e.g. a fixture that omits it). */}
+        {row.operatorSignifier !== undefined ? (
+          <StateSignifierChip
+            stateName={signifierStateName(row.operatorSignifier)}
+            label={row.operatorSignifier}
+            testId="operator-signifier"
+          />
+        ) : (
+          <WorkflowStateBadge currentState={row.currentState} />
+        )}
+        {/* AC2 — failure category chip (when present). */}
+        {failure !== undefined ? (
+          <StateSignifierChip
+            stateName="error"
+            label={failure}
+            testId="operator-failure-category"
+          />
+        ) : null}
+        {/* AC2 — runner kind chip (when the project carries a runner-kind override). */}
+        {row.runnerKind !== undefined ? (
+          <StateSignifierChip
+            stateName="informational"
+            label={`Runner: ${row.runnerKind}`}
+            testId="operator-runner-kind"
+          />
+        ) : null}
+        {/* AC2 — escalation marker prominence. */}
+        {row.escalationMarker === true ? (
+          <StateSignifierChip stateName="warning" label="Escalated" testId="operator-escalation" />
+        ) : null}
+        {/* AC2/OQ-LASTACTION — last operator action time (lastTransitionAt proxy in E4). */}
+        {relative !== null ? (
+          <time
+            className="text-meta text-text-tertiary"
+            dateTime={row.lastOperatorActionAt ?? row.lastTransitionAt}
+            title={utc ?? undefined}
+            data-testid="operator-last-action"
+          >
+            {relative}
+          </time>
+        ) : null}
+      </Inline>
+    </div>
+  );
+}
+
+/**
+ * Story 4.2 (AC2/AC7) — the fleshed-out `operator` variant row. Unlike the 2.15 placeholder it is
+ * NAVIGABLE (Enter/Space/click → the run detail; the 4.4 operator deep-dive is backlog), renders
+ * the state badge FROM `operatorSignifier`, and surfaces failure-category / runner-kind / escalation
+ * / last-operator-action metadata. Reuses the 3.31 stretched-link pattern (an absolutely-positioned
+ * overlay `<Link>` so the whole row is one open-run control).
+ */
+function OperatorRow({
+  row,
+  selected,
+  unread,
+  disabled,
+  density,
+}: {
+  row: RunQueueRow;
+  selected?: boolean | undefined;
+  unread?: boolean | undefined;
+  disabled?: boolean | undefined;
+  density: Density;
+}) {
+  const navigable = disabled !== true && isValidRunId(row.runId);
+  const effectivelyDisabled = disabled === true || !navigable;
+  const state = resolveQueueItemState({ row, selected, unread, disabled: effectivelyDisabled });
+  const nowMs = Date.now();
+  const relative = formatRelativeTime(row.lastOperatorActionAt ?? row.lastTransitionAt, nowMs);
+  const ariaLabel = composeOperatorAriaLabel(row, relative);
+  const containerClass = cn(
+    'flex min-h-touch items-center gap-3 rounded-md border px-4',
+    STATE_CONTAINER_CLASSES[state],
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus',
+    navigable && 'hover:bg-surface-elevated',
+  );
+
+  if (navigable) {
+    const handleKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
+      if (event.repeat) {
+        return;
+      }
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.click();
+      }
+    };
+    return (
+      <div className={cn('relative', containerClass)} style={{ minHeight: QUEUE_ROW_MIN_HEIGHT }}>
+        <Link
+          to="/workflows/$workflowRunId"
+          params={{ workflowRunId: row.runId as string }}
+          aria-label={ariaLabel}
+          className="absolute inset-0 z-[1] rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          data-queue-item-state={state}
+          data-variant="operator"
+          data-testid="run-review-queue-item"
+          onKeyDown={handleKeyDown}
+        />
+        <OperatorRowBody row={row} density={density} nowMs={nowMs} />
+      </div>
+    );
+  }
+
   return (
     <div
-      className={cn(
-        'flex items-center justify-between rounded-md border border-border bg-surface px-4 opacity-90',
-      )}
+      aria-label={ariaLabel !== '' ? ariaLabel : undefined}
+      aria-disabled={effectivelyDisabled ? true : undefined}
+      className={containerClass}
       style={{ minHeight: QUEUE_ROW_MIN_HEIGHT }}
-      data-queue-item-state="disabled"
+      data-queue-item-state={state}
       data-variant="operator"
       data-testid="run-review-queue-item"
     >
-      <Inline gap="2" align="center" className={densityGap(density)}>
-        <Identity row={row} />
-        <WorkflowStateBadge currentState={row.currentState} />
-      </Inline>
-      <span className="text-meta text-text-tertiary" data-testid="queue-item-operator-placeholder">
-        Operator view — available in Epic 4
-      </span>
+      <OperatorRowBody row={row} density={density} nowMs={nowMs} />
     </div>
   );
 }
@@ -426,7 +590,15 @@ export function RunReviewQueueItem({
   density = 'standard',
 }: RunReviewQueueItemProps) {
   if (variant === 'operator') {
-    return <OperatorRow row={run} density={density} />;
+    return (
+      <OperatorRow
+        row={run}
+        selected={selected}
+        unread={unread}
+        disabled={disabled}
+        density={density}
+      />
+    );
   }
 
   // AC6 — navigable only when enabled AND the run id is well-formed (never build a

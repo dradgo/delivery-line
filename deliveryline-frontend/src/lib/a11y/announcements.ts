@@ -37,6 +37,20 @@ export function queueLoaded(count: number): string {
   return `Review queue loaded: ${count} ${count === 1 ? 'run' : 'runs'} available`;
 }
 
+// ---- Operator queue (story 4.2) ------------------------------------------------
+
+/**
+ * Announced after the operator queue re-runs on a filter change (AC8) — the resolved run count and
+ * a human summary of the active filter (e.g. "state failed, stalled"), announced off the settled
+ * result count. Parameterized ⇒ a function (the vocabulary-node-test convention).
+ */
+export function operatorFilteredToRuns(count: number, filterSummary: string): string {
+  const runs = `${count} ${count === 1 ? 'run' : 'runs'}`;
+  return filterSummary.trim() === ''
+    ? `Operator queue filtered to ${runs}`
+    : `Operator queue filtered to ${runs} — ${filterSummary}`;
+}
+
 // ---- Clarifications (story 2.18) -----------------------------------------------
 
 /** A single clarification advanced to a new lifecycle state (`label` is its signifier label). */

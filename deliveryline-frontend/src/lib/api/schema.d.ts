@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/operator/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List operator fleet-view runs
+         * @description Runs in non-happy operator states (failed/stalled/orphaned/takenover/overridden) across all workflows, with aggregate histograms and cursor pagination. Backs the UI operator queue (story 4.2); the same read model as `deliveryline operator status` (story 4.1).
+         */
+        get: operations["listOperatorRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -1222,6 +1242,99 @@ export interface components {
             /** @example run_abc123 */
             workflowRunId: string;
         };
+        /** @description One operator fleet-view run row. */
+        OperatorRunRow: {
+            /** @description Latest event actor identity. */
+            actorIdentity?: string | null;
+            /**
+             * @description Current workflow state wire string.
+             * @example Failed
+             */
+            currentState?: string;
+            /**
+             * @description Escalation marker set on the run.
+             * @example false
+             */
+            escalationMarker?: boolean;
+            /**
+             * @description Latest Failed transition's failure category, when applicable.
+             * @enum {string|null}
+             */
+            failureCategory?: "runner_timeout" | "runner_crash" | "runner_contract_violation" | "runner_non_zero_exit" | "runner_late_result" | "runner_duplicate_result" | "runner_malformed_output" | "runner_secret_leak" | "runner_build_failed" | "orphan" | null;
+            /**
+             * Format: date-time
+             * @description Latest event timestamp (ISO-8601 UTC).
+             */
+            lastTransitionAt?: string | null;
+            /**
+             * @description Active github PR reference.
+             * @example octo/repo#7
+             */
+            linkedPrRef?: string | null;
+            /**
+             * @description Active linear ticket reference.
+             * @example DEL-1234
+             */
+            linkedTicketRef?: string | null;
+            /**
+             * Format: date-time
+             * @description Earliest event timestamp for the run (ISO-8601 UTC).
+             */
+            oldestEventAt?: string | null;
+            /**
+             * @description Server-derived UPPERCASE display signifier (ORPHANED/FAILED/TAKENOVER/STALLED/OVERRIDDEN, else the uppercased state). The UI renders the badge FROM this.
+             * @example STALLED
+             */
+            operatorSignifier?: string;
+            /**
+             * @description Run public id.
+             * @example run_abc123
+             */
+            runId?: string;
+            /**
+             * @description The run's project-level runner-kind override (projects.runner_kind), or null when the project uses the global default or the run has no project.
+             * @enum {string|null}
+             */
+            runnerKind?: "codex" | "claude" | "manual" | null;
+        };
+        /** @description Operator fleet-view summary with a runs page. */
+        OperatorRunSummary: {
+            /**
+             * @description Histogram of currently-Failed runs by failure-category wire string (full match set); empty unless the state filter includes failed/orphaned.
+             * @example {
+             *       "orphan": 3,
+             *       "runner_build_failed": 2
+             *     }
+             */
+            byFailureCategory?: {
+                [key: string]: number;
+            };
+            /**
+             * @description Histogram of matched runs by current-state wire string (full match set).
+             * @example {
+             *       "Failed": 8,
+             *       "TakenOver": 2
+             *     }
+             */
+            byState?: {
+                [key: string]: number;
+            };
+            /** @description Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more. */
+            nextCursor?: string | null;
+            /**
+             * Format: date-time
+             * @description Oldest matched entry timestamp (ISO-8601 UTC), or null when empty.
+             */
+            oldestEntryAt?: string | null;
+            /** @description The current page of operator rows (lastTransitionAt DESC). */
+            runs?: components["schemas"]["OperatorRunRow"][];
+            /**
+             * Format: int32
+             * @description Total runs matching the filter (independent of limit).
+             * @example 12
+             */
+            total?: number;
+        };
         /** @description RFC 9457 Problem Details payload with DeliveryLine extension fields. */
         ProblemDetailsResponse: {
             /** @example RUN_NOT_FOUND */
@@ -2020,6 +2133,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listOperatorRuns: {
+        parameters: {
+            query?: {
+                /** @description Operator-state filter tokens (multi-valued: failed/stalled/orphaned/takenover/overridden). Empty defaults to failed,stalled,orphaned. */
+                state?: string[];
+                /** @description Failure-category filter tokens (multi-valued, from the registry). Empty disables the filter. */
+                failureCategory?: string[];
+                /** @description Relative recent-activity window token (e.g. 1h, 24h, 7d). Omit for no window. */
+                since?: string;
+                /** @description Runner-kind filter tokens (multi-valued: codex/claude/manual). Empty disables the filter. */
+                runnerKind?: string[];
+                /** @description Max rows per page (clamped to [1,500]). Defaults to 100. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operator fleet summary (object carrier with aggregate + runs page + cursor). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorRunSummary"];
+                };
+            };
+        };
+    };
     listProjects: {
         parameters: {
             query?: never;

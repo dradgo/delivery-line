@@ -60,8 +60,10 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
           fe.failure_category     as failure_category,
           oe.oldest_event_at      as oldest_event_at,
           lk.external_ref         as linked_ticket_ref,
-          gh.external_ref         as linked_pr_ref
+          gh.external_ref         as linked_pr_ref,
+          p.runner_kind           as runner_kind
         from workflow_runs r
+        left join projects p on p.public_id = r.project_id
         left join lateral (
           select e.created_at, e.actor_identity, e.intervention_marker
             from workflow_events e
@@ -115,6 +117,8 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
         and (:sinceSecs::double precision is null
              or (f.last_transition_at is not null
                  and f.last_transition_at >= now() - make_interval(secs => :sinceSecs)))
+        and (:hasRunnerKindFilter = false or f.runner_kind in (:runnerKinds))
+        and (:hasFailureCategoryFilter = false or f.failure_category in (:failureCategories))
       )
       """;
 
@@ -144,11 +148,18 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
   // The signifier is derived server-side from the matched predicate (same expressions as the CTE),
   // so the CLI renderer needs no matched-token and cannot mislabel an active overridden run as
   // STALLED (review 4.1). Precedence: ORPHANED > FAILED > TAKENOVER > STALLED > OVERRIDDEN > state.
+  // Story 4.2 (AC5) — keyset cursor predicate consistent with the ordering
+  // (last_transition_at desc nulls last, run_id desc). "After the cursor" means, for a cursor whose
+  // last_transition_at is NON-null: rows with an earlier last_transition_at, OR the same
+  // last_transition_at with a smaller run_id, OR any null-last_transition_at row (nulls sort after
+  // all non-null). For a cursor already in the null tail (:cursorTs is null): only null rows with a
+  // smaller run_id remain. When :hasCursor is false the predicate is a no-op (page 1). The cursor
+  // never touches the aggregate queries, so the histograms stay stable across pages.
   private static final String LIST_ROWS_SQL =
       RUN_FACTS_CTE
           + """
           select run_id, current_state, failure_category, last_transition_at, actor_identity,
-                 linked_ticket_ref, linked_pr_ref, escalation_marker, oldest_event_at,
+                 linked_ticket_ref, linked_pr_ref, escalation_marker, oldest_event_at, runner_kind,
                  case
                    when current_state = 'Failed' and failure_category = 'orphan' then 'ORPHANED'
                    when current_state = 'Failed' then 'FAILED'
@@ -162,6 +173,19 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
                    else upper(current_state)
                  end as signifier
             from matched
+           where (
+             :hasCursor = false
+             or (
+               (:cursorTs::timestamptz is not null and (
+                    (last_transition_at is not null and last_transition_at < :cursorTs)
+                 or (last_transition_at is not null and last_transition_at = :cursorTs
+                     and run_id < :cursorRunId)
+                 or (last_transition_at is null)
+               ))
+               or (:cursorTs::timestamptz is null and last_transition_at is null
+                   and run_id < :cursorRunId)
+             )
+           )
            order by last_transition_at desc nulls last, run_id desc
            limit :limit
           """;
@@ -244,7 +268,8 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
                     rs.getString("linked_pr_ref"),
                     rs.getBoolean("escalation_marker"),
                     rs.getObject("oldest_event_at", OffsetDateTime.class),
-                    rs.getString("signifier")));
+                    rs.getString("signifier"),
+                    rs.getString("runner_kind")));
     log.debug("listOperatorRuns returned={} limit={}", rows.size(), limit);
     return new ArrayList<>(rows);
   }
@@ -254,6 +279,15 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
         query.stallWindow() == null ? Duration.ofSeconds(1) : query.stallWindow();
     Double sinceSecs =
         query.sinceWindow() == null ? null : query.sinceWindow().toMillis() / 1000.0d;
+    // `in (:runnerKinds)` is expanded by NamedParameterJdbcTemplate at parse time, so the list must
+    // be non-empty even when the filter is inactive; a placeholder that never matches a real
+    // runner_kind keeps the bind valid while :hasRunnerKindFilter=false short-circuits the OR.
+    List<String> runnerKinds =
+        query.hasRunnerKindFilter() ? query.runnerKinds() : List.of("__no_runner_kind_filter__");
+    List<String> failureCategories =
+        query.hasFailureCategoryFilter()
+            ? query.failureCategories()
+            : List.of("__no_failure_category_filter__");
     return new MapSqlParameterSource()
         .addValue("selFailed", query.selectFailed())
         .addValue("selStalled", query.selectStalled())
@@ -262,6 +296,13 @@ public class OperatorRunPersistenceAdapter implements OperatorRunReadPort {
         .addValue("selOverridden", query.selectOverridden())
         .addValue("stallSecs", stallWindow.toMillis() / 1000.0d)
         .addValue("sinceSecs", sinceSecs)
-        .addValue("includeArchived", query.includeArchived());
+        .addValue("includeArchived", query.includeArchived())
+        .addValue("hasRunnerKindFilter", query.hasRunnerKindFilter())
+        .addValue("runnerKinds", runnerKinds)
+        .addValue("hasFailureCategoryFilter", query.hasFailureCategoryFilter())
+        .addValue("failureCategories", failureCategories)
+        .addValue("hasCursor", query.hasCursor())
+        .addValue("cursorTs", query.cursorLastTransitionAt())
+        .addValue("cursorRunId", query.cursorRunId());
   }
 }

@@ -99,6 +99,9 @@ class OpenApiSnapshotContractTest {
         .contains("getWorkflow")
         .contains("getWorkflowEvents");
     assertThat(canonical)
+        .as("OpenAPI must expose the story 4.2 operator fleet-view read operation")
+        .contains("listOperatorRuns");
+    assertThat(canonical)
         .as("OpenAPI must expose the story 3c-8 project operations")
         .contains("listProjects")
         .contains("createProject")

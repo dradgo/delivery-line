@@ -30,6 +30,11 @@ import java.time.OffsetDateTime;
  *     {@code OVERRIDDEN} / else the uppercased current-state wire string). Derived in SQL so the
  *     renderer needs no matched-token and cannot mislabel an active {@code overridden} run as
  *     {@code STALLED} (story 4.1 AC4 / Reconciliation 9).
+ * @param runnerKind story 4.2 (AC2) — the run's project-level runner-kind override wire string
+ *     ({@code codex}/{@code claude}/{@code manual}) sourced from {@code projects.runner_kind} via
+ *     {@code workflow_runs.project_id}, or {@code null} when the project has no override (falls
+ *     back to the global default) or the run has no project. The operator queue renders it as a
+ *     chip.
  */
 public record OperatorRunRowSnapshot(
     String runId,
@@ -41,4 +46,5 @@ public record OperatorRunRowSnapshot(
     String linkedPrRef,
     boolean escalationMarker,
     OffsetDateTime oldestEventAt,
-    String operatorSignifier) {}
+    String operatorSignifier,
+    String runnerKind) {}

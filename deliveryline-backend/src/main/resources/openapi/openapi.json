@@ -922,6 +922,160 @@
         ],
         "type" : "object"
       },
+      "OperatorRunRow" : {
+        "description" : "One operator fleet-view run row.",
+        "properties" : {
+          "actorIdentity" : {
+            "description" : "Latest event actor identity.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "currentState" : {
+            "description" : "Current workflow state wire string.",
+            "example" : "Failed",
+            "type" : "string"
+          },
+          "escalationMarker" : {
+            "description" : "Escalation marker set on the run.",
+            "example" : false,
+            "type" : "boolean"
+          },
+          "failureCategory" : {
+            "description" : "Latest Failed transition's failure category, when applicable.",
+            "enum" : [
+              "runner_timeout",
+              "runner_crash",
+              "runner_contract_violation",
+              "runner_non_zero_exit",
+              "runner_late_result",
+              "runner_duplicate_result",
+              "runner_malformed_output",
+              "runner_secret_leak",
+              "runner_build_failed",
+              "orphan"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "lastTransitionAt" : {
+            "description" : "Latest event timestamp (ISO-8601 UTC).",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "linkedPrRef" : {
+            "description" : "Active github PR reference.",
+            "example" : "octo/repo#7",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "linkedTicketRef" : {
+            "description" : "Active linear ticket reference.",
+            "example" : "DEL-1234",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "oldestEventAt" : {
+            "description" : "Earliest event timestamp for the run (ISO-8601 UTC).",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "operatorSignifier" : {
+            "description" : "Server-derived UPPERCASE display signifier (ORPHANED/FAILED/TAKENOVER/STALLED/OVERRIDDEN, else the uppercased state). The UI renders the badge FROM this.",
+            "example" : "STALLED",
+            "type" : "string"
+          },
+          "runId" : {
+            "description" : "Run public id.",
+            "example" : "run_abc123",
+            "type" : "string"
+          },
+          "runnerKind" : {
+            "description" : "The run's project-level runner-kind override (projects.runner_kind), or null when the project uses the global default or the run has no project.",
+            "enum" : [
+              "codex",
+              "claude",
+              "manual"
+            ],
+            "type" : [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type" : "object"
+      },
+      "OperatorRunSummary" : {
+        "description" : "Operator fleet-view summary with a runs page.",
+        "properties" : {
+          "byFailureCategory" : {
+            "additionalProperties" : {
+              "format" : "int32",
+              "type" : "integer"
+            },
+            "description" : "Histogram of currently-Failed runs by failure-category wire string (full match set); empty unless the state filter includes failed/orphaned.",
+            "example" : {
+              "orphan" : 3,
+              "runner_build_failed" : 2
+            },
+            "type" : "object"
+          },
+          "byState" : {
+            "additionalProperties" : {
+              "format" : "int32",
+              "type" : "integer"
+            },
+            "description" : "Histogram of matched runs by current-state wire string (full match set).",
+            "example" : {
+              "Failed" : 8,
+              "TakenOver" : 2
+            },
+            "type" : "object"
+          },
+          "nextCursor" : {
+            "description" : "Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "oldestEntryAt" : {
+            "description" : "Oldest matched entry timestamp (ISO-8601 UTC), or null when empty.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "runs" : {
+            "description" : "The current page of operator rows (lastTransitionAt DESC).",
+            "items" : {
+              "$ref" : "#/components/schemas/OperatorRunRow"
+            },
+            "type" : "array"
+          },
+          "total" : {
+            "description" : "Total runs matching the filter (independent of limit).",
+            "example" : 12,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "ProblemDetailsResponse" : {
         "description" : "RFC 9457 Problem Details payload with DeliveryLine extension fields.",
         "properties" : {
@@ -2729,6 +2883,95 @@
   },
   "openapi" : "3.1.0",
   "paths" : {
+    "/api/v1/operator/runs" : {
+      "get" : {
+        "description" : "Runs in non-happy operator states (failed/stalled/orphaned/takenover/overridden) across all workflows, with aggregate histograms and cursor pagination. Backs the UI operator queue (story 4.2); the same read model as `deliveryline operator status` (story 4.1).",
+        "operationId" : "listOperatorRuns",
+        "parameters" : [
+          {
+            "description" : "Operator-state filter tokens (multi-valued: failed/stalled/orphaned/takenover/overridden). Empty defaults to failed,stalled,orphaned.",
+            "in" : "query",
+            "name" : "state",
+            "required" : false,
+            "schema" : {
+              "items" : {
+                "type" : "string"
+              },
+              "type" : "array"
+            }
+          },
+          {
+            "description" : "Failure-category filter tokens (multi-valued, from the registry). Empty disables the filter.",
+            "in" : "query",
+            "name" : "failureCategory",
+            "required" : false,
+            "schema" : {
+              "items" : {
+                "type" : "string"
+              },
+              "type" : "array"
+            }
+          },
+          {
+            "description" : "Relative recent-activity window token (e.g. 1h, 24h, 7d). Omit for no window.",
+            "in" : "query",
+            "name" : "since",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Runner-kind filter tokens (multi-valued: codex/claude/manual). Empty disables the filter.",
+            "in" : "query",
+            "name" : "runnerKind",
+            "required" : false,
+            "schema" : {
+              "items" : {
+                "type" : "string"
+              },
+              "type" : "array"
+            }
+          },
+          {
+            "description" : "Max rows per page (clamped to [1,500]). Defaults to 100.",
+            "in" : "query",
+            "name" : "limit",
+            "required" : false,
+            "schema" : {
+              "default" : 100,
+              "format" : "int32",
+              "type" : "integer"
+            }
+          },
+          {
+            "description" : "Opaque keyset cursor from a prior response's nextCursor.",
+            "in" : "query",
+            "name" : "cursor",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/OperatorRunSummary"
+                }
+              }
+            },
+            "description" : "Operator fleet summary (object carrier with aggregate + runs page + cursor)."
+          }
+        },
+        "summary" : "List operator fleet-view runs",
+        "tags" : [
+          "Operator"
+        ]
+      }
+    },
     "/api/v1/projects" : {
       "get" : {
         "operationId" : "listProjects",
@@ -5814,6 +6057,10 @@
     {
       "description" : "Inspect and command governed workflow runs.",
       "name" : "Workflows"
+    },
+    {
+      "description" : "Operator fleet-view read surface for failed/stalled runs.",
+      "name" : "Operator"
     },
     {
       "description" : "Manage projects: CRUD, write-only credentials, connectivity.",

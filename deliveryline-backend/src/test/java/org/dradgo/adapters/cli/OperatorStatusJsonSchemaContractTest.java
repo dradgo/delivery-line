@@ -62,7 +62,8 @@ class OperatorStatusJsonSchemaContractTest {
                     "octo/repo#7",
                     true,
                     t,
-                    "ORPHANED"),
+                    "ORPHANED",
+                    null),
                 new OperatorRunRow(
                     "run_active002",
                     WorkflowState.EXECUTING,
@@ -73,7 +74,9 @@ class OperatorStatusJsonSchemaContractTest {
                     null,
                     false,
                     null,
-                    "STALLED")));
+                    "STALLED",
+                    null)),
+            null);
 
     String json = outputs.renderOperatorSummaryJson(view);
 
@@ -85,7 +88,7 @@ class OperatorStatusJsonSchemaContractTest {
 
   @Test
   void emptySummaryValidates() throws Exception {
-    OperatorRunSummary view = new OperatorRunSummary(0, Map.of(), Map.of(), null, List.of());
+    OperatorRunSummary view = new OperatorRunSummary(0, Map.of(), Map.of(), null, List.of(), null);
 
     String json = outputs.renderOperatorSummaryJson(view);
 

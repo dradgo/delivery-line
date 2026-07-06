@@ -16,7 +16,7 @@
  * (AC10 / NFR25-27) means the Context Strip and Artifact Review Panel reading the
  * same run detail trigger ONE fetch, not two.
  */
-import { QueryCache, QueryClient, queryOptions } from '@tanstack/react-query';
+import { infiniteQueryOptions, QueryCache, QueryClient, queryOptions } from '@tanstack/react-query';
 
 import { apiClient, unwrap } from './client';
 import { isProblemDetailsError, type ProblemDetailsError } from './problemDetails';
@@ -27,11 +27,14 @@ import {
   type ArtifactView,
   type PrLinkage,
 } from '@/features/workflows/artifactView';
+import { operatorKeys, type OperatorQueueFilters } from '../queryKeys/operatorKeys';
 import { projectKeys } from '../queryKeys/projectKeys';
 import { workflowKeys, type WorkflowListFilters } from '../queryKeys/workflowKeys';
 
 export type WorkflowDetail = components['schemas']['WorkflowDetail'];
 export type WorkflowSummary = components['schemas']['WorkflowSummary'];
+/** Story 4.2 — the operator fleet summary (object carrier: aggregate + runs page + cursor). */
+export type OperatorRunSummary = components['schemas']['OperatorRunSummary'];
 export type WorkflowEventsResponse = components['schemas']['WorkflowEventsResponse'];
 /** The raw artifact-read DTO (story 3a-9 Gate 3) — adapted into `ArtifactView` below. */
 export type ArtifactDetail = components['schemas']['ArtifactDetail'];
@@ -104,6 +107,57 @@ export function listQueryOptions(filters: WorkflowListFilters = {}) {
   return queryOptions({
     queryKey: workflowKeys.list(filters),
     queryFn: () => fetchWorkflowList(filters),
+    staleTime: STALE_TIME.list,
+  });
+}
+
+/**
+ * Story 4.2 (AC3/AC5) — GET one page of operator fleet runs, throwing typed problem details
+ * (e.g. INVALID_COMMAND_PAYLOAD for a malformed cursor/token) on failure. Multi-valued filters go
+ * as repeated query params (openapi-fetch expands the arrays; Spring binds them to `List<String>`);
+ * the time-window maps to the relative `since` token (`all` omits it); `cursor` pages forward.
+ */
+async function fetchOperatorRuns(
+  filters: OperatorQueueFilters,
+  cursor?: string,
+): Promise<OperatorRunSummary> {
+  const query: {
+    state?: string[];
+    failureCategory?: string[];
+    runnerKind?: string[];
+    since?: string;
+    cursor?: string;
+  } = {};
+  if (filters.states.length > 0) {
+    query.state = filters.states;
+  }
+  if (filters.failureCategories.length > 0) {
+    query.failureCategory = filters.failureCategories;
+  }
+  if (filters.runnerKinds.length > 0) {
+    query.runnerKind = filters.runnerKinds;
+  }
+  if (filters.timeWindow !== 'all') {
+    query.since = filters.timeWindow;
+  }
+  if (cursor != null && cursor !== '') {
+    query.cursor = cursor;
+  }
+  return unwrap(await apiClient.GET('/api/v1/operator/runs', { params: { query } }));
+}
+
+/**
+ * Story 4.2 (AC5) — the operator-queue infinite query. `getNextPageParam` reads the response's
+ * `nextCursor` (null on the last page → `undefined` → `hasNextPage` false); pages flatten in the
+ * hook. The aggregate/histograms come from `pages[0]` (stable across pages). Used by
+ * `useOperatorRunsList` AND the `/operator/queue` loader warm.
+ */
+export function operatorRunsInfiniteQueryOptions(filters: OperatorQueueFilters) {
+  return infiniteQueryOptions({
+    queryKey: operatorKeys.list(filters),
+    queryFn: ({ pageParam }) => fetchOperatorRuns(filters, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage: OperatorRunSummary) => lastPage.nextCursor ?? undefined,
     staleTime: STALE_TIME.list,
   });
 }

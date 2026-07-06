@@ -2,9 +2,12 @@ package org.dradgo.application.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.EnumSet;
@@ -65,6 +68,7 @@ import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowState;
@@ -1002,12 +1006,19 @@ public class WorkflowInspectionService {
     Duration sinceWindow = parseRelativeDuration(filter.since());
     int limit = Math.min(Math.max(filter.limit(), 1), OPERATOR_LIST_MAX_LIMIT);
     Duration stallWindow = maxStaleWindow();
+    List<String> runnerKinds = resolveRunnerKinds(filter.runnerKinds());
+    List<String> failureCategories = resolveFailureCategories(filter.failureCategories());
+    CursorKeyset cursor = decodeCursor(filter.cursor());
     log.info(
-        "getOperatorRunSummary entry states={} sinceSeconds={} stallSeconds={} limit={}",
+        "getOperatorRunSummary entry states={} sinceSeconds={} stallSeconds={} limit={}"
+            + " runnerKinds={} failureCategories={} cursorPresent={}",
         states,
         sinceWindow == null ? null : sinceWindow.toSeconds(),
         stallWindow.toSeconds(),
-        limit);
+        limit,
+        runnerKinds,
+        failureCategories,
+        cursor.active());
 
     OperatorRunQuery query =
         new OperatorRunQuery(
@@ -1018,10 +1029,20 @@ public class WorkflowInspectionService {
             states.contains(OperatorRunState.OVERRIDDEN),
             sinceWindow,
             stallWindow,
-            false);
+            false,
+            runnerKinds,
+            failureCategories,
+            cursor.lastTransitionAt(),
+            cursor.runId());
 
     OperatorRunAggregate aggregate = operatorRunReadPort.loadOperatorRunAggregate(query);
-    List<OperatorRunRowSnapshot> rows = operatorRunReadPort.listOperatorRuns(query, limit);
+    // Fetch limit+1 so a full extra row signals hasMore; drop it and encode nextCursor from the
+    // last KEPT row's keyset (story 4.2 AC5). The aggregate is cursor-independent (unchanged query
+    // path), so total/histograms stay stable across pages.
+    List<OperatorRunRowSnapshot> fetched = operatorRunReadPort.listOperatorRuns(query, limit + 1);
+    boolean hasMore = fetched.size() > limit;
+    List<OperatorRunRowSnapshot> rows = hasMore ? fetched.subList(0, limit) : fetched;
+    String nextCursor = hasMore ? encodeCursor(rows.get(rows.size() - 1)) : null;
 
     Map<WorkflowState, Integer> byState = new EnumMap<>(WorkflowState.class);
     aggregate
@@ -1048,16 +1069,23 @@ public class WorkflowInspectionService {
               row.linkedPrRef(),
               row.escalationMarker(),
               row.oldestEventAt(),
-              row.operatorSignifier()));
+              row.operatorSignifier(),
+              row.runnerKind()));
     }
 
     OperatorRunSummary summary =
         new OperatorRunSummary(
-            aggregate.total(), byState, byFailureCategory, aggregate.oldestEntryAt(), runRows);
+            aggregate.total(),
+            byState,
+            byFailureCategory,
+            aggregate.oldestEntryAt(),
+            runRows,
+            nextCursor);
     log.info(
-        "getOperatorRunSummary success total={} returnedRows={} durationMs={}",
+        "getOperatorRunSummary success total={} returnedRows={} nextCursorPresent={} durationMs={}",
         summary.total(),
         runRows.size(),
+        nextCursor != null,
         (System.nanoTime() - start) / 1_000_000L);
     return summary;
   }
@@ -1138,6 +1166,177 @@ public class WorkflowInspectionService {
     log.warn("getOperatorRunSummary invalid --since value since={}", MdcKeys.sanitizeForLog(since));
     return new DomainException(
         DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported --since value: " + since, details);
+  }
+
+  /**
+   * Story 4.2 (AC3) — resolve the raw runner-kind filter tokens into de-duplicated wire strings,
+   * validated against the {@link RunnerKind} registry. Empty/blank input disables the filter
+   * (returns an empty list). An unknown token raises {@link
+   * DomainErrorCode#INVALID_COMMAND_PAYLOAD} (no silent drop), mirroring the {@code --since} /
+   * {@code --state} handling so the caller sees a typed error, not an empty result.
+   */
+  private List<String> resolveRunnerKinds(List<String> tokens) {
+    if (tokens == null || tokens.isEmpty()) {
+      return List.of();
+    }
+    List<String> resolved = new ArrayList<>();
+    for (String token : tokens) {
+      if (token == null || token.isBlank()) {
+        continue;
+      }
+      String normalized = token.trim().toLowerCase(java.util.Locale.ROOT);
+      RunnerKind kind = null;
+      for (RunnerKind candidate : RunnerKind.values()) {
+        if (candidate.value().equals(normalized)) {
+          kind = candidate;
+          break;
+        }
+      }
+      if (kind == null) {
+        throw invalidRunnerKind(token);
+      }
+      if (!resolved.contains(kind.value())) {
+        resolved.add(kind.value());
+      }
+    }
+    return resolved;
+  }
+
+  private DomainException invalidRunnerKind(String runnerKind) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerKind", runnerKind);
+    List<String> supported = new ArrayList<>();
+    for (RunnerKind value : RunnerKind.values()) {
+      supported.add(value.value());
+    }
+    details.put("supportedRunnerKinds", supported);
+    log.warn(
+        "getOperatorRunSummary invalid runnerKind runnerKind={}",
+        MdcKeys.sanitizeForLog(runnerKind));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported runnerKind: " + runnerKind, details);
+  }
+
+  /**
+   * Story 4.2 (AC3) — resolve the raw failure-category filter tokens into de-duplicated wire
+   * strings, validated against the {@link FailureCategory} registry. Empty/blank input disables the
+   * filter. An unknown token raises {@link DomainErrorCode#INVALID_COMMAND_PAYLOAD} (no silent
+   * drop).
+   */
+  private List<String> resolveFailureCategories(List<String> tokens) {
+    if (tokens == null || tokens.isEmpty()) {
+      return List.of();
+    }
+    List<String> resolved = new ArrayList<>();
+    for (String token : tokens) {
+      if (token == null || token.isBlank()) {
+        continue;
+      }
+      String normalized = token.trim().toLowerCase(java.util.Locale.ROOT);
+      FailureCategory category = null;
+      for (FailureCategory candidate : FailureCategory.values()) {
+        if (candidate.value().equals(normalized)) {
+          category = candidate;
+          break;
+        }
+      }
+      if (category == null) {
+        throw invalidFailureCategory(token);
+      }
+      if (!resolved.contains(category.value())) {
+        resolved.add(category.value());
+      }
+    }
+    return resolved;
+  }
+
+  private DomainException invalidFailureCategory(String failureCategory) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("failureCategory", failureCategory);
+    List<String> supported = new ArrayList<>();
+    for (FailureCategory value : FailureCategory.values()) {
+      supported.add(value.value());
+    }
+    details.put("supportedFailureCategories", supported);
+    log.warn(
+        "getOperatorRunSummary invalid failureCategory failureCategory={}",
+        MdcKeys.sanitizeForLog(failureCategory));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "Unsupported failureCategory: " + failureCategory,
+        details);
+  }
+
+  /**
+   * Story 4.2 (AC5) — the decoded keyset cursor. {@code lastTransitionAt} is nullable (the cursor
+   * row sat in the {@code nulls last} tail); {@code runId} is the tiebreaker and is non-null when a
+   * cursor is active. A no-cursor request decodes to {@code inactive()} ({@code runId == null}).
+   */
+  private record CursorKeyset(OffsetDateTime lastTransitionAt, String runId) {
+    static CursorKeyset inactive() {
+      return new CursorKeyset(null, null);
+    }
+
+    boolean active() {
+      return runId != null;
+    }
+  }
+
+  /**
+   * Decode the opaque base64url {@code <lastTransitionAt>|<runId>} cursor (story 4.2 AC5). An empty
+   * timestamp segment encodes a {@code nulls last} tail cursor. Any malformed input (bad base64,
+   * wrong segment count, unparseable timestamp, blank run id) raises {@link
+   * DomainErrorCode#INVALID_COMMAND_PAYLOAD} with a sanitized {@code cursor} detail.
+   */
+  private CursorKeyset decodeCursor(String rawCursor) {
+    if (rawCursor == null || rawCursor.isBlank()) {
+      return CursorKeyset.inactive();
+    }
+    String decoded;
+    try {
+      decoded = new String(Base64.getUrlDecoder().decode(rawCursor.trim()), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException badBase64) {
+      throw invalidCursor(rawCursor);
+    }
+    int separator = decoded.indexOf('|');
+    if (separator < 0) {
+      throw invalidCursor(rawCursor);
+    }
+    String timestampPart = decoded.substring(0, separator);
+    String runId = decoded.substring(separator + 1);
+    if (runId.isBlank()) {
+      throw invalidCursor(rawCursor);
+    }
+    OffsetDateTime lastTransitionAt = null;
+    if (!timestampPart.isEmpty()) {
+      try {
+        lastTransitionAt = OffsetDateTime.parse(timestampPart);
+      } catch (DateTimeParseException badTimestamp) {
+        throw invalidCursor(rawCursor);
+      }
+    }
+    return new CursorKeyset(lastTransitionAt, runId);
+  }
+
+  /**
+   * Encode the last returned row's keyset into an opaque base64url cursor (story 4.2 AC5). A null
+   * {@code lastTransitionAt} encodes as an empty timestamp segment so the tail page decodes back to
+   * a {@code nulls last} cursor.
+   */
+  private String encodeCursor(OperatorRunRowSnapshot row) {
+    String timestampPart = row.lastTransitionAt() == null ? "" : row.lastTransitionAt().toString();
+    String raw = timestampPart + "|" + row.runId();
+    return Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private DomainException invalidCursor(String cursor) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("cursor", cursor);
+    log.warn("getOperatorRunSummary invalid cursor cursor={}", MdcKeys.sanitizeForLog(cursor));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Malformed operator-runs cursor", details);
   }
 
   /**
@@ -3508,8 +3707,32 @@ public class WorkflowInspectionService {
    * @param since the raw {@code --since} relative-duration token, or {@code null}/blank for no
    *     window
    * @param limit the requested row cap (clamped to {@code [1,500]} in the service)
+   * @param runnerKinds story 4.2 (AC3) — the raw runner-kind filter tokens ({@code codex}/{@code
+   *     claude}/{@code manual}); empty disables the filter. Resolved/validated in the service.
+   * @param failureCategories story 4.2 (AC3) — the raw failure-category filter tokens (from the
+   *     {@link FailureCategory} registry); empty disables the filter. Resolved/validated in the
+   *     service.
+   * @param cursor story 4.2 (AC5) — the opaque keyset pagination cursor from a prior response's
+   *     {@code nextCursor}, or {@code null}/blank for the first page. Decoded/validated in the
+   *     service.
    */
-  public record OperatorRunFilter(List<String> stateTokens, String since, int limit) {}
+  public record OperatorRunFilter(
+      List<String> stateTokens,
+      String since,
+      int limit,
+      List<String> runnerKinds,
+      List<String> failureCategories,
+      String cursor) {
+
+    /**
+     * Back-compatible 4.1 constructor (no runner-kind / failure-category filter, first page). Keeps
+     * the CLI {@code OperatorCommands} call site and 4.1 unit tests untouched while 4.2 threads the
+     * new inputs.
+     */
+    public OperatorRunFilter(List<String> stateTokens, String since, int limit) {
+      this(stateTokens, since, limit, List.of(), List.of(), null);
+    }
+  }
 
   /**
    * Story 4.1 (AC2) — one fleet row. Nullable reference fields ({@code failureCategory}, {@code
@@ -3532,7 +3755,8 @@ public class WorkflowInspectionService {
       String linkedPrRef,
       boolean escalationMarker,
       OffsetDateTime oldestEventAt,
-      String operatorSignifier) {}
+      String operatorSignifier,
+      String runnerKind) {}
 
   /**
    * Story 4.1 (AC2) — the operator fleet summary view. {@code byState} / {@code byFailureCategory}
@@ -3540,12 +3764,14 @@ public class WorkflowInspectionService {
    * byFailureCategory} is populated only when the state filter includes {@code failed}/{@code
    * orphaned}. {@code oldestEntryAt} is {@code null} when the matched set is empty (never coalesced
    * to a synthetic value). {@code runs} is the {@code lastTransitionAt DESC} page capped by {@code
-   * --limit}.
+   * --limit}. {@code nextCursor} (story 4.2 AC5) is the opaque keyset cursor to fetch the next
+   * page, or {@code null} on the last page; the aggregate fields are stable across pages.
    */
   public record OperatorRunSummary(
       int total,
       Map<WorkflowState, Integer> byState,
       Map<FailureCategory, Integer> byFailureCategory,
       OffsetDateTime oldestEntryAt,
-      List<OperatorRunRow> runs) {}
+      List<OperatorRunRow> runs,
+      String nextCursor) {}
 }

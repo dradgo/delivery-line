@@ -1,6 +1,6 @@
 # Story 4.2: UI Operator Workflow-Owner Queue + Filters
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -103,50 +103,77 @@ Read story **4.1** (`4-1-cli-operator-inspection-deliveryline-operator-status.md
 
 ### Part A — Backend: operator-runs REST endpoint + cursor + runner-kind
 
-- [ ] **Task A1 — Read-model extension: cursor + runnerKind (AC5, AC2)**
-  - [ ] Add nullable `runnerKind` to `OperatorRunRowSnapshot` (`application.workflow.spi`) and `OperatorRunRow` (nested in `WorkflowInspectionService`) — appended at the END of each record (4.1 convention). Source = latest `runner_executions.runner_kind` for the run via a LEFT JOIN in `OperatorRunPersistenceAdapter.LIST_ROWS_SQL` (latest-rex correlated subquery/lateral, mirror the latest-event join).
-  - [ ] Add cursor support: extend `OperatorRunFilter` with `String cursor` (raw opaque token, nullable) and `OperatorRunQuery` with a decoded keyset `(OffsetDateTime cursorLastTransitionAt, String cursorRunId)` (nullable). Add a runner-kind predicate set to `OperatorRunQuery`.
-  - [ ] `OperatorRunReadPort.listOperatorRuns(query, limit)` → fetch `limit+1`; add the keyset `WHERE (last_transition_at, run_id) < (:ts,:id)` to `LIST_ROWS_SQL` with a null-aware branch for `last_transition_at IS NULL` rows (they sort last under `nulls last`, so the cursor must page into and through them correctly). Verify on real PG.
-  - [ ] Aggregate query (`loadOperatorRunAggregate`) unchanged — it already covers the FULL match set independent of `limit`; the cursor never touches it.
-- [ ] **Task A2 — Service: cursor encode/decode + runner-kind resolution (AC5, AC3)**
-  - [ ] In `getOperatorRunSummary`: decode the opaque `cursor` (base64 `lastTransitionAt|runId`; malformed → `INVALID_COMMAND_PAYLOAD` with `details{cursor}`), resolve runner-kind tokens (validate against known kinds), pass through to `OperatorRunQuery`; after fetching `limit+1`, drop the extra row and compute `nextCursor` (encode the last returned row's keyset) — expose it on `OperatorRunSummary` (append a nullable `String nextCursor` field). Reuse the 4.1 relative-`since` parser + `OperatorRunState.fromToken` unchanged.
-  - [ ] MDC/log entry+exit; `WARN` at any `INVALID_COMMAND_PAYLOAD` raise site (sanitized values).
-- [ ] **Task A3 — REST: `OperatorController` + DTOs + OpenAPI (AC1 backend seam, AC3)**
-  - [ ] New `OperatorController` (`adapters.rest`) `@GetMapping("/api/v1/operator/runs")` operationId `listOperatorRuns`: `@RequestParam` `state`, `failureCategory`, `since`, `runnerKind` (csv strings), `limit` (default 100), `cursor` → build `OperatorRunFilter` → `getOperatorRunSummary` → `OperatorRunSummaryResponse.from`. Thin: NO token/predicate resolution in the controller (that lives in the service — ArchUnit).
-  - [ ] `OperatorRunSummaryResponse { int total, Map<String,Integer> byState, Map<String,Integer> byFailureCategory, OffsetDateTime oldestEntryAt, List<OperatorRunRowResponse> runs, String nextCursor }` + `OperatorRunRowResponse { runId, currentState (wire), failureCategory, runnerKind, lastTransitionAt, actorIdentity, linkedTicketRef, linkedPrRef, boolean escalationMarker, oldestEventAt, operatorSignifier }`. `.from(...)` maps `WorkflowState`/`FailureCategory` enums + `EnumMap` histograms to wire strings. Add `@Schema(allowableValues=...)` for state-token / failure-category / runner-kind so the FE gets typed enums.
-  - [ ] Read GET: no `Idempotency-Key`, no `X-Actor-Identity`; `X-Correlation-Id` free via `CorrelationIdFilter`. Read-only.
-- [ ] **Task A4 — OpenAPI regen + backend tests + ArchUnit (AC1, AC5, AC10)**
-  - [ ] Regenerate the snapshot (`mvnw -pl deliveryline-backend -Dopenapi.snapshot.write=true test -Dtest=OpenApiSnapshotContractTest`), review + commit `openapi.json`; extend `OpenApiSnapshotContractTest` operationId assertions with `listOperatorRuns` (confirm the `FailureCategory` enum now includes `runner_build_failed`).
-  - [ ] `OperatorControllerTest` (slice — query-param→filter mapping, wire-string enums, `nextCursor` echo, empty/populated, thin-adapter). `OperatorRunCursorPaginationIT` (`@SpringBootTest`, `@Tag("integration")`, real PG, name `*IT` [[springboot-testcontainers-test-must-be-IT]]): seed >page-size mixed non-happy runs incl. null-`last_transition_at`, page through with cursor, assert no dup/skip across page boundary + `runnerKind` populated from latest rex.
-  - [ ] ArchUnit: `OperatorController` thin (mirror `WorkflowController` — no `OperatorRunState`/predicate logic); confirm the 4.1 `OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI` rule is WIDENED to also allow `OperatorController`/`OperatorRunSummaryResponse` (the view records now cross into `adapters.rest`) — Failsafe [[archunit-runs-in-failsafe-not-surefire]]. `spotless:apply` before commit [[spotless-apply-before-pushing-java-edits]].
+- [x] **Task A1 — Read-model extension: cursor + runnerKind (AC5, AC2)**
+  - [x] Add nullable `runnerKind` to `OperatorRunRowSnapshot` (`application.workflow.spi`) and `OperatorRunRow` (nested in `WorkflowInspectionService`) — appended at the END of each record (4.1 convention). Source = latest `runner_executions.runner_kind` for the run via a LEFT JOIN in `OperatorRunPersistenceAdapter.LIST_ROWS_SQL` (latest-rex correlated subquery/lateral, mirror the latest-event join).
+  - [x] Add cursor support: extend `OperatorRunFilter` with `String cursor` (raw opaque token, nullable) and `OperatorRunQuery` with a decoded keyset `(OffsetDateTime cursorLastTransitionAt, String cursorRunId)` (nullable). Add a runner-kind predicate set to `OperatorRunQuery`.
+  - [x] `OperatorRunReadPort.listOperatorRuns(query, limit)` → fetch `limit+1`; add the keyset `WHERE (last_transition_at, run_id) < (:ts,:id)` to `LIST_ROWS_SQL` with a null-aware branch for `last_transition_at IS NULL` rows (they sort last under `nulls last`, so the cursor must page into and through them correctly). Verify on real PG.
+  - [x] Aggregate query (`loadOperatorRunAggregate`) unchanged — it already covers the FULL match set independent of `limit`; the cursor never touches it.
+- [x] **Task A2 — Service: cursor encode/decode + runner-kind resolution (AC5, AC3)**
+  - [x] In `getOperatorRunSummary`: decode the opaque `cursor` (base64 `lastTransitionAt|runId`; malformed → `INVALID_COMMAND_PAYLOAD` with `details{cursor}`), resolve runner-kind tokens (validate against known kinds), pass through to `OperatorRunQuery`; after fetching `limit+1`, drop the extra row and compute `nextCursor` (encode the last returned row's keyset) — expose it on `OperatorRunSummary` (append a nullable `String nextCursor` field). Reuse the 4.1 relative-`since` parser + `OperatorRunState.fromToken` unchanged.
+  - [x] MDC/log entry+exit; `WARN` at any `INVALID_COMMAND_PAYLOAD` raise site (sanitized values).
+- [x] **Task A3 — REST: `OperatorController` + DTOs + OpenAPI (AC1 backend seam, AC3)**
+  - [x] New `OperatorController` (`adapters.rest`) `@GetMapping("/api/v1/operator/runs")` operationId `listOperatorRuns`: `@RequestParam` `state`, `failureCategory`, `since`, `runnerKind` (csv strings), `limit` (default 100), `cursor` → build `OperatorRunFilter` → `getOperatorRunSummary` → `OperatorRunSummaryResponse.from`. Thin: NO token/predicate resolution in the controller (that lives in the service — ArchUnit).
+  - [x] `OperatorRunSummaryResponse { int total, Map<String,Integer> byState, Map<String,Integer> byFailureCategory, OffsetDateTime oldestEntryAt, List<OperatorRunRowResponse> runs, String nextCursor }` + `OperatorRunRowResponse { runId, currentState (wire), failureCategory, runnerKind, lastTransitionAt, actorIdentity, linkedTicketRef, linkedPrRef, boolean escalationMarker, oldestEventAt, operatorSignifier }`. `.from(...)` maps `WorkflowState`/`FailureCategory` enums + `EnumMap` histograms to wire strings. Add `@Schema(allowableValues=...)` for state-token / failure-category / runner-kind so the FE gets typed enums.
+  - [x] Read GET: no `Idempotency-Key`, no `X-Actor-Identity`; `X-Correlation-Id` free via `CorrelationIdFilter`. Read-only.
+- [x] **Task A4 — OpenAPI regen + backend tests + ArchUnit (AC1, AC5, AC10)**
+  - [x] Regenerate the snapshot (`mvnw -pl deliveryline-backend -Dopenapi.snapshot.write=true test -Dtest=OpenApiSnapshotContractTest`), review + commit `openapi.json`; extend `OpenApiSnapshotContractTest` operationId assertions with `listOperatorRuns` (confirm the `FailureCategory` enum now includes `runner_build_failed`).
+  - [x] `OperatorControllerTest` (slice — query-param→filter mapping, wire-string enums, `nextCursor` echo, empty/populated, thin-adapter). `OperatorRunCursorPaginationIT` (`@SpringBootTest`, `@Tag("integration")`, real PG, name `*IT` [[springboot-testcontainers-test-must-be-IT]]): seed >page-size mixed non-happy runs incl. null-`last_transition_at`, page through with cursor, assert no dup/skip across page boundary + `runnerKind` populated from latest rex.
+  - [x] ArchUnit: `OperatorController` thin (mirror `WorkflowController` — no `OperatorRunState`/predicate logic); confirm the 4.1 `OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI` rule is WIDENED to also allow `OperatorController`/`OperatorRunSummaryResponse` (the view records now cross into `adapters.rest`) — Failsafe [[archunit-runs-in-failsafe-not-surefire]]. `spotless:apply` before commit [[spotless-apply-before-pushing-java-edits]].
 
 ### Part B — Frontend: operator queue route + filters + virtualization
 
-- [ ] **Task B1 — API client + query hook + filter model (AC3, AC5, AC9)**
-  - [ ] `npm run generate-api` to regen `src/lib/api/schema.d.ts` from the committed `openapi.json` (after Part A) — verify `check:api` in-sync ([[openapi-regen-frontend-client-drift-cascade]]).
-  - [ ] `OperatorQueueFilters` type (`states: string[]`, `failureCategories: string[]`, `runnerKinds: string[]`, `timeWindow: '1h'|'24h'|'7d'|'30d'|'all'`) + `operatorKeys` query-key factory (normalize/sort arrays for cache stability, mirror `workflowKeys.normalizeFilters`).
-  - [ ] `useOperatorRunsList(filters)` = `useInfiniteQuery` calling `fetchOperatorRuns` (`apiClient.GET('/api/v1/operator/runs', { params:{ query:{ state, failureCategory, since, runnerKind, limit, cursor } }})`, csv-join arrays, `timeWindow`→`since` token, "all"→omit); `getNextPageParam: (last) => last.nextCursor ?? undefined`. Flatten pages for rows; take aggregate/histograms from `pages[0]`.
-- [ ] **Task B2 — Route + gating seam (AC1)**
-  - [ ] `src/routes/operator/queue.tsx` (`createFileRoute('/operator/queue')`): `validateSearch` parses multi-valued filters (arrays from csv, time-window enum with a safe default `all`), `loaderDeps: ({search}) => search`, `loader` warms the infinite query's first page. Component reads `Route.useSearch()`/`useNavigate()`; every toggle spreads ALL active filters ([[tanstack-validatesearch-strips-unparsed-param]]).
-  - [ ] `useCanViewOperatorQueue()` seam (returns `true` in E4); when false, render `ErrorState variant="permissionRestricted"` (forward stub). Let the Vite plugin regen `routeTree.gen.ts` (do NOT hand-edit).
-- [ ] **Task B3 — Operator row + view model (AC2)**
-  - [ ] Extend `RunQueueRow` (`runQueueRow.ts`) with optional `failureCategory?`, `runnerKind?`, `operatorSignifier?`, `lastOperatorActionAt?`; add `toOperatorQueueRow(response)` mapper (guard nullable fields `!= null && trim` like the 3g-2 fix; [[workflowdetail-wire-sends-null-not-undefined]]). Keep `isRunQueueRow`/existing mapper intact ([[artifactview-variant-field-fanout]] discipline).
-  - [ ] Flesh out `OperatorRow` in `RunReviewQueueItem.tsx`: navigable (`onOpen` → `/workflows/$workflowRunId` for E4; 4.4 deep-dive is backlog), render badge/label from `run.operatorSignifier`, failure-category chip (when present), runner-kind chip, prominent escalation marker, `lastOperatorActionAt` relative time. Non-color signifier preserved (icon + label, story 2.3).
-- [ ] **Task B4 — Filter sidebar + shell + virtualization + bulk placeholder (AC3, AC4, AC5, AC6, AC7)**
-  - [ ] Add a shadcn `checkbox` primitive (`src/components/ui/checkbox.tsx`, Radix `@radix-ui/react-checkbox`); build `OperatorFilterSidebar` (state / failure-category / runner-kind multi-checkbox groups + time-window `Select`), URL-owned, each change `navigate`s. Options sourced from generated enums.
-  - [ ] Compose `QueueShell` (reuse `resolveQueueState`) with the operator `renderItem={(row)=><RunReviewQueueItem run={toOperatorQueueRow(row)} variant="operator" />}`; wrap the populated list in a `@tanstack/react-virtual` virtualizer (fixed `QUEUE_ROW_MIN_HEIGHT`) that calls `fetchNextPage` near the end; keyboard "load more" affordance for AC7.
-  - [ ] Bulk-actions placeholder: "Select multiple" checkbox column (local selection state, wires to nothing) + permanently-disabled "Bulk action" dropdown with the exact copy "Bulk operator actions arrive in a future release".
-- [ ] **Task B5 — a11y announcement + tests (AC8, AC9, AC10)**
-  - [ ] Add `operatorFilteredToRuns(count, stateSummary)` to `announcements.ts` (function per convention; `check:a11y` node test enforces it); announce via `useLiveAnnouncement` after the query settles.
-  - [ ] Tests (mirror `QueueShell.test.tsx` + `RunReviewQueueItem.test.tsx`): route renders when allowed; permission-restricted stub path; filters apply (MSW asserts query params); virtualization at >100 rows; `fetchNextPage` on scroll (multi-page MSW); bulk placeholder visible+disabled; filter-change announcement (`waitFor` the announcer); `expectNoA11yViolations` on sidebar+list (Radix Select jsdom shims); operator-runs GET carries `X-Correlation-Id`. Run `format:check`/`eslint` — one unformatted file reds the chain ([[prettier-gate-cascades-ci]]); no fn exports from `.tsx` ([[frontend-react-refresh-no-fn-exports]]).
+- [x] **Task B1 — API client + query hook + filter model (AC3, AC5, AC9)**
+  - [x] `npm run generate-api` to regen `src/lib/api/schema.d.ts` from the committed `openapi.json` (after Part A) — verify `check:api` in-sync ([[openapi-regen-frontend-client-drift-cascade]]).
+  - [x] `OperatorQueueFilters` type (`states: string[]`, `failureCategories: string[]`, `runnerKinds: string[]`, `timeWindow: '1h'|'24h'|'7d'|'30d'|'all'`) + `operatorKeys` query-key factory (normalize/sort arrays for cache stability, mirror `workflowKeys.normalizeFilters`).
+  - [x] `useOperatorRunsList(filters)` = `useInfiniteQuery` calling `fetchOperatorRuns` (`apiClient.GET('/api/v1/operator/runs', { params:{ query:{ state, failureCategory, since, runnerKind, limit, cursor } }})`, csv-join arrays, `timeWindow`→`since` token, "all"→omit); `getNextPageParam: (last) => last.nextCursor ?? undefined`. Flatten pages for rows; take aggregate/histograms from `pages[0]`.
+- [x] **Task B2 — Route + gating seam (AC1)**
+  - [x] `src/routes/operator/queue.tsx` (`createFileRoute('/operator/queue')`): `validateSearch` parses multi-valued filters (arrays from csv, time-window enum with a safe default `all`), `loaderDeps: ({search}) => search`, `loader` warms the infinite query's first page. Component reads `Route.useSearch()`/`useNavigate()`; every toggle spreads ALL active filters ([[tanstack-validatesearch-strips-unparsed-param]]).
+  - [x] `useCanViewOperatorQueue()` seam (returns `true` in E4); when false, render `ErrorState variant="permissionRestricted"` (forward stub). Let the Vite plugin regen `routeTree.gen.ts` (do NOT hand-edit).
+- [x] **Task B3 — Operator row + view model (AC2)**
+  - [x] Extend `RunQueueRow` (`runQueueRow.ts`) with optional `failureCategory?`, `runnerKind?`, `operatorSignifier?`, `lastOperatorActionAt?`; add `toOperatorQueueRow(response)` mapper (guard nullable fields `!= null && trim` like the 3g-2 fix; [[workflowdetail-wire-sends-null-not-undefined]]). Keep `isRunQueueRow`/existing mapper intact ([[artifactview-variant-field-fanout]] discipline).
+  - [x] Flesh out `OperatorRow` in `RunReviewQueueItem.tsx`: navigable (`onOpen` → `/workflows/$workflowRunId` for E4; 4.4 deep-dive is backlog), render badge/label from `run.operatorSignifier`, failure-category chip (when present), runner-kind chip, prominent escalation marker, `lastOperatorActionAt` relative time. Non-color signifier preserved (icon + label, story 2.3).
+- [x] **Task B4 — Filter sidebar + shell + virtualization + bulk placeholder (AC3, AC4, AC5, AC6, AC7)**
+  - [x] Add a shadcn `checkbox` primitive (`src/components/ui/checkbox.tsx`, Radix `@radix-ui/react-checkbox`); build `OperatorFilterSidebar` (state / failure-category / runner-kind multi-checkbox groups + time-window `Select`), URL-owned, each change `navigate`s. Options sourced from generated enums.
+  - [x] Compose `QueueShell` (reuse `resolveQueueState`) with the operator `renderItem={(row)=><RunReviewQueueItem run={toOperatorQueueRow(row)} variant="operator" />}`; wrap the populated list in a `@tanstack/react-virtual` virtualizer (fixed `QUEUE_ROW_MIN_HEIGHT`) that calls `fetchNextPage` near the end; keyboard "load more" affordance for AC7.
+  - [x] Bulk-actions placeholder: "Select multiple" checkbox column (local selection state, wires to nothing) + permanently-disabled "Bulk action" dropdown with the exact copy "Bulk operator actions arrive in a future release".
+- [x] **Task B5 — a11y announcement + tests (AC8, AC9, AC10)**
+  - [x] Add `operatorFilteredToRuns(count, stateSummary)` to `announcements.ts` (function per convention; `check:a11y` node test enforces it); announce via `useLiveAnnouncement` after the query settles.
+  - [x] Tests (mirror `QueueShell.test.tsx` + `RunReviewQueueItem.test.tsx`): route renders when allowed; permission-restricted stub path; filters apply (MSW asserts query params); virtualization at >100 rows; `fetchNextPage` on scroll (multi-page MSW); bulk placeholder visible+disabled; filter-change announcement (`waitFor` the announcer); `expectNoA11yViolations` on sidebar+list (Radix Select jsdom shims); operator-runs GET carries `X-Correlation-Id`. Run `format:check`/`eslint` — one unformatted file reds the chain ([[prettier-gate-cascades-ci]]); no fn exports from `.tsx` ([[frontend-react-refresh-no-fn-exports]]).
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Backend: `INFO` on `getOperatorRunSummary` entry (resolved filter incl. cursor presence, limit) + success (`total`, `returnedRows`, `nextCursor` present?, `durationMs`); `WARN` at `INVALID_COMMAND_PAYLOAD` (bad cursor/since/token, sanitized); `DEBUG` for the two port calls. `OperatorController` rides `CorrelationIdFilter` MDC.
-  - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
-  - [ ] Levels: `INFO` normal lifecycle, `WARN` recoverable anomalies (bad filter, malformed cursor), `ERROR` only unhandled failures. `DEBUG` for hot-path (operator may poll/scroll).
-  - [ ] Carry `correlationId` + the filter summary via MDC; per-row ids only at `DEBUG`. FE: no secret/PII logging.
-  - [ ] Never log secrets, payload bytes, raw tokens, or PII; sanitize user-supplied filter values before logging.
-  - [ ] Pin the completion-log + `WARN`-on-invalid-filter/cursor lines with `OutputCaptureExtension` (backend). FE relies on component tests, not logs (CLI stdout n/a here).
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Backend: `INFO` on `getOperatorRunSummary` entry (resolved filter incl. cursor presence, limit) + success (`total`, `returnedRows`, `nextCursor` present?, `durationMs`); `WARN` at `INVALID_COMMAND_PAYLOAD` (bad cursor/since/token, sanitized); `DEBUG` for the two port calls. `OperatorController` rides `CorrelationIdFilter` MDC.
+  - [x] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
+  - [x] Levels: `INFO` normal lifecycle, `WARN` recoverable anomalies (bad filter, malformed cursor), `ERROR` only unhandled failures. `DEBUG` for hot-path (operator may poll/scroll).
+  - [x] Carry `correlationId` + the filter summary via MDC; per-row ids only at `DEBUG`. FE: no secret/PII logging.
+  - [x] Never log secrets, payload bytes, raw tokens, or PII; sanitize user-supplied filter values before logging.
+  - [x] Pin the completion-log + `WARN`-on-invalid-filter/cursor lines with `OutputCaptureExtension` (backend). FE relies on component tests, not logs (CLI stdout n/a here).
+
+### Review Findings
+
+_Adversarial code review 2026-07-06 (Blind Hunter + Edge Case Hunter + Acceptance Auditor). 2 decision-needed (RESOLVED by Alex → 1 fixed, 1 accepted as-is); 6 patch (5 FIXED + verified via `tsc`/eslint/71 vitest green, 1 dismissed as a false positive on verification); 4 deferred; 4 dismissed as noise._
+
+**Decision-needed** (RESOLVED by Alex 2026-07-06):
+
+- [x] [Review][Decision→Patch] Runner-kind filter hollow for global-default runs — **RESOLVED: ship the runner-kind filter as a disabled "coming soon" control (per OQ-RUNNERKIND) while keeping the display.** `runner_kind` (project-level override, sourced from `projects.runner_kind` per prior Alex sign-off) is `null` for global-default projects, so `f.runner_kind in (:runnerKinds)` silently excludes every default-runner run. Rather than mislead operators with empty filtered results, disable the sidebar runner-kind filter control; the AC2 display chip stays. Converted to patch below.
+- [x] [Review][Decision] Failure-category AND-with-null drops non-failed states — **RESOLVED: accepted as intended cross-dimension AND semantics** (filtering by failure category inherently scopes to failed/orphaned runs). No change; not a defect.
+
+**Patch** (fixes APPLIED 2026-07-06):
+
+- [x] [Review][Patch] Runner-kind filter control now ships DISABLED ("coming soon") while the AC2 display chip stays — `CheckboxGroup` gained `disabled`/`note`; the runner-kind group renders disabled with a "future release" hint (resolved Decision 1) [OperatorFilterSidebar.tsx]
+- [x] [Review][Patch] AC8 announcement now uses the cursor-independent `aggregate.total` (`matchCount`), not `rows.length` — count no longer understates and no longer re-announces on each page fetch [OperatorQueue.tsx]
+- [x] [Review][Patch] Unknown `state`/`failureCategory`/`runnerKind` URL tokens are now dropped (retained against the shared vocab), so a stale/hand-edited URL no longer 400-loops the whole queue — `retainKnownTokens` + `parseKnownCsv`; vocab centralized in `operatorKeys.ts` (single source of truth, also consumed by the sidebar) [routes/operator/queue.tsx, operatorKeys.ts]
+- [x] [Review][Patch] Virtualizer now measures each row (`ref={rowVirtualizer.measureElement}` + `data-index`, fixed `height` dropped) so wrapping operator rows no longer overlap/clip and `getTotalSize()` is correct; the 80px `estimateSize` stays as the pre-measure estimate [OperatorQueue.tsx]
+- [x] [Review][Patch] Auto-load `useEffect` deps narrowed to `hasNextPage`/`isFetchingNextPage`/`fetchNextPage` (destructured), no longer the whole `query` object → runs on tail-scroll, not every render [OperatorQueue.tsx]
+- [x] [Review][Patch → Dismissed] Present-but-unmapped `failureCategory` "renders no chip / dropped from aria-label" — **FALSE POSITIVE on verification: `humanizeFailureCategory` already degrades gracefully via `titleCaseToken` (an unmapped-but-present token is title-cased, e.g. `runner_build_failed` → "Runner Build Failed"); it returns `undefined` only for null/blank, which correctly renders no chip.** No change applied. [failureCategoryView.ts:53-58]
+
+**Deferred** (real, not actionable now):
+
+- [x] [Review][Defer] Time-window pagination is not point-in-time consistent — `now() - make_interval(...)` re-evaluated per page vs the absolute-timestamp keyset cursor; a run near the window edge can shift across pages [`OperatorRunPersistenceAdapter.java` RUN_FACTS_CTE] — deferred, inherent to relative-window pagination
+- [x] [Review][Defer] Bulk-selection `Set` is not reset on filter/refetch — retains ids for rows no longer present [deliveryline-frontend/src/features/workflows/OperatorQueue.tsx:71] — deferred, harmless while the bulk control is a disabled placeholder; define reset semantics when bulk actions activate
+- [x] [Review][Defer] The 5 operator-state filter tokens are a hardcoded FE const (drift risk vs the backend vocabulary) — the `@Schema(allowableValues)` workaround collapses multi-select, so no typed enum exists to bind to [deliveryline-frontend/src/features/workflows/components/OperatorFilterSidebar.tsx STATE_OPTIONS] — deferred, accepted constraint
+- [x] [Review][Defer] Equal-`last_transition_at` keyset tiebreak branch (`run_id` comparator) is logically correct but not exercised — `OperatorRunCursorPaginationIT` seeds only distinct timestamps [OperatorRunCursorPaginationIT.java] — deferred, test-coverage gap
+
+**Dismissed as noise:** FE `7d`/`30d` time-window "unsupported by parser" (false positive — `parseRelativeDuration` supports `d`/`w`); empty-string `nextCursor` infinite-refetch (unreachable — `encodeCursor` never emits empty); runner-kind vocabulary `manual` vs epic's `mock` (correct — real `RunnerKind` registry); bulk-actions `Button` vs `dropdown` (intent met — exact required copy present, permanently disabled).
 
 ## Dev Notes
 
@@ -213,12 +240,112 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- Blocker resolved (Alex decision): the story's assumed `runner_executions.runner_kind` column does
+  NOT exist and Flyway is forbidden → runner kind is sourced migration-free from `projects.runner_kind`
+  via the existing `workflow_runs.project_id → projects` FK (LEFT JOIN in the read model). Semantics:
+  the run's project-level runner override (null when the project uses the global default / no project).
+- AC drift: the epic says runner kinds `codex/claude/mock`; the real `RunnerKind` registry is
+  `codex/claude/manual` — used the registry values.
+- Added a failure-category filter predicate (AC3) symmetric to runner-kind; the 4.1 read model only
+  histogrammed by category, it had no category predicate.
+- `@Schema(allowableValues)` on the `state`/`runnerKind` query params collapsed them to scalar enums
+  in OpenAPI (breaking multi-select) → removed; params type as `string[]`. Typed filter OPTIONS still
+  flow from the row DTO's nullable-enum `failureCategory`/`runnerKind` fields; state uses the stable
+  5-token local const.
+- Verification: backend — OperatorControllerTest 6/6 (surefire), OperatorCommandsTest 9/9,
+  OperatorStatusJsonSchemaContractTest 3/3, WorkflowInspectionOperatorStatusIT 10/10 (4.1 regression),
+  OperatorRunCursorPaginationIT 8/8 (real-PG keyset walk incl. null-tail + runner-kind join + filters),
+  OpenApiSnapshotContractTest pass (drift gate), ArchitectureBoundaryTest 58/58 (widened operator-view
+  rule). Frontend — full vitest 124 files / 1304 tests pass (incl. new OperatorQueue.test.tsx 9/9),
+  `tsc -b` clean, `eslint --max-warnings=0` clean, `check:api` in sync, `check:a11y` pass, prettier
+  written. spotless:apply on the backend.
+
 ### Completion Notes List
 
+**Part A — backend (NEW `GET /api/v1/operator/runs`).** New `OperatorController` (thin adapter,
+operationId `listOperatorRuns`) + object-carrier DTOs `OperatorRunSummaryResponse` /
+`OperatorRunRowResponse` (enums → wire strings; histograms `Map<String,Integer>`; `nextCursor`).
+Extended the 4.1 read model: `runnerKind` (nullable) added to `OperatorRunRowSnapshot` +
+`WorkflowInspectionService.OperatorRunRow` sourced from a `left join projects` in `LIST_ROWS_SQL`;
+NET-NEW keyset cursor (opaque base64url `<lastTransitionAt>|<runId>`, null-aware for the `nulls last`
+tail) threaded through `OperatorRunFilter`→`OperatorRunQuery`→`OperatorRunReadPort`; NET-NEW
+runner-kind + failure-category filter predicates in the shared `matched` CTE (so histograms reflect
+the filtered fleet, cursor-independent). Cursor decode/encode + runner-kind/failure-category token
+resolution live in the service (INVALID_COMMAND_PAYLOAD + WARN on malformed input); the endpoint
+stays thin. Back-compat secondary constructors on `OperatorRunFilter`/`OperatorRunQuery` keep the 4.1
+CLI + unit callers untouched. OpenAPI snapshot regenerated + `OpenApiSnapshotContractTest` asserts
+`listOperatorRuns`; the 4.1 `OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI` ArchUnit rule
+widened to admit the REST classes. NO Flyway / new WorkflowState / WorkflowEventType / DomainErrorCode
+/ AllowedAction.
+
+**Part B — frontend (`/operator/queue`).** NEW file-based route with URL-owned multi-valued filters
+(`validateSearch` parses CSV → arrays; every nav spreads all active filters). NEW `OperatorQueueFilters`
++ `operatorKeys` factory; `useOperatorRunsList` = `useInfiniteQuery` over
+`operatorRunsInfiniteQueryOptions` (`getNextPageParam` reads `nextCursor`, flattens pages, keeps page-1
+aggregate). Fleshed out the 2.15 `RunReviewQueueItem variant='operator'` `OperatorRow`: now navigable
+(stretched-link → run detail), renders the badge FROM `run.operatorSignifier` (never re-derives from
+`currentState` — the 4.1 review lesson), plus failure-category / runner-kind / escalation /
+last-operator-action metadata; `RunQueueRow` extended with optional operator fields + a dedicated
+`toOperatorQueueRow` mapper (guarded present/trim). NEW `OperatorQueue` composes the 2.20 state
+machinery (`resolveQueueState` + `EmptyState`/`ErrorState`/`Skeleton`) with a `@tanstack/react-virtual`
+virtualizer (windowed >100 rows) + a keyboard load-more affordance (AC7), a NEW shadcn `checkbox`
+primitive + `OperatorFilterSidebar` (multi-select state/failure-category/runner-kind + time-window
+Select; options typed against the generated enums via a completeness-checked Record), the bulk-actions
+placeholder (disabled dropdown + "Select multiple"), and the ARIA `operatorFilteredToRuns` announcement.
+Access gating is the `useCanViewOperatorQueue` seam (true in E4; not-allowed = `ErrorState
+variant="permissionRestricted"` forward stub — NO governed AllowedAction, Reconciliation 6). Added
+`@tanstack/react-virtual` + `@radix-ui/react-checkbox` deps; regenerated the FE API client.
+
+**Provisional bindings applied (OQs) — for reviewer/Alex confirmation:** OQ-GATE (gating seam true in
+E4, no governed action); OQ-OVERRIDDEN (`overridden` vocabulary inherited from 4.1); OQ-RUNNERKIND
+(runner kind sourced from `projects.runner_kind`, display + working filter both shipped);
+OQ-LASTACTION (`lastTransitionAt` proxy for last-operator-action); OQ-SPLIT (kept as one story per
+Alex).
+
 ### File List
+
+**Backend — new:**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/OperatorController.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/OperatorRunSummaryResponse.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/OperatorRunRowResponse.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OperatorControllerTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/persistence/OperatorRunCursorPaginationIT.java`
+
+**Backend — modified:**
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java` (cursor encode/decode + runnerKind/failureCategory resolution; `OperatorRunFilter`/`OperatorRunRow`/`OperatorRunSummary` record fields + back-compat ctor)
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/spi/OperatorRunQuery.java` (runnerKinds/failureCategories/cursor fields + back-compat ctor + predicates)
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/spi/OperatorRunRowSnapshot.java` (runnerKind)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/OperatorRunPersistenceAdapter.java` (projects join, runner_kind, keyset cursor + failure-category/runner-kind predicates, params)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regen)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java` (`listOperatorRuns`)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java` (widened operator-view rule)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java` (record-arg fixups)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorStatusJsonSchemaContractTest.java` (record-arg fixups)
+
+**Frontend — new:**
+- `deliveryline-frontend/src/routes/operator/queue.tsx`
+- `deliveryline-frontend/src/features/workflows/OperatorQueue.tsx`
+- `deliveryline-frontend/src/features/workflows/operatorQueueRow.ts`
+- `deliveryline-frontend/src/features/workflows/components/OperatorFilterSidebar.tsx`
+- `deliveryline-frontend/src/features/workflows/hooks/useOperatorRunsList.ts`
+- `deliveryline-frontend/src/features/workflows/hooks/useCanViewOperatorQueue.ts`
+- `deliveryline-frontend/src/lib/queryKeys/operatorKeys.ts`
+- `deliveryline-frontend/src/components/ui/checkbox.tsx`
+- `deliveryline-frontend/src/features/workflows/__tests__/OperatorQueue.test.tsx`
+
+**Frontend — modified:**
+- `deliveryline-frontend/src/features/workflows/components/RunReviewQueueItem.tsx` (`OperatorRow` fleshed out)
+- `deliveryline-frontend/src/features/workflows/runQueueRow.ts` (optional operator fields)
+- `deliveryline-frontend/src/lib/api/queryOptions.ts` (`fetchOperatorRuns` + `operatorRunsInfiniteQueryOptions` + `OperatorRunSummary` type)
+- `deliveryline-frontend/src/lib/a11y/announcements.ts` (`operatorFilteredToRuns`)
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regen)
+- `deliveryline-frontend/src/routeTree.gen.ts` (auto-regen)
+- `deliveryline-frontend/src/features/workflows/components/__tests__/RunReviewQueueItem.test.tsx` (operator-variant test updated)
+- `deliveryline-frontend/package.json` + `package-lock.json` (`@tanstack/react-virtual`, `@radix-ui/react-checkbox`)
 
 ## Change Log
 
 | Date | Change |
 |---|---|
+| 2026-07-06 | Story 4.2 implemented (Opus 4.8 [1m], bmad-dev-story). Part A backend: NEW `GET /api/v1/operator/runs` `OperatorController` + object-carrier DTOs over the 4.1 `getOperatorRunSummary`; keyset cursor pagination (null-aware tail); `runnerKind` read-model extension sourced from `projects.runner_kind` (Alex decision — no Flyway, column absent); NEW runner-kind + failure-category filter predicates; OpenAPI regen + snapshot assertion; widened operator-view ArchUnit rule. Part B frontend: NEW `/operator/queue` route with URL-owned multi-valued filters, `useOperatorRunsList` infinite query, fleshed-out `variant='operator'` `OperatorRow` (renders server `operatorSignifier`), `OperatorFilterSidebar` (+ shadcn `checkbox`), `@tanstack/react-virtual` virtualization + load-more, bulk-actions placeholder, `useCanViewOperatorQueue` gating seam, `operatorFilteredToRuns` announcement. All backend + frontend gates green (see Debug Log). Status → review. |
 | 2026-07-05 | Story 4.2 created via bmad-create-story (Opus 4.8 [1m]) from 3 parallel Explore code-maps (FE queue/routing, FE filters/a11y/testing, backend REST/allowed-actions). TWO-LAYER story: Part A backend (NEW `GET /api/v1/operator/runs` `OperatorController` + `OperatorRunSummaryResponse` object DTO over the 4.1 `getOperatorRunSummary` read model + NET-NEW cursor pagination (keyset-ready sort) + `runnerKind` read-model extension + OpenAPI regen) + Part B frontend (NEW `/operator/queue` route, flesh out the 2.15 `variant='operator'` `OperatorRow` rendering server-derived `operatorSignifier`, NET-NEW filter sidebar (multi-checkbox state/failure-category/runner-kind + time-window), `@tanstack/react-virtual` virtualization + `useInfiniteQuery` cursor pagination, bulk-actions placeholder, a11y). HEADLINE RECONCILIATIONS: (1) no REST endpoint exists — 4.1 was CLI-only and deferred it here; (2) response is an OBJECT not the repo's direct-array (carries aggregate+cursor); (3) cursor pagination NET-NEW (sort already keyset); (4) `runnerKind` not on the read model — EXTEND; (5) render from server `operatorSignifier`, never re-derive from currentState (4.1 review lesson); (6) fleet queue vs per-run allowed-actions mismatch → gating seam true in E4, do NOT add governed `view_operator_queue` (E5 RBAC); (7) NEW multi-valued `OperatorQueueFilters` (URL-owned, validateSearch); (8) `overridden` still provisional (4.1 OQ-1); (9) route `/operator/queue`; (10) virtualization+pagination net-new deps. NO Flyway/WorkflowState/WorkflowEventType/DomainErrorCode/AllowedAction. 5 OQs (split; gate; overridden; runner-kind filter; last-action timestamp). Status → ready-for-dev. |

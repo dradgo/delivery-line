@@ -1098,14 +1098,16 @@ final class ArchitectureRuleCatalog {
    * #RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS}. Keeps the {@code
    * operator status} read on the single {@code getOperatorRunSummary} seam and the SPI-layer
    * snapshots ({@code OperatorRunAggregate}/{@code OperatorRunRowSnapshot}) — which stay in {@code
-   * application.workflow.spi} — out of the CLI (story 4.1 Reconciliation 2). There is no REST
-   * translator in 4.1 (CLI-only), so unlike the 3.19 mirror the allow-list carries no {@code
-   * adapters.rest} entry.
+   * application.workflow.spi} — out of the CLI (story 4.1 Reconciliation 2). Story 4.2 adds the
+   * REST translator ({@code OperatorController} + {@code OperatorRunSummaryResponse}/{@code
+   * OperatorRunRowResponse}), so the allow-list is widened to admit those {@code adapters.rest}
+   * classes (mirroring the 3.19 runner-queue-status shape). The SPI-layer snapshots ({@code
+   * OperatorRunAggregate}/{@code OperatorRunRowSnapshot}) stay out of both the CLI and REST.
    */
   static final ArchRule OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI =
       namedRule(
-          "OperatorRunSummary / OperatorRunRow may only be referenced from WorkflowInspectionService (application) and the CLI operator-status surface (OperatorCommands + WorkflowCommandOutputs)",
-          "Remediation: route all operator fleet-view reading through WorkflowInspectionService.getOperatorRunSummary (story 4.1 AC9). The CLI must not reach the SPI snapshots (OperatorRunAggregate/OperatorRunRowSnapshot) — those stay in application.workflow.spi.",
+          "OperatorRunSummary / OperatorRunRow may only be referenced from WorkflowInspectionService (application), the CLI operator-status surface (OperatorCommands + WorkflowCommandOutputs), and the REST operator surface (OperatorController + OperatorRunSummaryResponse + OperatorRunRowResponse)",
+          "Remediation: route all operator fleet-view reading through WorkflowInspectionService.getOperatorRunSummary (story 4.1 AC9). The CLI/REST must not reach the SPI snapshots (OperatorRunAggregate/OperatorRunRowSnapshot) — those stay in application.workflow.spi.",
           noClasses()
               .that()
               .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
@@ -1116,6 +1118,14 @@ final class ArchitectureRuleCatalog {
               .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.OperatorCommands(\\$.*)?")
               .and()
               .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkflowCommandOutputs(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.rest\\.OperatorController(\\$.*)?")
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.adapters\\.rest\\.OperatorRunSummaryResponse(\\$.*)?")
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.adapters\\.rest\\.OperatorRunRowResponse(\\$.*)?")
               .should()
               .dependOnClassesThat()
               .haveNameMatching(

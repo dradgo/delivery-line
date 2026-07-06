@@ -96,6 +96,25 @@ export interface RunQueueRow {
   projectId?: string | undefined;
   projectName?: string | undefined;
   projectSlug?: string | undefined;
+  /**
+   * Story 4.2 (AC2) — operator queue: the run's project-level runner kind
+   * (`codex`/`claude`/`manual`), sourced from `OperatorRunRow.runnerKind`. Absent on the reviewer
+   * queue (dormant there); rendered as a chip on the operator variant. Never fabricated.
+   */
+  runnerKind?: string | undefined;
+  /**
+   * Story 4.2 (AC2/Reconciliation 5) — operator queue: the server-derived UPPERCASE state signifier
+   * (`ORPHANED`/`FAILED`/`TAKENOVER`/`STALLED`/`OVERRIDDEN`/else the uppercased state). The operator
+   * row renders its badge FROM this, NEVER re-deriving from `currentState`. Absent on the reviewer
+   * queue.
+   */
+  operatorSignifier?: string | undefined;
+  /**
+   * Story 4.2 (AC2/OQ-LASTACTION) — operator queue: last operator-action timestamp. E4 has no
+   * distinct operator-action column, so this proxies `lastTransitionAt` (documented). Absent on the
+   * reviewer queue.
+   */
+  lastOperatorActionAt?: string | undefined;
 }
 
 /**

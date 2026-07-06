@@ -72,7 +72,8 @@ class OperatorCommandsTest {
                 "octo/repo#7",
                 true,
                 T2,
-                "ORPHANED"),
+                "ORPHANED",
+                null),
             new OperatorRunRow(
                 "run_taken0002",
                 WorkflowState.TAKEN_OVER,
@@ -83,7 +84,9 @@ class OperatorCommandsTest {
                 null,
                 false,
                 T2,
-                "TAKENOVER")));
+                "TAKENOVER",
+                null)),
+        null);
   }
 
   @Test
@@ -128,7 +131,9 @@ class OperatorCommandsTest {
                     null,
                     false,
                     T2,
-                    "OVERRIDDEN")));
+                    "OVERRIDDEN",
+                    null)),
+            null);
     when(inspection.getOperatorRunSummary(any())).thenReturn(view);
 
     String out = commands(false).status("overridden", null, "text", 100, null, false);
