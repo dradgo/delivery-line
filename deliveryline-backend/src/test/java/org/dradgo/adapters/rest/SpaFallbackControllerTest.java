@@ -2,6 +2,11 @@ package org.dradgo.adapters.rest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.RedactionPolicyService;
+import org.dradgo.infrastructure.observability.RedactionLayoutHolder;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -28,6 +33,35 @@ import org.springframework.mock.web.MockHttpServletRequest;
  */
 @ExtendWith(OutputCaptureExtension.class)
 class SpaFallbackControllerTest {
+
+  // Wire an identity RedactionPolicyService into RedactionLayoutHolder so the %redactedMsg
+  // converter
+  // (active via logback-spring.xml's local,test,!demo springProfile block once any @SpringBootTest
+  // has installed it on the shared LoggerContext) passes log messages through verbatim. Without
+  // this
+  // bridge the holder's `service` field is null on this plain JUnit test and the converter emits
+  // the
+  // fail-closed sentinel "[redaction-pending]", making the serveShell CapturedOutput.contains(...)
+  // assertion order-dependent (green only when another live context happens to have the holder
+  // wired). Same capture-and-restore precedent as WorkflowCommandsStatusHistoryTest and the
+  // observability contract tests (story 1.19 review, P16).
+  private static RedactionPolicyService priorService;
+
+  @BeforeAll
+  static void wireRedactionHolder() {
+    priorService = RedactionLayoutHolder.currentForTesting();
+    RedactionLayoutHolder.setRedactionService(
+        new RedactionPolicyService(new DataClassificationService()));
+  }
+
+  @AfterAll
+  static void unwireRedactionHolder() {
+    if (priorService == null) {
+      RedactionLayoutHolder.clearForTesting();
+    } else {
+      RedactionLayoutHolder.setRedactionService(priorService);
+    }
+  }
 
   private static MockHttpServletRequest navigation(String method, String accept) {
     MockHttpServletRequest request = new MockHttpServletRequest(method, "/");
