@@ -26,10 +26,12 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -79,6 +81,11 @@ class CommandModelSymmetryFoundationContract {
   // REST) and RegenerateSpecCommand (regenerate-spec REST) to the sealed permit set. They are
   // recorded here as known permits to keep the set explicit; their REST round-trip captures follow
   // the RejectImplementationCommand precedent (permit recorded without a mandatory capture block).
+  //
+  // Story 3h-2 (FR76 CPU linter gate) added ApproveLintCommand (approve-lint REST) and
+  // RequestLintFixCommand (request-lint-fix REST) to the sealed permit set. Recorded here as known
+  // permits to keep the set explicit; they follow the same "permit recorded without a mandatory
+  // capture block" precedent.
   private static final Set<Class<?>> EXPECTED_PERMITS =
       Set.of(
           SubmitWorkflowCommand.class,
@@ -90,7 +97,9 @@ class CommandModelSymmetryFoundationContract {
           RetryWorkflowCommand.class,
           TakeoverWorkflowCommand.class,
           AcceptClarificationCommand.class,
-          RegenerateSpecCommand.class);
+          RegenerateSpecCommand.class,
+          ApproveLintCommand.class,
+          RequestLintFixCommand.class);
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
