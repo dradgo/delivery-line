@@ -11,9 +11,14 @@ import static org.mockito.Mockito.when;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.adapters.persistence.mapper.WorkflowRunEntityMapper;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.infrastructure.observability.RedactionLayoutHolder;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -23,6 +28,34 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 @ExtendWith(OutputCaptureExtension.class)
 class WorkflowRunPersistenceAdapterTest {
+
+  // Wire an identity RedactionPolicyService into RedactionLayoutHolder so the %redactedMsg
+  // converter
+  // (installed on the shared LoggerContext once any Spring context boots via logback-spring.xml)
+  // passes the create-log message through verbatim. Without this bridge the holder's `service`
+  // field
+  // is null on this plain JUnit test and the converter emits the fail-closed sentinel
+  // "[redaction-pending]", making the CapturedOutput.contains(...) assertion order-dependent (green
+  // only when another live context happens to have the holder wired). Same capture-and-restore
+  // precedent as SpaFallbackControllerTest / WorkflowCommandsStatusHistoryTest (story 1.19 review).
+  private static RedactionPolicyService priorService;
+
+  @BeforeAll
+  static void wireRedactionHolder() {
+    priorService = RedactionLayoutHolder.currentForTesting();
+    RedactionLayoutHolder.setRedactionService(
+        new RedactionPolicyService(new DataClassificationService()));
+  }
+
+  @AfterAll
+  static void unwireRedactionHolder() {
+    if (priorService == null) {
+      RedactionLayoutHolder.clearForTesting();
+    } else {
+      RedactionLayoutHolder.setRedactionService(priorService);
+    }
+  }
+
   @Test
   void createThreadsParentRunIdIntoNewEntityAndSnapshot(CapturedOutput output) {
     WorkflowRunRepository repository = mock(WorkflowRunRepository.class);

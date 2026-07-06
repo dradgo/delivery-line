@@ -13,6 +13,8 @@ import java.time.ZoneOffset;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunRow;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunSummary;
@@ -20,6 +22,9 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.WorkflowState;
+import org.dradgo.infrastructure.observability.RedactionLayoutHolder;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -34,6 +39,34 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
  */
 @ExtendWith(OutputCaptureExtension.class)
 class OperatorCommandsTest {
+
+  // Wire an identity RedactionPolicyService into RedactionLayoutHolder so the %redactedMsg
+  // converter
+  // (installed on the shared LoggerContext once any Spring context boots via logback-spring.xml)
+  // passes the AC7 completion-log messages through verbatim. Without this bridge the holder's
+  // `service` field is null on this plain JUnit test and the converter emits the fail-closed
+  // sentinel
+  // "[redaction-pending]", making the CapturedOutput.contains(...) assertions order-dependent
+  // (green
+  // only when another live context happens to have the holder wired). Same capture-and-restore
+  // precedent as SpaFallbackControllerTest / WorkflowCommandsStatusHistoryTest (story 1.19 review).
+  private static RedactionPolicyService priorService;
+
+  @BeforeAll
+  static void wireRedactionHolder() {
+    priorService = RedactionLayoutHolder.currentForTesting();
+    RedactionLayoutHolder.setRedactionService(
+        new RedactionPolicyService(new DataClassificationService()));
+  }
+
+  @AfterAll
+  static void unwireRedactionHolder() {
+    if (priorService == null) {
+      RedactionLayoutHolder.clearForTesting();
+    } else {
+      RedactionLayoutHolder.setRedactionService(priorService);
+    }
+  }
 
   private static final String ESC = Character.toString((char) 27);
   private static final OffsetDateTime T1 =
