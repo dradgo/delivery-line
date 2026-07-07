@@ -262,4 +262,8 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule audit_spi_snapshots_not_imported_by_adapters =
       ArchitectureRuleCatalog.AUDIT_SPI_SNAPSHOTS_NOT_IMPORTED_BY_ADAPTERS;
+
+  @ArchTest
+  static final ArchRule only_conflict_package_may_write_integration_conflicts =
+      ArchitectureRuleCatalog.ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS;
 }

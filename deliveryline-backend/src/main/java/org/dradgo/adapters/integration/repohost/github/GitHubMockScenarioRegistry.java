@@ -145,6 +145,27 @@ public class GitHubMockScenarioRegistry {
     scenarios.put(scenario.ref(), scenario);
   }
 
+  /**
+   * Test-only: seed (or replace) a PR at a specific external ref with a caller-controlled lifecycle
+   * state / merged flag / source branch. Story 4.17 uses this to inject the conflict-detection
+   * scenarios the built-in happy fixtures can't express — a PR merged-while-open (→
+   * external_state_advanced), reopened-after-closed (→ external_state_reverted), or with a drifted
+   * source branch (→ metadata_drift). The deleted/removed case is {@link #removePullRequest} (fresh
+   * fetch → {@code Optional.empty()}); the link-broken case is a {@code PERMISSION_DENIED} scenario
+   * registered via {@link #register}. Purged by {@link #clearTestScenarios} when the prRef begins
+   * with {@code TEST-}.
+   */
+  public void seedPullRequest(PullRequest pullRequest) {
+    Objects.requireNonNull(pullRequest, "pullRequest");
+    pullRequestsByRef.put(pullRequest.prRef().value(), pullRequest);
+  }
+
+  /** Test-only: remove a seeded PR so a fresh {@code getPullRequestByRef} resolves to empty. */
+  public void removePullRequest(String prRef) {
+    Objects.requireNonNull(prRef, "prRef");
+    pullRequestsByRef.remove(prRef);
+  }
+
   public Optional<GitHubMockScenario> find(String ref) {
     return Optional.ofNullable(scenarios.get(ref));
   }
@@ -197,6 +218,11 @@ public class GitHubMockScenarioRegistry {
   public void clearTestScenarios() {
     int before = scenarios.size();
     scenarios.entrySet().removeIf(entry -> entry.getKey().startsWith(TEST_REF_PREFIX));
+    // Also purge any test-seeded PRs (story 4.17 conflict-injection) keyed under the TEST- prefix
+    // so
+    // built-in fixtures (PR-101/102/103) survive but per-test PR state never leaks across
+    // scenarios.
+    pullRequestsByRef.keySet().removeIf(prRef -> prRef.startsWith(TEST_REF_PREFIX));
     int removed = before - scenarios.size();
     if (removed > 0) {
       log.debug("github_mock cleared {} test scenarios", removed);

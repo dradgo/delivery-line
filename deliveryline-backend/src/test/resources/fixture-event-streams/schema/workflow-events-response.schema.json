@@ -134,7 +134,8 @@
         "workflow.archived",
         "workflow.unarchived",
         "workflow.splitDepthOverride",
-        "audit.logDownloaded"
+        "audit.logDownloaded",
+        "integration.conflictDetected"
       ]
     },
     "artifactVariant": {

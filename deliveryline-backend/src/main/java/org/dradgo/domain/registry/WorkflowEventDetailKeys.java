@@ -107,6 +107,16 @@ public final class WorkflowEventDetailKeys {
   public static final String PR_NUMBER = "prNumber";
   public static final String PR_STATE = "prState";
 
+  // Integration-conflict keys (added story 4.17 AC4, emitted on INTEGRATION_CONFLICT_DETECTED).
+  // Both
+  // allow-listed: conflictId is the opaque icf_ public id of the persisted conflict row and
+  // conflictCategory is the controlled-vocabulary IntegrationConflictCategory wire token —
+  // non-secret
+  // identifiers, the same shareable-redacted posture as the failureCategory/prState keys emitted
+  // alongside them. NEVER carries external tokens, PR bodies, or raw external payloads.
+  public static final String CONFLICT_ID = "conflictId";
+  public static final String CONFLICT_CATEGORY = "conflictCategory";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -160,7 +170,9 @@ public final class WorkflowEventDetailKeys {
           BRANCH,
           COMMIT_SHA,
           PR_NUMBER,
-          PR_STATE);
+          PR_STATE,
+          CONFLICT_ID,
+          CONFLICT_CATEGORY);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

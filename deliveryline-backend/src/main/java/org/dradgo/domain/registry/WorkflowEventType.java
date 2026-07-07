@@ -102,7 +102,16 @@ public enum WorkflowEventType implements RegistryValue {
   // —
   // event_type is an un-CHECKed text column and the registry set is fixture-asserted, not
   // DB-derived.
-  AUDIT_LOG_DOWNLOADED("audit.logDownloaded");
+  AUDIT_LOG_DOWNLOADED("audit.logDownloaded"),
+  // Story 4.17 (AC4) — appended (once per first-inserted (link, category) conflict) by the
+  // IntegrationConflictDetectionService sweep when internal workflow state disagrees with the
+  // cached-vs-fresh external Linear/GitHub state. NON-lifecycle event like integration.linked
+  // (priorState == resultingState == null, actorType = SYSTEM); the insert-or-skip dedup prevents
+  // per-tick spam. Detail keys reuse failureCategory/linearTicketReference/githubPrReference/
+  // prState/reason/correlationId/workflowRunId + the new allow-listed conflictId/conflictCategory.
+  // NOT in any scenario stream fixture (non-lifecycle, like console.opened). NO Flyway migration —
+  // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
+  INTEGRATION_CONFLICT_DETECTED("integration.conflictDetected");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

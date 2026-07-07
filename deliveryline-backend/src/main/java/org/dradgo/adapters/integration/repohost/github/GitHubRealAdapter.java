@@ -709,6 +709,10 @@ public class GitHubRealAdapter implements RepositoryHostAdapter {
     }
     String sourceBranch = requireText(json.path("head"), "ref", "pullRequest");
     String state = requireText(json, "state", "pullRequest");
+    // GitHub's REST `state` collapses merged and closed to "closed"; the separate `merged` boolean
+    // is the only way to tell an externally-merged PR from a merely-closed one (story 4.17). Absent
+    // on some list-shaped payloads → default false (an unmerged closed/open PR).
+    boolean merged = json.path("merged").asBoolean(false);
     String url = requireText(json, "html_url", "pullRequest");
     Instant createdAt = parseInstant(requireText(json, "created_at", "pullRequest"));
     return new PullRequest(
@@ -717,6 +721,7 @@ public class GitHubRealAdapter implements RepositoryHostAdapter {
         number,
         sourceBranch,
         state,
+        merged,
         url,
         createdAt);
   }

@@ -117,6 +117,7 @@ class RepositoryWorkspaceServiceIT {
                 1,
                 "b",
                 "open",
+                false,
                 "u",
                 Instant.now()));
     when(secrets.resolveHostSecret("GITHUB_TOKEN")).thenReturn(Optional.of(TOKEN));

@@ -46,7 +46,8 @@ class FlywaySchemaContractTest {
           "provider_usage_snapshots",
           "spec_clarification_acknowledgements",
           "split_proposals",
-          "split_proposal_feedback");
+          "split_proposal_feedback",
+          "integration_conflicts");
 
   // Story 3e-4 / V26: project_runner_kinds is a pure mapping/association table (composite PK
   // (project_id, step)) — NOT a core table: it deliberately carries no bigserial id / public_id /
@@ -80,7 +81,8 @@ class FlywaySchemaContractTest {
           Map.entry("provider_usage_snapshots", "pul_"),
           Map.entry("spec_clarification_acknowledgements", "sca_"),
           Map.entry("split_proposals", "splprop_"),
-          Map.entry("split_proposal_feedback", "splfb_"));
+          Map.entry("split_proposal_feedback", "splfb_"),
+          Map.entry("integration_conflicts", "icf_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -418,10 +420,15 @@ class FlywaySchemaContractTest {
                               + row.get("child_table")
                               + ".workflow_run_id must point to workflow_runs");
                   // Story 3f-4 / V29: split_proposals.workflow_run_id references
-                  // workflow_runs.public_id (text) — the 3f-2/3f-3 convention for new Epic-3f
-                  // tables that store the opaque run public id — whereas the other 9 reference .id.
+                  // workflow_runs.public_id (text) — the 3f-2/3f-3 convention for new Epic-3f/4
+                  // tables that store the opaque run public id — as does story 4.17 / V36's
+                  // integration_conflicts.workflow_run_id — whereas the older tables reference .id.
+                  String childTable = (String) row.get("child_table");
                   String expectedParentColumn =
-                      "split_proposals".equals(row.get("child_table")) ? "public_id" : "id";
+                      ("split_proposals".equals(childTable)
+                              || "integration_conflicts".equals(childTable))
+                          ? "public_id"
+                          : "id";
                   assertEquals(expectedParentColumn, row.get("parent_column"));
                   assertEquals(
                       "RESTRICT",
@@ -433,10 +440,10 @@ class FlywaySchemaContractTest {
                 })
             .count();
     assertEquals(
-        10,
+        11,
         workflowRunFks,
         () ->
-            "Expected 10 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews, split_proposals). Found "
+            "Expected 11 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews, split_proposals, integration_conflicts). Found "
                 + workflowRunFks);
 
     // recovery_actions soft event references: SET NULL.
@@ -1190,6 +1197,184 @@ class FlywaySchemaContractTest {
         "fk_split_proposal_feedback_runner_executions", "ON UPDATE CASCADE");
     assertIndexDefinitionContains(
         "idx_split_proposal_feedback_runner_execution_id", "runner_execution_id");
+  }
+
+  @Test
+  void integrationConflictsSchemaCarriesExpectedColumnsChecksForeignKeysAndDedupIndex() {
+    // Story 4.17 / V36: the detected internal-vs-external integration-drift conflict table. The
+    // id/public_id/created_at/archived_at retention shape + uq/ck public_id format (prefix icf_)
+    // are
+    // asserted by the CORE_TABLES tests above. Probe the story-specific columns, the
+    // conflict_category
+    // CHECK, the three FKs (integration_links / workflow_runs / recovery_actions, all ON DELETE
+    // RESTRICT ON UPDATE CASCADE), and the MANDATORY partial-unique dedup index.
+    assertColumnType("integration_conflicts", "integration_link_id", "text");
+    assertColumnNullable("integration_conflicts", "integration_link_id", false);
+    assertColumnType("integration_conflicts", "workflow_run_id", "text");
+    assertColumnNullable("integration_conflicts", "workflow_run_id", false);
+    assertColumnType("integration_conflicts", "conflict_category", "text");
+    assertColumnNullable("integration_conflicts", "conflict_category", false);
+    assertColumnType("integration_conflicts", "detected_at", "timestamp with time zone");
+    assertColumnNullable("integration_conflicts", "detected_at", false);
+    assertColumnType("integration_conflicts", "internal_state_snapshot", "jsonb");
+    assertColumnNullable("integration_conflicts", "internal_state_snapshot", false);
+    assertColumnType("integration_conflicts", "external_state_snapshot", "jsonb");
+    assertColumnNullable("integration_conflicts", "external_state_snapshot", false);
+    assertColumnType("integration_conflicts", "resolved_at", "timestamp with time zone");
+    assertColumnNullable("integration_conflicts", "resolved_at", true);
+    assertColumnType("integration_conflicts", "resolved_by_action_id", "text");
+    assertColumnNullable("integration_conflicts", "resolved_by_action_id", true);
+
+    // conflict_category CHECK value-set (the five IntegrationConflictCategory registry values —
+    // the registry-vs-CHECK equality is asserted separately by RegistryContractTest).
+    assertConstraintDefinitionContains(
+        "ck_integration_conflicts_conflict_category", "external_state_advanced");
+    assertConstraintDefinitionContains(
+        "ck_integration_conflicts_conflict_category", "external_state_reverted");
+    assertConstraintDefinitionContains(
+        "ck_integration_conflicts_conflict_category", "external_resource_removed");
+    assertConstraintDefinitionContains(
+        "ck_integration_conflicts_conflict_category", "metadata_drift");
+    assertConstraintDefinitionContains("ck_integration_conflicts_conflict_category", "link_broken");
+
+    // FKs to the three parents' public_id, all ON DELETE RESTRICT ON UPDATE CASCADE.
+    assertConstraintDefinitionContains(
+        "fk_integration_conflicts_integration_links", "integration_link_id");
+    assertConstraintDefinitionContains("fk_integration_conflicts_integration_links", "public_id");
+    assertConstraintDefinitionContains(
+        "fk_integration_conflicts_integration_links", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains(
+        "fk_integration_conflicts_integration_links", "ON UPDATE CASCADE");
+    assertConstraintDefinitionContains("fk_integration_conflicts_workflow_runs", "workflow_run_id");
+    assertConstraintDefinitionContains(
+        "fk_integration_conflicts_workflow_runs", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains(
+        "fk_integration_conflicts_recovery_actions", "resolved_by_action_id");
+    assertConstraintDefinitionContains(
+        "fk_integration_conflicts_recovery_actions", "ON DELETE RESTRICT");
+
+    // Category + recency index and dependent-direction index.
+    assertIndexDefinitionContains(
+        "idx_integration_conflicts_category_detected_at", "conflict_category");
+    assertIndexDefinitionContains("idx_integration_conflicts_workflow_run_id", "workflow_run_id");
+
+    // MANDATORY partial-unique dedup index over UNRESOLVED, non-archived rows.
+    List<Map<String, Object>> dedupIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'integration_conflicts'
+              and indexname = 'uq_integration_conflicts_unresolved'
+            """);
+    assertEquals(
+        1,
+        dedupIndex.size(),
+        () -> "Missing V36 partial unique index uq_integration_conflicts_unresolved");
+    String dedupDef = ((String) dedupIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(dedupDef.contains("unique"), () -> "must be UNIQUE: " + dedupDef);
+    assertTrue(
+        dedupDef.contains("integration_link_id") && dedupDef.contains("conflict_category"),
+        () -> "must cover (integration_link_id, conflict_category): " + dedupDef);
+    assertTrue(
+        dedupDef.contains("resolved_at is null") && dedupDef.contains("archived_at is null"),
+        () -> "must be partial on resolved_at is null and archived_at is null: " + dedupDef);
+
+    // Functional probe: parent rows, dedup rejection, resolved-row escape, FK + CHECK rejections.
+    String n = uniqueRowSuffix();
+    String run = "run_icf_schema" + n;
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, 'WaitingForReview')", run);
+    Long runId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_runs where public_id = ?", Long.class, run);
+    String link = "ilk_icf_schema" + n;
+    jdbcTemplate.update(
+        "insert into integration_links"
+            + " (public_id, workflow_run_id, integration_type, external_ref, sync_status)"
+            + " values (?, ?, 'github_pr', 'octo/repo#1', 'synced')",
+        link,
+        runId);
+    jdbcTemplate.update(
+        "insert into integration_conflicts"
+            + " (public_id, integration_link_id, workflow_run_id, conflict_category)"
+            + " values (?, ?, ?, 'external_state_advanced')",
+        "icf_first" + n,
+        link,
+        run);
+    // A second UNRESOLVED conflict of the same (link, category) is rejected by the dedup index.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into integration_conflicts"
+                    + " (public_id, integration_link_id, workflow_run_id, conflict_category)"
+                    + " values (?, ?, ?, 'external_state_advanced')",
+                "icf_dup" + n,
+                link,
+                run),
+        "Expected uq_integration_conflicts_unresolved to reject a second unresolved conflict");
+    // A different category for the same link is fine.
+    jdbcTemplate.update(
+        "insert into integration_conflicts"
+            + " (public_id, integration_link_id, workflow_run_id, conflict_category)"
+            + " values (?, ?, ?, 'metadata_drift')",
+        "icf_othercat" + n,
+        link,
+        run);
+    // A RESOLVED conflict of the same (link, category) as the first is allowed (dedup is over
+    // unresolved rows only) — the reconcile path (4.6) can resolve one and the sweep re-detect
+    // later.
+    jdbcTemplate.update(
+        "insert into integration_conflicts"
+            + " (public_id, integration_link_id, workflow_run_id, conflict_category, resolved_at)"
+            + " values (?, ?, ?, 'external_state_advanced', now())",
+        "icf_resolved" + n,
+        link,
+        run);
+    // conflict_category CHECK rejects an out-of-set value.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into integration_conflicts"
+                    + " (public_id, integration_link_id, workflow_run_id, conflict_category)"
+                    + " values (?, ?, ?, 'bogus_category')",
+                "icf_badcat" + n,
+                link,
+                run),
+        "Expected ck_integration_conflicts_conflict_category to reject an out-of-set category");
+    // FK rejects a dangling integration_link_id.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into integration_conflicts"
+                    + " (public_id, integration_link_id, workflow_run_id, conflict_category)"
+                    + " values (?, 'ilk_missing_icf', ?, 'link_broken')",
+                "icf_danglinglink" + n,
+                run),
+        "Expected fk_integration_conflicts_integration_links to reject a dangling link id");
+    // FK rejects a dangling resolved_by_action_id.
+    assertThrows(
+        Exception.class,
+        () ->
+            jdbcTemplate.update(
+                "insert into integration_conflicts (public_id, integration_link_id, workflow_run_id,"
+                    + " conflict_category, resolved_by_action_id)"
+                    + " values (?, ?, ?, 'link_broken', 'rcv_missing_icf')",
+                "icf_danglingaction" + n,
+                link,
+                run),
+        "Expected fk_integration_conflicts_recovery_actions to reject a dangling action id");
+
+    // Clean up child rows BEFORE the parents — the ON DELETE RESTRICT FKs would otherwise leak the
+    // edge into every later contract test's `delete from workflow_runs` (the RESTRICT-FK probe-row
+    // leak lesson).
+    jdbcTemplate.update("delete from integration_conflicts where workflow_run_id = ?", run);
+    jdbcTemplate.update("delete from integration_links where public_id = ?", link);
+    jdbcTemplate.update("delete from workflow_runs where public_id = ?", run);
   }
 
   @Test

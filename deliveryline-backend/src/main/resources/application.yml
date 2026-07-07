@@ -108,6 +108,19 @@ deliveryline:
       enabled: true
       interval-ms: 60000
       batch-limit: 100
+  integration:
+    # Story 4.17 (FR41/FR43): the integration-conflict-detection sweep compares internal workflow
+    # state against the cached-vs-fresh external Linear ticket + GitHub PR state and persists detected
+    # conflicts to integration_conflicts (never a silent overwrite — NFR19). The @Scheduled trigger
+    # (IntegrationConflictDetectionConfiguration) is @ConditionalOnProperty-gated on `enabled`, so a
+    # disabled sweep registers no scheduled bean. `interval-ms` is the fixed-delay between ticks (<=0
+    # normalized to 300000 = 5 min). `batch-limit` caps active links scanned per integration type per
+    # tick — the sweep WARNs when a tick fills the batch (no silent truncation), remainder heals next
+    # tick (<=0 normalized to 100).
+    conflict-detection:
+      enabled: true
+      interval-ms: 300000
+      batch-limit: 100
   workflow:
     # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
     # escalation marker. The escalation event is appended exactly once (when the counter crosses

@@ -1,6 +1,6 @@
 # Story 4.17: Integration Conflict Detection — Linear + GitHub vs Internal State
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -95,39 +95,56 @@ The closest end-to-end analogue to mirror is **story 3f-8's split-rollup reconci
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Registry additions + fixtures (AC2, AC3, AC4)**
-  - [ ] NEW `domain/registry/IntegrationConflictCategory.java implements RegistryValue` — mirror `FailureCategory.java` (private `LOOKUP = RegistryParsers.index(values())`, `value()`, `fromValue`, `fromNullableValue`). Values: `EXTERNAL_STATE_ADVANCED("external_state_advanced")`, `EXTERNAL_STATE_REVERTED("external_state_reverted")`, `EXTERNAL_RESOURCE_REMOVED("external_resource_removed")`, `METADATA_DRIFT("metadata_drift")`, `LINK_BROKEN("link_broken")`.
-  - [ ] Add `DomainRegistry.integrationConflictCategories()` (mirror `integrationFailureCategories()`); add the set-equality assertion to `RegistryContractTest.registryValuesMatchDomainRegistry` (`:110` block).
-  - [ ] `PublicIdPrefixes.INTEGRATION_CONFLICT("integrationConflict", "icf_", "ck_integration_conflicts_public_id_format")`.
-  - [ ] `WorkflowEventType.INTEGRATION_CONFLICT_DETECTED("integration.conflictDetected")` + mirror the wire value into `contracts/events/workflow-event-types.fixture.json` AND `fixture-event-streams/schema/workflow-events-response.schema.json` (NOT scenario streams).
-  - [ ] `WorkflowEventDetailKeys`: add `CONFLICT_ID = "conflictId"` + `CONFLICT_CATEGORY = "conflictCategory"`, append both to `ALLOW_LISTED_KEYS`, and add them to `workflow-history.v1.schema.json` (the holder contract test pins holder↔schema↔allow-list).
-- [ ] **Task 2 — `V36` migration + schema contract (AC3)**
-  - [ ] Re-confirm on-disk head; author `V36__create_integration_conflicts.sql` (Reconciliation 3 column/index/CHECK/FK set; mirror `V29__add_split_proposals.sql` conventions; MANDATORY `uq_integration_conflicts_unresolved` partial-unique dedup index).
-  - [ ] Extend `FlywaySchemaContractTest`: register `integration_conflicts` in `CORE_TABLES` + `EXPECTED_PUBLIC_ID_PREFIX (icf_)`; add a per-table probe (columns/nullability, CHECK value-set = registry, FK `ON DELETE RESTRICT`, functional unique/FK/CHECK violation probes) — delete child rows before parent ([[flywayschema-restrict-fk-probe-rows-leak]]). Add the `ck_integration_conflicts_conflict_category` ↔ registry alignment assertion in `RegistryContractTest`.
-  - [ ] Verify on real Postgres (Testcontainers), not mocks.
-- [ ] **Task 3 — Adapter widening for merged-PR detection (AC2)**
-  - [ ] Add `boolean merged` to `PullRequest` (keep `state`); update `GitHubRealAdapter.toPullRequest` to read GitHub's `merged` field; update `GitHubMockAdapter` + `GitHubMockScenario`/`GitHubMockScenarioRegistry` with conflict-injection scenarios (merged-while-open, reopened-after-closed, deleted/404, title-drift). Update any other `new PullRequest(...)` call sites (compile fan-out).
-  - [ ] (Linear baseline) On first scan of a Linear link with no cached `sourceStatusId`, snapshot `ticket.sourceStatusId()` into `external_metadata` via `updateExternalMetadataAndSync` (respect the `failed→linked→synced` transition constraint — [[integration-link-adapter-tx-and-supersede]]). Gate behind OQ-1 decision.
-- [ ] **Task 4 — Scan read seam (AC1, AC5)**
-  - [ ] NEW paged, non-locking, archived-excluded projection: `List<IntegrationLinkScanRow> scanActiveLinksByType(String integrationType, int batchLimit)` on `IntegrationLinkRecordPort` (or a dedicated `IntegrationConflictScanPort`). `IntegrationLinkScanRow(String integrationLinkPublicId, String workflowRunPublicId, String integrationType, String externalRef, byte[] externalMetadata, String projectId, String currentState)`. JPA query `join fetch` the workflow run (or JOIN `workflow_runs` for `current_state`) so the scheduler thread never trips a lazy proxy ([[integration-link-mapper-lazy-proxy-on-worker-thread]]). Surface `integration_links.project_id` (Reconciliation 5).
-  - [ ] `IntegrationConflictWritePort.insertIfAbsent(NewIntegrationConflict)` returning the inserted row or empty on dedup-skip (relies on the partial-unique index; catch the unique violation → skip, do NOT poison the tx — [[caught-idempotency-conflict-poisons-shared-tx]], so probe existence first OR use `ON CONFLICT DO NOTHING`).
-- [ ] **Task 5 — Detection service + scheduled trigger + config (AC1, AC8, AC9)**
-  - [ ] `application/integration/conflict/IntegrationConflictDetectionService.java` (`@Service`): `SweepResult sweep()` — take PG advisory xact-lock first (dedicated key, mirror `RunDependencyPersistenceAdapter.lockDependencyGraph`); for each type (linear, github) page the scan port; per link, resolve adapter (Reconciliation 5), fresh-query, classify (Reconciliation 8), `insertIfAbsent` + emit event on first insert; per-link `REQUIRES_NEW` + swallow-and-WARN; WARN + break on `GITHUB_RATE_LIMITED`; WARN when `found == batchLimit` (no silent truncation). `SweepResult(int scanned, int conflictsDetected, int skippedDuplicate, boolean batchLimitHit, boolean rateLimited)`.
-  - [ ] `infrastructure/config/IntegrationConflictDetectionConfiguration.java` — `@Configuration @EnableScheduling @ConditionalOnProperty(name="deliveryline.integration.conflict-detection.enabled")` + `@Scheduled(fixedDelayString="${deliveryline.integration.conflict-detection.interval-ms:300000}") void detect() { service.sweep(); }`.
-  - [ ] `IntegrationConflictDetectionProperties` (`@ConfigurationProperties("deliveryline.integration.conflict-detection")` record `(boolean enabled, long intervalMs, int batchLimit)`) — compact ctor normalizes-with-defaults, **NOT `@Validated`**; `DEFAULT_INTERVAL_MS=300_000`, `DEFAULT_BATCH_LIMIT=100`. Register via `@EnableConfigurationProperties`. Mirror into BOTH `src/main/resources/application.yml` (enabled: true) AND `src/test/resources/application.yml` (enabled: false — no `@Scheduled` bean in tests; ITs call `sweep()` directly) — [[validated-config-needs-test-yaml]].
-- [ ] **Task 6 — Read surface (AC6)**
-  - [ ] `IntegrationConflictService.listUnresolvedConflicts(ConflictFilter) → List<ConflictSummary>` (`@Transactional(readOnly = true)`) over `IntegrationConflictReadPort` (archived+resolved excluded, ordered). `ConflictSummary` typed nested record in `application.integration.conflict`. Bad filter → `INVALID_COMMAND_PAYLOAD`.
-- [ ] **Task 7 — Metrics (AC7)**
-  - [ ] Counter `deliveryline.integration.conflict.detected` `{category, integration}` held on the service; increment on each first-insert. `@Component IntegrationConflictMetricsBinder implements MeterBinder` gauge `deliveryline.integration.conflict.unresolved` `{category, integration}` reading a cached snapshot in a strongly-referenced `volatile` field; scrape never throws. Grafana panel + `IntegrationConflictUnresolvedHigh` alert in `infra/observability/prometheus/alerts.yml`.
-- [ ] **Task 8 — ArchUnit + tests + docs (AC9, AC10)**
-  - [ ] ArchUnit write-boundary rule (Failsafe). ITs + unit tests per AC10. Document the job + config in `docs/integrations/` (conflict-detection cadence, categories, dedup semantics, the deferred reconcile path).
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, adapter fresh-query), and every conflict/skip/backoff/dedup branch.
-  - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
-  - [ ] Levels: `INFO` sweep start/finish + per-conflict first-insert; `WARN` transient sync/network/rate-limit skips, batch-limit-hit, per-link swallowed error, dedup-skip at DEBUG; `ERROR` only for unhandled failures. `DEBUG` per-link hot-path detail.
-  - [ ] Every log carries `correlationId` (per-sweep), `workflowRunId`, `integrationLinkId`, `integrationType`, `conflictId`/`conflictCategory` where applicable; `failureCategory` on skips. MDC where supported.
-  - [ ] Never log secrets, tokens, PR bodies, or raw external payloads — only ids/refs/states already classified shareable-redacted.
-  - [ ] Pin the sweep-summary line, a first-insert line, and the rate-limit-backoff WARN with `OutputCaptureExtension` (or list-appender).
+- [x] **Task 1 — Registry additions + fixtures (AC2, AC3, AC4)**
+  - [x] NEW `domain/registry/IntegrationConflictCategory.java implements RegistryValue` — mirror `FailureCategory.java` (private `LOOKUP = RegistryParsers.index(values())`, `value()`, `fromValue`, `fromNullableValue`). Values: `EXTERNAL_STATE_ADVANCED("external_state_advanced")`, `EXTERNAL_STATE_REVERTED("external_state_reverted")`, `EXTERNAL_RESOURCE_REMOVED("external_resource_removed")`, `METADATA_DRIFT("metadata_drift")`, `LINK_BROKEN("link_broken")`.
+  - [x] Add `DomainRegistry.integrationConflictCategories()` (mirror `integrationFailureCategories()`); add the set-equality assertion to `RegistryContractTest.registryValuesMatchDomainRegistry` (`:110` block).
+  - [x] `PublicIdPrefixes.INTEGRATION_CONFLICT("integrationConflict", "icf_", "ck_integration_conflicts_public_id_format")`.
+  - [x] `WorkflowEventType.INTEGRATION_CONFLICT_DETECTED("integration.conflictDetected")` + mirror the wire value into `contracts/events/workflow-event-types.fixture.json` AND `fixture-event-streams/schema/workflow-events-response.schema.json` (NOT scenario streams).
+  - [x] `WorkflowEventDetailKeys`: add `CONFLICT_ID = "conflictId"` + `CONFLICT_CATEGORY = "conflictCategory"`, append both to `ALLOW_LISTED_KEYS`, and add them to `workflow-history.v1.schema.json` (the holder contract test pins holder↔schema↔allow-list).
+- [x] **Task 2 — `V36` migration + schema contract (AC3)**
+  - [x] Re-confirm on-disk head; author `V36__create_integration_conflicts.sql` (Reconciliation 3 column/index/CHECK/FK set; mirror `V29__add_split_proposals.sql` conventions; MANDATORY `uq_integration_conflicts_unresolved` partial-unique dedup index).
+  - [x] Extend `FlywaySchemaContractTest`: register `integration_conflicts` in `CORE_TABLES` + `EXPECTED_PUBLIC_ID_PREFIX (icf_)`; add a per-table probe (columns/nullability, CHECK value-set = registry, FK `ON DELETE RESTRICT`, functional unique/FK/CHECK violation probes) — delete child rows before parent ([[flywayschema-restrict-fk-probe-rows-leak]]). Add the `ck_integration_conflicts_conflict_category` ↔ registry alignment assertion in `RegistryContractTest`.
+  - [x] Verify on real Postgres (Testcontainers), not mocks.
+- [x] **Task 3 — Adapter widening for merged-PR detection (AC2)**
+  - [x] Add `boolean merged` to `PullRequest` (keep `state`); update `GitHubRealAdapter.toPullRequest` to read GitHub's `merged` field; update `GitHubMockAdapter` + `GitHubMockScenario`/`GitHubMockScenarioRegistry` with conflict-injection scenarios (merged-while-open, reopened-after-closed, deleted/404, title-drift). Update any other `new PullRequest(...)` call sites (compile fan-out).
+  - [x] (Linear baseline) On first scan of a Linear link with no cached `sourceStatusId`, snapshot `ticket.sourceStatusId()` into `external_metadata` via `updateExternalMetadataAndSync` (respect the `failed→linked→synced` transition constraint — [[integration-link-adapter-tx-and-supersede]]). Gate behind OQ-1 decision.
+- [x] **Task 4 — Scan read seam (AC1, AC5)**
+  - [x] NEW paged, non-locking, archived-excluded projection: `List<IntegrationLinkScanRow> scanActiveLinksByType(String integrationType, int batchLimit)` on `IntegrationLinkRecordPort` (or a dedicated `IntegrationConflictScanPort`). `IntegrationLinkScanRow(String integrationLinkPublicId, String workflowRunPublicId, String integrationType, String externalRef, byte[] externalMetadata, String projectId, String currentState)`. JPA query `join fetch` the workflow run (or JOIN `workflow_runs` for `current_state`) so the scheduler thread never trips a lazy proxy ([[integration-link-mapper-lazy-proxy-on-worker-thread]]). Surface `integration_links.project_id` (Reconciliation 5).
+  - [x] `IntegrationConflictWritePort.insertIfAbsent(NewIntegrationConflict)` returning the inserted row or empty on dedup-skip (relies on the partial-unique index; catch the unique violation → skip, do NOT poison the tx — [[caught-idempotency-conflict-poisons-shared-tx]], so probe existence first OR use `ON CONFLICT DO NOTHING`).
+- [x] **Task 5 — Detection service + scheduled trigger + config (AC1, AC8, AC9)**
+  - [x] `application/integration/conflict/IntegrationConflictDetectionService.java` (`@Service`): `SweepResult sweep()` — take PG advisory xact-lock first (dedicated key, mirror `RunDependencyPersistenceAdapter.lockDependencyGraph`); for each type (linear, github) page the scan port; per link, resolve adapter (Reconciliation 5), fresh-query, classify (Reconciliation 8), `insertIfAbsent` + emit event on first insert; per-link `REQUIRES_NEW` + swallow-and-WARN; WARN + break on `GITHUB_RATE_LIMITED`; WARN when `found == batchLimit` (no silent truncation). `SweepResult(int scanned, int conflictsDetected, int skippedDuplicate, boolean batchLimitHit, boolean rateLimited)`.
+  - [x] `infrastructure/config/IntegrationConflictDetectionConfiguration.java` — `@Configuration @EnableScheduling @ConditionalOnProperty(name="deliveryline.integration.conflict-detection.enabled")` + `@Scheduled(fixedDelayString="${deliveryline.integration.conflict-detection.interval-ms:300000}") void detect() { service.sweep(); }`.
+  - [x] `IntegrationConflictDetectionProperties` (`@ConfigurationProperties("deliveryline.integration.conflict-detection")` record `(boolean enabled, long intervalMs, int batchLimit)`) — compact ctor normalizes-with-defaults, **NOT `@Validated`**; `DEFAULT_INTERVAL_MS=300_000`, `DEFAULT_BATCH_LIMIT=100`. Register via `@EnableConfigurationProperties`. Mirror into BOTH `src/main/resources/application.yml` (enabled: true) AND `src/test/resources/application.yml` (enabled: false — no `@Scheduled` bean in tests; ITs call `sweep()` directly) — [[validated-config-needs-test-yaml]].
+- [x] **Task 6 — Read surface (AC6)**
+  - [x] `IntegrationConflictService.listUnresolvedConflicts(ConflictFilter) → List<ConflictSummary>` (`@Transactional(readOnly = true)`) over `IntegrationConflictReadPort` (archived+resolved excluded, ordered). `ConflictSummary` typed nested record in `application.integration.conflict`. Bad filter → `INVALID_COMMAND_PAYLOAD`.
+- [x] **Task 7 — Metrics (AC7)**
+  - [x] Counter `deliveryline.integration.conflict.detected` `{category, integration}` held on the service; increment on each first-insert. `@Component IntegrationConflictMetricsBinder implements MeterBinder` gauge `deliveryline.integration.conflict.unresolved` `{category, integration}` reading a cached snapshot in a strongly-referenced `volatile` field; scrape never throws. Grafana panel + `IntegrationConflictUnresolvedHigh` alert in `infra/observability/prometheus/alerts.yml`.
+- [x] **Task 8 — ArchUnit + tests + docs (AC9, AC10)**
+  - [x] ArchUnit write-boundary rule (Failsafe). ITs + unit tests per AC10. Document the job + config in `docs/integrations/` (conflict-detection cadence, categories, dedup semantics, the deferred reconcile path).
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, adapter fresh-query), and every conflict/skip/backoff/dedup branch.
+  - [x] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
+  - [x] Levels: `INFO` sweep start/finish + per-conflict first-insert; `WARN` transient sync/network/rate-limit skips, batch-limit-hit, per-link swallowed error, dedup-skip at DEBUG; `ERROR` only for unhandled failures. `DEBUG` per-link hot-path detail.
+  - [x] Every log carries `correlationId` (per-sweep), `workflowRunId`, `integrationLinkId`, `integrationType`, `conflictId`/`conflictCategory` where applicable; `failureCategory` on skips. MDC where supported.
+  - [x] Never log secrets, tokens, PR bodies, or raw external payloads — only ids/refs/states already classified shareable-redacted.
+  - [x] Pin the sweep-summary line, a first-insert line, and the rate-limit-backoff WARN with `OutputCaptureExtension` (or list-appender).
+
+### Review Findings
+
+_Code review 2026-07-08 (bmad-code-review, 3 adversarial layers: Blind Hunter / Edge Case Hunter / Acceptance Auditor over the story-scoped uncommitted diff, ~3256 lines). Acceptance Auditor: all 11 Headline Reconciliations + Scope Boundary DEFERs verified against live source — no AC violation. 4 decision-needed (all resolved → patch) + 4 patch + 0 defer + 1 dismissed._
+
+- [x] [Review][Patch] Batch starvation — links beyond `batchLimit` are never scanned; "heals next tick" is false — `SCAN_ACTIVE_LINKS_SQL` (`IntegrationConflictPersistenceAdapter.java:51-67`) orders by `created_at,id` with a bare `LIMIT :batchLimit`, no offset/cursor. When active links of a type exceed `batchLimit` (default 100), the same oldest N rows are re-selected every tick and conflicts on the tail go permanently undetected (FR41 miss). Confirmed by Blind + Edge. **RESOLVED (D1): keyset cursor across ticks** — persist a per-type `(created_at,id)` watermark advanced each tick (`where (l.created_at, l.id) > (:cursorTs, :cursorId)`), wrapping to the start when the tail is reached; guarantees full coverage regardless of pool size.
+- [x] [Review][Patch] Sweep holds a pooled DB connection + the ICON advisory xact-lock across ALL external GitHub/Linear HTTP round-trips — `sweep()` is `@Transactional` and `acquireSweepLock()` deliberately joins that tx (`IntegrationConflictDetectionService.java:130-158`; adapter:132-141), while `classifyGitHub`/`classifyLinear` issue live adapter fetches inside the loop (service:226,287). Risks `idle_in_transaction_session_timeout` aborting the whole sweep, connection-pool pressure, and cross-instance lock contention. Confirmed by Blind + Edge + Auditor. **RESOLVED (D2): lock+scan in a short tx, then classify (HTTP) + write per-link in REQUIRES_NEW** — mirror 3f-8 exactly; no external I/O under the sweep-wide connection/lock.
+- [x] [Review][Patch] GitHub classification completeness — (a) a PR `state="closed", merged=false` while cached baseline is `"open"` matches no branch and returns `Decision.none()` (`IntegrationConflictDetectionService.java:236-254`); (b) merged-while-open detection silently no-ops when the cached `prState` baseline is absent (`:236`). Confirmed by Blind + Edge. **RESOLVED (D3): fix both** — flag `merged` whenever cached ≠ closed/merged (snapshot `prState` first-seen like Linear), and add closed-without-merge while internal-active → `external_state_advanced`.
+- [x] [Review][Patch] GitHub transient network failure skips per-link instead of backing off — `classifyGitHubFailure` (`IntegrationConflictDetectionService.java:266-281`) backs off only on `GITHUB_RATE_LIMITED`; `GITHUB_NETWORK_FAILURE`/`NETWORK_API_FAILURE` fall to `default → skip`. Linear's `classifyLinearFailure` (:312) DOES back off on network. Confirmed by Auditor. **RESOLVED (D4): back off GitHub on network too** — add `GITHUB_NETWORK_FAILURE`/`NETWORK_API_FAILURE` to the GitHub back-off switch (matches Reconciliation 8 + the Linear branch).
+- [x] [Review][Patch] Linear first-seen baseline write can poison the whole sweep transaction [`IntegrationConflictPersistenceAdapter.java:180`] — `snapshotLinearStatusBaseline` is `@Transactional` REQUIRED and is called directly from `classifyLinear` (service:303), NOT via `perLinkTemplate`, so it joins the outer sweep tx. A real SQL failure there marks the shared connection rollback-only; the `catch` at service:327 swallows the exception but `sweep()` commit then throws `UnexpectedRollbackException`, aborting the entire sweep ([[caught-idempotency-conflict-poisons-shared-tx]]). Fix: annotate `REQUIRES_NEW` (or route through `perLinkTemplate`). Confirmed by Edge + Auditor.
+- [x] [Review][Patch] Real-PG IT omits `external_state_reverted` + `link_broken`; Debug Log overstates coverage [`IntegrationConflictDetectionIT.java` / story Debug Log :201] — those two categories are covered only at unit level; the Debug Log asserts "IntegrationConflictDetectionIT 7 — all 5 GitHub categories". Add the two IT cases and correct the claim.
+- [x] [Review][Patch] `batchLimitHit` false-positive at exactly `batchLimit` [`IntegrationConflictDetectionService.java:175`] — `rows.size() == batchLimit` logs the "more links may remain" WARN every tick even when the pool is exactly `batchLimit` and nothing remains. Fetch `batchLimit+1` to distinguish. (Subsumed if the batch-starvation decision changes the pagination model.)
+- [x] [Review][Patch] Duplicate `LINEAR_INTEGRATION_TYPE` / `GITHUB_PR_INTEGRATION_TYPE` constants [`IntegrationConflictService.java` vs `IntegrationConflictDetectionService.java`] — both same-package classes define their own literal `"linear"`/`"github_pr"`; the read-surface validator can drift from the detector. Consolidate into one source.
+
+_Dismissed (1): non-atomic `volatile` counts/timestamp pair in `IntegrationConflictMetricsBinder.snapshot` — worst case one stale gauge window or one extra recompute; no NaN/crash (Blind, self-noted as completeness only)._
+
+_**All 8 patches applied + verified 2026-07-08.** Compile clean; 20 conflict unit tests green (incl. 2 new D3 cases + D4 backoff); `IntegrationConflictDetectionIT` **9 green on real Postgres** (added `external_state_reverted` + `link_broken` IT cases). Registry/contract/ArchUnit/V36 files untouched by the fixes. NOTE: full `mvnw verify` still aborts on the PRE-EXISTING checkstyle drift `WorkflowCommandService.java:1158` (Thread.sleep suppression line mismatch) — a HEAD issue unrelated to 4-17; must be resolved separately before a clean-env merge-gate pass [[verify-ci-fixes-in-clean-env]]._
 
 ## Dev Notes
 
@@ -192,16 +209,89 @@ Every story is expected to leave the touched services observable enough to debug
 
 ### Agent Model Used
 
-claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow.
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-dev-story workflow (implementation).
 
 ### Debug Log References
 
+- Full targeted verification under Testcontainers Postgres 17 (Docker). All green:
+  - Unit (Surefire): `IntegrationConflictDetectionServiceTest` 11, `IntegrationConflictServiceTest` 5, `IntegrationConflictMetricsBinderTest` 2.
+  - IT (Failsafe, real-PG): `IntegrationConflictDetectionIT` — GitHub `external_state_advanced` (merged-while-open), `external_resource_removed`, `metadata_drift`, insert-or-skip dedup (2nd tick = no new row/event), rate-limit backoff, archived-link exclusion, Linear removed, `listUnresolvedConflicts` surfaces the row. **Code-review update (2026-07-08):** added the missing `external_state_reverted` (reopened-after-close) and `link_broken` (permission-denied) IT cases — the earlier "IT 7 — all 5 GitHub categories" claim was inaccurate (those two were unit-only). Remaining categories are still additionally covered at unit level in `IntegrationConflictDetectionServiceTest`.
+  - ArchUnit (Failsafe): `ArchitectureBoundaryTest` 61 (incl. new `ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS`).
+  - Contract: `FlywaySchemaContractTest` 31 (new `integration_conflicts` probe + FK-target fix), `RegistryContractTest` 23 (new category set + `ck_integration_conflicts_conflict_category` alignment + `icf_` prefix alignment), `WorkflowEventDetailKeysContractTest` 4 (new `conflictId`/`conflictCategory`).
+  - Fan-out regression: `IntegrationLinkServiceUnitTest` 33, `RepositoryWorkspaceServiceTest` 19 (PullRequest.merged widening).
+- **Trap caught & fixed during test run:** `FlywaySchemaContractTest.foreignKeysReferenceExpectedTablesAndColumns` pins the FK-target column — `integration_conflicts.workflow_run_id` references `workflow_runs.public_id` (like `split_proposals`, NOT `.id`), and the workflow_run_id FK count bumped 10→11.
+- **Pre-existing, OUT-OF-SCOPE branch gate issue (NOT 4.17):** `mvnw verify` checkstyle is red on HEAD — `config/checkstyle/suppressions.xml` pins the `WorkflowCommandService` `Thread.sleep` suppression to `lines="1118"` but the committed code (story 4-5) has it at line 1158. My new files are checkstyle-clean; targeted runs used `-Dcheckstyle.skip=true`. The suppression line number should be bumped by whoever owns that change.
+
 ### Completion Notes List
 
+- **Scope decisions on the open questions (provisional bindings applied, do-not-block):** OQ-1 — Linear detects `external_resource_removed` + `link_broken` now; the first-seen `sourceStatusId` baseline IS snapshotted (via a NEW status-preserving native UPDATE port method, because `IntegrationLinkStateMachine` forbids a same-state self-transition) but 4.17 emits no Linear state-drift conflict. OQ-2 — singleton adapter resolution (`gitHubAdapterProvider.getIfAvailable()` / `linearAdapter`), no per-project. OQ-3 — widened `PullRequest` with `boolean merged` (positional field #5). OQ-4 — detect-only, no auto-pause.
+- **Persistence shape:** a single `IntegrationConflictPersistenceAdapter` (pure `NamedParameterJdbcTemplate`, NO JPA entity/repository/mapper — mirrors `OperatorRunPersistenceAdapter`, story 4.1) implements all three ports; the write is `INSERT … ON CONFLICT DO NOTHING` against the partial-unique `uq_integration_conflicts_unresolved`, so a standing conflict never poisons the tx.
+- **Config:** the `@EnableConfigurationProperties` binding lives in an UNCONDITIONAL `IntegrationConflictConfiguration`, separate from the `@ConditionalOnProperty`-gated `@Scheduled` trigger `IntegrationConflictDetectionConfiguration`, so the properties bean exists (and the unconditional `@Service` wires) even when the sweep is disabled in the test profile.
+- **Metric names:** counter `deliveryline.integration.conflict.detected` → `_detected_total`; gauge `deliveryline.integration.conflict.unresolved.count` → `_unresolved_count` (AC7 exact Prometheus names).
+
 ### File List
+
+**New — main:**
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/IntegrationConflictCategory.java`
+- `deliveryline-backend/src/main/resources/db/migration/V36__create_integration_conflicts.sql`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/IntegrationLinkScanRow.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/IntegrationConflictScanPort.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/NewIntegrationConflict.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/IntegrationConflictWritePort.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/IntegrationConflictReadPort.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/UnresolvedConflictCount.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/ConflictFilter.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/ConflictSummary.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/SweepResult.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionProperties.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictService.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionService.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/IntegrationConflictPersistenceAdapter.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/IntegrationConflictConfiguration.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/IntegrationConflictDetectionConfiguration.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/observability/IntegrationConflictMetricsBinder.java`
+
+**Modified — main:**
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainRegistry.java` (integrationConflictCategories())
+- `deliveryline-backend/src/main/java/org/dradgo/domain/id/PublicIdPrefixes.java` (INTEGRATION_CONFLICT icf_)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventType.java` (INTEGRATION_CONFLICT_DETECTED)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java` (CONFLICT_ID/CONFLICT_CATEGORY + allow-list)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/integration/repohost/PullRequest.java` (boolean merged)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/integration/repohost/github/GitHubRealAdapter.java` (map merged)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/integration/repohost/github/GitHubMockAdapter.java` (merged arg)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/integration/repohost/github/GitHubFixtureDocument.java` (optional merged)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/integration/repohost/github/GitHubMockScenarioRegistry.java` (seedPullRequest/removePullRequest + clearTestScenarios purge)
+- `deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json` (conflictId/conflictCategory)
+- `deliveryline-backend/src/main/resources/application.yml` (deliveryline.integration.conflict-detection)
+
+**Modified — test / config / docs:**
+- `deliveryline-backend/src/test/resources/application.yml` (conflict-detection enabled:false)
+- `deliveryline-backend/src/test/resources/contracts/events/workflow-event-types.fixture.json`
+- `deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json`
+- `deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (integrationConflict icf_)
+- `deliveryline-backend/src/test/java/org/dradgo/contract/RegistryContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java`
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/runner/workspace/RepositoryWorkspaceServiceTest.java` (merged arg)
+- `deliveryline-backend/src/test/java/org/dradgo/application/runner/workspace/RepositoryWorkspaceServiceIT.java` (merged arg)
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/IntegrationLinkServiceUnitTest.java` (merged arg)
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/IntegrationLoggingContractTest.java` (merged arg)
+
+**New — test:**
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionServiceTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictServiceTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/infrastructure/observability/IntegrationConflictMetricsBinderTest.java`
+
+**New / modified — observability + docs:**
+- `infra/observability/prometheus/alerts.yml` (IntegrationConflictUnresolvedHigh)
+- `infra/observability/grafana/dashboards/integration-conflicts.json` (new)
+- `docs/integrations/conflict-detection.md` (new)
 
 ## Change Log
 
 | Date | Change |
 |---|---|
+| 2026-07-07 | Story 4.17 IMPLEMENTED via bmad-dev-story (Opus 4.8 [1m]). All 8 tasks + logging complete; status → review. Shipped V36 table + `IntegrationConflictCategory`/`icf_`/`integration.conflictDetected` registry fan-out + `conflictId`/`conflictCategory` detail keys; `application.integration.conflict` sweep (advisory-lock-first + REQUIRES_NEW + swallow-WARN + ON CONFLICT DO NOTHING dedup) + read surface; `PullRequest.merged` widening + GitHub mock conflict scenarios; metrics counter/gauge + Grafana panel + alert; ArchUnit write-boundary rule; docs. Provisional OQ bindings applied (Linear removed+broken only, singleton adapters, detect-only). Fixed FlywaySchemaContractTest FK-target expectation (workflow_run_id → public_id like split_proposals; count 10→11). All targeted unit/IT/ArchUnit/contract tests GREEN on Testcontainers PG. NOTE: pre-existing OUT-OF-SCOPE checkstyle drift on HEAD (WorkflowCommandService Thread.sleep suppression line 1118 vs actual 1158) blocks full `mvnw verify` — unrelated to 4.17. |
 | 2026-07-05 | Story 4.17 created via bmad-create-story (Opus 4.8 [1m]). DETECTION half of Epic-4 integration-conflict pair — pure PRODUCER (table + scheduled sweep + events + metrics + read surface); reconcile (4.6) + surfacing/auto-pause (4.18) are backlog, DEFERRED. Central reconciliations: Flyway V36 (not epic's V11; V34=3h-2, V35=4-1); Linear ticket state is NEVER cached (only removed/broken detectable now — OQ-1); GitHub merged-vs-closed indistinguishable → widen `PullRequest.merged` (OQ-3); NO bulk list-by-type port (add join-fetched scan); `project_id` unsurfaced (OQ-2); MANDATORY partial-unique dedup index so the 5-min sweep doesn't spam rows; REUSE `IntegrationFailureCategory` (do NOT add); NEW `IntegrationConflictCategory` registry + `icf_` prefix + `integration.conflictDetected` event (+2 fixtures) + `conflictId`/`conflictCategory` detail keys. Mirror 3f-8 sweep (advisory lock + REQUIRES_NEW + swallow-WARN) + 3f-4 read-service split. Status → ready-for-dev. |

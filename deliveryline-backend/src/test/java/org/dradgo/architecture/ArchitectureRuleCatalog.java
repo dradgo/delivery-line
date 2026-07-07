@@ -25,6 +25,8 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.integration.conflict.spi.IntegrationConflictWritePort;
+import org.dradgo.application.integration.conflict.spi.NewIntegrationConflict;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceSubticketService;
@@ -495,6 +497,29 @@ final class ArchitectureRuleCatalog {
                   RunnerStage.class,
                   String.class,
                   ActorContext.class));
+
+  /**
+   * Story 4.17 (AC9) — only the {@code application.integration.conflict} package may WRITE the
+   * {@code integration_conflicts} table. The write crosses {@link
+   * IntegrationConflictWritePort#insertIfAbsent}, so the detection service ({@code
+   * application.integration.conflict.IntegrationConflictDetectionService}) is the only class that
+   * may call it; the {@code @Scheduled} trigger in {@code infrastructure.config} only delegates to
+   * the service and the persistence adapter merely IMPLEMENTS the port (callMethod matches the
+   * interface owner, so the adapter's own body does not trip this — the
+   * archunit-callmethod-matches-interface-owner lesson).
+   */
+  static final ArchRule ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS =
+      namedRule(
+          "only application.integration.conflict may write integration_conflicts via the write port",
+          "Remediation: route every integration_conflicts insert through IntegrationConflictDetectionService in application.integration.conflict; the infrastructure @Scheduled trigger only delegates, and no other package may call IntegrationConflictWritePort.insertIfAbsent (story 4.17 AC9).",
+          noClasses()
+              .that()
+              .resideOutsideOfPackage("org.dradgo.application.integration.conflict..")
+              .should()
+              .callMethod(
+                  IntegrationConflictWritePort.class,
+                  "insertIfAbsent",
+                  NewIntegrationConflict.class));
 
   /**
    * Story 3.11 (AC9) — the plan-stage twin of {@link

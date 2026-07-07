@@ -109,7 +109,8 @@
     "providerUsageSnapshot": "pul_",
     "specClarificationAcknowledgement": "sca_",
     "splitProposal": "splprop_",
-    "splitProposalFeedback": "splfb_"
+    "splitProposalFeedback": "splfb_",
+    "integrationConflict": "icf_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",

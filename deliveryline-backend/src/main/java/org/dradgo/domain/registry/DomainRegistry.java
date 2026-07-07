@@ -32,6 +32,8 @@ public final class DomainRegistry {
   private static final Set<String> FAILURE_CATEGORIES = valuesOf(FailureCategory.values());
   private static final Set<String> INTEGRATION_FAILURE_CATEGORIES =
       valuesOf(IntegrationFailureCategory.values());
+  private static final Set<String> INTEGRATION_CONFLICT_CATEGORIES =
+      valuesOf(IntegrationConflictCategory.values());
   private static final Set<String> INTEGRATION_SYNC_STATUSES =
       valuesOf(IntegrationSyncStatus.values());
   private static final Set<String> RUNNER_SCHEMA_VERSIONS = valuesOf(RunnerSchemaVersion.values());
@@ -96,6 +98,10 @@ public final class DomainRegistry {
 
   public static Set<String> integrationFailureCategories() {
     return INTEGRATION_FAILURE_CATEGORIES;
+  }
+
+  public static Set<String> integrationConflictCategories() {
+    return INTEGRATION_CONFLICT_CATEGORIES;
   }
 
   public static Set<String> integrationSyncStatuses() {

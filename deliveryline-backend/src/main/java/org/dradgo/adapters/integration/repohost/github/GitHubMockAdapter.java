@@ -298,6 +298,7 @@ public class GitHubMockAdapter implements RepositoryHostAdapter {
         999,
         "conflict/source-branch",
         "open",
+        false,
         "https://github.com/" + GitHubMockScenarioRegistry.CONFLICT_PR_REPO_REF + "/pull/999",
         SYNTHETIC_CREATED_AT);
   }
@@ -315,6 +316,7 @@ public class GitHubMockAdapter implements RepositoryHostAdapter {
         number,
         branch,
         "open",
+        false,
         "https://github.com/" + repoRef + "/pull/" + number,
         SYNTHETIC_CREATED_AT);
   }

@@ -97,7 +97,9 @@
               "branch": { "type": "string" },
               "commitSha": { "type": "string" },
               "prNumber": { "type": "integer" },
-              "prState": { "type": "string" }
+              "prState": { "type": "string" },
+              "conflictId": { "type": "string", "pattern": "^icf_" },
+              "conflictCategory": { "type": "string" }
             }
           }
         }

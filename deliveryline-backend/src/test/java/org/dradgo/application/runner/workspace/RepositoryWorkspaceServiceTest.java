@@ -144,6 +144,7 @@ class RepositoryWorkspaceServiceTest {
                     9,
                     "b",
                     "open",
+                    false,
                     "u",
                     Instant.now())));
 
@@ -383,6 +384,7 @@ class RepositoryWorkspaceServiceTest {
                 1,
                 "b",
                 "open",
+                false,
                 "u",
                 Instant.now()));
 
@@ -440,6 +442,7 @@ class RepositoryWorkspaceServiceTest {
                 1,
                 "b",
                 "open",
+                false,
                 "u",
                 Instant.now()));
     when(git.diff(REPO_DIR, "main"))

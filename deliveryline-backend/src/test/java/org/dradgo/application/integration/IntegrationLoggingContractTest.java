@@ -386,6 +386,7 @@ class IntegrationLoggingContractTest {
         42,
         "feature/x",
         state,
+        false,
         "https://github.com/octo/hello/pull/42",
         Instant.parse("2026-05-01T10:00:00Z"));
   }

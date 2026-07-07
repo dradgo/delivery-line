@@ -39,6 +39,7 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
+import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
@@ -110,6 +111,9 @@ class RegistryContractTest {
     assertEquals(
         registryValues(IntegrationFailureCategory.values()),
         DomainRegistry.integrationFailureCategories());
+    assertEquals(
+        registryValues(IntegrationConflictCategory.values()),
+        DomainRegistry.integrationConflictCategories());
     assertEquals(
         registryValues(IntegrationSyncStatus.values()), DomainRegistry.integrationSyncStatuses());
     assertEquals(
@@ -184,6 +188,23 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.integrationSyncStatuses(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "integrationSyncStatuses"));
+  }
+
+  @Test
+  void integrationConflictCategoryStaysAlignedWithSqlCheck() {
+    // Story 4.17 (AC2/AC3) — IntegrationConflictCategory is SQL-CHECK-backed (the V36
+    // integration_conflicts.conflict_category column), so the registry set must equal the
+    // ck_integration_conflicts_conflict_category value-set. NO API-placeholder leg — 4.17 has no
+    // REST surface (story 4.18 owns GET /api/v1/integration-conflicts + its OpenAPI schema), so
+    // this drift gate is registry-vs-SQL only (contrast IntegrationFailureCategory, which is
+    // neither
+    // SQL-CHECK-backed nor in the API manifest).
+    assertFalse(
+        DomainRegistry.integrationConflictCategories().isEmpty(),
+        "IntegrationConflictCategory registry must not be empty");
+    assertEquals(
+        DomainRegistry.integrationConflictCategories(),
+        extractConstraintValues("ck_integration_conflicts_conflict_category"));
   }
 
   @Test
