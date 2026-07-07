@@ -90,6 +90,15 @@ public class WorkflowEventPersistenceAdapter
   }
 
   @Override
+  @Transactional(readOnly = true)
+  public Optional<WorkflowEventRecord> findLatestByWorkflowRunPublicIdAndEventTypeIn(
+      String workflowRunPublicId, java.util.Collection<String> eventTypeValues) {
+    return workflowEventRepository
+        .findFirstLatestByWorkflowRunPublicIdAndEventTypeIn(workflowRunPublicId, eventTypeValues)
+        .map(workflowEventEntityMapper::toRecord);
+  }
+
+  @Override
   public Optional<String> findLatestCorrelationId(String workflowRunPublicId) {
     // Pushes the newest-first non-null/non-blank correlationId scan to the database, with
     // LIMIT 1 so the DB stops at the first match — no in-memory walk, no event-count cap.

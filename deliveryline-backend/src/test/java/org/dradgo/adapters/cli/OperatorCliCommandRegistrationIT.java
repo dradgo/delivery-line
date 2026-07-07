@@ -53,6 +53,10 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator status"),
               () -> "registered commands: " + commandNames);
+          // Story 4.4 (AC3) — the deep-dive diagnose command registers under the same group prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator diagnose"),
+              () -> "registered commands: " + commandNames);
         });
   }
 

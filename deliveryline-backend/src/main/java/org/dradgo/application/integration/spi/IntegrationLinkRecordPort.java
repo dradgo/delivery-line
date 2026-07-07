@@ -62,6 +62,17 @@ public interface IntegrationLinkRecordPort {
       String integrationType, String workflowRunPublicId);
 
   /**
+   * Story 4.4 (AC1/AC6) — NON-locking twin of {@link #findActiveByTypeAndWorkflowRunForUpdate},
+   * typed to a single {@code (integrationType, workflowRun)}. Returns the full {@link
+   * IntegrationLink} (so {@code syncStatus} + {@code lastSyncAt} are carried) for the read-only
+   * failure-diagnostics sync-status view, WITHOUT taking the {@code PESSIMISTIC_WRITE} lock the
+   * write-path variant needs. Reuses the existing non-locking repository query ({@code
+   * findActiveByTypeAndWorkflowRunPublicId}); adds no new SQL.
+   */
+  Optional<IntegrationLink> findActiveByTypeAndWorkflowRun(
+      String integrationType, String workflowRunPublicId);
+
+  /**
    * Transition the sync status of an integration link, updating {@code last_sync_at} when the
    * caller passes a non-null timestamp. Returns the updated row. Throws {@code
    * DomainException(ILLEGAL_TRANSITION)} when the requested transition is not allowed by the state

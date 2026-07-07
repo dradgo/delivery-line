@@ -773,6 +773,30 @@ public class IntegrationLinkService {
   }
 
   /**
+   * Story 4.4 (AC1/AC6) — the active {@code linear} link for a run, read WITHOUT the {@code
+   * PESSIMISTIC_WRITE} lock the {@link #findActiveLinearTicketLink} write-path variant takes. Backs
+   * the read-only failure-diagnostics integration-sync-status view (carries {@code syncStatus} +
+   * {@code lastSyncAt}). Empty when the run has no active Linear link.
+   */
+  @Transactional(readOnly = true)
+  public Optional<IntegrationLink> findActiveLinearLinkReadOnly(String workflowRunPublicId) {
+    return integrationLinkRecordPort.findActiveByTypeAndWorkflowRun(
+        LINEAR_INTEGRATION_TYPE, workflowRunPublicId);
+  }
+
+  /**
+   * Story 4.4 (AC1/AC6) — the active {@code github_pr} link for a run, read WITHOUT the {@code
+   * PESSIMISTIC_WRITE} lock the {@link #findActiveGitHubPrLink} write-path variant takes. Backs the
+   * read-only failure-diagnostics integration-sync-status view. Empty when the run has no active PR
+   * link.
+   */
+  @Transactional(readOnly = true)
+  public Optional<IntegrationLink> findActiveGitHubPrLinkReadOnly(String workflowRunPublicId) {
+    return integrationLinkRecordPort.findActiveByTypeAndWorkflowRun(
+        GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
+  }
+
+  /**
    * Story 3b-5 — the active {@code github_pr} link's PR reference + state for the artifact-read
    * projection (prOutput review panel). NON-locking (a read path must not take the {@code
    * PESSIMISTIC_WRITE} lock {@link #findActiveGitHubPrLink} holds) and typed to {@code github_pr}

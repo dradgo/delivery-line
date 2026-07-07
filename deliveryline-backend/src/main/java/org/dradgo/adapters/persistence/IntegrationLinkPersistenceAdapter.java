@@ -197,6 +197,20 @@ public class IntegrationLinkPersistenceAdapter implements IntegrationLinkRecordP
   }
 
   @Override
+  public Optional<IntegrationLink> findActiveByTypeAndWorkflowRun(
+      String integrationType, String workflowRunPublicId) {
+    if (integrationType == null || integrationType.isBlank()) {
+      throw new IllegalArgumentException("integrationType must be non-blank");
+    }
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    return integrationLinkRepository
+        .findActiveByTypeAndWorkflowRunPublicId(integrationType, workflowRunPublicId)
+        .stream()
+        .findFirst()
+        .map(mapper::toDomain);
+  }
+
+  @Override
   public Optional<TicketSummaryProjection> findActiveTicketSummaryByWorkflowRun(
       String workflowRunPublicId) {
     PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);

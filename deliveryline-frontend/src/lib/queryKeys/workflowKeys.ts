@@ -137,6 +137,14 @@ export const workflowKeys = {
   stepExecutions: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'stepExecutions'] as const,
 
+  /**
+   * A run's failure-diagnostics deep-dive (story 4.4). A PREFIX child of `detail(id)`, so a
+   * recovery mutation's `detail(id)` invalidation cascade refreshes the operator panel
+   * (recommended actions + integration sync + runner-log reference) for free as the run advances.
+   */
+  failureDiagnostics: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'failureDiagnostics'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
 } as const;

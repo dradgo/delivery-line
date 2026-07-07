@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -35,17 +36,21 @@ import org.dradgo.application.integration.IntegrationLinkService.TicketOriginVie
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.recovery.FailureDescription;
+import org.dradgo.application.recovery.RecommendationService;
+import org.dradgo.application.recovery.RecommendedAction;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.runner.ProviderUsageSnapshotView;
 import org.dradgo.application.runner.ProviderUsageStatusService;
+import org.dradgo.application.runner.RedactedRunnerLog;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerWorkerPoolProperties;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerLogStore;
 import org.dradgo.application.runner.spi.RunnerQueueCounts;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
@@ -67,10 +72,12 @@ import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
+import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -225,6 +232,32 @@ public class WorkflowInspectionService {
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setProviderUsageStatusService(ProviderUsageStatusService providerUsageStatusService) {
     this.providerUsageStatusService = providerUsageStatusService;
+  }
+
+  // Story 4.4 (AC1/AC2) — the pure safety-ranking policy, backing getFailureDiagnostics'
+  // recommendedRecoveryActions. Optional SETTER injection (mirroring providerUsageStatusService) so
+  // the ~10 lean `new WorkflowInspectionService(...)` unit ctors stay untouched
+  // ([[docker-adapter-ctor-dep-fans-out]]); production Spring wires the application.recovery
+  // @Service. Absent in lean ctors → getFailureDiagnostics reports an empty recommendation list.
+  private RecommendationService recommendationService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setRecommendationService(RecommendationService recommendationService) {
+    this.recommendationService = recommendationService;
+  }
+
+  // Story 4.4 (AC5) — the durable redacted runner-log store, backing getRedactedRunnerLog (the seam
+  // the download endpoint reads; ArchUnit forbids adapters.rest from importing
+  // application.runner..,
+  // so the store is surfaced through this application.workflow service). Optional SETTER injection
+  // so
+  // the lean unit ctors stay untouched; production Spring wires adapters.files.LocalRunnerLogStore.
+  // Absent in lean ctors → getRedactedRunnerLog returns an `unavailable` result.
+  private RunnerLogStore runnerLogStore;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setRunnerLogStore(RunnerLogStore runnerLogStore) {
+    this.runnerLogStore = runnerLogStore;
   }
 
   /**
@@ -2817,6 +2850,308 @@ public class WorkflowInspectionService {
     }
   }
 
+  /**
+   * Story 4.4 (AC1/AC7) — assemble the typed failure-diagnostics deep-dive view for a run, REUSING
+   * {@link RecoveryService#describeFailure} for the failure spread ({@code failedStage} / {@code
+   * lastSuccessfulStage} / {@code failureCategory} / {@code failureTimestamp} / {@code
+   * lastActivityTimestamp} / {@code nextSafeAction} / {@code correlationId} — never re-derived) and
+   * adding the redacted failure reason, the runner-log reference, per-integration sync status, the
+   * dependency-blocking reason, the last actor (NFR7 "who acted"), and the safety-ranked
+   * recommended recovery actions.
+   *
+   * <p>A non-{@code Failed} run gets a benign view: {@code describeFailure} yields {@code
+   * view_only}/{@code await_outcome} with null failure fields and {@link RecommendationService}
+   * returns an empty list. All nested fields are nullable-documented (NOT {@link Optional}).
+   * Read-only — never mutates state, never logs the raw reason.
+   *
+   * @param workflowRunId the {@code run_}-prefixed run id (prefix-validated first; {@code
+   *     RUN_NOT_FOUND} when absent)
+   */
+  @Transactional(readOnly = true)
+  public FailureDiagnostics getFailureDiagnostics(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      log.info("getFailureDiagnostics entry workflowRunId={}", workflowRunId);
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+
+      // REUSE the failure read — do NOT re-derive the failure spread (Reconciliation 1).
+      FailureDescription failure = recoveryService.describeFailure(workflowRunId);
+
+      Optional<WorkflowEventRecord> latestFailureEvent =
+          workflowEventReadPort.findLatestFailureEvent(workflowRunId);
+      String failureReason =
+          redactReason(latestFailureEvent.map(WorkflowEventRecord::reason).orElse(null));
+
+      // NFR7 "who acted" — the latest RECOVERY or TAKEOVER actor, or `system` when unattributed.
+      String lastActorIdentity = deriveWhoActed(run, workflowRunId);
+
+      // runnerLogReference? — the latest rex for the run, surfaced only when a log actually exists.
+      // Flatten the application.runner RunnerLogReference into an application.workflow view HERE so
+      // the CLI/REST adapters never import application.runner (ArchUnit).
+      RunnerLogReferenceResult logResult =
+          findLatestRunnerExecutionId(workflowRunId)
+              .map(this::getRunnerLogReference)
+              .filter(RunnerLogReferenceResult::available)
+              .orElse(null);
+      RunnerLogReferenceView runnerLogReference =
+          logResult == null
+              ? null
+              : new RunnerLogReferenceView(
+                  logResult.runnerExecutionId(),
+                  logResult.reference().referencePath(),
+                  logResult.reference().byteSize(),
+                  logResult.reference().classification().value(),
+                  logResult.reference().redactionCount());
+
+      // integrationSyncStatus { linear, github } — Reconciliation 8 (non-locking read-only links).
+      IntegrationSyncStatusView linearSyncStatus =
+          integrationLinkService
+              .findActiveLinearLinkReadOnly(workflowRunId)
+              .map(WorkflowInspectionService::toIntegrationSyncStatus)
+              .orElse(null);
+      IntegrationSyncStatusView githubSyncStatus =
+          integrationLinkService
+              .findActiveGitHubPrLinkReadOnly(workflowRunId)
+              .map(WorkflowInspectionService::toIntegrationSyncStatus)
+              .orElse(null);
+      boolean linearDrift = isSyncDrift(linearSyncStatus);
+      boolean githubDrift = isSyncDrift(githubSyncStatus);
+
+      // currentBlockingReason — dependency blocked-on set OR await_manual_reconciliation.
+      RunDependencyGraphView dependencyGraph =
+          runDependencyPort == null
+              ? RunDependencyGraphView.empty()
+              : runDependencyPort.graphView(run.publicId());
+      String currentBlockingReason =
+          deriveBlockingReason(failure.nextSafeAction(), dependencyGraph);
+
+      List<RecommendedAction> ranked =
+          recommendationService == null
+              ? List.of()
+              : recommendationService.recommend(
+                  run.currentState(),
+                  failure.failureCategory(),
+                  linearDrift,
+                  githubDrift,
+                  failure.nextSafeAction());
+      List<RecommendedActionView> recommendedRecoveryActions =
+          ranked.stream().map(WorkflowInspectionService::toRecommendedActionView).toList();
+
+      FailureDiagnostics diagnostics =
+          new FailureDiagnostics(
+              run.currentState(),
+              failure.failedStage(),
+              failure.lastSuccessfulStage(),
+              failure.failureCategory(),
+              failureReason,
+              failure.failureTimestamp(),
+              failure.lastActivityTimestamp(),
+              failure.diagnosticReferenceCorrelationId(),
+              // lastGoodState shares the failure event's priorState source (documented overlap).
+              failure.lastSuccessfulStage(),
+              currentBlockingReason,
+              failure.nextSafeAction(),
+              lastActorIdentity,
+              runnerLogReference,
+              linearSyncStatus,
+              githubSyncStatus,
+              recommendedRecoveryActions);
+      log.info(
+          "getFailureDiagnostics success workflowRunId={} currentState={} resultingRecommendationCount={}"
+              + " runnerLogPresent={}",
+          workflowRunId,
+          run.currentState().value(),
+          recommendedRecoveryActions.size(),
+          runnerLogReference != null);
+      return diagnostics;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 4.4 (AC5) — surface the ALREADY-redacted runner log (stdout/stderr/truncated) + the
+   * on-disk classification/byteSize metadata + the resolved {@code workflowRunId} (for the download
+   * endpoint's {@code view_runner_logs} gate) through {@code application.workflow}, so {@code
+   * adapters.rest} never imports {@code application.runner..} (ArchUnit — Reconciliation 6/7).
+   *
+   * <p><strong>Does NOT re-redact</strong> and <strong>does NOT route through {@code
+   * redactForExport}</strong> (Reconciliation 4): the story-3.6 capture already wrote only
+   * sanitized bytes and classified {@code local-only} by default, so the export path would throw
+   * {@code EXPORT_CLASSIFICATION_VIOLATION}. This is a local-operator read. The served
+   * classification is asserted {@code local-only}|{@code shareable-redacted} (never {@code
+   * shareable-full}/{@code derived-public-safe}); anything else degrades to an {@code unavailable}
+   * result → 404.
+   *
+   * <p>Returns an {@code unavailable} result (reasons {@code runnerExecutionNotFound} / {@code
+   * logsNotCaptured} / {@code classificationNotServable}) mirroring {@link #getRunnerLogReference}
+   * when the rex is missing, has no captured log, the store is unwired, or the classification is
+   * not servable.
+   */
+  @Transactional(readOnly = true)
+  public RedactedRunnerLogView getRedactedRunnerLog(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      log.info("getRedactedRunnerLog entry runnerExecutionId={}", runnerExecutionId);
+      Optional<RunnerExecutionSnapshot> rex =
+          runnerExecutionRecordPort.findByPublicId(runnerExecutionId);
+      if (rex.isEmpty()) {
+        log.warn(
+            "getRedactedRunnerLog miss runnerExecutionId={} reason=runnerExecutionNotFound",
+            runnerExecutionId);
+        return RedactedRunnerLogView.unavailable(runnerExecutionId, "runnerExecutionNotFound");
+      }
+      RunnerExecutionSnapshot snapshot = rex.get();
+      Optional<RedactedRunnerLog> redacted =
+          runnerLogStore == null
+              ? Optional.empty()
+              : runnerLogStore.readRedacted(runnerExecutionId);
+      if (redacted.isEmpty()) {
+        log.warn(
+            "getRedactedRunnerLog miss runnerExecutionId={} reason=logsNotCaptured",
+            runnerExecutionId);
+        return RedactedRunnerLogView.unavailable(runnerExecutionId, "logsNotCaptured");
+      }
+      DataClassification classification =
+          snapshot.rawOutputClassification() == null
+              ? DataClassification.LOCAL_ONLY
+              : snapshot.rawOutputClassification();
+      if (classification != DataClassification.LOCAL_ONLY
+          && classification != DataClassification.SHAREABLE_REDACTED) {
+        log.warn(
+            "getRedactedRunnerLog refused runnerExecutionId={} reason=classificationNotServable"
+                + " classification={}",
+            runnerExecutionId,
+            classification.value());
+        return RedactedRunnerLogView.unavailable(runnerExecutionId, "classificationNotServable");
+      }
+      RedactedRunnerLog body = redacted.get();
+      log.info(
+          "getRedactedRunnerLog success runnerExecutionId={} classification={} byteSize={} truncated={}",
+          runnerExecutionId,
+          classification.value(),
+          snapshot.rawOutputByteSize(),
+          body.truncated());
+      return RedactedRunnerLogView.available(
+          runnerExecutionId,
+          snapshot.workflowRunPublicId(),
+          body.stdout(),
+          body.stderr(),
+          body.truncated(),
+          classification.value(),
+          snapshot.rawOutputByteSize());
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+    }
+  }
+
+  private static RecommendedActionView toRecommendedActionView(RecommendedAction action) {
+    return new RecommendedActionView(
+        action.actionType(), action.safetyLevel(), action.reason(), action.precondition());
+  }
+
+  private static IntegrationSyncStatusView toIntegrationSyncStatus(
+      org.dradgo.application.integration.IntegrationLink link) {
+    return new IntegrationSyncStatusView(
+        link.integrationType(),
+        link.externalRef(),
+        link.syncStatus().value(),
+        link.lastSyncAt() == null ? null : link.lastSyncAt().atOffset(ZoneOffset.UTC));
+  }
+
+  private static boolean isSyncDrift(IntegrationSyncStatusView view) {
+    if (view == null) {
+      return false;
+    }
+    return IntegrationSyncStatus.STALE.value().equals(view.syncStatus())
+        || IntegrationSyncStatus.FAILED.value().equals(view.syncStatus());
+  }
+
+  // NFR7 "who acted" (story 4.4 review) — attribute to the latest RECOVERY or TAKEOVER actor, never
+  // to a later intervention event (audit.logDownloaded / workflow.archived / console.*). Using the
+  // run's latest event of ANY type let a downloader's audit.logDownloaded mask the real actor once
+  // an operator downloaded the redacted log. Takeover is a workflow.stateChanged event (not a
+  // distinct event_type), so it is attributed via the same authoritative source getRunSummary uses
+  // (the takeover recovery_actions row, else the → TakenOver transition event). Falls back to
+  // "system" when no recovery/takeover actor exists.
+  private static final java.util.List<String> RECOVERY_ACTOR_EVENT_TYPES =
+      java.util.List.of(
+          WorkflowEventType.RECOVERY_RETRIED.value(),
+          WorkflowEventType.RECOVERY_RECONCILED.value());
+
+  private String deriveWhoActed(WorkflowRunSnapshot run, String workflowRunId) {
+    if (run.currentState() == WorkflowState.TAKEN_OVER) {
+      Optional<String> takeoverActor =
+          recoveryActionRecordPort
+              .findLatestTakeoverForRun(workflowRunId)
+              .map(RecoveryActionSnapshot::actorIdentity)
+              .filter(actor -> actor != null && !actor.isBlank());
+      if (takeoverActor.isPresent()) {
+        return takeoverActor.get();
+      }
+      Optional<String> transitionActor =
+          workflowEventReadPort
+              .findLatestTransitionToState(workflowRunId, WorkflowState.TAKEN_OVER)
+              .map(WorkflowEventRecord::actorIdentity)
+              .filter(actor -> actor != null && !actor.isBlank());
+      if (transitionActor.isPresent()) {
+        return transitionActor.get();
+      }
+    }
+    return workflowEventReadPort
+        .findLatestByWorkflowRunPublicIdAndEventTypeIn(workflowRunId, RECOVERY_ACTOR_EVENT_TYPES)
+        .map(WorkflowEventRecord::actorIdentity)
+        .filter(actor -> actor != null && !actor.isBlank())
+        .orElse("system");
+  }
+
+  private static String deriveBlockingReason(
+      String nextSafeAction, RunDependencyGraphView dependencyGraph) {
+    if ("await_manual_reconciliation".equals(nextSafeAction)) {
+      return "Awaiting manual reconciliation before recovery.";
+    }
+    if (dependencyGraph != null && dependencyGraph.blockedByDependencies()) {
+      int blocked = dependencyGraph.blockedOn().size();
+      return "Blocked on "
+          + blocked
+          + " unfinished prerequisite run"
+          + (blocked == 1 ? "" : "s")
+          + ".";
+    }
+    return null;
+  }
+
+  /**
+   * Story 4.4 (AC1) — redact {@code reason} via the redaction policy (mirror 4.3 Reconciliation 10)
+   * then strip control characters so a newline/CR in a reason cannot inject a spurious CLI line or
+   * JSON control byte. NET-NEW here — the other inspection surfaces pass {@code reason} raw.
+   */
+  private String redactReason(String rawReason) {
+    if (rawReason == null) {
+      return null;
+    }
+    String sanitized =
+        redactionPolicyService
+            .redact(rawReason, DataClassification.SHAREABLE_REDACTED.value())
+            .sanitizedText();
+    return stripControlChars(sanitized);
+  }
+
+  private static String stripControlChars(String value) {
+    if (value == null) {
+      return null;
+    }
+    // Java's \p{Cntrl} is ASCII-only ([\x00-\x1F\x7F]); also strip the Unicode line terminators
+    // NEL (U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029) so a crafted reason
+    // cannot inject a spurious line into the grep-safe one-line-per-field CLI text output.
+    return value.replaceAll("[\\p{Cntrl}\\u0085\\u2028\\u2029]", " ");
+  }
+
   private static String specVersionKey(String artifactId, int version) {
     return artifactId + ":" + version;
   }
@@ -3584,6 +3919,134 @@ public class WorkflowInspectionService {
 
     public boolean available() {
       return reference != null;
+    }
+  }
+
+  /**
+   * Story 4.4 (AC1/AC7) — the typed failure-diagnostics deep-dive view. Nested HERE (in {@code
+   * application.workflow}) so the CLI {@code operator diagnose} adapter and the REST {@code
+   * FailureDiagnosticsResponse} DTO can both import it without touching {@code
+   * application.recovery} / {@code application.runner} (Reconciliation 7). Fields are documented
+   * nullable rather than wrapped in {@link Optional}.
+   *
+   * @param currentState the run's current workflow state (never null)
+   * @param failedStage runner stage of the most recent FAILED runner_execution, or null
+   *     (non-Failed)
+   * @param lastSuccessfulStage prior_state of the workflow → Failed event, or null
+   * @param failureCategory normalized failure category, or null
+   * @param failureReason the latest failure event's reason, redacted + control-char-stripped, or
+   *     null
+   * @param failureTimestamp created_at of the workflow → Failed event (UTC), or null
+   * @param lastActivityTimestamp last activity of the most recent runner_execution (UTC), or null
+   * @param correlationId the most recent correlation id recorded for the run, or null
+   * @param lastGoodState the last successful workflow state (shares {@code lastSuccessfulStage}'s
+   *     source — documented overlap), or null
+   * @param currentBlockingReason human string derived from the dependency blocked-on set or {@code
+   *     await_manual_reconciliation}, or null when nothing blocks recovery
+   * @param nextSafeAction {@code retry}/{@code await_manual_reconciliation}/{@code
+   *     await_outcome}/{@code view_only}
+   * @param lastActorIdentity NFR7 "who acted" — the latest governed event's actor, or {@code
+   *     system}
+   * @param runnerLogReference the latest runner-execution's redacted-log reference, or null when no
+   *     log exists (carries {@code runnerExecutionId} for the download link)
+   * @param linearSyncStatus the active Linear link's sync status, or null when no Linear link
+   * @param githubSyncStatus the active GitHub PR link's sync status, or null when no PR link
+   * @param recommendedRecoveryActions safety-ranked recovery advice (safe → caution → risky); empty
+   *     for a non-Failed run
+   */
+  public record FailureDiagnostics(
+      WorkflowState currentState,
+      String failedStage,
+      String lastSuccessfulStage,
+      String failureCategory,
+      String failureReason,
+      OffsetDateTime failureTimestamp,
+      OffsetDateTime lastActivityTimestamp,
+      String correlationId,
+      String lastGoodState,
+      String currentBlockingReason,
+      String nextSafeAction,
+      String lastActorIdentity,
+      RunnerLogReferenceView runnerLogReference,
+      IntegrationSyncStatusView linearSyncStatus,
+      IntegrationSyncStatusView githubSyncStatus,
+      List<RecommendedActionView> recommendedRecoveryActions) {}
+
+  /**
+   * Story 4.4 (AC1/AC5) — flat, content-free reference to a run's redacted runner log, projected
+   * into {@code application.workflow} so the CLI/REST adapters never import {@code
+   * application.runner.RunnerLogReference} (ArchUnit {@code REST_CONTROLLERS_STAY_THIN...}). {@code
+   * runnerExecutionId} drives the download link.
+   */
+  public record RunnerLogReferenceView(
+      String runnerExecutionId,
+      String referencePath,
+      long byteSize,
+      String classification,
+      int redactionCount) {}
+
+  /**
+   * Story 4.4 (AC1/AC2) — adapter-facing projection of {@link RecommendedAction} (adapters never
+   * import {@code application.recovery}). {@code safetyLevel} ∈ {@code safe|caution|risky}; {@code
+   * actionType} is within the {@code recovery_actions} CHECK vocabulary.
+   */
+  public record RecommendedActionView(
+      String actionType, String safetyLevel, String reason, String precondition) {}
+
+  /**
+   * Story 4.4 (AC1/AC6) — per-integration sync status for the diagnostics view. {@code syncStatus}
+   * ∈ {@code linked|synced|stale|failed|superseded}; {@code stale}/{@code failed} is the "drifted"
+   * flag the FE renders. {@code externalRef}/{@code lastSyncAt} may be null.
+   */
+  public record IntegrationSyncStatusView(
+      String integrationType, String externalRef, String syncStatus, OffsetDateTime lastSyncAt) {}
+
+  /**
+   * Story 4.4 (AC5) — the already-redacted runner-log payload + metadata surfaced through {@code
+   * application.workflow} for the download endpoint. Exactly one of a captured body ({@code
+   * available()}) or a {@code reason} is set. {@code workflowRunId} carries the resolved run for
+   * the {@code view_runner_logs} gate. Bytes are served VERBATIM — never re-redacted
+   * (Reconciliation 4).
+   */
+  public record RedactedRunnerLogView(
+      String runnerExecutionId,
+      String workflowRunId,
+      String stdout,
+      String stderr,
+      boolean truncated,
+      String classification,
+      Long byteSize,
+      String reason) {
+
+    public static RedactedRunnerLogView available(
+        String runnerExecutionId,
+        String workflowRunId,
+        String stdout,
+        String stderr,
+        boolean truncated,
+        String classification,
+        Long byteSize) {
+      return new RedactedRunnerLogView(
+          runnerExecutionId,
+          workflowRunId,
+          stdout,
+          stderr,
+          truncated,
+          classification,
+          byteSize,
+          null);
+    }
+
+    public static RedactedRunnerLogView unavailable(String runnerExecutionId, String reason) {
+      if (reason == null || reason.isBlank()) {
+        throw new IllegalArgumentException("reason must not be blank");
+      }
+      return new RedactedRunnerLogView(
+          runnerExecutionId, null, null, null, false, null, null, reason);
+    }
+
+    public boolean available() {
+      return reason == null;
     }
   }
 

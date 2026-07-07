@@ -17,6 +17,7 @@ import org.dradgo.domain.registry.DomainErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.shell.core.command.annotation.Argument;
 import org.springframework.shell.core.command.annotation.Command;
 import org.springframework.shell.core.command.annotation.CommandGroup;
 import org.springframework.shell.core.command.annotation.Option;
@@ -49,6 +50,7 @@ public class OperatorCommands {
   private static final Logger log = LoggerFactory.getLogger(OperatorCommands.class);
 
   private static final String COMMAND_NAME = "operator status";
+  private static final String COMMAND_NAME_DIAGNOSE = "operator diagnose";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -150,6 +152,69 @@ public class OperatorCommands {
     } finally {
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
     }
+  }
+
+  @Command(
+      name = "diagnose",
+      description =
+          "Deep-dive failure diagnostics for a single run: the NFR7 five questions (what happened /"
+              + " changed / who acted / what failed / what is next), correlation id, runner-log"
+              + " reference, per-integration sync status, and recommended recovery actions ranked by"
+              + " safety (green=safe, yellow=caution, red=risky). --format=json emits a"
+              + " stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String diagnose(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(longName = "correlation-id", description = "Correlation ID") String correlationId,
+      @Option(
+              longName = "verbose",
+              description = "Append the resolved correlation id",
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Parse INSIDE the try so an unsupported --format (INVALID_COMMAND_PAYLOAD) still emits the
+      // completion log AND runs the finally/endScope (no leaked MDC correlation-id scope).
+      boolean json = isJson(format);
+      WorkflowInspectionService.FailureDiagnostics view = inspection.getFailureDiagnostics(runId);
+      boolean ansi = !json && interactivity.isInteractive();
+      String rendered =
+          json ? outputs.renderDiagnoseJson(view) : outputs.renderDiagnoseText(view, ansi);
+      // Only append the verbose correlation-id footer to TEXT output — appending it to JSON would
+      // glue a trailing "correlationId=..." line onto the document and break the stable
+      // operator-diagnose.v1 schema for machine consumers.
+      if (verbose && !json) {
+        rendered = rendered + System.lineSeparator() + "correlationId=" + resolvedCorrelation;
+      }
+      emitDiagnose(resolvedCorrelation, runId, start, OUTCOME_SUCCESS);
+      return rendered;
+    } catch (DomainException de) {
+      emitDiagnose(resolvedCorrelation, runId, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitDiagnose(resolvedCorrelation, runId, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  private static void emitDiagnose(String correlationId, String runId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_DIAGNOSE,
+        MdcKeys.sanitizeForLog(runId),
+        outcome,
+        elapsedMs);
   }
 
   // Format is a RENDER choice made by this adapter (mirrors WorkflowCommands/DoctorCommands); an

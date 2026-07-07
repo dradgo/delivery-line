@@ -168,6 +168,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runner-executions/{rexId}/logs/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a runner execution's redacted log
+         * @description Returns the runner execution's ALREADY-redacted stdout/stderr as a text/plain attachment (story 3.6 post-hoc redaction is the authoritative guarantee; served verbatim, never re-redacted). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. The download is recorded as a best-effort audit.logDownloaded event. An unavailable log or gate denial returns 404 RUNNER_EXECUTION_NOT_FOUND.
+         */
+        get: operations["downloadRunnerLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner-queue/status": {
         parameters: {
             query?: never;
@@ -488,6 +508,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/failure-diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the failure-diagnostics deep-dive for a run */
+        get: operations["getFailureDiagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/lint-findings": {
         parameters: {
             query?: never;
@@ -679,7 +716,7 @@ export interface paths {
         };
         /**
          * Stream a run's latest runner-execution logs (live + historical)
-         * @description Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 consumes this same viewer (no separate redacted-log download surface). Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.
+         * @description Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 ADDED a separate redacted-log ATTACHMENT download (GET /api/v1/runner-executions/{rexId}/logs/download, downloadRunnerLog) — this reverses the earlier 'no separate download surface' note; this SSE viewer remains the live follow. Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.
          */
         get: operations["streamRunnerLogs"];
         put?: never;
@@ -1246,6 +1283,63 @@ export interface components {
              */
             dependsOnRunIds: string[];
         };
+        FailureDiagnosticsResponse: {
+            /** @example corr_abc123 */
+            correlationId?: string | null;
+            /** @description Why recovery is currently blocked, if it is. */
+            currentBlockingReason?: string | null;
+            /** @example Failed */
+            currentState: string;
+            /** @example execution */
+            failedStage?: string | null;
+            /** @example runner_timeout */
+            failureCategory?: string | null;
+            /** @description Redacted, control-char-stripped failure reason. */
+            failureReason?: string | null;
+            /** Format: date-time */
+            failureTimestamp?: string | null;
+            integrationSyncStatus: components["schemas"]["IntegrationSyncStatusPair"];
+            /** Format: date-time */
+            lastActivityTimestamp?: string | null;
+            /**
+             * @description NFR7 'who acted' — latest governed actor, or 'system'.
+             * @example local-operator
+             */
+            lastActorIdentity: string;
+            /** @example Executing */
+            lastGoodState?: string | null;
+            /** @example Executing */
+            lastSuccessfulStage?: string | null;
+            /** @example retry */
+            nextSafeAction?: string | null;
+            recommendedRecoveryActions: components["schemas"]["RecommendedAction"][];
+            runnerLogReference?: components["schemas"]["FailureRunnerLogReference"];
+        };
+        FailureRunnerLogReference: {
+            /** Format: int64 */
+            byteSize: number;
+            /** @example shareable-redacted */
+            classification: string;
+            /** Format: int32 */
+            redactionCount: number;
+            referencePath: string;
+            /** @example rex_abc123 */
+            runnerExecutionId: string;
+        };
+        IntegrationSyncStatus: {
+            /** @example LIN-123 */
+            externalRef?: string | null;
+            /** @example linear */
+            integrationType: string;
+            /** Format: date-time */
+            lastSyncAt?: string | null;
+            /** @example synced */
+            syncStatus: string;
+        };
+        IntegrationSyncStatusPair: {
+            github?: components["schemas"]["IntegrationSyncStatus"];
+            linear?: components["schemas"]["IntegrationSyncStatus"];
+        };
         LatestArtifact: {
             /**
              * @description Public id of this latest artifact. Resolves the artifact-read endpoint (GET .../artifacts/{artifactId}) and the spec approval/decision bar (story 2.19 resolveSpecArtifactId).
@@ -1607,6 +1701,14 @@ export interface components {
              * @description Used fraction 0..1.
              */
             usedFraction?: number | null;
+        };
+        RecommendedAction: {
+            /** @example retry */
+            actionType: string;
+            precondition: string;
+            reason: string;
+            /** @example safe */
+            safetyLevel: string;
         };
         RejectImplementationRequest: {
             artifactId: string;
@@ -2701,6 +2803,58 @@ export interface operations {
             };
         };
     };
+    downloadRunnerLog: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Actor role for action gating; view_runner_logs is role-agnostic in the runner-execution states, so the default resolves the gate for any operator.
+                 * @example workflow_owner
+                 */
+                actorRole?: "product_reviewer" | "workflow_owner" | "developer";
+            };
+            header?: {
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                /**
+                 * @description Runner execution public id, e.g. rex_abc123.
+                 * @example rex_abc123
+                 */
+                rexId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The redacted runner log as a text/plain attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": unknown;
+                };
+            };
+            /** @description Malformed runner-execution id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such runner execution, no captured/servable log, or view_runner_logs not allowed (RUNNER_EXECUTION_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     getRunnerQueueStatus: {
         parameters: {
             query?: {
@@ -3555,6 +3709,50 @@ export interface operations {
                 };
             };
             /** @description Malformed run id (INVALID_ID_PREFIX) or history too large. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getFailureDiagnostics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Failure diagnostics for the run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureDiagnosticsResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
             400: {
                 headers: {
                     [name: string]: unknown;

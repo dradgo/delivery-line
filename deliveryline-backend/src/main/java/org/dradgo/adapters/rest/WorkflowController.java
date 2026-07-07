@@ -608,6 +608,53 @@ public class WorkflowController {
   }
 
   /**
+   * Story 4.4 (AC4) — the failure-diagnostics deep-dive for the operator panel: the NFR7
+   * five-questions fields, per-integration sync status, an optional runner-log reference, and the
+   * safety-ranked recommended recovery actions ({@link
+   * WorkflowInspectionService#getFailureDiagnostics}). Read-only and idempotent (no
+   * Idempotency-Key/actor header). A non-Failed run returns a benign view (empty recommendations);
+   * an unknown run returns 404 {@code RUN_NOT_FOUND}.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/failure-diagnostics",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getFailureDiagnostics",
+      summary = "Get the failure-diagnostics deep-dive for a run")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Failure diagnostics for the run."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public FailureDiagnosticsResponse getFailureDiagnostics(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info("REST get failure-diagnostics received workflowRunId={}", workflowRunId);
+    FailureDiagnosticsResponse response =
+        FailureDiagnosticsResponse.from(
+            workflowInspectionService.getFailureDiagnostics(workflowRunId));
+    log.info(
+        "REST get failure-diagnostics success workflowRunId={} currentState={} recommendationCount={}",
+        workflowRunId,
+        response.currentState(),
+        response.recommendedRecoveryActions().size());
+    return response;
+  }
+
+  /**
    * Story 3a-9 (Gate 3): artifact-content read for the run-detail review surface. Returns the
    * redacted artifact body (UTF-8 markdown) plus identity/type/version/status/classification/
    * createdAt/checksum so the Artifact Review Panel (story 2.17) can render the real spec body

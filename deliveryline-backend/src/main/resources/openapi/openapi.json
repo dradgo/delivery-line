@@ -833,6 +833,184 @@
         ],
         "type" : "object"
       },
+      "FailureDiagnosticsResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "example" : "corr_abc123",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "currentBlockingReason" : {
+            "description" : "Why recovery is currently blocked, if it is.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "currentState" : {
+            "example" : "Failed",
+            "type" : "string"
+          },
+          "failedStage" : {
+            "example" : "execution",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "failureCategory" : {
+            "example" : "runner_timeout",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "failureReason" : {
+            "description" : "Redacted, control-char-stripped failure reason.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "failureTimestamp" : {
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "integrationSyncStatus" : {
+            "$ref" : "#/components/schemas/IntegrationSyncStatusPair"
+          },
+          "lastActivityTimestamp" : {
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "lastActorIdentity" : {
+            "description" : "NFR7 'who acted' — latest governed actor, or 'system'.",
+            "example" : "local-operator",
+            "type" : "string"
+          },
+          "lastGoodState" : {
+            "example" : "Executing",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "lastSuccessfulStage" : {
+            "example" : "Executing",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "nextSafeAction" : {
+            "example" : "retry",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "recommendedRecoveryActions" : {
+            "items" : {
+              "$ref" : "#/components/schemas/RecommendedAction"
+            },
+            "type" : "array"
+          },
+          "runnerLogReference" : {
+            "$ref" : "#/components/schemas/FailureRunnerLogReference",
+            "type" : "null"
+          }
+        },
+        "required" : [
+          "currentState",
+          "integrationSyncStatus",
+          "lastActorIdentity",
+          "recommendedRecoveryActions"
+        ],
+        "type" : "object"
+      },
+      "FailureRunnerLogReference" : {
+        "properties" : {
+          "byteSize" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "classification" : {
+            "example" : "shareable-redacted",
+            "type" : "string"
+          },
+          "redactionCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "referencePath" : {
+            "type" : "string"
+          },
+          "runnerExecutionId" : {
+            "example" : "rex_abc123",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "byteSize",
+          "classification",
+          "redactionCount",
+          "referencePath",
+          "runnerExecutionId"
+        ],
+        "type" : "object"
+      },
+      "IntegrationSyncStatus" : {
+        "properties" : {
+          "externalRef" : {
+            "example" : "LIN-123",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "integrationType" : {
+            "example" : "linear",
+            "type" : "string"
+          },
+          "lastSyncAt" : {
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "syncStatus" : {
+            "example" : "synced",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "integrationType",
+          "syncStatus"
+        ],
+        "type" : "object"
+      },
+      "IntegrationSyncStatusPair" : {
+        "properties" : {
+          "github" : {
+            "$ref" : "#/components/schemas/IntegrationSyncStatus",
+            "type" : "null"
+          },
+          "linear" : {
+            "$ref" : "#/components/schemas/IntegrationSyncStatus",
+            "type" : "null"
+          }
+        },
+        "type" : "object"
+      },
       "LatestArtifact" : {
         "properties" : {
           "artifactId" : {
@@ -1475,6 +1653,31 @@
             ]
           }
         },
+        "type" : "object"
+      },
+      "RecommendedAction" : {
+        "properties" : {
+          "actionType" : {
+            "example" : "retry",
+            "type" : "string"
+          },
+          "precondition" : {
+            "type" : "string"
+          },
+          "reason" : {
+            "type" : "string"
+          },
+          "safetyLevel" : {
+            "example" : "safe",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "actionType",
+          "precondition",
+          "reason",
+          "safetyLevel"
+        ],
         "type" : "object"
       },
       "RejectImplementationRequest" : {
@@ -3755,6 +3958,79 @@
         ]
       }
     },
+    "/api/v1/runner-executions/{rexId}/logs/download" : {
+      "get" : {
+        "description" : "Returns the runner execution's ALREADY-redacted stdout/stderr as a text/plain attachment (story 3.6 post-hoc redaction is the authoritative guarantee; served verbatim, never re-redacted). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. The download is recorded as a best-effort audit.logDownloaded event. An unavailable log or gate denial returns 404 RUNNER_EXECUTION_NOT_FOUND.",
+        "operationId" : "downloadRunnerLog",
+        "parameters" : [
+          {
+            "description" : "Runner execution public id, e.g. rex_abc123.",
+            "example" : "rex_abc123",
+            "in" : "path",
+            "name" : "rexId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Actor role for action gating; view_runner_logs is role-agnostic in the runner-execution states, so the default resolves the gate for any operator.",
+            "example" : "workflow_owner",
+            "in" : "query",
+            "name" : "actorRole",
+            "required" : false,
+            "schema" : {
+              "enum" : [
+                "product_reviewer",
+                "workflow_owner",
+                "developer"
+              ],
+              "type" : "null"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "text/plain" : { }
+            },
+            "description" : "The redacted runner log as a text/plain attachment."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed runner-execution id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such runner execution, no captured/servable log, or view_runner_logs not allowed (RUNNER_EXECUTION_NOT_FOUND)."
+          }
+        },
+        "summary" : "Download a runner execution's redacted log",
+        "tags" : [
+          "Runner executions"
+        ]
+      }
+    },
     "/api/v1/runner-queue/status" : {
       "get" : {
         "operationId" : "getRunnerQueueStatus",
@@ -5028,6 +5304,59 @@
         ]
       }
     },
+    "/api/v1/workflows/{workflowRunId}/failure-diagnostics" : {
+      "get" : {
+        "operationId" : "getFailureDiagnostics",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/FailureDiagnosticsResponse"
+                }
+              }
+            },
+            "description" : "Failure diagnostics for the run."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get the failure-diagnostics deep-dive for a run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
     "/api/v1/workflows/{workflowRunId}/lint-findings" : {
       "get" : {
         "description" : "Returns the severity-classified findings the backend-side CPU lint gate produced over the run's implementation output (story 3h-2), with a server-derived state (none/advisory/gated). Advisory only: the operator gate actions ride the allowed-actions matrix, not this read.",
@@ -5768,7 +6097,7 @@
     },
     "/api/v1/workflows/{workflowRunId}/runner-logs/stream" : {
       "get" : {
-        "description" : "Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 consumes this same viewer (no separate redacted-log download surface). Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.",
+        "description" : "Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 ADDED a separate redacted-log ATTACHMENT download (GET /api/v1/runner-executions/{rexId}/logs/download, downloadRunnerLog) — this reverses the earlier 'no separate download surface' note; this SSE viewer remains the live follow. Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.",
         "operationId" : "streamRunnerLogs",
         "parameters" : [
           {
@@ -6378,6 +6707,10 @@
     }
   ],
   "tags" : [
+    {
+      "description" : "Inspect and download runner-execution artifacts.",
+      "name" : "Runner executions"
+    },
     {
       "description" : "Inspect and command governed workflow runs.",
       "name" : "Workflows"

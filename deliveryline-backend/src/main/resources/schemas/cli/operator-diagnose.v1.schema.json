@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/operator-diagnose.v1",
+  "title": "OperatorDiagnoseV1",
+  "$comment": "Story 4.4 (AC3) — the stable wire shape for `deliveryline operator diagnose {runId} --format json`. Additive fields are allowed within v1; any removal/rename bumps to v2. integrationSyncStatus is the { linear, github } pair (either link may be null); recommendedRecoveryActions is ranked safe -> caution -> risky.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "currentState",
+    "failedStage",
+    "lastSuccessfulStage",
+    "failureCategory",
+    "failureReason",
+    "failureTimestamp",
+    "lastActivityTimestamp",
+    "correlationId",
+    "lastGoodState",
+    "currentBlockingReason",
+    "nextSafeAction",
+    "lastActorIdentity",
+    "runnerLogReference",
+    "integrationSyncStatus",
+    "recommendedRecoveryActions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "currentState": { "type": ["string", "null"] },
+    "failedStage": { "type": ["string", "null"] },
+    "lastSuccessfulStage": { "type": ["string", "null"] },
+    "failureCategory": { "type": ["string", "null"] },
+    "failureReason": { "type": ["string", "null"] },
+    "failureTimestamp": { "type": ["string", "null"], "format": "date-time" },
+    "lastActivityTimestamp": { "type": ["string", "null"], "format": "date-time" },
+    "correlationId": { "type": ["string", "null"] },
+    "lastGoodState": { "type": ["string", "null"] },
+    "currentBlockingReason": { "type": ["string", "null"] },
+    "nextSafeAction": { "type": ["string", "null"] },
+    "lastActorIdentity": { "type": "string" },
+    "runnerLogReference": {
+      "type": ["object", "null"],
+      "required": [
+        "runnerExecutionId",
+        "referencePath",
+        "byteSize",
+        "classification",
+        "redactionCount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runnerExecutionId": { "type": "string", "pattern": "^rex_" },
+        "referencePath": { "type": "string" },
+        "byteSize": { "type": "integer", "minimum": 0 },
+        "classification": { "type": "string" },
+        "redactionCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "integrationSyncStatus": {
+      "type": "object",
+      "required": ["linear", "github"],
+      "additionalProperties": false,
+      "properties": {
+        "linear": { "$ref": "#/$defs/syncStatus" },
+        "github": { "$ref": "#/$defs/syncStatus" }
+      }
+    },
+    "recommendedRecoveryActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["actionType", "safetyLevel", "reason", "precondition"],
+        "additionalProperties": false,
+        "properties": {
+          "actionType": { "type": "string" },
+          "safetyLevel": { "type": "string", "enum": ["safe", "caution", "risky"] },
+          "reason": { "type": "string" },
+          "precondition": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "syncStatus": {
+      "type": ["object", "null"],
+      "required": ["integrationType", "externalRef", "syncStatus", "lastSyncAt"],
+      "additionalProperties": false,
+      "properties": {
+        "integrationType": { "type": "string" },
+        "externalRef": { "type": ["string", "null"] },
+        "syncStatus": { "type": "string" },
+        "lastSyncAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  }
+}

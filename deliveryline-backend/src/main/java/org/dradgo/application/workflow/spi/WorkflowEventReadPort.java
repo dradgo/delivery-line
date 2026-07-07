@@ -27,6 +27,16 @@ public interface WorkflowEventReadPort {
       String workflowRunPublicId, org.dradgo.domain.registry.WorkflowState targetState);
 
   /**
+   * Story 4.4 (NFR7 "who acted") — the latest event for the run whose {@code eventType} value is in
+   * {@code eventTypeValues} (newest-first by {@code created_at}, {@code id}). Used to attribute
+   * "who acted" to the most recent recovery/takeover action while ignoring later intervention
+   * events (e.g. {@code audit.logDownloaded}, {@code workflow.archived}) that would otherwise mask
+   * the real actor. Empty when {@code eventTypeValues} is empty or no matching event exists.
+   */
+  Optional<WorkflowEventRecord> findLatestByWorkflowRunPublicIdAndEventTypeIn(
+      String workflowRunPublicId, java.util.Collection<String> eventTypeValues);
+
+  /**
    * Latest event marking a transition into the {@code Failed} state — i.e. the most recent {@code
    * workflow_events} row with {@code resulting_state = 'Failed'} and {@code prior_state IS NOT
    * NULL}, ordered by {@code created_at desc, id desc}. Used by {@link

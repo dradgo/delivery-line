@@ -106,6 +106,11 @@ class OpenApiSnapshotContractTest {
         .contains("queryAuditByTicket")
         .contains("queryAuditByRun");
     assertThat(canonical)
+        .as(
+            "OpenAPI must expose the story 4.4 failure-diagnostics + runner-log download operations")
+        .contains("getFailureDiagnostics")
+        .contains("downloadRunnerLog");
+    assertThat(canonical)
         .as("OpenAPI must expose the story 3c-8 project operations")
         .contains("listProjects")
         .contains("createProject")

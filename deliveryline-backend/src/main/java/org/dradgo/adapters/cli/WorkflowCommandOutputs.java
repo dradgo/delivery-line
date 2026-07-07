@@ -7,12 +7,17 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
+import org.dradgo.application.workflow.WorkflowInspectionService.FailureDiagnostics;
+import org.dradgo.application.workflow.WorkflowInspectionService.IntegrationSyncStatusView;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunRow;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunSummary;
+import org.dradgo.application.workflow.WorkflowInspectionService.RecommendedActionView;
+import org.dradgo.application.workflow.WorkflowInspectionService.RunnerLogReferenceView;
 import org.dradgo.application.workflow.WorkflowInspectionService.RunnerQueueStatus;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkerStatus;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventView;
@@ -47,6 +52,7 @@ public class WorkflowCommandOutputs {
   static final int QUEUE_STATUS_SCHEMA_VERSION = 1;
   static final int OPERATOR_STATUS_SCHEMA_VERSION = 1;
   static final int AUDIT_QUERY_SCHEMA_VERSION = 1;
+  static final int OPERATOR_DIAGNOSE_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
   // rules in infra/observability/prometheus/alerts.yml (warn 50 / critical 200). The stale-count
@@ -58,6 +64,7 @@ public class WorkflowCommandOutputs {
   private static final String ESC = Character.toString((char) 27);
   private static final String ANSI_YELLOW = ESC + "[33m";
   private static final String ANSI_RED = ESC + "[31m";
+  private static final String ANSI_GREEN = ESC + "[32m";
   private static final String ANSI_DIM = ESC + "[2m";
   private static final String ANSI_RESET = ESC + "[0m";
 
@@ -442,6 +449,202 @@ public class WorkflowCommandOutputs {
     }
     payload.put("runs", runs);
     return writeJson(payload);
+  }
+
+  /**
+   * Story 4.4 (AC3) — text rendering of the failure-diagnostics deep-dive. The NFR7 five questions
+   * are printed FIRST (above the fold — what happened / what changed / who acted / what failed /
+   * what is next), then the detail fields, the runner-log reference, per-integration sync status,
+   * and the safety-ranked recommended actions. {@code ansi} gates the color coding (red = failure,
+   * yellow = caution, green = safe) — the caller passes {@code true} only for an interactive TTY in
+   * text mode; the color-independent signifier is the UPPERCASE bracketed safety label ({@code
+   * [SAFE]}/{@code [CAUTION]}/{@code [RISKY]}) that survives ANSI stripping (story 2.3 AC5). Every
+   * free-form field routes through {@link #escapeForText} (the {@code failureReason} is already
+   * redacted + control-char-guarded by the service).
+   */
+  public String renderDiagnoseText(FailureDiagnostics view, boolean ansi) {
+    StringBuilder out = new StringBuilder();
+    out.append("=== Failure Diagnostics ===").append('\n');
+    out.append("run state: ").append(runStateLabel(view.currentState(), ansi)).append('\n');
+    // NFR7 five questions (AC7) — above the fold.
+    out.append("what happened: ")
+        .append(escapeForText(view.failureCategory()))
+        .append(" — ")
+        .append(escapeForText(view.failureReason()))
+        .append('\n');
+    out.append("what changed: ")
+        .append(escapeForText(view.lastSuccessfulStage()))
+        .append(" -> ")
+        .append(escapeForText(view.failedStage()))
+        .append('\n');
+    out.append("who acted: ").append(escapeForText(view.lastActorIdentity())).append('\n');
+    out.append("what failed: stage=")
+        .append(escapeForText(view.failedStage()))
+        .append(" category=")
+        .append(escapeForText(view.failureCategory()))
+        .append('\n');
+    out.append("what is next: ").append(escapeForText(whatIsNext(view))).append('\n');
+    // Detail fields.
+    out.append("correlationId: ").append(escapeForText(view.correlationId())).append('\n');
+    out.append("lastGoodState: ").append(escapeForText(view.lastGoodState())).append('\n');
+    out.append("failureTimestamp: ").append(formatTimestamp(view.failureTimestamp())).append('\n');
+    out.append("lastActivityTimestamp: ")
+        .append(formatTimestamp(view.lastActivityTimestamp()))
+        .append('\n');
+    out.append("currentBlockingReason: ")
+        .append(escapeForText(view.currentBlockingReason()))
+        .append('\n');
+    out.append("runner log: ").append(runnerLogLine(view.runnerLogReference())).append('\n');
+    out.append("integration sync:");
+    out.append("\n  linear: ").append(syncLine(view.linearSyncStatus()));
+    out.append("\n  github: ").append(syncLine(view.githubSyncStatus()));
+    out.append('\n').append("recommended actions:");
+    if (view.recommendedRecoveryActions().isEmpty()) {
+      out.append(" (none)");
+    } else {
+      for (RecommendedActionView action : view.recommendedRecoveryActions()) {
+        out.append("\n  ")
+            .append(safetyLabel(action.safetyLevel(), ansi))
+            .append(' ')
+            .append(escapeForText(action.actionType()))
+            .append(" — ")
+            .append(escapeForText(action.reason()))
+            .append(" (precondition: ")
+            .append(escapeForText(action.precondition()))
+            .append(')');
+      }
+    }
+    return out.toString();
+  }
+
+  /**
+   * Story 4.4 (AC3) — stable-schema JSON for the failure-diagnostics deep-dive. No ANSI ever;
+   * {@code schemaVersion} pins backward compatibility (additive within v1; any removal/rename bumps
+   * v2). Pinned by {@code operator-diagnose.v1.schema.json}.
+   */
+  public String renderDiagnoseJson(FailureDiagnostics view) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_DIAGNOSE_SCHEMA_VERSION);
+    payload.put("currentState", view.currentState() == null ? null : view.currentState().value());
+    payload.put("failedStage", view.failedStage());
+    payload.put("lastSuccessfulStage", view.lastSuccessfulStage());
+    payload.put("failureCategory", view.failureCategory());
+    payload.put("failureReason", view.failureReason());
+    payload.put(
+        "failureTimestamp",
+        view.failureTimestamp() == null ? null : canonicalUtcIso(view.failureTimestamp()));
+    payload.put(
+        "lastActivityTimestamp",
+        view.lastActivityTimestamp() == null
+            ? null
+            : canonicalUtcIso(view.lastActivityTimestamp()));
+    payload.put("correlationId", view.correlationId());
+    payload.put("lastGoodState", view.lastGoodState());
+    payload.put("currentBlockingReason", view.currentBlockingReason());
+    payload.put("nextSafeAction", view.nextSafeAction());
+    payload.put("lastActorIdentity", view.lastActorIdentity());
+    payload.put("runnerLogReference", runnerLogJson(view.runnerLogReference()));
+    Map<String, Object> integrationSyncStatus = new LinkedHashMap<>();
+    integrationSyncStatus.put("linear", syncJson(view.linearSyncStatus()));
+    integrationSyncStatus.put("github", syncJson(view.githubSyncStatus()));
+    payload.put("integrationSyncStatus", integrationSyncStatus);
+    List<Map<String, Object>> actions = new java.util.ArrayList<>();
+    for (RecommendedActionView action : view.recommendedRecoveryActions()) {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("actionType", action.actionType());
+      entry.put("safetyLevel", action.safetyLevel());
+      entry.put("reason", action.reason());
+      entry.put("precondition", action.precondition());
+      actions.add(entry);
+    }
+    payload.put("recommendedRecoveryActions", actions);
+    return writeJson(payload);
+  }
+
+  // NFR7 "what is next" (story 4.4 review) — the single actionable answer shown to a human. Leads
+  // with the top safety-ranked recommended action, falling back to nextSafeAction when there are no
+  // recommendations, so the CLI text answer matches the FE panel (which renders the same). The JSON
+  // render intentionally exposes nextSafeAction + the full recommendedRecoveryActions list as raw
+  // data instead, letting programmatic consumers derive this themselves.
+  private static String whatIsNext(FailureDiagnostics view) {
+    if (!view.recommendedRecoveryActions().isEmpty()) {
+      return view.recommendedRecoveryActions().get(0).actionType();
+    }
+    return view.nextSafeAction();
+  }
+
+  private static String runStateLabel(WorkflowState state, boolean ansi) {
+    if (state == null) {
+      return "(none)";
+    }
+    String value = state.value();
+    return ansi && state == WorkflowState.FAILED ? ANSI_RED + value + ANSI_RESET : value;
+  }
+
+  private static String safetyLabel(String safetyLevel, boolean ansi) {
+    String upper = safetyLevel == null ? "UNKNOWN" : safetyLevel.toUpperCase(java.util.Locale.ROOT);
+    String bracketed = "[" + upper + "]";
+    String color =
+        safetyLevel == null
+            ? null
+            : switch (safetyLevel) {
+              case "safe" -> ANSI_GREEN;
+              case "caution" -> ANSI_YELLOW;
+              case "risky" -> ANSI_RED;
+              default -> null;
+            };
+    return ansi && color != null ? color + bracketed + ANSI_RESET : bracketed;
+  }
+
+  private static String runnerLogLine(RunnerLogReferenceView reference) {
+    if (reference == null) {
+      return "(none)";
+    }
+    return "rex="
+        + escapeForText(reference.runnerExecutionId())
+        + " classification="
+        + escapeForText(reference.classification())
+        + " bytes="
+        + reference.byteSize()
+        + " redactions="
+        + reference.redactionCount();
+  }
+
+  private static String syncLine(IntegrationSyncStatusView sync) {
+    if (sync == null) {
+      return "(none)";
+    }
+    return "ref="
+        + escapeForText(sync.externalRef())
+        + " status="
+        + escapeForText(sync.syncStatus())
+        + " lastSyncAt="
+        + formatTimestamp(sync.lastSyncAt());
+  }
+
+  private static Map<String, Object> runnerLogJson(RunnerLogReferenceView reference) {
+    if (reference == null) {
+      return null;
+    }
+    Map<String, Object> entry = new LinkedHashMap<>();
+    entry.put("runnerExecutionId", reference.runnerExecutionId());
+    entry.put("referencePath", reference.referencePath());
+    entry.put("byteSize", reference.byteSize());
+    entry.put("classification", reference.classification());
+    entry.put("redactionCount", reference.redactionCount());
+    return entry;
+  }
+
+  private static Map<String, Object> syncJson(IntegrationSyncStatusView sync) {
+    if (sync == null) {
+      return null;
+    }
+    Map<String, Object> entry = new LinkedHashMap<>();
+    entry.put("integrationType", sync.integrationType());
+    entry.put("externalRef", sync.externalRef());
+    entry.put("syncStatus", sync.syncStatus());
+    entry.put("lastSyncAt", sync.lastSyncAt() == null ? null : canonicalUtcIso(sync.lastSyncAt()));
+    return entry;
   }
 
   /**

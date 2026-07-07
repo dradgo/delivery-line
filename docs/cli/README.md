@@ -129,6 +129,55 @@ any field removal or rename bumps the schema to v2 (same contract as `workflow-s
   currently matches runs whose latest event set `interventionMarker = true` in a non-terminal state.
   The binding may change before the UI queue (story 4.2) consumes the same vocabulary.
 
+## deliveryline operator diagnose
+
+Story 4.4 (FR — Epic 4, NFR3/NFR7). A **read-only deep-dive** for a single failed/stalled/orphaned
+run: the full failure context assembled from existing read seams. It answers _what happened / what
+changed / who acted / what failed / what is next_ **without** reading raw runner logs first (NFR7).
+
+```
+deliveryline operator diagnose <runId> \
+  [--format text|json] \
+  [--correlation-id <uuid>] [--verbose]
+```
+
+### Flags
+
+- `<runId>` — the `run_`-prefixed run public id (positional). A malformed id → `INVALID_ID_PREFIX`;
+  an unknown run → `RUN_NOT_FOUND`.
+- `--format` — `text` (default) or `json`. An invalid value → `INVALID_COMMAND_PAYLOAD`.
+- `--correlation-id` / `--verbose` — as for `operator status`.
+
+### Output
+
+Text mode prints the NFR7 five questions first (above the fold), then the detail fields
+(`correlationId`, `lastGoodState`, timestamps, `currentBlockingReason`), the runner-log reference,
+per-integration (`linear` / `github`) sync status, and the safety-ranked recommended recovery
+actions. Color coding — **green** for `safe`, **yellow** for `caution`, **red** for `risky` — is
+emitted **only** for an interactive TTY; a non-color signifier (a leading UPPERCASE bracketed label
+`[SAFE]` / `[CAUTION]` / `[RISKY]`) always precedes each recommendation so the output stays readable
+when color is stripped (story 2.3 AC5). A non-`Failed` run renders a benign report (empty
+recommendations).
+
+Recommendations are **ranked advisory** — only `retry` has a wired one-click invocation today
+(stories 4.5–4.14/4.22 add the rest); the others surface as ranked guidance.
+
+### JSON schema
+
+`--format json` emits the stable `operator-diagnose.v1` schema
+(`deliveryline-backend/src/main/resources/schemas/cli/operator-diagnose.v1.schema.json`), leading
+with `schemaVersion: 1`. Backward-compatibility contract: additive fields within v1; any removal or
+rename bumps to v2.
+
+### REST parity
+
+The CLI calls `WorkflowInspectionService.getFailureDiagnostics` in-process. The UI consumes the same
+diagnostics over `GET /api/v1/workflows/{workflowRunId}/failure-diagnostics` (operationId
+`getFailureDiagnostics`). The redacted runner log is downloaded separately as a `text/plain`
+attachment over `GET /api/v1/runner-executions/{rexId}/logs/download` (operationId
+`downloadRunnerLog`), gated by the `view_runner_logs` allowed-action and logged as an
+`audit.logDownloaded` event. Both endpoints are served over the localhost-only binding.
+
 ## deliveryline audit query
 
 Story 4.3 (FR29). A **read-only audit-history query** over the append-only `workflow_events` table.

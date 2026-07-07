@@ -82,7 +82,18 @@ public enum WorkflowEventType implements RegistryValue {
   // is auditable in the governed history. Detail keys: deepSplitOverride / splitDepth /
   // maxSplitDepth. NFR43 ("justify each new concept") is satisfied — an operator deliberately
   // overriding a safety cap is exactly what the governed history exists to record.
-  SPLIT_DEPTH_OVERRIDE("workflow.splitDepthOverride");
+  SPLIT_DEPTH_OVERRIDE("workflow.splitDepthOverride"),
+  // Story 4.4 (AC5) — appended (best-effort, in the download request's own transaction) when an
+  // operator downloads a run's already-redacted runner log via GET
+  // /api/v1/runner-executions/{rexId}/logs/download. It is a governed read-access audit record, NOT
+  // a workflow-state change: priorState == resultingState == the run's current state and
+  // interventionMarker = true (mirrors workflow.archived). Detail key is the already-allow-listed
+  // runnerExecutionId. The wire value is lowerCamel (audit.logDownloaded, NOT audit.log_downloaded)
+  // so it satisfies the RegistryContractTest dot-separated-lowerCamel pattern. NO Flyway migration
+  // —
+  // event_type is an un-CHECKed text column and the registry set is fixture-asserted, not
+  // DB-derived.
+  AUDIT_LOG_DOWNLOADED("audit.logDownloaded");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

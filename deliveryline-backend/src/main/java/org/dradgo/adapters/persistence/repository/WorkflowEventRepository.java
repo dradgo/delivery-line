@@ -94,6 +94,35 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
     return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
   }
 
+  // Story 4.4 review — the latest event for the run whose type is in the given set (newest-first).
+  // Backs the NFR7 "who acted" derivation, which must consider only recovery/takeover-attributing
+  // events and ignore later intervention events (audit.logDownloaded / workflow.archived /
+  // console.*)
+  // that would otherwise mask the real actor once an operator, e.g., downloads the redacted log.
+  @Query(
+      """
+		select event from WorkflowEventEntity event
+		where event.workflowRun.publicId = :publicId
+		  and event.archivedAt is null
+		  and event.eventType in :eventTypes
+		order by event.createdAt desc, event.id desc
+		""")
+  List<WorkflowEventEntity> findLatestByWorkflowRunPublicIdAndEventTypeIn(
+      @Param("publicId") String publicId,
+      @Param("eventTypes") java.util.Collection<String> eventTypes,
+      Pageable pageable);
+
+  default Optional<WorkflowEventEntity> findFirstLatestByWorkflowRunPublicIdAndEventTypeIn(
+      String publicId, java.util.Collection<String> eventTypes) {
+    if (eventTypes.isEmpty()) {
+      return Optional.empty();
+    }
+    List<WorkflowEventEntity> top =
+        findLatestByWorkflowRunPublicIdAndEventTypeIn(
+            publicId, eventTypes, org.springframework.data.domain.PageRequest.of(0, 1));
+    return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
+  }
+
   /**
    * Returns the most-recent non-blank {@code details->>'correlationId'} for the run, walking the
    * full event history newest-first at the DB layer. Filters on {@code archived_at IS NULL} to

@@ -262,6 +262,108 @@ class OperatorCommandsTest {
     assertThat(out).contains("correlationId=corr-fixed");
   }
 
+  // ---------------------------------------------------------------------------
+  // Story 4.4 (AC3/AC10) — `deliveryline operator diagnose {runId}` rendering + completion log.
+  // ---------------------------------------------------------------------------
+
+  private static WorkflowInspectionService.FailureDiagnostics diagnosticsFixture() {
+    return new WorkflowInspectionService.FailureDiagnostics(
+        WorkflowState.FAILED,
+        "execution",
+        "Executing",
+        "runner_timeout",
+        "boom",
+        T1,
+        T1,
+        "corr_diag_1",
+        "Executing",
+        null,
+        "retry",
+        "operator-jane",
+        new WorkflowInspectionService.RunnerLogReferenceView(
+            "rex_diag001", "/runner-logs/rex_diag001", 128L, "shareable-redacted", 2),
+        new WorkflowInspectionService.IntegrationSyncStatusView("linear", "LIN-101", "synced", T1),
+        null,
+        List.of(
+            new WorkflowInspectionService.RecommendedActionView(
+                "retry", "safe", "Retry from the failed stage.", "workspace intact")));
+  }
+
+  @Test
+  void diagnoseTextRendersNfr7AndSafetyLabels() {
+    when(inspection.getFailureDiagnostics("run_diag12345678")).thenReturn(diagnosticsFixture());
+
+    String out = commands(false).diagnose("run_diag12345678", "text", null, false);
+
+    assertThat(out).contains("what happened:").contains("what changed:").contains("who acted:");
+    assertThat(out).contains("what failed:").contains("what is next:");
+    assertThat(out).contains("[SAFE] retry");
+    assertThat(out).doesNotContain(ESC);
+  }
+
+  @Test
+  void diagnoseAnsiColorsSafetyOnTty() {
+    when(inspection.getFailureDiagnostics("run_diag12345678")).thenReturn(diagnosticsFixture());
+
+    String out = commands(true).diagnose("run_diag12345678", "text", null, false);
+
+    assertThat(out).contains(ESC + "[32m[SAFE]" + ESC + "[0m");
+  }
+
+  @Test
+  void diagnoseJsonEmitsStableSchemaWithoutAnsi() {
+    when(inspection.getFailureDiagnostics("run_diag12345678")).thenReturn(diagnosticsFixture());
+
+    String out = commands(true).diagnose("run_diag12345678", "json", null, false);
+
+    assertThat(out).doesNotContain(ESC);
+    JsonNode body = readJson(out);
+    assertThat(body.path("schemaVersion").asInt()).isEqualTo(1);
+    assertThat(body.path("currentState").asText()).isEqualTo("Failed");
+    assertThat(body.path("recommendedRecoveryActions").get(0).path("safetyLevel").asText())
+        .isEqualTo("safe");
+    assertThat(body.path("integrationSyncStatus").path("linear").path("syncStatus").asText())
+        .isEqualTo("synced");
+    assertThat(body.path("integrationSyncStatus").path("github").isNull()).isTrue();
+    assertThat(body.path("runnerLogReference").path("runnerExecutionId").asText())
+        .isEqualTo("rex_diag001");
+  }
+
+  @Test
+  void diagnoseJsonWithVerboseStaysParseable() {
+    when(inspection.getFailureDiagnostics("run_diag12345678")).thenReturn(diagnosticsFixture());
+
+    String out = commands(false).diagnose("run_diag12345678", "json", null, true);
+
+    // The verbose correlation-id footer must NOT be appended to JSON output — gluing a trailing
+    // "correlationId=..." line onto the document would break the stable operator-diagnose.v1
+    // schema.
+    assertThat(out).doesNotContain("correlationId=");
+    JsonNode body = readJson(out);
+    assertThat(body.path("schemaVersion").asInt()).isEqualTo(1);
+  }
+
+  @Test
+  void diagnoseInvalidFormatRaisesInvalidCommandPayload() {
+    assertThatThrownBy(() -> commands(false).diagnose("run_diag12345678", "xml", null, false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+  }
+
+  @Test
+  void diagnoseEmitsCompletionLogLine(CapturedOutput output) {
+    when(inspection.getFailureDiagnostics("run_diag12345678")).thenReturn(diagnosticsFixture());
+
+    commands(false).diagnose("run_diag12345678", "text", "corr-abc", false);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator diagnose")
+        .contains("workflowRunId=run_diag12345678")
+        .contains("outcome=success");
+  }
+
   private static JsonNode readJson(String json) {
     try {
       return new ObjectMapper().readTree(json);

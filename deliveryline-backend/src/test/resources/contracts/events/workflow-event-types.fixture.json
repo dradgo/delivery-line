@@ -39,6 +39,7 @@
     "console.closed",
     "workflow.archived",
     "workflow.unarchived",
-    "workflow.splitDepthOverride"
+    "workflow.splitDepthOverride",
+    "audit.logDownloaded"
   ]
 }
