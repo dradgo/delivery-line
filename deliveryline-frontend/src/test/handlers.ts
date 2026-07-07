@@ -132,9 +132,7 @@ export function failureDiagnosticsFromStream(
     'runner.orphaned',
     'recovery.dispatchFailed',
   ]);
-  const failureEvent = [...stream.events]
-    .reverse()
-    .find((e) => failureEventTypes.has(e.eventType));
+  const failureEvent = [...stream.events].reverse().find((e) => failureEventTypes.has(e.eventType));
   const failed = failureEvent != null || stream.workflowRun.terminalState === 'Failed';
   const state = failed ? 'Failed' : (stream.workflowRun.terminalState ?? 'Inbox');
   const event = failureEvent ?? lastEvent(stream);

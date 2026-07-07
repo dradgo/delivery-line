@@ -341,7 +341,7 @@ function FailureDiagnosticsBody({
   // Fall back to the clicked event's fields while the deep-dive loads or if it errors, so the panel
   // is never empty (AC7 — the five questions must still answer "what happened / what failed").
   const failureCategory = humanizeFailureCategory(
-    (diagnostics?.failureCategory ?? event.failureCategory) ?? undefined,
+    diagnostics?.failureCategory ?? event.failureCategory ?? undefined,
   );
   const failureReason = diagnostics?.failureReason ?? event.reason ?? undefined;
   const correlationId =
@@ -410,10 +410,7 @@ function FailureDiagnosticsBody({
               diagnostics?.failedStage ?? '(unknown)'
             }`}
           />
-          <DiagnosticsField
-            label="Who acted"
-            value={diagnostics?.lastActorIdentity ?? 'system'}
-          />
+          <DiagnosticsField label="Who acted" value={diagnostics?.lastActorIdentity ?? 'system'} />
           <DiagnosticsField
             label="What is next"
             value={
@@ -480,7 +477,10 @@ function FailureDiagnosticsBody({
           </ul>
         )}
         {retry.isError ? (
-          <p className="mt-1 text-meta text-state-error-text" data-testid="failure-diagnostics-retry-error">
+          <p
+            className="mt-1 text-meta text-state-error-text"
+            data-testid="failure-diagnostics-retry-error"
+          >
             The retry could not be submitted. Refresh and try again.
           </p>
         ) : null}
