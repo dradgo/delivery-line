@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/v1/audit/by-run/{workflowRunId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query audit history by run
+         * @description Events for a single workflow run, newest-first with cursor pagination. The same read model as `deliveryline audit query --run`.
+         */
+        get: operations["queryAuditByRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/by-ticket/{ticketRef}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query audit history by ticket
+         * @description Events across ALL workflow runs linked to a ticket (including retried runs), newest-first with cursor pagination. The same read model as `deliveryline audit query --ticket`.
+         */
+        get: operations["queryAuditByTicket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/runs": {
         parameters: {
             query?: never;
@@ -982,6 +1022,64 @@ export interface components {
              * @example 3
              */
             version?: number;
+        };
+        /** @description One flat audit event row. */
+        AuditEventRow: {
+            /**
+             * @description Actor identity.
+             * @example system
+             */
+            actorIdentity?: string;
+            /**
+             * @description Actor-type wire string.
+             * @example system
+             */
+            actorType?: string;
+            /** @description Correlation id (from event details), when present. */
+            correlationId?: string | null;
+            /**
+             * @description Event public id.
+             * @example evt_abc123
+             */
+            eventId?: string;
+            /**
+             * @description Event-type wire string.
+             * @example workflow.stateChanged
+             */
+            eventType?: string;
+            /** @description Failure category, when applicable. */
+            failureCategory?: string | null;
+            /** @description Best-effort linked artifact id (from event details), when present. */
+            linkedArtifactId?: string | null;
+            /** @description Prior workflow state, null on non-transition events. */
+            priorState?: string | null;
+            /** @description Redacted reason text. */
+            reason?: string | null;
+            /** @description Resulting workflow state, null on non-transition events. */
+            resultingState?: string | null;
+            /**
+             * Format: date-time
+             * @description Event timestamp (ISO-8601 UTC).
+             */
+            timestamp?: string;
+            /**
+             * @description Owning run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
+        /** @description Audit history query result with an events page. */
+        AuditQueryResponse: {
+            /** @description The current page of audit events (timestamp DESC). */
+            events?: components["schemas"]["AuditEventRow"][];
+            /** @description Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description Total events matching the filter (independent of limit).
+             * @example 42
+             */
+            totalCount?: number;
         };
         BatchSubmissionRequest: {
             actorIdentity: string;
@@ -2133,6 +2231,111 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    queryAuditByRun: {
+        parameters: {
+            query?: {
+                /** @description Event-type filter (multi-valued). Empty disables the filter. */
+                eventType?: string[];
+                /** @description Actor identity exact-match filter. */
+                actor?: string;
+                /** @description Lower time bound (inclusive), ISO-8601. */
+                since?: string;
+                /** @description Upper time bound (inclusive), ISO-8601. */
+                until?: string;
+                /** @description Max events per page (clamped to [1,200]). Defaults to 50. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit events page for the run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditQueryResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX), filter (INVALID_AUDIT_FILTER), or time range (INVALID_TIME_RANGE). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    queryAuditByTicket: {
+        parameters: {
+            query?: {
+                /** @description Event-type filter (multi-valued). Empty disables the filter. */
+                eventType?: string[];
+                /** @description Actor identity exact-match filter. */
+                actor?: string;
+                /** @description Lower time bound (inclusive), ISO-8601. */
+                since?: string;
+                /** @description Upper time bound (inclusive), ISO-8601. */
+                until?: string;
+                /** @description Max events per page (clamped to [1,200]). Defaults to 50. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Ticket external ref, e.g. LIN-123.
+                 * @example LIN-123
+                 */
+                ticketRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit events page for the ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditQueryResponse"];
+                };
+            };
+            /** @description Malformed filter (INVALID_AUDIT_FILTER) or bad time range (INVALID_TIME_RANGE). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     listOperatorRuns: {
         parameters: {
             query?: {

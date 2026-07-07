@@ -8,6 +8,8 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
+import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunRow;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunSummary;
@@ -44,6 +46,7 @@ public class WorkflowCommandOutputs {
   static final int HISTORY_SCHEMA_VERSION = 1;
   static final int QUEUE_STATUS_SCHEMA_VERSION = 1;
   static final int OPERATOR_STATUS_SCHEMA_VERSION = 1;
+  static final int AUDIT_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
   // rules in infra/observability/prometheus/alerts.yml (warn 50 / critical 200). The stale-count
@@ -439,6 +442,102 @@ public class WorkflowCommandOutputs {
     }
     payload.put("runs", runs);
     return writeJson(payload);
+  }
+
+  /**
+   * Story 4.3 (AC4) — text rendering of the audit query result. A machine-friendly header ({@code
+   * total} + {@code nextCursor}) then one grep-safe line per event. {@code ansi} gates the color
+   * codes (red for a failure event, i.e. a non-null failureCategory) — the caller passes {@code
+   * true} only for an interactive TTY in text mode. The color-independent signifier is a leading
+   * UPPERCASE bracketed event-type label ({@code [WORKFLOW.STATECHANGED]}) that survives ANSI
+   * stripping; every free-form field routes through {@link #escapeForText} for grep/awk safety (the
+   * {@code reason} is already redacted + control-char-guarded by the service).
+   */
+  public String renderAuditQueryText(AuditQueryResult result, boolean ansi) {
+    StringBuilder out = new StringBuilder();
+    out.append("total: ").append(result.totalCount()).append('\n');
+    out.append("nextCursor: ").append(nullableString(result.nextCursor())).append('\n');
+    out.append("events:");
+    if (result.events().isEmpty()) {
+      out.append(" (none)");
+    } else {
+      for (AuditEventRow row : result.events()) {
+        out.append("\n  ")
+            .append(eventTypeLabel(row, ansi))
+            .append(' ')
+            .append(escapeForText(row.eventId()))
+            .append(' ')
+            .append(escapeForText(row.workflowRunId()))
+            .append(" actor=")
+            .append(
+                formatActor(
+                    row.actorIdentity(), row.actorType() == null ? null : row.actorType().value()))
+            .append(" state=")
+            .append(formatTransition(row))
+            .append(" failureCategory=")
+            .append(
+                row.failureCategory() == null
+                    ? "(none)"
+                    : escapeForText(row.failureCategory().value()))
+            .append(" at=")
+            .append(formatTimestamp(row.timestamp()))
+            .append(" correlationId=")
+            .append(escapeForText(row.correlationId()))
+            .append(" artifactId=")
+            .append(escapeForText(row.linkedArtifactId()))
+            .append(" reason=\"")
+            .append(escapeQuotedValue(row.reason()))
+            .append('"');
+      }
+    }
+    return out.toString();
+  }
+
+  /**
+   * Story 4.3 (AC4) — stable-schema JSON for the audit query result. No ANSI ever; {@code
+   * schemaVersion} pins backward compatibility (additive within v1; any removal/rename bumps v2).
+   * Nullable fields serialize as JSON {@code null}; the {@code audit-query.v1} schema constrains
+   * the shape. The {@code reason} is already redacted + control-char-guarded by the service.
+   */
+  public String renderAuditQueryJson(AuditQueryResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", AUDIT_QUERY_SCHEMA_VERSION);
+    payload.put("totalCount", result.totalCount());
+    payload.put("nextCursor", result.nextCursor());
+    java.util.List<Map<String, Object>> events = new java.util.ArrayList<>();
+    for (AuditEventRow row : result.events()) {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("eventId", row.eventId());
+      entry.put("eventType", row.eventType());
+      entry.put("workflowRunId", row.workflowRunId());
+      entry.put("actorIdentity", row.actorIdentity());
+      entry.put("actorType", row.actorType() == null ? null : row.actorType().value());
+      entry.put("timestamp", row.timestamp() == null ? null : canonicalUtcIso(row.timestamp()));
+      entry.put("priorState", row.priorState() == null ? null : row.priorState().value());
+      entry.put(
+          "resultingState", row.resultingState() == null ? null : row.resultingState().value());
+      entry.put(
+          "failureCategory", row.failureCategory() == null ? null : row.failureCategory().value());
+      entry.put("reason", row.reason());
+      entry.put("correlationId", row.correlationId());
+      entry.put("linkedArtifactId", row.linkedArtifactId());
+      events.add(entry);
+    }
+    payload.put("events", events);
+    return writeJson(payload);
+  }
+
+  private static String formatTransition(AuditEventRow row) {
+    String prior = row.priorState() == null ? "(none)" : row.priorState().value();
+    String resulting = row.resultingState() == null ? "(none)" : row.resultingState().value();
+    return prior + "->" + resulting;
+  }
+
+  private static String eventTypeLabel(AuditEventRow row, boolean ansi) {
+    String bracketed = "[" + row.eventType().toUpperCase(java.util.Locale.ROOT) + "]";
+    // A failure event is the anomaly worth coloring; every other event type is the plain bracketed
+    // label. The bracketed UPPERCASE text is the color-independent signifier (survives ANSI strip).
+    return ansi && row.failureCategory() != null ? ANSI_RED + bracketed + ANSI_RESET : bracketed;
   }
 
   /**

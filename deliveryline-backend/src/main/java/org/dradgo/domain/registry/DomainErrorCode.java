@@ -203,7 +203,17 @@ public enum DomainErrorCode implements RegistryValue {
   // does NOT carry the allowDeepSplit override. A recursive split deeper than the configured cap is
   // a malformed request, not a transient fault; mirror RUN_DEPENDENCY_CYCLE's CONFLICT (409) +
   // non-retryable mapping. Carries runId, currentDepth, maxDepth, and reason=depth_limit_exceeded.
-  SPLIT_DEPTH_LIMIT_EXCEEDED("SPLIT_DEPTH_LIMIT_EXCEEDED");
+  SPLIT_DEPTH_LIMIT_EXCEEDED("SPLIT_DEPTH_LIMIT_EXCEEDED"),
+  // Story 4.3 (AC2 / Reconciliation 9) — three-sites code (enum + ProblemDetailsCatalog +
+  // manifest).
+  // Raised by AuditQueryService when an audit-history filter value is malformed: an unknown
+  // --event-type token (not in the WorkflowEventType registry), an undecodable --cursor (bad
+  // base64url / wrong shape / unparseable keyset), or a mutually-exclusive scope at the service
+  // seam.
+  // BAD_REQUEST (400) + non-retryable (a malformed query, not a transient fault — mirrors
+  // INVALID_COMMAND_PAYLOAD). The since>until case reuses the existing INVALID_TIME_RANGE, and the
+  // CLI --ticket/--run XOR reuses INVALID_COMMAND_PAYLOAD (the parseBatchTickets precedent).
+  INVALID_AUDIT_FILTER("INVALID_AUDIT_FILTER");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

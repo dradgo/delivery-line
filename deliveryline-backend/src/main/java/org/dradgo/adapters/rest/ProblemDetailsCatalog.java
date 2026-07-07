@@ -526,6 +526,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Split depth limit exceeded",
         false);
+    // Story 4.3 (AC2) — a malformed audit-history filter (unknown event-type token, undecodable
+    // cursor, mutually-exclusive scope) is a bad request, not a transient fault; mirror
+    // INVALID_COMMAND_PAYLOAD's BAD_REQUEST + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_AUDIT_FILTER,
+        HttpStatus.BAD_REQUEST,
+        "Invalid audit filter",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

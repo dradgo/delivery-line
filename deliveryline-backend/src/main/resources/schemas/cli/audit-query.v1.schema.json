@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/audit-query.v1",
+  "title": "AuditQueryResultV1",
+  "$comment": "Story 4.3 (AC4) — the stable wire shape for `deliveryline audit query --format json`. Additive fields are allowed within v1; any removal/rename bumps to v2. totalCount is the full filtered count (independent of --limit); nextCursor is the opaque keyset cursor (null on the last page).",
+  "type": "object",
+  "required": ["schemaVersion", "totalCount", "nextCursor", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "totalCount": { "type": "integer", "minimum": 0 },
+    "nextCursor": { "type": ["string", "null"] },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "eventId",
+          "eventType",
+          "workflowRunId",
+          "actorIdentity",
+          "actorType",
+          "timestamp",
+          "priorState",
+          "resultingState",
+          "failureCategory",
+          "reason",
+          "correlationId",
+          "linkedArtifactId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "eventId": { "type": "string", "pattern": "^evt_" },
+          "eventType": { "type": "string" },
+          "workflowRunId": { "type": "string", "pattern": "^run_" },
+          "actorIdentity": { "type": "string" },
+          "actorType": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "priorState": { "type": ["string", "null"] },
+          "resultingState": { "type": ["string", "null"] },
+          "failureCategory": { "type": ["string", "null"] },
+          "reason": { "type": ["string", "null"] },
+          "correlationId": { "type": ["string", "null"] },
+          "linkedArtifactId": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

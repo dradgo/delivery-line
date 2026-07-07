@@ -184,6 +184,7 @@
     "ARCHIVE_NOT_APPLICABLE": "https://deliveryline.local/problems/archive-not-applicable",
     "REGENERATE_NOT_APPLICABLE": "https://deliveryline.local/problems/regenerate-not-applicable",
     "RUN_DEPENDENCY_CYCLE": "https://deliveryline.local/problems/run-dependency-cycle",
-    "SPLIT_DEPTH_LIMIT_EXCEEDED": "https://deliveryline.local/problems/split-depth-limit-exceeded"
+    "SPLIT_DEPTH_LIMIT_EXCEEDED": "https://deliveryline.local/problems/split-depth-limit-exceeded",
+    "INVALID_AUDIT_FILTER": "https://deliveryline.local/problems/invalid-audit-filter"
   }
 }

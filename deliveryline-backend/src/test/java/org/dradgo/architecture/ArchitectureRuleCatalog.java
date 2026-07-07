@@ -1131,6 +1131,60 @@ final class ArchitectureRuleCatalog {
               .haveNameMatching(
                   "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService\\$(OperatorRunSummary|OperatorRunRow)"));
 
+  /**
+   * Story 4.3 (AC11) — the audit query result records ({@code AuditQueryService.AuditQueryResult} +
+   * {@code .AuditEventRow}, nested in {@code application.audit}) may be referenced ONLY from the
+   * producer service, the CLI {@code AuditCommands} + {@code WorkflowCommandOutputs} renderer, and
+   * the REST {@code AuditController} + {@code AuditQueryResponse}. Mirror of {@link
+   * #OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI}. Keeps the audit read on the single
+   * {@code AuditQueryService} seam and the SPI-layer snapshots ({@code
+   * AuditEventPageSnapshot}/{@code AuditEventRowSnapshot}) — which stay in {@code
+   * application.audit.spi} — out of the CLI/REST (story 4.3 Reconciliation 13). {@code
+   * AuditQueryFilter} is the un-restricted input record (the adapters build it), so it is
+   * intentionally NOT part of this rule.
+   */
+  static final ArchRule AUDIT_QUERY_RESULT_VIEWS_REFERENCED_ONLY_BY_SERVICE_CLI_REST =
+      namedRule(
+          "AuditQueryResult / AuditEventRow may only be referenced from AuditQueryService (application), the CLI audit surface (AuditCommands + WorkflowCommandOutputs), and the REST audit surface (AuditController + AuditQueryResponse)",
+          "Remediation: route all audit-history reading through AuditQueryService.queryByRun/queryByTicket (story 4.3 AC11). The CLI/REST must not reach the SPI snapshots (AuditEventPageSnapshot/AuditEventRowSnapshot) — those stay in application.audit.spi.",
+          noClasses()
+              .that()
+              .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.application\\.audit\\.AuditQueryService(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.AuditCommands(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkflowCommandOutputs(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.rest\\.AuditController(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.rest\\.AuditQueryResponse(\\$.*)?")
+              .should()
+              .dependOnClassesThat()
+              .haveNameMatching(
+                  "org\\.dradgo\\.application\\.audit\\.AuditQueryService\\$(AuditQueryResult|AuditEventRow)"));
+
+  /**
+   * Story 4.3 (AC11 / Reconciliation 13) — the audit read-seam SPI snapshots ({@code
+   * AuditEventPageSnapshot}/{@code AuditEventRowSnapshot}/{@code AuditEventQuery}, in {@code
+   * application.audit.spi}) are persistence-facing; the CLI/REST transports must consume the
+   * redacted {@code AuditQueryResult}/{@code AuditEventRow} from {@code AuditQueryService} instead.
+   * Mirrors the intent of {@link
+   * #REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER} but scoped to the audit SPI
+   * and extended to CLI adapters.
+   */
+  static final ArchRule AUDIT_SPI_SNAPSHOTS_NOT_IMPORTED_BY_ADAPTERS =
+      namedRule(
+          "adapters.cli / adapters.rest must not depend on application.audit.spi snapshots",
+          "Remediation: consume the redacted AuditQueryResult/AuditEventRow from AuditQueryService; the SPI snapshots stay behind the read seam (story 4.3 Reconciliation 13).",
+          noClasses()
+              .that()
+              .resideInAnyPackage(CLI_ADAPTER_PACKAGE, REST_ADAPTER_PACKAGE)
+              .should()
+              .dependOnClassesThat()
+              .resideInAPackage("org.dradgo.application.audit.spi.."));
+
   private ArchitectureRuleCatalog() {}
 
   private static ArchRule namedRule(String name, String remediationHint, ArchRule rule) {

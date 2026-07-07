@@ -102,6 +102,10 @@ class OpenApiSnapshotContractTest {
         .as("OpenAPI must expose the story 4.2 operator fleet-view read operation")
         .contains("listOperatorRuns");
     assertThat(canonical)
+        .as("OpenAPI must expose the story 4.3 audit-query read operations")
+        .contains("queryAuditByTicket")
+        .contains("queryAuditByRun");
+    assertThat(canonical)
         .as("OpenAPI must expose the story 3c-8 project operations")
         .contains("listProjects")
         .contains("createProject")

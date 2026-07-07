@@ -254,4 +254,12 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule operator_run_views_referenced_only_by_inspection_and_cli =
       ArchitectureRuleCatalog.OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI;
+
+  @ArchTest
+  static final ArchRule audit_query_result_views_referenced_only_by_service_cli_rest =
+      ArchitectureRuleCatalog.AUDIT_QUERY_RESULT_VIEWS_REFERENCED_ONLY_BY_SERVICE_CLI_REST;
+
+  @ArchTest
+  static final ArchRule audit_spi_snapshots_not_imported_by_adapters =
+      ArchitectureRuleCatalog.AUDIT_SPI_SNAPSHOTS_NOT_IMPORTED_BY_ADAPTERS;
 }

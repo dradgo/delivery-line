@@ -310,6 +310,110 @@
         },
         "type" : "object"
       },
+      "AuditEventRow" : {
+        "description" : "One flat audit event row.",
+        "properties" : {
+          "actorIdentity" : {
+            "description" : "Actor identity.",
+            "example" : "system",
+            "type" : "string"
+          },
+          "actorType" : {
+            "description" : "Actor-type wire string.",
+            "example" : "system",
+            "type" : "string"
+          },
+          "correlationId" : {
+            "description" : "Correlation id (from event details), when present.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "eventId" : {
+            "description" : "Event public id.",
+            "example" : "evt_abc123",
+            "type" : "string"
+          },
+          "eventType" : {
+            "description" : "Event-type wire string.",
+            "example" : "workflow.stateChanged",
+            "type" : "string"
+          },
+          "failureCategory" : {
+            "description" : "Failure category, when applicable.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "linkedArtifactId" : {
+            "description" : "Best-effort linked artifact id (from event details), when present.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "priorState" : {
+            "description" : "Prior workflow state, null on non-transition events.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "reason" : {
+            "description" : "Redacted reason text.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "resultingState" : {
+            "description" : "Resulting workflow state, null on non-transition events.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp" : {
+            "description" : "Event timestamp (ISO-8601 UTC).",
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "description" : "Owning run public id.",
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "AuditQueryResponse" : {
+        "description" : "Audit history query result with an events page.",
+        "properties" : {
+          "events" : {
+            "description" : "The current page of audit events (timestamp DESC).",
+            "items" : {
+              "$ref" : "#/components/schemas/AuditEventRow"
+            },
+            "type" : "array"
+          },
+          "nextCursor" : {
+            "description" : "Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "totalCount" : {
+            "description" : "Total events matching the filter (independent of limit).",
+            "example" : 42,
+            "format" : "int64",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "BatchSubmissionRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -2883,6 +2987,226 @@
   },
   "openapi" : "3.1.0",
   "paths" : {
+    "/api/v1/audit/by-run/{workflowRunId}" : {
+      "get" : {
+        "description" : "Events for a single workflow run, newest-first with cursor pagination. The same read model as `deliveryline audit query --run`.",
+        "operationId" : "queryAuditByRun",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Event-type filter (multi-valued). Empty disables the filter.",
+            "in" : "query",
+            "name" : "eventType",
+            "required" : false,
+            "schema" : {
+              "items" : {
+                "type" : "string"
+              },
+              "type" : "array"
+            }
+          },
+          {
+            "description" : "Actor identity exact-match filter.",
+            "in" : "query",
+            "name" : "actor",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Lower time bound (inclusive), ISO-8601.",
+            "in" : "query",
+            "name" : "since",
+            "required" : false,
+            "schema" : {
+              "format" : "date-time",
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Upper time bound (inclusive), ISO-8601.",
+            "in" : "query",
+            "name" : "until",
+            "required" : false,
+            "schema" : {
+              "format" : "date-time",
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Max events per page (clamped to [1,200]). Defaults to 50.",
+            "in" : "query",
+            "name" : "limit",
+            "required" : false,
+            "schema" : {
+              "default" : 50,
+              "format" : "int32",
+              "type" : "integer"
+            }
+          },
+          {
+            "description" : "Opaque keyset cursor from a prior response's nextCursor.",
+            "in" : "query",
+            "name" : "cursor",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/AuditQueryResponse"
+                }
+              }
+            },
+            "description" : "Audit events page for the run."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX), filter (INVALID_AUDIT_FILTER), or time range (INVALID_TIME_RANGE)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Query audit history by run",
+        "tags" : [
+          "Audit"
+        ]
+      }
+    },
+    "/api/v1/audit/by-ticket/{ticketRef}" : {
+      "get" : {
+        "description" : "Events across ALL workflow runs linked to a ticket (including retried runs), newest-first with cursor pagination. The same read model as `deliveryline audit query --ticket`.",
+        "operationId" : "queryAuditByTicket",
+        "parameters" : [
+          {
+            "description" : "Ticket external ref, e.g. LIN-123.",
+            "example" : "LIN-123",
+            "in" : "path",
+            "name" : "ticketRef",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Event-type filter (multi-valued). Empty disables the filter.",
+            "in" : "query",
+            "name" : "eventType",
+            "required" : false,
+            "schema" : {
+              "items" : {
+                "type" : "string"
+              },
+              "type" : "array"
+            }
+          },
+          {
+            "description" : "Actor identity exact-match filter.",
+            "in" : "query",
+            "name" : "actor",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Lower time bound (inclusive), ISO-8601.",
+            "in" : "query",
+            "name" : "since",
+            "required" : false,
+            "schema" : {
+              "format" : "date-time",
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Upper time bound (inclusive), ISO-8601.",
+            "in" : "query",
+            "name" : "until",
+            "required" : false,
+            "schema" : {
+              "format" : "date-time",
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Max events per page (clamped to [1,200]). Defaults to 50.",
+            "in" : "query",
+            "name" : "limit",
+            "required" : false,
+            "schema" : {
+              "default" : 50,
+              "format" : "int32",
+              "type" : "integer"
+            }
+          },
+          {
+            "description" : "Opaque keyset cursor from a prior response's nextCursor.",
+            "in" : "query",
+            "name" : "cursor",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/AuditQueryResponse"
+                }
+              }
+            },
+            "description" : "Audit events page for the ticket."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed filter (INVALID_AUDIT_FILTER) or bad time range (INVALID_TIME_RANGE)."
+          }
+        },
+        "summary" : "Query audit history by ticket",
+        "tags" : [
+          "Audit"
+        ]
+      }
+    },
     "/api/v1/operator/runs" : {
       "get" : {
         "description" : "Runs in non-happy operator states (failed/stalled/orphaned/takenover/overridden) across all workflows, with aggregate histograms and cursor pagination. Backs the UI operator queue (story 4.2); the same read model as `deliveryline operator status` (story 4.1).",
@@ -6061,6 +6385,10 @@
     {
       "description" : "Operator fleet-view read surface for failed/stalled runs.",
       "name" : "Operator"
+    },
+    {
+      "description" : "Audit history query by ticket and by run over workflow_events.",
+      "name" : "Audit"
     },
     {
       "description" : "Manage projects: CRUD, write-only credentials, connectivity.",
