@@ -116,9 +116,11 @@ class RunnerExecutionControllerIT {
         insert into runner_executions
           (public_id, workflow_run_id, stage, status, context_bundle_version,
            last_activity_at, timeout_at, queue_priority, queue_attempt_count, created_at,
+           completed_at,
            raw_output_reference, raw_output_classification, raw_output_byte_size, redaction_count)
         values (?, (select id from workflow_runs where public_id = ?),
                 'execution', 'failed', 1, now(), now() + interval '10 minutes', 100, 0, now(),
+                now(),
                 ?, 'shareable-redacted', ?, 0)
         """,
         rexId,
