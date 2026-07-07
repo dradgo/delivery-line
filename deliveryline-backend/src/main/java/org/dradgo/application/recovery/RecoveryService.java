@@ -16,9 +16,12 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
+import org.dradgo.application.runner.RunnerDispatchResult;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
+import org.dradgo.application.workflow.WorkflowOrchestrationService;
+import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
@@ -46,14 +49,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Application service for CLI minimum-viable recovery (story 1.18 baseline).
  *
- * <p><strong>Scope-protected by ArchUnit:</strong> exposes <em>exactly</em> two public methods —
- * {@link #retry(String, String, ActorContext, String)} and {@link #describeFailure(String)}. The
- * rule {@code RECOVERY_SERVICE_IS_SCOPE_PROTECTED} in {@code ArchitectureRuleCatalog} fails the
- * build if any other public method name is added without an Epic-4 story justifying it.
+ * <p><strong>Scope-protected by ArchUnit:</strong> exposes <em>exactly</em> three public methods —
+ * {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
+ * ActorContext, String)} (story 4.5), and {@link #describeFailure(String)}. The rule {@code
+ * RECOVERY_SERVICE_IS_SCOPE_PROTECTED} in {@code ArchitectureRuleCatalog} fails the build if any
+ * other public method name is added without an Epic-4 story justifying it; adding {@code resume}
+ * required widening that guard in lockstep (story 4.5 Reconciliation 2).
  *
- * <p>Methods <strong>not</strong> in story 1.18 (Epic 4 will add): {@code resume(...)}, {@code
- * rerun(...)}, {@code reconcile(...)}, {@code pause(...)}, {@code classifyFailure(...)}, {@code
- * takeover(...)}.
+ * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code rerun(...)},
+ * {@code reconcile(...)}, {@code pause(...)}, {@code classifyFailure(...)}. {@code takeover(...)}
+ * lives on the sibling {@code DeveloperTakeoverService}, not here.
  *
  * <p><strong>Idempotency-key namespacing:</strong> the user-supplied {@code idempotencyKey} flows
  * through three idempotency surfaces — {@link WorkflowCommandService#retryWorkflow} (workflow state
@@ -140,6 +145,11 @@ public class RecoveryService {
   static final String NEXT_SAFE_ACTION_AWAIT_MANUAL_RECONCILIATION = "await_manual_reconciliation";
 
   static final String ACTION_TYPE_RETRY = "retry";
+  // Story 4.5 — resume recovery-action constants. reviewer_role='workflow_owner' is the resume
+  // invariant applied when building the recovery_actions row (9-arg ctor), NOT a public param
+  // (audit-only label; RBAC deferred).
+  static final String ACTION_TYPE_RESUME = "resume";
+  static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
   static final String RESULT_STATUS_PENDING = "pending";
   static final String RESULT_STATUS_SUCCEEDED = "succeeded";
 
@@ -175,6 +185,10 @@ public class RecoveryService {
   private final org.dradgo.application.project.ProjectRuntimeConfigResolver
       projectRuntimeConfigResolver;
   private final org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher;
+  // Story 4.5 (AC6) — resume re-dispatches the EXECUTION-stage runner via the sub-stage-aware
+  // redispatchAfterRetry (never transitions; no-op returning null when auto-dispatch is off). No DI
+  // cycle: WorkflowOrchestrationService does not depend on RecoveryService.
+  private final WorkflowOrchestrationService workflowOrchestrationService;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final RecoveryActionRecordPort recoveryActionRecordPort;
   private final IdempotencyKeyValidator idempotencyKeyValidator;
@@ -192,6 +206,7 @@ public class RecoveryService {
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
       org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
+      WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       IdempotencyKeyValidator idempotencyKeyValidator,
@@ -205,6 +220,7 @@ public class RecoveryService {
         runnerExecutionQueue,
         projectRuntimeConfigResolver,
         manualExecutionDispatcher,
+        workflowOrchestrationService,
         workflowEventWritePort,
         recoveryActionRecordPort,
         idempotencyKeyValidator,
@@ -222,6 +238,7 @@ public class RecoveryService {
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
       org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
+      WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
       IdempotencyKeyValidator idempotencyKeyValidator,
@@ -243,6 +260,8 @@ public class RecoveryService {
         Objects.requireNonNull(projectRuntimeConfigResolver, "projectRuntimeConfigResolver");
     this.manualExecutionDispatcher =
         Objects.requireNonNull(manualExecutionDispatcher, "manualExecutionDispatcher");
+    this.workflowOrchestrationService =
+        Objects.requireNonNull(workflowOrchestrationService, "workflowOrchestrationService");
     this.workflowEventWritePort =
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.recoveryActionRecordPort =
@@ -582,6 +601,516 @@ public class RecoveryService {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
   }
+
+  /**
+   * Story 4.5 — resume a paused run back to its prior executing state. Structural twin of {@link
+   * #retry}: MDC scope → idempotency validate → replay pre-check → current-state guard ({@code
+   * PAUSED}) → locate the {@code → Paused} transition event → REQUIRES_NEW prep tx (transition via
+   * {@link WorkflowCommandService#resumeWorkflow} + append {@code recovery.resumed} + insert {@code
+   * recovery_actions} row) → post-commit re-dispatch (single-sourced here — see the double-dispatch
+   * caution) with compensation → {@code markSucceeded} → return. Differs from retry in: the target
+   * state comes from the recovered {@code priorState} (not hardcoded {@code Executing}); the
+   * linking event is the {@code → Paused} transition (not the failure event); the event type is
+   * {@code recovery.resumed}; the {@code recovery_actions} row carries {@code
+   * reviewerRole='workflow_owner'} (9-arg ctor); and re-dispatch uses the sub-stage-aware {@code
+   * redispatchAfterRetry}.
+   */
+  public ResumeRecoveryResult resume(
+      String workflowRunId, String idempotencyKey, ActorContext actor, String reasonText) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(actor, "actor");
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(idempotencyKey);
+      long start = System.nanoTime();
+      log.info(
+          "recovery resume start workflowRunId={} idempotencyKey={} actorIdentity={}",
+          workflowRunId,
+          validatedIdempotencyKey,
+          actor.actorIdentity());
+
+      // Step 1 — replay detection (mirror retry Step 1). A prior recovery_actions row is a replay
+      // only when it belongs to the SAME run AND already reached `succeeded`. Different run, or a
+      // prior pending/failed attempt on this run, surfaces as IDEMPOTENCY_KEY_CONFLICT.
+      Optional<RecoveryActionSnapshot> priorAction =
+          recoveryActionRecordPort.findByIdempotencyKey(validatedIdempotencyKey);
+      if (priorAction.isPresent()) {
+        RecoveryActionSnapshot prior = priorAction.get();
+        // The idempotency key is not action-namespaced, so a prior row may belong to a different
+        // recovery action (retry/takeover) on this run. Guard here exactly as
+        // resolveConcurrentResumeReplay does — a cross-action key reuse is a conflict, never a
+        // resume replay (otherwise we would echo the prior action's row/event id as if resume ran).
+        if (!ACTION_TYPE_RESUME.equals(prior.actionType())) {
+          Map<String, Object> details = new LinkedHashMap<>();
+          details.put("idempotencyKey", validatedIdempotencyKey);
+          details.put("runId", workflowRunId);
+          details.put("priorActionType", prior.actionType());
+          details.put("reason", "idempotency_key_bound_to_different_action");
+          log.warn(
+              "recovery resume rejected workflowRunId={} reason=idempotency_key_bound_to_different_action priorActionType={}",
+              workflowRunId,
+              prior.actionType());
+          throw new DomainException(
+              DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+              "Idempotency key is already bound to a different recovery action (priorActionType="
+                  + prior.actionType()
+                  + ")",
+              details);
+        }
+        if (!workflowRunId.equals(prior.workflowRunPublicId())) {
+          Map<String, Object> details = new LinkedHashMap<>();
+          details.put("idempotencyKey", validatedIdempotencyKey);
+          details.put("requestedRunId", workflowRunId);
+          details.put("priorRunId", prior.workflowRunPublicId());
+          details.put("reason", "idempotency_key_bound_to_different_run");
+          log.warn(
+              "recovery resume rejected workflowRunId={} reason=idempotency_key_bound_to_different_run priorRunId={}",
+              workflowRunId,
+              prior.workflowRunPublicId());
+          throw new DomainException(
+              DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+              "Idempotency key is already bound to a different workflow run (priorRunId="
+                  + prior.workflowRunPublicId()
+                  + ")",
+              details);
+        }
+        if (!RESULT_STATUS_SUCCEEDED.equals(prior.resultStatus())) {
+          Map<String, Object> details = new LinkedHashMap<>();
+          details.put("idempotencyKey", validatedIdempotencyKey);
+          details.put("runId", workflowRunId);
+          details.put("priorResultStatus", prior.resultStatus());
+          details.put("reason", "idempotency_key_used_by_non_succeeded_attempt");
+          log.warn(
+              "recovery resume rejected workflowRunId={} reason=idempotency_key_used_by_non_succeeded_attempt priorResultStatus={}",
+              workflowRunId,
+              prior.resultStatus());
+          throw new DomainException(
+              DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+              "Idempotency key was used by a prior non-succeeded recovery attempt (resultStatus="
+                  + prior.resultStatus()
+                  + "); use a fresh key for a new attempt",
+              details);
+        }
+        log.info(
+            "recovery resume replay workflowRunId={} recoveryActionId={} idempotencyKey={}",
+            workflowRunId,
+            prior.publicId(),
+            validatedIdempotencyKey);
+        return new ResumeRecoveryResult(
+            prior.publicId(),
+            prior.resultingEventPublicId(),
+            null,
+            resolvePriorExecutingStateForReplay(workflowRunId).orElse(null),
+            actor.correlationId(),
+            true);
+      }
+
+      // Step 2 — current-state guard. resume is only meaningful from Paused (AC3).
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+      if (run.currentState() != WorkflowState.PAUSED) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("currentState", run.currentState().value());
+        details.put("reason", "not_paused");
+        log.warn(
+            "recovery resume rejected workflowRunId={} currentState={} reason=not_paused",
+            workflowRunId,
+            run.currentState().value());
+        throw new DomainException(
+            DomainErrorCode.RESUME_NOT_APPLICABLE,
+            "Resume is only applicable to runs in state Paused; current state is "
+                + run.currentState().value(),
+            details);
+      }
+
+      // Step 3 — locate the WORKFLOW_STATE_CHANGED → Paused event (Reconciliation 1). Its TYPED
+      // priorState() is the recovered prior executing state to resume into, and its publicId() is
+      // the triggering_event_id that links the audit trail. A Paused run without that event can
+      // only
+      // have arrived there through a malformed fixture; we refuse to invent a link-less audit entry
+      // (mirror how retry raises RETRY_NOT_APPLICABLE when its failure event is missing).
+      WorkflowEventRecord pausedEvent =
+          workflowEventReadPort
+              .findLatestTransitionToState(workflowRunId, WorkflowState.PAUSED)
+              .orElseThrow(
+                  () -> {
+                    Map<String, Object> details = new LinkedHashMap<>();
+                    details.put("runId", workflowRunId);
+                    details.put("currentState", WorkflowState.PAUSED.value());
+                    details.put("reason", "no_paused_event_to_link");
+                    return new DomainException(
+                        DomainErrorCode.RESUME_NOT_APPLICABLE,
+                        "Resume requires a workflow.stateChanged → Paused event to derive the prior "
+                            + "executing state and link the audit trail; none found for run "
+                            + workflowRunId,
+                        details);
+                  });
+      WorkflowState priorState = pausedEvent.priorState();
+      if (priorState == null) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("currentState", WorkflowState.PAUSED.value());
+        details.put("reason", "paused_event_missing_prior_state");
+        log.warn(
+            "recovery resume rejected workflowRunId={} reason=paused_event_missing_prior_state",
+            workflowRunId);
+        throw new DomainException(
+            DomainErrorCode.RESUME_NOT_APPLICABLE,
+            "Resume requires the → Paused event to carry a typed priorState to resume into; "
+                + "none present for run "
+                + workflowRunId,
+            details);
+      }
+
+      // Step 4 — prep work runs inside a REQUIRES_NEW transaction so the audit trail (transition +
+      // recovery.resumed event + recovery_actions row) is durable BEFORE the re-dispatch is
+      // attempted. If the re-dispatch then fails, the recovery_actions row survives and gets
+      // flipped
+      // to `failed` in a fresh tx so operators can see the attempt in audit history (mirror retry
+      // F1).
+      String correlationId = actor.correlationId();
+      String effectiveReason = resolveResumeReasonText(reasonText, priorState);
+      ResumePrep prep;
+      try {
+        prep =
+            retryPrepTransactionTemplate.execute(
+                status ->
+                    performResumePrep(
+                        workflowRunId,
+                        validatedIdempotencyKey,
+                        actor,
+                        priorState,
+                        pausedEvent,
+                        effectiveReason,
+                        correlationId));
+      } catch (DomainException prepError) {
+        // Concurrent-resume race (mirror retry F532): a sibling won the recovery_actions insert (or
+        // the inner resumeWorkflow's idempotency record) between our pre-check and our prep tx. If
+        // the prior row is now the same run AND already succeeded, return the documented replay;
+        // otherwise propagate the conflict.
+        if (prepError.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          Optional<ResumeRecoveryResult> raceReplay =
+              resolveConcurrentResumeReplay(workflowRunId, validatedIdempotencyKey, actor);
+          if (raceReplay.isPresent()) {
+            return raceReplay.get();
+          }
+        }
+        throw prepError;
+      }
+
+      // Step 5 — re-dispatch OUTSIDE any transaction so the audit trail above is durable before any
+      // side effects. Single-sourced here (resumeWorkflowInternal did the transition ONLY — the
+      // double-dispatch caution). Only priorStates that carry runner work re-dispatch; today
+      // priorState is always Executing.
+      String newRunnerExecutionId;
+      try {
+        RunnerDispatchResult dispatchResult =
+            redispatchForResume(workflowRunId, priorState, correlationId);
+        newRunnerExecutionId =
+            dispatchResult == null ? null : dispatchResult.handle().runnerExecutionId();
+      } catch (RuntimeException error) {
+        boolean compensationFailed = false;
+        try {
+          resultStatusTransactionTemplate.executeWithoutResult(
+              status -> recoveryActionRecordPort.markFailed(validatedIdempotencyKey));
+        } catch (RuntimeException compensationError) {
+          compensationFailed = true;
+          error.addSuppressed(compensationError);
+        }
+        // Append-only audit: stamp the typed re-dispatch error into a second event so operators
+        // reading `history` see the failure. Mutating the already-committed recovery.resumed event
+        // would violate NFR4; instead append recovery.dispatchFailed in its own REQUIRES_NEW tx.
+        try {
+          appendResumeDispatchFailedEvent(
+              workflowRunId,
+              priorState,
+              prep,
+              validatedIdempotencyKey,
+              correlationId,
+              effectiveReason,
+              actor,
+              error,
+              compensationFailed);
+        } catch (RuntimeException auditError) {
+          error.addSuppressed(auditError);
+          String dispatchErrorCode =
+              (error instanceof DomainException d) ? d.errorCode().value() : "RUNTIME_ERROR";
+          log.error(
+              "recovery resume dispatch-failed event append failed workflowRunId={} "
+                  + "recoveryActionId={} recoveryResumedEventId={} idempotencyKey={} "
+                  + "targetState={} errorCode={} errorClass={} correlationId={} "
+                  + "compensationFailed={} auditErrorClass={} — audit event missing; "
+                  + "structured log is the only audit trail for this attempt",
+              workflowRunId,
+              prep.recoveryActionPublicId,
+              prep.resumedEventPublicId,
+              validatedIdempotencyKey,
+              priorState.value(),
+              dispatchErrorCode,
+              error.getClass().getSimpleName(),
+              correlationId,
+              compensationFailed,
+              auditError.getClass().getSimpleName());
+        }
+        log.warn(
+            "recovery resume dispatch failed workflowRunId={} targetState={} errorClass={} — workflow state stays {} without a runner; operator action required",
+            workflowRunId,
+            priorState.value(),
+            error.getClass().getSimpleName(),
+            priorState.value());
+        throw error;
+      }
+
+      // Step 6 — flip the recovery_actions row to succeeded in a fresh REQUIRES_NEW tx. Leaving it
+      // `pending` while reporting success would lie about audit terminality (mirror retry F526).
+      try {
+        resultStatusTransactionTemplate.executeWithoutResult(
+            status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));
+      } catch (RuntimeException completionError) {
+        log.error(
+            "recovery resume completion status update failed workflowRunId={} recoveryActionId={} idempotencyKey={} newRunnerExecutionId={} errorClass={} — run resumed but recovery_actions row stays pending; operator reconciliation required",
+            workflowRunId,
+            prep.recoveryActionPublicId,
+            validatedIdempotencyKey,
+            newRunnerExecutionId,
+            completionError.getClass().getSimpleName());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("recoveryActionId", prep.recoveryActionPublicId);
+        details.put("idempotencyKey", validatedIdempotencyKey);
+        details.put("newRunnerExecutionId", newRunnerExecutionId);
+        details.put("reason", "result_status_flip_failed_after_resume");
+        DomainException terminal =
+            new DomainException(
+                DomainErrorCode.INTERNAL_ERROR,
+                "Run resumed but recovery_actions.result_status flip to succeeded failed; "
+                    + "row remains pending. Operator reconciliation required.",
+                details);
+        terminal.addSuppressed(completionError);
+        throw terminal;
+      }
+
+      long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+      log.info(
+          "recovery resume success workflowRunId={} recoveryActionId={} newRunnerExecutionId={} resultingState={} durationMs={}",
+          workflowRunId,
+          prep.recoveryActionPublicId,
+          newRunnerExecutionId,
+          priorState.value(),
+          elapsedMs);
+      return new ResumeRecoveryResult(
+          prep.recoveryActionPublicId,
+          prep.resumedEventPublicId,
+          newRunnerExecutionId,
+          priorState,
+          correlationId,
+          false);
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private ResumePrep performResumePrep(
+      String workflowRunId,
+      String idempotencyKey,
+      ActorContext actor,
+      WorkflowState targetState,
+      WorkflowEventRecord pausedEvent,
+      String effectiveReason,
+      String correlationId) {
+    ResumeWorkflowCommand command =
+        new ResumeWorkflowCommand(
+            workflowRunId,
+            actor.actorIdentity(),
+            actor.actorType(),
+            idempotencyKey,
+            correlationId,
+            effectiveReason,
+            targetState);
+    workflowCommandService.resumeWorkflow(command);
+
+    String recoveryEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put(WorkflowEventDetailKeys.TRIGGERING_EVENT_ID, pausedEvent.publicId());
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    // Surface the operator-supplied reason in the audit details (mirror retry F6). Truncation
+    // matches ResumeWorkflowCommand's @Size(max = 512).
+    if (effectiveReason != null && !effectiveReason.isBlank()) {
+      eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    }
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            recoveryEventPublicId,
+            workflowRunId,
+            WorkflowEventType.RECOVERY_RESUMED,
+            WorkflowState.PAUSED,
+            targetState,
+            actor.actorIdentity(),
+            actor.actorType(),
+            effectiveReason,
+            null,
+            true,
+            OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+            eventDetails));
+
+    RecoveryActionSnapshot recoveryAction =
+        recoveryActionRecordPort.insert(
+            new RecoveryActionWriteCommand(
+                workflowRunId,
+                ACTION_TYPE_RESUME,
+                pausedEvent.publicId(),
+                recoveryEventPublicId,
+                actor.actorIdentity(),
+                actor.actorType(),
+                idempotencyKey,
+                RESULT_STATUS_PENDING,
+                REVIEWER_ROLE_WORKFLOW_OWNER));
+
+    return new ResumePrep(recoveryAction.publicId(), recoveryEventPublicId);
+  }
+
+  /**
+   * AC6 re-dispatch: resuming into {@code Executing} re-dispatches the EXECUTION-stage runner via
+   * the sub-stage-aware {@code redispatchAfterRetry} (plan vs pr-output; NEVER transitions; returns
+   * {@code null} when auto-dispatch is off — tolerate the null). The {@code Investigating} branch
+   * is DEFERRED/untested (Reconciliation 4): no {@code Investigating → Paused} edge exists today,
+   * so a paused run's priorState is always {@code Executing}; the branch is coded for when pause
+   * (4.8) later supports more source states. Human-gate priorStates carry no runner work.
+   */
+  private RunnerDispatchResult redispatchForResume(
+      String workflowRunId, WorkflowState priorState, String correlationId) {
+    if (priorState == WorkflowState.EXECUTING) {
+      return workflowOrchestrationService.redispatchAfterRetry(workflowRunId, correlationId);
+    }
+    if (priorState == WorkflowState.INVESTIGATING) {
+      // DEFERRED / unreachable today — see javadoc.
+      return workflowOrchestrationService.retrySpecGeneration(workflowRunId, correlationId);
+    }
+    return null;
+  }
+
+  private void appendResumeDispatchFailedEvent(
+      String workflowRunId,
+      WorkflowState targetState,
+      ResumePrep prep,
+      String idempotencyKey,
+      String correlationId,
+      String effectiveReason,
+      ActorContext actor,
+      RuntimeException error,
+      boolean compensationFailed) {
+    String errorCode =
+        (error instanceof DomainException domainError)
+            ? domainError.errorCode().value()
+            : "RUNTIME_ERROR";
+    String errorClass = error.getClass().getSimpleName();
+    String dispatchFailedReason = "resume re-dispatch failed: " + errorCode;
+    String dispatchFailedEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put(WorkflowEventDetailKeys.RECOVERY_ACTION_ID, prep.recoveryActionPublicId);
+    // The recovery-event-id detail key (retry-flavored name) carries the recovery.resumed event id
+    // — the only recovery-event-id allow-listed key; the resumed event is this action's anchor.
+    eventDetails.put(WorkflowEventDetailKeys.RECOVERY_RETRIED_EVENT_ID, prep.resumedEventPublicId);
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    eventDetails.put(WorkflowEventDetailKeys.ERROR_CODE, errorCode);
+    eventDetails.put(WorkflowEventDetailKeys.ERROR_CLASS, errorClass);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    if (effectiveReason != null && !effectiveReason.isBlank()) {
+      eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    }
+    if (compensationFailed) {
+      eventDetails.put(WorkflowEventDetailKeys.COMPENSATION_FAILED, true);
+    }
+    resultStatusTransactionTemplate.executeWithoutResult(
+        status -> {
+          workflowEventWritePort.append(
+              new WorkflowEventRecord(
+                  dispatchFailedEventPublicId,
+                  workflowRunId,
+                  WorkflowEventType.RECOVERY_DISPATCH_FAILED,
+                  targetState,
+                  targetState,
+                  actor.actorIdentity(),
+                  actor.actorType(),
+                  dispatchFailedReason,
+                  null,
+                  true,
+                  OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+                  eventDetails));
+          log.info(
+              "recovery resume dispatch-failed event appended workflowRunId={} dispatchFailedEventId={} errorCode={} errorClass={}",
+              workflowRunId,
+              dispatchFailedEventPublicId,
+              errorCode,
+              errorClass);
+        });
+  }
+
+  private Optional<ResumeRecoveryResult> resolveConcurrentResumeReplay(
+      String workflowRunId, String idempotencyKey, ActorContext actor) {
+    Optional<RecoveryActionSnapshot> prior =
+        recoveryActionRecordPort.findByIdempotencyKey(idempotencyKey);
+    if (prior.isEmpty()) {
+      return Optional.empty();
+    }
+    RecoveryActionSnapshot snapshot = prior.get();
+    if (!workflowRunId.equals(snapshot.workflowRunPublicId())) {
+      return Optional.empty();
+    }
+    if (!ACTION_TYPE_RESUME.equals(snapshot.actionType())) {
+      return Optional.empty();
+    }
+    if (!RESULT_STATUS_SUCCEEDED.equals(snapshot.resultStatus())) {
+      return Optional.empty();
+    }
+    // Defensive: recovery_actions.resulting_event_id FK is `ON DELETE SET NULL` — a succeeded prior
+    // row could carry a null event id (the linked event was archived). Emitting a replay with a
+    // null event id would mislead callers that assume non-null on replay; propagate the conflict.
+    if (snapshot.resultingEventPublicId() == null) {
+      log.warn(
+          "recovery resume replay-on-conflict refused workflowRunId={} recoveryActionId={} reason=missing_resulting_event_id",
+          workflowRunId,
+          snapshot.publicId());
+      return Optional.empty();
+    }
+    log.info(
+        "recovery resume replay-on-conflict workflowRunId={} recoveryActionId={} idempotencyKey={} priorResultStatus={}",
+        workflowRunId,
+        snapshot.publicId(),
+        idempotencyKey,
+        snapshot.resultStatus());
+    return Optional.of(
+        new ResumeRecoveryResult(
+            snapshot.publicId(),
+            snapshot.resultingEventPublicId(),
+            null,
+            resolvePriorExecutingStateForReplay(workflowRunId).orElse(null),
+            actor.correlationId(),
+            true));
+  }
+
+  private Optional<WorkflowState> resolvePriorExecutingStateForReplay(String workflowRunId) {
+    return workflowEventReadPort
+        .findLatestTransitionToState(workflowRunId, WorkflowState.PAUSED)
+        .map(WorkflowEventRecord::priorState);
+  }
+
+  private static String resolveResumeReasonText(String reasonText, WorkflowState targetState) {
+    if (reasonText != null && !reasonText.isBlank()) {
+      return reasonText;
+    }
+    return "resume to " + targetState.value();
+  }
+
+  private record ResumePrep(String recoveryActionPublicId, String resumedEventPublicId) {}
 
   private RetryPrep performRetryPrep(
       String workflowRunId,

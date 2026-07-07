@@ -22,6 +22,7 @@
     "recovery.retried",
     "recovery.dispatchFailed",
     "recovery.reconciled",
+    "recovery.resumed",
     "artifact.lineageRecovered",
     "integration.linked",
     "export.created",

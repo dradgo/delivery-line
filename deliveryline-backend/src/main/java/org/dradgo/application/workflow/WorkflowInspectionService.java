@@ -1787,8 +1787,18 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
       case PAUSED:
-        // SEAM (Epic 4): Epic 4 adds resume here for workflow_owner.
-        // Story 3d-5 (AC6): the paused run's runner execution logs remain viewable.
+        // Story 4.5 (AC9): resume_workflow is surfaced ONLY to the workflow_owner gate role
+        // (canonical executor RecoveryService.resume). Other roles keep the view-only +
+        // diagnostics/
+        // log set. Story 3d-5 (AC6): the paused run's runner execution logs remain viewable.
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.RESUME_WORKFLOW,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_DIAGNOSTICS,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+        }
         return List.of(
             AllowedAction.VIEW_ONLY,
             AllowedAction.VIEW_DIAGNOSTICS,

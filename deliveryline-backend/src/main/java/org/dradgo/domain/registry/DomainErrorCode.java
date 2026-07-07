@@ -213,7 +213,17 @@ public enum DomainErrorCode implements RegistryValue {
   // BAD_REQUEST (400) + non-retryable (a malformed query, not a transient fault — mirrors
   // INVALID_COMMAND_PAYLOAD). The since>until case reuses the existing INVALID_TIME_RANGE, and the
   // CLI --ticket/--run XOR reuses INVALID_COMMAND_PAYLOAD (the parseBatchTickets precedent).
-  INVALID_AUDIT_FILTER("INVALID_AUDIT_FILTER");
+  INVALID_AUDIT_FILTER("INVALID_AUDIT_FILTER"),
+  // Story 4.5 (AC3 / Reconciliation 6) — three-sites code (enum + ProblemDetailsCatalog +
+  // manifest).
+  // Mirrors RETRY_NOT_APPLICABLE / MANUAL_EXECUTION_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE: there
+  // is
+  // NO generic ACTION_NOT_ALLOWED guard — command services enforce their own state preconditions.
+  // Raised by RecoveryService.resume when the run is not in Paused (details.currentState), OR when
+  // the run IS Paused but no WORKFLOW_STATE_CHANGED → Paused event exists to derive the prior
+  // executing state / link the audit trail. CONFLICT (409) + non-retryable (a precondition mismatch
+  // on the run's state, not a transient fault).
+  RESUME_NOT_APPLICABLE("RESUME_NOT_APPLICABLE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

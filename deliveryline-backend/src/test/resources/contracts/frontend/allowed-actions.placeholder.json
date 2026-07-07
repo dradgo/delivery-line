@@ -26,6 +26,7 @@
     "repropose_split",
     "approve_split",
     "approve_lint",
-    "request_lint_fix"
+    "request_lint_fix",
+    "resume_workflow"
   ]
 }

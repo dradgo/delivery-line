@@ -36,6 +36,7 @@ import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -246,6 +247,17 @@ public class WorkflowCommandService {
   @Transactional
   public WorkflowStateChangeResult takeoverWorkflow(TakeoverWorkflowCommand command) {
     return executeIdempotent(command, this::takeoverWorkflowInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult resumeWorkflow(ResumeWorkflowCommand command) {
+    // Story 4.5 (AC5 / Reconciliation 8): transition Paused → command.targetState() (the recovered
+    // prior executing state) inside the shared idempotency envelope. Unlike retryWorkflow, this
+    // does
+    // NOT re-dispatch here — re-dispatch is single-sourced by RecoveryService.resume after the prep
+    // tx commits (the double-dispatch caution). Replay pins targetState (an invariant post-state
+    // per accepted command) in replayStateChange.
+    return executeIdempotent(command, this::resumeWorkflowInternal, this::replayStateChange);
   }
 
   @Transactional
@@ -691,6 +703,28 @@ public class WorkflowCommandService {
     }
   }
 
+  private WorkflowStateChangeResult resumeWorkflowInternal(ResumeWorkflowCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      // Story 4.5 (Reconciliation 8): transition to the caller-supplied targetState (the recovered
+      // Paused → prior executing state) via the generic transition helper — the transition table
+      // validates Paused → targetState is legal (Paused → Executing today). NO re-dispatch here
+      // (RecoveryService.resume owns the single redispatchAfterRetry after this prep tx commits).
+      transition(
+          command.workflowRunId(),
+          command.targetState(),
+          command,
+          fallbackReason(command.reasonText(), "resume workflow"),
+          Map.of());
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(),
+          command.targetState(),
+          normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
   private <T extends DomainResult, C extends WorkflowCommand> T executeIdempotent(
       C command,
       java.util.function.Function<C, T> action,
@@ -926,6 +960,12 @@ public class WorkflowCommandService {
           // re-dispatches to Executing. Both are invariant post-states, so a replay pins them here.
           case ApproveLintCommand ignored -> WorkflowState.WAITING_FOR_REVIEW;
           case RequestLintFixCommand ignored -> WorkflowState.EXECUTING;
+          // Story 4.5 (Reconciliation 8): resume's post-state is the accepted command's
+          // targetState (the recovered prior executing state — Executing today). It is the
+          // invariant answer for a replay of this exact command, mirroring how retry pins
+          // Executing; pin it from the command payload rather than re-reading the run's later
+          // live state.
+          case ResumeWorkflowCommand resume -> resume.targetState();
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           case AcceptClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();

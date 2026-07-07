@@ -71,6 +71,7 @@ class RecoveryServiceUnitTest {
   private WorkflowCommandService workflowCommandService;
   private RunnerExecutionQueue runnerExecutionQueue;
   private org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver;
+  private org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
   private IdempotencyKeyValidator idempotencyKeyValidator;
@@ -86,6 +87,8 @@ class RecoveryServiceUnitTest {
     runnerExecutionQueue = mock(RunnerExecutionQueue.class);
     projectRuntimeConfigResolver =
         mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class);
+    workflowOrchestrationService =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     idempotencyKeyValidator = new IdempotencyKeyValidator();
@@ -99,6 +102,7 @@ class RecoveryServiceUnitTest {
             runnerExecutionQueue,
             projectRuntimeConfigResolver,
             mock(org.dradgo.application.runner.ManualExecutionDispatcher.class),
+            workflowOrchestrationService,
             eventWritePort,
             recoveryRecordPort,
             idempotencyKeyValidator,

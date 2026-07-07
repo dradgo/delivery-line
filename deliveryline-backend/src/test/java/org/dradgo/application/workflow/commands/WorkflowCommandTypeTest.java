@@ -70,5 +70,16 @@ class WorkflowCommandTypeTest {
         "TakeoverWorkflowCommand",
         new TakeoverWorkflowCommand("run_x", "alex", ActorType.HUMAN, "k", null, null)
             .commandType());
+    assertEquals(
+        "ResumeWorkflowCommand",
+        new ResumeWorkflowCommand(
+                "run_x",
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                null,
+                org.dradgo.domain.registry.WorkflowState.EXECUTING)
+            .commandType());
   }
 }

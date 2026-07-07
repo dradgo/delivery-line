@@ -32,6 +32,7 @@ import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -96,6 +97,7 @@ class CommandModelSymmetryFoundationContract {
           SubmitClarificationCommand.class,
           RetryWorkflowCommand.class,
           TakeoverWorkflowCommand.class,
+          ResumeWorkflowCommand.class,
           AcceptClarificationCommand.class,
           RegenerateSpecCommand.class,
           ApproveLintCommand.class,

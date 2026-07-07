@@ -783,10 +783,11 @@ final class ArchitectureRuleCatalog {
 
   static final ArchRule RECOVERY_SERVICE_IS_SCOPE_PROTECTED =
       namedRule(
-          "RecoveryService must expose only the Epic-1 baseline public method signatures",
-          "Remediation: Epic 4 will add resume/rerun/reconcile/pause/classifyFailure/takeover. "
-              + "Changing RecoveryService's public surface without an Epic-4 story is a scope "
-              + "violation — update the story and this guard together.",
+          "RecoveryService must expose only the Epic-1 baseline plus story-4.5 public method signatures",
+          "Remediation: later Epic 4 stories will add rerun/reconcile/pause/classifyFailure. Story "
+              + "4.5 added resume (widening this guard in lockstep — Reconciliation 2). Changing "
+              + "RecoveryService's public surface without an Epic-4 story is a scope violation — "
+              + "update the story and this guard together.",
           classes()
               .that()
               .haveFullyQualifiedName("org.dradgo.application.recovery.RecoveryService")
@@ -794,6 +795,9 @@ final class ArchitectureRuleCatalog {
                   exposeOnlyPublicMethodSignatures(
                       methodSignature(
                           "retry", String.class, String.class, ActorContext.class, String.class),
+                      // Story 4.5 — resume mirrors retry's positional signature.
+                      methodSignature(
+                          "resume", String.class, String.class, ActorContext.class, String.class),
                       methodSignature("describeFailure", String.class))));
 
   // Story 3.22 (Trap T1): DeveloperTakeoverService is the SIBLING of RecoveryService (not a third

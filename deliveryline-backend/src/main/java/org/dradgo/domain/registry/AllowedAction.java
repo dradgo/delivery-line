@@ -92,7 +92,15 @@ public enum AllowedAction implements RegistryValue {
   // LintApprovalService. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON
   // only).
   APPROVE_LINT("approve_lint"),
-  REQUEST_LINT_FIX("request_lint_fix");
+  REQUEST_LINT_FIX("request_lint_fix"),
+  // Story 4.5 (AC9, FR47/NFR5) — the resume affordance for a paused run, surfaced ONLY at PAUSED
+  // for
+  // the workflow_owner gate role (other roles keep the view-only + diagnostics/log set). Canonical
+  // executor is RecoveryService.resume (routing the Paused → prior-executing-state transition
+  // through WorkflowCommandService.resumeWorkflow). The REST endpoint that honors it lands in story
+  // 4.10. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
+  // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
+  RESUME_WORKFLOW("resume_workflow");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

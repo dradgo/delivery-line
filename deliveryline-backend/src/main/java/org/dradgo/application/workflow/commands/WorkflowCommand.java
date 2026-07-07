@@ -13,6 +13,7 @@ public sealed interface WorkflowCommand
         RegenerateSpecCommand,
         RetryWorkflowCommand,
         TakeoverWorkflowCommand,
+        ResumeWorkflowCommand,
         ApproveLintCommand,
         RequestLintFixCommand {
 

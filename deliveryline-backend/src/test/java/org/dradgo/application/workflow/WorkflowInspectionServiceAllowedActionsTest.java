@@ -269,6 +269,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.PAUSED,
             "workflow_owner",
             List.of(
+                AllowedAction.RESUME_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,

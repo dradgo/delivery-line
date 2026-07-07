@@ -535,6 +535,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Invalid audit filter",
         false);
+    // Story 4.5 (AC3) — resuming a run that is not Paused (or a Paused run with no derivable prior
+    // executing state) is a precondition mismatch on the run's state, not a transient fault; mirror
+    // RETRY_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.RESUME_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Resume not applicable",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

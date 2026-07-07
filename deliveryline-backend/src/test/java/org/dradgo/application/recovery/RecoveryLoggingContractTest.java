@@ -74,6 +74,7 @@ class RecoveryLoggingContractTest {
   private ArtifactOperationPort artifactOperationPort;
   private WorkflowCommandService workflowCommandService;
   private RunnerExecutionQueue runnerExecutionQueue;
+  private org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
 
@@ -85,6 +86,8 @@ class RecoveryLoggingContractTest {
     artifactOperationPort = mock(ArtifactOperationPort.class);
     workflowCommandService = mock(WorkflowCommandService.class);
     runnerExecutionQueue = mock(RunnerExecutionQueue.class);
+    workflowOrchestrationService =
+        mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     service =
@@ -97,6 +100,7 @@ class RecoveryLoggingContractTest {
             runnerExecutionQueue,
             mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class),
             mock(org.dradgo.application.runner.ManualExecutionDispatcher.class),
+            workflowOrchestrationService,
             eventWritePort,
             recoveryRecordPort,
             new IdempotencyKeyValidator(),
@@ -268,6 +272,104 @@ class RecoveryLoggingContractTest {
     assertTrue(exit.getFormattedMessage().contains("nextSafeAction=await_outcome"));
   }
 
+  // ---------------------------------------------------------------------------
+  // Story 4.5 — resume log lines (start / success / replay / rejected).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void resumeHappyPathEmitsStartAndSuccessLogsAtInfoWithExpectedKeys() {
+    stubPausedRunPath();
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(recoveryActionSnapshot("rcv_res1-aaaaa", "pending"));
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(recoveryActionSnapshot("rcv_res1-aaaaa", "succeeded"));
+    stubResumeDispatchOk();
+
+    service.resume(RUN, IDEMPOTENCY_KEY, ACTOR, null);
+
+    ILoggingEvent start = findFirst(Level.INFO, "recovery resume start");
+    assertTrue(start.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(start.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+    assertTrue(start.getFormattedMessage().contains("actorIdentity=" + ACTOR.actorIdentity()));
+
+    ILoggingEvent success = findFirst(Level.INFO, "recovery resume success");
+    assertTrue(success.getFormattedMessage().contains("recoveryActionId=rcv_res1-aaaaa"));
+    assertTrue(success.getFormattedMessage().contains("newRunnerExecutionId=rex_resume-bbbbb"));
+    assertTrue(success.getFormattedMessage().contains("resultingState=Executing"));
+    assertTrue(success.getFormattedMessage().contains("durationMs="));
+
+    assertEquals(RUN, start.getMDCPropertyMap().get("workflowRunId"));
+    assertEquals(RUN, success.getMDCPropertyMap().get("workflowRunId"));
+
+    long errorCount =
+        appender.list.stream().filter(event -> event.getLevel() == Level.ERROR).count();
+    assertEquals(0L, errorCount, "RecoveryService.resume must not emit ERROR on the happy path");
+  }
+
+  @Test
+  void resumeReplayEmitsReplayLogAtInfoWithRecoveryActionIdAndIdempotencyKey() {
+    // The prior row MUST be a resume action — a cross-action key reuse (retry/takeover) is a
+    // conflict, not a resume replay (guarded in both the Step 1 pre-check and the concurrent path).
+    RecoveryActionSnapshot prior = resumeActionSnapshot("rcv_resprior-aaaaa", "succeeded");
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.of(prior));
+
+    service.resume(RUN, IDEMPOTENCY_KEY, ACTOR, null);
+
+    ILoggingEvent replay = findFirst(Level.INFO, "recovery resume replay");
+    assertTrue(replay.getFormattedMessage().contains("recoveryActionId=rcv_resprior-aaaaa"));
+    assertTrue(replay.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+  }
+
+  @Test
+  void resumeOnNonPausedEmitsRejectedLogAtWarnWithCurrentState() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
+
+    assertThrows(DomainException.class, () -> service.resume(RUN, IDEMPOTENCY_KEY, ACTOR, null));
+
+    ILoggingEvent rejected = findFirst(Level.WARN, "recovery resume rejected");
+    assertTrue(rejected.getFormattedMessage().contains("currentState=Executing"));
+    assertTrue(rejected.getFormattedMessage().contains("reason=not_paused"));
+  }
+
+  private void stubPausedRunPath() {
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.PAUSED, null, 7L, 0, false)));
+    when(eventReadPort.findLatestTransitionToState(RUN, WorkflowState.PAUSED))
+        .thenReturn(
+            Optional.of(
+                new WorkflowEventRecord(
+                    "evt_paused-aaaaa",
+                    RUN,
+                    WorkflowEventType.WORKFLOW_STATE_CHANGED,
+                    WorkflowState.EXECUTING,
+                    WorkflowState.PAUSED,
+                    ACTOR.actorIdentity(),
+                    ActorType.HUMAN,
+                    "paused for investigation",
+                    null,
+                    true,
+                    FIXED_NOW,
+                    Map.of())));
+  }
+
+  private void stubResumeDispatchOk() {
+    org.dradgo.application.runner.RunnerExecutionHandle handle =
+        new org.dradgo.application.runner.RunnerExecutionHandle(
+            "rex_resume-bbbbb",
+            RUN,
+            RunnerStage.EXECUTION,
+            RunnerExecutionStatus.QUEUED,
+            FIXED_NOW.plusMinutes(30));
+    when(workflowOrchestrationService.redispatchAfterRetry(eq(RUN), any()))
+        .thenReturn(
+            new org.dradgo.application.runner.RunnerDispatchResult.Queued(handle, "evt_q-resume1"));
+  }
+
   private void stubFailedRunPath() {
     when(runReadPort.findByPublicId(RUN))
         .thenReturn(
@@ -321,6 +423,21 @@ class RecoveryLoggingContractTest {
         "retry",
         "evt_failure-aaaaa",
         null,
+        ACTOR.actorIdentity(),
+        ACTOR.actorType(),
+        IDEMPOTENCY_KEY,
+        resultStatus,
+        Instant.now().atOffset(ZoneOffset.UTC));
+  }
+
+  private RecoveryActionSnapshot resumeActionSnapshot(String publicId, String resultStatus) {
+    return new RecoveryActionSnapshot(
+        publicId,
+        1L,
+        RUN,
+        "resume",
+        "evt_paused-aaaaa",
+        "evt_resumed-prior",
         ACTOR.actorIdentity(),
         ACTOR.actorType(),
         IDEMPOTENCY_KEY,

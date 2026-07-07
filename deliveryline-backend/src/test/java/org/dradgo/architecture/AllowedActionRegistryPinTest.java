@@ -122,4 +122,13 @@ class AllowedActionRegistryPinTest {
     // RegistryContractTest).
     assertThat(AllowedAction.APPROVE_SPLIT.value()).isEqualTo("approve_split");
   }
+
+  @Test
+  void resumeWorkflowWireValueIsPinned() {
+    // Story 4.5 AC9 — RecoveryService.resume (routing through
+    // WorkflowCommandService.resumeWorkflow) is the canonical executor; surfaced ONLY at PAUSED for
+    // the workflow_owner gate role. Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.RESUME_WORKFLOW.value()).isEqualTo("resume_workflow");
+  }
 }

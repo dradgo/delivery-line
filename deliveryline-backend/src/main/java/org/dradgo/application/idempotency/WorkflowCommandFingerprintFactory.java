@@ -12,6 +12,7 @@ import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -116,6 +117,17 @@ public class WorkflowCommandFingerprintFactory {
       case TakeoverWorkflowCommand takeover -> {
         append(digest, takeover.workflowRunId());
         append(digest, normalizeOptional(takeover.reasonText()));
+      }
+      case ResumeWorkflowCommand resume -> {
+        // Story 4.5: canonical fingerprint fields beyond the shared envelope are workflowRunId +
+        // reasonText (mirrors RetryWorkflowCommand/TakeoverWorkflowCommand). targetState is
+        // deterministically derived per run from the → Paused event, so it is NOT fingerprinted.
+        // reasonText IS fingerprinted (symmetric with retry/takeover): a same-key resume with a
+        // different reason is a distinct action, not a replay. This differs from the review
+        // commands (ApproveSpec/RejectSpec/...) which deliberately exclude reason so wording edits
+        // replay.
+        append(digest, resume.workflowRunId());
+        append(digest, normalizeOptional(resume.reasonText()));
       }
       // Story 3h-2 (AC5) — the lint-gate operator actions. Fingerprint the run id only: the two
       // actions are distinguished by their distinct COMMAND_* type constants at the reservation

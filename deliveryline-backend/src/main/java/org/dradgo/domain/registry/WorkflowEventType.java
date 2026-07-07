@@ -26,6 +26,15 @@ public enum WorkflowEventType implements RegistryValue {
   RECOVERY_RETRIED("recovery.retried"),
   RECOVERY_DISPATCH_FAILED("recovery.dispatchFailed"),
   RECOVERY_RECONCILED("recovery.reconciled"),
+  // Story 4.5 (AC7) — appended in the same REQUIRES_NEW prep transaction as the Paused → prior
+  // executing-state transition + the recovery_actions insert when an operator resumes a paused run.
+  // Recovery namespace (lowerCamel), mirroring recovery.retried / recovery.reconciled (NOT
+  // workflow.resumed). It preserves who resumed + when (FR47 append-only): priorState = Paused,
+  // resultingState = the recovered prior executing state, interventionMarker = true. Detail keys
+  // (triggeringEventId = the Paused transition event, idempotencyKey, reason?, correlationId?) are
+  // already allow-listed. NO Flyway migration — event_type is an un-CHECKed text column and the
+  // registry set is fixture-asserted, not DB-derived.
+  RECOVERY_RESUMED("recovery.resumed"),
   ARTIFACT_LINEAGE_RECOVERED("artifact.lineageRecovered"),
   INTEGRATION_LINKED("integration.linked"),
   EXPORT_CREATED("export.created"),
