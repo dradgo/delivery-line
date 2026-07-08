@@ -49,16 +49,19 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Application service for CLI minimum-viable recovery (story 1.18 baseline).
  *
- * <p><strong>Scope-protected by ArchUnit:</strong> exposes <em>exactly</em> three public methods —
- * {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
- * ActorContext, String)} (story 4.5), and {@link #describeFailure(String)}. The rule {@code
- * RECOVERY_SERVICE_IS_SCOPE_PROTECTED} in {@code ArchitectureRuleCatalog} fails the build if any
- * other public method name is added without an Epic-4 story justifying it; adding {@code resume}
- * required widening that guard in lockstep (story 4.5 Reconciliation 2).
+ * <p><strong>Scope governed by ADR 0033 (was ArchUnit scope-protected):</strong> today this service
+ * exposes {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
+ * ActorContext, String)} (story 4.5), and {@link #describeFailure(String)}. The former ArchUnit
+ * tripwire {@code RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper
+ * recovery surface out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see
+ * {@code docs/adr/0033-recovery-service-scope-lift.md}. The set of recovery methods allowed to land
+ * on this service is now governed by that ADR's "what new scope is now allowed" list rather than by
+ * a build-breaking rule; adding a method outside that list requires a new ADR (or updating 0033).
  *
- * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code rerun(...)},
- * {@code reconcile(...)}, {@code pause(...)}, {@code classifyFailure(...)}. {@code takeover(...)}
- * lives on the sibling {@code DeveloperTakeoverService}, not here.
+ * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code
+ * rerunFromStep(...)}, {@code reconcile(...)}, {@code pause(...)}, {@code classifyFailure(...)} —
+ * see the ADR 0033 (c) allow-list for the exhaustive set. {@code takeover(...)} lives on the
+ * sibling {@code DeveloperTakeoverService}, which remains ArchUnit scope-protected.
  *
  * <p><strong>Idempotency-key namespacing:</strong> the user-supplied {@code idempotencyKey} flows
  * through three idempotency surfaces — {@link WorkflowCommandService#retryWorkflow} (workflow state

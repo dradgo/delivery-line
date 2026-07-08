@@ -192,9 +192,10 @@ class ArchitectureBoundaryTest {
   static final ArchRule repository_workspace_service_scope =
       ArchitectureRuleCatalog.REPOSITORY_WORKSPACE_SERVICE_SCOPE;
 
-  @ArchTest
-  static final ArchRule recovery_service_is_scope_protected =
-      ArchitectureRuleCatalog.RECOVERY_SERVICE_IS_SCOPE_PROTECTED;
+  // Story 4.28 lifted RECOVERY_SERVICE_IS_SCOPE_PROTECTED (governed by
+  // docs/adr/0033-recovery-service-scope-lift.md). Its @ArchTest registration was removed here;
+  // RecoveryServiceScopeLiftMetaTest guards that neither the rule nor this field returns. The
+  // sibling developer_takeover registration below stays (AC8).
 
   @ArchTest
   static final ArchRule developer_takeover_service_is_scope_protected =

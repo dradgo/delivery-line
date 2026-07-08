@@ -806,29 +806,17 @@ final class ArchitectureRuleCatalog {
                   "java..", "org.dradgo.application.artifact..", "org.dradgo.domain..")
               .allowEmptyShould(false));
 
-  static final ArchRule RECOVERY_SERVICE_IS_SCOPE_PROTECTED =
-      namedRule(
-          "RecoveryService must expose only the Epic-1 baseline plus story-4.5 public method signatures",
-          "Remediation: later Epic 4 stories will add rerun/reconcile/pause/classifyFailure. Story "
-              + "4.5 added resume (widening this guard in lockstep — Reconciliation 2). Changing "
-              + "RecoveryService's public surface without an Epic-4 story is a scope violation — "
-              + "update the story and this guard together.",
-          classes()
-              .that()
-              .haveFullyQualifiedName("org.dradgo.application.recovery.RecoveryService")
-              .should(
-                  exposeOnlyPublicMethodSignatures(
-                      methodSignature(
-                          "retry", String.class, String.class, ActorContext.class, String.class),
-                      // Story 4.5 — resume mirrors retry's positional signature.
-                      methodSignature(
-                          "resume", String.class, String.class, ActorContext.class, String.class),
-                      methodSignature("describeFailure", String.class))));
+  // Story 4.28: the RecoveryService scope-protected lock (RECOVERY_SERVICE_IS_SCOPE_PROTECTED —
+  // formerly pinning RecoveryService to retry/resume/describeFailure) was LIFTED here. Epic 4's
+  // deeper recovery surface (resume/reconcile/rerunFromStep/pause/classifyFailure) is now governed
+  // by docs/adr/0033-recovery-service-scope-lift.md rather than an ArchUnit tripwire. Do NOT
+  // re-add the rule — RecoveryServiceScopeLiftMetaTest guards its absence.
 
   // Story 3.22 (Trap T1): DeveloperTakeoverService is the SIBLING of RecoveryService (not a third
   // method on it). Pin its public surface to exactly takeoverWorkflow so a future story cannot
-  // silently widen it without an explicit scope decision (mirrors
-  // RECOVERY_SERVICE_IS_SCOPE_PROTECTED).
+  // silently widen it without an explicit scope decision. (This is the surviving twin of the
+  // now-lifted RecoveryService scope lock — see docs/adr/0033-recovery-service-scope-lift.md;
+  // story 4.28 AC8 keeps this one protected.)
   static final ArchRule DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED =
       namedRule(
           "DeveloperTakeoverService must expose only the takeoverWorkflow public method signature",

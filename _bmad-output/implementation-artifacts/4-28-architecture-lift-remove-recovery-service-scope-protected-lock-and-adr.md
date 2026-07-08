@@ -1,6 +1,6 @@
 # Story 4.28: Architecture Lift — Remove `RecoveryService` Scope-Protected Lock + ADR
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -71,30 +71,42 @@ _(Verbatim from epic-04-recovery.md Story 4.28, annotated with the reconciliatio
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Confirm the ADR number + the buildable scope (AC1/AC2/AC3/AC5)**
-  - [ ] Re-glob `docs/adr/*.md`; confirm the highest existing number (expected `0032`) and that `0033` is free on the current branch. If a sibling story already took `0033`, use the next free number and update every reference in this story consistently ([[flyway-v31-cross-branch-collision]] discipline for numbered artifacts).
-  - [ ] Re-read `sprint-status.yaml` for `4-5`…`4-9`. If any are still `backlog`/`in-progress` (not merged), confirm the DEFER scoping (Reconciliation 3) with the operator before proceeding.
-- [ ] **Task 2 — Remove the scope-protection rule (AC1)**
-  - [ ] Delete the `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` constant — `ArchitectureRuleCatalog.java:784-797`.
-  - [ ] Delete the `@ArchTest recovery_service_is_scope_protected` field — `ArchitectureBoundaryTest.java:195-197`.
-  - [ ] Verify `DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED` and both shared helpers (`exposeOnlyPublicMethodSignatures`, `methodSignature`) remain intact and still compile (AC8).
-  - [ ] Rewrite the `RecoveryService` class Javadoc (`:46-56`) — replace the "Scope-protected by ArchUnit" paragraph with a note that the lock was lifted by story 4.28 / ADR 0033, and that scope is now governed by that ADR. Run `spotless:apply` after the hand edit ([[spotless-apply-before-pushing-java-edits]]).
-- [ ] **Task 3 — Author the ADR (AC2/AC5)**
-  - [ ] Create `docs/adr/0033-recovery-service-scope-lift.md` following the house format (`# ADR 0033 — Title`, `**Status:**`, `**Driver:**`, `## Context`, `## Decision`, `## Alternatives Considered`, `## Consequences`) — exemplars: `0032-replay-safe-aftercommit-helper.md`, `0030-governed-delivery-tail.md`. Include the five required subsections (a)–(e) from AC2.
-  - [ ] Create `docs/adr/README.md` as an index table (number | title | status) covering all existing ADRs + the new `0033` row (AC5). (Or, if the team prefers, cross-link from `architecture.md` — see Open Questions.)
-- [ ] **Task 4 — Absence + sibling-presence meta-test (AC6 clause 1 + AC8)**
-  - [ ] Add `RecoveryServiceScopeLiftMetaTest` in `deliveryline-backend/src/test/java/org/dradgo/architecture/`, `@Tag(ArchitectureRuleCatalog.ARCHITECTURE_TAG)`.
-  - [ ] Assert via reflection: no field `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` on `ArchitectureRuleCatalog`; no field `recovery_service_is_scope_protected` on `ArchitectureBoundaryTest`.
-  - [ ] Assert in the same test: `DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED` field IS still declared on `ArchitectureRuleCatalog` (AC8 regression guard). Give each assertion a failure message pointing at ADR 0033.
-  - [ ] Add a lightweight ADR-presence assertion (AC6 clause 3): the `0033` file exists and contains the (a)–(e) section markers. (A plain file-read test in the same class, or a checklist step — keep it simple.)
-- [ ] **Task 5 — Documentation cross-links (AC7) — CONDITIONAL**
-  - [ ] If the story-4.27 recovery walkthrough doc exists, add an ADR-0033 reference in its "Background" section. If 4.27 is unbuilt, record the pending edit in `deferred-work.md` for 4.27 to absorb.
-- [ ] **Task 6 — Record deferred AC portions (AC3/AC4/AC6-clause-2/AC9)**
-  - [ ] Append to `_bmad-output/implementation-artifacts/deferred-work.md`: the AC3 merge-gate, AC4 Epic-4 close gate, AC6 "deeper methods end-to-end" proof, and AC9 close-validation — all gated on stories 4.5–4.9 (and the full Epic-4 set) merging. Cross-reference this story.
-- [ ] **Task 7 — Verify green**
-  - [ ] Run the Failsafe arch slice (the tag that carries `ArchitectureBoundaryTest` + the new meta-test) — [[archunit-runs-in-failsafe-not-surefire]]: a new/removed `@ArchTest` is exercised by Failsafe, NOT `mvnw test`. Confirm both the arch slice and the new meta-test pass. Prefer verifying in a clean env ([[verify-ci-fixes-in-clean-env]]).
-- [ ] **Logging instrumentation** (cross-cutting standard) — **N/A for this story, with rationale.**
-  - [ ] This story touches **no runtime application-service, persistence, SPI, or I/O code** — it deletes an ArchUnit test rule, edits Javadoc/Markdown, and adds a reflection meta-test. There is **no SLF4J surface, no new branch, no service entry/exit, no DomainException raise site** to instrument. The project-wide logging contract (below) is therefore satisfied vacuously. **Do not manufacture log statements in test or ADR files to "comply."** If Task 2's Javadoc edit somehow expands into touching `RecoveryService` runtime code (it must not), re-apply the full logging task.
+- [x] **Task 1 — Confirm the ADR number + the buildable scope (AC1/AC2/AC3/AC5)**
+  - [x] Re-glob `docs/adr/*.md`; confirm the highest existing number (expected `0032`) and that `0033` is free on the current branch. If a sibling story already took `0033`, use the next free number and update every reference in this story consistently ([[flyway-v31-cross-branch-collision]] discipline for numbered artifacts).
+  - [x] Re-read `sprint-status.yaml` for `4-5`…`4-9`. If any are still `backlog`/`in-progress` (not merged), confirm the DEFER scoping (Reconciliation 3) with the operator before proceeding.
+- [x] **Task 2 — Remove the scope-protection rule (AC1)**
+  - [x] Delete the `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` constant — `ArchitectureRuleCatalog.java:784-797`.
+  - [x] Delete the `@ArchTest recovery_service_is_scope_protected` field — `ArchitectureBoundaryTest.java:195-197`.
+  - [x] Verify `DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED` and both shared helpers (`exposeOnlyPublicMethodSignatures`, `methodSignature`) remain intact and still compile (AC8).
+  - [x] Rewrite the `RecoveryService` class Javadoc (`:46-56`) — replace the "Scope-protected by ArchUnit" paragraph with a note that the lock was lifted by story 4.28 / ADR 0033, and that scope is now governed by that ADR. Run `spotless:apply` after the hand edit ([[spotless-apply-before-pushing-java-edits]]).
+- [x] **Task 3 — Author the ADR (AC2/AC5)**
+  - [x] Create `docs/adr/0033-recovery-service-scope-lift.md` following the house format (`# ADR 0033 — Title`, `**Status:**`, `**Driver:**`, `## Context`, `## Decision`, `## Alternatives Considered`, `## Consequences`) — exemplars: `0032-replay-safe-aftercommit-helper.md`, `0030-governed-delivery-tail.md`. Include the five required subsections (a)–(e) from AC2.
+  - [x] Create `docs/adr/README.md` as an index table (number | title | status) covering all existing ADRs + the new `0033` row (AC5). (Or, if the team prefers, cross-link from `architecture.md` — see Open Questions.)
+- [x] **Task 4 — Absence + sibling-presence meta-test (AC6 clause 1 + AC8)**
+  - [x] Add `RecoveryServiceScopeLiftMetaTest` in `deliveryline-backend/src/test/java/org/dradgo/architecture/`, `@Tag(ArchitectureRuleCatalog.ARCHITECTURE_TAG)`.
+  - [x] Assert via reflection: no field `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` on `ArchitectureRuleCatalog`; no field `recovery_service_is_scope_protected` on `ArchitectureBoundaryTest`.
+  - [x] Assert in the same test: `DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED` field IS still declared on `ArchitectureRuleCatalog` (AC8 regression guard). Give each assertion a failure message pointing at ADR 0033.
+  - [x] Add a lightweight ADR-presence assertion (AC6 clause 3): the `0033` file exists and contains the (a)–(e) section markers. (A plain file-read test in the same class, or a checklist step — keep it simple.)
+- [x] **Task 5 — Documentation cross-links (AC7) — CONDITIONAL**
+  - [x] If the story-4.27 recovery walkthrough doc exists, add an ADR-0033 reference in its "Background" section. If 4.27 is unbuilt, record the pending edit in `deferred-work.md` for 4.27 to absorb.
+- [x] **Task 6 — Record deferred AC portions (AC3/AC4/AC6-clause-2/AC9)**
+  - [x] Append to `_bmad-output/implementation-artifacts/deferred-work.md`: the AC3 merge-gate, AC4 Epic-4 close gate, AC6 "deeper methods end-to-end" proof, and AC9 close-validation — all gated on stories 4.5–4.9 (and the full Epic-4 set) merging. Cross-reference this story.
+- [x] **Task 7 — Verify green**
+  - [x] Run the Failsafe arch slice (the tag that carries `ArchitectureBoundaryTest` + the new meta-test) — [[archunit-runs-in-failsafe-not-surefire]]: a new/removed `@ArchTest` is exercised by Failsafe, NOT `mvnw test`. Confirm both the arch slice and the new meta-test pass. Prefer verifying in a clean env ([[verify-ci-fixes-in-clean-env]]).
+- [x] **Logging instrumentation** (cross-cutting standard) — **N/A for this story, with rationale.**
+  - [x] This story touches **no runtime application-service, persistence, SPI, or I/O code** — it deletes an ArchUnit test rule, edits Javadoc/Markdown, and adds a reflection meta-test. There is **no SLF4J surface, no new branch, no service entry/exit, no DomainException raise site** to instrument. The project-wide logging contract (below) is therefore satisfied vacuously. **Do not manufacture log statements in test or ADR files to "comply."** If Task 2's Javadoc edit somehow expands into touching `RecoveryService` runtime code (it must not), re-apply the full logging task.
+
+## Review Findings
+
+Adversarial code review 2026-07-08 (bmad-code-review, Opus 4.8 [1m]) — 3 layers (Blind Hunter / Edge Case Hunter / Acceptance Auditor) over the story-scoped uncommitted diff (~432 lines). **No Critical or High.** Acceptance Auditor: all buildable ACs (AC1/AC2/AC5/AC6-clauses-1+3/AC8) **PASS**; the AC3/AC4/AC6-clause-2/AC7/AC9 deferrals are honestly recorded. Edge Case Hunter **verified against live code** that the highest-risk Blind Hunter concerns are false alarms (see Dismissed). Triage: 0 decision-needed, 3 patch, 2 defer, 5 dismissed.
+
+- [x] [Review][Patch] Meta-test `(a)`–`(e)` section check uses an unanchored substring match — `body.contains("(a)")` … `"(e)"` can false-pass on incidental two-char substrings (e.g. the prose "process (d)/(e)"), so a gutted ADR whose real governance subsections were deleted would still pass. **FIXED:** anchored to the bold line-start markers (`**(a)`…`**(e)`); Failsafe meta-test 4/0 green against the real ADR. [deliveryline-backend/src/test/java/org/dradgo/architecture/RecoveryServiceScopeLiftMetaTest.java:105]
+- [x] [Review][Patch] `RecoveryService` Javadoc "not yet present" list says `rerun(...)` while the new ADR 0033 (c) allow-list and `deferred-work.md` name the story-4.7 method `rerunFromStep(...)` — the class and its governing ADR contradicted each other. **FIXED:** aligned to `rerunFromStep(...)` + pointed at the ADR 0033 (c) allow-list; test-compile clean. [deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java:61]
+- [x] [Review][Patch] ADR 0033 Consequences overclaimed the meta-test's durability — "a contributor re-adding the tripwire … fails the build" is only true for a literal same-name revert; a scope-protection rule re-added under a different constant name escapes the reflection guard. **FIXED:** softened to "re-adding the tripwire under its original name `RECOVERY_SERVICE_IS_SCOPE_PROTECTED`" and noted the rename case routes through (d)/(e). [docs/adr/0033-recovery-service-scope-lift.md:72]
+- [x] [Review][Defer] `RecoveryServiceScopeLiftMetaTest.resolveAdr()` cwd-dependent upward walk — green in current Failsafe/CI layout, hypothetically false-fail/false-pass under a relocated or nested cwd. [deliveryline-backend/src/test/java/org/dradgo/architecture/RecoveryServiceScopeLiftMetaTest.java:119] — deferred, low-value robustness nit
+- [x] [Review][Defer] Meta-test guards the ADR file but not the doc cross-links (README 0033 row, the two doc pointers) it relies on — silent link-rot possible. [deliveryline-backend/src/test/java/org/dradgo/architecture/RecoveryServiceScopeLiftMetaTest.java] — deferred, coverage gap arguably out of arch-meta-test scope
+
+**Dismissed as noise (5):** (1) `ActorContext` unused-import risk from deleting the rule — Edge verified the import is still live via the takeover rule (`:446`/`:499`) and the shared helpers survive; (2) dangling reference / broken rule-count contract to the removed constant — Edge grep confirmed only comments/docs/string-literals remain, no live Java reference; (3) `RecoveryServiceScopeLiftMetaTest` uses the `*Test` (Surefire) name while claiming Failsafe placement — Edge verified the POM excludes `architecture/**/*Test` from Surefire and includes `<groups>architecture</groups>` in Failsafe, so it runs in the Failsafe arch slice as claimed; (4) ADR ships/stays `Proposed` with no merge mechanism to flip it — house convention (matches 0024/0026/0027/0029–0032); (5) closure story advanced to `review` with AC3/AC4 unmet — by-design deferral, operator-confirmed 2026-07-08, enforced by the new `4-29` backlog close-gate story.
 
 ## Dev Notes
 
@@ -172,12 +184,46 @@ Every story is expected to leave the touched services observable enough to debug
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Opus 4.8 [1m] (claude-opus-4-8) — bmad-dev-story, 2026-07-08.
 
 ### Debug Log References
 
+- Format + test-compile: `./mvnw -pl deliveryline-backend spotless:apply test-compile -Djacoco.skip=true` → clean (spotless reflowed one lambda in the new meta-test).
+- Failsafe architecture slice: `./mvnw -pl deliveryline-backend integration-test -Dit.test='org.dradgo.architecture.*Test' -Dfailsafe.failIfNoSpecifiedTests=false -Dcheckstyle.skip=true -Dspotbugs.skip=true -Djacoco.skip=true` → **BUILD SUCCESS**. Failsafe arch slice **82 tests / 0 failures**, incl. `RecoveryServiceScopeLiftMetaTest` **4/0**, `ArchitectureBoundaryTest` **60/0** (green with the recovery rule removed), `ArchitectureDiagnosticMetaTest` **5/0**. Full backend Surefire suite **1661 / 0 failures** (no regression from the `RecoveryService` Javadoc / catalog / boundary edits).
+- NOTE: `verify` (full) aborts at the `jacoco:check` coverage gate when run as an isolated subset (0.62 vs 0.75 line ratio) — an artifact of running one slice, NOT a test failure. Also skipped `checkstyle`/`spotbugs`: HEAD carries a PRE-EXISTING checkstyle drift at `WorkflowCommandService.java:1158` unrelated to 4.28 (see sprint-status 4-17 residual). Recommend a clean-env full `mvnw verify` before merge ([[verify-ci-fixes-in-clean-env]]).
+
 ### Completion Notes List
 
-Ultimate context engine analysis completed — comprehensive developer guide created.
+Implemented the **buildable slice** of the Epic-4 closure story (scope confirmed with operator 2026-07-08). Dependency-gated ACs are deferred to `deferred-work.md`.
+
+**GROUND-TRUTH DRIFT from the 2026-07-05 story snapshot (handled):** story 4-5 is now `done` — it had already added a public `resume(...)` method and **widened** `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` to permit it. So (a) the live surface was 3 methods (`retry`/`resume`/`describeFailure`), not the 2 the story assumed, and (b) the rule + registration + Javadoc had moved off the story's cited line numbers (rule `ArchitectureRuleCatalog.java:809-826` not `:784-797`; registration `ArchitectureBoundaryTest.java:195-197`; Javadoc already rewritten once by 4.5 to "three methods"). Verified all against live code before editing.
+
+- ✅ **AC1** — Deleted the `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` rule constant (`ArchitectureRuleCatalog`) and its `@ArchTest recovery_service_is_scope_protected` registration (`ArchitectureBoundaryTest`); left explanatory tombstone comments pointing at ADR 0033. Arch slice green after removal.
+- ✅ **AC8** — Kept `DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED` + both shared helpers (`exposeOnlyPublicMethodSignatures`, `methodSignature` — still used by the takeover rule at the new `:842`). Confirmed `ActorContext` import stays live (used by 2 other rules at `:446`/`:499`), so no unused-import breakage. Rewrote the `RecoveryService` class Javadoc from "scope-protected by ArchUnit" → "scope governed by ADR 0033".
+- ✅ **AC2** — Authored `docs/adr/0033-recovery-service-scope-lift.md` in the house format (Status/Driver/Context/Decision/Alternatives/Consequences) with the five required governance subsections (a)–(e). Confirmed `0033` free (highest on disk was `0032`).
+- ✅ **AC5** — Created `docs/adr/README.md` index (did not exist) — one row per existing ADR 0001–0032 + the new 0033, with a note on the non-contiguous numbering gaps.
+- ✅ **AC6 (clause 1 + clause 3)** — Added `RecoveryServiceScopeLiftMetaTest` (reflection, `@Tag(ARCHITECTURE_TAG)`): asserts the rule field is absent on the catalog, the registration field is absent on the boundary test, the sibling `DEVELOPER_TAKEOVER_*` field is still present (AC8 regression guard), and ADR 0033 exists with its (a)–(e) markers + house sections. Each assertion message points at ADR 0033.
+- ➕ **Doc hygiene (in-scope with AC1)** — `docs/failure-recovery-walkthrough.md` and `docs/cli/workflow-commands.md` both asserted the now-deleted rule protects `RecoveryService`; corrected both to note the lift + link ADR 0033 (leaving them would be a stale claim about a rule I just deleted). Neither is the story-4.27 "Background" walkthrough (that increment is `backlog`).
+- ⏸️ **DEFERRED to `deferred-work.md`** (dependency-gated on 4.6–4.9, which are `backlog`; 4.5 is `done`): AC3 merge-gate, AC4 Epic-4 close gate, AC6 clause 2 (all-five-methods end-to-end ArchUnit proof — only `resume` exists today), AC7 (4.27 walkthrough Background cross-link — doc not authored yet), AC9 (merge-time acknowledgment).
 
 ### File List
+
+Modified:
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java` — deleted `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` rule constant (AC1); tombstone comment + updated sibling comment (AC8).
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java` — deleted `recovery_service_is_scope_protected` `@ArchTest` registration (AC1); tombstone comment.
+- `deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java` — rewrote class Javadoc: scope now governed by ADR 0033, not the ArchUnit tripwire.
+- `docs/failure-recovery-walkthrough.md` — corrected stale "scope-protected by ArchUnit rule" claim → lifted-by-4.28 + ADR 0033 link.
+- `docs/cli/workflow-commands.md` — same stale-claim correction + ADR 0033 link.
+- `_bmad-output/implementation-artifacts/deferred-work.md` — new "dev-story of story-4-28" section (AC3/AC4/AC6-clause-2/AC7/AC9 deferrals).
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 4-28 `ready-for-dev` → `in-progress` → `review` + last_updated log.
+
+Added:
+- `docs/adr/0033-recovery-service-scope-lift.md` — the governing ADR (AC2).
+- `docs/adr/README.md` — ADR index (AC5).
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/RecoveryServiceScopeLiftMetaTest.java` — reflection absence/sibling/ADR-presence meta-test (AC6 clause 1+3, AC8).
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-07-08 | Buildable slice implemented via bmad-dev-story (Opus 4.8 [1m]): removed the `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` ArchUnit rule + registration (AC1), rewrote `RecoveryService` Javadoc, authored ADR 0033 + `docs/adr/README.md` index (AC2/AC5), added `RecoveryServiceScopeLiftMetaTest` absence/sibling guard (AC6/AC8), corrected two stale doc references. AC3/AC4/AC6-clause-2/AC7/AC9 deferred to `deferred-work.md` (gated on 4.6–4.9). Failsafe arch slice + full Surefire suite green. Status → review. |
