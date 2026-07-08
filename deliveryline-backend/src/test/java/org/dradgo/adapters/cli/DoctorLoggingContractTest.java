@@ -69,6 +69,7 @@ class DoctorLoggingContractTest {
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
     when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
+    when(probes.probeJiraAuth()).thenReturn(ProbeResult.pass("jira-real inactive"));
     DoctorService service =
         new DoctorService(
             probes,
@@ -87,7 +88,7 @@ class DoctorLoggingContractTest {
     assertThat(infoEvents.get(1).getFormattedMessage())
         .contains("doctor diagnostics finished")
         .contains("overallStatus=PASS")
-        .contains("checksRun=18");
+        .contains("checksRun=19");
   }
 
   @Test

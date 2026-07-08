@@ -84,7 +84,8 @@
   "connectorKinds": [
     "linear",
     "github",
-    "gitlab"
+    "gitlab",
+    "jira"
   ],
   "reviewOutcomes": [
     "pass",
@@ -161,6 +162,8 @@
     "DOCTOR_RUNNER_SECRET_MISSING": "https://deliveryline.local/problems/doctor-runner-secret-missing",
     "DOCTOR_GITHUB_AUTH_FAILED": "https://deliveryline.local/problems/doctor-github-auth-failed",
     "DOCTOR_GITHUB_TOKEN_MISSING": "https://deliveryline.local/problems/doctor-github-token-missing",
+    "DOCTOR_JIRA_AUTH_FAILED": "https://deliveryline.local/problems/doctor-jira-auth-failed",
+    "DOCTOR_JIRA_TOKEN_MISSING": "https://deliveryline.local/problems/doctor-jira-token-missing",
     "LINEAR_GITHUB_REPO_MISMATCH": "https://deliveryline.local/problems/linear-github-repo-mismatch",
     "DOCTOR_GIT_MISSING": "https://deliveryline.local/problems/doctor-git-missing",
     "DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED": "https://deliveryline.local/problems/doctor-git-bot-identity-unconfigured",

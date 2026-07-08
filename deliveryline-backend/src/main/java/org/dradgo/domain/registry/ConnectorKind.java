@@ -10,7 +10,13 @@ public enum ConnectorKind implements RegistryValue {
   // capability set). Widening this enum fans out to V18 (both projects CHECK constraints) + the
   // connectorKinds API placeholder; the 3c-2 RegistryContractTest drift gate enforces all three
   // stay aligned. A full GitLab vendor implementation is post-pilot.
-  GITLAB("gitlab");
+  GITLAB("gitlab"),
+  // Story 3i-1 (FR80) — JIRA is a first-class ticket source at Linear parity (real
+  // JiraReal/JiraMockAdapter under adapters.integration.ticketsource.jira). Widening this enum fans
+  // out to V37 (both projects CHECK constraints, mirroring the V18/GITLAB precedent) + the
+  // connectorKinds API placeholder; the 3c-2 RegistryContractTest drift gate enforces all three
+  // stay aligned.
+  JIRA("jira");
 
   private static final Map<String, ConnectorKind> LOOKUP = RegistryParsers.index(values());
 

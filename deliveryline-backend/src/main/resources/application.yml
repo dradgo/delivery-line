@@ -264,6 +264,23 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  jira:
+    # Story 3i-1 (FR80) — real JIRA ticket-source adapter config (active only under the opt-in
+    # jira-real profile, which is NEVER in a profile group; the jira-mock stays opt-in for
+    # local/demo). JIRA auth uses a bearer token read at request time. The token normally comes from
+    # the project-scoped credential override; JIRA_API_TOKEN is only an optional host-env fallback
+    # for local operations. NEVER commit tokens here. base-url is non-secret deployment config. A
+    # blank token/email/base-url is allowed at bind time; base-url is required when jira-real creates
+    # the jiraRestClient bean.
+    # bean. Mirrors the linear.* / github.* patterns. To run JIRA as the ticket source, activate the
+    # jira-real (or jira-mock) profile and set deliveryline.integration.ticket-source.kind: jira.
+    api-token: ${JIRA_API_TOKEN:}
+    email: ${JIRA_EMAIL:}
+    # base-url: https://acme.atlassian.net  # your JIRA Cloud site URL (required under jira-real)
+    poll-batch-size: 50
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000

@@ -593,6 +593,12 @@ final class ArchitectureRuleCatalog {
               .and()
               .doNotHaveFullyQualifiedName(
                   "org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter")
+              .and()
+              // Story 3i-1 — JiraRealAdapter self-posts the parent-link comment from
+              // createSubticket,
+              // exactly as LinearRealAdapter is exempted.
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.adapters.integration.ticketsource.jira.JiraRealAdapter")
               .should()
               .callMethod(
                   TicketSourceAdapter.class,

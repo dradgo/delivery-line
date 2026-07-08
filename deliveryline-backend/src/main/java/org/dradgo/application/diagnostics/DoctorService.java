@@ -52,6 +52,9 @@ public class DoctorService {
   // Story 3c-10 (AC1) — per-project configuration health (status/kinds/binding/credential-presence
   // /kind-resolvability). Appended last in STATIC_ORDER.
   public static final String CHECK_PROJECTS = "projects";
+  // Story 3i-1 (AC6) — JIRA auth probe under the jira-real profile. Appended last in STATIC_ORDER
+  // (this entry is what makes the count 18→19); sibling of CHECK_GITHUB_AUTH.
+  public static final String CHECK_JIRA_AUTH = "jira-auth";
 
   public static final List<String> STATIC_ORDER =
       List.of(
@@ -72,7 +75,8 @@ public class DoctorService {
           CHECK_GIT_BOT_IDENTITY,
           CHECK_OBSERVABILITY_MEMORY,
           CHECK_LINEAR_COMPLETION_SYNC,
-          CHECK_PROJECTS);
+          CHECK_PROJECTS,
+          CHECK_JIRA_AUTH);
 
   private static final Map<String, String> REMEDIATION =
       Map.ofEntries(
@@ -132,7 +136,12 @@ public class DoctorService {
               "Fix the misconfigured project(s) named in details: set a repository URL, set the"
                   + " missing connector credential via the project's set-credential endpoint (story"
                   + " 3c-8), or register an adapter for the configured connector kind. Disabled"
-                  + " projects are reported but excluded from the advisory."));
+                  + " projects are reported but excluded from the advisory."),
+          Map.entry(
+              CHECK_JIRA_AUTH,
+              "Set a valid JIRA_API_TOKEN (an Atlassian API token) and JIRA_EMAIL (the account"
+                  + " email) in .env, plus deliveryline.jira.base-url, then restart and re-check."
+                  + " This check only runs under the jira-real profile."));
 
   private static final String SHAREABLE_REDACTED = DataClassification.SHAREABLE_REDACTED.value();
 
@@ -249,6 +258,7 @@ public class DoctorService {
         case CHECK_OBSERVABILITY_MEMORY -> probes.probeObservabilityMemory();
         case CHECK_LINEAR_COMPLETION_SYNC -> probes.probeLinearCompletionSync();
         case CHECK_PROJECTS -> probes.probeProjects();
+        case CHECK_JIRA_AUTH -> probes.probeJiraAuth();
         default -> ProbeResult.skip("Unknown check: " + name);
       };
     } catch (RuntimeException re) {

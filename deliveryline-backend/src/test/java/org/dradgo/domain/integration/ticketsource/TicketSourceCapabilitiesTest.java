@@ -30,6 +30,19 @@ class TicketSourceCapabilitiesTest {
   }
 
   @Test
+  void jiraDefaultsAdvertiseTheFullCapabilitySet() {
+    // Story 3i-1 AC2 — JIRA supports comment-posting, polling, source-status ids, sub-task
+    // creation, and the /browse/ source-ticket URL.
+    TicketSourceCapabilities capabilities = TicketSourceCapabilities.jiraDefaults();
+
+    assertTrue(capabilities.supportsCommentOnTicket());
+    assertTrue(capabilities.supportsPolling());
+    assertTrue(capabilities.supportsTicketStateUpdates());
+    assertTrue(capabilities.supportsTicketCreation());
+    assertTrue(capabilities.supportsSourceTicketUrl());
+  }
+
+  @Test
   void subticketRecordsAreVendorNeutralAndCarryReplayKey() {
     SubticketDraft draft =
         new SubticketDraft(

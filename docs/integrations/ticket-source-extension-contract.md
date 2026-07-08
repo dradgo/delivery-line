@@ -73,7 +73,29 @@ A new source must:
 - Cover config-driven selection: the configured `kind` (+ profile) activates the right implementation, and a `kind` with no implementation fails fast at boot.
 - Honor the test-naming conventions: `@SpringBootTest`+Testcontainers tests are `*IT` (Failsafe); ArchUnit `@ArchTest`s run in Failsafe, not Surefire.
 
+## Worked example: JIRA (story 3i-1)
+
+JIRA is the first non-Linear connector to exercise this contract end-to-end (`ConnectorKind.JIRA`,
+`kind=jira`, `adapters.integration.ticketsource.jira`). It is a **real** implementation (all
+capabilities true, real JIRA REST v3 HTTP) — the opposite of the degraded `gitlab` stub. Notes for
+the next author:
+
+- **Not `@Primary`.** Resolution keys on `connectorKind()`; a second `@Primary` collides with
+  `LinearRealAdapter` for the single-injection polling host when both real profiles co-activate.
+- **Vendor body format lives behind the port.** JIRA comment/description bodies are ADF; the
+  `<!-- deliveryline:... -->` markers are embedded in an ADF text node and scanned back by
+  extracting comment text. The neutral `Ticket`/`CommentResult`/`CreateSubticketResult` shapes are
+  unchanged — no ADF type crosses the port.
+- **State is read-only on the neutral `Ticket`.** `sourceStatus` (name) + `sourceStatusId` (opaque
+  `fields.status.id`) populate from `fields.status`; there is no state-write.
+- **Auth is deployment + per-project.** HTTP Basic `email:apiToken`; the email is deployment-level
+  (`deliveryline.jira.email`) and the token is the per-project write-only credential under
+  `ConnectorRole.TICKET_SOURCE`, preferred via the `CREDENTIAL_OVERRIDE_ATTRIBUTE` at request time.
+- **Doctor + redaction fan-out.** A `jira-auth` doctor probe + `DOCTOR_JIRA_{TOKEN_MISSING,AUTH_FAILED}`
+  codes, and a `project-credential-jira-token.json` redaction fixture (the Atlassian token rides a
+  `SECRET_FIELD`-covered key — Atlassian tokens have no stable prefix, so no vendor regex).
+
 ## References
 
-- `../adr/0007-ticket-source-abstraction.md` — the abstraction decision record.
+- `../adr/0007-ticket-source-abstraction.md` — the abstraction decision record (incl. the JIRA section).
 - `linear-completion-sync.md` — the completion-sync flow and security posture.

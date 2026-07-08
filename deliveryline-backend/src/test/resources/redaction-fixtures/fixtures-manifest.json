@@ -193,6 +193,12 @@
       "placeholder": "[REDACTED_SECRET_FIELD]",
       "minimumClassification": "shareable-redacted",
       "forbiddenSnippets": ["FAKE-OPAQUE-CREDENTIAL-DO-NOT-USE-Zk9wQ2pLmN7xR4tBvH"]
+    },
+    {
+      "file": "project-credential-jira-token.json",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ATATT3xFfGF0-FAKEDONOTUSE-aaaaaaaaaaaaaaaaaaaaaaaa"]
     }
   ]
 }

@@ -18,6 +18,7 @@ import java.util.Optional;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
+import org.dradgo.application.integration.ticketsource.CredentialBoundTicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.integration.repohost.Branch;
@@ -178,6 +179,27 @@ class ProjectConnectorResolverTest {
     assertThat(ts.getCapabilities().supportsCommentOnTicket()).isFalse();
     assertThat(rh).isSameAs(degradedRh);
     assertThat(rh.getCapabilities().supportsPullRequestComments()).isFalse();
+  }
+
+  @Test
+  void resolveTicketSourceBindsProjectCredentialWhenAdapterSupportsIt() {
+    Project project = project(ConnectorKind.JIRA, ConnectorKind.GITHUB);
+    BindableTicketSource jira = new BindableTicketSource(ConnectorKind.JIRA);
+    ProjectCredentialSource source = mock(ProjectCredentialSource.class);
+    when(source.resolveSecret(project, "ticket_source"))
+        .thenReturn(Optional.of("oauth-grant-json"));
+    @SuppressWarnings("unchecked")
+    ObjectProvider<ProjectCredentialSource> provider = mock(ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(source);
+    ProjectConnectorResolver resolver =
+        new ProjectConnectorResolver(List.of(jira), List.of(), provider);
+
+    TicketSourceAdapter resolved = resolver.resolveTicketSource(project);
+
+    assertThat(resolved).isInstanceOf(BindableTicketSource.class);
+    assertThat(((BindableTicketSource) resolved).boundCredential())
+        .contains("prj_test01:oauth-grant-json");
+    assertThat(jira.boundCredential()).isEmpty();
   }
 
   // ---- project-scoped repo mismatch (AC5) ----
@@ -400,7 +422,7 @@ class ProjectConnectorResolverTest {
   }
 
   /** Minimal fake {@link TicketSourceAdapter} declaring a kind + capabilities; ops are no-ops. */
-  private static final class FakeTicketSource implements TicketSourceAdapter {
+  private static class FakeTicketSource implements TicketSourceAdapter {
     private final ConnectorKind kind;
     private final TicketSourceCapabilities capabilities;
 
@@ -451,6 +473,35 @@ class ProjectConnectorResolverTest {
     @Override
     public ConnectivityResult verifyConnectivity(String credentialOverride) {
       return ConnectivityResult.ok("fake: ok");
+    }
+  }
+
+  private static final class BindableTicketSource extends FakeTicketSource
+      implements CredentialBoundTicketSourceAdapter {
+    private final String boundCredential;
+
+    private BindableTicketSource(ConnectorKind kind) {
+      this(kind, null);
+    }
+
+    private BindableTicketSource(ConnectorKind kind, String boundCredential) {
+      super(kind);
+      this.boundCredential = boundCredential;
+    }
+
+    @Override
+    public TicketSourceAdapter withCredentialOverride(String credentialOverride) {
+      return new BindableTicketSource(connectorKind(), credentialOverride);
+    }
+
+    @Override
+    public TicketSourceAdapter withProjectCredential(
+        String projectPublicId, String credentialOverride) {
+      return new BindableTicketSource(connectorKind(), projectPublicId + ":" + credentialOverride);
+    }
+
+    private Optional<String> boundCredential() {
+      return Optional.ofNullable(boundCredential);
     }
   }
 

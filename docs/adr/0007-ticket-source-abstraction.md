@@ -59,8 +59,35 @@ Keep the governed method and add a raw-string sibling.
 - `deliveryline.linear.*` config keys and the `linear-mock`/`linear-real` profiles are unchanged; the only net-new config is the optional `deliveryline.integration.ticket-source.kind` selector (default `linear`).
 - The `IntegrationLinkService` method names (`linkTicket`, `findActiveLinearTicketLink`) and `WorkflowOrchestrationService.syncCompletionToLinear` keep their Linear-flavored names — a cosmetic rename is a follow-up, not this story.
 
+## Story 3i-1 — JIRA is the second real `TicketSourceAdapter` kind (FR80)
+
+JIRA (`ConnectorKind.JIRA`, `kind=jira`) is added at Linear parity: `JiraRealAdapter` /
+`JiraMockAdapter` under `adapters.integration.ticketsource.jira`, `@Profile("jira-real")` /
+`@Profile("jira-mock")` — **not `@Primary`** (per-project resolution keys on `connectorKind()`, so a
+second `@Primary` would collide with `LinearRealAdapter` for the single-injection `LinearPollingHost`
+when both real profiles co-activate). It implements the full capability set
+(`TicketSourceCapabilities.jiraDefaults()`) against JIRA REST v3 (`/rest/api/3/issue/{key}`,
+`/comment`, sub-task `/issue`, `/myself`). Ticket workflow-state rides the neutral
+`Ticket.sourceStatus` / `sourceStatusId` (opaque `fields.status.id`) — there is no state-**write**
+(JIRA transitions are out of scope). Comment/description bodies are Atlassian Document Format (ADF);
+the `<!-- deliveryline:... -->` idempotency markers are embedded in an ADF text node and scanned back
+by extracting comment text.
+
+The story also **generalized the story-3.32 ticket-source `kind` fail-fast** (deferred-work #132):
+`LinearConfiguration` previously hard-failed any `kind != linear`, so a `kind=jira` deployment could
+not boot. It now validates the configured `kind` against the registered `ConnectorKind` set
+(connector-agnostic — a new enum value needs no edit here); per-project resolution remains the
+load-bearing selector.
+
+Onboarding a JIRA project: store the per-project API token write-only under
+`ConnectorRole.TICKET_SOURCE` (opaque ciphertext, no schema change); set deployment-level
+`deliveryline.jira.base-url` (non-secret) and `deliveryline.jira.email`; activate the `jira-real`
+profile and set `deliveryline.integration.ticket-source.kind: jira`. JIRA Cloud auth is HTTP Basic
+`email:apiToken` assembled at request time (never logged). The doctor `jira-auth` probe verifies it.
+
 ## References
 
+- [Source: `_bmad-output/planning-artifacts/epic-03i-connector-expansion.md#Story 3i-1`] — FR80 JIRA ticket source, ACs 1–8.
 - [Source: `_bmad-output/planning-artifacts/epic-03-agent-execution.md#Story 3.32`] — ACs 1–10 (and §3.33 for the symmetric GitHub sibling).
 - `docs/integrations/ticket-source-extension-contract.md` — the documented extension contract for new ticket sources.
 - `docs/integrations/linear-completion-sync.md` — the completion-sync flow this story must not regress.

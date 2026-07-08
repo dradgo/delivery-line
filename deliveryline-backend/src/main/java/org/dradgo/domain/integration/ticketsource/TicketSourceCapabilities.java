@@ -45,4 +45,14 @@ public record TicketSourceCapabilities(
   public static TicketSourceCapabilities linearDefaults() {
     return new TicketSourceCapabilities(true, true, true, true, true);
   }
+
+  /**
+   * The JIRA capability set (story 3i-1 AC2) - JIRA supports comment-posting (ADF), polling (JQL),
+   * source-status ids (opaque {@code fields.status.id}), source sub-task creation, and the {@code
+   * /browse/} source-ticket URL. Same full set as {@link #linearDefaults()}; kept a distinct named
+   * factory so the capability contract test asserts the JIRA connector's flags explicitly.
+   */
+  public static TicketSourceCapabilities jiraDefaults() {
+    return new TicketSourceCapabilities(true, true, true, true, true);
+  }
 }

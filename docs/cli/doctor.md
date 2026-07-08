@@ -50,6 +50,9 @@ is safe even on `FAIL`.
 | `rest-bind-address` | `server.address` resolves to a loopback address | FAIL on non-loopback. **Port-availability sub-check is skipped** in story 1.16; production bind failures still surface on Spring Boot startup. |
 | `frontend-asset-presence` | Reserved (populated in story 2.28) | SKIP |
 | `supported-environment` | OS+shell+runtime combination matches [`docs/supported-environments.md`](../supported-environments.md) | FAIL on outside-matrix (`DOCTOR_UNSUPPORTED_ENVIRONMENT`); WARN on near-miss (Windows 10, macOS 13, Ubuntu 20.04) |
+| `jira-auth` | Under the `jira-real` profile only: `JIRA_API_TOKEN` + `JIRA_EMAIL` present and `GET /rest/api/3/myself` authenticates (story 3i-1). Inactive profile ⇒ PASS not-applicable with no network call | FAIL on missing creds (`DOCTOR_JIRA_TOKEN_MISSING`) / auth failure (`DOCTOR_JIRA_AUTH_FAILED`) |
+
+> Note: this table is not exhaustive — the runtime `STATIC_ORDER` also includes the later `github-auth`, `git-available`, `git-bot-identity`, `observability-memory`, `linear-completion-sync`, `projects`, and `jira-auth` checks (all profile-gated / advisory). The canonical list is `DoctorService.STATIC_ORDER`.
 
 ## JSON schema
 

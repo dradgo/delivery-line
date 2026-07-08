@@ -32,6 +32,7 @@ import org.dradgo.application.diagnostics.spi.DoctorProbePort;
 import org.dradgo.application.diagnostics.spi.ProbeResult;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.integration.github.GitHubProperties;
+import org.dradgo.application.integration.jira.JiraProperties;
 import org.dradgo.application.project.ProjectConfigChecks;
 import org.dradgo.application.project.ProjectConnectorResolver;
 import org.dradgo.application.project.ProjectStore;
@@ -68,6 +69,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   private static final Set<String> BLOCKED_PROFILES = Set.of("prod", "production", "prd");
   private static final Set<String> ALLOWED_PROFILES = Set.of("local", "test", "demo");
   private static final String GITHUB_REAL_PROFILE = "github-real";
+  // Story 3i-1 (AC6) — the profile that activates the real JIRA adapter + its jiraRestClient bean.
+  private static final String JIRA_REAL_PROFILE = "jira-real";
   // Story 3.7 AC10 — the profile that activates the ELK observability stack, and the recommended
   // minimum host RAM below which that stack may be unstable (8 GiB).
   private static final String OBSERVABILITY_PROFILE = "observability";
@@ -115,6 +118,11 @@ public class DoctorProbeAdapter implements DoctorProbePort {
   // github-real is inactive, so a null client here is the normal default-profile case.
   @Nullable private final RestClient gitHubRestClient;
   @Nullable private final GitHubProperties gitHubProperties;
+  // Story 3i-1 (AC6) — the JIRA auth probe deps. Both null unless the jira-real profile is active
+  // and its config/RestClient beans exist — the probe returns PASS-not-applicable (no network) when
+  // jira-real is inactive, so a null client here is the normal default case.
+  @Nullable private final RestClient jiraRestClient;
+  @Nullable private final JiraProperties jiraProperties;
   // Story 3.9 AC15 — the configured deliveryline-bot identity for the git-bot-identity probe.
   // ObjectProvider-injected; absent → defaults() (empty bot → the probe WARNs as unconfigured).
   private final WorkflowProperties workflowProperties;
@@ -150,6 +158,11 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       // absent in lean doctor-smoke boots. Absent → null → probe reports PASS-not-applicable.
       @Qualifier("gitHubRestClient") ObjectProvider<RestClient> gitHubRestClientProvider,
       ObjectProvider<GitHubProperties> gitHubPropertiesProvider,
+      // Story 3i-1 (AC6) — the jira-auth probe wires in every context; the jiraRestClient bean
+      // exists only under jira-real and JiraProperties may be absent in lean doctor-smoke boots.
+      // Absent → null → probe reports PASS-not-applicable.
+      @Qualifier("jiraRestClient") ObjectProvider<RestClient> jiraRestClientProvider,
+      ObjectProvider<JiraProperties> jiraPropertiesProvider,
       // ObjectProvider so the git-bot-identity probe (story 3.9 AC15) wires in every context;
       // absent (lean doctor-smoke boots) → defaults() (empty bot → probe WARNs as unconfigured).
       ObjectProvider<WorkflowProperties> workflowPropertiesProvider,
@@ -184,7 +197,9 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         workflowPropertiesProvider.getIfAvailable(),
         DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
         projectStoreProvider.getIfAvailable(),
-        projectConnectorResolverProvider.getIfAvailable());
+        projectConnectorResolverProvider.getIfAvailable(),
+        jiraRestClientProvider.getIfAvailable(),
+        jiraPropertiesProvider.getIfAvailable());
   }
 
   // Public so tests in other packages can construct an adapter without the
@@ -260,6 +275,46 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
         null,
         null);
+  }
+
+  /**
+   * Story 3i-1 (AC6) test seam for the jira-auth probe: only {@code environment} (jira-real profile
+   * check) and the two JIRA deps are load-bearing. The parameter order is intentionally ({@code
+   * JiraProperties} before {@code RestClient}) so this overload never collides with the github-auth
+   * seam {@code (Environment, RestClient, GitHubProperties)} — a {@code (env, (RestClient) null,
+   * null)} call still resolves unambiguously to the github seam. Pass a {@code null}
+   * client/properties to exercise the not-applicable / token-missing paths.
+   */
+  DoctorProbeAdapter(
+      Environment environment,
+      @Nullable JiraProperties jiraProperties,
+      @Nullable RestClient jiraRestClient) {
+    this(
+        environment,
+        null,
+        null,
+        new UuidV7Generator(),
+        Path.of("."),
+        "localhost",
+        8080,
+        Path.of("."),
+        ProcessBuilder::start,
+        () -> System.getProperty("os.name", "unknown"),
+        () -> System.getProperty("os.version", "unknown"),
+        () -> System.getProperty("os.arch", "unknown"),
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultFileRead,
+        DoctorProbeAdapter::defaultPowerShellVersion,
+        DoctorProbeAdapter::defaultShellValue,
+        RunnerProperties.defaults(),
+        null,
+        null,
+        WorkflowProperties.defaults(),
+        DoctorProbeAdapter::defaultTotalPhysicalMemoryBytes,
+        null,
+        null,
+        jiraRestClient,
+        jiraProperties);
   }
 
   /**
@@ -369,6 +424,12 @@ public class DoctorProbeAdapter implements DoctorProbePort {
         projectConnectorResolver);
   }
 
+  /**
+   * Story 3i-1 — pre-JIRA arity overload. The existing test seams delegate here (no jira deps); it
+   * forwards {@code null} jira client/properties so those probes report jira-auth
+   * PASS-not-applicable. The {@code @Autowired} + jira test-seam constructors call the full arity
+   * constructor directly.
+   */
   DoctorProbeAdapter(
       Environment environment,
       @Nullable DataSource dataSource,
@@ -393,6 +454,60 @@ public class DoctorProbeAdapter implements DoctorProbePort {
       LongSupplier totalPhysicalMemoryBytesSupplier,
       @Nullable ProjectStore projectStore,
       @Nullable ProjectConnectorResolver projectConnectorResolver) {
+    this(
+        environment,
+        dataSource,
+        flyway,
+        uuidV7Generator,
+        deliverylineHome,
+        serverAddress,
+        serverPort,
+        workingDirectory,
+        processLauncher,
+        osNameSupplier,
+        osVersionSupplier,
+        osArchSupplier,
+        procVersionReader,
+        osReleaseReader,
+        powerShellVersionSupplier,
+        shellEnvSupplier,
+        runnerProperties,
+        gitHubRestClient,
+        gitHubProperties,
+        workflowProperties,
+        totalPhysicalMemoryBytesSupplier,
+        projectStore,
+        projectConnectorResolver,
+        null,
+        null);
+  }
+
+  DoctorProbeAdapter(
+      Environment environment,
+      @Nullable DataSource dataSource,
+      @Nullable Flyway flyway,
+      UuidV7Generator uuidV7Generator,
+      Path deliverylineHome,
+      String serverAddress,
+      int serverPort,
+      Path workingDirectory,
+      ProcessLauncher processLauncher,
+      Supplier<String> osNameSupplier,
+      Supplier<String> osVersionSupplier,
+      Supplier<String> osArchSupplier,
+      Function<Path, Optional<String>> procVersionReader,
+      Function<Path, Optional<String>> osReleaseReader,
+      Supplier<String> powerShellVersionSupplier,
+      Supplier<String> shellEnvSupplier,
+      RunnerProperties runnerProperties,
+      @Nullable RestClient gitHubRestClient,
+      @Nullable GitHubProperties gitHubProperties,
+      @Nullable WorkflowProperties workflowProperties,
+      LongSupplier totalPhysicalMemoryBytesSupplier,
+      @Nullable ProjectStore projectStore,
+      @Nullable ProjectConnectorResolver projectConnectorResolver,
+      @Nullable RestClient jiraRestClient,
+      @Nullable JiraProperties jiraProperties) {
     this.environment = environment;
     this.dataSource = dataSource;
     this.flyway = flyway;
@@ -421,6 +536,8 @@ public class DoctorProbeAdapter implements DoctorProbePort {
             : totalPhysicalMemoryBytesSupplier;
     this.projectStore = projectStore;
     this.projectConnectorResolver = projectConnectorResolver;
+    this.jiraRestClient = jiraRestClient;
+    this.jiraProperties = jiraProperties;
   }
 
   /**
@@ -842,6 +959,85 @@ public class DoctorProbeAdapter implements DoctorProbePort {
           DiagnosticsStatus.FAIL,
           "GitHub auth probe could not reach GitHub: " + transportError.getClass().getSimpleName(),
           DomainErrorCode.DOCTOR_GITHUB_AUTH_FAILED.value(),
+          details);
+    }
+  }
+
+  /**
+   * Story 3i-1 (AC6) — JIRA auth check (mirrors {@link #probeGitHubAuth()}). PASS "not-applicable"
+   * with NO network call when {@code jira-real} is inactive. Under {@code jira-real}: a blank token
+   * or email ⇒ FAIL {@link DomainErrorCode#DOCTOR_JIRA_TOKEN_MISSING}; otherwise probes {@code GET
+   * /rest/api/3/myself} and reports PASS on 2xx, FAIL {@link
+   * DomainErrorCode#DOCTOR_JIRA_AUTH_FAILED} on 401/403 (and any other unreachable/transport
+   * outcome). Presence-only details; the token / Basic header is never logged.
+   */
+  @Override
+  public ProbeResult probeJiraAuth() {
+    Map<String, String> details = new LinkedHashMap<>();
+    if (!isProfileActive(JIRA_REAL_PROFILE)) {
+      details.put("jiraRealProfile", "inactive");
+      // No network call — under the default (jira-mock / absent) profile this probe is a no-op PASS
+      // so a @SpringBootTest doctor run never reaches a JIRA instance.
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "jira-real profile inactive; JIRA auth check not applicable",
+          null,
+          details);
+    }
+    details.put("jiraRealProfile", "active");
+    boolean tokenPresent = jiraProperties != null && jiraProperties.hasToken();
+    boolean emailPresent =
+        jiraProperties != null
+            && jiraProperties.email() != null
+            && !jiraProperties.email().isBlank();
+    details.put("tokenPresent", tokenPresent ? "present" : "missing");
+    details.put("emailPresent", emailPresent ? "present" : "missing");
+    if (!tokenPresent || !emailPresent) {
+      log.warn("doctor jira_auth probe resolution=credentials_missing");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "JIRA credentials missing; set JIRA_API_TOKEN and JIRA_EMAIL before activating the"
+              + " jira-real profile",
+          DomainErrorCode.DOCTOR_JIRA_TOKEN_MISSING.value(),
+          details);
+    }
+    if (jiraRestClient == null) {
+      // Active + credentials present but the jiraRestClient bean is unavailable — a
+      // misconfiguration
+      // rather than an auth outcome. Surface as token-missing-class so doctor flags the config gap.
+      log.warn("doctor jira_auth probe resolution=client_unavailable");
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "JIRA REST client unavailable under the jira-real profile",
+          DomainErrorCode.DOCTOR_JIRA_TOKEN_MISSING.value(),
+          details);
+    }
+    try {
+      jiraRestClient.get().uri("/rest/api/3/myself").retrieve().toBodilessEntity();
+      log.info("doctor jira_auth probe resolution=pass");
+      return new ProbeResult(
+          DiagnosticsStatus.PASS,
+          "JIRA authentication succeeded (GET /rest/api/3/myself)",
+          null,
+          details);
+    } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden authError) {
+      log.warn(
+          "doctor jira_auth probe resolution=auth_failed status={}", authError.getStatusCode());
+      details.put("status", String.valueOf(authError.getStatusCode().value()));
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "JIRA authentication failed (" + authError.getStatusCode() + ")",
+          DomainErrorCode.DOCTOR_JIRA_AUTH_FAILED.value(),
+          details);
+    } catch (RestClientException transportError) {
+      log.warn(
+          "doctor jira_auth probe resolution=auth_failed cause={}",
+          transportError.getClass().getSimpleName());
+      details.put("cause", transportError.getClass().getSimpleName());
+      return new ProbeResult(
+          DiagnosticsStatus.FAIL,
+          "JIRA auth probe could not reach JIRA: " + transportError.getClass().getSimpleName(),
+          DomainErrorCode.DOCTOR_JIRA_AUTH_FAILED.value(),
           details);
     }
   }

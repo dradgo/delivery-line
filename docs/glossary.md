@@ -189,8 +189,10 @@ parity; it can never be disabled. Runs are associated with a project at submissi
 
 The selectable, vendor-neutral adapter a [project](#project) binds for one of its two integration
 roles — a **ticket source** or a **repository host** — chosen by `ConnectorKind`. The registered
-kinds are `linear`, `github`, and a `gitlab` **proof-of-seam** stub (a documented demonstration of
-per-project resolution, not a full vendor implementation). Each project resolves its connectors
+kinds are `linear`, `github`, `jira` (story 3i-1 — a second full ticket-source vendor at Linear
+parity: fetch, comment, sub-task creation, opaque source-status, and a `/browse/` link-out), and a
+`gitlab` **proof-of-seam** stub (a documented demonstration of per-project resolution, not a full
+vendor implementation). Each project resolves its connectors
 **per project at run time**, so two projects can use different vendors. A connector authenticates
 with the project's per-role [credential](#credential).
 

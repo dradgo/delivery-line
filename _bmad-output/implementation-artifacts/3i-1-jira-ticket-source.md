@@ -1,6 +1,6 @@
 # Story 3i.1: JIRA Ticket Source (kind=jira) — Linear-parity connector
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -23,53 +23,53 @@ so that I can run governed workflows on real JIRA tickets without changing how t
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — `ConnectorKind.JIRA` + Flyway + registry drift** (AC: #3)
-  - [ ] Add `JIRA("jira")` to `domain/registry/ConnectorKind.java` (after `GITLAB`). `DomainRegistry.connectorKinds()` auto-derives from `values()` — no edit there.
-  - [ ] Add migration `db/migration/V34__widen_connector_kind_to_jira.sql` mirroring `V18__widen_connector_kind_to_gitlab.sql`: drop + re-add **both** `ck_projects_ticket_source_kind` and `ck_projects_repo_host_kind` with `check (... in ('linear','github','gitlab','jira'))`. **RE-CONFIRM the head number at implementation** — memory flags `V33` as the highest on this branch's disk but `3h-2` claims `V34` on an unmerged branch (Flyway cross-branch-collision trap); if `V34` is taken by then, take the next free.
-  - [ ] Update the API placeholder `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` key `connectorKinds` → add `"jira"`.
-  - [ ] Extend `FlywaySchemaContractTest` with a `jira`-accepted insert probe (optional; the existing `bogus`-rejected probe already passes). Confirm `flywayMigrateIsReplaySafeAndChecksumStable()` and `RegistryContractTest.projectStatusAndConnectorKindStayAlignedWithSqlChecksAndApiManifest()` are green (three-way alignment: enum, both CHECKs, placeholder).
-- [ ] **Task 2 — Config + wiring + kind-selector generalization** (AC: #1)
-  - [ ] Add `application/integration/jira/JiraProperties.java` (`@ConfigurationProperties("deliveryline.jira")`) mirroring `LinearProperties`: `baseUrl`, `email` (account email for basic-auth), `apiToken` (with `@JsonIgnore` accessor + redacting `toString()`), `timeout`, and a `CREDENTIAL_OVERRIDE_ATTRIBUTE` constant. Keep it framework-light in the `application` layer (not `infrastructure`).
-  - [ ] Add `infrastructure/config/JiraConfiguration.java` mirroring `LinearConfiguration`: `@Bean("jiraRestClient") @Profile("jira-real")` `RestClient` with connect/read timeouts and a request interceptor that reads the token at request-time and prefers the per-request `CREDENTIAL_OVERRIDE_ATTRIBUTE` (3c-8). Assert mutual exclusion of `jira-mock`/`jira-real`. JIRA Cloud auth = HTTP Basic `email:apiToken` (Base64) — build the header inside the interceptor; **never log it**.
-  - [ ] **Generalize the ticket-source `kind` fail-fast (deferred-work #132).** Today `LinearConfiguration` constructor runs `assertSupportedTicketSourceKind` unconditionally and throws unless `kind==linear`, so a `kind=jira` deployment cannot boot. Move the "is this kind backed by a classpath impl?" check out of `LinearConfiguration` into a connector-neutral seam that validates the configured kind against the set of registered `TicketSourceAdapter` beans (i.e. the kinds `ProjectConnectorResolver` indexes), OR minimally widen the supported set to include `jira`. Recommended: connector-agnostic validation so the next connector needs no edit here. (See OQ-1.)
-  - [ ] Register `jira-real`/`jira-mock` in `application.yml` profile docs; add `deliveryline.jira.*` keys.
-- [ ] **Task 3 — `JiraRealAdapter`** (AC: #1, #2, #5, #7)
-  - [ ] New `adapters/integration/ticketsource/jira/JiraRealAdapter.java`, `@Component @Profile("jira-real")` implementing `TicketSourceAdapter`. **Do NOT add `@Primary`** (see Reconciliation R1) — per-project resolution keys on `connectorKind()`; a second `@Primary` would collide with `LinearRealAdapter` for the single-injection `LinearPollingHost`. Constructor takes `@Qualifier("jiraRestClient") RestClient` + `JiraProperties`.
-  - [ ] Implement against JIRA REST v3: `fetchTicketByReference` → `GET /rest/api/3/issue/{key}` (map to neutral `Ticket`: `ticketRef`, `title`=summary field, `summary`=description text, `authorIdentity`=reporter accountId/email string — never a vendor user DTO, `createdAt`/`updatedAt`, `labels`, and nullable `sourceStatus`=`fields.status.name` + `sourceStatusId`=`fields.status.id` as the opaque vendor token). Return `Optional.empty()` on 404 — **do not throw on not-found**.
-  - [ ] `pollNewTickets(since)` → JQL `updated > "…" ORDER BY updated ASC`, ascending by `updatedAt`, internal paging, empty list when nothing new. (Wiring a `JiraPollingHost` bean is **out of scope** for 3i-1 — the Linear host is Linear-specific; interactive intake is 3i-2. The method must still work for the parity/capability contract.)
-  - [ ] `postGovernedRunComment` → `POST /rest/api/3/issue/{key}/comment`; embed the `<!-- deliveryline:run=<runPublicId> fp=<fingerprint> -->` marker (mirror `LinearRealAdapter.fingerprintMarker`), scan existing comments first, return `SKIPPED_DUPLICATE` on a marker hit else `POSTED`.
-  - [ ] `createSubticket` → `POST /rest/api/3/issue` with `issuetype=Sub-task` + `parent={parentKey}`; idempotency via a `<!-- deliveryline:subticket key=<idempotencyKey> child=<childRef> -->` marker scan on the parent (mirror `LinearRealAdapter.createSubticketGuarded`), returning the existing child with `replay=true` on a hit; after create, post the parent-link back-reference through `postGovernedRunComment` with fingerprint `"subticket:"+draft.idempotencyKey()` and `DataClassification.SHAREABLE_REDACTED`.
-  - [ ] `buildSourceTicketUrl` → `Optional.of(properties.baseUrl() + "/browse/" + ref.value())` gated on the `^[A-Z][A-Z0-9_]*-[0-9]+$` ref pattern; `Optional.empty()` when unmatched or `baseUrl` unset. Pure derivation — no network, no secret, never logged.
-  - [ ] `getCapabilities()` → the JIRA set (AC2). Add a `TicketSourceCapabilities.jiraDefaults()` factory (or reuse the 5-arg constructor).
-  - [ ] `verifyConnectivity(credentialOverride)` → `GET /rest/api/3/myself` then a project lookup; fold `TicketSourceAdapterException` categories into `ConnectivityResult` (LINK_FAILURE→`unauthenticated`, NETWORK_API_FAILURE→`unreachable`, default→`new ConnectivityResult(true,false,…)`). Never throws across the port.
-  - [ ] Error classification: funnel every HTTP call through a shared `execute(...)` that maps 401/403→`LINK_FAILURE`, 429/5xx/`ResourceAccessException`→`NETWORK_API_FAILURE`, malformed/validation→`SYNC_FAILURE`, unexpected/conflict→`STATE_CONFLICT`, wrapped in `TicketSourceAdapterException`. **No retry** — surface typed failures.
-- [ ] **Task 4 — `JiraMockAdapter` parity twin** (AC: #1, #8)
-  - [ ] New `adapters/integration/ticketsource/jira/JiraMockAdapter.java`, `@Component @Profile("jira-mock")` (no `@Primary`), deterministic, no network — mirror `LinearMockAdapter` (deterministic `child = parent-<ordinal>` refs, deterministic mock URL, `SKIPPED_DUPLICATE`/`POSTED` by in-memory marker, `ConnectivityResult.ok`).
-- [ ] **Task 5 — Credential store + redaction two-gates** (AC: #4)
-  - [ ] JIRA per-project secret rides `ProjectCredentialService.setCredential(projectPublicId, ConnectorRole.TICKET_SOURCE, plaintext)` — **no schema change** (`ciphertext` is opaque). Store the API token (and email if per-project) as the plaintext; the connectivity/adapter path decrypts on-stack and passes it as the `CREDENTIAL_OVERRIDE_ATTRIBUTE`. `baseUrl` is **non-secret deployment config** on `JiraProperties`, so `buildSourceTicketUrl` never decrypts. (See OQ-2.)
-  - [ ] **Gate A** — add fixture `src/test/resources/redaction-fixtures/project-credential-jira-token.json` (a fake Atlassian token, e.g. `ATATT3xFfGF0-FAKE…`) + a `fixtures-manifest.json` entry (`placeholder`, `minimumClassification`, `forbiddenSnippets`). `RedactionAdversarialFoundationContract` fails if the file is unlisted.
-  - [ ] **Gate B** — Atlassian API tokens have **no stable public prefix**, so do **not** add a vendor regex; instead ensure the credential JSON secret key(s) are covered by `SensitivePayloadAnalyzer.SECRET_FIELD_NAMES` (add `jiraApiToken`/the chosen key if not already covered by `token`/`apiKey`) and mirror any change into `runner-contracts/redaction-policy.json` (`RedactionPolicyParityContractTest` asserts JSON↔Java equality). Only add a `RedactionCategory.JIRA_API_TOKEN` if a reliable pattern is chosen.
-- [ ] **Task 6 — Doctor `jira-auth` probe + checksRun fan-out** (AC: #6)
-  - [ ] `application/diagnostics/spi/DoctorProbePort.java` → add `ProbeResult probeJiraAuth();`.
-  - [ ] `adapters/diagnostics/DoctorProbeAdapter.java` → implement it (profile-gate first: PASS-not-applicable with **no** network call when `jira-real` inactive; presence-only details; typed `DomainErrorCode` on failure; never log the token). Add a package-private `(Environment, RestClient jiraRestClient, JiraProperties)` test-seam constructor mirroring the github-auth seam.
-  - [ ] `application/diagnostics/DoctorService.java` → add `CHECK_JIRA_AUTH="jira-auth"` constant, a `STATIC_ORDER` entry (this is what makes the count 18→19), a `case CHECK_JIRA_AUTH -> probes.probeJiraAuth();` switch arm, and an optional `REMEDIATION` entry.
-  - [ ] Fan-out (do not miss any): `DoctorLoggingContractTest.java:90` `checksRun=18`→`19` + add a `when(probes.probeJiraAuth())…` stub in its all-probe block; add a `probeJiraAuth()` stub to `DoctorServiceTest.stubAllProbesPass()` **and** its four other inline all-probe stub blocks (else Mockito returns null → NPE). `DoctorServiceTest`'s `hasSize(STATIC_ORDER.size())` auto-tracks.
-  - [ ] New `DoctorJiraProbeTest` modeled on `DoctorGitHubProbeTest` (MockRestServiceServer; PASS-not-applicable / token-missing / 200 / 401).
-- [ ] **Task 7 — Tests** (AC: #8)
-  - [ ] `TicketSourceCapabilitiesTest` → add a `jiraDefaults()` flag-set assertion.
-  - [ ] Extend / mirror `TicketSourceAbstractionFoundationContract` for the JIRA mock↔real pair (happy read → neutral `Ticket`; a classified failure surfaces the same `IntegrationFailureCategory` in both). Mock HTTP with `MockRestServiceServer.bindTo(builder)` (NOT WireMock/MockWebServer). Testcontainers-backed tests are named `*IT` (Failsafe), never `*Test`.
-  - [ ] Adapter unit tests in `org.dradgo.adapters.integration.ticketsource.jira` (`JiraRealAdapterUnitTest`, `JiraMockAdapterUnitTest`) covering fetch/comment/subticket happy + replay, URL build, connectivity (reachable/auth-fail/unreachable), and the error-classification map.
-  - [ ] Keep the `org.dradgo.application.integration.ticketsource` package at its jacoco **≥0.80 line** floor (new application-layer JIRA config/props land here; the `adapters…jira` package is governed by the 0.75 bundle floor only, per 3c-11 D1).
-- [ ] **Task 8 — ArchUnit + docs + ADR** (AC: #1, #3)
-  - [ ] `ArchitectureRuleCatalog.TICKET_SOURCE_TYPES_MUST_NOT_LEAK_THROUGH_PORT` — if the JIRA adapter introduces a vendor SDK package, add its prefix to the banned list (keep `RestClient`/JIRA-DTO types inside `adapters.integration.ticketsource.jira`). Placement (`adapters.integration.ticketsource.jira`) is already covered by `ADAPTER_PACKAGE_LAYOUT` (`integration` slice) and `TICKET_SOURCE_IMPLS_RESIDE_IN_ADAPTERS_TICKETSOURCE` — no edit.
-  - [ ] Add `JiraRealAdapter`'s FQN to the `ONLY_ORCHESTRATION_AND_CLI_MAY_POST_LINEAR_COMMENT` exception list (the real adapter self-posts the parent-link comment from `createSubticket`, exactly as `LinearRealAdapter` is exempted).
-  - [ ] Docs: append a JIRA note to `docs/adr/0007-ticket-source-abstraction.md` (second real `TicketSourceAdapter` kind) and `docs/integrations/ticket-source-extension-contract.md`; add `jira` + `bug promotion`-adjacent vocabulary check to `docs/glossary.md` (`ConnectorKind` is the connector registry); add the `jira-auth` row to the (already-stale) `docs/cli/doctor.md` check-list; a connector-onboarding note for JIRA credentials.
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException`/`TicketSourceAdapterException` raise site, every external SPI call (each JIRA REST call, the credential decrypt, the doctor probe), and every idempotency-replay branch (comment `SKIPPED_DUPLICATE`, subticket `replay=true`).
-  - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
-  - [ ] Levels: `INFO` for normal lifecycle (fetch/comment/subticket start+outcome, connectivity resolution, transitions), `WARN` for recoverable anomalies (replay/duplicate, connectivity fail, capability-degraded skip), `ERROR` only for unhandled failures. `DEBUG` for hot-path detail.
-  - [ ] Every log carries relevant context keys: `correlationId`, `workflowRunId`, `idempotencyKey`, plus the entity's public id (`ticketRef`/`projectPublicId`) — sanitized via `MdcKeys.sanitizeForLog(...)`. **Never** log the JIRA token, Basic-auth header, ciphertext, key id, comment body bytes, or ticket free-text (ids/lengths only).
-  - [ ] Pin the new log lines with a focused test (`OutputCaptureExtension` / list-appender) at the expected level per new branch.
+- [x] **Task 1 — `ConnectorKind.JIRA` + Flyway + registry drift** (AC: #3)
+  - [x] Add `JIRA("jira")` to `domain/registry/ConnectorKind.java` (after `GITLAB`). `DomainRegistry.connectorKinds()` auto-derives from `values()` — no edit there.
+  - [x] Add migration `db/migration/V34__widen_connector_kind_to_jira.sql` mirroring `V18__widen_connector_kind_to_gitlab.sql`: drop + re-add **both** `ck_projects_ticket_source_kind` and `ck_projects_repo_host_kind` with `check (... in ('linear','github','gitlab','jira'))`. **RE-CONFIRM the head number at implementation** — memory flags `V33` as the highest on this branch's disk but `3h-2` claims `V34` on an unmerged branch (Flyway cross-branch-collision trap); if `V34` is taken by then, take the next free.
+  - [x] Update the API placeholder `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` key `connectorKinds` → add `"jira"`.
+  - [x] Extend `FlywaySchemaContractTest` with a `jira`-accepted insert probe (optional; the existing `bogus`-rejected probe already passes). Confirm `flywayMigrateIsReplaySafeAndChecksumStable()` and `RegistryContractTest.projectStatusAndConnectorKindStayAlignedWithSqlChecksAndApiManifest()` are green (three-way alignment: enum, both CHECKs, placeholder).
+- [x] **Task 2 — Config + wiring + kind-selector generalization** (AC: #1)
+  - [x] Add `application/integration/jira/JiraProperties.java` (`@ConfigurationProperties("deliveryline.jira")`) mirroring `LinearProperties`: `baseUrl`, `email` (account email for basic-auth), `apiToken` (with `@JsonIgnore` accessor + redacting `toString()`), `timeout`, and a `CREDENTIAL_OVERRIDE_ATTRIBUTE` constant. Keep it framework-light in the `application` layer (not `infrastructure`).
+  - [x] Add `infrastructure/config/JiraConfiguration.java` mirroring `LinearConfiguration`: `@Bean("jiraRestClient") @Profile("jira-real")` `RestClient` with connect/read timeouts and a request interceptor that reads the token at request-time and prefers the per-request `CREDENTIAL_OVERRIDE_ATTRIBUTE` (3c-8). Assert mutual exclusion of `jira-mock`/`jira-real`. JIRA Cloud auth = HTTP Basic `email:apiToken` (Base64) — build the header inside the interceptor; **never log it**.
+  - [x] **Generalize the ticket-source `kind` fail-fast (deferred-work #132).** Today `LinearConfiguration` constructor runs `assertSupportedTicketSourceKind` unconditionally and throws unless `kind==linear`, so a `kind=jira` deployment cannot boot. Move the "is this kind backed by a classpath impl?" check out of `LinearConfiguration` into a connector-neutral seam that validates the configured kind against the set of registered `TicketSourceAdapter` beans (i.e. the kinds `ProjectConnectorResolver` indexes), OR minimally widen the supported set to include `jira`. Recommended: connector-agnostic validation so the next connector needs no edit here. (See OQ-1.)
+  - [x] Register `jira-real`/`jira-mock` in `application.yml` profile docs; add `deliveryline.jira.*` keys.
+- [x] **Task 3 — `JiraRealAdapter`** (AC: #1, #2, #5, #7)
+  - [x] New `adapters/integration/ticketsource/jira/JiraRealAdapter.java`, `@Component @Profile("jira-real")` implementing `TicketSourceAdapter`. **Do NOT add `@Primary`** (see Reconciliation R1) — per-project resolution keys on `connectorKind()`; a second `@Primary` would collide with `LinearRealAdapter` for the single-injection `LinearPollingHost`. Constructor takes `@Qualifier("jiraRestClient") RestClient` + `JiraProperties`.
+  - [x] Implement against JIRA REST v3: `fetchTicketByReference` → `GET /rest/api/3/issue/{key}` (map to neutral `Ticket`: `ticketRef`, `title`=summary field, `summary`=description text, `authorIdentity`=reporter accountId/email string — never a vendor user DTO, `createdAt`/`updatedAt`, `labels`, and nullable `sourceStatus`=`fields.status.name` + `sourceStatusId`=`fields.status.id` as the opaque vendor token). Return `Optional.empty()` on 404 — **do not throw on not-found**.
+  - [x] `pollNewTickets(since)` → JQL `updated > "…" ORDER BY updated ASC`, ascending by `updatedAt`, internal paging, empty list when nothing new. (Wiring a `JiraPollingHost` bean is **out of scope** for 3i-1 — the Linear host is Linear-specific; interactive intake is 3i-2. The method must still work for the parity/capability contract.)
+  - [x] `postGovernedRunComment` → `POST /rest/api/3/issue/{key}/comment`; embed the `<!-- deliveryline:run=<runPublicId> fp=<fingerprint> -->` marker (mirror `LinearRealAdapter.fingerprintMarker`), scan existing comments first, return `SKIPPED_DUPLICATE` on a marker hit else `POSTED`.
+  - [x] `createSubticket` → `POST /rest/api/3/issue` with `issuetype=Sub-task` + `parent={parentKey}`; idempotency via a `<!-- deliveryline:subticket key=<idempotencyKey> child=<childRef> -->` marker scan on the parent (mirror `LinearRealAdapter.createSubticketGuarded`), returning the existing child with `replay=true` on a hit; after create, post the parent-link back-reference through `postGovernedRunComment` with fingerprint `"subticket:"+draft.idempotencyKey()` and `DataClassification.SHAREABLE_REDACTED`.
+  - [x] `buildSourceTicketUrl` → `Optional.of(properties.baseUrl() + "/browse/" + ref.value())` gated on the `^[A-Z][A-Z0-9_]*-[0-9]+$` ref pattern; `Optional.empty()` when unmatched or `baseUrl` unset. Pure derivation — no network, no secret, never logged.
+  - [x] `getCapabilities()` → the JIRA set (AC2). Add a `TicketSourceCapabilities.jiraDefaults()` factory (or reuse the 5-arg constructor).
+  - [x] `verifyConnectivity(credentialOverride)` → `GET /rest/api/3/myself` then a project lookup; fold `TicketSourceAdapterException` categories into `ConnectivityResult` (LINK_FAILURE→`unauthenticated`, NETWORK_API_FAILURE→`unreachable`, default→`new ConnectivityResult(true,false,…)`). Never throws across the port.
+  - [x] Error classification: funnel every HTTP call through a shared `execute(...)` that maps 401/403→`LINK_FAILURE`, 429/5xx/`ResourceAccessException`→`NETWORK_API_FAILURE`, malformed/validation→`SYNC_FAILURE`, unexpected/conflict→`STATE_CONFLICT`, wrapped in `TicketSourceAdapterException`. **No retry** — surface typed failures.
+- [x] **Task 4 — `JiraMockAdapter` parity twin** (AC: #1, #8)
+  - [x] New `adapters/integration/ticketsource/jira/JiraMockAdapter.java`, `@Component @Profile("jira-mock")` (no `@Primary`), deterministic, no network — mirror `LinearMockAdapter` (deterministic `child = parent-<ordinal>` refs, deterministic mock URL, `SKIPPED_DUPLICATE`/`POSTED` by in-memory marker, `ConnectivityResult.ok`).
+- [x] **Task 5 — Credential store + redaction two-gates** (AC: #4)
+  - [x] JIRA per-project secret rides `ProjectCredentialService.setCredential(projectPublicId, ConnectorRole.TICKET_SOURCE, plaintext)` — **no schema change** (`ciphertext` is opaque). Store the API token (and email if per-project) as the plaintext; the connectivity/adapter path decrypts on-stack and passes it as the `CREDENTIAL_OVERRIDE_ATTRIBUTE`. `baseUrl` is **non-secret deployment config** on `JiraProperties`, so `buildSourceTicketUrl` never decrypts. (See OQ-2.)
+  - [x] **Gate A** — add fixture `src/test/resources/redaction-fixtures/project-credential-jira-token.json` (a fake Atlassian token, e.g. `ATATT3xFfGF0-FAKE…`) + a `fixtures-manifest.json` entry (`placeholder`, `minimumClassification`, `forbiddenSnippets`). `RedactionAdversarialFoundationContract` fails if the file is unlisted.
+  - [x] **Gate B** — Atlassian API tokens have **no stable public prefix**, so do **not** add a vendor regex; instead ensure the credential JSON secret key(s) are covered by `SensitivePayloadAnalyzer.SECRET_FIELD_NAMES` (add `jiraApiToken`/the chosen key if not already covered by `token`/`apiKey`) and mirror any change into `runner-contracts/redaction-policy.json` (`RedactionPolicyParityContractTest` asserts JSON↔Java equality). Only add a `RedactionCategory.JIRA_API_TOKEN` if a reliable pattern is chosen.
+- [x] **Task 6 — Doctor `jira-auth` probe + checksRun fan-out** (AC: #6)
+  - [x] `application/diagnostics/spi/DoctorProbePort.java` → add `ProbeResult probeJiraAuth();`.
+  - [x] `adapters/diagnostics/DoctorProbeAdapter.java` → implement it (profile-gate first: PASS-not-applicable with **no** network call when `jira-real` inactive; presence-only details; typed `DomainErrorCode` on failure; never log the token). Add a package-private `(Environment, RestClient jiraRestClient, JiraProperties)` test-seam constructor mirroring the github-auth seam.
+  - [x] `application/diagnostics/DoctorService.java` → add `CHECK_JIRA_AUTH="jira-auth"` constant, a `STATIC_ORDER` entry (this is what makes the count 18→19), a `case CHECK_JIRA_AUTH -> probes.probeJiraAuth();` switch arm, and an optional `REMEDIATION` entry.
+  - [x] Fan-out (do not miss any): `DoctorLoggingContractTest.java:90` `checksRun=18`→`19` + add a `when(probes.probeJiraAuth())…` stub in its all-probe block; add a `probeJiraAuth()` stub to `DoctorServiceTest.stubAllProbesPass()` **and** its four other inline all-probe stub blocks (else Mockito returns null → NPE). `DoctorServiceTest`'s `hasSize(STATIC_ORDER.size())` auto-tracks.
+  - [x] New `DoctorJiraProbeTest` modeled on `DoctorGitHubProbeTest` (MockRestServiceServer; PASS-not-applicable / token-missing / 200 / 401).
+- [x] **Task 7 — Tests** (AC: #8)
+  - [x] `TicketSourceCapabilitiesTest` → add a `jiraDefaults()` flag-set assertion.
+  - [x] Extend / mirror `TicketSourceAbstractionFoundationContract` for the JIRA mock↔real pair (happy read → neutral `Ticket`; a classified failure surfaces the same `IntegrationFailureCategory` in both). Mock HTTP with `MockRestServiceServer.bindTo(builder)` (NOT WireMock/MockWebServer). Testcontainers-backed tests are named `*IT` (Failsafe), never `*Test`.
+  - [x] Adapter unit tests in `org.dradgo.adapters.integration.ticketsource.jira` (`JiraRealAdapterUnitTest`, `JiraMockAdapterUnitTest`) covering fetch/comment/subticket happy + replay, URL build, connectivity (reachable/auth-fail/unreachable), and the error-classification map.
+  - [x] Keep the `org.dradgo.application.integration.ticketsource` package at its jacoco **≥0.80 line** floor (new application-layer JIRA config/props land here; the `adapters…jira` package is governed by the 0.75 bundle floor only, per 3c-11 D1).
+- [x] **Task 8 — ArchUnit + docs + ADR** (AC: #1, #3)
+  - [x] `ArchitectureRuleCatalog.TICKET_SOURCE_TYPES_MUST_NOT_LEAK_THROUGH_PORT` — if the JIRA adapter introduces a vendor SDK package, add its prefix to the banned list (keep `RestClient`/JIRA-DTO types inside `adapters.integration.ticketsource.jira`). Placement (`adapters.integration.ticketsource.jira`) is already covered by `ADAPTER_PACKAGE_LAYOUT` (`integration` slice) and `TICKET_SOURCE_IMPLS_RESIDE_IN_ADAPTERS_TICKETSOURCE` — no edit.
+  - [x] Add `JiraRealAdapter`'s FQN to the `ONLY_ORCHESTRATION_AND_CLI_MAY_POST_LINEAR_COMMENT` exception list (the real adapter self-posts the parent-link comment from `createSubticket`, exactly as `LinearRealAdapter` is exempted).
+  - [x] Docs: append a JIRA note to `docs/adr/0007-ticket-source-abstraction.md` (second real `TicketSourceAdapter` kind) and `docs/integrations/ticket-source-extension-contract.md`; add `jira` + `bug promotion`-adjacent vocabulary check to `docs/glossary.md` (`ConnectorKind` is the connector registry); add the `jira-auth` row to the (already-stale) `docs/cli/doctor.md` check-list; a connector-onboarding note for JIRA credentials.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException`/`TicketSourceAdapterException` raise site, every external SPI call (each JIRA REST call, the credential decrypt, the doctor probe), and every idempotency-replay branch (comment `SKIPPED_DUPLICATE`, subticket `replay=true`).
+  - [x] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
+  - [x] Levels: `INFO` for normal lifecycle (fetch/comment/subticket start+outcome, connectivity resolution, transitions), `WARN` for recoverable anomalies (replay/duplicate, connectivity fail, capability-degraded skip), `ERROR` only for unhandled failures. `DEBUG` for hot-path detail.
+  - [x] Every log carries relevant context keys: `correlationId`, `workflowRunId`, `idempotencyKey`, plus the entity's public id (`ticketRef`/`projectPublicId`) — sanitized via `MdcKeys.sanitizeForLog(...)`. **Never** log the JIRA token, Basic-auth header, ciphertext, key id, comment body bytes, or ticket free-text (ids/lengths only).
+  - [x] Pin the new log lines with a focused test (`OutputCaptureExtension` / list-appender) at the expected level per new branch.
 
 ## Dev Notes
 
@@ -136,12 +136,88 @@ Every story leaves the touched services observable enough to debug a production 
 
 ### Agent Model Used
 
-<!-- populated by dev-story -->
+Opus 4.8 (1M context) — `claude-opus-4-8[1m]`
 
 ### Debug Log References
 
+- `mvnw -pl deliveryline-backend test` — full Surefire unit suite: **1690 run, 0 failures, 0 errors**.
+- `mvnw -pl deliveryline-backend -Pfoundation-gate test` — foundation-gate tier: **1690 run, 0 failures** (incl. `JiraTicketSourceParityFoundationContract`, `RedactionAdversarialFoundationContract`, `ProblemDetailsCoverageFoundationContract`).
+- `mvnw -pl deliveryline-backend verify -Dit.test=RegistryContractTest,FlywaySchemaContractTest,ArchitectureBoundaryTest` (Failsafe/Testcontainers): **114 run, 0 failures** — connector-kind three-way alignment + V37 replay-safe + ArchUnit allow-list all green.
+- `mvnw spotless:check checkstyle:check` — clean (0 violations); `spotbugs:check` — BUILD SUCCESS.
+
 ### Completion Notes List
 
-- Ultimate context engine analysis completed — comprehensive developer guide created.
+- **Flyway head (OQ-4 resolved):** V33–V36 (3h-2/4-3/4-17) are merged on this branch, so the migration is **V37** (not V34 — the stale memory note was re-confirmed against merged state).
+- **Kind-selector generalization (R4 / deferred-work #132):** `LinearConfiguration.assertSupportedTicketSourceKind` now validates the configured `kind` against the registered `ConnectorKind` set (connector-agnostic — new enum kinds are auto-covered) instead of `isLinear()`-only, so a `kind=jira` deployment boots. `TicketSourceConfigurationTest` updated (jira now boots; `github-issues` is the unregistered-kind fail-fast probe). deferred-work #132 marked RESOLVED.
+- **Doctor error codes (confirmed with Alex):** added `DOCTOR_JIRA_TOKEN_MISSING` + `DOCTOR_JIRA_AUTH_FAILED` with the three-site fan-out (enum + `ProblemDetailsCatalog` + `problemTypeUris` placeholder; `ProblemDetailsCoverageFoundationContract` auto-covers) — matches the GitHub/Sentry doctor-probe pattern; the story's "no new DomainErrorCode" note was scoped to the connector-resolution path.
+- **checksRun fan-out:** `CHECK_JIRA_AUTH` appended to `STATIC_ORDER` (18→19). Updated the `checksRun=18`→`19` literal + all-probe stub in `DoctorLoggingContractTest` and the `probeJiraAuth()` stub in `DoctorServiceTest.stubAllProbesPass()` + its 4 inline all-probe blocks.
+- **Redaction two-gates (Gate B minimal):** the fake Atlassian token rides a `token`-named key already covered by `SECRET_FIELD` — no `SensitivePayloadAnalyzer.SECRET_FIELD_NAMES` / `redaction-policy.json` change needed (Atlassian tokens have no stable prefix → no vendor regex). Fixture added to both the manifest (Gate A) and the hardcoded corpus Set in `RedactionPolicyServiceContractTest` (Gate B).
+- **JIRA REST v3 / ADF:** comment & description bodies are posted as minimal ADF docs; the `<!-- deliveryline:... -->` idempotency markers are embedded in an ADF text node and scanned back via ADF text extraction. Not `@Primary` (R1). JIRA timestamps (`+0000` offset, no colon) parse via a dedicated formatter fallback.
+- **Mock design divergence:** `JiraMockAdapter` synthesizes its happy ticket deterministically in-line (no fixture-registry / fixture files, unlike `LinearMockAdapter`) with test-only `registerNotFound`/`registerFailure` hooks — sufficient for the mock↔real parity contract, and immediately usable under `jira-mock`.
+- **Out of scope (unchanged):** no FE / OpenAPI / `schema.d.ts` (3i-2 owns intake REST); no new `WorkflowState`/`WorkflowEventType`/`AllowedAction`; no `JiraPollingHost` wiring (interactive intake is 3i-2 — `pollNewTickets` still works for the parity/capability contract); the 3c-10 `projects` doctor probe still maps the `ticket_source` host-env name to `LINEAR_API_TOKEN` (a 3c-10 concern, not widened here).
 
 ### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/jira/JiraProperties.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/JiraConfiguration.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraMockAdapter.java`
+- `deliveryline-backend/src/main/resources/db/migration/V37__widen_connector_kind_to_jira.sql`
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapterUnitTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/integration/ticketsource/jira/JiraMockAdapterUnitTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/integration/ticketsource/jira/JiraProfileWiringContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/diagnostics/DoctorJiraProbeTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/foundation/JiraTicketSourceParityFoundationContract.java`
+- `deliveryline-backend/src/test/resources/redaction-fixtures/project-credential-jira-token.json`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/ConnectorKind.java` (JIRA enum)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java` (DOCTOR_JIRA_* codes)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/integration/ticketsource/TicketSourceCapabilities.java` (jiraDefaults)
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/LinearConfiguration.java` (kind fail-fast generalized)
+- `deliveryline-backend/src/main/java/org/dradgo/application/diagnostics/spi/DoctorProbePort.java` (probeJiraAuth)
+- `deliveryline-backend/src/main/java/org/dradgo/application/diagnostics/DoctorService.java` (CHECK_JIRA_AUTH)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/diagnostics/DoctorProbeAdapter.java` (probeJiraAuth + jira deps/seam)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java` (DOCTOR_JIRA_* registration)
+- `deliveryline-backend/src/main/resources/application.yml` (deliveryline.jira.*)
+
+**Modified (test):**
+- `deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (connectorKinds + problemTypeUris)
+- `deliveryline-backend/src/test/resources/redaction-fixtures/fixtures-manifest.json`
+- `deliveryline-backend/src/test/java/org/dradgo/application/security/RedactionPolicyServiceContractTest.java` (corpus Set)
+- `deliveryline-backend/src/test/java/org/dradgo/infrastructure/config/TicketSourceConfigurationTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/domain/integration/ticketsource/TicketSourceCapabilitiesTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/DoctorLoggingContractTest.java` (checksRun 18→19)
+- `deliveryline-backend/src/test/java/org/dradgo/application/diagnostics/DoctorServiceTest.java` (5 stub sites)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java` (comment allow-list)
+
+**Modified (docs):**
+- `docs/adr/0007-ticket-source-abstraction.md` (JIRA section + onboarding)
+- `docs/integrations/ticket-source-extension-contract.md` (JIRA worked example)
+- `docs/glossary.md` (jira connector kind)
+- `docs/cli/doctor.md` (jira-auth row)
+- `_bmad-output/implementation-artifacts/deferred-work.md` (#132 resolved)
+
+## Change Log
+
+- 2026-07-08 — Implemented JIRA ticket source (kind=jira) at Linear parity via `bmad-dev-story` (Opus 4.8 [1m]). Net-new `JiraReal`/`JiraMockAdapter` (JIRA REST v3, ADF bodies, marker idempotency, error classification), `JiraProperties`/`JiraConfiguration` (Basic email:token, credential-override interceptor), `ConnectorKind.JIRA` + Flyway V37, generalized the ticket-source `kind` fail-fast (deferred-work #132), doctor `jira-auth` probe + `DOCTOR_JIRA_*` codes (checksRun 18→19), redaction two-gates fixture, ArchUnit comment allow-list, and docs (ADR 0007 + extension contract + glossary + doctor.md). All quality gates green (1690 unit + foundation-gate, contract/arch ITs, spotless/checkstyle/spotbugs). Status: ready-for-dev → review.
+- 2026-07-08 — Closed remaining review blockers: project-scoped Atlassian OAuth grant JSON now refreshes access tokens per use, routes calls through `api.atlassian.com/ex/jira/{cloudId}`, and persists rotated refresh tokens; subtask creation now writes a JIRA issue property at create time and replays from a property search when the parent marker comment is missing. Focused suite + Spotless/Checkstyle green. Status: review → done.
+
+### Review Findings
+
+- [x] [Review][Patch] Replace Basic/API-token JIRA auth with project-scoped OAuth grant handling - store encrypted refresh token + cloudid under `ConnectorRole.TICKET_SOURCE`, do not require a JIRA access token at startup, refresh an access token per use, rotate/persist the returned refresh token atomically, and call Jira through `https://api.atlassian.com/ex/jira/{cloudid}/rest/api/3/...` [deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/JiraConfiguration.java:68]
+- [x] [Review][Patch] Ticket-source kind fail-fast accepts repo-host-only connector kinds [deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/LinearConfiguration.java:66]
+- [x] [Review][Patch] `postGovernedRunComment` builds JIRA comment URIs from unvalidated `TicketRef` values [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:231]
+- [x] [Review][Patch] Sub-ticket creation can duplicate children if the parent marker comment fails after JIRA creates the child [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:309]
+- [x] [Review][Patch] Comment idempotency scan treats malformed/truncated comment pages as no marker and can repost duplicates [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:413]
+- [x] [Review][Patch] `pollNewTickets` can reprocess same-minute tickets because JQL truncates `since` to minutes without client-side filtering [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:167]
+- [x] [Review][Patch] `pollNewTickets` fails after a hard 20-page cap instead of draining large backlogs safely [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:157]
+- [x] [Review][Patch] `verifyConnectivity` ignores the project-search response and reports OK even when no reachable project is returned [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:380]
+- [x] [Review][Patch] JIRA auth interceptor and credential override behavior are not asserted by tests [deliveryline-backend/src/test/java/org/dradgo/adapters/integration/ticketsource/jira/JiraProfileWiringContractTest.java:54]
+- [x] [Review][Patch] JIRA redaction fixture does not cover raw `apiToken`/`api-token`/`jiraApiToken` payload shapes [deliveryline-backend/src/test/resources/redaction-fixtures/project-credential-jira-token.json:1]
+- [x] [Review][Patch] JIRA mock creates non-JIRA-shaped child ticket refs such as `PROJ-9-3` [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraMockAdapter.java:140]
+- [x] [Review][Patch] New JIRA logs do not consistently sanitize ticket refs, run ids, fingerprints, and idempotency keys as required by the story [deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/jira/JiraRealAdapter.java:237]
+Review patch pass notes (2026-07-08): all review findings are patched and verified. The OAuth finding is closed by binding ticket-source credentials with the project public id, refreshing encrypted Atlassian grant JSON per use, persisting rotated refresh tokens through `ProjectCredentialService`, and routing OAuth-backed calls through `https://api.atlassian.com/ex/jira/{cloudId}`. The sub-ticket duplicate finding is closed by attaching a `deliveryline.subticket` issue property during JIRA issue creation and searching that property before create, so replay survives the create-before-parent-marker crash window.

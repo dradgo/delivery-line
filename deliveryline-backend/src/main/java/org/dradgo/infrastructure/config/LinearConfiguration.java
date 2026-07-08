@@ -5,6 +5,7 @@ import java.util.Objects;
 import org.dradgo.application.integration.linear.LinearAutoIngestProperties;
 import org.dradgo.application.integration.linear.LinearProperties;
 import org.dradgo.application.integration.ticketsource.TicketSourceProperties;
+import org.dradgo.domain.registry.ConnectorKind;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -51,21 +52,29 @@ public class LinearConfiguration {
   }
 
   /**
-   * Story 3.32 AC5 / OQ-2 — only the {@code linear} kind has an implementation on the classpath
-   * today. A configured {@code kind=jira|github-issues|gitlab-issues} would silently leave the port
-   * unbacked; fail fast at boot with a clear message instead. The {@code kind} defaults to {@code
-   * linear} when unset, so this never trips a context that does not configure the selector.
+   * Story 3i-1 (R4 / deferred-work #132) — connector-neutral generalization of the story-3.32
+   * ticket-source {@code kind} fail-fast. The configured {@code kind} must name a registered {@link
+   * ConnectorKind} (the vendor-neutral connector registry); anything else (a typo, or a kind with
+   * no adapter shipped) fails fast at boot. This is connector-agnostic: adding a new {@link
+   * ConnectorKind} value (e.g. {@code jira}) automatically makes that kind bootable here with no
+   * edit to this method — the previous {@code isLinear()}-only check hard-failed every non-linear
+   * kind, so a {@code kind=jira} deployment could not boot. Per-project resolution (3c-3) remains
+   * the load-bearing selector; an enum kind with no {@code TicketSourceAdapter} on the classpath
+   * still surfaces {@code UNSUPPORTED_CONNECTOR_KIND} at resolve time. {@code kind} defaults to
+   * {@code linear} when unset, so this never trips a context that does not configure the selector.
    */
   private static void assertSupportedTicketSourceKind(TicketSourceProperties properties) {
-    if (!properties.isLinear()) {
-      throw new IllegalStateException(
-          "deliveryline.integration.ticket-source.kind="
-              + properties.kind()
-              + " has no implementation on the classpath. The only supported kind today is '"
-              + TicketSourceProperties.KIND_LINEAR
-              + "'. Add a TicketSourceAdapter implementation + profile entry for the new kind, or"
-              + " correct the configured kind.");
+    String kind = properties.kind();
+    if (ConnectorKind.LINEAR.value().equals(kind)
+        || ConnectorKind.GITLAB.value().equals(kind)
+        || ConnectorKind.JIRA.value().equals(kind)) {
+      return;
     }
+    throw new IllegalStateException(
+        "deliveryline.integration.ticket-source.kind="
+            + kind
+            + " is not a registered ticket-source connector kind. Supported ticket-source kinds: linear, gitlab, jira."
+            + " Add a TicketSourceAdapter implementation/profile entry for the new kind, or correct the configured kind.");
   }
 
   /**
