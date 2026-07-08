@@ -2,11 +2,7 @@ package org.dradgo.infrastructure.config;
 
 import java.time.Duration;
 import java.util.Objects;
-import org.dradgo.adapters.integration.ticketsource.jira.JiraOAuthTokenProvider;
 import org.dradgo.application.integration.jira.JiraProperties;
-import org.dradgo.application.project.ProjectCredentialService;
-import org.dradgo.domain.registry.ConnectorRole;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -86,21 +82,6 @@ public class JiraConfiguration {
               return execution.execute(request, body);
             })
         .build();
-  }
-
-  @Bean
-  @Profile(REAL_PROFILE)
-  public JiraOAuthTokenProvider jiraOAuthTokenProvider(
-      ObjectProvider<ProjectCredentialService> credentialServiceProvider) {
-    return new JiraOAuthTokenProvider(
-        RestClient.builder().baseUrl("https://auth.atlassian.com").build(),
-        (projectPublicId, plaintextGrant) -> {
-          ProjectCredentialService credentialService = credentialServiceProvider.getIfAvailable();
-          if (credentialService != null) {
-            credentialService.setCredential(
-                projectPublicId, ConnectorRole.TICKET_SOURCE, plaintextGrant);
-          }
-        });
   }
 
   private static void assertExclusiveJiraProfile(Environment environment) {

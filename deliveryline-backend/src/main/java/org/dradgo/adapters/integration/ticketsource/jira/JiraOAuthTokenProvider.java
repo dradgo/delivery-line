@@ -8,22 +8,55 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
+import org.dradgo.application.project.ProjectCredentialService;
+import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
  * Refreshes encrypted JIRA OAuth grants into one-use access tokens without logging secret material.
+ *
+ * <p>Self-wired as a {@code @Component} under the {@code jira-real} profile (mirroring {@code
+ * JiraRealAdapter}) rather than defined as an {@code @Bean} in {@code JiraConfiguration}: the
+ * {@code LAYERED_BOUNDARIES} ArchUnit rule forbids the {@code infrastructure} layer from
+ * referencing an {@code adapters} type, so the wiring lives with the adapter it belongs to.
  */
+@Component
+@Profile("jira-real")
 public class JiraOAuthTokenProvider {
 
   private static final String API_BASE_URL = "https://api.atlassian.com/ex/jira/";
+  private static final String OAUTH_BASE_URL = "https://auth.atlassian.com";
 
   private final RestClient oauthClient;
   private final BiConsumer<String, String> rotatedGrantStore;
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  /**
+   * Spring wiring constructor: builds the Atlassian OAuth token client and persists any rotated
+   * refresh-token grant back through {@link ProjectCredentialService} (looked up lazily so the
+   * provider still loads when no credential store is present, e.g. in slice tests).
+   */
+  @Autowired
+  public JiraOAuthTokenProvider(
+      ObjectProvider<ProjectCredentialService> credentialServiceProvider) {
+    this(
+        RestClient.builder().baseUrl(OAUTH_BASE_URL).build(),
+        (projectPublicId, plaintextGrant) -> {
+          ProjectCredentialService credentialService = credentialServiceProvider.getIfAvailable();
+          if (credentialService != null) {
+            credentialService.setCredential(
+                projectPublicId, ConnectorRole.TICKET_SOURCE, plaintextGrant);
+          }
+        });
+  }
 
   public JiraOAuthTokenProvider(
       RestClient oauthClient, BiConsumer<String, String> rotatedGrantStore) {
