@@ -43,6 +43,12 @@ public class RunnerSecretScanService {
 
   private static final Logger log = LoggerFactory.getLogger(RunnerSecretScanService.class);
 
+  // Lenient, read-only mapper used solely to recognize + parse an authored JSON artifact for
+  // structural secret analysis (never for credential detection — that stays in the sanctioned
+  // RedactionPolicyService engine, Trap T7). Default strict config: only well-formed JSON parses.
+  private static final com.fasterxml.jackson.databind.ObjectMapper SCAN_JSON_MAPPER =
+      new com.fasterxml.jackson.databind.ObjectMapper();
+
   /**
    * Synthetic category name for a literal injected-provider-key substring hit (never the value).
    */
@@ -159,14 +165,33 @@ public class RunnerSecretScanService {
           file.relativePath().startsWith(REPO_RELATIVE_PREFIX)
               || TRANSCRIPT_LOG_RELATIVE_PATHS.contains(file.relativePath());
 
-      // (i) known-shape detection via the sanctioned engine.
-      RedactionResult result =
-          redactionPolicyService.redact(file.text(), DataClassification.LOCAL_ONLY.value());
-      for (RedactionCategory category : result.detectedCategories()) {
-        if (echoesRepoContent && FUZZY_HEURISTIC_CATEGORIES.contains(category)) {
-          continue;
+      // (i) known-shape detection via the sanctioned engine. An authored JSON artifact (e.g. the
+      // runner's output/runner-result.v1.json) is analyzed STRUCTURALLY: the fuzzy YAML/env
+      // heuristics false-positive on natural-language PROSE inside string VALUES — the
+      // security-conscious plan text "…without password:" / "password=<invalid>" that quarantined
+      // an otherwise-clean run (run_009f4595) captured the JSON `","` / a literal placeholder as
+      // the "secret value". Structural analysis pardons the fuzzy categories on VALUES only, while
+      // the secret-named-KEY check and the precise credential shapes (tokens, PEM/SSH keys, auth
+      // headers) still fire — so a real leak is still caught. Non-JSON content (config lines,
+      // transcripts, source) and repo/transcript echoes keep the raw-text scan unchanged.
+      com.fasterxml.jackson.databind.JsonNode structuredJson =
+          echoesRepoContent ? null : tryParseJsonContainer(file.text());
+      if (structuredJson != null) {
+        RedactionResult result =
+            redactionPolicyService.redactStructured(
+                structuredJson, DataClassification.LOCAL_ONLY.value(), FUZZY_HEURISTIC_CATEGORIES);
+        for (RedactionCategory category : result.detectedCategories()) {
+          categories.add(category.name());
         }
-        categories.add(category.name());
+      } else {
+        RedactionResult result =
+            redactionPolicyService.redact(file.text(), DataClassification.LOCAL_ONLY.value());
+        for (RedactionCategory category : result.detectedCategories()) {
+          if (echoesRepoContent && FUZZY_HEURISTIC_CATEGORIES.contains(category)) {
+            continue;
+          }
+          categories.add(category.name());
+        }
       }
 
       // (ii) mandatory literal substring containment of THIS dispatch's injected provider key(s).
@@ -222,6 +247,30 @@ public class RunnerSecretScanService {
           runnerExecutionId);
     }
     return values;
+  }
+
+  /**
+   * Parse {@code text} as a JSON object/array so an authored JSON artifact can be scanned
+   * structurally (prose in string VALUES is not misread as a credential). Returns {@code null} when
+   * the content is not a JSON container — a bare string, a config line ({@code DB_PASSWORD=…}), a
+   * JSONL transcript, or source — so those keep the raw-text scan (and its fuzzy detection)
+   * unchanged. Gated on a leading {@code '{'}/{@code '['} so ordinary text is never probed, and
+   * tolerant of malformed input (a parse failure returns {@code null}).
+   */
+  private com.fasterxml.jackson.databind.JsonNode tryParseJsonContainer(String text) {
+    if (text == null) {
+      return null;
+    }
+    String trimmed = text.stripLeading();
+    if (trimmed.isEmpty() || (trimmed.charAt(0) != '{' && trimmed.charAt(0) != '[')) {
+      return null;
+    }
+    try {
+      com.fasterxml.jackson.databind.JsonNode node = SCAN_JSON_MAPPER.readTree(text);
+      return (node != null && node.isContainerNode()) ? node : null;
+    } catch (com.fasterxml.jackson.core.JacksonException parseFailure) {
+      return null;
+    }
   }
 
   /**

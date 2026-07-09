@@ -519,7 +519,19 @@ final class ArchitectureRuleCatalog {
               .callMethod(
                   IntegrationConflictWritePort.class,
                   "insertIfAbsent",
-                  NewIntegrationConflict.class));
+                  NewIntegrationConflict.class)
+              .orShould()
+              .callMethod(
+                  IntegrationConflictWritePort.class,
+                  "markResolved",
+                  String.class,
+                  String.class,
+                  java.time.Instant.class)
+              // Story 4.6 code review (P3) — the per-run reconcile advisory lock is on the same
+              // conflict-package-only write port; only application.integration.conflict may call
+              // it.
+              .orShould()
+              .callMethod(IntegrationConflictWritePort.class, "lockRunForReconcile", String.class));
 
   /**
    * Story 3.11 (AC9) — the plan-stage twin of {@link

@@ -128,6 +128,8 @@ public class WorkflowInspectionService {
   // Story 3f-4 — threads hasOpenSplitProposal into the action matrix (advisory split overlay).
   private final org.dradgo.application.workflow.spi.SplitProposalReadPort splitProposalReadPort;
   private ProjectStore projectStore;
+  private org.dradgo.application.integration.conflict.IntegrationConflictService
+      integrationConflictService;
   // Story 3b-5 — parses the structured prOutput payload (branch/commitSha/diff) for the
   // artifact-read projection. A plain instance field, not a constructor dependency, so the ~7 `new
   // WorkflowInspectionService(...)` test sites are untouched ([[runnerproperties-record-fanout]]).
@@ -185,6 +187,13 @@ public class WorkflowInspectionService {
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setProjectStore(ProjectStore projectStore) {
     this.projectStore = projectStore;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setIntegrationConflictService(
+      org.dradgo.application.integration.conflict.IntegrationConflictService
+          integrationConflictService) {
+    this.integrationConflictService = integrationConflictService;
   }
 
   // Story 3f-3 (AC8) — the run-dependency read port, backing the dependency graph embedded in the
@@ -1390,6 +1399,18 @@ public class WorkflowInspectionService {
   static final String ROLE_WORKFLOW_OWNER = "workflow_owner";
 
   /**
+   * Story 4.6 code review (P1) — the {@code reconcile_conflict} overlay is only actionable for the
+   * workflow owner on a NON-terminal run, because {@code RecoveryService.reconcile} rejects
+   * terminal states with {@code RECONCILE_NOT_APPLICABLE}. Mirrors {@code
+   * RecoveryService.TERMINAL_STATES}. Gating the conflict scan on role + non-terminal state keeps
+   * the {@code integration_conflicts} query off the allowed-actions hot path (it never runs for
+   * non-owner roles or terminal runs) and stops the overlay from advertising an action that would
+   * always 409 — the same state-gating discipline as {@code hasActiveSplitDispatch}.
+   */
+  private static final Set<WorkflowState> RECONCILE_TERMINAL_STATES =
+      EnumSet.of(WorkflowState.COMPLETED, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED);
+
+  /**
    * Story 3.20 (AC12 / OQ-3) — the developer-review actor role recognized for {@code
    * accept_implementation} in the {@code WAITING_FOR_REVIEW} state. Added to {@link
    * #RECOGNIZED_ACTOR_ROLES} so {@code getAllowedActions(runId, "developer")} does not throw {@code
@@ -1490,6 +1511,13 @@ public class WorkflowInspectionService {
           (state == WorkflowState.WAITING_FOR_SPEC_APPROVAL
                   || state == WorkflowState.WAITING_FOR_REVIEW)
               && hasActiveSplitDispatch(workflowRunPublicId);
+      // Story 4.6 code review (P1): only the workflow owner on a non-terminal run can act on a
+      // conflict, so gate the scan on role + state (mirroring hasActiveSplitDispatch) rather than
+      // querying integration_conflicts on every getAllowedActions call.
+      boolean hasUnresolvedConflict =
+          ROLE_WORKFLOW_OWNER.equals(resolvedRole)
+              && !RECONCILE_TERMINAL_STATES.contains(state)
+              && hasUnresolvedConflict(workflowRunPublicId);
       List<AllowedAction> actions =
           computeActionMatrix(
               state,
@@ -1498,7 +1526,8 @@ public class WorkflowInspectionService {
               latestSpecPublicId,
               summary.archivedAt() != null,
               hasOpenSplitProposal,
-              hasActiveSplitDispatch);
+              hasActiveSplitDispatch,
+              hasUnresolvedConflict);
 
       AllowedActionsView view =
           new AllowedActionsView(
@@ -1548,7 +1577,8 @@ public class WorkflowInspectionService {
       String latestSpecPublicId,
       boolean archived,
       boolean hasOpenSplitProposal,
-      boolean hasActiveSplitDispatch) {
+      boolean hasActiveSplitDispatch,
+      boolean hasUnresolvedConflict) {
     List<AllowedAction> result =
         new ArrayList<>(
             baseActionMatrix(state, actorRole, pendingClarifications, latestSpecPublicId));
@@ -1558,6 +1588,7 @@ public class WorkflowInspectionService {
     // exists, else repropose_split + continue_as_single. (approve_split is added by 3f-5.) Appended
     // before the archive overlay so the gate actions stay grouped.
     appendSplitOverlay(result, state, actorRole, hasOpenSplitProposal, hasActiveSplitDispatch);
+    appendConflictOverlay(result, actorRole, hasUnresolvedConflict);
     // Soft-hide is a run-owner triage affordance only (review decision 3d-8/D1): gate
     // archive_run/unarchive_run to workflow_owner, mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE.
     // It stays additive + orthogonal to the per-state lifecycle actions, just role-scoped.
@@ -1569,6 +1600,23 @@ public class WorkflowInspectionService {
 
   // Story 3f-4 (AC1) — the proposal-aware split overlay. A no-op outside the two gate/role
   // combinations, so every other matrix row stays byte-identical.
+  private void appendConflictOverlay(
+      List<AllowedAction> actions, String actorRole, boolean hasUnresolvedConflict) {
+    if (hasUnresolvedConflict && ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+      actions.add(AllowedAction.RECONCILE_CONFLICT);
+    }
+  }
+
+  private boolean hasUnresolvedConflict(String workflowRunPublicId) {
+    if (integrationConflictService == null) {
+      return false;
+    }
+    return !integrationConflictService
+        .listUnresolvedConflicts(
+            org.dradgo.application.integration.conflict.ConflictFilter.forRun(workflowRunPublicId))
+        .isEmpty();
+  }
+
   private void appendSplitOverlay(
       List<AllowedAction> actions,
       WorkflowState state,

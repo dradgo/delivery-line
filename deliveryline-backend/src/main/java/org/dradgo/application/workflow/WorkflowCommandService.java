@@ -32,6 +32,7 @@ import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -258,6 +259,11 @@ public class WorkflowCommandService {
     // tx commits (the double-dispatch caution). Replay pins targetState (an invariant post-state
     // per accepted command) in replayStateChange.
     return executeIdempotent(command, this::resumeWorkflowInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult reconcileWorkflow(ReconcileWorkflowCommand command) {
+    return executeIdempotent(command, this::reconcileWorkflowInternal, this::replayStateChange);
   }
 
   @Transactional
@@ -725,6 +731,28 @@ public class WorkflowCommandService {
     }
   }
 
+  private WorkflowStateChangeResult reconcileWorkflowInternal(ReconcileWorkflowCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      transition(
+          command.workflowRunId(),
+          WorkflowState.RECONCILED,
+          command,
+          fallbackReason(command.reasonText(), "reconcile workflow"),
+          Map.of(
+              "conflictId",
+              command.conflictId(),
+              "reconciliationDecision",
+              command.decision().value()));
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(),
+          WorkflowState.RECONCILED,
+          normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
   private <T extends DomainResult, C extends WorkflowCommand> T executeIdempotent(
       C command,
       java.util.function.Function<C, T> action,
@@ -966,6 +994,7 @@ public class WorkflowCommandService {
           // Executing; pin it from the command payload rather than re-reading the run's later
           // live state.
           case ResumeWorkflowCommand resume -> resume.targetState();
+          case ReconcileWorkflowCommand ignored -> WorkflowState.RECONCILED;
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           case AcceptClarificationCommand ignored -> clarificationReplayState(resultRef);
           default -> workflowRun.currentState();

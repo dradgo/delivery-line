@@ -190,6 +190,11 @@
     "RUN_DEPENDENCY_CYCLE": "https://deliveryline.local/problems/run-dependency-cycle",
     "SPLIT_DEPTH_LIMIT_EXCEEDED": "https://deliveryline.local/problems/split-depth-limit-exceeded",
     "INVALID_AUDIT_FILTER": "https://deliveryline.local/problems/invalid-audit-filter",
-    "RESUME_NOT_APPLICABLE": "https://deliveryline.local/problems/resume-not-applicable"
+    "RESUME_NOT_APPLICABLE": "https://deliveryline.local/problems/resume-not-applicable",
+    "RECONCILE_NOT_APPLICABLE": "https://deliveryline.local/problems/reconcile-not-applicable",
+    "MISSING_RECONCILIATION_DECISION": "https://deliveryline.local/problems/missing-reconciliation-decision",
+    "INVALID_RECONCILIATION_DECISION": "https://deliveryline.local/problems/invalid-reconciliation-decision",
+    "CONFLICT_NOT_FOUND": "https://deliveryline.local/problems/conflict-not-found",
+    "CONFLICT_ALREADY_RESOLVED": "https://deliveryline.local/problems/conflict-already-resolved"
   }
 }

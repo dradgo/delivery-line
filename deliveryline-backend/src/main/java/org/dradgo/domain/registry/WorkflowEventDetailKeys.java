@@ -116,6 +116,7 @@ public final class WorkflowEventDetailKeys {
   // alongside them. NEVER carries external tokens, PR bodies, or raw external payloads.
   public static final String CONFLICT_ID = "conflictId";
   public static final String CONFLICT_CATEGORY = "conflictCategory";
+  public static final String RECONCILIATION_DECISION = "reconciliationDecision";
 
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
@@ -172,7 +173,8 @@ public final class WorkflowEventDetailKeys {
           PR_NUMBER,
           PR_STATE,
           CONFLICT_ID,
-          CONFLICT_CATEGORY);
+          CONFLICT_CATEGORY,
+          RECONCILIATION_DECISION);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

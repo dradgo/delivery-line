@@ -228,7 +228,12 @@ public enum DomainErrorCode implements RegistryValue {
   // the run IS Paused but no WORKFLOW_STATE_CHANGED → Paused event exists to derive the prior
   // executing state / link the audit trail. CONFLICT (409) + non-retryable (a precondition mismatch
   // on the run's state, not a transient fault).
-  RESUME_NOT_APPLICABLE("RESUME_NOT_APPLICABLE");
+  RESUME_NOT_APPLICABLE("RESUME_NOT_APPLICABLE"),
+  RECONCILE_NOT_APPLICABLE("RECONCILE_NOT_APPLICABLE"),
+  MISSING_RECONCILIATION_DECISION("MISSING_RECONCILIATION_DECISION"),
+  INVALID_RECONCILIATION_DECISION("INVALID_RECONCILIATION_DECISION"),
+  CONFLICT_NOT_FOUND("CONFLICT_NOT_FOUND"),
+  CONFLICT_ALREADY_RESOLVED("CONFLICT_ALREADY_RESOLVED");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

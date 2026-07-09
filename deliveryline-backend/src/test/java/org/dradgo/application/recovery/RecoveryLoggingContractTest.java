@@ -23,6 +23,10 @@ import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.spi.ArtifactOperationPort;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.conflict.ConflictIntegrationTypes;
+import org.dradgo.application.integration.conflict.ConflictResolutionView;
+import org.dradgo.application.integration.conflict.IntegrationConflictService;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
@@ -39,6 +43,7 @@ import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -75,6 +80,8 @@ class RecoveryLoggingContractTest {
   private WorkflowCommandService workflowCommandService;
   private RunnerExecutionQueue runnerExecutionQueue;
   private org.dradgo.application.workflow.WorkflowOrchestrationService workflowOrchestrationService;
+  private IntegrationLinkService integrationLinkService;
+  private IntegrationConflictService conflictService;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
 
@@ -88,6 +95,8 @@ class RecoveryLoggingContractTest {
     runnerExecutionQueue = mock(RunnerExecutionQueue.class);
     workflowOrchestrationService =
         mock(org.dradgo.application.workflow.WorkflowOrchestrationService.class);
+    integrationLinkService = mock(IntegrationLinkService.class);
+    conflictService = mock(IntegrationConflictService.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     service =
@@ -101,8 +110,10 @@ class RecoveryLoggingContractTest {
             mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class),
             mock(org.dradgo.application.runner.ManualExecutionDispatcher.class),
             workflowOrchestrationService,
+            integrationLinkService,
             eventWritePort,
             recoveryRecordPort,
+            conflictService,
             new IdempotencyKeyValidator(),
             Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC),
             callthroughTemplate(),
@@ -335,6 +346,89 @@ class RecoveryLoggingContractTest {
     assertTrue(rejected.getFormattedMessage().contains("reason=not_paused"));
   }
 
+  // ---------------------------------------------------------------------------
+  // Story 4.6 - reconcile log lines (start / success / replay / rejected).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void reconcileHappyPathEmitsStartAndSuccessLogsAtInfoWithExpectedKeys() {
+    stubReconcileHappyPath("rcv_rec-log1");
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(reconcileActionSnapshot("rcv_rec-log1", "succeeded", "evt_reconciled-log1"));
+
+    service.reconcile(
+        RUN,
+        "icf_log-aaaaa",
+        "mark_completed_externally",
+        IDEMPOTENCY_KEY,
+        ACTOR,
+        "operator confirmed external completion");
+
+    ILoggingEvent start = findFirst(Level.INFO, "recovery reconcile start");
+    assertTrue(start.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(start.getFormattedMessage().contains("conflictId=icf_log-aaaaa"));
+    assertTrue(start.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+    assertTrue(start.getFormattedMessage().contains("actorIdentity=" + ACTOR.actorIdentity()));
+
+    ILoggingEvent success = findFirst(Level.INFO, "recovery reconcile success");
+    assertTrue(success.getFormattedMessage().contains("recoveryActionId=rcv_rec-log1"));
+    assertTrue(success.getFormattedMessage().contains("resolvedConflictId=icf_log-aaaaa"));
+    assertTrue(success.getFormattedMessage().contains("decision=mark_completed_externally"));
+    assertTrue(success.getFormattedMessage().contains("durationMs="));
+    assertEquals(RUN, start.getMDCPropertyMap().get("workflowRunId"));
+    assertEquals(RUN, success.getMDCPropertyMap().get("workflowRunId"));
+  }
+
+  @Test
+  void reconcileReplayEmitsReplayLogAtInfoWithRecoveryActionIdAndIdempotencyKey() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY))
+        .thenReturn(
+            Optional.of(
+                reconcileActionSnapshot("rcv_rec-prior", "succeeded", "evt_reconciled-prior")));
+    when(eventReadPort.listByWorkflowRunPublicId(RUN, null))
+        .thenReturn(
+            List.of(
+                new WorkflowEventRecord(
+                    "evt_reconciled-prior",
+                    RUN,
+                    WorkflowEventType.RECOVERY_RECONCILED,
+                    WorkflowState.EXECUTING,
+                    WorkflowState.RECONCILED,
+                    ACTOR.actorIdentity(),
+                    ACTOR.actorType(),
+                    "operator confirmed external completion",
+                    null,
+                    true,
+                    FIXED_NOW,
+                    Map.of(
+                        "conflictId",
+                        "icf_log-aaaaa",
+                        "reconciliationDecision",
+                        "mark_completed_externally"))));
+
+    service.reconcile(
+        RUN, "icf_log-aaaaa", "mark_completed_externally", IDEMPOTENCY_KEY, ACTOR, " ");
+
+    ILoggingEvent replay = findFirst(Level.INFO, "recovery reconcile replay");
+    assertTrue(replay.getFormattedMessage().contains("recoveryActionId=rcv_rec-prior"));
+    assertTrue(replay.getFormattedMessage().contains("conflictId=icf_log-aaaaa"));
+    assertTrue(replay.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+  }
+
+  @Test
+  void reconcileRejectedEmitsWarnWithReasonAndConflictId() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+
+    assertThrows(
+        DomainException.class,
+        () -> service.reconcile(RUN, "icf_log-aaaaa", " ", IDEMPOTENCY_KEY, ACTOR, "reason"));
+
+    ILoggingEvent rejected = findFirst(Level.WARN, "recovery reconcile rejected");
+    assertTrue(rejected.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(rejected.getFormattedMessage().contains("conflictId=icf_log-aaaaa"));
+    assertTrue(rejected.getFormattedMessage().contains("reason=MISSING_RECONCILIATION_DECISION"));
+  }
+
   private void stubPausedRunPath() {
     when(runReadPort.findByPublicId(RUN))
         .thenReturn(
@@ -413,6 +507,48 @@ class RecoveryLoggingContractTest {
             "rex_log1-bbbbb", RUN, RunnerStage.EXECUTION, 100, "corr", 1L, "evt_queued-log1a");
     when(runnerExecutionQueue.enqueue(eq(RUN), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
         .thenReturn(queued);
+  }
+
+  private void stubReconcileHappyPath(String recoveryActionId) {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
+    when(conflictService.findConflictForResolution("icf_log-aaaaa"))
+        .thenReturn(Optional.of(reconcileConflict(null)));
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(reconcileActionSnapshot(recoveryActionId, "pending", null));
+    when(conflictService.listUnresolvedConflicts(any())).thenReturn(List.of());
+  }
+
+  private static ConflictResolutionView reconcileConflict(OffsetDateTime resolvedAt) {
+    return new ConflictResolutionView(
+        "icf_log-aaaaa",
+        RUN,
+        "ilk_log-aaaaa",
+        ConflictIntegrationTypes.GITHUB_PR,
+        IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED.value(),
+        "octo/repo#1",
+        resolvedAt,
+        "{}",
+        "{}");
+  }
+
+  private RecoveryActionSnapshot reconcileActionSnapshot(
+      String publicId, String resultStatus, String resultingEventId) {
+    return new RecoveryActionSnapshot(
+        publicId,
+        1L,
+        RUN,
+        "reconcile",
+        null,
+        resultingEventId,
+        ACTOR.actorIdentity(),
+        ACTOR.actorType(),
+        IDEMPOTENCY_KEY,
+        resultStatus,
+        Instant.now().atOffset(ZoneOffset.UTC),
+        "workflow_owner");
   }
 
   private RecoveryActionSnapshot recoveryActionSnapshot(String publicId, String resultStatus) {

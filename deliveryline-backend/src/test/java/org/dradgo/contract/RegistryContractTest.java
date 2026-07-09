@@ -45,6 +45,7 @@ import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.ReconciliationDecision;
 import org.dradgo.domain.registry.ReviewOutcome;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
@@ -114,6 +115,8 @@ class RegistryContractTest {
     assertEquals(
         registryValues(IntegrationConflictCategory.values()),
         DomainRegistry.integrationConflictCategories());
+    assertEquals(
+        registryValues(ReconciliationDecision.values()), DomainRegistry.reconciliationDecisions());
     assertEquals(
         registryValues(IntegrationSyncStatus.values()), DomainRegistry.integrationSyncStatuses());
     assertEquals(

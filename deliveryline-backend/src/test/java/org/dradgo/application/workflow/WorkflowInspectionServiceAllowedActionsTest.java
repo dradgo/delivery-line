@@ -331,6 +331,37 @@ class WorkflowInspectionServiceAllowedActionsTest {
     assertThat(view.actions()).doesNotContain(AllowedAction.ARCHIVE_RUN);
   }
 
+  @Test
+  void unresolvedConflictAddsReconcileActionForWorkflowOwnerOnly() {
+    org.dradgo.application.integration.conflict.IntegrationConflictService conflicts =
+        mock(org.dradgo.application.integration.conflict.IntegrationConflictService.class);
+    service.setIntegrationConflictService(conflicts);
+    when(conflicts.listUnresolvedConflicts(
+            org.mockito.ArgumentMatchers.any(
+                org.dradgo.application.integration.conflict.ConflictFilter.class)))
+        .thenReturn(
+            List.of(
+                new org.dradgo.application.integration.conflict.ConflictSummary(
+                    "icf_allowed00001",
+                    "ilk_allowed00001",
+                    RUN,
+                    org.dradgo.domain.registry.IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED
+                        .value(),
+                    org.dradgo.application.integration.conflict.ConflictIntegrationTypes.GITHUB_PR,
+                    "octo/hello#42",
+                    NOW.toInstant())));
+    stubRunWithState(WorkflowState.FAILED, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+
+    AllowedActionsView owner = service.getAllowedActions(RUN, "workflow_owner");
+    AllowedActionsView reviewer = service.getAllowedActions(RUN, "product_reviewer");
+
+    assertThat(owner.actions())
+        .containsSubsequence(AllowedAction.RECONCILE_CONFLICT, AllowedAction.ARCHIVE_RUN);
+    assertThat(reviewer.actions()).doesNotContain(AllowedAction.RECONCILE_CONFLICT);
+  }
+
   // ---------------------------------------------------------------------------
   // Story 3d-2 AC8 — the advisory Reviewer Verdict Panel adds NO governed action
   // ---------------------------------------------------------------------------

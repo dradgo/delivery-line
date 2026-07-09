@@ -14,6 +14,7 @@ public sealed interface WorkflowCommand
         RetryWorkflowCommand,
         TakeoverWorkflowCommand,
         ResumeWorkflowCommand,
+        ReconcileWorkflowCommand,
         ApproveLintCommand,
         RequestLintFixCommand {
 

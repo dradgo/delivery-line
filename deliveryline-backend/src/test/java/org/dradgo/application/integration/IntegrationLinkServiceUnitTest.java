@@ -646,6 +646,24 @@ class IntegrationLinkServiceUnitTest {
   }
 
   @Test
+  void commentInternalReconcileOnGitHubPrPostsDeterministicCommentToActivePr() {
+    IntegrationLink active =
+        sampleGithubLink("ilk_reconcile00001", RUN_ID, IntegrationSyncStatus.LINKED);
+    when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
+        .thenReturn(Optional.of(active));
+
+    service.commentInternalReconcileOnGitHubPr(RUN_ID, "icf_conflict00001");
+
+    ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(gitHubAdapter).commentOnPullRequest(eq(PullRequestRef.of(PR_REF)), bodyCaptor.capture());
+    String body = bodyCaptor.getValue();
+    assertTrue(body.contains(RUN_ID));
+    assertTrue(body.contains("icf_conflict00001"));
+    assertTrue(body.contains("internal state"));
+    assertTrue(!body.contains("operator chose"), "operator reason stays in internal audit only");
+  }
+
+  @Test
   void assertArtifactPrLinkMatchesPassesWhenArtifactRefMatchesLink() {
     when(port.findActiveByTypeAndWorkflowRunForUpdate(GITHUB_TYPE, RUN_ID))
         .thenReturn(

@@ -100,7 +100,8 @@ public enum AllowedAction implements RegistryValue {
   // through WorkflowCommandService.resumeWorkflow). The REST endpoint that honors it lands in story
   // 4.10. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
   // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
-  RESUME_WORKFLOW("resume_workflow");
+  RESUME_WORKFLOW("resume_workflow"),
+  RECONCILE_CONFLICT("reconcile_conflict");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

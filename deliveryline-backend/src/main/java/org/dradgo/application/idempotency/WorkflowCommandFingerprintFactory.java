@@ -8,6 +8,7 @@ import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
@@ -128,6 +129,12 @@ public class WorkflowCommandFingerprintFactory {
         // replay.
         append(digest, resume.workflowRunId());
         append(digest, normalizeOptional(resume.reasonText()));
+      }
+      case ReconcileWorkflowCommand reconcile -> {
+        append(digest, reconcile.workflowRunId());
+        append(digest, reconcile.conflictId());
+        append(digest, reconcile.decision().value());
+        append(digest, normalizeOptional(reconcile.reasonText()));
       }
       // Story 3h-2 (AC5) — the lint-gate operator actions. Fingerprint the run id only: the two
       // actions are distinguished by their distinct COMMAND_* type constants at the reservation

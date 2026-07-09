@@ -7,10 +7,10 @@ package org.dradgo.application.integration.conflict;
  * integration type cannot silently diverge the detector from the read-surface filter validator (the
  * two previously held independent copies of these literals).
  */
-final class ConflictIntegrationTypes {
+public final class ConflictIntegrationTypes {
 
-  static final String LINEAR = "linear";
-  static final String GITHUB_PR = "github_pr";
+  public static final String LINEAR = "linear";
+  public static final String GITHUB_PR = "github_pr";
 
   private ConflictIntegrationTypes() {}
 }

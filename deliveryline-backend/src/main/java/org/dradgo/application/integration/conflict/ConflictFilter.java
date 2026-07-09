@@ -22,4 +22,8 @@ public record ConflictFilter(
   public static ConflictFilter unfiltered() {
     return new ConflictFilter(null, null, null, null, null);
   }
+
+  public static ConflictFilter forRun(String workflowRunId) {
+    return new ConflictFilter(null, null, null, workflowRunId, null);
+  }
 }

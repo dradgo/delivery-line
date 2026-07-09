@@ -112,12 +112,16 @@ public final class WorkflowTransitionTable {
         WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
-    put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED);
+    put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED, WorkflowState.RECONCILED);
     // Story 3f-3 (AC2 / AC6) — the sole out-edge from the dependency-gating state: when the last
     // prerequisite reaches Completed, RunDependencyReleaseService releases the dependent onward
     // into
     // the normal spec-generation path. No direct edges to approval/review/completed states.
-    put(rules, WorkflowState.WAITING_FOR_DEPENDENCIES, WorkflowState.INVESTIGATING);
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_DEPENDENCIES,
+        WorkflowState.INVESTIGATING,
+        WorkflowState.RECONCILED);
     // Story 3h-2 (AC4 / AC5) — the pre-review lint gate. approve_lint resumes the delivery tail
     // (-> WaitingForReview); request_lint_fix re-dispatches the implementation runner (->
     // Executing).

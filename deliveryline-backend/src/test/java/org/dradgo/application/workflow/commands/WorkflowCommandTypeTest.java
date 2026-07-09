@@ -81,5 +81,17 @@ class WorkflowCommandTypeTest {
                 null,
                 org.dradgo.domain.registry.WorkflowState.EXECUTING)
             .commandType());
+    assertEquals(
+        "ReconcileWorkflowCommand",
+        new ReconcileWorkflowCommand(
+                "run_x",
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "icf_x",
+                org.dradgo.domain.registry.ReconciliationDecision.ACCEPT_INTERNAL_STATE,
+                "reason")
+            .commandType());
   }
 }

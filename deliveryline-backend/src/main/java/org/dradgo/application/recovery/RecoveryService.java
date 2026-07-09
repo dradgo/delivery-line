@@ -12,6 +12,11 @@ import java.util.Optional;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.spi.ArtifactOperationPort;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.conflict.ConflictFilter;
+import org.dradgo.application.integration.conflict.ConflictIntegrationTypes;
+import org.dradgo.application.integration.conflict.ConflictResolutionView;
+import org.dradgo.application.integration.conflict.IntegrationConflictService;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
@@ -21,6 +26,7 @@ import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
+import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
@@ -32,6 +38,7 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
+import org.dradgo.domain.registry.ReconciliationDecision;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
@@ -51,17 +58,18 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p><strong>Scope governed by ADR 0033 (was ArchUnit scope-protected):</strong> today this service
  * exposes {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
- * ActorContext, String)} (story 4.5), and {@link #describeFailure(String)}. The former ArchUnit
- * tripwire {@code RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper
- * recovery surface out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see
- * {@code docs/adr/0033-recovery-service-scope-lift.md}. The set of recovery methods allowed to land
- * on this service is now governed by that ADR's "what new scope is now allowed" list rather than by
- * a build-breaking rule; adding a method outside that list requires a new ADR (or updating 0033).
+ * ActorContext, String)} (story 4.5), {@link #reconcile(String, String, String, ActorContext,
+ * String, String)} (story 4.6), and {@link #describeFailure(String)}. The former ArchUnit tripwire
+ * {@code RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper recovery
+ * surface out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see {@code
+ * docs/adr/0033-recovery-service-scope-lift.md}. The set of recovery methods allowed to land on
+ * this service is now governed by that ADR's "what new scope is now allowed" list rather than by a
+ * build-breaking rule; adding a method outside that list requires a new ADR (or updating 0033).
  *
  * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code
- * rerunFromStep(...)}, {@code reconcile(...)}, {@code pause(...)}, {@code classifyFailure(...)} —
- * see the ADR 0033 (c) allow-list for the exhaustive set. {@code takeover(...)} lives on the
- * sibling {@code DeveloperTakeoverService}, which remains ArchUnit scope-protected.
+ * rerunFromStep(...)}, {@code pause(...)}, {@code classifyFailure(...)} — see the ADR 0033 (c)
+ * allow-list for the exhaustive set. {@code takeover(...)} lives on the sibling {@code
+ * DeveloperTakeoverService}, which remains ArchUnit scope-protected.
  *
  * <p><strong>Idempotency-key namespacing:</strong> the user-supplied {@code idempotencyKey} flows
  * through three idempotency surfaces — {@link WorkflowCommandService#retryWorkflow} (workflow state
@@ -152,6 +160,7 @@ public class RecoveryService {
   // invariant applied when building the recovery_actions row (9-arg ctor), NOT a public param
   // (audit-only label; RBAC deferred).
   static final String ACTION_TYPE_RESUME = "resume";
+  static final String ACTION_TYPE_RECONCILE = "reconcile";
   static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
   static final String RESULT_STATUS_PENDING = "pending";
   static final String RESULT_STATUS_SUCCEEDED = "succeeded";
@@ -192,6 +201,8 @@ public class RecoveryService {
   // redispatchAfterRetry (never transitions; no-op returning null when auto-dispatch is off). No DI
   // cycle: WorkflowOrchestrationService does not depend on RecoveryService.
   private final WorkflowOrchestrationService workflowOrchestrationService;
+  private final IntegrationLinkService integrationLinkService;
+  private final IntegrationConflictService integrationConflictService;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final RecoveryActionRecordPort recoveryActionRecordPort;
   private final IdempotencyKeyValidator idempotencyKeyValidator;
@@ -210,8 +221,10 @@ public class RecoveryService {
       org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
       org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
       WorkflowOrchestrationService workflowOrchestrationService,
+      IntegrationLinkService integrationLinkService,
       WorkflowEventWritePort workflowEventWritePort,
       RecoveryActionRecordPort recoveryActionRecordPort,
+      IntegrationConflictService integrationConflictService,
       IdempotencyKeyValidator idempotencyKeyValidator,
       PlatformTransactionManager transactionManager) {
     this(
@@ -224,8 +237,10 @@ public class RecoveryService {
         projectRuntimeConfigResolver,
         manualExecutionDispatcher,
         workflowOrchestrationService,
+        integrationLinkService,
         workflowEventWritePort,
         recoveryActionRecordPort,
+        integrationConflictService,
         idempotencyKeyValidator,
         Clock.systemUTC(),
         requiresNewTemplate(transactionManager),
@@ -248,6 +263,44 @@ public class RecoveryService {
       Clock clock,
       TransactionTemplate retryPrepTransactionTemplate,
       TransactionTemplate resultStatusTransactionTemplate) {
+    this(
+        workflowRunReadPort,
+        workflowEventReadPort,
+        runnerExecutionRecordPort,
+        artifactOperationPort,
+        workflowCommandService,
+        runnerExecutionQueue,
+        projectRuntimeConfigResolver,
+        manualExecutionDispatcher,
+        workflowOrchestrationService,
+        null,
+        workflowEventWritePort,
+        recoveryActionRecordPort,
+        null,
+        idempotencyKeyValidator,
+        clock,
+        retryPrepTransactionTemplate,
+        resultStatusTransactionTemplate);
+  }
+
+  RecoveryService(
+      WorkflowRunReadPort workflowRunReadPort,
+      WorkflowEventReadPort workflowEventReadPort,
+      RunnerExecutionRecordPort runnerExecutionRecordPort,
+      ArtifactOperationPort artifactOperationPort,
+      WorkflowCommandService workflowCommandService,
+      org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
+      org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
+      org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
+      WorkflowOrchestrationService workflowOrchestrationService,
+      IntegrationLinkService integrationLinkService,
+      WorkflowEventWritePort workflowEventWritePort,
+      RecoveryActionRecordPort recoveryActionRecordPort,
+      IntegrationConflictService integrationConflictService,
+      IdempotencyKeyValidator idempotencyKeyValidator,
+      Clock clock,
+      TransactionTemplate retryPrepTransactionTemplate,
+      TransactionTemplate resultStatusTransactionTemplate) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -265,6 +318,8 @@ public class RecoveryService {
         Objects.requireNonNull(manualExecutionDispatcher, "manualExecutionDispatcher");
     this.workflowOrchestrationService =
         Objects.requireNonNull(workflowOrchestrationService, "workflowOrchestrationService");
+    this.integrationLinkService = integrationLinkService;
+    this.integrationConflictService = integrationConflictService;
     this.workflowEventWritePort =
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.recoveryActionRecordPort =
@@ -916,6 +971,148 @@ public class RecoveryService {
     }
   }
 
+  public ReconcileRecoveryResult reconcile(
+      String workflowRunId,
+      String conflictId,
+      String resolutionDecision,
+      String idempotencyKey,
+      ActorContext actor,
+      String reasonText) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(actor, "actor");
+    if (integrationConflictService == null) {
+      throw new IllegalStateException("IntegrationConflictService is required for reconcile");
+    }
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(idempotencyKey);
+      long start = System.nanoTime();
+      log.info(
+          "recovery reconcile start workflowRunId={} conflictId={} idempotencyKey={} actorIdentity={}",
+          workflowRunId,
+          conflictId,
+          validatedIdempotencyKey,
+          actor.actorIdentity());
+
+      // Idempotency replay pre-check BEFORE input validation (mirror resume's replay-first order):
+      // a genuine retry of an already-succeeded reconcile must replay even if the client now omits
+      // reasonText or sends a blank/invalid decision.
+      Optional<RecoveryActionSnapshot> priorAction =
+          recoveryActionRecordPort.findByIdempotencyKey(validatedIdempotencyKey);
+      if (priorAction.isPresent()) {
+        RecoveryActionSnapshot prior = priorAction.get();
+        if (!ACTION_TYPE_RECONCILE.equals(prior.actionType())
+            || !workflowRunId.equals(prior.workflowRunPublicId())
+            || !RESULT_STATUS_SUCCEEDED.equals(prior.resultStatus())) {
+          throw idempotencyConflict(validatedIdempotencyKey, workflowRunId, prior);
+        }
+        return replayReconcileResultOrConflict(
+            workflowRunId, conflictId, resolutionDecision, validatedIdempotencyKey, actor, prior);
+      }
+
+      ReconciliationDecision decision = parseDecision(resolutionDecision);
+      String effectiveReason = resolveReconcileReasonText(reasonText);
+
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+      if (TERMINAL_STATES.contains(run.currentState())) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("currentState", run.currentState().value());
+        throw new DomainException(
+            DomainErrorCode.RECONCILE_NOT_APPLICABLE,
+            "Reconcile is not applicable from terminal state " + run.currentState().value(),
+            details);
+      }
+      ConflictResolutionView view = validateConflictForReconcile(workflowRunId, conflictId);
+      String correlationId = actor.correlationId();
+      ReconcilePrep prep;
+      try {
+        prep =
+            retryPrepTransactionTemplate.execute(
+                status ->
+                    performReconcilePrep(
+                        workflowRunId,
+                        validatedIdempotencyKey,
+                        actor,
+                        decision,
+                        view,
+                        run.currentState(),
+                        effectiveReason,
+                        correlationId));
+      } catch (DomainException prepError) {
+        if (prepError.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          Optional<ReconcileRecoveryResult> raceReplay =
+              resolveConcurrentReconcileReplay(
+                  workflowRunId, conflictId, validatedIdempotencyKey, actor);
+          if (raceReplay.isPresent()) {
+            return raceReplay.get();
+          }
+        }
+        throw prepError;
+      }
+
+      applyReconcileSideEffect(workflowRunId, decision, view);
+      // Mirror resume Step 6: a failed status flip must not surface as a raw error nor silently
+      // strand the row as pending (which would poison every later same-key replay with
+      // IDEMPOTENCY_KEY_CONFLICT). Escalate to INTERNAL_ERROR so the operator knows the reconcile
+      // landed but needs reconciliation of the audit row.
+      try {
+        resultStatusTransactionTemplate.executeWithoutResult(
+            status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));
+      } catch (RuntimeException completionError) {
+        log.error(
+            "recovery reconcile completion status update failed workflowRunId={} recoveryActionId={} idempotencyKey={} errorClass={} — run reconciled but recovery_actions row stays pending; operator reconciliation required",
+            workflowRunId,
+            prep.recoveryActionPublicId,
+            validatedIdempotencyKey,
+            completionError.getClass().getSimpleName());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("recoveryActionId", prep.recoveryActionPublicId);
+        details.put("idempotencyKey", validatedIdempotencyKey);
+        details.put("reason", "result_status_flip_failed_after_reconcile");
+        DomainException terminal =
+            new DomainException(
+                DomainErrorCode.INTERNAL_ERROR,
+                "Run reconciled but recovery_actions.result_status flip to succeeded failed; "
+                    + "row remains pending. Operator reconciliation required.",
+                details);
+        terminal.addSuppressed(completionError);
+        throw terminal;
+      }
+      long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+      log.info(
+          "recovery reconcile success workflowRunId={} recoveryActionId={} resolvedConflictId={} decision={} durationMs={}",
+          workflowRunId,
+          prep.recoveryActionPublicId,
+          conflictId,
+          decision.value(),
+          elapsedMs);
+      return new ReconcileRecoveryResult(
+          prep.recoveryActionPublicId,
+          prep.reconciledEventPublicId,
+          conflictId,
+          prep.resultingState,
+          correlationId,
+          false);
+    } catch (DomainException rejected) {
+      // Rejection observability: every guarded rejection (missing/invalid decision, blank reason,
+      // RUN_NOT_FOUND, RECONCILE_NOT_APPLICABLE, CONFLICT_NOT_FOUND/ALREADY_RESOLVED, idempotency
+      // conflict) surfaces one WARN carrying the reason before propagating.
+      log.warn(
+          "recovery reconcile rejected workflowRunId={} conflictId={} reason={}",
+          workflowRunId,
+          conflictId,
+          rejected.errorCode());
+      throw rejected;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
   private ResumePrep performResumePrep(
       String workflowRunId,
       String idempotencyKey,
@@ -1114,6 +1311,286 @@ public class RecoveryService {
   }
 
   private record ResumePrep(String recoveryActionPublicId, String resumedEventPublicId) {}
+
+  private ReconcilePrep performReconcilePrep(
+      String workflowRunId,
+      String idempotencyKey,
+      ActorContext actor,
+      ReconciliationDecision decision,
+      ConflictResolutionView conflict,
+      WorkflowState priorState,
+      String effectiveReason,
+      String correlationId) {
+    // Story 4.6 code review (P3): serialize concurrent reconciles on this run FIRST, before the
+    // last-conflict read below. Without it, two reconciles on two different conflicts of the same
+    // run can each read hasOtherUnresolvedConflicts before the other's markResolved commits, both
+    // skip the terminal transition, and leave the run stuck non-terminal with zero conflicts.
+    // Tx-scoped advisory lock (released on this prep tx's commit/rollback).
+    integrationConflictService.lockRunForReconcile(workflowRunId);
+    String recoveryEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+
+    // Last-conflict semantics: decide the resulting workflow state before appending the recovery
+    // event, while the current conflict is still unresolved. Any unresolved conflict other than the
+    // commanded one means this reconcile only closes one row and leaves the run in its current
+    // state.
+    boolean hasOtherUnresolvedConflicts =
+        integrationConflictService
+            .listUnresolvedConflicts(ConflictFilter.forRun(workflowRunId))
+            .stream()
+            .anyMatch(summary -> !conflict.conflictId().equals(summary.conflictId()));
+    WorkflowState resultingState =
+        hasOtherUnresolvedConflicts ? priorState : WorkflowState.RECONCILED;
+    if (!hasOtherUnresolvedConflicts) {
+      ReconcileWorkflowCommand command =
+          new ReconcileWorkflowCommand(
+              workflowRunId,
+              actor.actorIdentity(),
+              actor.actorType(),
+              idempotencyKey,
+              correlationId,
+              conflict.conflictId(),
+              decision,
+              effectiveReason);
+      workflowCommandService.reconcileWorkflow(command);
+    }
+
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put(WorkflowEventDetailKeys.CONFLICT_ID, conflict.conflictId());
+    eventDetails.put(WorkflowEventDetailKeys.CONFLICT_CATEGORY, conflict.conflictCategory());
+    eventDetails.put(WorkflowEventDetailKeys.RECONCILIATION_DECISION, decision.value());
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    if (effectiveReason != null && !effectiveReason.isBlank()) {
+      eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    }
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            recoveryEventPublicId,
+            workflowRunId,
+            WorkflowEventType.RECOVERY_RECONCILED,
+            priorState,
+            resultingState,
+            actor.actorIdentity(),
+            actor.actorType(),
+            effectiveReason,
+            null,
+            true,
+            OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+            eventDetails));
+
+    // triggering_event_id is a nullable FK to workflow_events(evt_...); resolve the run's
+    // integration.conflictDetected event best-effort (null when unresolvable - AC4/Reconciliation
+    // 3). Passing the conflict id (icf_...) here throws invalidPrefix in the adapter's prefix guard
+    // and rolls back the entire reconcile prep tx; the conflict id already lives in the event
+    // details under CONFLICT_ID.
+    String triggeringEventPublicId =
+        workflowEventReadPort
+            .findLatestByWorkflowRunPublicIdAndEventTypeIn(
+                workflowRunId, List.of(WorkflowEventType.INTEGRATION_CONFLICT_DETECTED.value()))
+            .map(WorkflowEventRecord::publicId)
+            .orElse(null);
+
+    RecoveryActionSnapshot recoveryAction =
+        recoveryActionRecordPort.insert(
+            new RecoveryActionWriteCommand(
+                workflowRunId,
+                ACTION_TYPE_RECONCILE,
+                triggeringEventPublicId,
+                recoveryEventPublicId,
+                actor.actorIdentity(),
+                actor.actorType(),
+                idempotencyKey,
+                RESULT_STATUS_PENDING,
+                REVIEWER_ROLE_WORKFLOW_OWNER));
+    integrationConflictService.resolveConflict(
+        conflict.conflictId(), workflowRunId, recoveryAction.publicId(), clock.instant());
+
+    return new ReconcilePrep(recoveryAction.publicId(), recoveryEventPublicId, resultingState);
+  }
+
+  private ConflictResolutionView validateConflictForReconcile(
+      String workflowRunId, String conflictId) {
+    ConflictResolutionView view =
+        integrationConflictService
+            .findConflictForResolution(conflictId)
+            .orElseThrow(() -> conflictNotFound(workflowRunId, conflictId));
+    if (!workflowRunId.equals(view.workflowRunId())) {
+      throw conflictNotFound(workflowRunId, conflictId);
+    }
+    if (view.resolvedAt() != null) {
+      throw new DomainException(
+          DomainErrorCode.CONFLICT_ALREADY_RESOLVED,
+          "Integration conflict is already resolved: " + conflictId,
+          Map.of("conflictId", conflictId, "runId", workflowRunId));
+    }
+    return view;
+  }
+
+  private DomainException conflictNotFound(String workflowRunId, String conflictId) {
+    return new DomainException(
+        DomainErrorCode.CONFLICT_NOT_FOUND,
+        "Integration conflict not found: " + conflictId,
+        Map.of("conflictId", conflictId, "runId", workflowRunId));
+  }
+
+  private ReconciliationDecision parseDecision(String rawDecision) {
+    if (rawDecision == null || rawDecision.isBlank()) {
+      throw new DomainException(
+          DomainErrorCode.MISSING_RECONCILIATION_DECISION,
+          "Missing reconciliation decision",
+          Map.of("field", "resolutionDecision"));
+    }
+    try {
+      return ReconciliationDecision.fromValue(rawDecision, "resolutionDecision");
+    } catch (DomainException ignored) {
+      throw new DomainException(
+          DomainErrorCode.INVALID_RECONCILIATION_DECISION,
+          "Invalid reconciliation decision: " + rawDecision,
+          Map.of("provided", rawDecision));
+    }
+  }
+
+  private void applyReconcileSideEffect(
+      String workflowRunId, ReconciliationDecision decision, ConflictResolutionView view) {
+    try {
+      if (decision == ReconciliationDecision.ACCEPT_EXTERNAL_STATE) {
+        if (ConflictIntegrationTypes.GITHUB_PR.equals(view.integrationType())
+            && integrationLinkService != null) {
+          integrationLinkService.syncGitHubPr(workflowRunId);
+        } else {
+          // Documented gap (Task 5 / Reconciliation 6): no external metadata-refresh path exists
+          // for
+          // Linear (or unknown/null integration types) on accept_external_state — log + skip. The
+          // conflict is still resolved and the run still reconciled.
+          log.warn(
+              "recovery reconcile accept_external_state skipped external refresh (documented gap) workflowRunId={} conflictId={} integrationType={}",
+              workflowRunId,
+              view.conflictId(),
+              view.integrationType());
+        }
+        return;
+      }
+      if (decision == ReconciliationDecision.ACCEPT_INTERNAL_STATE) {
+        if (ConflictIntegrationTypes.LINEAR.equals(view.integrationType())) {
+          workflowOrchestrationService.syncCompletionToLinear(workflowRunId);
+        }
+        if (ConflictIntegrationTypes.GITHUB_PR.equals(view.integrationType())
+            && integrationLinkService != null) {
+          integrationLinkService.commentInternalReconcileOnGitHubPr(
+              workflowRunId, view.conflictId());
+        }
+      }
+    } catch (RuntimeException error) {
+      log.warn(
+          "recovery reconcile side-effect failed workflowRunId={} conflictId={} decision={} integrationType={} errorClass={}",
+          workflowRunId,
+          view.conflictId(),
+          decision.value(),
+          view.integrationType(),
+          error.getClass().getSimpleName());
+    }
+  }
+
+  private ReconcileRecoveryResult replayReconcileResultOrConflict(
+      String workflowRunId,
+      String conflictId,
+      String rawDecision,
+      String idempotencyKey,
+      ActorContext actor,
+      RecoveryActionSnapshot prior) {
+    if (prior.resultingEventPublicId() == null) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    WorkflowEventRecord event =
+        workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null).stream()
+            .filter(candidate -> prior.resultingEventPublicId().equals(candidate.publicId()))
+            .findFirst()
+            .orElseThrow(() -> idempotencyConflict(idempotencyKey, workflowRunId, prior));
+    Object storedConflict = event.details().get(WorkflowEventDetailKeys.CONFLICT_ID);
+    if (!conflictId.equals(storedConflict)) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    if (rawDecision != null && !rawDecision.isBlank()) {
+      try {
+        ReconciliationDecision requested = parseDecision(rawDecision);
+        Object storedDecision =
+            event.details().get(WorkflowEventDetailKeys.RECONCILIATION_DECISION);
+        if (!requested.value().equals(storedDecision)) {
+          throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+        }
+      } catch (DomainException invalidDecision) {
+        if (invalidDecision.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          throw invalidDecision;
+        }
+        // Preserve replay-first semantics: a malformed decision on a retry does not block replay
+        // once the conflict id matches the persisted recovery.reconciled event.
+      }
+    }
+    WorkflowState resultingState =
+        event.resultingState() == null ? WorkflowState.RECONCILED : event.resultingState();
+    log.info(
+        "recovery reconcile replay workflowRunId={} recoveryActionId={} conflictId={} idempotencyKey={}",
+        workflowRunId,
+        prior.publicId(),
+        conflictId,
+        idempotencyKey);
+    return new ReconcileRecoveryResult(
+        prior.publicId(),
+        prior.resultingEventPublicId(),
+        conflictId,
+        resultingState,
+        actor.correlationId(),
+        true);
+  }
+
+  private Optional<ReconcileRecoveryResult> resolveConcurrentReconcileReplay(
+      String workflowRunId, String conflictId, String idempotencyKey, ActorContext actor) {
+    Optional<RecoveryActionSnapshot> prior =
+        recoveryActionRecordPort.findByIdempotencyKey(idempotencyKey);
+    if (prior.isEmpty()) {
+      return Optional.empty();
+    }
+    RecoveryActionSnapshot snapshot = prior.get();
+    if (!workflowRunId.equals(snapshot.workflowRunPublicId())
+        || !ACTION_TYPE_RECONCILE.equals(snapshot.actionType())
+        || !RESULT_STATUS_SUCCEEDED.equals(snapshot.resultStatus())
+        || snapshot.resultingEventPublicId() == null) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        replayReconcileResultOrConflict(
+            workflowRunId, conflictId, null, idempotencyKey, actor, snapshot));
+  }
+
+  private DomainException idempotencyConflict(
+      String idempotencyKey, String workflowRunId, RecoveryActionSnapshot prior) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("idempotencyKey", idempotencyKey);
+    details.put("runId", workflowRunId);
+    details.put("priorActionType", prior.actionType());
+    details.put("priorResultStatus", prior.resultStatus());
+    return new DomainException(
+        DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+        "Idempotency key is already bound to another recovery attempt",
+        details);
+  }
+
+  private static String resolveReconcileReasonText(String reasonText) {
+    if (reasonText != null && !reasonText.isBlank()) {
+      return reasonText;
+    }
+    throw new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "Reconcile requires a non-blank reason",
+        Map.of("field", "reasonText"));
+  }
+
+  private record ReconcilePrep(
+      String recoveryActionPublicId,
+      String reconciledEventPublicId,
+      WorkflowState resultingState) {}
 
   private RetryPrep performRetryPrep(
       String workflowRunId,

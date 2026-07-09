@@ -3,6 +3,7 @@ package org.dradgo.application.security;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -27,6 +28,21 @@ public class RedactionPolicyService {
 
   public RedactionResult redact(JsonNode payload, String claimedClassificationValue) {
     return toResult(classificationService.analyze(payload, claimedClassificationValue));
+  }
+
+  /**
+   * Structural redaction of a JSON payload with {@code valueLevelSuppressed} categories pardoned on
+   * string VALUES (never on secret-named KEYS). Used by the runner secret scan to analyze authored
+   * JSON artifacts so security-conscious prose inside string values is not misread by the fuzzy
+   * heuristics as a leaked credential, while a real secret-named field and precise credential
+   * shapes are still caught.
+   */
+  public RedactionResult redactStructured(
+      JsonNode payload,
+      String claimedClassificationValue,
+      Set<RedactionCategory> valueLevelSuppressed) {
+    return toResult(
+        classificationService.analyze(payload, claimedClassificationValue, valueLevelSuppressed));
   }
 
   public RedactionResult redactForExport(String payload, String claimedClassificationValue) {

@@ -103,11 +103,13 @@ class WorkflowTransitionTableTest {
             WorkflowState.FAILED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
-    expectedTargets.put(WorkflowState.SPLIT, Set.of(WorkflowState.COMPLETED));
+    expectedTargets.put(
+        WorkflowState.SPLIT, Set.of(WorkflowState.COMPLETED, WorkflowState.RECONCILED));
     // Story 3f-3: the dependency-gating park state releases onward into the spec-generation path
     // (INVESTIGATING) once the last prerequisite reaches Completed — its sole out-edge.
     expectedTargets.put(
-        WorkflowState.WAITING_FOR_DEPENDENCIES, Set.of(WorkflowState.INVESTIGATING));
+        WorkflowState.WAITING_FOR_DEPENDENCIES,
+        Set.of(WorkflowState.INVESTIGATING, WorkflowState.RECONCILED));
     // Story 3h-2: the lint gate resumes to WaitingForReview (approve_lint) or re-dispatches to
     // Executing (request_lint_fix), plus the recovery/safety edges. No -> Failed edge (Decision 3).
     expectedTargets.put(

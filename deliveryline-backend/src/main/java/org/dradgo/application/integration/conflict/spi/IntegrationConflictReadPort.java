@@ -1,7 +1,9 @@
 package org.dradgo.application.integration.conflict.spi;
 
 import java.util.List;
+import java.util.Optional;
 import org.dradgo.application.integration.conflict.ConflictFilter;
+import org.dradgo.application.integration.conflict.ConflictResolutionView;
 import org.dradgo.application.integration.conflict.ConflictSummary;
 
 /**
@@ -14,6 +16,8 @@ public interface IntegrationConflictReadPort {
 
   /** Unresolved conflicts matching {@code filter} (all axes optional), newest first. */
   List<ConflictSummary> listUnresolved(ConflictFilter filter);
+
+  Optional<ConflictResolutionView> findByPublicId(String conflictPublicId);
 
   /**
    * Grouped {@code (category, integration)} counts of all currently unresolved conflicts — the

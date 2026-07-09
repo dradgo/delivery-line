@@ -104,11 +104,13 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.FAILED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
-          Map.entry(WorkflowState.SPLIT, EnumSet.of(WorkflowState.COMPLETED)),
+          Map.entry(
+              WorkflowState.SPLIT, EnumSet.of(WorkflowState.COMPLETED, WorkflowState.RECONCILED)),
           // Story 3f-3 (AC2 / AC6) — the dependency-gating state's sole out-edge: release onward to
           // spec generation once the last prerequisite completes.
           Map.entry(
-              WorkflowState.WAITING_FOR_DEPENDENCIES, EnumSet.of(WorkflowState.INVESTIGATING)),
+              WorkflowState.WAITING_FOR_DEPENDENCIES,
+              EnumSet.of(WorkflowState.INVESTIGATING, WorkflowState.RECONCILED)),
           // Story 3h-2 (AC4 / AC5) — the pre-review lint gate: approve_lint -> WaitingForReview,
           // request_lint_fix -> Executing, plus the recovery/safety edges. No -> Failed (Decision
           // 3).

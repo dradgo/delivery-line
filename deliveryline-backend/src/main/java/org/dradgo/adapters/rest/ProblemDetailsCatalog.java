@@ -556,6 +556,36 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Resume not applicable",
         false);
+    register(
+        metadata,
+        DomainErrorCode.RECONCILE_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Reconcile not applicable",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_RECONCILIATION_DECISION,
+        HttpStatus.BAD_REQUEST,
+        "Missing reconciliation decision",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.INVALID_RECONCILIATION_DECISION,
+        HttpStatus.BAD_REQUEST,
+        "Invalid reconciliation decision",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.CONFLICT_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        "Integration conflict not found",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.CONFLICT_ALREADY_RESOLVED,
+        HttpStatus.CONFLICT,
+        "Integration conflict already resolved",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

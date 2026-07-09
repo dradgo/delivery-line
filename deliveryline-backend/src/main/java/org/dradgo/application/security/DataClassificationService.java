@@ -2,6 +2,7 @@ package org.dradgo.application.security;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -35,6 +36,13 @@ public class DataClassificationService {
   SensitivePayloadAnalyzer.SensitiveAnalysis analyze(
       JsonNode payload, String claimedClassificationValue) {
     return analyzer.analyzeStructured(payload, claimedClassificationValue);
+  }
+
+  SensitivePayloadAnalyzer.SensitiveAnalysis analyze(
+      JsonNode payload,
+      String claimedClassificationValue,
+      Set<RedactionCategory> valueLevelSuppressed) {
+    return analyzer.analyzeStructured(payload, claimedClassificationValue, valueLevelSuppressed);
   }
 
   private ClassificationAssessment toAssessment(

@@ -2,11 +2,14 @@ package org.dradgo.adapters.persistence;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import org.dradgo.application.integration.conflict.ConflictFilter;
+import org.dradgo.application.integration.conflict.ConflictResolutionView;
 import org.dradgo.application.integration.conflict.ConflictSummary;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictReadPort;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictScanPort;
@@ -48,6 +51,15 @@ public class IntegrationConflictPersistenceAdapter
   private static final long CONFLICT_SWEEP_ADVISORY_LOCK_KEY = 0x49434F4EL;
 
   private static final String ACQUIRE_LOCK_SQL = "select pg_advisory_xact_lock(:lockKey)";
+
+  // Story 4.6 code review (P3) — per-run reconcile advisory lock. The two-int
+  // pg_advisory_xact_lock(classifier, hashtext(runId)) form serializes reconciles on the SAME run
+  // (closing the D1 last-conflict count->transition race) while different runs never contend.
+  // 0x5243 == "RC" (reconcile), distinct from the ICON sweep key so the locks never collide.
+  private static final int RECONCILE_RUN_LOCK_CLASSIFIER = 0x5243;
+
+  private static final String LOCK_RUN_FOR_RECONCILE_SQL =
+      "select pg_advisory_xact_lock(:classifier, hashtext(:runId))";
 
   // Keyset-paginated by l.id (the raw monotonic PK) so the sweep advances past a single batch
   // across ticks instead of re-selecting the same oldest window every tick (bare-LIMIT starvation).
@@ -125,6 +137,33 @@ public class IntegrationConflictPersistenceAdapter
         left join integration_links l on l.public_id = c.integration_link_id
        where c.resolved_at is null and c.archived_at is null
        group by c.conflict_category, l.integration_type
+      """;
+
+  private static final String FIND_BY_PUBLIC_ID_SQL =
+      """
+      select c.public_id                  as conflict_id,
+             c.integration_link_id        as integration_link_id,
+             c.workflow_run_id            as workflow_run_id,
+             c.conflict_category          as conflict_category,
+             l.integration_type           as integration_type,
+             l.external_ref               as external_ref,
+             c.resolved_at                as resolved_at,
+             c.external_state_snapshot::text as external_state_snapshot,
+             c.internal_state_snapshot::text as internal_state_snapshot
+        from integration_conflicts c
+        left join integration_links l on l.public_id = c.integration_link_id
+       where c.public_id = :conflictId
+         and c.archived_at is null
+      """;
+
+  private static final String MARK_RESOLVED_SQL =
+      """
+      update integration_conflicts
+         set resolved_at = :resolvedAt,
+             resolved_by_action_id = :recoveryActionId
+       where public_id = :conflictId
+         and resolved_at is null
+         and archived_at is null
       """;
 
   private final NamedParameterJdbcTemplate jdbcTemplate;
@@ -266,6 +305,61 @@ public class IntegrationConflictPersistenceAdapter
                     toInstant(rs.getObject("detected_at", OffsetDateTime.class))));
     log.debug("listUnresolved returned={} ", rows.size());
     return new ArrayList<>(rows);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<ConflictResolutionView> findByPublicId(String conflictPublicId) {
+    Objects.requireNonNull(conflictPublicId, "conflictPublicId");
+    List<ConflictResolutionView> rows =
+        jdbcTemplate.query(
+            FIND_BY_PUBLIC_ID_SQL,
+            new MapSqlParameterSource("conflictId", conflictPublicId),
+            (rs, rowNum) ->
+                new ConflictResolutionView(
+                    rs.getString("conflict_id"),
+                    rs.getString("workflow_run_id"),
+                    rs.getString("integration_link_id"),
+                    rs.getString("integration_type"),
+                    rs.getString("conflict_category"),
+                    rs.getString("external_ref"),
+                    rs.getObject("resolved_at", OffsetDateTime.class),
+                    rs.getString("external_state_snapshot"),
+                    rs.getString("internal_state_snapshot")));
+    return rows.stream().findFirst();
+  }
+
+  @Override
+  @Transactional
+  public boolean markResolved(
+      String conflictPublicId, String recoveryActionPublicId, Instant resolvedAt) {
+    Objects.requireNonNull(conflictPublicId, "conflictPublicId");
+    Objects.requireNonNull(recoveryActionPublicId, "recoveryActionPublicId");
+    Objects.requireNonNull(resolvedAt, "resolvedAt");
+    int updated =
+        jdbcTemplate.update(
+            MARK_RESOLVED_SQL,
+            new MapSqlParameterSource()
+                .addValue("conflictId", conflictPublicId)
+                .addValue("recoveryActionId", recoveryActionPublicId)
+                .addValue("resolvedAt", Timestamp.from(resolvedAt)));
+    return updated > 0;
+  }
+
+  @Override
+  public void lockRunForReconcile(String workflowRunId) {
+    Objects.requireNonNull(workflowRunId, "workflowRunId");
+    // Joins the caller's (reconcile prep) transaction so the lock is held until that tx
+    // commits/rolls back. NOT @Transactional here — a REQUIRES_NEW would release it immediately;
+    // it relies on the ambient MANDATORY tx opened by
+    // IntegrationConflictService.lockRunForReconcile.
+    jdbcTemplate.queryForObject(
+        LOCK_RUN_FOR_RECONCILE_SQL,
+        new MapSqlParameterSource()
+            .addValue("classifier", RECONCILE_RUN_LOCK_CLASSIFIER)
+            .addValue("runId", workflowRunId),
+        Object.class);
+    log.debug("reconcile per-run advisory lock acquired workflowRunId={}", workflowRunId);
   }
 
   @Override
