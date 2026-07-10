@@ -32,6 +32,14 @@ class RunnerPropertiesTest {
   }
 
   @Test
+  void partialDeliveryModeConfigDefaultsAutoCreatePullRequestToTrue() {
+    RunnerProperties.DeliveryMode deliveryMode =
+        new RunnerProperties.DeliveryMode(org.dradgo.domain.registry.PushMode.MANUAL, null);
+
+    assertEquals(true, deliveryMode.autoCreatePullRequest());
+  }
+
+  @Test
   void queueMaxDepthIsClampedToAtLeastOne() {
     // Story 3.17a AC4 — a cap below 1 (0, negative, or an unset primitive bound to 0) would reject
     // every enqueue; the compact ctor coerces it up to 1 rather than dead-queueing.
@@ -62,6 +70,7 @@ class RunnerPropertiesTest {
         d.openspec(),
         d.buildStage(),
         d.lintStage(),
+        d.deliveryMode(),
         queueMaxDepth);
   }
 
@@ -88,6 +97,7 @@ class RunnerPropertiesTest {
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
             RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(true, enabled.allowShareableLogs());
   }
@@ -153,6 +163,7 @@ class RunnerPropertiesTest {
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
             RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(
         RunnerKind.CLAUDE,
@@ -182,6 +193,7 @@ class RunnerPropertiesTest {
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
             RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(
         RunnerKind.CLAUDE,
@@ -237,6 +249,7 @@ class RunnerPropertiesTest {
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
             RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(
         RunnerKind.CODEX, props.kindForExecutionSubStage(ExecutionSubStage.IMPLEMENTATION_PLAN));
@@ -268,6 +281,7 @@ class RunnerPropertiesTest {
                 RunnerProperties.OpenSpec.defaults(),
                 RunnerProperties.BuildStage.defaults(),
                 RunnerProperties.LintStage.defaults(),
+                RunnerProperties.DeliveryMode.defaults(),
                 100));
   }
 
@@ -295,6 +309,7 @@ class RunnerPropertiesTest {
                 RunnerProperties.OpenSpec.defaults(),
                 RunnerProperties.BuildStage.defaults(),
                 RunnerProperties.LintStage.defaults(),
+                RunnerProperties.DeliveryMode.defaults(),
                 100));
   }
 

@@ -13,6 +13,7 @@ import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,7 +119,11 @@ public class ProjectManagementService {
             // Story 3h-2 (AC2) — per-project lint config from the command (blank entries dropped;
             // empty ⇒ no lint).
             normalizeLintCommands(command.lintCommands()),
-            command.lintStageEnabled());
+            command.lintStageEnabled(),
+            // Story 3h-4 (AC1) — per-project delivery config from the create command (null pushMode
+            // ⇒ AUTO; autoCreatePullRequest is a plain boolean).
+            parsePushMode(command.pushMode()),
+            command.autoCreatePullRequest());
     Project created = projectStore.insert(project);
     log.info(
         "project created projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -174,7 +179,11 @@ public class ProjectManagementService {
             // Story 3h-2 (AC2) — per-project lint config from the command (blank entries dropped;
             // empty ⇒ no lint).
             normalizeLintCommands(command.lintCommands()),
-            command.lintStageEnabled());
+            command.lintStageEnabled(),
+            // Story 3h-4 (AC1) — delivery config is editable; full-replace from the update command
+            // (null pushMode ⇒ AUTO).
+            parsePushMode(command.pushMode()),
+            command.autoCreatePullRequest());
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -237,7 +246,11 @@ public class ProjectManagementService {
             // Story 3h-2 — preserve lint config across a status-only change (the back-compat 16-arg
             // ctor would default it to (empty,false) and silently wipe it).
             existing.lintCommands(),
-            existing.lintStageEnabled());
+            existing.lintStageEnabled(),
+            // Story 3h-4 — preserve delivery config across a status-only change (the back-compat
+            // 18-arg ctor would default it to (AUTO,true) and silently wipe a non-auto mode).
+            existing.pushMode(),
+            existing.autoCreatePullRequest());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -280,7 +293,10 @@ public class ProjectManagementService {
             // Story 3h-2 — preserve lint config across a status-only change (the back-compat 16-arg
             // ctor would default it to (empty,false) and silently wipe it).
             existing.lintCommands(),
-            existing.lintStageEnabled());
+            existing.lintStageEnabled(),
+            // Story 3h-4 — preserve delivery config across the status-only re-enable.
+            existing.pushMode(),
+            existing.autoCreatePullRequest());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",
@@ -322,6 +338,20 @@ public class ProjectManagementService {
 
   private static RunnerKind parseRunnerKind(String runnerKind) {
     return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "runnerKind");
+  }
+
+  /**
+   * Story 3h-4 (AC1) — parse/validate the per-project push mode for persistence. null/blank ⇒ the
+   * {@link PushMode#AUTO} default (push inline, pre-3h parity — mirrors {@code parseRunnerKind}'s
+   * null handling but with a non-null default because {@code push_mode} is a NOT NULL column). A
+   * non-blank value must resolve to a real {@link PushMode} ({@code auto}/{@code manual}/{@code
+   * approve}); an unknown value surfaces a typed {@code UNKNOWN_REGISTRY_VALUE} 400 via {@code
+   * PushMode.fromValue}.
+   */
+  private static PushMode parsePushMode(String pushMode) {
+    return (pushMode == null || pushMode.isBlank())
+        ? PushMode.AUTO
+        : PushMode.fromValue(pushMode, "pushMode");
   }
 
   /**

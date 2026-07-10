@@ -93,6 +93,15 @@ public enum AllowedAction implements RegistryValue {
   // only).
   APPROVE_LINT("approve_lint"),
   REQUEST_LINT_FIX("request_lint_fix"),
+  // Story 3h-4 (AC3, FR78) — the unified delivery gate's operator action, surfaced ONLY at
+  // WAITING_FOR_DELIVERY for the workflow_owner gate role (other roles get view_only + the
+  // log/usage views). approve_delivery dismisses the gate and advances to WaitingForReview: in
+  // approve mode it performs the push (+ PR per autoCreatePullRequest) via the resumable delivery
+  // seam; in manual mode it records the out-of-band delivery (delivery.recordedManually) WITHOUT
+  // touching git (Decision 4). Canonical executor is DeliveryApprovalService. There is NO
+  // request-fix twin: a non-auto delivery is dismissed by the single approve action. No DB CHECK
+  // exists for allowed-actions (enum <-> frontend placeholder JSON only).
+  APPROVE_DELIVERY("approve_delivery"),
   // Story 4.5 (AC9, FR47/NFR5) — the resume affordance for a paused run, surfaced ONLY at PAUSED
   // for
   // the workflow_owner gate role (other roles keep the view-only + diagnostics/log set). Canonical

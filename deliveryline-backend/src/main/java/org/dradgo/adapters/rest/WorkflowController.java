@@ -29,6 +29,7 @@ import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ArchiveRunCommand;
@@ -1382,6 +1383,83 @@ public class WorkflowController {
                     request.reasonText())));
     log.info(
         "REST approve-lint success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  /**
+   * Story 3h-4 (AC4, FR78) — {@code approve_delivery}: an operator (workflow_owner) dismisses the
+   * pre-review delivery gate and advances to WaitingForReview. In {@code approve} push mode the
+   * push (+ PR per autoCreatePullRequest) fires via the resumable delivery seam; in {@code manual}
+   * mode the out-of-band delivery is recorded (no git). Idempotent under Idempotency-Key;
+   * workflow_owner-gated (mirrors approve-lint and the recovery-bar operator actions).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/approve-delivery",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "approveDelivery",
+      summary = "Dismiss the pre-review delivery gate (approve_delivery)",
+      description =
+          "Operator (workflow_owner) action that dismisses a WaitingForDelivery gate and advances to "
+              + "WaitingForReview. In approve mode it pushes (+ PR per autoCreatePullRequest); in "
+              + "manual mode it records the out-of-band delivery. Idempotent under Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Gate dismissed; resulting state returned."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse approveDelivery(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ApproveDeliveryRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    requireWorkflowOwnerRole("approve-delivery", request.role());
+    log.info(
+        "REST approve-delivery received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.approveDelivery(
+                new ApproveDeliveryCommand(
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    request.reasonText())));
+    log.info(
+        "REST approve-delivery success workflowRunId={} currentState={}",
         workflowRunId,
         response.currentState());
     return response;

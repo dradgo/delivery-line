@@ -379,6 +379,7 @@ class DockerRunnerAdapterLoggingContractTest {
         b.openspec(),
         b.buildStage(),
         b.lintStage(),
+        b.deliveryMode(),
         b.queueMaxDepth());
   }
 }

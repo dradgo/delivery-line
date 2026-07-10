@@ -16,7 +16,8 @@ public sealed interface WorkflowCommand
         ResumeWorkflowCommand,
         ReconcileWorkflowCommand,
         ApproveLintCommand,
-        RequestLintFixCommand {
+        RequestLintFixCommand,
+        ApproveDeliveryCommand {
 
   String actorIdentity();
 

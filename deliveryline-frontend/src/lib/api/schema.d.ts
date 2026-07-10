@@ -316,6 +316,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/approve-delivery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the pre-review delivery gate (approve_delivery)
+         * @description Operator (workflow_owner) action that dismisses a WaitingForDelivery gate and advances to WaitingForReview. In approve mode it pushes (+ PR per autoCreatePullRequest); in manual mode it records the out-of-band delivery. Idempotent under Idempotency-Key.
+         */
+        post: operations["approveDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/approve-lint": {
         parameters: {
             query?: never;
@@ -962,6 +982,16 @@ export interface components {
             /** Format: int32 */
             expectedArtifactVersion: number;
         };
+        /** @description Dismiss the pre-review delivery gate (approve_delivery). */
+        ApproveDeliveryRequest: {
+            /** @description Optional operator note. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
         /** @description Dismiss the pre-review lint gate (approve_lint). */
         ApproveLintRequest: {
             /** @description Optional operator note. */
@@ -1206,6 +1236,11 @@ export interface components {
         /** @description Create a new project. */
         CreateProjectRequest: {
             /**
+             * @description Story 3h-4 — whether a pull/merge request is created wherever the push fires. Default true (pre-3h parity). When false the push still fires but no PR is created/linked.
+             * @example true
+             */
+            autoCreatePullRequest?: boolean;
+            /**
              * @description Story 3h-1 — optional build command run backend-side in the workspace before review (null/empty = no build, BUILD skipped even if enabled).
              * @example mvn -q -DskipTests package
              */
@@ -1235,6 +1270,12 @@ export interface components {
              * @example false
              */
             openspecEnabled?: boolean;
+            /**
+             * @description Story 3h-4 — per-project delivery push mode. 'auto' pushes inline at the delivery tail (pre-3h parity, never parks); 'manual'/'approve' park the run at WaitingForDelivery for an explicit approve_delivery. Default 'auto'.
+             * @example auto
+             * @enum {string|null}
+             */
+            pushMode?: "auto" | "manual" | "approve" | null;
             /** @example github */
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
@@ -1571,6 +1612,8 @@ export interface components {
              *     ]
              */
             allowedActions?: string[];
+            /** @description Story 3h-4 — whether a pull/merge request is created wherever the push fires. */
+            autoCreatePullRequest?: boolean;
             /**
              * @description Story 3h-1 — build command run backend-side before review; null = no build.
              * @example mvn -q -DskipTests package
@@ -1607,6 +1650,12 @@ export interface components {
             name?: string;
             /** @description Whether OpenSpec is enabled for this project. */
             openspecEnabled?: boolean;
+            /**
+             * @description Story 3h-4 — per-project delivery push mode. 'auto' pushes inline (pre-3h parity); 'manual'/'approve' park at WaitingForDelivery.
+             * @example auto
+             * @enum {string}
+             */
+            pushMode?: "auto" | "manual" | "approve";
             /**
              * @description Repository-host connector kind.
              * @example github
@@ -2045,6 +2094,11 @@ export interface components {
         /** @description Edit a project's mutable configuration. */
         UpdateProjectRequest: {
             /**
+             * @description Story 3h-4 — whether a pull/merge request is created wherever the push fires, full-replace on update. Default true (pre-3h parity).
+             * @example true
+             */
+            autoCreatePullRequest?: boolean;
+            /**
              * @description Story 3h-1 — optional build command run backend-side in the workspace before review (null/empty = no build, BUILD skipped even if enabled).
              * @example mvn -q -DskipTests package
              */
@@ -2074,6 +2128,12 @@ export interface components {
              * @example false
              */
             openspecEnabled?: boolean;
+            /**
+             * @description Story 3h-4 — per-project delivery push mode, editable here. 'auto' pushes inline (pre-3h parity); 'manual'/'approve' park the run at WaitingForDelivery. Default 'auto'.
+             * @example auto
+             * @enum {string|null}
+             */
+            pushMode?: "auto" | "manual" | "approve" | null;
             /** @example github */
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
@@ -3136,6 +3196,62 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    approveDelivery: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveDeliveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Gate dismissed; resulting state returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

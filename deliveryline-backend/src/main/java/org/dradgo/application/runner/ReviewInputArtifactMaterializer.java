@@ -113,12 +113,9 @@ public class ReviewInputArtifactMaterializer {
             referencePath);
         continue;
       }
-      String redacted =
-          redactionPolicyService
-              .redact(new String(payload.get(), StandardCharsets.UTF_8), classification)
-              .sanitizedText();
+      String content = new String(payload.get(), StandardCharsets.UTF_8);
       workspaceStore.writeInputArtifact(
-          runnerExecutionId, referencePath, redacted.getBytes(StandardCharsets.UTF_8));
+          runnerExecutionId, referencePath, redact(content, classification));
       materialized++;
     }
     log.info(
@@ -126,6 +123,46 @@ public class ReviewInputArtifactMaterializer {
         runnerExecutionId,
         materialized);
     return materialized;
+  }
+
+  /**
+   * Redact one artifact payload before its bytes cross into the container. A JSON artifact MUST be
+   * redacted structurally: the raw-text heuristics are line- and delimiter-oriented, so on a
+   * single-line JSON document they consume the document's own punctuation — the YAML secret-field
+   * rule swallows the {@code ","} separating two array elements, and the entropy rule splits at the
+   * first {@code =} and treats the whole remainder of the line as one secret "value", truncating
+   * the file. The result stopped parsing as JSON, which defeated the structural secret scan
+   * downstream and stranded the run on a bogus {@code runner_secret_leak} (run_009f4595…).
+   * Structural redaction rewrites string VALUES in place, so a real secret is still replaced while
+   * delimiters and sibling elements survive. Non-JSON content (e.g. an authored {@code spec.md})
+   * keeps the raw-text pass.
+   */
+  private byte[] redact(String content, String classification) {
+    JsonNode structured = tryParseJsonContainer(content);
+    String redacted =
+        structured != null
+            ? redactionPolicyService.redact(structured, classification).sanitizedText()
+            : redactionPolicyService.redact(content, classification).sanitizedText();
+    return redacted.getBytes(StandardCharsets.UTF_8);
+  }
+
+  /**
+   * Parse {@code content} as a JSON object/array. Gated on a leading {@code '{'}/{@code '['} so
+   * ordinary prose is never probed, and tolerant of malformed input (a parse failure returns {@code
+   * null}, routing the payload to the raw-text pass). Mirrors {@code
+   * RunnerSecretScanService.tryParseJsonContainer} — the scan that re-reads these very bytes.
+   */
+  private JsonNode tryParseJsonContainer(String content) {
+    String trimmed = content.stripLeading();
+    if (trimmed.isEmpty() || (trimmed.charAt(0) != '{' && trimmed.charAt(0) != '[')) {
+      return null;
+    }
+    try {
+      JsonNode node = objectMapper.readTree(content);
+      return node != null && node.isContainerNode() ? node : null;
+    } catch (com.fasterxml.jackson.core.JacksonException parseFailure) {
+      return null;
+    }
   }
 
   private static void addIfObject(List<JsonNode> target, JsonNode node) {

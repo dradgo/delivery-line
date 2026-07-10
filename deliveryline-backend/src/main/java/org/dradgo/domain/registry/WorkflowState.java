@@ -35,6 +35,18 @@ public enum WorkflowState implements RegistryValue {
   // operator-driven and never auto-fails (Decision 3). Wire value is PascalCase, matching the other
   // states.
   WAITING_FOR_LINT_APPROVAL("WaitingForLintApproval"),
+  // Story 3h-4 (AC3 / FR78): non-terminal delivery-gate state. A run under a non-auto push mode
+  // parks HERE instead of pushing (entered from EXECUTING at the current push point, or from
+  // WAITING_FOR_LINT_APPROVAL when a lint approval routes into a non-auto delivery — Decision 3).
+  // It
+  // leaves only on the operator gate action approve_delivery (-> WaitingForReview, either
+  // performing
+  // the push [approve mode] or recording the out-of-band delivery [manual mode]) or a
+  // recovery/safety edge (TakenOver / Reconciled). There is NO -> Failed edge: a push failure
+  // during
+  // approve_delivery rolls the command back and leaves the run parked for retry (Decision 5). An
+  // auto-mode run NEVER enters this state. Wire value is PascalCase, matching the other states.
+  WAITING_FOR_DELIVERY("WaitingForDelivery"),
   COMPLETED("Completed"),
   FAILED("Failed"),
   PAUSED("Paused"),

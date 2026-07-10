@@ -6,6 +6,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
@@ -143,6 +144,14 @@ public class WorkflowCommandFingerprintFactory {
       // replay, not a distinct action.
       case ApproveLintCommand approveLint -> append(digest, approveLint.workflowRunId());
       case RequestLintFixCommand requestLintFix -> append(digest, requestLintFix.workflowRunId());
+      // Story 3h-4 (AC7) — the delivery-gate operator action. Fingerprint the run id only;
+      // reasonText
+      // is intentionally NOT fingerprinted (free-form) so a same-key retry with a different reason
+      // is
+      // an idempotent replay that short-circuits to the pinned post-state (WaitingForReview), never
+      // double-pushing/double-creating the PR.
+      case ApproveDeliveryCommand approveDelivery ->
+          append(digest, approveDelivery.workflowRunId());
     }
     return HexFormat.of().formatHex(digest.digest());
   }

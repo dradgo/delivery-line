@@ -11,6 +11,7 @@ import java.util.Objects;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 
 /**
@@ -102,6 +103,18 @@ public class ProjectEntity {
   // RunnerKind.fromValue (fail fast on an unknown DB value, mirroring the status getter).
   @Column(name = "runner_kind")
   private String runnerKind;
+
+  // Story 3h-4 (AC1, FR78) — per-project delivery config (V38). push_mode is NOT NULL text
+  // defaulting
+  // 'auto', CHECK-constrained (ck_projects_push_mode) to the PushMode value set — so the getter
+  // parses through PushMode.fromValue (fail fast on an unknown DB value, mirroring getRunnerKind()
+  // and the status getter). auto_create_pull_request mirrors build_stage_enabled: NOT NULL boolean,
+  // but default TRUE (pre-3h delivery created a PR).
+  @Column(name = "push_mode", nullable = false)
+  private String pushMode;
+
+  @Column(name = "auto_create_pull_request", nullable = false)
+  private boolean autoCreatePullRequest;
 
   // Stamped from the domain createdAt at insert (updatable=false: created_at is immutable). NOT
   // insertable=false: Hibernate does not refresh an entity after saveAndFlush, so a DB-defaulted
@@ -235,6 +248,22 @@ public class ProjectEntity {
 
   public void setRunnerKind(RunnerKind runnerKind) {
     this.runnerKind = runnerKind == null ? null : runnerKind.value();
+  }
+
+  public PushMode getPushMode() {
+    return PushMode.fromValue(pushMode, "projects.push_mode");
+  }
+
+  public void setPushMode(PushMode pushMode) {
+    this.pushMode = Objects.requireNonNull(pushMode, "pushMode").value();
+  }
+
+  public boolean isAutoCreatePullRequest() {
+    return autoCreatePullRequest;
+  }
+
+  public void setAutoCreatePullRequest(boolean autoCreatePullRequest) {
+    this.autoCreatePullRequest = autoCreatePullRequest;
   }
 
   public OffsetDateTime getCreatedAt() {

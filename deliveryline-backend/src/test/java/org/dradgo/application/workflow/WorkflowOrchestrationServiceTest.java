@@ -170,6 +170,7 @@ class WorkflowOrchestrationServiceTest {
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
             RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     return new WorkflowOrchestrationService(
         runnerExecutionQueue,

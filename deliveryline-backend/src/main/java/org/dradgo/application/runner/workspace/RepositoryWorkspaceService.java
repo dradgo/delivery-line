@@ -757,6 +757,21 @@ public class RepositoryWorkspaceService {
           branch);
       return null;
     }
+    // Story 3h-4 (AC5) — the autoCreatePullRequest per-project flag gates PR creation wherever the
+    // push fires. When false the push still fired (governed by pushMode, not this flag) but no PR
+    // is
+    // created/linked: return null so RepositoryPushOutcome.prRef stays null and
+    // linkGitHubPrBestEffort
+    // no-ops (no github_pr link). A null resolver (git-focused service tests) defaults to true
+    // (pre-3h parity). The operator must create/link the PR out-of-band before review-accept.
+    Project runProject = resolveProjectOrNull(workflowRunId);
+    if (runProject != null && !runProject.autoCreatePullRequest()) {
+      log.info(
+          "captureAndPush PR step skipped workflowRunId={} reason=pr_creation_disabled branch={}",
+          workflowRunId,
+          branch);
+      return null;
+    }
     // Story 3c-7 review (P2) — resolve the run's Project repo-host adapter only AFTER the
     // no-repoRef
     // early return, so a PR-less push never triggers per-project connector resolution (which could

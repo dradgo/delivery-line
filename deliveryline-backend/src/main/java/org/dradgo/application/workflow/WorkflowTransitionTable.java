@@ -21,7 +21,11 @@ public final class WorkflowTransitionTable {
           // Story 3h-1 (AC5) — the bounded build auto-fix loop fails the run from EXECUTING with
           // RUNNER_BUILD_FAILED once the fix cap is exhausted
           // (BuildStageService.handleBuildFailure).
-          FailureCategory.RUNNER_BUILD_FAILED);
+          FailureCategory.RUNNER_BUILD_FAILED,
+          // A post-execution workspace secret leak (RunnerBroker.onResult) fails the run from
+          // EXECUTING or INVESTIGATING. Omitting it here made driveWorkflowFailed swallow the
+          // resulting ILLEGAL_TRANSITION, stranding leaked-secret runs in EXECUTING forever.
+          FailureCategory.RUNNER_SECRET_LEAK);
 
   private final Map<WorkflowState, Set<WorkflowState>> allowedTargets;
 
@@ -87,6 +91,9 @@ public final class WorkflowTransitionTable {
         // Story 3h-2 (AC4) — a CRITICAL lint finding parks the run at the pre-review lint gate
         // (entered from EXECUTING when the backend-side LINT stage classifies a critical finding).
         WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        // Story 3h-4 (AC3 / AC4) — a non-auto push mode parks the run at the pre-review delivery
+        // gate instead of pushing (entered from EXECUTING at the current push point).
+        WorkflowState.WAITING_FOR_DELIVERY,
         WorkflowState.FAILED,
         WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
@@ -133,6 +140,20 @@ public final class WorkflowTransitionTable {
         WorkflowState.WAITING_FOR_LINT_APPROVAL,
         WorkflowState.WAITING_FOR_REVIEW,
         WorkflowState.EXECUTING,
+        // Story 3h-4 (AC3, Decision 3) — when a lint approval lands on a non-auto push-mode
+        // project, approve_lint routes into the delivery gate rather than resuming the push.
+        WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.TAKEN_OVER,
+        WorkflowState.RECONCILED);
+    // Story 3h-4 (AC3 / AC4) — the unified delivery gate. approve_delivery advances the run to
+    // WaitingForReview (performing the push in approve mode, or recording the out-of-band delivery
+    // in manual mode). No -> Failed edge: a push failure during approve_delivery rolls the command
+    // back and leaves the run parked for retry (Decision 5). The recovery/safety edges (TakenOver /
+    // Reconciled) keep a parked run from ever wedging.
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.WAITING_FOR_REVIEW,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.COMPLETED);

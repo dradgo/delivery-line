@@ -403,6 +403,7 @@ class LocalRunnerWorkspaceStoreTest {
         RunnerProperties.OpenSpec.defaults(),
         RunnerProperties.BuildStage.defaults(),
         RunnerProperties.LintStage.defaults(),
+        RunnerProperties.DeliveryMode.defaults(),
         100);
   }
 

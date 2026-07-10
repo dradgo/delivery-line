@@ -378,6 +378,46 @@ infinite-loop risk (each iteration requires a manual operator action).
 **See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md),
 [`adr/0032-replay-safe-aftercommit-helper.md`](adr/0032-replay-safe-aftercommit-helper.md).
 
+### Delivery gate / push mode
+
+The **unified delivery gate** (FR78, story 3h-4) governs *whether and when* the backend pushes the
+produced code and opens a PR/MR. Two per-project flags feed it:
+
+- **`pushMode` ∈ `{auto, manual, approve}`** (default **`auto`**) — a CHECK-constrained column
+  (`ck_projects_push_mode`, mirroring `runner_kind`). It selects push-vs-park at the pr-output
+  delivery tail (which sits **before** review, resolving the epic's crux — see below):
+  - **`auto`** — the run **never parks**; `captureAndPush` fires **inline** exactly as pre-3h
+    delivery (byte-identical), then the run advances to `WaitingForReview`. The gate is a
+    pass-through.
+  - **`approve`** — the run parks at [`WaitingForDelivery`](#waitingfordelivery); `approve_delivery`
+    performs the push (+ PR per `autoCreatePullRequest`) via the resumable delivery seam.
+  - **`manual`** — the run parks at `WaitingForDelivery`; `approve_delivery` records the operator's
+    **out-of-band** delivery (a `delivery.recordedManually` event) and advances **without touching
+    git**.
+- **`autoCreatePullRequest`** (`boolean`, default **`true`**) — gates PR/MR creation *wherever the
+  push fires*. When `false` the push still fires (governed by `pushMode`) but no PR is created or
+  linked; the operator links the PR out-of-band before review-accept.
+
+**Gate before review.** The gate sits at the *current* push point (entered from `EXECUTING`), so the
+advisory reviewer still reads pushed code + a live PR. An `auto` project is byte-identical to pre-3h
+delivery. The gate also **composes with the [lint gate](#lint-gate)**: a lint approval on a
+non-`auto` project routes into `WaitingForDelivery` rather than pushing immediately.
+
+### WaitingForDelivery
+
+A **non-terminal** workflow state (story 3h-4) a run parks in under a non-`auto`
+[push mode](#delivery-gate--push-mode) — instead of pushing, at the pr-output delivery tail (before
+any LLM review). It surfaces a single operator action to the `workflow_owner` gate role:
+**`approve_delivery`** — in **`approve`** mode it performs the push (+ PR per `autoCreatePullRequest`)
+via `RunnerBroker.resumeDeliveryTailFromGate` (reused verbatim from the lint gate); in **`manual`**
+mode it records the out-of-band delivery (`delivery.recordedManually`) and enqueues the reviewer
+**without touching git**. Either mode then advances to `WaitingForReview`. There is **no `FAILED`
+edge** — a push failure during `approve_delivery` rolls the command back and leaves the run parked
+for retry (the `TakenOver`/`Reconciled` recovery edges keep it from wedging). An `auto`-mode run
+never enters this state.
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md).
+
 ---
 
 ## Linked from

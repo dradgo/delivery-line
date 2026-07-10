@@ -75,4 +75,19 @@ public record UpdateProjectRequest(
                     + "skipped even if enabled).",
             nullable = true,
             example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
-        List<String> lintCommands) {}
+        List<String> lintCommands,
+    @Schema(
+            description =
+                "Story 3h-4 — per-project delivery push mode, editable here. 'auto' pushes inline "
+                    + "(pre-3h parity); 'manual'/'approve' park the run at WaitingForDelivery. "
+                    + "Default 'auto'.",
+            nullable = true,
+            allowableValues = {"auto", "manual", "approve"},
+            example = "auto")
+        String pushMode,
+    @Schema(
+            description =
+                "Story 3h-4 — whether a pull/merge request is created wherever the push fires, "
+                    + "full-replace on update. Default true (pre-3h parity).",
+            example = "true")
+        Boolean autoCreatePullRequest) {}

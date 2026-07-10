@@ -211,6 +211,8 @@ class FlywaySchemaContractTest {
             "WaitingForManualExecution",
             "WaitingForDependencies",
             "WaitingForLintApproval",
+            // Story 3h-4 / V38 — the non-terminal delivery gate state.
+            "WaitingForDelivery",
             "Split",
             "Completed",
             "Failed",
@@ -665,6 +667,49 @@ class FlywaySchemaContractTest {
         "false",
         lintStageDefault,
         () -> "projects.lint_stage_enabled must default to false but was: " + lintStageDefault);
+
+    // Story 3h-4 / V38: per-project delivery config. push_mode is a NOT NULL text column defaulting
+    // 'auto', CHECK-constrained to {auto,manual,approve} (mirrors runner_kind, NOT free-text
+    // reviewer_model_kind). auto_create_pull_request is a NOT NULL boolean defaulting TRUE (unlike
+    // build/lint's default false — the pre-3h behavior created a PR).
+    assertColumnType("projects", "push_mode", "text");
+    assertColumnNullable("projects", "push_mode", false);
+    assertColumnType("projects", "auto_create_pull_request", "boolean");
+    assertColumnNullable("projects", "auto_create_pull_request", false);
+    String pushModeDefault =
+        jdbcTemplate.queryForObject(
+            """
+					select column_default
+					from information_schema.columns
+					where table_schema = 'public'
+					  and table_name = 'projects'
+					  and column_name = 'push_mode'
+					""",
+            String.class);
+    assertEquals(
+        "'auto'::text",
+        pushModeDefault,
+        () -> "projects.push_mode must default to 'auto' but was: " + pushModeDefault);
+    String autoCreatePrDefault =
+        jdbcTemplate.queryForObject(
+            """
+					select column_default
+					from information_schema.columns
+					where table_schema = 'public'
+					  and table_name = 'projects'
+					  and column_name = 'auto_create_pull_request'
+					""",
+            String.class);
+    assertEquals(
+        "true",
+        autoCreatePrDefault,
+        () ->
+            "projects.auto_create_pull_request must default to true but was: "
+                + autoCreatePrDefault);
+    // ck_projects_push_mode admits exactly {auto,manual,approve}.
+    assertConstraintDefinitionContains("ck_projects_push_mode", "'auto'");
+    assertConstraintDefinitionContains("ck_projects_push_mode", "'manual'");
+    assertConstraintDefinitionContains("ck_projects_push_mode", "'approve'");
 
     // uq_projects_slug enforces a unique slug.
     assertTrue(

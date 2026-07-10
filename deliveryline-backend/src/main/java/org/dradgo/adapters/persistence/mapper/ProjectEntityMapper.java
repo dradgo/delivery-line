@@ -67,7 +67,12 @@ public class ProjectEntityMapper {
         // list (null/blank text → empty list; blank lines dropped). Project's compact ctor copies
         // it.
         splitLintCommands(entity.getLintCommands()),
-        entity.isLintStageEnabled());
+        entity.isLintStageEnabled(),
+        // Story 3h-4 (AC1) — per-project delivery config (push_mode parsed through
+        // PushMode.fromValue
+        // in the entity getter; auto_create_pull_request a plain boolean).
+        entity.getPushMode(),
+        entity.isAutoCreatePullRequest());
   }
 
   public ProjectEntity toNewEntity(Project project) {
@@ -89,6 +94,9 @@ public class ProjectEntityMapper {
     // Story 3h-2 (AC2) — per-project lint config round-trips on insert (list ↔ newline-delimited).
     entity.setLintCommands(joinLintCommands(project.lintCommands()));
     entity.setLintStageEnabled(project.lintStageEnabled());
+    // Story 3h-4 (AC1) — per-project delivery config round-trips on insert.
+    entity.setPushMode(project.pushMode());
+    entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -125,6 +133,10 @@ public class ProjectEntityMapper {
     // read-modify-write round-trip stays lossless (mirrors build config).
     entity.setLintCommands(joinLintCommands(project.lintCommands()));
     entity.setLintStageEnabled(project.lintStageEnabled());
+    // Story 3h-4 (AC1) — delivery config is editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors build/lint config).
+    entity.setPushMode(project.pushMode());
+    entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }

@@ -142,6 +142,14 @@ public class RunnerBroker {
   // here), so there is no construction cycle to break.
   private java.util.function.Supplier<org.dradgo.application.workflow.LintStageService>
       lintStageServiceSupplier = () -> null;
+  // Story 3h-4 (AC2) — the pre-review delivery gate, resolved LAZILY via optional SETTER injection
+  // (an ObjectProvider) so NONE of the broker's ctor sites change — the same lint-gate precedent.
+  // Supplies null in lean contexts, so mock/no-delivery-gate dispatches run the delivery tail
+  // unchanged (push inline). The broker↔delivery-gate edge is one-way (the gate only resolves the
+  // push mode and decides park-vs-pass; it runs no command and does not reach the broker back), so
+  // there is no construction cycle to break.
+  private java.util.function.Supplier<org.dradgo.application.workflow.DeliveryGateService>
+      deliveryGateServiceSupplier = () -> null;
   // Story 3.10 (OQ-1) — resolves the run's Linear ticketRef for the EXECUTION-stage deterministic
   // branch (story 3.9 AC2) so prepareWorkspace checks out the right branch and captureAndPush
   // pushes
@@ -521,6 +529,20 @@ public class RunnerBroker {
               org.dradgo.application.workflow.LintStageService>
           provider) {
     this.lintStageServiceSupplier = provider::getIfAvailable;
+  }
+
+  /**
+   * Story 3h-4 (AC2) — optional setter injection of the delivery gate (via an {@link
+   * org.springframework.beans.factory.ObjectProvider} so the resolution is lazy + absent-tolerant).
+   * Keeps every broker ctor site untouched; production Spring wires the {@code DeliveryGateService}
+   * bean, lean test contexts leave the default {@code () -> null} (no delivery gate ⇒ push inline).
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setDeliveryGateServiceProvider(
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.DeliveryGateService>
+          provider) {
+    this.deliveryGateServiceSupplier = provider::getIfAvailable;
   }
 
   // Story 3a-1 test ctor (repo seam + a resolved orchestration instance) — wraps the instance in a
@@ -2105,10 +2127,12 @@ public class RunnerBroker {
     // of
     // the injected provider key). On a hit: record the execution FAILED with runner_secret_leak,
     // emit RUNNER_FAILED with leakedFile + category names (never a value), quarantine the workspace
-    // (Trap T10), and return. Per AC4 this does NOT drive the workflow-run state (the
-    // EXECUTING→FAILED
-    // transition allowlist is deliberately narrow — story 1.13 — and leak handling is scoped to the
-    // execution + event + quarantine); operator-driven recovery owns the run-state path.
+    // (Trap T10), drive the run to FAILED, and return. The leak previously stopped at the
+    // execution + event + quarantine on the theory that operator-driven recovery owned the
+    // run-state path — but nothing ever moved the run, so it sat in EXECUTING forever: the timeout
+    // scan skips a terminal execution row and RecommendationService offers no actions for a
+    // non-FAILED run. Driving FAILED here is what opens the recovery path it already classifies as
+    // a risky-retry category.
     // Story 3.5 review note (defaultKind coupling): the scan re-resolves the injected key for
     // runnerProperties.docker().defaultKind(), which is the SAME source the dispatch path uses when
     // building the RunnerDispatchRequest (see :288 above) — so the substring detector compares
@@ -2168,6 +2192,11 @@ public class RunnerBroker {
           runnerExecutionId,
           secretScan.leakedFile(),
           secretScan.detectedCategories());
+      driveWorkflowFailed(
+          workflowRunId,
+          runnerExecutionId,
+          FailureCategory.RUNNER_SECRET_LEAK,
+          "runner_secret_leak");
       log.warn(
           "onResult secret-leak runnerExecutionId={} workflowRunId={} leakedFile={} categories={}",
           runnerExecutionId,
@@ -2216,9 +2245,10 @@ public class RunnerBroker {
     final String prOutputArtifactIdFinal = prOutputArtifactId;
     final String prOutputResolvedDiffFinal = prOutputResolvedDiff;
     final ExecutionSubStage executionSubStageFinal = executionSubStage;
-    // The delivery tail continuation (captureAndPush + validate/enrich + recordCompleted +
-    // auto-advance), captured as a lambda so the BUILD and LINT gates can chain in front of it.
-    Runnable tail =
+    // The INLINE delivery step (captureAndPush + validate/enrich + recordCompleted + auto-advance),
+    // captured as a lambda so the BUILD, LINT, and DELIVERY gates can chain in front of it. In
+    // `auto` push mode this fires exactly where captureAndPush did pre-3h (byte-identical).
+    Runnable deliverInline =
         () ->
             completeExecutionTailAndAdvance(
                 runnerExecutionId,
@@ -2229,12 +2259,27 @@ public class RunnerBroker {
                 prOutputArtifactIdFinal,
                 prOutputResolvedDiffFinal,
                 executionSubStageFinal);
+    // Story 3h-4 (AC2) — the DELIVERY gate sits BETWEEN the lint gate and the inline delivery: in
+    // `auto` push mode (or no gate / no workspace) it is a pass-through that runs deliverInline; in
+    // `manual`/`approve` mode it finalizes the producing PR_OUTPUT rex and PARKS the run at
+    // WaitingForDelivery instead of pushing (approve_delivery later resumes/records). This is the
+    // chain's new innermost step: build -> lint -> DELIVERY -> deliver.
+    Runnable tail =
+        () ->
+            tryDeliveryGateOrDeliver(
+                workflowRunId,
+                runnerExecutionId,
+                correlationId,
+                row,
+                executionSubStageFinal,
+                deliverInline);
     // Story 3h-2 (AC3) — the LINT gate chains AFTER the BUILD gate onto the SAME tail: BUILD's
     // success continuation is not the tail itself but tryLintGateOrTail, which runs the
     // backend-side
     // lint (parking at WaitingForLintApproval on a critical finding) and only runs the tail when
     // lint
-    // produces no critical finding (or the lint gate does not apply).
+    // produces no critical finding (or the lint gate does not apply). Post-3h-4 the tail it runs is
+    // the DELIVERY gate (which itself decides push-vs-park), not the raw inline delivery.
     Runnable afterBuild =
         () ->
             tryLintGateOrTail(
@@ -2284,6 +2329,38 @@ public class RunnerBroker {
   }
 
   /**
+   * Story 3h-4 (AC2/AC4) — the DELIVERY gate seam: for a PR_OUTPUT success (post-BUILD, post-LINT),
+   * resolve the run's push mode. In {@code auto} mode (or when no delivery-gate bean is wired, or
+   * there is no workspace/repoRef to deliver) it is a pass-through — the inline delivery runs
+   * exactly where {@code captureAndPush} fired pre-3h. In {@code manual}/{@code approve} mode the
+   * gate finalizes the producing execution and PARKS the run at {@code WaitingForDelivery} (taking
+   * ownership of the tail — {@code approve_delivery} later performs the push or records the manual
+   * delivery). The gate applies only to a PR_OUTPUT EXECUTION success, mirroring the build/lint
+   * gates.
+   */
+  private void tryDeliveryGateOrDeliver(
+      String workflowRunId,
+      String runnerExecutionId,
+      String correlationId,
+      RunnerExecutionSnapshot row,
+      ExecutionSubStage executionSubStage,
+      Runnable deliverInline) {
+    org.dradgo.application.workflow.DeliveryGateService deliveryGateService =
+        deliveryGateServiceSupplier.get();
+    boolean gatedBehindDelivery = false;
+    if (deliveryGateService != null
+        && row.stage() == RunnerStage.EXECUTION
+        && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+      gatedBehindDelivery =
+          deliveryGateService.tryGateBehindDelivery(
+              workflowRunId, runnerExecutionId, correlationId, deliverInline);
+    }
+    if (!gatedBehindDelivery) {
+      deliverInline.run();
+    }
+  }
+
+  /**
    * Story 3h-2 (AC5; code-review 2026-07-06, Decision 4 P1) — resume the delivery tail after an
    * operator {@code approve_lint} dismissed the lint gate. Re-derivable from {@code
    * (workflowRunId)} alone (the in-memory tail continuation is long gone by approval time): resolve
@@ -2301,6 +2378,15 @@ public class RunnerBroker {
    * LintApprovalService}.
    */
   public void resumeDeliveryTailFromGate(String workflowRunId, String correlationId) {
+    resumeDeliveryTailFromGate(workflowRunId, correlationId, false);
+  }
+
+  public void resumeDeliveryTailFromGateOrThrow(String workflowRunId, String correlationId) {
+    resumeDeliveryTailFromGate(workflowRunId, correlationId, true);
+  }
+
+  private void resumeDeliveryTailFromGate(
+      String workflowRunId, String correlationId, boolean failOnPushFailure) {
     Optional<RunnerExecutionSnapshot> prOutput =
         recordPort.findLatestByWorkflowRunPublicIdAndStage(workflowRunId, RunnerStage.EXECUTION);
     if (prOutput.isEmpty()) {
@@ -2322,6 +2408,9 @@ public class RunnerBroker {
       try {
         pushOutcome = repositoryWorkspaceService.captureAndPush(prOutputRunnerExecutionId);
       } catch (GitCommandException pushFailure) {
+        if (failOnPushFailure) {
+          throw pushFailure;
+        }
         log.warn(
             "resumeDeliveryTailFromGate git push rejected workflowRunId={} runnerExecutionId={} "
                 + "category={} (proceeding to review)",
@@ -2388,6 +2477,69 @@ public class RunnerBroker {
     } else {
       log.warn(
           "resumeDeliveryTailFromGate cannot enqueue reviewer (no orchestration bean) "
+              + "workflowRunId={}",
+          workflowRunId);
+    }
+  }
+
+  /**
+   * Story 3h-4 (AC4, Decision 4) — the MANUAL-mode twin of {@link #resumeDeliveryTailFromGate}:
+   * advance a run the operator delivered OUT-OF-BAND (approve_delivery under {@code manual} push
+   * mode) WITHOUT touching git. This is the {@code ingestManualResult}
+   * "advance-without-side-effect" pattern: the backend pushed NOTHING (the operator pushed by
+   * hand), so there is no captureAndPush / enrich / PR-create — only the reviewer enqueue over the
+   * already-ingested pr-output artifact. The {@code WaitingForDelivery -> WaitingForReview}
+   * transition + the {@code delivery.recordedManually} audit event are owned by {@code
+   * DeliveryApprovalService.approveDelivery} (synchronous, in the command tx); by the time this
+   * runs post-commit the run is already {@code WaitingForReview}. Idempotent — the finalize
+   * tolerates an already-terminal producing row and the reviewer enqueue is idempotency-keyed, so a
+   * replayed approve neither re-finalizes nor double-enqueues. Called post-commit by {@code
+   * DeliveryApprovalService}.
+   *
+   * <p>The advisory reviewer degrades best-effort without a backend push (the documented
+   * manual-push limitation, consistent with 3h-5 AC4: "manual push = the backend pushed nothing, so
+   * there is nothing of ours to read").
+   */
+  public void recordManualDeliveryAndEnqueueReviewer(String workflowRunId, String correlationId) {
+    Optional<RunnerExecutionSnapshot> prOutput =
+        recordPort.findLatestByWorkflowRunPublicIdAndStage(workflowRunId, RunnerStage.EXECUTION);
+    if (prOutput.isEmpty()) {
+      log.warn(
+          "recordManualDeliveryAndEnqueueReviewer found no producing EXECUTION execution "
+              + "workflowRunId={} — cannot enqueue reviewer",
+          workflowRunId);
+      return;
+    }
+    String prOutputRunnerExecutionId = prOutput.get().publicId();
+
+    // Finalize the producing PR_OUTPUT execution (it was finalized at gate park; a terminal row is
+    // a
+    // no-op). Idempotent. NEVER captureAndPush / createPullRequest — the delivery was out-of-band.
+    try {
+      executionService.recordCompleted(prOutputRunnerExecutionId);
+    } catch (DomainException alreadyTerminal) {
+      if (alreadyTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw alreadyTerminal;
+      }
+      log.info(
+          "recordManualDeliveryAndEnqueueReviewer producing execution already terminal "
+              + "runnerExecutionId={}",
+          prOutputRunnerExecutionId);
+    }
+
+    log.info(
+        "recordManualDeliveryAndEnqueueReviewer workflowRunId={} runnerExecutionId={} "
+            + "(manual push — no git, enqueue reviewer only)",
+        workflowRunId,
+        prOutputRunnerExecutionId);
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        workflowOrchestrationServiceSupplier.get();
+    if (orchestration != null) {
+      orchestration.enqueueReviewerAfterLintApproval(
+          workflowRunId, prOutputRunnerExecutionId, correlationId);
+    } else {
+      log.warn(
+          "recordManualDeliveryAndEnqueueReviewer cannot enqueue reviewer (no orchestration bean) "
               + "workflowRunId={}",
           workflowRunId);
     }

@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -37,40 +38,40 @@ public record RunnerProperties(
     Docker docker,
     Map<RunnerKind, List<String>> secretEnvNames,
     boolean allowShareableLogs,
-    // Story 3a-1 (AC10) — per-stage runner-image kind selection. Binds
+    // Story 3a-1 (AC10) вЂ” per-stage runner-image kind selection. Binds
     // deliveryline.runner.spec-stage.kind (codex | claude), defaulting to codex. Resolved into the
     // dispatch path via kindForStage(stage); a null group falls back to the codex default so the
-    // @SpringBootTest tiers that omit the key still bind (test yaml carries it too — Trap T4).
+    // @SpringBootTest tiers that omit the key still bind (test yaml carries it too вЂ” Trap T4).
     SpecStage specStage,
-    // Story 3.11 (AC10) — plan-stage (EXECUTION) twin of specStage. Binds
+    // Story 3.11 (AC10) вЂ” plan-stage (EXECUTION) twin of specStage. Binds
     // deliveryline.runner.plan-stage.kind (codex | claude) + .auto-dispatch.
     // kindForStage(EXECUTION)
     // resolves to planStage.kind() (OQ-4: pr-output falls back here until story 3.12);
     // auto-dispatch
     // gates the approveSpec -> dispatchPlanGeneration trigger (ON in prod, OFF in the shared test
-    // yaml — Trap T4/T11). A null group falls back to the codex default so contexts that omit the
+    // yaml вЂ” Trap T4/T11). A null group falls back to the codex default so contexts that omit the
     // key still bind.
     PlanStage planStage,
-    // Story 3.12 (AC1 / Task 5) — implementation-stage (pr-output sub-stage) twin of planStage.
+    // Story 3.12 (AC1 / Task 5) вЂ” implementation-stage (pr-output sub-stage) twin of planStage.
     // Binds deliveryline.runner.implementation-stage.kind (codex | claude) + .auto-dispatch.
     // kindForExecutionSubStage(PR_OUTPUT) resolves to implementationStage.kind(); auto-dispatch
     // gates the dispatchImplementation / retryImplementation trigger (ON in prod, OFF in the shared
-    // test yaml — Trap T7). A null group falls back to the codex default so contexts that omit the
+    // test yaml вЂ” Trap T7). A null group falls back to the codex default so contexts that omit the
     // key still bind.
     ImplementationStage implementationStage,
-    // Story 3a-8 (AC1) — opt-in OpenSpec authoring flag, surfaced to the container as
+    // Story 3a-8 (AC1) вЂ” opt-in OpenSpec authoring flag, surfaced to the container as
     // DELIVERYLINE_RUNNER_OPENSPEC. OPTIONAL + UNVALIDATED nested record (mirrors the docker()
     // nesting precedent); a null/absent group falls back to disabled (default OFF) so the shared
     // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
     OpenSpec openspec,
-    // Story 3h-1 (AC2, FR75) — global default build-validation config seeded into the default
+    // Story 3h-1 (AC2, FR75) вЂ” global default build-validation config seeded into the default
     // project (deliveryline.runner.build-stage.{enabled,command,timeout}). OPTIONAL + UNVALIDATED
     // nested record (mirrors the openspec() precedent); a null/absent group falls back to disabled
     // (default OFF, no command) so the shared test application.yml needs no mirror entry (Trap:
     // [[validated-config-needs-test-yaml]]). Per-project overrides live on the Project aggregate;
     // this is only the seed default read by DefaultProjectSeeder.
     BuildStage buildStage,
-    // Story 3h-2 (AC2, FR76) — global default lint-validation config seeded into the default
+    // Story 3h-2 (AC2, FR76) вЂ” global default lint-validation config seeded into the default
     // project (deliveryline.runner.lint-stage.{enabled,commands,timeout}). OPTIONAL + UNVALIDATED
     // nested record (mirrors the buildStage() precedent); a null/absent group falls back to
     // disabled
@@ -79,7 +80,16 @@ public record RunnerProperties(
     // this is only the seed default read by DefaultProjectSeeder + the global fallback command
     // list.
     LintStage lintStage,
-    // Story 3.17a (AC4 / AC7) — RunnerExecutionQueue backpressure cap. The maximum number of rows
+    // Story 3h-4 (AC1, FR78) вЂ” global default delivery config seeded into the default project
+    // (deliveryline.runner.delivery.{push-mode,auto-create-pull-request}). OPTIONAL + UNVALIDATED
+    // nested record (mirrors the buildStage()/lintStage() precedent); a null/absent group falls
+    // back
+    // to (AUTO, true) вЂ” the pre-3h delivery behavior (push inline + create a PR) вЂ” so the shared
+    // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
+    // Per-project overrides live on the Project aggregate; this is only the seed default read by
+    // DefaultProjectSeeder + the global fallback for ProjectRuntimeConfigResolver.
+    DeliveryMode deliveryMode,
+    // Story 3.17a (AC4 / AC7) вЂ” RunnerExecutionQueue backpressure cap. The maximum number of rows
     // that may sit in status='queued' at once; enqueue beyond it raises RUNNER_QUEUE_FULL and
     // writes
     // no row. Default 100. Clamped to >=1 in the compact ctor (a cap below 1 would reject every
@@ -131,7 +141,8 @@ public record RunnerProperties(
     openspec = openspec == null ? OpenSpec.defaults() : openspec;
     buildStage = buildStage == null ? BuildStage.defaults() : buildStage;
     lintStage = lintStage == null ? LintStage.defaults() : lintStage;
-    // Story 3.17a AC4 — clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an unset
+    deliveryMode = deliveryMode == null ? DeliveryMode.defaults() : deliveryMode;
+    // Story 3.17a AC4 вЂ” clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an unset
     // primitive that bound to 0) would reject every enqueue; coerce to the minimum useful depth so
     // a
     // misconfiguration degrades to "depth 1" rather than a dead queue.
@@ -161,45 +172,46 @@ public record RunnerProperties(
         OpenSpec.defaults(),
         BuildStage.defaults(),
         LintStage.defaults(),
+        DeliveryMode.defaults(),
         100);
   }
 
   /**
-   * Story 3a-1 (AC10) + story 3.11 (AC10 / Decision D3 / OQ-4) — resolve the runner-image {@link
+   * Story 3a-1 (AC10) + story 3.11 (AC10 / Decision D3 / OQ-4) вЂ” resolve the runner-image {@link
    * RunnerKind} for a dispatch stage. The spec-investigation stage ({@link
    * RunnerStage#INVESTIGATION}) honors {@code deliveryline.runner.spec-stage.kind}; the EXECUTION
    * stage honors {@code deliveryline.runner.plan-stage.kind}. Because {@link RunnerStage#EXECUTION}
    * is shared by the implementation-plan AND pr-output sub-stages and the wire stage cannot
-   * distinguish them, the plan-stage kind covers both for now — pr-output deliberately falls back
+   * distinguish them, the plan-stage kind covers both for now вЂ” pr-output deliberately falls back
    * to {@code plan-stage.kind} until story 3.12 adds a dedicated implementation-stage kind (OQ-4).
    * A stage-keyed (not sub-stage-keyed) resolver is intentional: the broker's secret-scan path
    * (post-execution, story 3.5) only has {@code row.stage()} and MUST compare against the SAME key
-   * the dispatch path injected — keying on the sub-stage would desync the two.
+   * the dispatch path injected вЂ” keying on the sub-stage would desync the two.
    */
   public RunnerKind kindForStage(RunnerStage stage) {
     Objects.requireNonNull(stage, "stage");
     return switch (stage) {
       case INVESTIGATION -> specStage.kind();
       case EXECUTION -> planStage.kind();
-      // Story 3d-2 (DD-1/DD-7) — the reviewer kind is PER-PROJECT (Project.reviewerModelKind),
+      // Story 3d-2 (DD-1/DD-7) вЂ” the reviewer kind is PER-PROJECT (Project.reviewerModelKind),
       // resolved by ProjectRuntimeConfigResolver.resolveReviewerKind, never from these global
       // per-stage props. The reviewer dispatch path special-cases REVIEW before reaching this
-      // resolver, so reaching here for REVIEW is a routing bug — fail loud rather than silently
+      // resolver, so reaching here for REVIEW is a routing bug вЂ” fail loud rather than silently
       // mis-resolve to a producer kind.
       case REVIEW ->
           throw new IllegalStateException(
               "kindForStage must not be called for RunnerStage.REVIEW; the reviewer kind is "
-                  + "per-project — use ProjectRuntimeConfigResolver.resolveReviewerKind");
-      // Story 3h-1 (AC1) — BUILD runs BACKEND-SIDE via BuildCommandPort (ProcessBuilder in the
+                  + "per-project вЂ” use ProjectRuntimeConfigResolver.resolveReviewerKind");
+      // Story 3h-1 (AC1) вЂ” BUILD runs BACKEND-SIDE via BuildCommandPort (ProcessBuilder in the
       // materialized workspace), never through the Docker runner, so it is NEVER runner-kind
-      // dispatched. Reaching here for BUILD is a routing bug — fail loud (same posture as REVIEW).
+      // dispatched. Reaching here for BUILD is a routing bug вЂ” fail loud (same posture as REVIEW).
       case BUILD ->
           throw new IllegalStateException(
               "kindForStage must not be called for RunnerStage.BUILD; the build stage runs "
                   + "backend-side via BuildCommandPort and is never runner-kind dispatched");
-      // Story 3h-2 (AC1) — LINT runs BACKEND-SIDE via BuildCommandPort (the configured CPU linters
+      // Story 3h-2 (AC1) вЂ” LINT runs BACKEND-SIDE via BuildCommandPort (the configured CPU linters
       // in the materialized workspace), never through the Docker runner, so it is NEVER
-      // runner-kind dispatched. Reaching here for LINT is a routing bug — fail loud (same posture
+      // runner-kind dispatched. Reaching here for LINT is a routing bug вЂ” fail loud (same posture
       // as BUILD/REVIEW).
       case LINT ->
           throw new IllegalStateException(
@@ -209,7 +221,7 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.12 (AC1 / Task 5, closes 3.11 OQ-4) — resolve the runner-image {@link RunnerKind} for
+   * Story 3.12 (AC1 / Task 5, closes 3.11 OQ-4) вЂ” resolve the runner-image {@link RunnerKind} for
    * an EXECUTION dispatch by its derived {@link ExecutionSubStage}: {@link
    * ExecutionSubStage#IMPLEMENTATION_PLAN} honors {@code deliveryline.runner.plan-stage.kind};
    * {@link ExecutionSubStage#PR_OUTPUT} honors {@code
@@ -231,7 +243,7 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.12 (AC1 / Task 5) — implementation-stage (pr-output) auto-dispatch master switch
+   * Story 3.12 (AC1 / Task 5) вЂ” implementation-stage (pr-output) auto-dispatch master switch
    * ({@code deliveryline.runner.implementation-stage.auto-dispatch}). The pr-output twin of {@link
    * #planAutoDispatchEnabled()}: when {@code false} (the shared test profile) the {@code
    * dispatchImplementation} / {@code retryImplementation} entry points are no-ops so the fast tier
@@ -242,7 +254,7 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.11 (AC10 / Task 4) — plan-stage auto-dispatch master switch ({@code
+   * Story 3.11 (AC10 / Task 4) вЂ” plan-stage auto-dispatch master switch ({@code
    * deliveryline.runner.plan-stage.auto-dispatch}). The EXECUTION twin of {@link
    * SpecStage#autoDispatch()}: when {@code false} (the shared test profile) the {@code approveSpec
    * -> dispatchPlanGeneration} trigger is a no-op so the fast tier stays deterministic; production
@@ -253,49 +265,49 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.6 AC4 — when {@code true}, captured runner logs whose redaction pass detected zero
+   * Story 3.6 AC4 вЂ” when {@code true}, captured runner logs whose redaction pass detected zero
    * secrets across both streams may be elevated from {@code local-only} to {@code
    * shareable-redacted}. Defaults to {@code false} (Trap T3): logs stay {@code local-only} (never
    * shipped by story 3.7's ELK filter) unless the operator explicitly opts in via {@code
    * deliveryline.runner.allow-shareable-logs=true}. The elevation is gated on BOTH the zero-secret
-   * detection AND this flag — it is never sufficient on its own.
+   * detection AND this flag вЂ” it is never sufficient on its own.
    */
   public boolean allowShareableLogs() {
     return allowShareableLogs;
   }
 
   /**
-   * Story 3a-8 (AC1) — whether the runner entrypoints' opt-in OpenSpec authoring layer is enabled
+   * Story 3a-8 (AC1) вЂ” whether the runner entrypoints' opt-in OpenSpec authoring layer is enabled
    * ({@code deliveryline.runner.openspec.enabled}). When {@code true} it is surfaced to the
    * container as env {@code DELIVERYLINE_RUNNER_OPENSPEC=true} (threaded by {@code
    * DockerRunnerAdapter} exactly like {@code DELIVERYLINE_RUNNER_STAGE}); the entrypoints gate the
-   * whole authoring layer on it. Default {@code false} ⇒ byte-identical legacy path.
+   * whole authoring layer on it. Default {@code false} в‡’ byte-identical legacy path.
    */
   public boolean openSpecEnabled() {
     return openspec.enabled();
   }
 
   /**
-   * Story 3h-1 (AC2) — the GLOBAL default build-stage opt-in ({@code
+   * Story 3h-1 (AC2) вЂ” the GLOBAL default build-stage opt-in ({@code
    * deliveryline.runner.build-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
-   * default project's per-project {@code buildStageEnabled}. Default {@code false} ⇒ pre-3h parity.
+   * default project's per-project {@code buildStageEnabled}. Default {@code false} в‡’ pre-3h parity.
    */
   public boolean buildStageEnabled() {
     return buildStage.enabled();
   }
 
   /**
-   * Story 3h-1 (AC2) — the GLOBAL default build command ({@code
+   * Story 3h-1 (AC2) вЂ” the GLOBAL default build command ({@code
    * deliveryline.runner.build-stage.command}) seeded into the default project's per-project {@code
-   * buildCommand}. {@code null}/absent ⇒ no build command (BUILD skipped even if enabled).
+   * buildCommand}. {@code null}/absent в‡’ no build command (BUILD skipped even if enabled).
    */
   public String buildCommand() {
     return buildStage.command();
   }
 
   /**
-   * Story 3h-1 (AC2 / Task 3) — the bound on the backend-side build process ({@code
-   * deliveryline.runner.build-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * Story 3h-1 (AC2 / Task 3) вЂ” the bound on the backend-side build process ({@code
+   * deliveryline.runner.build-stage.timeout}); overrun kills the process в†’ non-zero exit. Defaults
    * to 10 minutes.
    */
   public Duration buildTimeout() {
@@ -303,9 +315,9 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3h-2 (AC2) — the GLOBAL default lint-stage opt-in ({@code
+   * Story 3h-2 (AC2) вЂ” the GLOBAL default lint-stage opt-in ({@code
    * deliveryline.runner.lint-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
-   * default project's per-project {@code lintStageEnabled}. Default {@code false} ⇒ pre-3h-2
+   * default project's per-project {@code lintStageEnabled}. Default {@code false} в‡’ pre-3h-2
    * parity.
    */
   public boolean lintStageEnabled() {
@@ -313,10 +325,10 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3h-2 (AC2) — the GLOBAL default lint command list ({@code
+   * Story 3h-2 (AC2) вЂ” the GLOBAL default lint command list ({@code
    * deliveryline.runner.lint-stage.commands}) that {@link
    * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveLintCommands} falls back to
-   * when the resolved project binds no per-project {@code lintCommands}. Empty/absent ⇒ no lint
+   * when the resolved project binds no per-project {@code lintCommands}. Empty/absent в‡’ no lint
    * commands (LINT skipped even if enabled).
    */
   public List<String> lintCommands() {
@@ -324,8 +336,8 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3h-2 (AC2 / Task 3) — the bound on each backend-side lint process ({@code
-   * deliveryline.runner.lint-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * Story 3h-2 (AC2 / Task 3) вЂ” the bound on each backend-side lint process ({@code
+   * deliveryline.runner.lint-stage.timeout}); overrun kills the process в†’ non-zero exit. Defaults
    * to 5 minutes.
    */
   public Duration lintTimeout() {
@@ -333,9 +345,30 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. The list is ordered =
+   * Story 3h-4 (AC1) вЂ” the GLOBAL default push mode ({@code
+   * deliveryline.runner.delivery.push-mode}) that {@code DefaultProjectSeeder} seeds into the
+   * default project's per-project {@code pushMode} and that {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolvePushMode} falls back to.
+   * Default {@link PushMode#AUTO} в‡’ pre-3h delivery (push inline, never parks).
+   */
+  public PushMode pushMode() {
+    return deliveryMode.pushMode();
+  }
+
+  /**
+   * Story 3h-4 (AC1) вЂ” the GLOBAL default create-PR flag ({@code
+   * deliveryline.runner.delivery.auto-create-pull-request}) seeded into the default project's
+   * per-project {@code autoCreatePullRequest}. Default {@code true} в‡’ pre-3h delivery (a PR is
+   * created wherever the push fires).
+   */
+  public boolean autoCreatePullRequest() {
+    return deliveryMode.autoCreatePullRequest();
+  }
+
+  /**
+   * Story 3.5 Trap T2 вЂ” default agent-provider env-var names per runner kind. The list is ordered =
    * the runner image's resolution preference (first present wins at dispatch time, and the value is
-   * injected under the name it was found — see {@link RunnerSecretsService}).
+   * injected under the name it was found вЂ” see {@link RunnerSecretsService}).
    *
    * <p>Story 3a-3 made Codex subscription-first/file-based: {@code CODEX_AUTH_JSON} (the raw,
    * single-line content of {@code $CODEX_HOME/auth.json} from a ChatGPT/Pro subscription, the
@@ -343,12 +376,12 @@ public record RunnerProperties(
    * $CODEX_HOME/auth.json} before invoking Codex. {@code CODEX_API_KEY} then {@code OPENAI_API_KEY}
    * (aliases for the same OpenAI API key) remain the fallback. This mirrors story 3.4's Claude
    * subscription-first dual-mode, but Codex's subscription credential travels as a file's content
-   * rather than a token the CLI reads directly — see {@code runners/codex/entrypoint.sh} + {@code
+   * rather than a token the CLI reads directly вЂ” see {@code runners/codex/entrypoint.sh} + {@code
    * runners/codex/lib/runner.mjs materialize-auth}.
    *
    * <p>Story 3.4 made Claude dual-mode: {@code CLAUDE_CODE_OAUTH_TOKEN} (Pro/Max subscription
-   * token, preferred) then {@code ANTHROPIC_API_KEY} (per-token API billing) — two DISTINCT
-   * credential types, not aliases, so doctor reports PASS when either is set. NAMES only — the
+   * token, preferred) then {@code ANTHROPIC_API_KEY} (per-token API billing) вЂ” two DISTINCT
+   * credential types, not aliases, so doctor reports PASS when either is set. NAMES only вЂ” the
    * values live in {@code .env} / process env and are read per-dispatch.
    */
   public static Map<RunnerKind, List<String>> defaultSecretEnvNames() {
@@ -419,7 +452,7 @@ public record RunnerProperties(
       Map<RunnerStage, String> scenarios = new LinkedHashMap<>();
       scenarios.put(RunnerStage.INVESTIGATION, "happy-spec");
       scenarios.put(RunnerStage.EXECUTION, "happy-implementation-plan");
-      // Story 3d-2 (Task 6) — the offline reviewer scenario for the !runners.docker profile.
+      // Story 3d-2 (Task 6) вЂ” the offline reviewer scenario for the !runners.docker profile.
       scenarios.put(RunnerStage.REVIEW, "happy-review");
       return new Mock(scenarios);
     }
@@ -439,17 +472,17 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3a-1 — spec-stage orchestration config.
+   * Story 3a-1 вЂ” spec-stage orchestration config.
    *
    * <ul>
-   *   <li>{@code kind} (AC10) — runner-image flavor for the spec-investigation stage ({@code codex}
+   *   <li>{@code kind} (AC10) вЂ” runner-image flavor for the spec-investigation stage ({@code codex}
    *       | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX} so binding
    *       never fails and a new {@link RunnerKind} never silently resolves to an undefined image.
-   *   <li>{@code autoDispatch} — master switch for the auto-dispatch triggers (dispatch on submit +
+   *   <li>{@code autoDispatch} вЂ” master switch for the auto-dispatch triggers (dispatch on submit +
    *       re-dispatch on spec rejection). Production ({@code application.yml}) sets it {@code
-   *       true}; the shared test profile sets it {@code false} — mirroring {@code
-   *       scheduling.enabled: false} — so the existing suite's submit/reject tests stay
-   *       deterministic and the full submit→spec loop is exercised by the dedicated integration
+   *       true}; the shared test profile sets it {@code false} вЂ” mirroring {@code
+   *       scheduling.enabled: false} вЂ” so the existing suite's submit/reject tests stay
+   *       deterministic and the full submitв†’spec loop is exercised by the dedicated integration
    *       test that opts in. Spring binds a missing key to {@code false} (primitive default);
    *       {@link #defaults()} (non-Spring construction) is {@code true} to match the production
    *       default.
@@ -467,18 +500,18 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.11 (AC10) — plan-stage orchestration config, the EXECUTION twin of {@link SpecStage}.
+   * Story 3.11 (AC10) вЂ” plan-stage orchestration config, the EXECUTION twin of {@link SpecStage}.
    *
    * <ul>
-   *   <li>{@code kind} — runner-image flavor for the implementation-plan (EXECUTION) stage ({@code
+   *   <li>{@code kind} вЂ” runner-image flavor for the implementation-plan (EXECUTION) stage ({@code
    *       codex} | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX}.
    *       Resolved into the dispatch path via {@link #kindForStage(RunnerStage)} (it also serves
-   *       the pr-output sub-stage until story 3.12 — OQ-4).
-   *   <li>{@code autoDispatch} — master switch for the {@code approveSpec ->
+   *       the pr-output sub-stage until story 3.12 вЂ” OQ-4).
+   *   <li>{@code autoDispatch} вЂ” master switch for the {@code approveSpec ->
    *       dispatchPlanGeneration} trigger. Production ({@code application.yml}) sets it {@code
    *       true}; the shared test profile sets it {@code false} (mirroring {@code
    *       spec-stage.auto-dispatch}) so the existing suite's approveSpec tests stay deterministic
-   *       and the full approve→plan→{@code WaitingForReview} loop runs only in the dedicated
+   *       and the full approveв†’planв†’{@code WaitingForReview} loop runs only in the dedicated
    *       integration test that opts in. Spring binds a missing key to {@code false} (primitive
    *       default); {@link #defaults()} (non-Spring construction) is {@code true} to match the
    *       production default.
@@ -496,21 +529,21 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.12 (AC1) — implementation-stage orchestration config, the pr-output (EXECUTION) twin of
+   * Story 3.12 (AC1) вЂ” implementation-stage orchestration config, the pr-output (EXECUTION) twin of
    * {@link PlanStage}.
    *
    * <ul>
-   *   <li>{@code kind} — runner-image flavor for the pr-output sub-stage ({@code codex} | {@code
+   *   <li>{@code kind} вЂ” runner-image flavor for the pr-output sub-stage ({@code codex} | {@code
    *       claude}); a null/absent value defaults to {@link RunnerKind#CODEX}. Resolved into the
    *       dispatch path via {@link #kindForExecutionSubStage(ExecutionSubStage)}. <b>OQ-4:</b> it
    *       MUST stay equal to {@code plan-stage.kind} until a {@code runner_kind} column lands, so
    *       the story-3.5 secret-scan (keyed on {@code kindForStage(EXECUTION)} = {@code
    *       plan-stage.kind}) stays consistent.
-   *   <li>{@code autoDispatch} — master switch for the {@code dispatchImplementation} /{@code
+   *   <li>{@code autoDispatch} вЂ” master switch for the {@code dispatchImplementation} /{@code
    *       retryImplementation} entry points. Production ({@code application.yml}) sets it {@code
    *       true}; the shared test profile sets it {@code false} (mirroring {@code
    *       plan-stage.auto-dispatch}) so the existing suite stays deterministic and the full
-   *       approved-plan→pr-output→{@code WaitingForReview} loop runs only in {@code
+   *       approved-planв†’pr-outputв†’{@code WaitingForReview} loop runs only in {@code
    *       PrOutputOrchestrationIT} (which opts in via {@code @TestPropertySource}). Spring binds a
    *       missing key to {@code false} (primitive default); {@link #defaults()} (non-Spring
    *       construction) is {@code true} to match the production default.
@@ -528,7 +561,7 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3a-8 (AC1) — opt-in OpenSpec authoring switch ({@code
+   * Story 3a-8 (AC1) вЂ” opt-in OpenSpec authoring switch ({@code
    * deliveryline.runner.openspec.enabled}). When {@code true}, the runner entrypoints author
    * OpenSpec change artifacts (proposal/specs/design/tasks) and assemble {@code
    * openspec/changes/<id>/} into the delivered PR at pr-output; when {@code false} (the default)
@@ -547,12 +580,12 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3h-1 (AC2, FR75) — global default build-validation config ({@code
+   * Story 3h-1 (AC2, FR75) вЂ” global default build-validation config ({@code
    * deliveryline.runner.build-stage.{enabled,command,timeout}}). Seeds the default project's
    * per-project build config via {@code DefaultProjectSeeder}; per-project overrides live on the
-   * {@code Project} aggregate. {@code enabled=false} (the default) ⇒ BUILD skipped entirely (pre-3h
+   * {@code Project} aggregate. {@code enabled=false} (the default) в‡’ BUILD skipped entirely (pre-3h
    * parity); {@code command} is the shell/build command run backend-side via {@code
-   * BuildCommandPort} in the materialized workspace; {@code timeout} bounds that process (kill →
+   * BuildCommandPort} in the materialized workspace; {@code timeout} bounds that process (kill в†’
    * non-zero exit on overrun), defaulting to 10 minutes.
    *
    * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard): the shared test
@@ -575,14 +608,14 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3h-2 (AC2, FR76) — global default lint-validation config ({@code
+   * Story 3h-2 (AC2, FR76) вЂ” global default lint-validation config ({@code
    * deliveryline.runner.lint-stage.{enabled,commands,timeout}}). Seeds the default project's
    * per-project lint config via {@code DefaultProjectSeeder} and supplies the global fallback
    * command list; per-project overrides live on the {@code Project} aggregate. {@code
-   * enabled=false} (the default) ⇒ LINT skipped entirely (pre-3h-2 parity); {@code commands} are
+   * enabled=false} (the default) в‡’ LINT skipped entirely (pre-3h-2 parity); {@code commands} are
    * the CPU linter commands run backend-side (fail-fast, one per configured command) via {@code
    * BuildCommandPort} in the materialized workspace; {@code timeout} bounds each such process (kill
-   * → non-zero exit on overrun), defaulting to 5 minutes.
+   * в†’ non-zero exit on overrun), defaulting to 5 minutes.
    *
    * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard beyond null/blank
    * coercion): the shared test {@code application.yml} therefore needs no mirror entry ({@code
@@ -609,13 +642,42 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.1 — Docker runner adapter configuration. The {@code @Profile("runners.docker")}-gated
-   * {@code DockerRunnerAdapter} reads {@link #imageTags()} (kind → tag) and {@link
+   * Story 3h-4 (AC1, FR78) вЂ” global default delivery config ({@code
+   * deliveryline.runner.delivery.{push-mode,auto-create-pull-request}}). Seeds the default
+   * project's per-project delivery config via {@code DefaultProjectSeeder} and supplies the global
+   * fallback for {@code ProjectRuntimeConfigResolver}; per-project overrides live on the {@code
+   * Project} aggregate. {@code pushMode=AUTO} (the default) в‡’ push inline exactly as pre-3h
+   * delivery (the run never parks); {@code MANUAL}/{@code APPROVE} park the run at {@code
+   * WaitingForDelivery}. {@code autoCreatePullRequest=true} (the default) в‡’ a PR is created
+   * wherever the push fires.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard beyond null
+   * coercion): the shared test {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()}; a
+   * null {@code pushMode} falls back to {@link PushMode#AUTO}. Note the {@code
+   * autoCreatePullRequest} default is {@code true} вЂ” unlike the build/lint {@code enabled} defaults
+   * (false) вЂ” because the pre-3h behavior created a PR.
+   */
+  public record DeliveryMode(PushMode pushMode, Boolean autoCreatePullRequest) {
+
+    public DeliveryMode {
+      pushMode = pushMode == null ? PushMode.AUTO : pushMode;
+      autoCreatePullRequest = autoCreatePullRequest == null ? Boolean.TRUE : autoCreatePullRequest;
+    }
+
+    public static DeliveryMode defaults() {
+      return new DeliveryMode(PushMode.AUTO, true);
+    }
+  }
+
+  /**
+   * Story 3.1 вЂ” Docker runner adapter configuration. The {@code @Profile("runners.docker")}-gated
+   * {@code DockerRunnerAdapter} reads {@link #imageTags()} (kind в†’ tag) and {@link
    * #workspaceRoot()}. {@code workspaceRetentionHours} is declared here so story 3.2's cleanup job
    * has a property to read (this story forbids immediate deletion).
    *
    * <p>Trap T3: {@link #defaultKind()} is the only sanctioned source of the runner kind for the
-   * broker → adapter dispatch path. Reading the kind from the (untrusted) context bundle is
+   * broker в†’ adapter dispatch path. Reading the kind from the (untrusted) context bundle is
    * forbidden.
    */
   public record Docker(
@@ -627,12 +689,12 @@ public record RunnerProperties(
       Duration containerCreateTimeout,
       Duration containerStartTimeout,
       long danglingContainerMinAgeSeconds,
-      // Story 3.8 — Docker network mode applied at container create (DockerRunnerAdapter →
+      // Story 3.8 вЂ” Docker network mode applied at container create (DockerRunnerAdapter в†’
       // CreateContainerSpec.networkMode). Defaults to "none" (the locked-down mock/contract
       // posture:
       // a runner needs no egress to read a bundle and write a result). Real agent runs
       // (codex/claude
-      // CLIs calling their provider API) require egress — set
+      // CLIs calling their provider API) require egress вЂ” set
       // deliveryline.runner.docker.network-mode
       // to "bridge" (default NAT egress) or a pre-created egress-allowlisted network name. A
       // null/blank value falls back to "none" so every existing context binds unchanged.
@@ -654,7 +716,7 @@ public record RunnerProperties(
       Objects.requireNonNull(defaultKind, "defaultKind");
       imageTags = imageTags == null ? Map.of() : Map.copyOf(new EnumMap<>(imageTags));
       for (RunnerKind kind : RunnerKind.values()) {
-        // Story 3d-3 — the `manual` kind launches NO container (the dispatch chokepoint parks the
+        // Story 3d-3 вЂ” the `manual` kind launches NO container (the dispatch chokepoint parks the
         // run and never reaches imageTagFor), so it requires no Docker image tag. Skip it here; an
         // accidental imageTagFor(MANUAL) still fails loudly below.
         if (kind == RunnerKind.MANUAL) {
@@ -689,12 +751,12 @@ public record RunnerProperties(
       }
       // Story 3.2a AC4: a non-negative grace window during which a labelled-but-rowless container
       // is
-      // preserved by the dangling-container sweep (covers the dispatch→row-insert window). Zero
+      // preserved by the dangling-container sweep (covers the dispatchв†’row-insert window). Zero
       // disables the guard (every rowless container is eligible for removal immediately).
       // Story 3.2a code-review (2026-05-29): bound the upper end too. The sweep computes
       // now.minusSeconds(minAgeSeconds); an unbounded value overflows OffsetDateTime arithmetic
       // (DateTimeException), which the per-container handler swallows so every dangling container
-      // leaks. A day is far beyond any sane dispatch→row-insert grace window.
+      // leaks. A day is far beyond any sane dispatchв†’row-insert grace window.
       if (danglingContainerMinAgeSeconds < 0L
           || danglingContainerMinAgeSeconds > MAX_DANGLING_CONTAINER_MIN_AGE_SECONDS) {
         throw new IllegalArgumentException(
@@ -740,7 +802,7 @@ public record RunnerProperties(
 
     /**
      * Redacts credentials embedded in a registry image reference of the form {@code
-     * user:pass@host/image:tag} → {@code ***@host/image:tag}, leaving an un-credentialed reference
+     * user:pass@host/image:tag} в†’ {@code ***@host/image:tag}, leaving an un-credentialed reference
      * untouched. Lives in the application layer (the image tags are application-owned config) so
      * {@code RunnerBroker} can redact before writing the {@code runner.dispatched} audit event
      * without reaching into {@code adapters.runner.docker} (which the layered-boundary ArchUnit

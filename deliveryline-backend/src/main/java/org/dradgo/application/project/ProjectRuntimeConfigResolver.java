@@ -174,6 +174,30 @@ public class ProjectRuntimeConfigResolver {
   }
 
   /**
+   * Story 3h-4 (AC1) — the effective push mode for a run: the resolved project's non-null {@code
+   * pushMode} (seeded from {@code deliveryline.runner.delivery.push-mode}, per-project
+   * overridable). The {@code default} project seeds {@code AUTO} unless the global prop selects
+   * otherwise, so a pre-3h deployment pushes inline (never parks at the delivery gate). Read on the
+   * worker thread — {@code Project} is a detached POJO (no lazy proxy), so this is safe outside a
+   * transaction.
+   */
+  public org.dradgo.domain.registry.PushMode resolvePushMode(String workflowRunId) {
+    return resolveForRun(workflowRunId).pushMode();
+  }
+
+  /**
+   * Story 3h-4 (AC1/AC5) — the effective create-PR flag for a run: the resolved project's {@code
+   * autoCreatePullRequest} (seeded from {@code
+   * deliveryline.runner.delivery.auto-create-pull-request}, per-project overridable). The {@code
+   * default} project seeds {@code true} unless the global prop turns it off, so a pre-3h deployment
+   * creates a PR wherever the push fires. Read on the worker thread — {@code Project} is a detached
+   * POJO (no lazy proxy), so this is safe outside a transaction.
+   */
+  public boolean resolveAutoCreatePullRequest(String workflowRunId) {
+    return resolveForRun(workflowRunId).autoCreatePullRequest();
+  }
+
+  /**
    * Story 3d-3 (AC1) — the effective runner kind for a run at {@code stage}: the resolved project's
    * per-project {@code runnerKind} override when present, else the existing global per-stage kind
    * ({@link RunnerProperties#kindForStage}). The {@code default} project seeds a null override, so

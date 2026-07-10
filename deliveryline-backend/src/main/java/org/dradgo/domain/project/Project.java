@@ -8,6 +8,7 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 
 /**
@@ -73,7 +74,18 @@ public record Project(
     // false ⇒ pre-3h-2 parity (LINT skipped entirely). Detached POJO fields — safe on the worker
     // thread (no lazy proxy).
     List<String> lintCommands,
-    boolean lintStageEnabled) {
+    boolean lintStageEnabled,
+    // Story 3h-4 (AC1, FR78) — per-project delivery config (ADR 0030, Decision 6). pushMode is a
+    // non-null PushMode enum {AUTO, MANUAL, APPROVE}, default AUTO ⇒ push inline exactly as pre-3h
+    // delivery (the run never parks). MANUAL/APPROVE park the run at WaitingForDelivery instead of
+    // pushing. Stored as a CHECK-constrained text column (ck_projects_push_mode), NOT free-text
+    // like
+    // reviewerModelKind — the entity getter parses it via PushMode.fromValue (fail-fast).
+    // autoCreatePullRequest is a plain boolean, default TRUE (unlike build/lint's default false) ⇒
+    // pre-3h parity (a PR is created wherever the push fires). Detached POJO fields — safe on the
+    // worker thread (no lazy proxy).
+    PushMode pushMode,
+    boolean autoCreatePullRequest) {
 
   /**
    * Back-compat constructor for the pre-3e-4 13-arg shape — defaults {@code stepRunnerKinds} to an
@@ -199,6 +211,55 @@ public record Project(
         false);
   }
 
+  /**
+   * Story 3h-4 back-compat constructor for the pre-3h-4 18-arg shape (canonical through {@code
+   * lintStageEnabled}) — defaults the two new delivery fields to {@code (PushMode.AUTO, true)} ⇒
+   * push inline + create a PR (pre-3h delivery parity). Keeps the existing 18-arg {@code new
+   * Project(...)} call sites (lint create/update/seed paths, tests, resolver fixtures) compiling
+   * unchanged; only the paths that actually carry delivery config use the full 20-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled,
+      List<String> lintCommands,
+      boolean lintStageEnabled) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        lintCommands,
+        lintStageEnabled,
+        PushMode.AUTO,
+        true);
+  }
+
   public Project {
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.PROJECT);
     if (name == null || name.isBlank()) {
@@ -227,5 +288,9 @@ public record Project(
     // List.copyOf rejects null elements, so a malformed list fails fast at construction (mirrors
     // stepRunnerKinds).
     lintCommands = lintCommands == null ? List.of() : List.copyOf(lintCommands);
+    // Story 3h-4 — a null pushMode coerces to the AUTO default (push inline, never park). Mirrors
+    // the RunnerProperties.DeliveryMode null-coalesce; keeps the pre-3h delivery behavior for any
+    // caller that constructs a Project without an explicit push mode.
+    pushMode = pushMode == null ? PushMode.AUTO : pushMode;
   }
 }

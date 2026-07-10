@@ -102,6 +102,28 @@ class ProjectControllerContractTest {
   }
 
   @Test
+  void createProjectDefaultsAutoCreatePullRequestToTrueWhenOmitted() throws Exception {
+    when(projectManagementService.createProject(any()))
+        .thenReturn(project(PROJECT_ID, "acme-widgets", ProjectStatus.ACTIVE));
+    when(projectCredentialService.isConfigured(anyString(), any())).thenReturn(false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/projects")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
+                        + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false}"))
+        .andExpect(status().isCreated());
+
+    org.mockito.ArgumentCaptor<CreateProjectCommand> command =
+        org.mockito.ArgumentCaptor.forClass(CreateProjectCommand.class);
+    verify(projectManagementService).createProject(command.capture());
+    org.assertj.core.api.Assertions.assertThat(command.getValue().autoCreatePullRequest()).isTrue();
+  }
+
+  @Test
   void createProjectReturns201WithAllowedActionsAndCredentialPresenceNoSecret() throws Exception {
     when(projectManagementService.createProject(any()))
         .thenReturn(project(PROJECT_ID, "acme-widgets", ProjectStatus.ACTIVE));
@@ -118,7 +140,7 @@ class ProjectControllerContractTest {
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"repositoryUrl\":\"https://github.com/acme/widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(PROJECT_ID))
@@ -160,7 +182,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"runnerKind\":\"manual\"}"))
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true,\"runnerKind\":\"manual\"}"))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.runnerKind").value("manual"));
 
@@ -200,7 +222,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,"
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true,"
                         + "\"stepRunnerKinds\":{\"spec\":\"codex\",\"prOutput\":\"manual\"}}"))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.stepRunnerKinds.spec").value("codex"))
@@ -230,7 +252,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
@@ -255,7 +277,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme Widgets\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
@@ -278,7 +300,7 @@ class ProjectControllerContractTest {
                 .content(
                     "{\"name\":\"Acme\",\"slug\":\"acme-widgets\","
                         + "\"ticketSourceKind\":\"linear\",\"repoHostKind\":\"github\","
-                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false}")
+                        + "\"openspecEnabled\":false,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isConflict())
         .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
@@ -309,7 +331,7 @@ class ProjectControllerContractTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     "{\"name\":\"Renamed\",\"ticketSourceKind\":\"linear\","
-                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,\"buildStageEnabled\":false,\"lintStageEnabled\":false}")
+                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(PROJECT_ID));
@@ -341,7 +363,7 @@ class ProjectControllerContractTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     "{\"name\":\"Renamed\",\"ticketSourceKind\":\"linear\","
-                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,\"buildStageEnabled\":false,\"lintStageEnabled\":false,"
+                        + "\"repoHostKind\":\"github\",\"openspecEnabled\":true,\"buildStageEnabled\":false,\"lintStageEnabled\":false,\"autoCreatePullRequest\":true,"
                         + "\"reviewerModelKind\":\"claude\"}")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())

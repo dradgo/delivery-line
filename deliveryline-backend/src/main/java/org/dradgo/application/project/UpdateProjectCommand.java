@@ -29,6 +29,12 @@ public record UpdateProjectCommand(
     // full-replaces (default false clears); lintCommands null/empty clears all lint commands.
     boolean lintStageEnabled,
     java.util.List<String> lintCommands,
+    // Story 3h-4 (AC1) — per-project delivery config, editable here. pushMode is a nullable raw
+    // wire
+    // string ({@code auto}/{@code manual}/{@code approve}); the service parses it through
+    // ProjectManagementService.parsePushMode (null ⇒ AUTO). autoCreatePullRequest full-replaces.
+    String pushMode,
+    boolean autoCreatePullRequest,
     String actorIdentity) {
   public UpdateProjectCommand(
       String name,
@@ -50,6 +56,45 @@ public record UpdateProjectCommand(
         null,
         false,
         null,
+        null,
+        true,
+        actorIdentity);
+  }
+
+  /**
+   * Story 3h-4 back-compat overload for the pre-3h-4 13-arg shape (canonical through {@code
+   * lintCommands}) — defaults the delivery fields to {@code (null pushMode ⇒ AUTO, true)}. Keeps
+   * existing 13-arg callers (lint update tests) compiling unchanged.
+   */
+  public UpdateProjectCommand(
+      String name,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      String reviewerModelKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      boolean buildStageEnabled,
+      String buildCommand,
+      boolean lintStageEnabled,
+      java.util.List<String> lintCommands,
+      String actorIdentity) {
+    this(
+        name,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        reviewerModelKind,
+        stepRunnerKinds,
+        buildStageEnabled,
+        buildCommand,
+        lintStageEnabled,
+        lintCommands,
+        null,
+        true,
         actorIdentity);
   }
 
@@ -81,6 +126,8 @@ public record UpdateProjectCommand(
         null,
         false,
         null,
+        null,
+        true,
         actorIdentity);
   }
 
@@ -114,6 +161,8 @@ public record UpdateProjectCommand(
         buildCommand,
         false,
         null,
+        null,
+        true,
         actorIdentity);
   }
 }

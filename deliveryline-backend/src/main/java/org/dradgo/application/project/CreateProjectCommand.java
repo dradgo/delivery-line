@@ -34,6 +34,12 @@ public record CreateProjectCommand(
     // enum validation needed (mirrors buildStageEnabled/buildCommand).
     boolean lintStageEnabled,
     java.util.List<String> lintCommands,
+    // Story 3h-4 (AC1) — per-project delivery config. pushMode is a nullable raw wire string
+    // ({@code auto}/{@code manual}/{@code approve}); the service parses it through
+    // ProjectManagementService.parsePushMode (default AUTO on null). autoCreatePullRequest defaults
+    // TRUE ⇒ a PR is created (pre-3h parity). No enum validation on the boolean.
+    String pushMode,
+    boolean autoCreatePullRequest,
     String idempotencyKey,
     String actorIdentity) {
   public CreateProjectCommand(
@@ -58,6 +64,47 @@ public record CreateProjectCommand(
         null,
         false,
         null,
+        null,
+        true,
+        idempotencyKey,
+        actorIdentity);
+  }
+
+  /**
+   * Story 3h-4 back-compat overload for the pre-3h-4 14-arg shape (canonical through {@code
+   * lintCommands}) — defaults the delivery fields to {@code (null pushMode ⇒ AUTO, true)}. Keeps
+   * existing 14-arg callers (lint create tests) compiling unchanged.
+   */
+  public CreateProjectCommand(
+      String name,
+      String slug,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      boolean buildStageEnabled,
+      String buildCommand,
+      boolean lintStageEnabled,
+      java.util.List<String> lintCommands,
+      String idempotencyKey,
+      String actorIdentity) {
+    this(
+        name,
+        slug,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        stepRunnerKinds,
+        buildStageEnabled,
+        buildCommand,
+        lintStageEnabled,
+        lintCommands,
+        null,
+        true,
         idempotencyKey,
         actorIdentity);
   }
@@ -91,6 +138,8 @@ public record CreateProjectCommand(
         null,
         false,
         null,
+        null,
+        true,
         idempotencyKey,
         actorIdentity);
   }
@@ -126,6 +175,8 @@ public record CreateProjectCommand(
         buildCommand,
         false,
         null,
+        null,
+        true,
         idempotencyKey,
         actorIdentity);
   }

@@ -206,6 +206,7 @@ class DockerRunnerAdapterUnitTest {
         b.openspec(),
         b.buildStage(),
         b.lintStage(),
+        b.deliveryMode(),
         b.queueMaxDepth());
   }
 
@@ -589,6 +590,7 @@ class DockerRunnerAdapterUnitTest {
             RunnerProperties.OpenSpec.defaults(),
             RunnerProperties.BuildStage.defaults(),
             RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     adapter =
         new DockerRunnerAdapter(

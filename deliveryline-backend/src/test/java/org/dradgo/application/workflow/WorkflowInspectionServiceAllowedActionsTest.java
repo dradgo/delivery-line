@@ -235,6 +235,24 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             "developer",
             List.of(AllowedAction.VIEW_ONLY)),
+        // Story 3h-4 (AC3) — a WaitingForDelivery run offers approve_delivery to the workflow_owner
+        // gate role (+ the log/usage views); every other role gets view-only + the views.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_DELIVERY,
+            "workflow_owner",
+            List.of(
+                AllowedAction.APPROVE_DELIVERY,
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.ARCHIVE_RUN)),
+        Arguments.of(
+            WorkflowState.WAITING_FOR_DELIVERY,
+            "product_reviewer",
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         Arguments.of(WorkflowState.COMPLETED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
             WorkflowState.COMPLETED,

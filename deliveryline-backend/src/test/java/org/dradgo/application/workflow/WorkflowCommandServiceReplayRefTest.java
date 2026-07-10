@@ -15,10 +15,12 @@ import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.WorkflowCommandFingerprintFactory;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
+import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,13 +32,15 @@ class WorkflowCommandServiceReplayRefTest {
 
   private WorkflowCommandService service;
   private ClarificationReadPort clarificationReadPort;
+  private WorkflowRunReadPort workflowRunReadPort;
 
   @BeforeEach
   void setUp() {
     clarificationReadPort = mock(ClarificationReadPort.class);
+    workflowRunReadPort = mock(WorkflowRunReadPort.class);
     service =
         new WorkflowCommandService(
-            mock(WorkflowRunReadPort.class),
+            workflowRunReadPort,
             mock(WorkflowRunCreatePort.class),
             mock(WorkflowEventWritePort.class),
             mock(WorkflowTransitionService.class),
@@ -49,12 +53,14 @@ class WorkflowCommandServiceReplayRefTest {
             mock(ApprovalService.class),
             mock(org.dradgo.application.approval.TechnicalApprovalService.class),
             mock(org.dradgo.application.workflow.LintApprovalService.class),
+            mock(org.dradgo.application.workflow.DeliveryApprovalService.class),
             mock(ClarificationService.class),
             mock(org.dradgo.application.clarification.ClarificationLifecycleService.class),
             clarificationReadPort,
             mock(WorkflowOrchestrationService.class),
             mock(org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort.class),
-            mock(org.dradgo.application.project.ProjectStore.class));
+            mock(org.dradgo.application.project.ProjectStore.class),
+            mock(org.dradgo.application.project.ProjectRuntimeConfigResolver.class));
   }
 
   @Test
@@ -95,6 +101,27 @@ class WorkflowCommandServiceReplayRefTest {
     assertEquals("run_new123", runId);
     assertEquals(WorkflowState.WAITING_FOR_SPEC_APPROVAL, state);
     assertEquals("answered", clarificationStatus);
+  }
+
+  @Test
+  void approveLintReplayStateComesFromStoredResultRef() {
+    String resultRef = "run_lintreplay123\u001FWaitingForDelivery";
+    when(workflowRunReadPort.findByPublicId("run_lintreplay123"))
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    "run_lintreplay123", WorkflowState.WAITING_FOR_REVIEW, null, 1L, 0, false)));
+
+    WorkflowStateChangeResult result =
+        ReflectionTestUtils.invokeMethod(
+            service,
+            "replayStateChange",
+            resultRef,
+            new ApproveLintCommand(
+                "run_lintreplay123", "alex", ActorType.HUMAN, "idem-lint", "corr", null));
+
+    assertEquals("run_lintreplay123", result.workflowRunId());
+    assertEquals(WorkflowState.WAITING_FOR_DELIVERY, result.currentState());
   }
 
   @Test

@@ -81,6 +81,9 @@ class TransitionTableCrossProductFoundationContract {
                   // Story 3h-2 (AC4) — a CRITICAL lint finding parks the run at the pre-review
                   // gate.
                   WorkflowState.WAITING_FOR_LINT_APPROVAL,
+                  // Story 3h-4 (AC3 / AC4) — a non-auto push mode parks the run at the pre-review
+                  // delivery gate.
+                  WorkflowState.WAITING_FOR_DELIVERY,
                   WorkflowState.FAILED,
                   WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
@@ -119,6 +122,19 @@ class TransitionTableCrossProductFoundationContract {
               EnumSet.of(
                   WorkflowState.WAITING_FOR_REVIEW,
                   WorkflowState.EXECUTING,
+                  // Story 3h-4 (AC3, Decision 3) — a lint approval on a non-auto project routes
+                  // into the delivery gate.
+                  WorkflowState.WAITING_FOR_DELIVERY,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
+          // Story 3h-4 (AC3 / AC4) — the unified delivery gate: approve_delivery ->
+          // WaitingForReview
+          // (push in approve mode, record in manual mode), plus the recovery/safety edges. No ->
+          // Failed (Decision 5).
+          Map.entry(
+              WorkflowState.WAITING_FOR_DELIVERY,
+              EnumSet.of(
+                  WorkflowState.WAITING_FOR_REVIEW,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.COMPLETED, EnumSet.noneOf(WorkflowState.class)),
@@ -143,7 +159,9 @@ class TransitionTableCrossProductFoundationContract {
           FailureCategory.RUNNER_CONTRACT_VIOLATION,
           FailureCategory.RUNNER_NON_ZERO_EXIT,
           // Story 3h-1 (AC5) — mirrors the WorkflowTransitionTable allow-list addition.
-          FailureCategory.RUNNER_BUILD_FAILED);
+          FailureCategory.RUNNER_BUILD_FAILED,
+          // Post-execution secret leak — mirrors the WorkflowTransitionTable allow-list addition.
+          FailureCategory.RUNNER_SECRET_LEAK);
 
   @Test
   void everyIllegalTransitionRaisesIllegalTransitionAndEveryLegalTransitionPasses() {

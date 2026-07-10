@@ -26,6 +26,7 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
@@ -103,7 +104,10 @@ class CommandModelSymmetryFoundationContract {
           AcceptClarificationCommand.class,
           RegenerateSpecCommand.class,
           ApproveLintCommand.class,
-          RequestLintFixCommand.class);
+          RequestLintFixCommand.class,
+          // Story 3h-4 (FR78 delivery gate) added ApproveDeliveryCommand (approve-delivery REST);
+          // recorded here as a known permit to keep the set explicit.
+          ApproveDeliveryCommand.class);
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;

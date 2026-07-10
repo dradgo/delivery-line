@@ -365,6 +365,17 @@ deliveryline:
     #     - "mvn -q -DskipTests checkstyle:check"
     #     - "npm --prefix frontend run lint"
     #   timeout: 5m
+    # Story 3h-4 (FR78) — unified delivery gate. push-mode selects whether the backend push (+ PR/MR
+    # creation) at the pr-output delivery tail happens automatically or behind an explicit operator
+    # approve_delivery: 'auto' (the default) pushes inline exactly as pre-3h delivery (the run never
+    # parks); 'manual'/'approve' park the run at WaitingForDelivery. auto-create-pull-request gates
+    # PR creation wherever the push fires (default true ⇒ pre-3h parity). Default (auto, true) ⇒
+    # byte-identical to pre-3h delivery. OPTIONAL + UNVALIDATED, so the shared test application.yml
+    # needs no mirror entry. Seeds the default project's per-project delivery config; per-project
+    # overrides live on the Project aggregate. Uncomment to change the global default.
+    # delivery:
+    #   push-mode: auto
+    #   auto-create-pull-request: true
     recovery:
       batch-size: 100
     mock:

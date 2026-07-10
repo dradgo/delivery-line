@@ -1490,9 +1490,13 @@ public class WorkflowInspectionService {
       // Story 3h-2 (AC5) — WAITING_FOR_LINT_APPROVAL sits on the IMPLEMENTATION (between EXECUTING
       // and REVIEW), so it reuses the EXECUTION context-bundle version like WAITING_FOR_REVIEW (not
       // the spec bundle).
+      // Story 3h-4 (AC3) — WAITING_FOR_DELIVERY also sits on the IMPLEMENTATION tail (the
+      // pre-review
+      // push gate), so it reuses the EXECUTION context-bundle version like the lint gate.
       Integer bundleVersion =
           (state == WorkflowState.WAITING_FOR_REVIEW
-                  || state == WorkflowState.WAITING_FOR_LINT_APPROVAL)
+                  || state == WorkflowState.WAITING_FOR_LINT_APPROVAL
+                  || state == WorkflowState.WAITING_FOR_DELIVERY)
               ? resolveImplementationContextBundleVersion(workflowRunPublicId)
               : resolveSpecContextBundleVersion(latestSpecPublicId);
 
@@ -1807,6 +1811,24 @@ public class WorkflowInspectionService {
           return List.of(
               AllowedAction.APPROVE_LINT,
               AllowedAction.REQUEST_LINT_FIX,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+        }
+        return List.of(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+      case WAITING_FOR_DELIVERY:
+        // Story 3h-4 (AC3): the unified delivery gate. Its single operator action
+        // (approve_delivery)
+        // is surfaced ONLY to the workflow_owner gate role
+        // ([recovery-bar-wrong-allowed-actions-role]); every other role gets view-only + the log/
+        // usage views (the producing PR_OUTPUT runner execution logs are a primary diagnostic
+        // here).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.APPROVE_DELIVERY,
               AllowedAction.VIEW_ONLY,
               AllowedAction.VIEW_RUNNER_LOGS,
               AllowedAction.VIEW_PROVIDER_USAGE_STATUS);

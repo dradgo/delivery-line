@@ -30,6 +30,7 @@ import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.workflow.WorkflowTransitionService.TransitionActor;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
@@ -54,6 +55,7 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
@@ -72,7 +74,7 @@ public class WorkflowCommandService {
   private static final Logger log = LoggerFactory.getLogger(WorkflowCommandService.class);
 
   /**
-   * P10 — replay-ref separator switched from {@code "|"} (which is a legal char in workflow run
+   * P10 вЂ” replay-ref separator switched from {@code "|"} (which is a legal char in workflow run
    * public ids and state names per a future regex relaxation) to ASCII Unit Separator {@code
    * U+001F}. The character is disallowed in every component of the resultRef (run-public-id and
    * state-value regexes both ban control characters), so the indexOf split is guaranteed
@@ -86,7 +88,7 @@ public class WorkflowCommandService {
   /**
    * Sentinel surfaced for clarification idempotent replays whose underlying row was hard-deleted
    * before the replay arrived (story-2.13 round-3 decision D-Round3-1). Preserves the
-   * idempotent-replay-never-fails contract for previously-successful 200s — callers see {@code
+   * idempotent-replay-never-fails contract for previously-successful 200s вЂ” callers see {@code
    * clarificationStatus="unknown"} instead of a 500. Only ever surfaced for the legacy 2-segment
    * replay-ref population; fresh writes embed the real status in the ref.
    */
@@ -103,19 +105,24 @@ public class WorkflowCommandService {
   private final IntegrationLinkService integrationLinkService;
   private final ApprovalService approvalService;
   private final TechnicalApprovalService technicalApprovalService;
-  // Story 3h-2 (AC5) — the pre-review lint-gate operator-action executors.
+  // Story 3h-2 (AC5) вЂ” the pre-review lint-gate operator-action executors.
   private final LintApprovalService lintApprovalService;
+  private final DeliveryApprovalService deliveryApprovalService;
   private final ClarificationService clarificationService;
-  // Story 3e-2 (AC1) — canonical executor for accept_clarification (answered -> accepted).
+  // Story 3e-2 (AC1) вЂ” canonical executor for accept_clarification (answered -> accepted).
   private final ClarificationLifecycleService clarificationLifecycleService;
   private final ClarificationReadPort clarificationReadPort;
-  // Story 3a-1 (Task 5 / AC1) — auto-dispatch the spec runner once a submitted run is created.
+  // Story 3a-1 (Task 5 / AC1) вЂ” auto-dispatch the spec runner once a submitted run is created.
   private final WorkflowOrchestrationService workflowOrchestrationService;
-  // Story 3e-2 (AC2) — bump spec_rejection_loop_count before retrySpecGeneration so each
+  // Story 3e-2 (AC2) вЂ” bump spec_rejection_loop_count before retrySpecGeneration so each
   // regenerate mints a fresh deterministic dispatch key (mirrors ApprovalService.rejectSpec).
   private final WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort;
-  // Story 3c-6 (AC2) — resolve the default project to bind every new run to at create time.
+  // Story 3c-6 (AC2) вЂ” resolve the default project to bind every new run to at create time.
   private final ProjectStore projectStore;
+  // Story 3h-4 (AC7) вЂ” resolve the run's push mode so approve_lint's replay pin reflects the actual
+  // mode-dependent post-state (WaitingForReview when auto, WaitingForDelivery otherwise).
+  private final org.dradgo.application.project.ProjectRuntimeConfigResolver
+      projectRuntimeConfigResolver;
   private final TransactionTemplate failureCompletionTemplate;
   private static final int REPLAY_LOOKUP_ATTEMPTS = 200;
   private static final long REPLAY_LOOKUP_DELAY_MS = 10L;
@@ -134,12 +141,14 @@ public class WorkflowCommandService {
       ApprovalService approvalService,
       TechnicalApprovalService technicalApprovalService,
       LintApprovalService lintApprovalService,
+      DeliveryApprovalService deliveryApprovalService,
       ClarificationService clarificationService,
       ClarificationLifecycleService clarificationLifecycleService,
       ClarificationReadPort clarificationReadPort,
       WorkflowOrchestrationService workflowOrchestrationService,
       WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort,
-      ProjectStore projectStore) {
+      ProjectStore projectStore,
+      org.dradgo.application.project.ProjectRuntimeConfigResolver projectRuntimeConfigResolver) {
     this.workflowRunReadPort = workflowRunReadPort;
     this.workflowRunCreatePort = workflowRunCreatePort;
     this.workflowEventWritePort = workflowEventWritePort;
@@ -153,12 +162,14 @@ public class WorkflowCommandService {
     this.approvalService = approvalService;
     this.technicalApprovalService = technicalApprovalService;
     this.lintApprovalService = lintApprovalService;
+    this.deliveryApprovalService = deliveryApprovalService;
     this.clarificationService = clarificationService;
     this.clarificationLifecycleService = clarificationLifecycleService;
     this.clarificationReadPort = clarificationReadPort;
     this.workflowOrchestrationService = workflowOrchestrationService;
     this.workflowRunRejectionLoopPort = workflowRunRejectionLoopPort;
     this.projectStore = projectStore;
+    this.projectRuntimeConfigResolver = projectRuntimeConfigResolver;
   }
 
   @Transactional
@@ -232,7 +243,7 @@ public class WorkflowCommandService {
 
   @Transactional
   public WorkflowStateChangeResult regenerateSpecWithClarifications(RegenerateSpecCommand command) {
-    // Story 3e-2 (AC2): structural twin of rejectSpec — transition WaitingForSpecApproval ->
+    // Story 3e-2 (AC2): structural twin of rejectSpec вЂ” transition WaitingForSpecApproval ->
     // Investigating then re-dispatch the spec runner, all inside this @Transactional boundary so a
     // dispatch failure rolls back the transition + loop-count bump. Replay pins INVESTIGATING (the
     // original command's post-state), mirroring rejectSpec.
@@ -252,10 +263,10 @@ public class WorkflowCommandService {
 
   @Transactional
   public WorkflowStateChangeResult resumeWorkflow(ResumeWorkflowCommand command) {
-    // Story 4.5 (AC5 / Reconciliation 8): transition Paused → command.targetState() (the recovered
+    // Story 4.5 (AC5 / Reconciliation 8): transition Paused в†’ command.targetState() (the recovered
     // prior executing state) inside the shared idempotency envelope. Unlike retryWorkflow, this
     // does
-    // NOT re-dispatch here — re-dispatch is single-sourced by RecoveryService.resume after the prep
+    // NOT re-dispatch here вЂ” re-dispatch is single-sourced by RecoveryService.resume after the prep
     // tx commits (the double-dispatch caution). Replay pins targetState (an invariant post-state
     // per accepted command) in replayStateChange.
     return executeIdempotent(command, this::resumeWorkflowInternal, this::replayStateChange);
@@ -271,7 +282,11 @@ public class WorkflowCommandService {
     // Story 3h-2 (AC5): the resume-tail deferral is registered inside LintApprovalService,
     // participating in this method's @Transactional idempotency boundary. Replay pins
     // WaitingForReview (the invariant post-state).
-    return executeIdempotent(command, this::approveLintInternal, this::replayStateChange);
+    return executeIdempotent(
+        command,
+        this::approveLintInternal,
+        this::replayStateChange,
+        result -> stateChangeReplayRef(result.workflowRunId(), result.currentState()));
   }
 
   @Transactional
@@ -282,8 +297,18 @@ public class WorkflowCommandService {
     return executeIdempotent(command, this::requestLintFixInternal, this::replayStateChange);
   }
 
+  @Transactional
+  public WorkflowStateChangeResult approveDelivery(ApproveDeliveryCommand command) {
+    // Story 3h-4 (AC4/AC7): the WaitingForDelivery -> WaitingForReview transition (+ the manual
+    // audit event) happen synchronously inside DeliveryApprovalService, participating in this
+    // method's @Transactional idempotency boundary; the workspace-coupled push resume / reviewer
+    // enqueue are deferred post-commit there. Replay pins WaitingForReview (the invariant
+    // post-state) so a replayed approve short-circuits without re-pushing / double-creating the PR.
+    return executeIdempotent(command, this::approveDeliveryInternal, this::replayStateChange);
+  }
+
   private SubmitWorkflowResult submitInternal(SubmitWorkflowCommand command) {
-    // Story 3c-7 (AC1) — resolve the project to bind this run to BEFORE create so the run row is
+    // Story 3c-7 (AC1) вЂ” resolve the project to bind this run to BEFORE create so the run row is
     // never null at insert. An explicit projectReference (slug or `prj_` id) resolves the named
     // project (else PROJECT_NOT_FOUND); absent, the 3c-6 reserved `default` project stands. A
     // create
@@ -294,7 +319,7 @@ public class WorkflowCommandService {
     // The create path, initial event append, and integration_link creation must stay inside the
     // surrounding @Transactional boundary so they commit or roll back together. If linking the
     // source ticket fails (LINEAR_TICKET_NOT_FOUND / INTEGRATION_LINK_CONFLICT / adapter
-    // failure), the workflow_run row is rolled back too — the run never existed.
+    // failure), the workflow_run row is rolled back too вЂ” the run never existed.
     var workflowRun =
         workflowRunCreatePort.create(
             PublicIdPrefixes.WORKFLOW_RUN.next(), WorkflowState.INBOX, projectId);
@@ -335,8 +360,8 @@ public class WorkflowCommandService {
               command.actorType(),
               normalizeOptional(command.correlationId())));
 
-      // Story 3a-1 (AC1 / Task 5) — auto-dispatch the spec runner. This shares the submit
-      // transaction (Dev Notes §"Transaction & async boundary"): the run + Linear link + the
+      // Story 3a-1 (AC1 / Task 5) вЂ” auto-dispatch the spec runner. This shares the submit
+      // transaction (Dev Notes В§"Transaction & async boundary"): the run + Linear link + the
       // Inbox->Investigating transition + the runner_executions row commit or roll back together,
       // so a dispatch failure unwinds the submit. The async runner RESULT arrives later via the
       // poller (a separate transaction). No-op when spec-stage.auto-dispatch=false (test profile),
@@ -344,13 +369,13 @@ public class WorkflowCommandService {
       workflowOrchestrationService.dispatchSpecGeneration(
           workflowRun.publicId(), normalizeOptional(command.correlationId()));
 
-      // Story 3a-1 review finding P4 — report the run's ACTUAL committed state, not the stale
+      // Story 3a-1 review finding P4 вЂ” report the run's ACTUAL committed state, not the stale
       // just-created Inbox value: when auto-dispatch advanced the run to Investigating in THIS
       // transaction the caller must see Investigating. Re-read within the transaction
       // (auto-dispatch
       // disabled leaves it Inbox; enabled => Investigating).
       //
-      // The re-read is purely cosmetic — it only populates the response's currentState. Guard it so
+      // The re-read is purely cosmetic вЂ” it only populates the response's currentState. Guard it so
       // a transient read failure cannot escape and roll back this @Transactional submit (the
       // created
       // run + Linear link + Inbox->Investigating transition + dispatched runner_executions row all
@@ -377,7 +402,7 @@ public class WorkflowCommandService {
   private record ProjectBinding(String projectId, String source) {}
 
   /**
-   * Story 3c-7 (AC1) — generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An explicit
+   * Story 3c-7 (AC1) вЂ” generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An explicit
    * {@code projectReference} resolves the named project: a {@code prj_}-prefixed reference via
    * {@link ProjectStore#findByPublicId}, otherwise via {@link ProjectStore#findBySlug}; an
    * unresolvable explicit reference is rejected with the consume-only {@code PROJECT_NOT_FOUND}. An
@@ -502,19 +527,31 @@ public class WorkflowCommandService {
     }
   }
 
+  private WorkflowStateChangeResult approveDeliveryInternal(ApproveDeliveryCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      requireParkedAtDeliveryGate(command.workflowRunId(), "approve_delivery");
+      WorkflowState resultingState = deliveryApprovalService.approveDelivery(command);
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(), resultingState, normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
   /**
-   * Story 3h-2 (code-review 2026-07-06 re-review) — the executor gate for the pre-review lint-gate
+   * Story 3h-2 (code-review 2026-07-06 re-review) вЂ” the executor gate for the pre-review lint-gate
    * actions ({@code approve_lint} / {@code request_lint_fix}). These are surfaced ONLY at {@code
-   * WaitingForLintApproval}, so — mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
-   * REGENERATE_NOT_APPLICABLE} precedent (there is NO generic ACTION_NOT_ALLOWED guard) — the
+   * WaitingForLintApproval}, so вЂ” mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
+   * REGENERATE_NOT_APPLICABLE} precedent (there is NO generic ACTION_NOT_ALLOWED guard) вЂ” the
    * executor is the gate. This precondition is LOAD-BEARING, not defensive: both action targets are
    * ALSO reachable from other live sources ({@code EXECUTING -> WaitingForReview} is the normal
    * delivery tail; {@code WaitingForReview -> Executing} is reject-implementation), so
    * transition-table legality ALONE does NOT reject a wrong-state call. Without this guard a
-   * wrong-state {@code approve_lint} (e.g. on a still-{@code EXECUTING} run — stale UI, double
+   * wrong-state {@code approve_lint} (e.g. on a still-{@code EXECUTING} run вЂ” stale UI, double
    * submit, direct API) would transition + push a mid-execution workspace, and a wrong-state {@code
    * request_lint_fix} on a {@code WaitingForReview} run would hijack it back into {@code
-   * Executing}. Reject (ILLEGAL_TRANSITION → 409, non-retryable) unless the run is actually parked
+   * Executing}. Reject (ILLEGAL_TRANSITION в†’ 409, non-retryable) unless the run is actually parked
    * at the gate.
    */
   private void requireParkedAtLintGate(String workflowRunId, String action) {
@@ -546,18 +583,58 @@ public class WorkflowCommandService {
     }
   }
 
+  /**
+   * Story 3h-4 (AC7) вЂ” the executor gate for {@code approve_delivery}, surfaced ONLY at {@code
+   * WaitingForDelivery}. Mirrors {@link #requireParkedAtLintGate}: LOAD-BEARING, not defensive,
+   * because the action's target ({@code WaitingForReview}) is reachable from other live sources
+   * (the normal delivery tail {@code EXECUTING -> WaitingForReview}, the lint gate {@code
+   * WaitingForLintApproval -> WaitingForReview}), so transition-table legality ALONE does NOT
+   * reject a wrong-state call. Without this guard a wrong-state {@code approve_delivery} (stale UI,
+   * double submit, direct API on a still-{@code EXECUTING} run) would transition + push. Reject
+   * (ILLEGAL_TRANSITION в†’ 409, non-retryable) unless the run is actually parked at the delivery
+   * gate.
+   */
+  private void requireParkedAtDeliveryGate(String workflowRunId, String action) {
+    WorkflowState currentState =
+        workflowRunReadPort
+            .findByPublicId(workflowRunId)
+            .map(WorkflowRunSnapshot::currentState)
+            .orElseThrow(
+                () ->
+                    new DomainException(
+                        DomainErrorCode.RUN_NOT_FOUND,
+                        "Workflow run not found: " + workflowRunId,
+                        Map.of("runId", workflowRunId)));
+    if (currentState != WorkflowState.WAITING_FOR_DELIVERY) {
+      throw new DomainException(
+          DomainErrorCode.ILLEGAL_TRANSITION,
+          "Delivery-gate action '"
+              + action
+              + "' requires the run to be parked at WaitingForDelivery",
+          Map.of(
+              "runId",
+              workflowRunId,
+              "action",
+              action,
+              "currentState",
+              currentState.value(),
+              "requiredState",
+              WorkflowState.WAITING_FOR_DELIVERY.value()));
+    }
+  }
+
   private WorkflowStateChangeResult answerClarificationInternal(
       SubmitClarificationCommand command) {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       // Story 2.13 round-4 P-R4-4: read currentState FIRST so the response reflects the workflow
       // state at the START of the answer operation, not whatever a concurrent reject/takeover/retry
-      // happened to commit during the answer write. Trap T6 says answering does NOT advance state —
+      // happened to commit during the answer write. Trap T6 says answering does NOT advance state вЂ”
       // if the read came after the clarification write, a concurrent state-change could surface as
       // the answer's "post-mutation" state and contradict AC9. Both calls sit inside the outer
       // @Transactional answerClarification, so READ COMMITTED still sees the latest committed value
       // at this point, but the resulting currentState now belongs to the snapshot the answer
-      // started from — not to an unrelated concurrent transition.
+      // started from вЂ” not to an unrelated concurrent transition.
       WorkflowState currentState =
           workflowRunReadPort
               .findByPublicId(command.workflowRunId())
@@ -581,7 +658,7 @@ public class WorkflowCommandService {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       // Story 3e-2 (AC1): read currentState FIRST (mirror answerClarificationInternal trap T6) so
-      // the response reflects the run state at the START of the accept — accepting does NOT advance
+      // the response reflects the run state at the START of the accept вЂ” accepting does NOT advance
       // workflow state, so a concurrent reject/takeover must not surface as the accept's
       // post-mutation state.
       WorkflowState currentState =
@@ -619,7 +696,7 @@ public class WorkflowCommandService {
       // (review D1) Gate FIRST: a spec rebuild only makes sense when there is >=1 `accepted`
       // clarification to incorporate. The REGENERATE_SPEC action is surfaced unconditionally at
       // WaitingForSpecApproval (WorkflowInspectionService.computeActionMatrix), so the executor is
-      // the gate (mirrors the RETRY_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE precedent — no generic
+      // the gate (mirrors the RETRY_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE precedent вЂ” no generic
       // ACTION_NOT_ALLOWED). Reject BEFORE the loop-count bump / transition / re-dispatch so a
       // no-incorporation rebuild never spuriously re-runs the spec stage.
       boolean hasAccepted =
@@ -643,15 +720,15 @@ public class WorkflowCommandService {
           command.workflowRunId(),
           loopCount);
       // (b) WaitingForSpecApproval -> Investigating. The transition service appends
-      // workflow.stateChanged itself (do NOT append a second one). The edge is already legal — the
-      // reject->retry loop uses it — so no transition-table change.
+      // workflow.stateChanged itself (do NOT append a second one). The edge is already legal вЂ” the
+      // reject->retry loop uses it вЂ” so no transition-table change.
       transition(
           command.workflowRunId(),
           WorkflowState.INVESTIGATING,
           command,
           "regenerate specification with clarifications",
           Map.of());
-      // (c) Re-dispatch ONLY (Trap T8) — retrySpecGeneration MUST NOT re-transition. Shares this
+      // (c) Re-dispatch ONLY (Trap T8) вЂ” retrySpecGeneration MUST NOT re-transition. Shares this
       // @Transactional boundary, so a dispatch failure rolls back the transition + the bump
       // (all-or-nothing). No-op when spec-stage.auto-dispatch=false.
       workflowOrchestrationService.retrySpecGeneration(
@@ -674,7 +751,7 @@ public class WorkflowCommandService {
           command,
           fallbackReason(command.reasonText(), "retry workflow"),
           Map.of());
-      // RC2 (rerun re-dispatch) — the transition above only flips Failed -> Executing; it enqueues
+      // RC2 (rerun re-dispatch) вЂ” the transition above only flips Failed -> Executing; it enqueues
       // NO runner, so without this the run wedges in Executing with nothing for the worker pool to
       // dequeue. Re-dispatch the EXECUTION-stage runner so the retried run actually resumes. Shares
       // this @Transactional boundary exactly like submitInternal's dispatchSpecGeneration (the
@@ -713,8 +790,8 @@ public class WorkflowCommandService {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       // Story 4.5 (Reconciliation 8): transition to the caller-supplied targetState (the recovered
-      // Paused → prior executing state) via the generic transition helper — the transition table
-      // validates Paused → targetState is legal (Paused → Executing today). NO re-dispatch here
+      // Paused в†’ prior executing state) via the generic transition helper вЂ” the transition table
+      // validates Paused в†’ targetState is legal (Paused в†’ Executing today). NO re-dispatch here
       // (RecoveryService.resume owns the single redispatchAfterRetry after this prep tx commits).
       transition(
           command.workflowRunId(),
@@ -944,7 +1021,7 @@ public class WorkflowCommandService {
 
   /**
    * Story 3.20 (Trap T2): {@code acceptImplementation}'s resulting state depends on the accepted
-   * artifact's type — {@code Completed} for a {@code prOutput}, {@code Executing} for an {@code
+   * artifact's type вЂ” {@code Completed} for a {@code prOutput}, {@code Executing} for an {@code
    * implementationPlan}. The generic {@link #replayStateChange} hard-codes the post-state per
    * command type, which would return the wrong state here, so this dedicated replay re-reads the
    * run and returns its <strong>current</strong> {@code currentState()}. The run never leaves
@@ -965,6 +1042,7 @@ public class WorkflowCommandService {
         switch (command) {
           case SubmitClarificationCommand ignored -> clarificationReplayRunId(resultRef);
           case AcceptClarificationCommand ignored -> clarificationReplayRunId(resultRef);
+          case ApproveLintCommand ignored -> stateChangeReplayRunId(resultRef);
           default -> resultRef;
         };
     var workflowRun = findWorkflowRunForReplay(workflowRunId);
@@ -984,12 +1062,23 @@ public class WorkflowCommandService {
           // so a hard-coded replay state is correct (unlike acceptImplementation's type-dependent
           // target, which uses the dedicated replayAcceptImplementation re-read).
           case RejectImplementationCommand ignored -> WorkflowState.EXECUTING;
-          // Story 3h-2 (AC5): approve_lint resumes the tail to WaitingForReview; request_lint_fix
-          // re-dispatches to Executing. Both are invariant post-states, so a replay pins them here.
-          case ApproveLintCommand ignored -> WorkflowState.WAITING_FOR_REVIEW;
+          // Story 3h-2 (AC5) / 3h-4 (Decision 3): request_lint_fix re-dispatches to Executing
+          // (invariant). approve_lint's post-state is now MODE-DEPENDENT вЂ” WaitingForReview when
+          // the
+          // run's project is auto push mode (the lint approval delivers directly),
+          // WaitingForDelivery
+          // when non-auto (the lint approval routes into the delivery gate). Resolve pushMode at
+          // replay time (a stable per-project value, so the same answer as at command time) rather
+          // than re-reading the run's later live state, which may have advanced past either.
+          case ApproveLintCommand ignored -> stateChangeReplayState(resultRef, workflowRunId);
           case RequestLintFixCommand ignored -> WorkflowState.EXECUTING;
+          // Story 3h-4 (AC7): approve_delivery always advances to WaitingForReview (both approve
+          // and
+          // manual push modes), so a static pin is correct вЂ” a replayed approve returns
+          // WaitingForReview without re-pushing / double-creating the PR.
+          case ApproveDeliveryCommand ignored -> WorkflowState.WAITING_FOR_REVIEW;
           // Story 4.5 (Reconciliation 8): resume's post-state is the accepted command's
-          // targetState (the recovered prior executing state — Executing today). It is the
+          // targetState (the recovered prior executing state вЂ” Executing today). It is the
           // invariant answer for a replay of this exact command, mirroring how retry pins
           // Executing; pin it from the command payload rather than re-reading the run's later
           // live state.
@@ -1007,7 +1096,7 @@ public class WorkflowCommandService {
           clarificationReplayStatus(resultRef, submitClarificationCommand));
     }
     if (command instanceof AcceptClarificationCommand) {
-      // Story 3e-2: accept_clarification is a NET-NEW command — every replay ref is the 3-segment
+      // Story 3e-2: accept_clarification is a NET-NEW command вЂ” every replay ref is the 3-segment
       // (run, state, status) shape (no legacy 2-segment refs exist), so the embedded status is
       // always present. No legacy live-read fallback needed (contrast SubmitClarificationCommand).
       return new WorkflowStateChangeResult(
@@ -1040,6 +1129,26 @@ public class WorkflowCommandService {
         + clarificationStatus;
   }
 
+
+  private String stateChangeReplayRef(String workflowRunId, WorkflowState state) {
+    return workflowRunId + CLARIFICATION_REPLAY_REF_SEPARATOR + state.value();
+  }
+
+  private String stateChangeReplayRunId(String resultRef) {
+    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
+    return separator < 0 ? resultRef : resultRef.substring(0, separator);
+  }
+
+  private WorkflowState stateChangeReplayState(String resultRef, String workflowRunId) {
+    int separator = resultRef.indexOf(CLARIFICATION_REPLAY_REF_SEPARATOR);
+    if (separator < 0) {
+      return projectRuntimeConfigResolver.resolvePushMode(workflowRunId) == PushMode.AUTO
+          ? WorkflowState.WAITING_FOR_REVIEW
+          : WorkflowState.WAITING_FOR_DELIVERY;
+    }
+    String stateValue = resultRef.substring(separator + CLARIFICATION_REPLAY_REF_SEPARATOR.length());
+    return WorkflowState.fromValue(stateValue, "idempotency.resultRef");
+  }
   private String clarificationReplayRunId(String resultRef) {
     return parseClarificationReplayRef(resultRef).workflowRunId();
   }
@@ -1050,12 +1159,12 @@ public class WorkflowCommandService {
 
   /**
    * Story 2.13 review D1: legacy two-segment {@code resultRef} values written before this story
-   * stored only {@code workflowRunId + SEP + state.value()} — they do not encode the {@code
+   * stored only {@code workflowRunId + SEP + state.value()} вЂ” they do not encode the {@code
    * clarificationStatus} that callers now expect on replay. For these legacy refs the resolver
    * falls back to a live read against {@link ClarificationReadPort}, which means:
    *
    * <ul>
-   *   <li>If the row has advanced (answered → accepted / incorporated / superseded /
+   *   <li>If the row has advanced (answered в†’ accepted / incorporated / superseded /
    *       rejected_invalid) between original-answer time and replay time, the replay observes the
    *       <em>current</em> row status, not the answer-time status. Idempotent replays across the
    *       legacy migration window may therefore not reproduce the original response byte-for-byte.
@@ -1077,7 +1186,7 @@ public class WorkflowCommandService {
     }
     // Story 2.13 round-4 P-R4-1: cross-run guard on the legacy 2-segment replay-ref fallback. The
     // idempotency record fingerprint normally blocks cross-run replays, but the legacy path reads
-    // from a port keyed on clarificationId alone — a tampered URL or migration-era leaked ref
+    // from a port keyed on clarificationId alone вЂ” a tampered URL or migration-era leaked ref
     // would otherwise surface another run's clarification status. Reject mismatches as
     // CLARIFICATION_NOT_FOUND (same code/HTTP-status the caller would see for an unknown id, so we
     // don't leak the existence of a foreign run's clarification through error code variance).
@@ -1146,7 +1255,7 @@ public class WorkflowCommandService {
       return separator;
     }
     // Story 2.13 review P16: a single ref must encode with one separator scheme. A ref carrying
-    // both the new U+001F and the legacy '|' is ambiguous — Math.min would silently pick one and
+    // both the new U+001F and the legacy '|' is ambiguous вЂ” Math.min would silently pick one and
     // misparse. Reject as malformed so callers see a typed error rather than corrupted parsing.
     throw malformedClarificationReplayRef(resultRef);
   }

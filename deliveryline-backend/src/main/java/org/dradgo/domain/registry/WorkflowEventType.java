@@ -111,7 +111,19 @@ public enum WorkflowEventType implements RegistryValue {
   // prState/reason/correlationId/workflowRunId + the new allow-listed conflictId/conflictCategory.
   // NOT in any scenario stream fixture (non-lifecycle, like console.opened). NO Flyway migration —
   // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
-  INTEGRATION_CONFLICT_DETECTED("integration.conflictDetected");
+  INTEGRATION_CONFLICT_DETECTED("integration.conflictDetected"),
+  // Story 3h-4 (AC4, ADR 0030) — appended when an operator records an out-of-band delivery for a
+  // run parked at WaitingForDelivery under the `manual` push mode (approve_delivery). The backend
+  // pushes NOTHING (Decision 4, ingestManualResult precedent): the operator pushed by hand, so this
+  // event records that the delivery happened out-of-band and the run advanced to WaitingForReview.
+  // It rides the WaitingForDelivery -> WaitingForReview transition (appended in the same command
+  // tx)
+  // but is NOT itself a workflow-state change — priorState == resultingState == the run's state at
+  // append time (WaitingForReview), interventionMarker = true (a governed operator action). Detail
+  // keys reuse the already-allow-listed runnerExecutionId / workflowRunId / correlationId. NOT in
+  // any scenario stream fixture (like console.opened / integration.conflictDetected). NO Flyway —
+  // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
+  DELIVERY_RECORDED_MANUALLY("delivery.recordedManually");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

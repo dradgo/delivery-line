@@ -72,4 +72,20 @@ public record CreateProjectRequest(
                     + "first command whose exit signals critical findings parks the run.",
             nullable = true,
             example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
-        List<String> lintCommands) {}
+        List<String> lintCommands,
+    @Schema(
+            description =
+                "Story 3h-4 — per-project delivery push mode. 'auto' pushes inline at the delivery "
+                    + "tail (pre-3h parity, never parks); 'manual'/'approve' park the run at "
+                    + "WaitingForDelivery for an explicit approve_delivery. Default 'auto'.",
+            nullable = true,
+            allowableValues = {"auto", "manual", "approve"},
+            example = "auto")
+        String pushMode,
+    @Schema(
+            description =
+                "Story 3h-4 — whether a pull/merge request is created wherever the push fires. "
+                    + "Default true (pre-3h parity). When false the push still fires but no PR is "
+                    + "created/linked.",
+            example = "true")
+        Boolean autoCreatePullRequest) {}

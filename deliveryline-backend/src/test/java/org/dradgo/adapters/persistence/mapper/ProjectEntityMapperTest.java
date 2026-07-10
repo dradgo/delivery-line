@@ -32,6 +32,10 @@ class ProjectEntityMapperTest {
     entity.setRepoHostKind(ConnectorKind.GITHUB);
     entity.setOpenspecEnabled(false);
     entity.setReviewerGatingEnabled(false);
+    // Story 3h-4 — push_mode is NOT NULL default 'auto' in the DB; a persisted row always carries a
+    // value, so the mapper test's in-memory row must set it too (the getter fail-fast-parses it).
+    entity.setPushMode(org.dradgo.domain.registry.PushMode.AUTO);
+    entity.setAutoCreatePullRequest(true);
     entity.setCreatedAt(OffsetDateTime.parse("2026-06-21T00:00:00Z"));
     return entity;
   }

@@ -87,6 +87,7 @@ class RunnerLogCaptureServiceTest {
         d.openspec(),
         d.buildStage(),
         d.lintStage(),
+        d.deliveryMode(),
         d.queueMaxDepth());
   }
 

@@ -69,6 +69,17 @@ public record ProjectResponse(
                 "Story 3h-2 — CPU linter commands run backend-side before review; empty = no lint.",
             example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
         List<String> lintCommands,
+    @Schema(
+            description =
+                "Story 3h-4 — per-project delivery push mode. 'auto' pushes inline (pre-3h parity); "
+                    + "'manual'/'approve' park at WaitingForDelivery.",
+            allowableValues = {"auto", "manual", "approve"},
+            example = "auto")
+        String pushMode,
+    @Schema(
+            description =
+                "Story 3h-4 — whether a pull/merge request is created wherever the push fires.")
+        boolean autoCreatePullRequest,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -97,6 +108,8 @@ public record ProjectResponse(
         project.buildCommand(),
         project.lintStageEnabled(),
         project.lintCommands(),
+        project.pushMode().value(),
+        project.autoCreatePullRequest(),
         project.createdAt(),
         credentials,
         allowedActions);

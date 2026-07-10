@@ -10,6 +10,7 @@
     "WaitingForManualExecution",
     "WaitingForDependencies",
     "WaitingForLintApproval",
+    "WaitingForDelivery",
     "Split",
     "Completed",
     "Failed",
