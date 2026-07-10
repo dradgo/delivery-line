@@ -49,13 +49,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Story 3c-8 вЂ” the first product surface over the {@code Project} aggregate. A governed,
+ * Story 3c-8 — the first product surface over the {@code Project} aggregate. A governed,
  * localhost-only (inherited from {@code RestBindingGuard}, AC7), idempotent, Problem-Details REST
  * contract that never returns a stored secret (the credential store is write-only end-to-end).
  *
- * <p>Idempotency uses the generic {@code IdempotencyService} directly (R6 вЂ” no {@code
+ * <p>Idempotency uses the generic {@code IdempotencyService} directly (R6 — no {@code
  * WorkflowCommandFingerprintFactory} edit): {@code POST /projects} (optional key) and {@code PUT
- * вЂ¦/credentials/{role}} (required key) compute their own canonical fingerprint and run
+ * …/credentials/{role}} (required key) compute their own canonical fingerprint and run
  * reserve&rarr;execute&rarr;complete here. The credential plaintext is excluded from the
  * fingerprint so a same-key replay is idempotent without the secret entering the idempotency table.
  */
@@ -151,7 +151,7 @@ public class ProjectController {
         MdcKeys.sanitizeForLog(actorIdentity));
 
     // Reject duplicated / comma-folded Idempotency-Key headers regardless of whether a single key
-    // was supplied вЂ” a malformed multi-header set must not silently bypass idempotency on the
+    // was supplied — a malformed multi-header set must not silently bypass idempotency on the
     // optional-key create path.
     rejectMultiValuedIdempotencyKeyHeader(httpRequest);
     Project project;
@@ -304,7 +304,7 @@ public class ProjectController {
       produces = MediaType.APPLICATION_JSON_VALUE)
   @Operation(
       operationId = "setProjectCredential",
-      summary = "Set or rotate a connector credential (write-only вЂ” never returned)")
+      summary = "Set or rotate a connector credential (write-only — never returned)")
   @ApiResponses({
     @ApiResponse(responseCode = "200", description = "Credential configured (non-secret id only)."),
     @ApiResponse(
@@ -378,7 +378,7 @@ public class ProjectController {
       // 3c-4 cipher.encrypt throws IllegalStateException from requireMasterKey when no master key
       // is
       // configured (the startup guard stays dormant until the first credential row exists). Map it
-      // to the already-registered 503 rather than the opaque generic 500 вЂ” secret-hostile (no
+      // to the already-registered 503 rather than the opaque generic 500 — secret-hostile (no
       // message/cause echoed). Scoped to the credential-set path; the only ISE the encrypt path can
       // throw is the master-key one.
       idempotencyService.complete(idempotencyKey, null, IdempotencyRecordStatus.FAILED);
@@ -433,7 +433,7 @@ public class ProjectController {
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.TICKET_SOURCE);
     boolean repoConfigured =
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.REPO_HOST);
-    // Story 3d-2 вЂ” the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A
+    // Story 3d-2 — the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A
     // REVIEW
     // dispatch (advisory reviewer + the 3f-4 split-proposal) resolves THIS secret with no host-key
     // fallback, so its presence must be surfaced for the UI to set it. Appended last so the
@@ -485,18 +485,18 @@ public class ProjectController {
             Boolean.toString(command.openspecEnabled()),
             nullSafe(command.runnerKind()),
             canonicalStepRunnerKinds(command.stepRunnerKinds()),
-            // Story 3h-1 (AC2) вЂ” both build-config fields MUST be part of the create fingerprint,
+            // Story 3h-1 (AC2) — both build-config fields MUST be part of the create fingerprint,
             // else two creates differing only in build config would collide as idempotent replays.
             Boolean.toString(command.buildStageEnabled()),
             nullSafe(command.buildCommand()),
-            // Story 3h-2 (AC2) вЂ” both lint-config fields MUST be part of the create fingerprint,
+            // Story 3h-2 (AC2) — both lint-config fields MUST be part of the create fingerprint,
             // else two creates differing only in lint config would collide as idempotent replays.
             Boolean.toString(command.lintStageEnabled()),
             canonicalLintCommands(command.lintCommands()),
-            // Story 3h-4 (AC1) вЂ” both delivery-config fields MUST be part of the create
+            // Story 3h-4 (AC1) — both delivery-config fields MUST be part of the create
             // fingerprint,
             // else two creates differing only in delivery config would collide as idempotent
-            // replays. pushMode is the raw wire string (null в‡’ "" canonicalizes to the AUTO
+            // replays. pushMode is the raw wire string (null ⇒ "" canonicalizes to the AUTO
             // default).
             nullSafe(command.pushMode()),
             Boolean.toString(command.autoCreatePullRequest()));
@@ -504,8 +504,8 @@ public class ProjectController {
   }
 
   /**
-   * Story 3h-2 вЂ” deterministic canonical form of the lint command list for the create
-   * fingerprint: the commands joined in order (order is semantically meaningful вЂ” fail-fast runs
+   * Story 3h-2 — deterministic canonical form of the lint command list for the create
+   * fingerprint: the commands joined in order (order is semantically meaningful — fail-fast runs
    * first-to-last), newline-delimited. Two same-key creates with the same lint commands fingerprint
    * identically (and replay); a different list (or order) is a distinct create.
    */
@@ -519,7 +519,7 @@ public class ProjectController {
   }
 
   /**
-   * Story 3e-4 вЂ” deterministic canonical form of the per-step map for the create fingerprint: the
+   * Story 3e-4 — deterministic canonical form of the per-step map for the create fingerprint: the
    * (step=kind) pairs sorted by step key, comma-joined. Two same-key creates with the same per-step
    * mapping fingerprint identically (and replay); a different mapping is a distinct create.
    */
@@ -535,7 +535,7 @@ public class ProjectController {
 
   private static String credentialFingerprint(
       String projectPublicId, ConnectorRole role, String actorIdentity) {
-    // The plaintext secret is DELIBERATELY excluded (R5/R6) вЂ” only project + role + actor + a
+    // The plaintext secret is DELIBERATELY excluded (R5/R6) — only project + role + actor + a
     // constant marker participate, so a same-key replay is idempotent without the secret entering
     // the idempotency table or any fingerprint log.
     String canonical =
@@ -572,7 +572,7 @@ public class ProjectController {
   }
 
   /**
-   * Story 2.13 P10 mirror вЂ” collapse a null/blank Idempotency-Key back to
+   * Story 2.13 P10 mirror — collapse a null/blank Idempotency-Key back to
    * MISSING_IDEMPOTENCY_KEY.
    */
   private static void requireNonBlankIdempotencyKey(String idempotencyKey) {
@@ -586,7 +586,7 @@ public class ProjectController {
     }
   }
 
-  /** Story 2.13 P8 mirror вЂ” reject duplicated / comma-folded Idempotency-Key headers. */
+  /** Story 2.13 P8 mirror — reject duplicated / comma-folded Idempotency-Key headers. */
   private static void rejectMultiValuedIdempotencyKeyHeader(HttpServletRequest httpRequest) {
     if (httpRequest == null) {
       return;

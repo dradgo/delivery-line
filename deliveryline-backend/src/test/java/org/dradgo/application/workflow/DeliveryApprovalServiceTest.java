@@ -35,11 +35,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Story 3h-4 (Task 8, AC4) Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В Р вЂ Р В РІР‚С™Р РЋРЎС™ unit
+ * Story 3h-4 (Task 8, AC4) — unit
  * coverage for the approve_delivery executor: approve
- * Р В Р’В Р В РІР‚В Р В Р вЂ Р В РІР‚С™Р вЂ™Р’В Р В Р вЂ Р В РІР‚С™Р Р†РІР‚С›РЎС› transition +
+ * — transition +
  * deferred push resume; manual
- * Р В Р’В Р В РІР‚В Р В Р вЂ Р В РІР‚С™Р вЂ™Р’В Р В Р вЂ Р В РІР‚С™Р Р†РІР‚С›РЎС› transition +
+ * — transition +
  * delivery.recordedManually event + deferred reviewer-enqueue-only (no git); both return
  * WaitingForReview.
  */
@@ -205,8 +205,7 @@ class DeliveryApprovalServiceTest {
                 event ->
                     event.eventType() == WorkflowEventType.DELIVERY_RECORDED_MANUALLY
                         && RUN_ID.equals(event.workflowRunPublicId())));
-    // ...and the reviewer is enqueued via the no-git manual seam Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р
-    //  вЂљРЎв„ўР В Р вЂ Р В РІР‚С™Р РЋРЎС™ never the push resume.
+    // ...and the reviewer is enqueued via the no-git manual seam — never the push resume.
     verify(broker).recordManualDeliveryAndEnqueueReviewer(RUN_ID, CORR);
     verify(broker, never()).resumeDeliveryTailFromGate(any(), any());
     assertThat(logMessages())

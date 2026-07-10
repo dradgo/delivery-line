@@ -29,7 +29,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Story 3h-4 (AC4, FR78) вЂ” the executor for the pre-review delivery-gate operator action {@code
+ * Story 3h-4 (AC4, FR78) — the executor for the pre-review delivery-gate operator action {@code
  * approve_delivery}. The structural twin of {@code LintApprovalService.approveLint}: a {@code
  * MANDATORY}-propagation method that participates in {@code WorkflowCommandService}'s
  * idempotency-boundary transaction (so the transition rolls back with any downstream failure), and
@@ -41,13 +41,13 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>transitions {@code WaitingForDelivery -> WaitingForReview} SYNCHRONOUSLY in the command tx
  *       (a wrong-state call is rejected 409 upstream by {@code
  *       WorkflowCommandService.requireParkedAtDeliveryGate}, exactly like the lint gate);
- *   <li><b>{@code APPROVE}</b> в†’ defers the git-push-bearing delivery resume ({@code
- *       RunnerBroker.resumeDeliveryTailFromGate}, REUSED verbatim from 3h-2 вЂ” it self-gates on
+ *   <li><b>{@code APPROVE}</b> → defers the git-push-bearing delivery resume ({@code
+ *       RunnerBroker.resumeDeliveryTailFromGate}, REUSED verbatim from 3h-2 — it self-gates on
  *       already-pushed refs, respects {@code autoCreatePullRequest}, enriches + links the PR, and
  *       enqueues the reviewer);
- *   <li><b>{@code MANUAL}</b> в†’ appends a {@code delivery.recordedManually} audit event (in the
+ *   <li><b>{@code MANUAL}</b> → appends a {@code delivery.recordedManually} audit event (in the
  *       command tx, atomic with the transition) and defers the reviewer enqueue-only via {@code
- *       RunnerBroker.recordManualDeliveryAndEnqueueReviewer} вЂ” NEVER touching git (Decision 4 /
+ *       RunnerBroker.recordManualDeliveryAndEnqueueReviewer} — NEVER touching git (Decision 4 /
  *       {@code ingestManualResult} precedent).
  * </ul>
  *
@@ -108,7 +108,7 @@ public class DeliveryApprovalService {
   }
 
   /**
-   * AC4 вЂ” {@code approve_delivery}: dismiss the delivery gate and advance to {@code
+   * AC4 — {@code approve_delivery}: dismiss the delivery gate and advance to {@code
    * WaitingForReview}. Transitions synchronously in this command tx, then defers the mode-specific
    * side effect (push resume for {@code approve}, reviewer enqueue for {@code manual}) AFTER
    * commit. Returns {@code WaitingForReview} (the resulting state the command reports / a replay
@@ -145,7 +145,7 @@ public class DeliveryApprovalService {
         appendManualDeliveryEvent(runId, command, correlationId);
         log.info(
             "approveDelivery accepted (manual) + transitioned WaitingForDelivery->WaitingForReview "
-                + "workflowRunId={} actorIdentity={} вЂ” recorded out-of-band delivery, reviewer "
+                + "workflowRunId={} actorIdentity={} — recorded out-of-band delivery, reviewer "
                 + "enqueue deferred post-commit (no git)",
             runId,
             command.actorIdentity());
@@ -195,7 +195,7 @@ public class DeliveryApprovalService {
   /**
    * Append the {@code delivery.recordedManually} governed audit event for a manual-mode delivery.
    * Not itself a workflow-state change ({@code priorState == resultingState == WaitingForReview},
-   * {@code interventionMarker = true}) вЂ” it records that an operator delivered out-of-band. Runs
+   * {@code interventionMarker = true}) — it records that an operator delivered out-of-band. Runs
    * in the command tx so it is atomic with the transition.
    */
   private PushMode resolveParkedPushMode(String runId) {
