@@ -504,10 +504,10 @@ public class ProjectController {
   }
 
   /**
-   * Story 3h-2 — deterministic canonical form of the lint command list for the create
-   * fingerprint: the commands joined in order (order is semantically meaningful — fail-fast runs
-   * first-to-last), newline-delimited. Two same-key creates with the same lint commands fingerprint
-   * identically (and replay); a different list (or order) is a distinct create.
+   * Story 3h-2 — deterministic canonical form of the lint command list for the create fingerprint:
+   * the commands joined in order (order is semantically meaningful — fail-fast runs first-to-last),
+   * newline-delimited. Two same-key creates with the same lint commands fingerprint identically
+   * (and replay); a different list (or order) is a distinct create.
    */
   private static String canonicalLintCommands(java.util.List<String> lintCommands) {
     if (lintCommands == null || lintCommands.isEmpty()) {
@@ -572,8 +572,7 @@ public class ProjectController {
   }
 
   /**
-   * Story 2.13 P10 mirror — collapse a null/blank Idempotency-Key back to
-   * MISSING_IDEMPOTENCY_KEY.
+   * Story 2.13 P10 mirror — collapse a null/blank Idempotency-Key back to MISSING_IDEMPOTENCY_KEY.
    */
   private static void requireNonBlankIdempotencyKey(String idempotencyKey) {
     if (idempotencyKey == null || idempotencyKey.isBlank()) {

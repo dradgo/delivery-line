@@ -195,8 +195,8 @@ public class DeliveryApprovalService {
   /**
    * Append the {@code delivery.recordedManually} governed audit event for a manual-mode delivery.
    * Not itself a workflow-state change ({@code priorState == resultingState == WaitingForReview},
-   * {@code interventionMarker = true}) — it records that an operator delivered out-of-band. Runs
-   * in the command tx so it is atomic with the transition.
+   * {@code interventionMarker = true}) — it records that an operator delivered out-of-band. Runs in
+   * the command tx so it is atomic with the transition.
    */
   private PushMode resolveParkedPushMode(String runId) {
     return workflowEventReadPort

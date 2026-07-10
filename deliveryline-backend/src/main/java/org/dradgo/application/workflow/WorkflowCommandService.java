@@ -406,9 +406,9 @@ public class WorkflowCommandService {
   private record ProjectBinding(String projectId, String source) {}
 
   /**
-   * Story 3c-7 (AC1) — generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An
-   * explicit {@code projectReference} resolves the named project: a {@code prj_}-prefixed reference
-   * via {@link ProjectStore#findByPublicId}, otherwise via {@link ProjectStore#findBySlug}; an
+   * Story 3c-7 (AC1) — generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An explicit
+   * {@code projectReference} resolves the named project: a {@code prj_}-prefixed reference via
+   * {@link ProjectStore#findByPublicId}, otherwise via {@link ProjectStore#findBySlug}; an
    * unresolvable explicit reference is rejected with the consume-only {@code PROJECT_NOT_FOUND}. An
    * absent reference keeps the reserved {@code default}-project fallback (byte-identical to 3c-6).
    */
@@ -544,9 +544,9 @@ public class WorkflowCommandService {
   }
 
   /**
-   * Story 3h-2 (code-review 2026-07-06 re-review) — the executor gate for the pre-review
-   * lint-gate actions ({@code approve_lint} / {@code request_lint_fix}). These are surfaced ONLY at
-   * {@code WaitingForLintApproval}, so — mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
+   * Story 3h-2 (code-review 2026-07-06 re-review) — the executor gate for the pre-review lint-gate
+   * actions ({@code approve_lint} / {@code request_lint_fix}). These are surfaced ONLY at {@code
+   * WaitingForLintApproval}, so — mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
    * REGENERATE_NOT_APPLICABLE} precedent (there is NO generic ACTION_NOT_ALLOWED guard) — the
    * executor is the gate. This precondition is LOAD-BEARING, not defensive: both action targets are
    * ALSO reachable from other live sources ({@code EXECUTING -> WaitingForReview} is the normal
@@ -555,8 +555,8 @@ public class WorkflowCommandService {
    * wrong-state {@code approve_lint} (e.g. on a still-{@code EXECUTING} run — stale UI, double
    * submit, direct API) would transition + push a mid-execution workspace, and a wrong-state {@code
    * request_lint_fix} on a {@code WaitingForReview} run would hijack it back into {@code
-   * Executing}. Reject (ILLEGAL_TRANSITION → 409, non-retryable) unless the run is actually
-   * parked at the gate.
+   * Executing}. Reject (ILLEGAL_TRANSITION → 409, non-retryable) unless the run is actually parked
+   * at the gate.
    */
   private void requireParkedAtLintGate(String workflowRunId, String action) {
     WorkflowState currentState =

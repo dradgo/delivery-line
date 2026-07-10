@@ -35,13 +35,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Story 3h-4 (Task 8, AC4) — unit
- * coverage for the approve_delivery executor: approve
- * — transition +
- * deferred push resume; manual
- * — transition +
- * delivery.recordedManually event + deferred reviewer-enqueue-only (no git); both return
- * WaitingForReview.
+ * Story 3h-4 (Task 8, AC4) — unit coverage for the approve_delivery executor: approve — transition
+ * + deferred push resume; manual — transition + delivery.recordedManually event + deferred
+ * reviewer-enqueue-only (no git); both return WaitingForReview.
  */
 class DeliveryApprovalServiceTest {
 

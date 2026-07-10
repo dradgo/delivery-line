@@ -295,8 +295,7 @@ public record RunnerProperties(
   /**
    * Story 3h-1 (AC2) — the GLOBAL default build-stage opt-in ({@code
    * deliveryline.runner.build-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
-   * default project's per-project {@code buildStageEnabled}. Default {@code false} ⇒ pre-3h
-   * parity.
+   * default project's per-project {@code buildStageEnabled}. Default {@code false} ⇒ pre-3h parity.
    */
   public boolean buildStageEnabled() {
     return buildStage.enabled();
@@ -313,8 +312,8 @@ public record RunnerProperties(
 
   /**
    * Story 3h-1 (AC2 / Task 3) — the bound on the backend-side build process ({@code
-   * deliveryline.runner.build-stage.timeout}); overrun kills the process → non-zero exit.
-   * Defaults to 10 minutes.
+   * deliveryline.runner.build-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * to 10 minutes.
    */
   public Duration buildTimeout() {
     return buildStage.timeout();
@@ -372,9 +371,9 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. The list is ordered
-   * = the runner image's resolution preference (first present wins at dispatch time, and the value
-   * is injected under the name it was found — see {@link RunnerSecretsService}).
+   * Story 3.5 Trap T2 — default agent-provider env-var names per runner kind. The list is ordered =
+   * the runner image's resolution preference (first present wins at dispatch time, and the value is
+   * injected under the name it was found — see {@link RunnerSecretsService}).
    *
    * <p>Story 3a-3 made Codex subscription-first/file-based: {@code CODEX_AUTH_JSON} (the raw,
    * single-line content of {@code $CODEX_HOME/auth.json} from a ChatGPT/Pro subscription, the
@@ -481,12 +480,11 @@ public record RunnerProperties(
    * Story 3a-1 — spec-stage orchestration config.
    *
    * <ul>
-   *   <li>{@code kind} (AC10) — runner-image flavor for the spec-investigation stage ({@code
-   *       codex} | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX} so
-   *       binding never fails and a new {@link RunnerKind} never silently resolves to an undefined
-   *       image.
-   *   <li>{@code autoDispatch} — master switch for the auto-dispatch triggers (dispatch on submit
-   *       + re-dispatch on spec rejection). Production ({@code application.yml}) sets it {@code
+   *   <li>{@code kind} (AC10) — runner-image flavor for the spec-investigation stage ({@code codex}
+   *       | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX} so binding
+   *       never fails and a new {@link RunnerKind} never silently resolves to an undefined image.
+   *   <li>{@code autoDispatch} — master switch for the auto-dispatch triggers (dispatch on submit +
+   *       re-dispatch on spec rejection). Production ({@code application.yml}) sets it {@code
    *       true}; the shared test profile sets it {@code false} — mirroring {@code
    *       scheduling.enabled: false} — so the existing suite's submit/reject tests stay
    *       deterministic and the full submit→spec loop is exercised by the dedicated integration
@@ -510,10 +508,10 @@ public record RunnerProperties(
    * Story 3.11 (AC10) — plan-stage orchestration config, the EXECUTION twin of {@link SpecStage}.
    *
    * <ul>
-   *   <li>{@code kind} — runner-image flavor for the implementation-plan (EXECUTION) stage
-   *       ({@code codex} | {@code claude}); a null/absent value defaults to {@link
-   *       RunnerKind#CODEX}. Resolved into the dispatch path via {@link #kindForStage(RunnerStage)}
-   *       (it also serves the pr-output sub-stage until story 3.12 — OQ-4).
+   *   <li>{@code kind} — runner-image flavor for the implementation-plan (EXECUTION) stage ({@code
+   *       codex} | {@code claude}); a null/absent value defaults to {@link RunnerKind#CODEX}.
+   *       Resolved into the dispatch path via {@link #kindForStage(RunnerStage)} (it also serves
+   *       the pr-output sub-stage until story 3.12 — OQ-4).
    *   <li>{@code autoDispatch} — master switch for the {@code approveSpec ->
    *       dispatchPlanGeneration} trigger. Production ({@code application.yml}) sets it {@code
    *       true}; the shared test profile sets it {@code false} (mirroring {@code
@@ -536,8 +534,8 @@ public record RunnerProperties(
   }
 
   /**
-   * Story 3.12 (AC1) — implementation-stage orchestration config, the pr-output (EXECUTION) twin
-   * of {@link PlanStage}.
+   * Story 3.12 (AC1) — implementation-stage orchestration config, the pr-output (EXECUTION) twin of
+   * {@link PlanStage}.
    *
    * <ul>
    *   <li>{@code kind} — runner-image flavor for the pr-output sub-stage ({@code codex} | {@code
@@ -590,8 +588,8 @@ public record RunnerProperties(
    * Story 3h-1 (AC2, FR75) — global default build-validation config ({@code
    * deliveryline.runner.build-stage.{enabled,command,timeout}}). Seeds the default project's
    * per-project build config via {@code DefaultProjectSeeder}; per-project overrides live on the
-   * {@code Project} aggregate. {@code enabled=false} (the default) ⇒ BUILD skipped entirely
-   * (pre-3h parity); {@code command} is the shell/build command run backend-side via {@code
+   * {@code Project} aggregate. {@code enabled=false} (the default) ⇒ BUILD skipped entirely (pre-3h
+   * parity); {@code command} is the shell/build command run backend-side via {@code
    * BuildCommandPort} in the materialized workspace; {@code timeout} bounds that process (kill →
    * non-zero exit on overrun), defaulting to 10 minutes.
    *
@@ -662,8 +660,8 @@ public record RunnerProperties(
    * coercion): the shared test {@code application.yml} therefore needs no mirror entry ({@code
    * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()}; a
    * null {@code pushMode} falls back to {@link PushMode#AUTO}. Note the {@code
-   * autoCreatePullRequest} default is {@code true} — unlike the build/lint {@code enabled}
-   * defaults (false) — because the pre-3h behavior created a PR.
+   * autoCreatePullRequest} default is {@code true} — unlike the build/lint {@code enabled} defaults
+   * (false) — because the pre-3h behavior created a PR.
    */
   public record DeliveryMode(PushMode pushMode, Boolean autoCreatePullRequest) {
 
@@ -809,12 +807,12 @@ public record RunnerProperties(
 
     /**
      * Redacts credentials embedded in a registry image reference of the form {@code
-     * user:pass@host/image:tag} → {@code ***@host/image:tag}, leaving an un-credentialed
-     * reference untouched. Lives in the application layer (the image tags are application-owned
-     * config) so {@code RunnerBroker} can redact before writing the {@code runner.dispatched} audit
-     * event without reaching into {@code adapters.runner.docker} (which the layered-boundary
-     * ArchUnit rule forbids). The adapter's {@code DockerLogSanitizer} delegates here so there is a
-     * single implementation.
+     * user:pass@host/image:tag} → {@code ***@host/image:tag}, leaving an un-credentialed reference
+     * untouched. Lives in the application layer (the image tags are application-owned config) so
+     * {@code RunnerBroker} can redact before writing the {@code runner.dispatched} audit event
+     * without reaching into {@code adapters.runner.docker} (which the layered-boundary ArchUnit
+     * rule forbids). The adapter's {@code DockerLogSanitizer} delegates here so there is a single
+     * implementation.
      */
     public static String redactImageTag(String image) {
       if (image == null || image.isBlank()) {
