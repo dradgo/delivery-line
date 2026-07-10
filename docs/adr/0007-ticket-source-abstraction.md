@@ -85,8 +85,62 @@ Onboarding a JIRA project: store the per-project API token write-only under
 profile and set `deliveryline.integration.ticket-source.kind: jira`. JIRA Cloud auth is HTTP Basic
 `email:apiToken` assembled at request time (never logged). The doctor `jira-auth` probe verifies it.
 
+## Story 3i-2 — `supportsTicketQuery`: the sixth capability flag (FR81)
+
+The port gains an optional read, `TicketQueryResult queryTickets(TicketQuery)` — a filtered browse
+for *candidate* tickets (assignee / components / state, bounded by `limit`) — gated on a new sixth
+`TicketSourceCapabilities` flag, `supportsTicketQuery`. Only JIRA advertises it today (JQL-backed);
+Linear and the GitLab stub report `false` and throw `UnsupportedOperationException` rather than
+returning an empty result, which would misreport an unsupported connector as an empty backlog.
+
+The flag is **in-code only**: it never reaches a DB `CHECK`, so there is no Flyway migration and no
+new `ConnectorKind` (3i-1 already landed `JIRA` + V37). Adding it is a three-factory edit
+(`noCreation`/`linearDefaults` → `false`, `jiraDefaults` → `true`).
+
+### The result is a page, not a list (code review, 2026-07-10)
+
+`queryTickets` returns `TicketQueryResult{tickets, total}` rather than a bare list. A browse is a
+*bounded page*, so a bare list cannot distinguish a complete answer from a truncated one: a filter
+matching 400 tickets and one matching exactly `limit` render identically, and the operator gets no
+signal to narrow the filter. `total` counts matches at the source; `truncated()` is
+`total > tickets.size()`, which is also true when a ticket was skipped because the source hid a
+required field from the browsing account. Both cases answer the operator's real question — *am I
+seeing everything?* The REST surface mirrors this as a `CandidateTicketPage` envelope, deviating from
+the list endpoints' usual bare-array convention for exactly this reason.
+
+### Adapter failures are translated, never leaked (code review, 2026-07-10)
+
+`TicketSourceAdapterException` is a plain `RuntimeException` carrying an `IntegrationFailureCategory`.
+Because the browse is the **first synchronous REST path into a ticket-source adapter**, it is also the
+first place that exception could reach an HTTP response — where, unhandled, it rendered as an opaque
+`500 INTERNAL_ERROR, retryable=false`. The application service now honors the contract the exception's
+own Javadoc states and maps the category: `NETWORK_API_FAILURE` → `TICKET_QUERY_SOURCE_UNAVAILABLE`
+(503, **retryable** — the source was unreachable and the same request may later succeed); every other
+category → `TICKET_QUERY_SOURCE_FAILED` (502, **non-retryable** — the source answered, but with an
+expired credential or an unmappable payload, and retrying cannot help). Any future adapter-backed
+foreground read must translate the same way.
+
+Two design points worth preserving:
+
+- **`TicketQuery` / `TicketSummary` are new neutral records** in `domain.integration.ticketsource`.
+  In particular `TicketSummary` is *not* the pre-existing `application.runner.TicketSummary` (the
+  context-bundle projection): that one carries a bare `String` ref and rejects a blank summary, which
+  would throw on a real JIRA ticket with no description. It also lives in a package the REST adapters
+  are forbidden to import (`REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER`).
+- **The capability gate surfaces as a typed 404, not a silent skip.** `TicketSourceSubticketService`
+  skips silently when `supportsTicketCreation` is off, because sub-ticket creation is a background
+  side-effect. A browse is a direct operator request with no meaningful degraded answer, so
+  `TicketQueryService` raises `TICKET_QUERY_NOT_SUPPORTED` (HTTP 404, non-retryable) for both the
+  capability-off and the no-adapter case. The intake UI hides the surface by catching that code —
+  never by checking the connector kind, so a future browsable connector lights it up for free.
+
+The vendor query is assembled **by omission**: an absent filter field contributes no clause at all
+(never a match-all predicate), and every operator-supplied value is escaped for the vendor dialect —
+the filters are an injection boundary.
+
 ## References
 
+- [Source: `_bmad-output/planning-artifacts/epic-03i-connector-expansion.md#Story 3i-2`] — FR81 filtered ticket-intake browse, ACs 1–8.
 - [Source: `_bmad-output/planning-artifacts/epic-03i-connector-expansion.md#Story 3i-1`] — FR80 JIRA ticket source, ACs 1–8.
 - [Source: `_bmad-output/planning-artifacts/epic-03-agent-execution.md#Story 3.32`] — ACs 1–10 (and §3.33 for the symmetric GitHub sibling).
 - `docs/integrations/ticket-source-extension-contract.md` — the documented extension contract for new ticket sources.

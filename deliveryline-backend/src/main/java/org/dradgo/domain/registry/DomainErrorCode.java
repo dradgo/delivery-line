@@ -156,6 +156,32 @@ public enum DomainErrorCode implements RegistryValue {
   PROJECT_NOT_FOUND("PROJECT_NOT_FOUND"),
   PROJECT_SLUG_CONFLICT("PROJECT_SLUG_CONFLICT"),
   UNSUPPORTED_CONNECTOR_KIND("UNSUPPORTED_CONNECTOR_KIND"),
+  // Story 3i-2 (AC3) — three-sites code (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder; ProblemDetailsCoverageFoundationContract auto-covers). Raised by
+  // TicketQueryService
+  // when the project's ticket source has no registered adapter in this context OR reports
+  // supportsTicketQuery=false. Distinct from UNSUPPORTED_CONNECTOR_KIND, which means "no adapter is
+  // registered for that connector kind at all" — here the connector may well exist and simply
+  // cannot
+  // be browsed. NOT_FOUND + non-retryable, so the intake UI cleanly hides the surface by catching
+  // it.
+  TICKET_QUERY_NOT_SUPPORTED("TICKET_QUERY_NOT_SUPPORTED"),
+  // Story 3i-2 code-review — three-sites codes (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder). The browse is the FIRST synchronous REST call into a ticket-source adapter, so it
+  // is the first place a TicketSourceAdapterException can reach an HTTP response. Left uncaught it
+  // renders as an opaque 500 INTERNAL_ERROR + retryable=false, which mislabels the two conditions
+  // operators actually hit: an expired token (diagnosable, not retryable) and a transient
+  // 429/5xx/timeout (retryable). TicketQueryService translates the exception's
+  // IntegrationFailureCategory into one of these two codes, honoring the contract that
+  // TicketSourceAdapterException's own javadoc states: "the application service is responsible for
+  // converting this to the appropriate DomainException".
+  //
+  // NETWORK_API_FAILURE — the source was unreachable or answered transiently. 503 + RETRYABLE.
+  TICKET_QUERY_SOURCE_UNAVAILABLE("TICKET_QUERY_SOURCE_UNAVAILABLE"),
+  // Every other category (LINK_FAILURE auth/permission, SYNC_FAILURE malformed response,
+  // STATE_CONFLICT) — the source answered, but not usefully. 502 + non-retryable: retrying an
+  // expired credential or an unparseable payload cannot help.
+  TICKET_QUERY_SOURCE_FAILED("TICKET_QUERY_SOURCE_FAILED"),
   // Story 3c-4 (AC3) — three-sites code (enum + ProblemDetailsCatalog + manifest). Thrown by
   // CredentialMasterKeyGuard at startup (as a typed DomainException, precedent
   // DOCTOR_REST_BIND_UNAVAILABLE) when the credential master key is missing AND at least one

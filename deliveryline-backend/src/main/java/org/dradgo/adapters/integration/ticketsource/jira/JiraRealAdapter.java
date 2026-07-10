@@ -18,6 +18,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.StringJoiner;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,8 +33,11 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
+import org.dradgo.domain.integration.ticketsource.TicketSummary;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -112,6 +116,9 @@ public class JiraRealAdapter implements CredentialBoundTicketSourceAdapter {
   /** JQL {@code updated >} comparisons take {@code "yyyy-MM-dd HH:mm"} in the instance timezone. */
   private static final DateTimeFormatter JQL_UPDATED =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT).withZone(ZoneOffset.UTC);
+
+  /** Ordering suffix for the story 3i-2 candidate browse — newest-updated first. */
+  private static final String JQL_BROWSE_ORDER = "ORDER BY updated DESC";
 
   private final RestClient jiraRestClient;
   private final JiraProperties properties;
@@ -255,6 +262,120 @@ public class JiraRealAdapter implements CredentialBoundTicketSourceAdapter {
         pages,
         elapsedMs(startedAt));
     return collected;
+  }
+
+  /**
+   * Story 3i-2 (AC2) — the JQL-backed candidate browse. A single {@code /rest/api/3/search} POST
+   * bounded by {@code maxResults = query.limit()} (no paging: a browse is a bounded page, not a
+   * sweep), ordered newest-updated first.
+   *
+   * <p>The JQL is assembled by <strong>omission</strong>: an absent filter field contributes no
+   * clause at all. It is never rendered as a match-all predicate — {@code assignee is not EMPTY}
+   * would quietly narrow an unfiltered browse, and an unbounded {@code component in ()} is not even
+   * legal JQL. Every operator-supplied value is escaped through {@link #escapeJqlString} before it
+   * reaches the query string; the filters are user input, so this is the injection boundary.
+   *
+   * <p><strong>An unmappable issue is skipped, not fatal</strong> — deliberately unlike {@link
+   * #pollNewTickets}, which lets {@code toTicket} throw and fails the whole batch. A JIRA
+   * field-level permission scheme can hide {@code summary} from the browsing account while still
+   * returning the issue in search results, and {@code requireText} throws on it. Failing the page
+   * would cost the operator every other valid candidate for the sake of one they cannot see anyway.
+   * Poll is a background batch that retries wholesale and where a hard failure is a legible signal;
+   * browse is a foreground request where partial results strictly beat none. The skip count is
+   * logged at WARN so a systemic mapping break is still visible.
+   */
+  @Override
+  public TicketQueryResult queryTickets(TicketQuery query) {
+    Objects.requireNonNull(query, "query");
+    long startedAt = System.nanoTime();
+    ObjectNode request = objectMapper.createObjectNode();
+    request.put("jql", buildBrowseJql(query));
+    request.put("startAt", 0);
+    request.put("maxResults", query.limit());
+    ArrayNode fields = request.putArray("fields");
+    for (String field : ISSUE_FIELDS.split(",")) {
+      fields.add(field);
+    }
+    JsonNode response =
+        parse(
+            execute(
+                HttpMethod.POST,
+                "/rest/api/3/search",
+                writeJson(request, "queryTickets"),
+                "queryTickets",
+                credentialOverride),
+            "queryTickets");
+    List<TicketSummary> collected = new ArrayList<>();
+    JsonNode issues = response.path("issues");
+    int skipped = 0;
+    if (issues.isArray()) {
+      for (JsonNode issue : issues) {
+        try {
+          collected.add(toTicketSummary(toTicket(issue)));
+        } catch (TicketSourceAdapterException unmappable) {
+          // Count only. The exception message can quote the issue payload, and the issue itself is
+          // ticket free-text — neither may reach a log (AC7).
+          skipped++;
+        }
+      }
+    }
+    // `total` is the source's count of ALL matches, not just this page. We ask for at most
+    // `limit` issues, so a total above what we collected means the browse is truncated and the
+    // operator is looking at a partial backlog. Reporting it is the difference between "these are
+    // your candidates" and "these are 50 of your 400 candidates".
+    int total = response.path("total").asInt(collected.size());
+    if (skipped > 0) {
+      // WARN, not INFO: a nonzero count is either a permission scheme hiding fields from this
+      // account or a mapping break. Both deserve attention even though the browse succeeded.
+      log.warn("jira_real query skippedUnmappableIssues={} of={}", skipped, issues.size());
+    }
+    // Counts and flags only — the JQL string, the filter values, and the ticket free-text never
+    // reach the log (story 3i-2 AC7).
+    log.info(
+        "jira_real query assigneeFiltered={} componentCount={} stateFiltered={} limit={} resultCount={} total={} durationMs={}",
+        query.hasAssignee(),
+        query.components().size(),
+        query.hasState(),
+        query.limit(),
+        collected.size(),
+        total,
+        elapsedMs(startedAt));
+    return new TicketQueryResult(collected, total);
+  }
+
+  /**
+   * Renders the browse JQL from only the <em>present</em> filter fields, always suffixed with the
+   * ordering. With no filters at all this yields a bare {@code ORDER BY updated DESC} — a legal,
+   * deliberately unfiltered browse bounded by {@code maxResults}.
+   */
+  private static String buildBrowseJql(TicketQuery query) {
+    StringJoiner clauses = new StringJoiner(" AND ");
+    if (query.hasAssignee()) {
+      clauses.add("assignee = \"" + escapeJqlString(query.assignee()) + "\"");
+    }
+    if (query.hasComponents()) {
+      StringJoiner components = new StringJoiner(", ", "component in (", ")");
+      for (String component : query.components()) {
+        components.add("\"" + escapeJqlString(component) + "\"");
+      }
+      clauses.add(components.toString());
+    }
+    if (query.hasState()) {
+      clauses.add("status = \"" + escapeJqlString(query.state()) + "\"");
+    }
+    String where = clauses.toString();
+    return where.isEmpty() ? JQL_BROWSE_ORDER : where + " " + JQL_BROWSE_ORDER;
+  }
+
+  /**
+   * Projects the full neutral {@link Ticket} down to the browse read shape. A JIRA issue with an
+   * empty description maps to a {@code null} summary rather than an empty string, matching {@link
+   * TicketSummary}'s nullable contract.
+   */
+  private static TicketSummary toTicketSummary(Ticket ticket) {
+    String summary = ticket.summary();
+    return new TicketSummary(
+        ticket.ticketRef(), ticket.title(), summary == null || summary.isBlank() ? null : summary);
   }
 
   @Override

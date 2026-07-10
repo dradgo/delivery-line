@@ -855,7 +855,7 @@ final class ArchitectureRuleCatalog {
       namedRule(
           "vendor-specific ticket-source types must not leak through the application.integration.ticketsource port",
           "Remediation: keep Linear GraphQL DTOs, vendor SDK types, and HTTP-client surface inside adapters.integration.ticketsource.{kind}; the application port "
-              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment, SubticketDraft, CreateSubticketResult). Story 1.14 AC1 / story 3.32 AC7 / story 3f-1 invariant.",
+              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment, SubticketDraft, CreateSubticketResult, TicketQuery, TicketSummary). Story 1.14 AC1 / story 3.32 AC7 / story 3f-1 invariant / story 3i-2 AC1.",
           noClasses()
               .that()
               .resideInAPackage("org.dradgo.application.integration.ticketsource..")

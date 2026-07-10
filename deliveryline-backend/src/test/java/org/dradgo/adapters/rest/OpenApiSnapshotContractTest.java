@@ -120,6 +120,9 @@ class OpenApiSnapshotContractTest {
         .contains("enableProject")
         .contains("setProjectCredential")
         .contains("testProjectConnection");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 3i-2 filtered ticket-intake browse operation")
+        .contains("queryProjectTickets");
 
     JsonNode document = MAPPER.readTree(canonical);
     assertThat(document.at(pointer("servers")).isArray()).isTrue();

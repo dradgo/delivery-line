@@ -51,6 +51,37 @@ export function operatorFilteredToRuns(count: number, filterSummary: string): st
     : `Operator queue filtered to ${runs} — ${filterSummary}`;
 }
 
+// ---- Ticket intake browse (story 3i-2) -----------------------------------------
+
+/**
+ * Announced after the intake browse re-runs on a filter change (AC6) — the resolved candidate count
+ * and a human summary of the active filter (e.g. "assignee acct-1, components billing"), announced
+ * off the settled result count. Parameterized ⇒ a function (the vocabulary-node-test convention).
+ *
+ * When `total` exceeds `count` the page was truncated, and the announcement says so: a screen-reader
+ * user must learn they are not hearing the whole backlog, exactly as a sighted user reads it.
+ */
+export function intakeFilteredToTickets(
+  count: number,
+  filterSummary: string,
+  total?: number,
+): string {
+  const tickets = `${count} ${count === 1 ? 'ticket' : 'tickets'}`;
+  const shown = total !== undefined && total > count ? `${tickets} of ${total}` : tickets;
+  return filterSummary.trim() === ''
+    ? `Ticket intake filtered to ${shown}`
+    : `Ticket intake filtered to ${shown} — ${filterSummary}`;
+}
+
+/** Announced when the selected project's connector cannot be browsed (TICKET_QUERY_NOT_SUPPORTED). */
+export const intakeNotSupported =
+  'This project’s ticket source does not support browsing candidate tickets';
+
+/** Announced when a candidate ticket has been submitted as a governed run. */
+export function intakeRunStarted(ticketRef: string): string {
+  return `Started a governed run for ${ticketRef}`;
+}
+
 // ---- Clarifications (story 2.18) -----------------------------------------------
 
 /** A single clarification advanced to a new lifecycle state (`label` is its signifier label). */

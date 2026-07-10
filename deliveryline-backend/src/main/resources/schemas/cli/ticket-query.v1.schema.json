@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/ticket-query.v1",
+  "title": "TicketQueryResultV1",
+  "$comment": "Story 3i-2 (AC3) — the stable wire shape for `deliveryline tickets query --format json`. Additive fields are allowed within v1; any removal/rename bumps to v2. shownCount is the number of rows in `tickets`; totalCount is how many tickets matched the filter AT THE SOURCE and may exceed shownCount, because the browse is a bounded page (--limit) and because an individual ticket that cannot be mapped is skipped. truncated is `totalCount > shownCount` — the single flag telling the operator they are not seeing every match. summary is null when the source ticket has no description.",
+  "type": "object",
+  "required": ["schemaVersion", "shownCount", "totalCount", "truncated", "tickets"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "shownCount": { "type": "integer", "minimum": 0 },
+    "totalCount": { "type": "integer", "minimum": 0 },
+    "truncated": { "type": "boolean" },
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ticketRef", "title", "summary"],
+        "additionalProperties": false,
+        "properties": {
+          "ticketRef": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "summary": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

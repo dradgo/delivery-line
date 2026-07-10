@@ -857,4 +857,27 @@ class FoundationGateVerificationTest {
           "3d.8", "org.dradgo.adapters.rest.ArchiveRunEndpointContractTest");
     }
   }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #27 — JIRA TicketSourceAdapter parity (stories 3i-1, 3i-2)")
+  class Contract27JiraTicketSourceParity {
+
+    /**
+     * Story 3i-1 AC8 / 3i-2 AC8 — the JIRA mock + real adapters satisfy the vendor-neutral {@code
+     * TicketSourceAdapter} port, return neutral {@code Ticket}s on a happy read, classify failures
+     * identically, probe connectivity alike, and (3i-2) both advertise {@code supportsTicketQuery}
+     * and return the same neutral {@code TicketSummary} shape from {@code queryTickets}.
+     *
+     * <p>{@code JiraTicketSourceParityFoundationContract} was authored in 3i-1 but never registered
+     * here. Its class name does not match any Surefire/Failsafe include pattern, so the only way it
+     * runs is this delegate entry — without it the contract was inert. Registered by story 3i-2.
+     */
+    @Test
+    @DisplayName("JIRA mock/real parity + ticket-query capability + neutral TicketSummary shape")
+    void jiraTicketSourceParityContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3i-1", "org.dradgo.foundation.JiraTicketSourceParityFoundationContract");
+    }
+  }
 }

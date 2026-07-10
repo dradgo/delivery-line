@@ -17,6 +17,11 @@ package org.dradgo.domain.integration.ticketsource;
  *   <li>{@code supportsSourceTicketUrl} - the source can build a link-back URL to the originating
  *       ticket ({@code buildSourceTicketUrl}), snapshotted into the run's origin metadata (story
  *       3g-1).
+ *   <li>{@code supportsTicketQuery} - the source can be browsed with a filter (assignee /
+ *       components / state) for candidate tickets ({@code queryTickets}), story 3i-2. Only JIRA
+ *       advertises this today; a connector that reports {@code false} throws {@link
+ *       UnsupportedOperationException} from {@code queryTickets} and the intake surface is
+ *       capability-gated off for it.
  * </ul>
  */
 public record TicketSourceCapabilities(
@@ -24,35 +29,40 @@ public record TicketSourceCapabilities(
     boolean supportsPolling,
     boolean supportsTicketStateUpdates,
     boolean supportsTicketCreation,
-    boolean supportsSourceTicketUrl) {
+    boolean supportsSourceTicketUrl,
+    boolean supportsTicketQuery) {
 
   /**
    * Helper for connectors that intentionally do not support source ticket creation yet. Such
-   * connectors also do not build a source-ticket URL ({@code supportsSourceTicketUrl == false}).
+   * connectors also do not build a source-ticket URL ({@code supportsSourceTicketUrl == false}) nor
+   * support a filtered browse ({@code supportsTicketQuery == false}).
    */
   public static TicketSourceCapabilities noCreation(
       boolean supportsCommentOnTicket,
       boolean supportsPolling,
       boolean supportsTicketStateUpdates) {
     return new TicketSourceCapabilities(
-        supportsCommentOnTicket, supportsPolling, supportsTicketStateUpdates, false, false);
+        supportsCommentOnTicket, supportsPolling, supportsTicketStateUpdates, false, false, false);
   }
 
   /**
    * The Linear capability set - Linear supports comment-posting, polling, state ids, source
-   * sub-ticket creation, and source-ticket URL building.
+   * sub-ticket creation, and source-ticket URL building. Story 3i-2 - Linear does NOT yet implement
+   * the filtered browse ({@code supportsTicketQuery == false}).
    */
   public static TicketSourceCapabilities linearDefaults() {
-    return new TicketSourceCapabilities(true, true, true, true, true);
+    return new TicketSourceCapabilities(true, true, true, true, true, false);
   }
 
   /**
    * The JIRA capability set (story 3i-1 AC2) - JIRA supports comment-posting (ADF), polling (JQL),
    * source-status ids (opaque {@code fields.status.id}), source sub-task creation, and the {@code
-   * /browse/} source-ticket URL. Same full set as {@link #linearDefaults()}; kept a distinct named
-   * factory so the capability contract test asserts the JIRA connector's flags explicitly.
+   * /browse/} source-ticket URL. Story 3i-2 adds the JQL-backed filtered browse ({@code
+   * supportsTicketQuery == true}) - the one flag that today distinguishes JIRA from {@link
+   * #linearDefaults()}. Kept a distinct named factory so the capability contract test asserts the
+   * JIRA connector's flags explicitly.
    */
   public static TicketSourceCapabilities jiraDefaults() {
-    return new TicketSourceCapabilities(true, true, true, true, true);
+    return new TicketSourceCapabilities(true, true, true, true, true, true);
   }
 }

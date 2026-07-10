@@ -9,6 +9,8 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ConnectorKind;
@@ -57,6 +59,28 @@ public interface TicketSourceAdapter {
    * are present.
    */
   List<Ticket> pollNewTickets(Instant since);
+
+  /**
+   * Optional operation (story 3i-2 / FR81): browse <em>candidate</em> tickets matching a neutral
+   * {@link TicketQuery} filter, newest-updated first, bounded by {@link TicketQuery#limit()}.
+   * Consumers MUST check {@link TicketSourceCapabilities#supportsTicketQuery()} before invoking;
+   * adapters that do not advertise the capability throw {@link UnsupportedOperationException}.
+   *
+   * <p>Unlike {@link #pollNewTickets} (a background sweep bounded by an {@code updatedAt}
+   * watermark), this is a foreground, operator-driven read with no time boundary. An absent filter
+   * field carries no constraint and MUST be omitted from the vendor query rather than rendered as a
+   * match-all clause. Every filter value is operator-supplied, so the adapter MUST treat them as an
+   * injection boundary and escape them for its query dialect.
+   *
+   * <p>Returns {@link TicketQueryResult#empty()} when nothing matches. Throws — via runtime
+   * exceptions classified by category — on network/auth/state failures, exactly as {@link
+   * #pollNewTickets} does.
+   *
+   * <p>The result carries the source's {@code total} match count alongside the page, so the caller
+   * can tell a complete browse from a truncated one. An adapter whose source cannot report a total
+   * MUST return {@link TicketQueryResult#complete(List)} rather than inventing a number.
+   */
+  TicketQueryResult queryTickets(TicketQuery query);
 
   /**
    * Best-effort write-back of a governed-run summary to the source ticket. Idempotent on {@code

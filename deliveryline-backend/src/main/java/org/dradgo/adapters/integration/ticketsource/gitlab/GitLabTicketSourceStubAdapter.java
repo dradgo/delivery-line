@@ -11,6 +11,8 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ConnectorKind;
@@ -54,6 +56,17 @@ public class GitLabTicketSourceStubAdapter implements TicketSourceAdapter {
     Objects.requireNonNull(since, "since");
     log.info("gitlab stub: pollNewTickets is a documented no-op since={}", since);
     return List.of();
+  }
+
+  /**
+   * Story 3i-2 — the stub reports {@code supportsTicketQuery=false} (via {@code noCreation}), so
+   * the capability-gated intake surface never reaches this method. Unlike the other no-ops above it
+   * throws rather than returning an empty list: an empty browse result is indistinguishable from
+   * "no tickets matched", which would misrepresent an unsupported connector as an empty backlog.
+   */
+  @Override
+  public TicketQueryResult queryTickets(TicketQuery query) {
+    throw new UnsupportedOperationException("queryTickets not supported for gitlab");
   }
 
   @Override

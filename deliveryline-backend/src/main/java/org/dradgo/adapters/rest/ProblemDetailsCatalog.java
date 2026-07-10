@@ -472,6 +472,36 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Unsupported connector kind",
         false);
+    // Story 3i-2 (AC3) — the project's ticket source cannot be browsed (no adapter resolved, or the
+    // connector reports supportsTicketQuery=false). 404 + non-retryable: the browse resource does
+    // not exist for this project. Never a 5xx — an unsupported connector is a known, benign shape.
+    register(
+        metadata,
+        DomainErrorCode.TICKET_QUERY_NOT_SUPPORTED,
+        HttpStatus.NOT_FOUND,
+        "Ticket query not supported",
+        false);
+    // Story 3i-2 code-review — the browse's upstream-failure pair. TicketQueryService maps the
+    // adapter exception's IntegrationFailureCategory onto these, so a JIRA outage never renders as
+    // an opaque 500. SERVICE_UNAVAILABLE + RETRYABLE mirrors the runner-capacity mapping: the
+    // source
+    // was unreachable or answered transiently, and the same request may well succeed later.
+    register(
+        metadata,
+        DomainErrorCode.TICKET_QUERY_SOURCE_UNAVAILABLE,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Ticket source unavailable",
+        true);
+    // BAD_GATEWAY + non-retryable, mirroring RUNNER_CONTRACT_VIOLATION: the source answered, but
+    // the
+    // answer was unusable (expired credential, permission denied, malformed payload). Retrying an
+    // expired token cannot help, so the client must not be told to.
+    register(
+        metadata,
+        DomainErrorCode.TICKET_QUERY_SOURCE_FAILED,
+        HttpStatus.BAD_GATEWAY,
+        "Ticket source query failed",
+        false);
     // Story 3c-4 (AC3) — credential master-key fail-fast guard. 503 + non-retryable, mirroring the
     // other infrastructure-missing startup faults (DOCTOR_GITHUB_TOKEN_MISSING /
     // DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED). The type URI auto-derives.

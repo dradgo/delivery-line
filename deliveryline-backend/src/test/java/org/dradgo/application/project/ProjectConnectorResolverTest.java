@@ -32,6 +32,8 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.project.Project;
@@ -448,6 +450,11 @@ class ProjectConnectorResolverTest {
     @Override
     public List<Ticket> pollNewTickets(Instant since) {
       return List.of();
+    }
+
+    @Override
+    public TicketQueryResult queryTickets(TicketQuery query) {
+      return TicketQueryResult.empty();
     }
 
     @Override

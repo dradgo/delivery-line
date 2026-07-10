@@ -24,6 +24,8 @@ import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowEventVi
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowHistoryView;
 import org.dradgo.application.workflow.WorkflowInspectionService.WorkflowStatusView;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
+import org.dradgo.domain.integration.ticketsource.TicketSummary;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.WorkflowState;
 import org.springframework.beans.factory.ObjectProvider;
@@ -53,6 +55,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_STATUS_SCHEMA_VERSION = 1;
   static final int AUDIT_QUERY_SCHEMA_VERSION = 1;
   static final int OPERATOR_DIAGNOSE_SCHEMA_VERSION = 1;
+  static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
   // rules in infra/observability/prometheus/alerts.yml (warn 50 / critical 200). The stale-count
@@ -727,6 +730,70 @@ public class WorkflowCommandOutputs {
       events.add(entry);
     }
     payload.put("events", events);
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 3i-2 (AC3) — human-readable candidate-ticket browse. One line per ticket: the ticket ref,
+   * the title, and a {@code summary=} field. Every free-form field routes through {@link
+   * #escapeForText} / {@link #escapeQuotedValue} for grep/awk safety, mirroring {@link
+   * #renderAuditQueryText}. No ANSI beyond the dim ref (a browse has no anomaly to color).
+   *
+   * <p>Emits {@code shown} and {@code total} separately, plus an explicit {@code truncated} line,
+   * so a capped page never reads as a complete backlog.
+   */
+  public String renderTicketQueryText(TicketQueryResult result, boolean ansi) {
+    List<TicketSummary> tickets = result.tickets();
+    StringBuilder out = new StringBuilder();
+    // `shown` is this page; `total` is what matched at the source. When they differ the operator is
+    // looking at a partial backlog and needs to know it — a bare count would hide that entirely.
+    out.append("shown: ").append(tickets.size()).append('\n');
+    out.append("total: ").append(result.total()).append('\n');
+    if (result.truncated()) {
+      out.append("truncated: yes (narrow the filter or raise --limit)").append('\n');
+    }
+    out.append("tickets:");
+    if (tickets.isEmpty()) {
+      out.append(" (none)");
+      return out.toString();
+    }
+    for (TicketSummary ticket : tickets) {
+      String ref = escapeForText(ticket.ticketRef().value());
+      out.append("\n  ")
+          .append(ansi ? ANSI_DIM + ref + ANSI_RESET : ref)
+          .append(" title=\"")
+          .append(escapeQuotedValue(ticket.title()))
+          .append("\" summary=\"")
+          .append(escapeQuotedValue(ticket.summary()))
+          .append('"');
+    }
+    return out.toString();
+  }
+
+  /**
+   * Story 3i-2 (AC3) — stable-schema JSON for the candidate-ticket browse. No ANSI ever; {@code
+   * schemaVersion} pins backward compatibility (additive within v1; any removal/rename bumps v2). A
+   * ticket with no description serializes {@code summary} as JSON {@code null}.
+   *
+   * <p>{@code shownCount} is the rows in {@code tickets}; {@code totalCount} is the source's match
+   * count and may exceed it; {@code truncated} is the derived flag a script should branch on.
+   */
+  public String renderTicketQueryJson(TicketQueryResult result) {
+    List<TicketSummary> tickets = result.tickets();
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", TICKET_QUERY_SCHEMA_VERSION);
+    payload.put("shownCount", tickets.size());
+    payload.put("totalCount", result.total());
+    payload.put("truncated", result.truncated());
+    java.util.List<Map<String, Object>> rows = new java.util.ArrayList<>();
+    for (TicketSummary ticket : tickets) {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("ticketRef", ticket.ticketRef().value());
+      entry.put("title", ticket.title());
+      entry.put("summary", ticket.summary());
+      rows.add(entry);
+    }
+    payload.put("tickets", rows);
     return writeJson(payload);
   }
 

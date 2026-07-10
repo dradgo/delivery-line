@@ -19,8 +19,11 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
+import org.dradgo.domain.integration.ticketsource.TicketSummary;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -60,6 +63,12 @@ public class JiraMockAdapter implements TicketSourceAdapter {
   private static final Instant FIXED_UPDATED = Instant.parse("2026-01-02T00:00:00Z");
   private static final String MOCK_STATUS_NAME = "To Do";
   private static final String MOCK_STATUS_ID = "10000";
+
+  /** The single assignee every synthesized mock ticket carries (story 3i-2 browse filter). */
+  private static final String MOCK_ASSIGNEE = "mock-user@example.com";
+
+  /** The single component every synthesized mock ticket carries (story 3i-2 browse filter). */
+  private static final String MOCK_COMPONENT = "mock";
 
   private final CopyOnWriteArrayList<PostedComment> postedComments = new CopyOnWriteArrayList<>();
   private final ConcurrentHashMap<CreationKey, CreateSubticketResult> createdSubtickets =
@@ -105,6 +114,70 @@ public class JiraMockAdapter implements TicketSourceAdapter {
     matched.sort(Comparator.comparing(Ticket::updatedAt));
     log.info("jira_mock poll since={} returned={} tickets", since, matched.size());
     return List.copyOf(matched);
+  }
+
+  /**
+   * Story 3i-2 — deterministic, network-free candidate browse over the registered HAPPY scenarios.
+   *
+   * <p>The synthesized mock ticket carries a single fixed assignee ({@link #MOCK_ASSIGNEE}), status
+   * ({@link #MOCK_STATUS_NAME}) and component ({@link #MOCK_COMPONENT}), so the in-memory filter
+   * approximates the real adapter's JQL semantics: an <em>absent</em> filter field constrains
+   * nothing, a <em>present</em> one must match. Results are ordered by ticket ref (every mock
+   * ticket shares {@link #FIXED_UPDATED}, so ordering by {@code updated} would be
+   * non-deterministic) and capped at {@code query.limit()}.
+   *
+   * <p>{@code total} counts every matching scenario <em>before</em> the {@code limit} cap,
+   * mirroring JIRA's {@code total} field. Capping it at the page size instead would make {@code
+   * truncated()} permanently false here and let a real truncation bug pass the mock↔real parity
+   * contract.
+   */
+  @Override
+  public TicketQueryResult queryTickets(TicketQuery query) {
+    Objects.requireNonNull(query, "query");
+    List<String> happyRefs = new ArrayList<>();
+    for (Map.Entry<String, Scenario> entry : scenarios.entrySet()) {
+      if (entry.getValue().behaviour() == Behaviour.HAPPY) {
+        happyRefs.add(entry.getKey());
+      }
+    }
+    happyRefs.sort(Comparator.naturalOrder());
+    if (!matchesFilter(query)) {
+      happyRefs.clear();
+    }
+    int total = happyRefs.size();
+
+    List<TicketSummary> matched = new ArrayList<>();
+    for (String ticketRef : happyRefs) {
+      if (matched.size() >= query.limit()) {
+        break;
+      }
+      Ticket ticket = happyTicket(ticketRef);
+      matched.add(new TicketSummary(ticket.ticketRef(), ticket.title(), ticket.summary()));
+    }
+    log.info(
+        "jira_mock query assigneeFiltered={} componentCount={} stateFiltered={} limit={} resultCount={} total={}",
+        query.hasAssignee(),
+        query.components().size(),
+        query.hasState(),
+        query.limit(),
+        matched.size(),
+        total);
+    return new TicketQueryResult(matched, total);
+  }
+
+  /**
+   * Every synthesized mock ticket carries identical assignee/status/component, so the filter either
+   * admits all of them or none. Comparison is case-insensitive, mirroring JIRA's field matching.
+   */
+  private static boolean matchesFilter(TicketQuery query) {
+    if (query.hasAssignee() && !MOCK_ASSIGNEE.equalsIgnoreCase(query.assignee())) {
+      return false;
+    }
+    if (query.hasState() && !MOCK_STATUS_NAME.equalsIgnoreCase(query.state())) {
+      return false;
+    }
+    return !query.hasComponents()
+        || query.components().stream().anyMatch(MOCK_COMPONENT::equalsIgnoreCase);
   }
 
   @Override
@@ -272,10 +345,10 @@ public class JiraMockAdapter implements TicketSourceAdapter {
         TicketRef.of(ticketRef),
         "JIRA mock ticket " + ticketRef,
         "Deterministic mock summary for " + ticketRef,
-        "mock-user@example.com",
+        MOCK_ASSIGNEE,
         FIXED_CREATED,
         FIXED_UPDATED,
-        Map.of("mock", ""),
+        Map.of(MOCK_COMPONENT, ""),
         MOCK_STATUS_NAME,
         MOCK_STATUS_ID);
   }

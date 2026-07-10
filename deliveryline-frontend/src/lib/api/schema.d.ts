@@ -168,6 +168,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{projectId}/ticket-query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse candidate tickets from the project's ticket source (capability-gated) */
+        get: operations["queryProjectTickets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner-executions/{rexId}/logs/download": {
         parameters: {
             query?: never;
@@ -1166,6 +1183,40 @@ export interface components {
             tickets: components["schemas"]["TicketResult"][];
             /** Format: int32 */
             total: number;
+        };
+        /** @description A candidate ticket returned by a filtered intake browse. */
+        CandidateTicket: {
+            /**
+             * @description Source ticket description; null when the ticket has no body.
+             * @example Totals are rounded half-down instead of half-even.
+             */
+            summary?: string | null;
+            /**
+             * @description Source ticket reference.
+             * @example PROJ-123
+             */
+            ticketRef: string;
+            /**
+             * @description Source ticket headline.
+             * @example Fix the billing rounding error
+             */
+            title: string;
+        };
+        /** @description A page of candidate tickets from a filtered intake browse. */
+        CandidateTicketPage: {
+            /** @description The candidate tickets on this page, newest-updated first. */
+            tickets: components["schemas"]["CandidateTicket"][];
+            /**
+             * Format: int32
+             * @description Total tickets matching the filter at the source, which may exceed the page size.
+             * @example 412
+             */
+            total: number;
+            /**
+             * @description True when the operator is not seeing every match — the page was capped by `limit`, or a ticket could not be mapped and was skipped. Narrow the filter.
+             * @example true
+             */
+            truncated: boolean;
         };
         /** @description A single clarification raised against a spec artifact version. */
         Clarification: {
@@ -2854,6 +2905,73 @@ export interface operations {
             };
             /** @description PROJECT_NOT_FOUND. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    queryProjectTickets: {
+        parameters: {
+            query?: {
+                /** @description Source assignee identity (JIRA Cloud: an accountId, or an email the instance resolves). Opaque — passed to the source verbatim. */
+                assignee?: string;
+                /** @description Repeatable/CSV component names; a ticket matching any of them is returned. */
+                components?: string[];
+                /** @description Source workflow-state name, e.g. "To Do". */
+                state?: string;
+                /** @description Maximum tickets to return (1..200). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of candidate tickets plus the source's total match count and a truncated flag. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateTicketPage"];
+                };
+            };
+            /** @description INVALID_COMMAND_PAYLOAD (limit out of range, or too many components). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND, or TICKET_QUERY_NOT_SUPPORTED when the project's ticket source cannot be browsed. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description TICKET_QUERY_SOURCE_FAILED — the ticket source answered, but unusably (expired or insufficiently-scoped credential, malformed response). Not retryable. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description TICKET_QUERY_SOURCE_UNAVAILABLE — the ticket source was unreachable or answered transiently (timeout, 429, 5xx). Retryable. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -29,6 +29,8 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ConnectorKind;
@@ -235,6 +237,18 @@ public class LinearRealAdapter implements TicketSourceAdapter {
         pages,
         elapsedMs(startedAt));
     return collected;
+  }
+
+  /**
+   * Story 3i-2 — Linear does not implement the filtered candidate browse. The capability flag
+   * {@code supportsTicketQuery} is {@code false} in {@code linearDefaults()}, so the intake surface
+   * is gated off for Linear projects and this method is never reached; it throws rather than
+   * returning an empty list so an accidental un-gated caller fails loudly instead of silently
+   * browsing nothing.
+   */
+  @Override
+  public TicketQueryResult queryTickets(TicketQuery query) {
+    throw new UnsupportedOperationException("queryTickets not supported for linear");
   }
 
   /**

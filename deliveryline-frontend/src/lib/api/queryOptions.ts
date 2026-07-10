@@ -27,6 +27,12 @@ import {
   type ArtifactView,
   type PrLinkage,
 } from '@/features/workflows/artifactView';
+import {
+  INTAKE_DEFAULT_LIMIT,
+  intakeKeys,
+  normalizeIntakeFilters,
+  type IntakeFilters,
+} from '../queryKeys/intakeKeys';
 import { operatorKeys, type OperatorQueueFilters } from '../queryKeys/operatorKeys';
 import { projectKeys } from '../queryKeys/projectKeys';
 import { workflowKeys, type WorkflowListFilters } from '../queryKeys/workflowKeys';
@@ -40,6 +46,11 @@ export type WorkflowEventsResponse = components['schemas']['WorkflowEventsRespon
 export type ArtifactDetail = components['schemas']['ArtifactDetail'];
 /** Story 3c-9 — a configured project (list item + create/edit/disable/enable response). */
 export type Project = components['schemas']['Project'];
+/** Story 3i-2 — one candidate ticket from the filtered intake browse. `summary` is nullable. */
+export type CandidateTicket = components['schemas']['CandidateTicket'];
+
+/** One page of a filtered intake browse: the rows, the source's match count, and a truncated flag. */
+export type CandidateTicketPage = components['schemas']['CandidateTicketPage'];
 
 /** Cache-freshness defaults (ms). Centralized so every hook reads the same policy. */
 export const STALE_TIME = {
@@ -329,6 +340,60 @@ export function getProjectOptions(projectId: string) {
     queryKey: projectKeys.detail(projectId),
     queryFn: () => fetchProject(projectId),
     staleTime: STALE_TIME.detail,
+  });
+}
+
+/**
+ * Story 3i-2 (AC3/AC5) — GET the filtered candidate tickets for one project's ticket source.
+ *
+ * An absent filter field is OMITTED from the query string rather than sent blank, mirroring the
+ * backend's build-by-omission rule. `components` goes as repeated query params (openapi-fetch
+ * expands the array; Spring binds them to `List<String>`).
+ *
+ * A connector that cannot be browsed throws a typed `ProblemDetailsError` with code
+ * `TICKET_QUERY_NOT_SUPPORTED` (HTTP 404, non-retryable) — the caller hides the surface on it rather
+ * than hardcoding a connector kind.
+ */
+async function fetchCandidateTickets(filters: IntakeFilters): Promise<CandidateTicketPage> {
+  const normalized = normalizeIntakeFilters(filters);
+  if (normalized.projectId === undefined) {
+    // Guarded by `enabled` in the query options; this keeps the fn total.
+    return { tickets: [], total: 0, truncated: false };
+  }
+  const query: {
+    assignee?: string;
+    components?: string[];
+    state?: string;
+    limit?: number;
+  } = { limit: INTAKE_DEFAULT_LIMIT };
+  if (normalized.assignee !== undefined) {
+    query.assignee = normalized.assignee;
+  }
+  if (normalized.components.length > 0) {
+    query.components = normalized.components;
+  }
+  if (normalized.state !== undefined) {
+    query.state = normalized.state;
+  }
+  return unwrap(
+    await apiClient.GET('/api/v1/projects/{projectId}/ticket-query', {
+      params: { path: { projectId: normalized.projectId }, query },
+    }),
+  );
+}
+
+/**
+ * Story 3i-2 (AC5) — the candidate-ticket browse query. Disabled until a project is selected (the
+ * endpoint is project-scoped), and never retried on a non-retryable domain error — a
+ * `TICKET_QUERY_NOT_SUPPORTED` 404 must surface immediately so the view can hide the surface
+ * (`retryUnlessNonRetryable` already enforces this).
+ */
+export function candidateTicketsQueryOptions(filters: IntakeFilters) {
+  return queryOptions({
+    queryKey: intakeKeys.list(filters),
+    queryFn: () => fetchCandidateTickets(filters),
+    enabled: normalizeIntakeFilters(filters).projectId !== undefined,
+    staleTime: STALE_TIME.list,
   });
 }
 

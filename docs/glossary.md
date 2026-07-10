@@ -420,6 +420,39 @@ never enters this state.
 
 ---
 
+## Epic 3i vocabulary (connector expansion)
+
+### ticket query
+
+A **read-only, filtered browse** of a [ticket source](#connector) for *candidate* tickets — the
+tickets an operator might pull into governance — filtered by assignee, components, and source state,
+and bounded by a `limit`. It is an **optional port operation** gated on the
+`supportsTicketQuery` capability flag (story 3i-2 / FR81); only the JIRA connector implements it
+today, backing it with JQL. A connector that does not advertise it answers the intake surface with a
+typed `TICKET_QUERY_NOT_SUPPORTED` (HTTP 404), never a 5xx.
+
+Distinct from **polling** (`pollNewTickets`): polling is a background sweep bounded by an `updatedAt`
+watermark that *ingests* tickets; a ticket query is a foreground, operator-driven read with no time
+boundary that *lists* them. Neither creates a run.
+
+### intake browse
+
+The operator-facing **surface** over a [ticket query](#ticket-query) — the `/intake` UI view, the
+`GET /api/v1/projects/{projectId}/ticket-query` endpoint, and the `deliveryline tickets query` CLI
+command. From it the operator selects one or more candidate tickets and starts a governed
+[run](#run) per selection through the **existing** submit path (each submit is independent and
+idempotency-keyed; one failing row does not abort the others). The browse itself never creates a run
+and never mutates the source.
+
+Two new terms only (NFR43): *ticket query* names the port capability, *intake browse* names the
+surface over it. The surface reuses existing vocabulary throughout — `project`, `connector`, `run`,
+`ticket` — and introduces **no** new workflow state, action, or event.
+
+**See also:** [`adr/0007-ticket-source-abstraction.md`](adr/0007-ticket-source-abstraction.md),
+[`integrations/ticket-source-extension-contract.md`](integrations/ticket-source-extension-contract.md).
+
+---
+
 ## Linked from
 
 This glossary is referenced from:

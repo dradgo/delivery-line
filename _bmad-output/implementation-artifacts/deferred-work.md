@@ -2,6 +2,10 @@
 
 Items raised during reviews that are intentionally postponed. Each entry references the source review and the story it came from.
 
+## Deferred from: code review of 3i-2-filtered-ticket-intake-browse (2026-07-10)
+
+- **Vendor misnomer: a JIRA ticket ref is submitted through the `linearTicketReference` wire field** -- the `/intake` browse is explicitly vendor-neutral, yet each per-row "start run" threads the candidate ticket ref through `SubmitWorkflowCommand.linearTicketReference` / the `linearTicketReference` request field. This is the pre-existing generic origin-ref field (documented in the story's R4), so 3i-2 did not introduce it -- but 3i-2 is the first surface to route non-Linear refs through it, which makes the misnomer newly load-bearing and actively misleading to the next reader. Renaming is a cross-cutting wire + command + FE change (breaking API field rename) and belongs in its own story. [`IntakeBrowse.tsx` submit; `WorkflowCommandService.submit`; `WorkflowController.submit`]
+
 ## Deferred from: code review of 4-6-recovery-service-reconcile (2026-07-09)
 
 - **P3b — Self-healing reconcile sweep for manifestation (b) [DESIGN FORK — needs its own story]** — the P3a per-run advisory lock closes the concurrent-reconcile race (a) but does NOT serialize against the 4.17 conflict detector (which holds a different, sweep-wide `ICON` lock). A conflict the detector inserts onto a run that just terminalized to `RECONCILED` is stranded unresolvable (reconcile → `RECONCILE_NOT_APPLICABLE`; after P1 the overlay no longer advertises it on terminal runs). Correct remediation is a design decision for Alex: (i) 4.17 detector skips terminal runs, (ii) advisory-locked sweep (mirror `SplitRollupReconciliationSweepService`) auto-resolves/alerts unresolved conflicts on terminal runs, or (iii) re-open the run. Requires a `@ConditionalOnProperty` scheduler + read-port query + IT. Lower severity than (a). [new sweep story; 4.17 detector guard]

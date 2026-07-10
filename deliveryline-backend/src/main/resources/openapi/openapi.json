@@ -518,6 +518,63 @@
         ],
         "type" : "object"
       },
+      "CandidateTicket" : {
+        "description" : "A candidate ticket returned by a filtered intake browse.",
+        "properties" : {
+          "summary" : {
+            "description" : "Source ticket description; null when the ticket has no body.",
+            "example" : "Totals are rounded half-down instead of half-even.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "ticketRef" : {
+            "description" : "Source ticket reference.",
+            "example" : "PROJ-123",
+            "type" : "string"
+          },
+          "title" : {
+            "description" : "Source ticket headline.",
+            "example" : "Fix the billing rounding error",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "ticketRef",
+          "title"
+        ],
+        "type" : "object"
+      },
+      "CandidateTicketPage" : {
+        "description" : "A page of candidate tickets from a filtered intake browse.",
+        "properties" : {
+          "tickets" : {
+            "description" : "The candidate tickets on this page, newest-updated first.",
+            "items" : {
+              "$ref" : "#/components/schemas/CandidateTicket"
+            },
+            "type" : "array"
+          },
+          "total" : {
+            "description" : "Total tickets matching the filter at the source, which may exceed the page size.",
+            "example" : 412,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "truncated" : {
+            "description" : "True when the operator is not seeing every match — the page was capped by `limit`, or a ticket could not be mapped and was skipped. Narrow the filter.",
+            "example" : true,
+            "type" : "boolean"
+          }
+        },
+        "required" : [
+          "tickets",
+          "total",
+          "truncated"
+        ],
+        "type" : "object"
+      },
       "Clarification" : {
         "description" : "A single clarification raised against a spec artifact version.",
         "properties" : {
@@ -4027,6 +4084,118 @@
           }
         },
         "summary" : "Run capability-aware connectivity probes (per-check results, HTTP 200)",
+        "tags" : [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/ticket-query" : {
+      "get" : {
+        "operationId" : "queryProjectTickets",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "projectId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Source assignee identity (JIRA Cloud: an accountId, or an email the instance resolves). Opaque — passed to the source verbatim.",
+            "in" : "query",
+            "name" : "assignee",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Repeatable/CSV component names; a ticket matching any of them is returned.",
+            "in" : "query",
+            "name" : "components",
+            "required" : false,
+            "schema" : {
+              "items" : {
+                "type" : "string"
+              },
+              "type" : "array"
+            }
+          },
+          {
+            "description" : "Source workflow-state name, e.g. \"To Do\".",
+            "in" : "query",
+            "name" : "state",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Maximum tickets to return (1..200).",
+            "in" : "query",
+            "name" : "limit",
+            "required" : false,
+            "schema" : {
+              "default" : 50,
+              "format" : "int32",
+              "type" : "integer"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CandidateTicketPage"
+                }
+              }
+            },
+            "description" : "A page of candidate tickets plus the source's total match count and a truncated flag."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "INVALID_COMMAND_PAYLOAD (limit out of range, or too many components)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PROJECT_NOT_FOUND, or TICKET_QUERY_NOT_SUPPORTED when the project's ticket source cannot be browsed."
+          },
+          "502" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "TICKET_QUERY_SOURCE_FAILED — the ticket source answered, but unusably (expired or insufficiently-scoped credential, malformed response). Not retryable."
+          },
+          "503" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "TICKET_QUERY_SOURCE_UNAVAILABLE — the ticket source was unreachable or answered transiently (timeout, 429, 5xx). Retryable."
+          }
+        },
+        "summary" : "Browse candidate tickets from the project's ticket source (capability-gated)",
         "tags" : [
           "Projects"
         ]

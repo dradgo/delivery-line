@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -13,6 +14,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.jira.JiraProperties;
@@ -22,7 +24,10 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
+import org.dradgo.domain.integration.ticketsource.TicketSummary;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.hamcrest.Matchers;
@@ -205,6 +210,310 @@ class JiraRealAdapterUnitTest {
     assertThat(tickets).hasSize(1);
     assertThat(tickets.get(0).ticketRef().value()).isEqualTo("PROJ-1");
     h.server.verify();
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Story 3i-2 (AC2) — queryTickets: JQL by omission + escaping + maxResults
+  // -------------------------------------------------------------------------------------------
+
+  private static final String SEARCH_ONE_ISSUE =
+      "{\"issues\":[" + ISSUE_JSON + "],\"startAt\":0,\"maxResults\":50,\"total\":1}";
+
+  /**
+   * A JIRA issue whose {@code summary} is hidden by a field-level permission scheme. JIRA still
+   * returns the issue in search results; {@code requireText(fields,"summary")} throws on it.
+   * Realistic — not a corrupt payload.
+   */
+  private static final String ISSUE_HIDDEN_SUMMARY_JSON =
+      """
+      {
+        "key": "PROJ-77",
+        "fields": {
+          "status": {"id":"10001","name":"To Do"},
+          "labels": [],
+          "reporter": {"accountId":"5b10","displayName":"Dev"},
+          "created": "2026-05-01T10:00:00.000+0000",
+          "updated": "2026-05-02T12:30:00.000+0000"
+        }
+      }
+      """;
+
+  /** A JIRA issue whose {@code updated} timestamp cannot be parsed. */
+  private static final String ISSUE_BAD_TIMESTAMP_JSON =
+      """
+      {
+        "key": "PROJ-78",
+        "fields": {
+          "summary": "Unparseable timestamp",
+          "status": {"id":"10001","name":"To Do"},
+          "labels": [],
+          "reporter": {"accountId":"5b10","displayName":"Dev"},
+          "created": "2026-05-01T10:00:00.000+0000",
+          "updated": "not-a-timestamp"
+        }
+      }
+      """;
+
+  /** A JIRA issue whose description is absent entirely (a legal, body-less ticket). */
+  private static final String ISSUE_NO_DESCRIPTION_JSON =
+      """
+      {
+        "key": "PROJ-9",
+        "fields": {
+          "summary": "Body-less ticket",
+          "status": {"id":"10001","name":"To Do"},
+          "labels": [],
+          "reporter": {"accountId":"5b10","displayName":"Dev"},
+          "created": "2026-05-01T10:00:00.000+0000",
+          "updated": "2026-05-02T12:30:00.000+0000"
+        }
+      }
+      """;
+
+  private static Harness expectSearchJql(String expectedJql, int expectedMaxResults, String body) {
+    Harness h = harness();
+    h.server
+        .expect(requestTo(BASE_URL + "/rest/api/3/search"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.jql").value(expectedJql))
+        .andExpect(jsonPath("$.maxResults").value(expectedMaxResults))
+        .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+    return h;
+  }
+
+  @Test
+  void querySearchesByJqlAndMapsResults() {
+    Harness h =
+        expectSearchJql(
+            "assignee = \"acct-1\" AND component in (\"billing\", \"api\") "
+                + "AND status = \"To Do\" ORDER BY updated DESC",
+            25,
+            SEARCH_ONE_ISSUE);
+
+    List<TicketSummary> tickets =
+        h.adapter
+            .queryTickets(new TicketQuery("acct-1", List.of("billing", "api"), "To Do", 25))
+            .tickets();
+
+    assertThat(tickets).hasSize(1);
+    assertThat(tickets.get(0).ticketRef().value()).isEqualTo("PROJ-1");
+    assertThat(tickets.get(0).title()).isEqualTo("Add caching layer");
+    assertThat(tickets.get(0).summary()).contains("Bounded feature");
+    h.server.verify();
+  }
+
+  /** An absent filter field contributes NO clause — never a match-all predicate. */
+  @Test
+  void queryOmitsAbsentFilterFieldsInsteadOfRenderingMatchAllClauses() {
+    Harness h =
+        expectSearchJql("ORDER BY updated DESC", TicketQuery.DEFAULT_LIMIT, SEARCH_ONE_ISSUE);
+
+    assertThat(h.adapter.queryTickets(TicketQuery.unfiltered()).tickets()).hasSize(1);
+    h.server.verify();
+  }
+
+  @Test
+  void queryOmitsOnlyTheBlankFieldsAndKeepsThePresentOnes() {
+    Harness h =
+        expectSearchJql("status = \"In Progress\" ORDER BY updated DESC", 10, SEARCH_ONE_ISSUE);
+
+    assertThat(
+            h.adapter.queryTickets(new TicketQuery("  ", List.of(), "In Progress", 10)).tickets())
+        .hasSize(1);
+    h.server.verify();
+  }
+
+  /** Every operator-supplied value is escaped — the filters are a JQL-injection boundary. */
+  @Test
+  void queryEscapesQuotesAndBackslashesInEveryUserSuppliedValue() {
+    Harness h =
+        expectSearchJql(
+            "assignee = \"a\\\"b\" AND component in (\"c\\\\d\") "
+                + "AND status = \"e\\\"f\" ORDER BY updated DESC",
+            50,
+            SEARCH_ONE_ISSUE);
+
+    h.adapter.queryTickets(new TicketQuery("a\"b", List.of("c\\d"), "e\"f", 50));
+    h.server.verify();
+  }
+
+  /** A ticket with no description must map to a null summary, not crash the browse. */
+  @Test
+  void queryMapsAnAbsentDescriptionToANullSummary() {
+    Harness h =
+        expectSearchJql(
+            "ORDER BY updated DESC",
+            TicketQuery.DEFAULT_LIMIT,
+            "{\"issues\":[" + ISSUE_NO_DESCRIPTION_JSON + "],\"startAt\":0,\"total\":1}");
+
+    List<TicketSummary> tickets = h.adapter.queryTickets(TicketQuery.unfiltered()).tickets();
+
+    assertThat(tickets).hasSize(1);
+    assertThat(tickets.get(0).title()).isEqualTo("Body-less ticket");
+    assertThat(tickets.get(0).summary()).isNull();
+    h.server.verify();
+  }
+
+  /**
+   * Code-review D2 — one issue the browsing account cannot fully see must not cost the operator the
+   * rest of the page. Before this, {@code requireText} threw out of the un-guarded map loop and the
+   * whole browse failed.
+   */
+  @Test
+  void queryHiddenSummaryIssueIsSkippedInsteadOfFailingTheWholePage() {
+    Harness h =
+        expectSearchJql(
+            "ORDER BY updated DESC",
+            TicketQuery.DEFAULT_LIMIT,
+            "{\"issues\":["
+                + ISSUE_HIDDEN_SUMMARY_JSON
+                + ","
+                + ISSUE_JSON
+                + "],\"startAt\":0,\"total\":2}");
+
+    TicketQueryResult result = h.adapter.queryTickets(TicketQuery.unfiltered());
+
+    assertThat(result.tickets()).hasSize(1);
+    assertThat(result.tickets().get(0).ticketRef().value()).isEqualTo("PROJ-1");
+    // The skipped issue still counts toward the source total, so the operator learns they are not
+    // seeing everything.
+    assertThat(result.total()).isEqualTo(2);
+    assertThat(result.truncated()).isTrue();
+    h.server.verify();
+  }
+
+  /** An unparseable timestamp is skipped on the same terms as a hidden field. */
+  @Test
+  void queryUnparseableTimestampIssueIsSkipped() {
+    Harness h =
+        expectSearchJql(
+            "ORDER BY updated DESC",
+            TicketQuery.DEFAULT_LIMIT,
+            "{\"issues\":["
+                + ISSUE_BAD_TIMESTAMP_JSON
+                + ","
+                + ISSUE_JSON
+                + "],\"startAt\":0,\"total\":2}");
+
+    TicketQueryResult result = h.adapter.queryTickets(TicketQuery.unfiltered());
+
+    assertThat(result.tickets()).extracting(t -> t.ticketRef().value()).containsExactly("PROJ-1");
+    h.server.verify();
+  }
+
+  /** Every issue unmappable => an empty page, still not an exception. */
+  @Test
+  void queryWithEveryIssueUnmappableReturnsAnEmptyPageRatherThanThrowing() {
+    Harness h =
+        expectSearchJql(
+            "ORDER BY updated DESC",
+            TicketQuery.DEFAULT_LIMIT,
+            "{\"issues\":[" + ISSUE_HIDDEN_SUMMARY_JSON + "],\"startAt\":0,\"total\":1}");
+
+    TicketQueryResult result = h.adapter.queryTickets(TicketQuery.unfiltered());
+
+    assertThat(result.tickets()).isEmpty();
+    assertThat(result.truncated()).isTrue();
+    h.server.verify();
+  }
+
+  /** The skip is loud: a WARN carries the count, and never the issue payload or ticket text. */
+  @Test
+  void querySkippedIssuesAreLoggedAtWarnAsACountWithoutTicketText() {
+    Logger logger = (Logger) org.slf4j.LoggerFactory.getLogger(JiraRealAdapter.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      Harness h =
+          expectSearchJql(
+              "ORDER BY updated DESC",
+              TicketQuery.DEFAULT_LIMIT,
+              "{\"issues\":["
+                  + ISSUE_HIDDEN_SUMMARY_JSON
+                  + ","
+                  + ISSUE_JSON
+                  + "],\"startAt\":0,\"total\":2}");
+      h.adapter.queryTickets(TicketQuery.unfiltered());
+
+      assertThat(appender.list)
+          .anyMatch(
+              event ->
+                  event.getLevel() == Level.WARN
+                      && event.getFormattedMessage().contains("skippedUnmappableIssues=1")
+                      && event.getFormattedMessage().contains("of=2"));
+      assertThat(appender.list)
+          .noneMatch(
+              event ->
+                  event.getFormattedMessage().contains("PROJ-77")
+                      || event.getFormattedMessage().contains("Add caching layer"));
+    } finally {
+      logger.detachAppender(appender);
+    }
+  }
+
+  /** Code-review D3 — the source's total is surfaced, not the page size. */
+  @Test
+  void queryReportsTheSourceTotalAndFlagsATruncatedPage() {
+    Harness h =
+        expectSearchJql(
+            "ORDER BY updated DESC",
+            1,
+            "{\"issues\":[" + ISSUE_JSON + "],\"startAt\":0,\"total\":412}");
+
+    TicketQueryResult result = h.adapter.queryTickets(new TicketQuery(null, List.of(), null, 1));
+
+    assertThat(result.tickets()).hasSize(1);
+    assertThat(result.total()).isEqualTo(412);
+    assertThat(result.truncated()).isTrue();
+    h.server.verify();
+  }
+
+  /** A response with no `total` field falls back to the page size — never a fabricated number. */
+  @Test
+  void queryWithoutATotalFieldFallsBackToThePageSizeAndReportsNoTruncation() {
+    Harness h =
+        expectSearchJql(
+            "ORDER BY updated DESC",
+            TicketQuery.DEFAULT_LIMIT,
+            "{\"issues\":[" + ISSUE_JSON + "],\"startAt\":0}");
+
+    TicketQueryResult result = h.adapter.queryTickets(TicketQuery.unfiltered());
+
+    assertThat(result.total()).isEqualTo(1);
+    assertThat(result.truncated()).isFalse();
+    h.server.verify();
+  }
+
+  /** AC7 — the JQL string, the filter values, and the ticket free-text never reach the logs. */
+  @Test
+  void queryLogsCountsAndFlagsButNeverTheJqlOrFilterValuesOrTicketText() {
+    Logger logger = (Logger) org.slf4j.LoggerFactory.getLogger(JiraRealAdapter.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      Harness h =
+          expectSearchJql(
+              "assignee = \"secret-account\" ORDER BY updated DESC", 50, SEARCH_ONE_ISSUE);
+      h.adapter.queryTickets(new TicketQuery("secret-account", List.of(), null, 50));
+
+      assertThat(appender.list)
+          .anyMatch(
+              event ->
+                  event.getLevel() == Level.INFO
+                      && event.getFormattedMessage().contains("jira_real query")
+                      && event.getFormattedMessage().contains("resultCount=1")
+                      && event.getFormattedMessage().contains("assigneeFiltered=true"));
+      assertThat(appender.list)
+          .noneMatch(
+              event ->
+                  event.getFormattedMessage().contains("secret-account")
+                      || event.getFormattedMessage().contains("ORDER BY")
+                      || event.getFormattedMessage().contains("Add caching layer"));
+    } finally {
+      logger.detachAppender(appender);
+    }
   }
 
   @Test
