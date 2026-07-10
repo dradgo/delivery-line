@@ -80,6 +80,12 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
     if (!spec.securityOpts().isEmpty()) {
       hostConfig.withSecurityOpts(List.copyOf(spec.securityOpts()));
     }
+    if (spec.privileged()) {
+      hostConfig.withPrivileged(true);
+    }
+    if (spec.memoryBytes() != null) {
+      hostConfig.withMemory(spec.memoryBytes());
+    }
     try (CreateContainerCmd cmd = client.createContainerCmd(spec.image())) {
       cmd.withHostConfig(hostConfig).withLabels(spec.labels());
       // Story 3.5 AC3 + Trap T8: apply env via docker-java withEnv (NOT the docker CLI), so secret
@@ -92,6 +98,18 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
           envPairs.add(entry.getKey() + "=" + entry.getValue());
         }
         cmd.withEnv(envPairs);
+      }
+      if (!spec.networkAliases().isEmpty()) {
+        cmd.withAliases(spec.networkAliases());
+      }
+      if (spec.healthcheck() != null) {
+        com.github.dockerjava.api.model.HealthCheck hc =
+            new com.github.dockerjava.api.model.HealthCheck()
+                .withTest(spec.healthcheck().test())
+                .withInterval(spec.healthcheck().interval().toNanos())
+                .withTimeout(spec.healthcheck().timeout().toNanos())
+                .withRetries(spec.healthcheck().retries());
+        cmd.withHealthcheck(hc);
       }
       CreateContainerResponse response = cmd.exec();
       // Trap T5: log the env-var COUNT only — never env names, never values.
@@ -146,7 +164,11 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
 
     OffsetDateTime startedAt = state != null ? parseIso8601(state.getStartedAt()) : null;
 
-    return new ContainerState(status, exitCode, networkMode, binds, labels, startedAt);
+    String healthStatus =
+        state != null && state.getHealth() != null ? state.getHealth().getStatus() : null;
+
+    return new ContainerState(
+        status, exitCode, networkMode, binds, labels, startedAt, healthStatus);
   }
 
   @Override
@@ -350,6 +372,31 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
         log.info("docker attach (read-only) stop containerId={}", containerId);
       }
     };
+  }
+
+  @Override
+  public String createNetwork(String name, Map<String, String> labels) {
+    Objects.requireNonNull(name, "name");
+    var response =
+        client
+            .createNetworkCmd()
+            .withName(name)
+            .withDriver("bridge")
+            .withLabels(labels == null ? Map.of() : labels)
+            .exec();
+    log.info("docker network create name={} id={}", name, response.getId());
+    return response.getId();
+  }
+
+  @Override
+  public void removeNetwork(String name) {
+    Objects.requireNonNull(name, "name");
+    try {
+      client.removeNetworkCmd(name).exec();
+      log.info("docker network rm name={}", name);
+    } catch (com.github.dockerjava.api.exception.NotFoundException missing) {
+      log.info("docker network rm name={} reason=not_found (treated as no-op)", name);
+    }
   }
 
   /**

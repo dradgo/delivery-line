@@ -16,7 +16,13 @@ public enum ConnectorKind implements RegistryValue {
   // out to V37 (both projects CHECK constraints, mirroring the V18/GITLAB precedent) + the
   // connectorKinds API placeholder; the 3c-2 RegistryContractTest drift gate enforces all three
   // stay aligned.
-  JIRA("jira");
+  JIRA("jira"),
+  // Story 3i-3 (FR82) — Bitbucket is a first-class repository host at GitHub parity (real
+  // BitbucketRealAdapter/BitbucketMockAdapter under adapters.integration.repohost.bitbucket).
+  // Widening this enum fans out to V39 (both projects CHECK constraints, mirroring the V18/GITLAB
+  // precedent) + the connectorKinds API placeholder; the 3c-2 RegistryContractTest drift gate
+  // enforces all three stay aligned.
+  BITBUCKET("bitbucket");
 
   private static final Map<String, ConnectorKind> LOOKUP = RegistryParsers.index(values());
 

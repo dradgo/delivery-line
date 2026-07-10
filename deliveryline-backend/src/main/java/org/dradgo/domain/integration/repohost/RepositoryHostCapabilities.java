@@ -33,4 +33,20 @@ public record RepositoryHostCapabilities(
   public static RepositoryHostCapabilities githubDefaults() {
     return new RepositoryHostCapabilities(true, true, true, true, true);
   }
+
+  /**
+   * The Bitbucket Cloud capability set (story 3i-3 / FR82). Declared honestly against Bitbucket
+   * Cloud's real feature surface, which differs from GitHub: Bitbucket Cloud has <strong>no
+   * draft-pull-request concept</strong> ({@code supportsDraftPullRequests == false}), so the
+   * Bitbucket adapter — unlike the GitHub adapter — never sends a {@code draft} flag on PR create.
+   * It does support PR comments, branch restrictions (branch protection), fork pushes, and
+   * merge/required-status checks.
+   *
+   * <p>{@code supportsCiStatusReads} (the Pipelines CI read) is deliberately absent — that flag and
+   * the CI-checks port are story 3h-5's deliverable, and AC2 of this story is split forward until
+   * 3h-5 merges (Dev Notes §0). When AC2 lands it flips on here.
+   */
+  public static RepositoryHostCapabilities bitbucketDefaults() {
+    return new RepositoryHostCapabilities(false, true, true, true, true);
+  }
 }

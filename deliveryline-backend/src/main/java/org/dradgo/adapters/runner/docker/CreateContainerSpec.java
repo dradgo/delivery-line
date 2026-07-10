@@ -1,6 +1,7 @@
 package org.dradgo.adapters.runner.docker;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +20,11 @@ public record CreateContainerSpec(
     String networkMode,
     Map<String, String> labels,
     Map<String, String> environment,
-    List<String> securityOpts) {
+    List<String> securityOpts,
+    boolean privileged,
+    List<String> networkAliases,
+    Long memoryBytes,
+    Healthcheck healthcheck) {
 
   public CreateContainerSpec {
     if (image == null || image.isBlank()) {
@@ -38,6 +43,7 @@ public record CreateContainerSpec(
     // Defaults to empty (the locked-down posture); a non-empty list is required for real Codex
     // read-only stages whose bubblewrap sandbox must create an unprivileged user namespace.
     securityOpts = securityOpts == null ? List.of() : List.copyOf(securityOpts);
+    networkAliases = networkAliases == null ? List.of() : List.copyOf(networkAliases);
   }
 
   /**
@@ -47,7 +53,7 @@ public record CreateContainerSpec(
    */
   public CreateContainerSpec(
       String image, List<BindMount> binds, String networkMode, Map<String, String> labels) {
-    this(image, binds, networkMode, labels, Map.of(), List.of());
+    this(image, binds, networkMode, labels, Map.of(), List.of(), false, List.of(), null, null);
   }
 
   /**
@@ -60,7 +66,22 @@ public record CreateContainerSpec(
       String networkMode,
       Map<String, String> labels,
       Map<String, String> environment) {
-    this(image, binds, networkMode, labels, environment, List.of());
+    this(image, binds, networkMode, labels, environment, List.of(), false, List.of(), null, null);
+  }
+
+  /**
+   * Back-compat constructor for the DockerRunnerAdapter dispatch call site (env + securityOpts,
+   * unprivileged, no network aliases/memory/healthcheck).
+   */
+  public CreateContainerSpec(
+      String image,
+      List<BindMount> binds,
+      String networkMode,
+      Map<String, String> labels,
+      Map<String, String> environment,
+      List<String> securityOpts) {
+    this(
+        image, binds, networkMode, labels, environment, securityOpts, false, List.of(), null, null);
   }
 
   /** Single bind-mount entry. {@code readOnly} maps directly to Docker's bind {@code :ro} flag. */
@@ -71,6 +92,13 @@ public record CreateContainerSpec(
       if (containerPath == null || containerPath.isBlank()) {
         throw new IllegalArgumentException("containerPath must not be blank");
       }
+    }
+  }
+
+  /** Docker container healthcheck (used only by the dind sidecar). */
+  public record Healthcheck(List<String> test, Duration interval, Duration timeout, int retries) {
+    public Healthcheck {
+      test = test == null ? List.of() : List.copyOf(test);
     }
   }
 }

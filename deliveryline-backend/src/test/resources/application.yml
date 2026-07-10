@@ -28,6 +28,17 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  bitbucket:
+    # Story 3i-3 (FR82) — mirror the real application.yml non-secret bitbucket knobs so the
+    # profile-neutral BitbucketProperties binding does not shadow the defaults to surprising values
+    # in the @SpringBootTest tier (memory: validated-config-needs-test-yaml). No token here —
+    # bitbucket-real is never in a test profile group, so the bitbucketRestClient fail-fast never
+    # fires under tests.
+    token: ${BITBUCKET_TOKEN:}
+    base-url: https://api.bitbucket.org
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
   complex-ticket-flow:
     # Story 3f-7 (AC5 / Trap) — mirror deliveryline.complex-ticket-flow.* so the validated
     # ComplexTicketFlowProperties binding does not shadow the default to a surprising value in the
@@ -138,6 +149,11 @@ deliveryline:
       claude:
         - CLAUDE_CODE_OAUTH_TOKEN
         - ANTHROPIC_API_KEY
+    # Story: runner JDK+Maven — mirror deliveryline.runner.maven-cache-enabled (the test
+    # application.yml shadows, does not merge with, main). true matches production; the
+    # @Value default of :true would already bind this, but pin explicitly since this file
+    # already pins the other runner keys.
+    maven-cache-enabled: true
     # Story 3.1 — under tests, override the Docker runner image tags to a stable, tiny
     # image (alpine:3.20) so docker-runner ITs do not depend on the not-yet-built
     # Codex / Claude images (stories 3.3 / 3.4). The fast tier never activates the

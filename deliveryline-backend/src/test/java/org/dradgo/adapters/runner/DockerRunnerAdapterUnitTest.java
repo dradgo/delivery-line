@@ -141,6 +141,36 @@ class DockerRunnerAdapterUnitTest {
   }
 
   @Test
+  void dispatchAddsMavenCacheMountWhenEnabled() {
+    // Story: runner JDK+Maven — when the flag is enabled AND the workspace store provides a
+    // shared cache path, dispatch adds a 4th rw bind at /workspace/.m2. Every existing dispatch
+    // test never calls the setter, so mavenCacheEnabled stays false and the mount is absent
+    // (byte-identical 3-mount spec).
+    Path cacheDir = Path.of("/srv/dl/maven-cache");
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID))
+        .thenReturn(Optional.of("bundle-bytes".getBytes()));
+    when(workspaceStore.prepareMavenCache()).thenReturn(Optional.of(cacheDir));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+    adapter.setMavenCacheEnabled(true);
+
+    adapter.dispatch(dispatchRequest());
+
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.binds()).hasSize(4);
+    CreateContainerSpec.BindMount m2 =
+        spec.binds().stream()
+            .filter(b -> b.containerPath().equals("/workspace/.m2"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(m2.readOnly()).isFalse();
+    assertThat(m2.hostPath()).isEqualTo(cacheDir);
+  }
+
+  @Test
   void dispatchForwardsConfiguredDockerSecurityOptsToContainerSpec() {
     // Real read-only-stage Codex runs use bubblewrap, which needs an unprivileged user namespace;
     // Docker's default seccomp blocks it. The adapter must forward the configured

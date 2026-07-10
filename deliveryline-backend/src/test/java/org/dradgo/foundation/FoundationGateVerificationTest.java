@@ -880,4 +880,29 @@ class FoundationGateVerificationTest {
           "3i-1", "org.dradgo.foundation.JiraTicketSourceParityFoundationContract");
     }
   }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #28 — Bitbucket RepositoryHostAdapter parity (story 3i-3)")
+  class Contract28BitbucketRepositoryHostParity {
+
+    /**
+     * Story 3i-3 AC7 — the Bitbucket mock + real adapters satisfy the vendor-neutral {@code
+     * RepositoryHostAdapter} port, return neutral {@code Repository}/{@code PullRequest}s on a
+     * happy read, classify failures identically, declare the same Bitbucket capability set, and
+     * probe connectivity alike. Bitbucket is the second real repository host (the GitHub twin is
+     * Contract #15).
+     *
+     * <p>{@code BitbucketRepositoryHostParityFoundationContract}'s class name matches no
+     * Surefire/Failsafe include pattern, so this delegate entry is its only execution path —
+     * without it the contract would be inert (the trap 3i-1's JIRA contract fell into, fixed in
+     * 3i-2).
+     */
+    @Test
+    @DisplayName("Bitbucket mock/real parity + capability declaration + connectivity probe")
+    void bitbucketRepositoryHostParityContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "3i-3", "org.dradgo.foundation.BitbucketRepositoryHostParityFoundationContract");
+    }
+  }
 }

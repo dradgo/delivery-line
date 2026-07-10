@@ -68,6 +68,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private static final String CONTAINER_INPUT_MOUNT = "/workspace/input";
   private static final String CONTAINER_OUTPUT_MOUNT = "/workspace/output";
   private static final String CONTAINER_LOGS_MOUNT = "/workspace/logs";
+  private static final String CONTAINER_MAVEN_CACHE_MOUNT = "/workspace/.m2";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private final RunnerScratchStore scratchStore;
@@ -127,6 +128,17 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   void setProjectConnectorResolver(
       org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver) {
     this.projectConnectorResolver = projectConnectorResolver;
+  }
+
+  // Story: runner JDK+Maven — mount the shared Maven local repo so repeat build runs reuse
+  // downloaded artifacts. Default ON in production; the unit test toggles via the setter, and a
+  // bare `new DockerRunnerAdapter(...)` leaves it false (existing 3-mount tests unaffected).
+  private boolean mavenCacheEnabled;
+
+  @org.springframework.beans.factory.annotation.Value(
+      "${deliveryline.runner.maven-cache-enabled:true}")
+  void setMavenCacheEnabled(boolean mavenCacheEnabled) {
+    this.mavenCacheEnabled = mavenCacheEnabled;
   }
 
   @org.springframework.beans.factory.annotation.Autowired
@@ -342,6 +354,18 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     mounts.add(new CreateContainerSpec.BindMount(layout.input(), CONTAINER_INPUT_MOUNT, true));
     mounts.add(new CreateContainerSpec.BindMount(layout.output(), CONTAINER_OUTPUT_MOUNT, false));
     mounts.add(new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false));
+
+    // Shared Maven local-repo cache (rw) at /workspace/.m2 — only when enabled AND the store
+    // provides a path. Absent → Maven uses a container-local ephemeral repo (cold download).
+    if (mavenCacheEnabled) {
+      workspaceStore
+          .prepareMavenCache()
+          .ifPresent(
+              cache ->
+                  mounts.add(
+                      new CreateContainerSpec.BindMount(
+                          cache, CONTAINER_MAVEN_CACHE_MOUNT, false)));
+    }
 
     // Story 3.9 AC2/AC4 (Decision D0/D3) — when the dispatch carries a repositoryRef AND the
     // repository-workspace service is wired, clone the linked repo and add a /workspace/repo (rw)

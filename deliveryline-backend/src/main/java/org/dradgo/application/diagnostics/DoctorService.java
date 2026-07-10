@@ -55,6 +55,9 @@ public class DoctorService {
   // Story 3i-1 (AC6) — JIRA auth probe under the jira-real profile. Appended last in STATIC_ORDER
   // (this entry is what makes the count 18→19); sibling of CHECK_GITHUB_AUTH.
   public static final String CHECK_JIRA_AUTH = "jira-auth";
+  // Story 3i-3 (AC6) — Bitbucket auth probe under the bitbucket-real profile. Appended last in
+  // STATIC_ORDER (this entry is what makes the count 19→20); sibling of CHECK_GITHUB_AUTH.
+  public static final String CHECK_BITBUCKET = "bitbucket-auth";
 
   public static final List<String> STATIC_ORDER =
       List.of(
@@ -76,7 +79,8 @@ public class DoctorService {
           CHECK_OBSERVABILITY_MEMORY,
           CHECK_LINEAR_COMPLETION_SYNC,
           CHECK_PROJECTS,
-          CHECK_JIRA_AUTH);
+          CHECK_JIRA_AUTH,
+          CHECK_BITBUCKET);
 
   private static final Map<String, String> REMEDIATION =
       Map.ofEntries(
@@ -141,7 +145,12 @@ public class DoctorService {
               CHECK_JIRA_AUTH,
               "Set a valid JIRA_API_TOKEN (an Atlassian API token) and JIRA_EMAIL (the account"
                   + " email) in .env, plus deliveryline.jira.base-url, then restart and re-check."
-                  + " This check only runs under the jira-real profile."));
+                  + " This check only runs under the jira-real profile."),
+          Map.entry(
+              CHECK_BITBUCKET,
+              "Set a valid BITBUCKET_TOKEN in .env (a 'workspace:app_password' pair for HTTP Basic,"
+                  + " or a bare access token for Bearer), then restart and re-check. This check only"
+                  + " runs under the bitbucket-real profile."));
 
   private static final String SHAREABLE_REDACTED = DataClassification.SHAREABLE_REDACTED.value();
 
@@ -259,6 +268,7 @@ public class DoctorService {
         case CHECK_LINEAR_COMPLETION_SYNC -> probes.probeLinearCompletionSync();
         case CHECK_PROJECTS -> probes.probeProjects();
         case CHECK_JIRA_AUTH -> probes.probeJiraAuth();
+        case CHECK_BITBUCKET -> probes.probeBitbucket();
         default -> ProbeResult.skip("Unknown check: " + name);
       };
     } catch (RuntimeException re) {

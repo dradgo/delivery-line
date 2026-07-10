@@ -26,9 +26,11 @@ spring:
     group:
       # Story 3.13 — github-mock joins the default mock stack alongside linear-mock so the full
       # execution loop runs against deterministic, zero-network integrations in test/local/demo.
-      local: [runners.mock, linear-mock, github-mock]
-      test: [runners.mock, linear-mock, github-mock]
-      demo: [runners.mock, linear-mock, github-mock]
+      # Story 3i-3 (FR82) — bitbucket-mock joins the same default stack so a bitbucket-kind project
+      # resolves a deterministic, zero-network repository host in test/local/demo.
+      local: [runners.mock, linear-mock, github-mock, bitbucket-mock]
+      test: [runners.mock, linear-mock, github-mock, bitbucket-mock]
+      demo: [runners.mock, linear-mock, github-mock, bitbucket-mock]
   # Story 2.13 round-3 review D3 follow-up: make `@JsonIgnoreProperties(ignoreUnknown = false)` on
   # request DTOs actually enforce rejection. Spring Boot's autoconfigured ObjectMapper otherwise
   # disables FAIL_ON_UNKNOWN_PROPERTIES, leaving the annotation no global default to defer to and
@@ -264,6 +266,21 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  bitbucket:
+    # Story 3i-3 (FR82) — real Bitbucket repository-host adapter config (active only under the opt-in
+    # bitbucket-real profile, which is NEVER in a profile group; the bitbucket-mock stays the
+    # default in local/test/demo). The single secret is supplied at runtime via the BITBUCKET_TOKEN
+    # env var (.env / process env) — NEVER committed here. Its encoding is self-describing: a
+    # "workspace:app_password" pair is sent as HTTP Basic; a bare access token is sent as Bearer.
+    # A blank token is allowed at bind time and is fatal only when the bitbucket-real profile
+    # activates the bitbucketRestClient bean (surfaced by the doctor bitbucket-auth probe).
+    token: ${BITBUCKET_TOKEN:}
+    # Host only — the /2.0 REST API version segment is carried in each request path (mirrors the
+    # github.base-url host-only convention), so an absolute-path request never clobbers it.
+    base-url: https://api.bitbucket.org
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
   jira:
     # Story 3i-1 (FR80) — real JIRA ticket-source adapter config (active only under the opt-in
     # jira-real profile, which is NEVER in a profile group; the jira-mock stays opt-in for
@@ -406,6 +423,9 @@ deliveryline:
       claude:
         - CLAUDE_CODE_OAUTH_TOKEN
         - ANTHROPIC_API_KEY
+    # Story: runner JDK+Maven — mount {deliveryline.home}/maven-cache at /workspace/.m2 (rw) so
+    # repeat Maven builds reuse the downloaded dependency tree. false → cold download each run.
+    maven-cache-enabled: true
     # Story 3.1 — Docker runner adapter config. Bound to RunnerProperties.Docker.
     # Activated only under the runners.docker profile (the wiring is profile-gated;
     # leaving this block in the shared application.yml keeps the defaults discoverable

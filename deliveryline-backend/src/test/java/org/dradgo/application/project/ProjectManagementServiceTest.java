@@ -115,7 +115,7 @@ class ProjectManagementServiceTest {
             () ->
                 service.createProject(
                     new CreateProjectCommand(
-                        "Acme", "acme", null, "bitbucket", "github", false, null, "alex")))
+                        "Acme", "acme", null, "gitea", "github", false, null, "alex")))
         .isInstanceOf(DomainException.class);
     verify(store, never()).insert(any());
   }

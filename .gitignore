@@ -83,5 +83,17 @@ _tmp/
 _tmp-*.log
 *.log
 
+# Code-review scratch diffs & temp capture artifacts (per-developer; never committed)
+.review-*
+.tmp-*
+*-review.diff
+_review-full.diff
+codex-json.txt
+
+# Local tooling / agent scaffolding (per-developer; not committed)
+.agents/
+.claude/
+_bmad/
+
 # Local-only Spring profile config (per-developer repo target; not committed)
 deliveryline-backend/src/main/resources/application-git-finance-monitor.yml

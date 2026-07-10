@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.spi.RawRunnerLog;
@@ -405,6 +406,20 @@ class LocalRunnerWorkspaceStoreTest {
         RunnerProperties.LintStage.defaults(),
         RunnerProperties.DeliveryMode.defaults(),
         100);
+  }
+
+  @Test
+  void prepareMavenCacheCreatesSharedDirUnderHome() throws Exception {
+    Path home = Files.createTempDirectory("dl-home-");
+    LocalRunnerWorkspaceStore store =
+        new LocalRunnerWorkspaceStore(home.toString(), Path.of("runner-work"));
+
+    Optional<Path> cache = store.prepareMavenCache();
+
+    assertThat(cache).isPresent();
+    assertThat(Files.isDirectory(cache.get())).isTrue();
+    assertThat(cache.get().getFileName().toString()).isEqualTo("maven-cache");
+    assertThat(cache.get().startsWith(home.toRealPath())).isTrue();
   }
 
   private static Set<PosixFilePermission> allAccessDirPerms() {

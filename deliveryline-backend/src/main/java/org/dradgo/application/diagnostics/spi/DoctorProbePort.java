@@ -42,6 +42,16 @@ public interface DoctorProbePort {
   ProbeResult probeJiraAuth();
 
   /**
+   * Story 3i-3 (AC6) — Bitbucket auth check. When the {@code bitbucket-real} profile is inactive
+   * (the default — bitbucket-mock/absent), returns a PASS "not-applicable" result and makes
+   * <strong>no network call</strong>. When active: secret blank ⇒ FAIL {@code
+   * DOCTOR_BITBUCKET_TOKEN_MISSING}; otherwise probes {@code GET /user} and reports PASS on 200 /
+   * FAIL {@code DOCTOR_BITBUCKET_AUTH_FAILED} on 401/403 (and any unreachable/transport outcome).
+   * Reports presence only — never logs or returns the secret / Authorization header (NFR8/NFR9).
+   */
+  ProbeResult probeBitbucket();
+
+  /**
    * Story 3.9 AC15 — system {@code git} availability. Like {@link #probeGitHubAuth()}, returns a
    * PASS "not-applicable" result with NO process call when the {@code github-real} profile is
    * inactive (the default mock profile). Under {@code github-real}: probes {@code git --version}

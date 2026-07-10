@@ -61,6 +61,12 @@ public enum DomainErrorCode implements RegistryValue {
   // probe under the jira-real profile, mirroring the DOCTOR_GITHUB_* pair.
   DOCTOR_JIRA_AUTH_FAILED("DOCTOR_JIRA_AUTH_FAILED"),
   DOCTOR_JIRA_TOKEN_MISSING("DOCTOR_JIRA_TOKEN_MISSING"),
+  // Story 3i-3 (AC6) — three-sites codes (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder; ProblemDetailsCoverageFoundationContract auto-covers). Back the doctor
+  // bitbucket-auth probe under the bitbucket-real profile, mirroring the DOCTOR_GITHUB_* /
+  // DOCTOR_JIRA_* pairs.
+  DOCTOR_BITBUCKET_AUTH_FAILED("DOCTOR_BITBUCKET_AUTH_FAILED"),
+  DOCTOR_BITBUCKET_TOKEN_MISSING("DOCTOR_BITBUCKET_TOKEN_MISSING"),
   // Story 3.9 (Decision D5) — three-sites codes (enum + ProblemDetailsCatalog + manifest).
   // LINEAR_GITHUB_REPO_MISMATCH guards prepareWorkspace (AC9); the two DOCTOR_GIT_* codes back the
   // git availability + bot-identity doctor probes (AC15).

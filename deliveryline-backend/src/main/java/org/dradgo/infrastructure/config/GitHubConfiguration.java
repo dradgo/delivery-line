@@ -46,18 +46,22 @@ public class GitHubConfiguration {
   }
 
   /**
-   * Story 3.33 AC5 / OQ-4 — only the {@code github} kind has an implementation on the classpath
-   * today. A configured {@code kind=bitbucket|gitlab|gitea|azure-devops} would silently leave the
-   * port unbacked; fail fast at boot with a clear message instead. The {@code kind} defaults to
-   * {@code github} when unset, so this never trips a context that does not configure the selector.
+   * Story 3.33 AC5 / OQ-4 — a configured repository-host {@code kind} must have an implementation
+   * on the classpath, else the port is silently left unbacked; fail fast at boot with a clear
+   * message instead. Story 3i-3 (FR82) added the second real host, so {@code github} and {@code
+   * bitbucket} are both supported now; a configured {@code kind=gitlab|gitea|azure-devops} still
+   * fails fast. The {@code kind} defaults to {@code github} when unset, so this never trips a
+   * context that does not configure the selector.
    */
   private static void assertSupportedRepositoryHostKind(RepositoryHostProperties properties) {
-    if (!properties.isGithub()) {
+    if (!properties.isSupported()) {
       throw new IllegalStateException(
           "deliveryline.integration.repo-host.kind="
               + properties.kind()
-              + " has no implementation on the classpath. The only supported kind today is '"
+              + " has no implementation on the classpath. The supported kinds today are '"
               + RepositoryHostProperties.KIND_GITHUB
+              + "' and '"
+              + RepositoryHostProperties.KIND_BITBUCKET
               + "'. Add a RepositoryHostAdapter implementation + profile entry for the new kind, or"
               + " correct the configured kind.");
     }

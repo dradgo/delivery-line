@@ -334,6 +334,18 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.DOCTOR_BITBUCKET_AUTH_FAILED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Bitbucket authentication failed",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_BITBUCKET_TOKEN_MISSING,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Bitbucket token missing",
+        false);
+    register(
+        metadata,
         DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH,
         HttpStatus.CONFLICT,
         "Linear ticket and GitHub repository do not reconcile",

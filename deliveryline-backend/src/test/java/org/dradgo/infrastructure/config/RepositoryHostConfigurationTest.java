@@ -42,10 +42,19 @@ class RepositoryHostConfigurationTest {
 
   @Test
   void unsupportedKindFailsFastAtBoot() {
+    // github + bitbucket both have classpath implementations (story 3i-3); gitea still does not.
     assertThatThrownBy(
-            () -> new GitHubConfiguration(noProfiles(), new RepositoryHostProperties("bitbucket")))
+            () -> new GitHubConfiguration(noProfiles(), new RepositoryHostProperties("gitea")))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("repo-host.kind=bitbucket")
+        .hasMessageContaining("repo-host.kind=gitea")
         .hasMessageContaining("github");
+  }
+
+  @Test
+  void bitbucketKindActivatesWithoutFailFast() {
+    // Story 3i-3 (FR82) — Bitbucket is the second real repository host, so kind=bitbucket resolves.
+    assertThatCode(
+            () -> new GitHubConfiguration(noProfiles(), new RepositoryHostProperties("bitbucket")))
+        .doesNotThrowAnyException();
   }
 }

@@ -26,8 +26,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties("deliveryline.integration.repo-host")
 public record RepositoryHostProperties(String kind) {
 
-  /** The only kind shipped today; the validated default. */
+  /** The default kind shipped today. */
   public static final String KIND_GITHUB = "github";
+
+  /** Story 3i-3 (FR82) — the second real repository host: Bitbucket Cloud. */
+  public static final String KIND_BITBUCKET = "bitbucket";
 
   public RepositoryHostProperties {
     kind = (kind == null || kind.isBlank()) ? KIND_GITHUB : kind.strip().toLowerCase(Locale.ROOT);
@@ -39,5 +42,14 @@ public record RepositoryHostProperties(String kind) {
 
   public boolean isGithub() {
     return KIND_GITHUB.equals(kind);
+  }
+
+  public boolean isBitbucket() {
+    return KIND_BITBUCKET.equals(kind);
+  }
+
+  /** True when {@code kind} names a repository host with an implementation on the classpath. */
+  public boolean isSupported() {
+    return isGithub() || isBitbucket();
   }
 }

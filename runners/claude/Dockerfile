@@ -20,8 +20,23 @@
 # npm-global package that needs the same Node runtime at run time, so a
 # builder/runtime split yields no size win and risks clobbering the base image's
 # /usr/local/bin node/npm symlinks. We keep layers lean instead (npm cache cleaned).
+# The runtime stage below is still single-stage for the agent CLI itself; the two
+# `FROM ... AS jdk`/`AS mvn` stages further down exist ONLY as COPY --from sources
+# for the JDK 21 + Maven 3.9 toolchain (story: runner JDK+Maven) — they are never
+# the base of the runtime image and contribute no extra RUN layers of their own.
 
 ARG BASE_IMAGE=node:22-slim
+# --- toolchain source stages (story: runner JDK+Maven) ------------------------
+# Self-contained Temurin JDK 21 + Apache Maven 3.9 copied into the runtime image
+# below. apt is NOT usable: bookworm has no openjdk-21 package and ships maven
+# 3.8.7, which fails the target repo's enforcer (Java >= 21, Maven >= 3.9.0).
+# Pinned via ARG; present in BOTH the real and INSTALL_CLAUDE_CLI=false builds so
+# the offline conformance gate exercises the toolchain.
+ARG JAVA_IMAGE=eclipse-temurin:21-jdk
+ARG MAVEN_IMAGE=maven:3.9-eclipse-temurin-21
+FROM ${JAVA_IMAGE} AS jdk
+FROM ${MAVEN_IMAGE} AS mvn
+
 FROM ${BASE_IMAGE}
 
 # --- build args --------------------------------------------------------------
@@ -80,6 +95,19 @@ COPY runners/claude/test/mock-openspec.sh /opt/deliveryline/test/mock-openspec.s
 # exposes it on Claude's skills-discovery dir. --chown=1001:1001 = the claude uid/gid below.
 COPY --chown=1001:1001 runners/vendor/superpowers /opt/deliveryline/vendor/superpowers
 
+# --- JDK 21 + Maven 3.9 toolchain (story: runner JDK+Maven) -------------------
+# Temurin's /opt/java/openjdk is a self-contained glibc build; it runs on
+# node:22-slim (bookworm) unchanged. jmods (83 MB, jlink-only) is removed in the
+# RUN below to stay near the AC9 layer budget. MAVEN_OPTS points the local repo
+# at the /workspace/.m2 cache mount (Task 4) and enables file-lock sync so
+# concurrent runs do not race on the same artifact download.
+COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
+COPY --from=mvn /usr/share/maven  /usr/share/maven
+ENV JAVA_HOME=/opt/java/openjdk \
+    MAVEN_HOME=/usr/share/maven \
+    MAVEN_OPTS="-Dmaven.repo.local=/workspace/.m2 -Daether.syncContext.named.factory=file-lock -Daether.syncContext.named.nameMapper=file-gav"
+ENV PATH="${JAVA_HOME}/bin:${MAVEN_HOME}/bin:${PATH}"
+
 # Install the Claude Code CLI + the agent-side OpenSpec CLI (production) OR bake
 # their deterministic mocks (test build), make the contract scripts executable,
 # and create the unprivileged runtime user — all in one layer to keep the image
@@ -132,6 +160,15 @@ RUN set -eu; \
     mv /opt/deliveryline/vendor/superpowers /home/claude/.claude/superpowers; \
     ln -s /home/claude/.claude/superpowers/skills /home/claude/.claude/skills/superpowers; \
     chown -R claude:claude /home/claude/.claude; \
+    # story: runner JDK+Maven follow-up — when the /workspace/.m2 cache bind-mount is
+    # ABSENT (maven-cache-enabled=false, or the store's io_error fallback), MAVEN_OPTS
+    # above still points -Dmaven.repo.local at /workspace/.m2, but /workspace is root-owned
+    # and the runtime user (claude:1001) cannot create it there -> mvn fails EACCES instead
+    # of degrading to a container-local repo. Pre-create the dir owned by uid/gid 1001 (the
+    # useradd above) so a present bind-mount shadows it (unchanged behavior) and an absent
+    # one leaves a writable ephemeral repo (safe degradation). Runs in BOTH build branches.
+    mkdir -p /workspace/.m2 && chown 1001:1001 /workspace/.m2; \
+    rm -rf /opt/java/openjdk/jmods; \
     rm -rf /var/lib/apt/lists/*
 
 # Least privilege (AC2): unprivileged user, no network by default (set by the
