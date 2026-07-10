@@ -433,7 +433,8 @@ public class ProjectController {
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.TICKET_SOURCE);
     boolean repoConfigured =
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.REPO_HOST);
-    // Story 3d-2 вЂ” the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A REVIEW
+    // Story 3d-2 вЂ” the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A
+    // REVIEW
     // dispatch (advisory reviewer + the 3f-4 split-proposal) resolves THIS secret with no host-key
     // fallback, so its presence must be surfaced for the UI to set it. Appended last so the
     // existing ticket_source/repo_host array indices are unchanged.
@@ -503,10 +504,10 @@ public class ProjectController {
   }
 
   /**
-   * Story 3h-2 вЂ” deterministic canonical form of the lint command list for the create fingerprint:
-   * the commands joined in order (order is semantically meaningful вЂ” fail-fast runs first-to-last),
-   * newline-delimited. Two same-key creates with the same lint commands fingerprint identically
-   * (and replay); a different list (or order) is a distinct create.
+   * Story 3h-2 вЂ” deterministic canonical form of the lint command list for the create
+   * fingerprint: the commands joined in order (order is semantically meaningful вЂ” fail-fast runs
+   * first-to-last), newline-delimited. Two same-key creates with the same lint commands fingerprint
+   * identically (and replay); a different list (or order) is a distinct create.
    */
   private static String canonicalLintCommands(java.util.List<String> lintCommands) {
     if (lintCommands == null || lintCommands.isEmpty()) {
@@ -571,7 +572,8 @@ public class ProjectController {
   }
 
   /**
-   * Story 2.13 P10 mirror вЂ” collapse a null/blank Idempotency-Key back to MISSING_IDEMPOTENCY_KEY.
+   * Story 2.13 P10 mirror вЂ” collapse a null/blank Idempotency-Key back to
+   * MISSING_IDEMPOTENCY_KEY.
    */
   private static void requireNonBlankIdempotencyKey(String idempotencyKey) {
     if (idempotencyKey == null || idempotencyKey.isBlank()) {

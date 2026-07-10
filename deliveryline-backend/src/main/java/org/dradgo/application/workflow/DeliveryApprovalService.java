@@ -99,12 +99,14 @@ public class DeliveryApprovalService {
     this.projectRuntimeConfigResolver =
         Objects.requireNonNull(projectRuntimeConfigResolver, "projectRuntimeConfigResolver");
     this.afterCommit = Objects.requireNonNull(afterCommit, "afterCommit");
-    this.workflowEventReadPort = Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
+    this.workflowEventReadPort =
+        Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
     this.workflowEventWritePort =
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.brokerSupplier = Objects.requireNonNull(brokerSupplier, "brokerSupplier");
     this.clock = Objects.requireNonNull(clock, "clock");
   }
+
   /**
    * AC4 вЂ” {@code approve_delivery}: dismiss the delivery gate and advance to {@code
    * WaitingForReview}. Transitions synchronously in this command tx, then defers the mode-specific
@@ -193,10 +195,9 @@ public class DeliveryApprovalService {
   /**
    * Append the {@code delivery.recordedManually} governed audit event for a manual-mode delivery.
    * Not itself a workflow-state change ({@code priorState == resultingState == WaitingForReview},
-   * {@code interventionMarker = true}) вЂ” it records that an operator delivered out-of-band. Runs in
-   * the command tx so it is atomic with the transition.
+   * {@code interventionMarker = true}) вЂ” it records that an operator delivered out-of-band. Runs
+   * in the command tx so it is atomic with the transition.
    */
-
   private PushMode resolveParkedPushMode(String runId) {
     return workflowEventReadPort
         .findLatestTransitionToState(runId, WorkflowState.WAITING_FOR_DELIVERY)
@@ -207,6 +208,7 @@ public class DeliveryApprovalService {
         .map(value -> PushMode.fromValue(value, "workflow_events.details.pushMode"))
         .orElseGet(() -> projectRuntimeConfigResolver.resolvePushMode(runId));
   }
+
   private void appendManualDeliveryEvent(
       String runId, ApproveDeliveryCommand command, String correlationId) {
     Map<String, Object> details = new LinkedHashMap<>();

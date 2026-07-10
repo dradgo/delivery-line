@@ -119,7 +119,8 @@ public class WorkflowCommandService {
   private final WorkflowRunRejectionLoopPort workflowRunRejectionLoopPort;
   // Story 3c-6 (AC2) вЂ” resolve the default project to bind every new run to at create time.
   private final ProjectStore projectStore;
-  // Story 3h-4 (AC7) вЂ” resolve the run's push mode so approve_lint's replay pin reflects the actual
+  // Story 3h-4 (AC7) вЂ” resolve the run's push mode so approve_lint's replay pin reflects the
+  // actual
   // mode-dependent post-state (WaitingForReview when auto, WaitingForDelivery otherwise).
   private final org.dradgo.application.project.ProjectRuntimeConfigResolver
       projectRuntimeConfigResolver;
@@ -263,10 +264,12 @@ public class WorkflowCommandService {
 
   @Transactional
   public WorkflowStateChangeResult resumeWorkflow(ResumeWorkflowCommand command) {
-    // Story 4.5 (AC5 / Reconciliation 8): transition Paused в†’ command.targetState() (the recovered
+    // Story 4.5 (AC5 / Reconciliation 8): transition Paused в†’ command.targetState() (the
+    // recovered
     // prior executing state) inside the shared idempotency envelope. Unlike retryWorkflow, this
     // does
-    // NOT re-dispatch here вЂ” re-dispatch is single-sourced by RecoveryService.resume after the prep
+    // NOT re-dispatch here вЂ” re-dispatch is single-sourced by RecoveryService.resume after the
+    // prep
     // tx commits (the double-dispatch caution). Replay pins targetState (an invariant post-state
     // per accepted command) in replayStateChange.
     return executeIdempotent(command, this::resumeWorkflowInternal, this::replayStateChange);
@@ -375,7 +378,8 @@ public class WorkflowCommandService {
       // (auto-dispatch
       // disabled leaves it Inbox; enabled => Investigating).
       //
-      // The re-read is purely cosmetic вЂ” it only populates the response's currentState. Guard it so
+      // The re-read is purely cosmetic вЂ” it only populates the response's currentState. Guard it
+      // so
       // a transient read failure cannot escape and roll back this @Transactional submit (the
       // created
       // run + Linear link + Inbox->Investigating transition + dispatched runner_executions row all
@@ -402,9 +406,9 @@ public class WorkflowCommandService {
   private record ProjectBinding(String projectId, String source) {}
 
   /**
-   * Story 3c-7 (AC1) вЂ” generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An explicit
-   * {@code projectReference} resolves the named project: a {@code prj_}-prefixed reference via
-   * {@link ProjectStore#findByPublicId}, otherwise via {@link ProjectStore#findBySlug}; an
+   * Story 3c-7 (AC1) вЂ” generalize the 3c-6 hardcoded {@code findBySlug(default)} bind. An
+   * explicit {@code projectReference} resolves the named project: a {@code prj_}-prefixed reference
+   * via {@link ProjectStore#findByPublicId}, otherwise via {@link ProjectStore#findBySlug}; an
    * unresolvable explicit reference is rejected with the consume-only {@code PROJECT_NOT_FOUND}. An
    * absent reference keeps the reserved {@code default}-project fallback (byte-identical to 3c-6).
    */
@@ -540,9 +544,9 @@ public class WorkflowCommandService {
   }
 
   /**
-   * Story 3h-2 (code-review 2026-07-06 re-review) вЂ” the executor gate for the pre-review lint-gate
-   * actions ({@code approve_lint} / {@code request_lint_fix}). These are surfaced ONLY at {@code
-   * WaitingForLintApproval}, so вЂ” mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
+   * Story 3h-2 (code-review 2026-07-06 re-review) вЂ” the executor gate for the pre-review
+   * lint-gate actions ({@code approve_lint} / {@code request_lint_fix}). These are surfaced ONLY at
+   * {@code WaitingForLintApproval}, so вЂ” mirroring the {@code RETRY_NOT_APPLICABLE} / {@code
    * REGENERATE_NOT_APPLICABLE} precedent (there is NO generic ACTION_NOT_ALLOWED guard) вЂ” the
    * executor is the gate. This precondition is LOAD-BEARING, not defensive: both action targets are
    * ALSO reachable from other live sources ({@code EXECUTING -> WaitingForReview} is the normal
@@ -551,8 +555,8 @@ public class WorkflowCommandService {
    * wrong-state {@code approve_lint} (e.g. on a still-{@code EXECUTING} run вЂ” stale UI, double
    * submit, direct API) would transition + push a mid-execution workspace, and a wrong-state {@code
    * request_lint_fix} on a {@code WaitingForReview} run would hijack it back into {@code
-   * Executing}. Reject (ILLEGAL_TRANSITION в†’ 409, non-retryable) unless the run is actually parked
-   * at the gate.
+   * Executing}. Reject (ILLEGAL_TRANSITION в†’ 409, non-retryable) unless the run is actually
+   * parked at the gate.
    */
   private void requireParkedAtLintGate(String workflowRunId, String action) {
     WorkflowState currentState =
@@ -629,7 +633,8 @@ public class WorkflowCommandService {
     try {
       // Story 2.13 round-4 P-R4-4: read currentState FIRST so the response reflects the workflow
       // state at the START of the answer operation, not whatever a concurrent reject/takeover/retry
-      // happened to commit during the answer write. Trap T6 says answering does NOT advance state вЂ”
+      // happened to commit during the answer write. Trap T6 says answering does NOT advance state
+      // вЂ”
       // if the read came after the clarification write, a concurrent state-change could surface as
       // the answer's "post-mutation" state and contradict AC9. Both calls sit inside the outer
       // @Transactional answerClarification, so READ COMMITTED still sees the latest committed value
@@ -658,7 +663,8 @@ public class WorkflowCommandService {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       // Story 3e-2 (AC1): read currentState FIRST (mirror answerClarificationInternal trap T6) so
-      // the response reflects the run state at the START of the accept вЂ” accepting does NOT advance
+      // the response reflects the run state at the START of the accept вЂ” accepting does NOT
+      // advance
       // workflow state, so a concurrent reject/takeover must not surface as the accept's
       // post-mutation state.
       WorkflowState currentState =
@@ -696,7 +702,8 @@ public class WorkflowCommandService {
       // (review D1) Gate FIRST: a spec rebuild only makes sense when there is >=1 `accepted`
       // clarification to incorporate. The REGENERATE_SPEC action is surfaced unconditionally at
       // WaitingForSpecApproval (WorkflowInspectionService.computeActionMatrix), so the executor is
-      // the gate (mirrors the RETRY_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE precedent вЂ” no generic
+      // the gate (mirrors the RETRY_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE precedent вЂ” no
+      // generic
       // ACTION_NOT_ALLOWED). Reject BEFORE the loop-count bump / transition / re-dispatch so a
       // no-incorporation rebuild never spuriously re-runs the spec stage.
       boolean hasAccepted =
@@ -720,7 +727,8 @@ public class WorkflowCommandService {
           command.workflowRunId(),
           loopCount);
       // (b) WaitingForSpecApproval -> Investigating. The transition service appends
-      // workflow.stateChanged itself (do NOT append a second one). The edge is already legal вЂ” the
+      // workflow.stateChanged itself (do NOT append a second one). The edge is already legal вЂ”
+      // the
       // reject->retry loop uses it вЂ” so no transition-table change.
       transition(
           command.workflowRunId(),
@@ -751,7 +759,8 @@ public class WorkflowCommandService {
           command,
           fallbackReason(command.reasonText(), "retry workflow"),
           Map.of());
-      // RC2 (rerun re-dispatch) вЂ” the transition above only flips Failed -> Executing; it enqueues
+      // RC2 (rerun re-dispatch) вЂ” the transition above only flips Failed -> Executing; it
+      // enqueues
       // NO runner, so without this the run wedges in Executing with nothing for the worker pool to
       // dequeue. Re-dispatch the EXECUTION-stage runner so the retried run actually resumes. Shares
       // this @Transactional boundary exactly like submitInternal's dispatchSpecGeneration (the
@@ -790,7 +799,8 @@ public class WorkflowCommandService {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
       // Story 4.5 (Reconciliation 8): transition to the caller-supplied targetState (the recovered
-      // Paused в†’ prior executing state) via the generic transition helper вЂ” the transition table
+      // Paused в†’ prior executing state) via the generic transition helper вЂ” the transition
+      // table
       // validates Paused в†’ targetState is legal (Paused в†’ Executing today). NO re-dispatch here
       // (RecoveryService.resume owns the single redispatchAfterRetry after this prep tx commits).
       transition(
@@ -1129,7 +1139,6 @@ public class WorkflowCommandService {
         + clarificationStatus;
   }
 
-
   private String stateChangeReplayRef(String workflowRunId, WorkflowState state) {
     return workflowRunId + CLARIFICATION_REPLAY_REF_SEPARATOR + state.value();
   }
@@ -1146,9 +1155,11 @@ public class WorkflowCommandService {
           ? WorkflowState.WAITING_FOR_REVIEW
           : WorkflowState.WAITING_FOR_DELIVERY;
     }
-    String stateValue = resultRef.substring(separator + CLARIFICATION_REPLAY_REF_SEPARATOR.length());
+    String stateValue =
+        resultRef.substring(separator + CLARIFICATION_REPLAY_REF_SEPARATOR.length());
     return WorkflowState.fromValue(stateValue, "idempotency.resultRef");
   }
+
   private String clarificationReplayRunId(String resultRef) {
     return parseClarificationReplayRef(resultRef).workflowRunId();
   }
