@@ -198,6 +198,15 @@ public class ProjectRuntimeConfigResolver {
   }
 
   /**
+   * The effective Testcontainers opt-in for a run — the resolved project's {@code
+   * testcontainersEnabled} (seeded false). Read on the worker thread (detached POJO, no lazy
+   * proxy).
+   */
+  public boolean resolveTestcontainersEnabled(String workflowRunId) {
+    return resolveForRun(workflowRunId).testcontainersEnabled();
+  }
+
+  /**
    * Story 3d-3 (AC1) — the effective runner kind for a run at {@code stage}: the resolved project's
    * per-project {@code runnerKind} override when present, else the existing global per-stage kind
    * ({@link RunnerProperties#kindForStage}). The {@code default} project seeds a null override, so

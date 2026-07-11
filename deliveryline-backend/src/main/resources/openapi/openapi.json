@@ -877,6 +877,11 @@
               "null"
             ]
           },
+          "testcontainersEnabled" : {
+            "description" : "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs. Default false (pre-task-4 parity, no sidecar).",
+            "example" : false,
+            "type" : "boolean"
+          },
           "ticketSourceKind" : {
             "example" : "linear",
             "minLength" : 1,
@@ -1668,6 +1673,10 @@
               "spec" : "codex"
             },
             "type" : "object"
+          },
+          "testcontainersEnabled" : {
+            "description" : "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs.",
+            "type" : "boolean"
           },
           "ticketSourceKind" : {
             "description" : "Ticket-source connector kind.",
@@ -2727,6 +2736,11 @@
               "null"
             ]
           },
+          "testcontainersEnabled" : {
+            "description" : "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs, editable here. Default false (pre-task-4 parity).",
+            "example" : false,
+            "type" : "boolean"
+          },
           "ticketSourceKind" : {
             "example" : "linear",
             "minLength" : 1,
@@ -2776,6 +2790,33 @@
               "type" : "string"
             },
             "type" : "array"
+          },
+          "ciChecksEnforced" : {
+            "description" : "Whether the run's repository host enforces required status checks (RepositoryHostCapabilities.supportsRequiredStatusChecks, story 3h-5 AC3). False when the host is unknown.",
+            "example" : true,
+            "type" : "boolean"
+          },
+          "ciFixLoopCount" : {
+            "description" : "How many bounded CI fix attempts this run has accumulated (story 3h-5). 0 when no red CI has been investigated.",
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "ciHeadSha" : {
+            "description" : "The pushed commit SHA the CI verdict was read for (story 3h-5). Null when never stamped.",
+            "example" : "a1b2c3d4",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "ciStatus" : {
+            "description" : "Latest CI build verdict for this run's pushed commit (story 3h-5, FR79): pending/success/failure/neutral/unavailable. Null when the run was never pushed or the repo host does not support CI status reads.",
+            "example" : "pending",
+            "type" : [
+              "string",
+              "null"
+            ]
           },
           "currentActorIdentity" : {
             "type" : "string"

@@ -72,7 +72,9 @@ public class ProjectEntityMapper {
         // PushMode.fromValue
         // in the entity getter; auto_create_pull_request a plain boolean).
         entity.getPushMode(),
-        entity.isAutoCreatePullRequest());
+        entity.isAutoCreatePullRequest(),
+        // Task 4 (DinD Testcontainers sidecar) — plain boolean, no parsing needed.
+        entity.isTestcontainersEnabled());
   }
 
   public ProjectEntity toNewEntity(Project project) {
@@ -97,6 +99,8 @@ public class ProjectEntityMapper {
     // Story 3h-4 (AC1) — per-project delivery config round-trips on insert.
     entity.setPushMode(project.pushMode());
     entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
+    // Task 4 (DinD Testcontainers sidecar) — per-project flag round-trips on insert.
+    entity.setTestcontainersEnabled(project.testcontainersEnabled());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -137,6 +141,9 @@ public class ProjectEntityMapper {
     // read-modify-write round-trip stays lossless (mirrors build/lint config).
     entity.setPushMode(project.pushMode());
     entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
+    // Task 4 (DinD Testcontainers sidecar) — editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors build/lint/delivery config).
+    entity.setTestcontainersEnabled(project.testcontainersEnabled());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }

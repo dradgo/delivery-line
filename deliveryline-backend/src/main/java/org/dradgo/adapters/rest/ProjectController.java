@@ -147,6 +147,7 @@ public class ProjectController {
             request.lintCommands(),
             request.pushMode(),
             defaultTrue(request.autoCreatePullRequest()),
+            request.testcontainersEnabled(),
             idempotencyKey,
             actorIdentity);
     log.info(
@@ -255,6 +256,7 @@ public class ProjectController {
             request.lintCommands(),
             request.pushMode(),
             defaultTrue(request.autoCreatePullRequest()),
+            request.testcontainersEnabled(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
   }
@@ -591,7 +593,10 @@ public class ProjectController {
             // replays. pushMode is the raw wire string (null ⇒ "" canonicalizes to the AUTO
             // default).
             nullSafe(command.pushMode()),
-            Boolean.toString(command.autoCreatePullRequest()));
+            Boolean.toString(command.autoCreatePullRequest()),
+            // Task 4 (DinD Testcontainers sidecar) — MUST be part of the create fingerprint, else
+            // two creates differing only in this flag would collide as idempotent replays.
+            Boolean.toString(command.testcontainersEnabled()));
     return sha256Hex(canonical);
   }
 

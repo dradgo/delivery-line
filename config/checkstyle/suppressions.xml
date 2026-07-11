@@ -51,6 +51,18 @@
             lines="1307"/>
 
   <!--
+    DindSidecarService - Thread.sleep is the single concrete implementation of the
+    injected Sleeper seam that backs the DinD health-readiness poll (story 3h-5
+    co-mingled testcontainers feature). The class already abstracts the wait behind a
+    Sleeper functional interface (tests inject a fake); this default lambda is the one
+    place a real, bounded (readinessTimeout-capped) sleep must happen. Same rationale as
+    IdempotencyService / WorkflowCommandService above.
+  -->
+  <suppress id="ForbiddenThreadSleep"
+            files="[\\/]adapters[\\/]runner[\\/]docker[\\/]DindSidecarService\.java$"
+            lines="65"/>
+
+  <!--
     RedactionLayoutHolder - two exemptions for this one class:
       * System.err is the fail-closed logging-bootstrap path. This class IS the
         redaction layer bootstrapping, so routing this diagnostic through SLF4J

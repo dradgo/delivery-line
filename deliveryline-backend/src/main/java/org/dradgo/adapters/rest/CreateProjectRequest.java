@@ -88,4 +88,10 @@ public record CreateProjectRequest(
                     + "Default true (pre-3h parity). When false the push still fires but no PR is "
                     + "created/linked.",
             example = "true")
-        Boolean autoCreatePullRequest) {}
+        Boolean autoCreatePullRequest,
+    @Schema(
+            description =
+                "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this "
+                    + "project's runs. Default false (pre-task-4 parity, no sidecar).",
+            example = "false")
+        boolean testcontainersEnabled) {}

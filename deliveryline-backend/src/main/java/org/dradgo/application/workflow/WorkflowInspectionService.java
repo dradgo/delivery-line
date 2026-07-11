@@ -130,6 +130,10 @@ public class WorkflowInspectionService {
   private ProjectStore projectStore;
   private org.dradgo.application.integration.conflict.IntegrationConflictService
       integrationConflictService;
+  // Story 3h-5 (AC3) — resolves the CI detail read-model fields. Optional setter injection so the
+  // ~7 `new WorkflowInspectionService(...)` test sites are untouched; null in lean contexts ⇒ the
+  // neutral empty read model (ci fields null/0/false).
+  private org.dradgo.application.workflow.ci.CiReadModelResolver ciReadModelResolver;
   // Story 3b-5 — parses the structured prOutput payload (branch/commitSha/diff) for the
   // artifact-read projection. A plain instance field, not a constructor dependency, so the ~7 `new
   // WorkflowInspectionService(...)` test sites are untouched ([[runnerproperties-record-fanout]]).
@@ -194,6 +198,12 @@ public class WorkflowInspectionService {
       org.dradgo.application.integration.conflict.IntegrationConflictService
           integrationConflictService) {
     this.integrationConflictService = integrationConflictService;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setCiReadModelResolver(
+      org.dradgo.application.workflow.ci.CiReadModelResolver ciReadModelResolver) {
+    this.ciReadModelResolver = ciReadModelResolver;
   }
 
   // Story 3f-3 (AC8) — the run-dependency read port, backing the dependency graph embedded in the
@@ -2016,6 +2026,13 @@ public class WorkflowInspectionService {
               runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
                   run.publicId(), ALL_RUNNER_EXECUTION_STATUSES));
 
+      // Story 3h-5 (AC3) — CI-investigation read model. Neutral empty when no resolver is wired
+      // (lean test contexts): ci fields null/0/false.
+      org.dradgo.application.workflow.ci.CiReadModelResolver.CiRunReadModel ciReadModel =
+          ciReadModelResolver == null
+              ? org.dradgo.application.workflow.ci.CiReadModelResolver.CiRunReadModel.empty()
+              : ciReadModelResolver.resolve(run.publicId());
+
       WorkflowStatusView view =
           new WorkflowStatusView(
               run.publicId(),
@@ -2041,7 +2058,11 @@ public class WorkflowInspectionService {
               project == null ? null : project.projectSlug(),
               dependencyGraph,
               decompositionStatus,
-              runTotalTokens);
+              runTotalTokens,
+              ciReadModel.ciStatus(),
+              ciReadModel.ciHeadSha(),
+              ciReadModel.ciFixLoopCount(),
+              ciReadModel.ciChecksEnforced());
       log.info(
           "inspecting workflow_run snapshot success workflowRunId={} currentState={}"
               + " totalTokensPresent={}",
@@ -3519,7 +3540,17 @@ public class WorkflowInspectionService {
       // Story 3g-4 (FR74, AC2) — run-level token consumption: sum of the non-null per-step
       // totalTokens over ALL executions of the run. Null when no step reported any (never 0); not
       // synthesized from input+output.
-      Integer totalTokens) {
+      Integer totalTokens,
+      // Story 3h-5 (AC3) — CI-investigation read model (trailing nullable/default fields on the
+      // DETAIL view only; WorkflowSummaryResponse is NOT touched). ciStatus/ciHeadSha are null for
+      // a
+      // never-pushed/never-polled run; ciFixLoopCount defaults 0; ciChecksEnforced is the first
+      // production reader of RepositoryHostCapabilities.supportsRequiredStatusChecks() (defaults
+      // false when the host is unknown/throws).
+      String ciStatus,
+      String ciHeadSha,
+      int ciFixLoopCount,
+      boolean ciChecksEnforced) {
 
     public WorkflowStatusView(
         String workflowRunId,
@@ -3562,7 +3593,12 @@ public class WorkflowInspectionService {
           null,
           RunDependencyGraphView.empty(),
           null,
-          null);
+          null,
+          // Story 3h-5 (AC3) — CI read-model defaults for the legacy short constructor.
+          null,
+          null,
+          0,
+          false);
     }
   }
 

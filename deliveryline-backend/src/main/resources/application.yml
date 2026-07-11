@@ -150,6 +150,30 @@ deliveryline:
     # loops, D5); the run stays parked, so there is no infinite-loop risk (each iteration needs a
     # manual operator action).
     lint-fix-max-loops: 3
+    # Story 3h-5 (FR79): the bounded CI investigation/fix cap AND escalation threshold (one value;
+    # read by CiFixEscalationThresholdProvider). On a red CI the implementation runner is re-dispatched
+    # with the CI-failure log as referenced feedback for up to N (=this value) fix attempts. On the
+    # (N+1)-th consecutive red CI (ci_fix_loop_count > cap) the SHARED per-run escalation marker is
+    # flipped once (same marker as the spec / implementation / split / build / lint loops, D5) and the
+    # run is LEFT parked at WaitingForReview (WaitingForReview has no ->Failed edge) — CI escalates,
+    # never fails the run (Decision 5).
+    ci-fix-max-loops: 3
+    # Story 3h-5 (AC2/AC4, Decision 4): the CI-investigation sweep. The @ConditionalOnProperty on
+    # `enabled` is the load-bearing PARITY gate — when false/absent the scheduled bean
+    # (CiInvestigationConfiguration) is NEVER registered, so a disabled sweep adds zero scheduled work
+    # and the delivery tail is byte-identical to pre-3h-5. There is NO per-project CI flag; parity is
+    # this global switch alone. Disabled by default (opt-in), mirroring rollup-sweep. Uncomment + set
+    # enabled=true to activate against a github-real repo host.
+    #   * interval-ms — fixed-delay between poll ticks (<=0 normalized to 30000).
+    #   * batch-limit — max pending runs scanned per tick; the sweep WARNs on a full batch (no silent
+    #     truncation), remainder scanned next tick (<=0 normalized to 20).
+    #   * max-poll-attempts — bounded poll budget; once ci_poll_attempts exceeds this the run is
+    #     recorded `unavailable` and polling stops (<=0 normalized to 60).
+    # ci-investigation:
+    #   enabled: false
+    #   interval-ms: 30000
+    #   batch-limit: 20
+    #   max-poll-attempts: 60
     # Story 3f-4 (AC4): threshold above which SplitProposalService.repropose raises the per-run
     # escalation marker (the SAME marker as the spec-rejection / implementation-rejection loops). The
     # escalation event is appended exactly once (when the split-proposal re-propose counter crosses
@@ -426,6 +450,11 @@ deliveryline:
     # Story: runner JDK+Maven — mount {deliveryline.home}/maven-cache at /workspace/.m2 (rw) so
     # repeat Maven builds reuse the downloaded dependency tree. false → cold download each run.
     maven-cache-enabled: true
+    # Per-run DinD Testcontainers sidecar (only used when a project has testcontainers-enabled=true).
+    testcontainers:
+      dind-image: docker:27-dind
+      memory-bytes: 2147483648   # 2 GiB cap on the privileged sidecar
+      readiness-timeout: 60s
     # Story 3.1 — Docker runner adapter config. Bound to RunnerProperties.Docker.
     # Activated only under the runners.docker profile (the wiring is profile-gated;
     # leaving this block in the shared application.yml keeps the defaults discoverable

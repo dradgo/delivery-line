@@ -418,6 +418,45 @@ never enters this state.
 
 **See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md).
 
+### CI investigation
+
+The **async, best-effort reading of a pushed branch's CI build result and the bounded fix loop that
+follows a red build** (story 3h-5 / FR79). After a successful backend push a run is stamped
+`ci_status='pending'`; a scheduled sweep (`CiStatusPollingService`) polls the repository host's
+[check runs](#check-run) for that commit. A **green** verdict is recorded and the run proceeds (it is
+already at/past review); a **red** verdict drives a [CI fix loop](#ci-fix-loop). The sweep is gated by
+a single global switch (`deliveryline.workflow.ci-investigation.enabled`) — there is **no** per-project
+CI flag — and only polls runs whose repository host advertises `supportsCiStatusReads`. CI status is
+**informational**: it never blocks `accept_implementation`. Reuses existing vocabulary — [run](#run),
+[check run](#check-run), escalation — and introduces **no** new workflow state, action, event, or
+failure category.
+
+### check run
+
+The **vendor-neutral projection of a single CI check** for a pushed commit (`CiStatus` / `CiCheck` /
+`CiConclusion`, story 3h-5). Read through the `RepositoryHostAdapter.readCheckRuns` port so no host
+vocabulary (GitHub check-run `status`/`conclusion`, Bitbucket Pipelines state) leaks past it. A red
+check's bounded failure body — its `output` title/summary/text plus `failure`-level annotations — is
+captured (redaction-policed) as a FAILED `runner_executions` row with `stage='ci'` and threaded back
+into the regenerated execution bundle by reference (kind `ci.failure`), exactly like a
+[build.failure](#build-gate). GitHub (Actions) is the first backer; Bitbucket Pipelines lands in Epic
+3i. Not to be confused with `supportsRequiredStatusChecks` (does the host *enforce* checks at merge) —
+CI investigation is the first production reader of that flag, surfaced as `ciChecksEnforced`.
+
+### CI fix loop
+
+The **bounded investigation/fix loop a red [CI investigation](#ci-investigation) drives** (story
+3h-5), the third referenced-feedback loop beside the [build](#build-gate) and [lint](#lint-gate) loops.
+On a red CI the run transitions `WaitingForReview → Executing` (the existing edge) and re-dispatches
+the EXECUTION runner with the CI failure log as feedback, bumping `ci_fix_loop_count`. Distinct
+idempotency key (`ci-fix:<run>:<count>`). On the `(cap+1)`-th consecutive red CI it flips the **shared**
+per-run escalation marker once and **leaves the run parked at `WaitingForReview`** for Epic-4 recovery
+— it **never** transitions to `Failed` (there is no such edge) and adds no new failure category. This
+is the lint-loop cap semantics (escalate, never fail), not the build-loop cap (which fails the run).
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md) (Amendment —
+story 3h-5).
+
 ---
 
 ## Epic 3i vocabulary (connector expansion)

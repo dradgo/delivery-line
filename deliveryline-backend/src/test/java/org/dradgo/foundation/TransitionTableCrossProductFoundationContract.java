@@ -161,7 +161,9 @@ class TransitionTableCrossProductFoundationContract {
           // Story 3h-1 (AC5) — mirrors the WorkflowTransitionTable allow-list addition.
           FailureCategory.RUNNER_BUILD_FAILED,
           // Post-execution secret leak — mirrors the WorkflowTransitionTable allow-list addition.
-          FailureCategory.RUNNER_SECRET_LEAK);
+          FailureCategory.RUNNER_SECRET_LEAK,
+          // Mirror of the WorkflowTransitionTable allow-list addition.
+          FailureCategory.TESTCONTAINERS_INFRA_FAILED);
 
   @Test
   void everyIllegalTransitionRaisesIllegalTransitionAndEveryLegalTransitionPasses() {

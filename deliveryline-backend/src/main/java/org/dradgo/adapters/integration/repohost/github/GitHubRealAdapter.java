@@ -9,9 +9,12 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.dradgo.application.integration.ConnectivityResult;
@@ -20,6 +23,9 @@ import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CiCheck;
+import org.dradgo.domain.integration.repohost.CiConclusion;
+import org.dradgo.domain.integration.repohost.CiStatus;
 import org.dradgo.domain.integration.repohost.CommentResult;
 import org.dradgo.domain.integration.repohost.PullRequest;
 import org.dradgo.domain.integration.repohost.PullRequestRef;
@@ -306,6 +312,360 @@ public class GitHubRealAdapter implements RepositoryHostAdapter {
         prRef,
         elapsedMs(startedAt));
     return CommentResult.POSTED;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // CI status read (story 3h-5, AC1/AC5, Decision 7) — check-runs for a pushed commit + failure
+  // annotations. Reuses getOrEmptyOnNotFound + inspectRateLimit + classify verbatim; NEVER retries
+  // (the scheduled CiStatusPollingService owns the retry budget).
+  // ---------------------------------------------------------------------------------------------
+
+  /** GitHub completed-conclusion values that mean the check failed (drives the FAILURE verdict). */
+  private static final Set<String> FAILING_CONCLUSIONS = Set.of("failure", "timed_out");
+
+  /**
+   * {@code action_required} means the check awaits a MANUAL operator action (a required
+   * deployment/environment approval, a GitHub App requesting authorization) — NOT a code defect.
+   * Story 3h-5 (3rd review, Decision 2 — CI is informational/non-blocking): mapping it to FAILURE
+   * would drive the bounded auto-fix loop the agent can never satisfy until the cap escalates, so
+   * it is treated as inconclusive → NEUTRAL and WARNed distinctly so the manual gate stays visible.
+   */
+  private static final Set<String> MANUAL_ACTION_CONCLUSIONS = Set.of("action_required");
+
+  /** Completed conclusions that are inconclusive (no CI value) when nothing failed → NEUTRAL. */
+  private static final Set<String> INCONCLUSIVE_CONCLUSIONS = Set.of("cancelled", "stale");
+
+  /**
+   * Completed conclusions that PASS (contribute neither a failure nor an inconclusive verdict). Any
+   * completed conclusion outside {@link #FAILING_CONCLUSIONS}, {@link #INCONCLUSIVE_CONCLUSIONS},
+   * and this set is UNKNOWN — treated conservatively as inconclusive (never silently green) and
+   * WARNed, so a new failing-type conclusion GitHub introduces later surfaces instead of counting
+   * as success.
+   */
+  private static final Set<String> SUCCESS_CONCLUSIONS = Set.of("success", "skipped", "neutral");
+
+  /**
+   * Page budget for the {@code check-runs} list (per_page=100 → up to 1000 checks, GitHub's
+   * documented per-ref ceiling). Story 3h-5 review: a single un-paginated page silently computed
+   * the verdict over a partial set when {@code total_count > 100}, so failing/pending checks beyond
+   * the first page were missed (false SUCCESS). We now walk pages until every reported check is
+   * read.
+   */
+  private static final int MAX_CHECK_RUNS_PAGES = 10;
+
+  /** Bound the composed failure body — first N failure annotations, ≤ this many bytes. */
+  private static final int MAX_FAILURE_ANNOTATIONS = 50;
+
+  private static final int MAX_FAILURE_TEXT_BYTES = 64 * 1024;
+
+  private static final String TRUNCATION_SUFFIX = "\n…(truncated)";
+
+  @Override
+  public CiStatus readCheckRuns(RepositoryRef repoRefValue, String ref) {
+    Objects.requireNonNull(repoRefValue, "repo");
+    Objects.requireNonNull(ref, "ref");
+    if (ref.isBlank()) {
+      throw new RepositoryHostAdapterException(
+          IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
+          "GitHub readCheckRuns: ref (commit SHA) must be non-blank");
+    }
+    ParsedRepoRef repo = parseRepoRef(repoRefValue.value());
+    long startedAt = System.nanoTime();
+
+    // GET /repos/{owner}/{repo}/commits/{ref}/check-runs?filter=latest&per_page=100
+    // The `ref` is the pushed commit SHA (RepositoryPushOutcome.commitSha()). filter=latest returns
+    // only the most recent run per (app, name). per_page max is 100; with more than 1000 check
+    // suites on a ref only the 1000 most recent are returned (documented GitHub ceiling).
+    // Paginate the check-runs list: page 1 keeps the original query (no `page` param) so existing
+    // callers/fixtures are byte-identical; only total_count>100 walks further pages. filter=latest
+    // returns one run per (app, name).
+    List<JsonNode> checkRuns = new ArrayList<>();
+    int totalCount = 0;
+    for (int page = 1; page <= MAX_CHECK_RUNS_PAGES; page++) {
+      String query =
+          page == 1 ? "filter=latest&per_page=100" : "filter=latest&per_page=100&page=" + page;
+      URI checkRunsUri =
+          UriComponentsBuilder.fromPath("")
+              .pathSegment("repos", repo.owner(), repo.name(), "commits", ref, "check-runs")
+              .query(query)
+              .build()
+              .encode()
+              .toUri();
+      JsonNode body =
+          getOrEmptyOnNotFound(
+                  checkRunsUri, "readCheckRuns", IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND)
+              .orElseThrow(
+                  () ->
+                      new RepositoryHostAdapterException(
+                          IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND,
+                          "GitHub readCheckRuns: repository/ref not found for repoRef="
+                              + repoRefValue.value()));
+      if (page == 1) {
+        totalCount = body.path("total_count").asInt(0);
+      }
+      JsonNode pageRuns = body.path("check_runs");
+      if (!pageRuns.isArray() || pageRuns.isEmpty()) {
+        break;
+      }
+      pageRuns.forEach(checkRuns::add);
+      if (checkRuns.size() >= totalCount) {
+        break;
+      }
+    }
+    if (totalCount == 0 || checkRuns.isEmpty()) {
+      // No CI configured / registered on this ref — never loop, stop polling.
+      log.info(
+          "github_real read_check_runs repoRef={} ref={} conclusion=neutral reason=no_checks "
+              + "durationMs={}",
+          repoRefValue.value(),
+          ref,
+          elapsedMs(startedAt));
+      return new CiStatus(CiConclusion.NEUTRAL, ref, List.of());
+    }
+    boolean paginationTruncated = checkRuns.size() < totalCount;
+    if (paginationTruncated) {
+      // Ran out of the page budget before collecting every reported check — WARN (no silent
+      // truncation) and compute the verdict over what we have. A still-pending or failed check
+      // among the collected set keeps the run polling / loops as usual; but if the collected set is
+      // ALL green we must NOT report a terminal SUCCESS, because an unread check beyond the budget
+      // may have failed and we cannot see it — fall through to PENDING to force another poll.
+      log.warn(
+          "github_real read_check_runs repoRef={} ref={} reason=check_runs_pagination_truncated "
+              + "collected={} totalCount={}",
+          repoRefValue.value(),
+          ref,
+          checkRuns.size(),
+          totalCount);
+    }
+
+    boolean anyPending = false;
+    boolean anyFailure = false;
+    boolean anyInconclusive = false;
+    List<JsonNode> failedRuns = new ArrayList<>();
+    for (JsonNode run : checkRuns) {
+      String status = run.path("status").asText("");
+      if (!"completed".equals(status)) {
+        anyPending = true;
+        continue;
+      }
+      String conclusion = run.path("conclusion").asText("");
+      if (FAILING_CONCLUSIONS.contains(conclusion)) {
+        anyFailure = true;
+        failedRuns.add(run);
+      } else if (SUCCESS_CONCLUSIONS.contains(conclusion)) {
+        // Passing — contributes neither a failure nor an inconclusive verdict.
+        continue;
+      } else if (MANUAL_ACTION_CONCLUSIONS.contains(conclusion)) {
+        // Awaiting a manual operator action — non-blocking, never a fixable failure. Treat as
+        // inconclusive (NEUTRAL) and WARN distinctly so the manual gate is visible in logs.
+        anyInconclusive = true;
+        log.warn(
+            "github_real read_check_runs repoRef={} ref={} reason=action_required_non_blocking "
+                + "check={}",
+            repoRefValue.value(),
+            ref,
+            run.path("name").asText(""));
+      } else {
+        // cancelled/stale (known inconclusive) OR an unrecognized/future conclusion. Treat as
+        // inconclusive (never silently green); WARN on a value we do not recognize so a new
+        // failing-type conclusion GitHub adds later surfaces instead of counting as success.
+        anyInconclusive = true;
+        if (!INCONCLUSIVE_CONCLUSIONS.contains(conclusion)) {
+          log.warn(
+              "github_real read_check_runs repoRef={} ref={} reason=unknown_conclusion "
+                  + "conclusion={} check={}",
+              repoRefValue.value(),
+              ref,
+              conclusion,
+              run.path("name").asText(""));
+        }
+      }
+    }
+
+    // Precedence (story 3h-5 Task 3): a still-running check keeps the whole verdict PENDING even if
+    // a sibling already failed — we wait for completion before declaring FAILURE (avoids a
+    // premature
+    // re-dispatch that a later-passing check would race).
+    if (anyPending) {
+      log.info(
+          "github_real read_check_runs repoRef={} ref={} conclusion=pending durationMs={}",
+          repoRefValue.value(),
+          ref,
+          elapsedMs(startedAt));
+      return new CiStatus(CiConclusion.PENDING, ref, List.of());
+    }
+    if (anyFailure) {
+      List<CiCheck> checks = new ArrayList<>();
+      for (JsonNode run : failedRuns) {
+        checks.add(toFailedCiCheck(repo, run));
+      }
+      log.info(
+          "github_real read_check_runs repoRef={} ref={} conclusion=failure failedChecks={} "
+              + "durationMs={}",
+          repoRefValue.value(),
+          ref,
+          checks.size(),
+          elapsedMs(startedAt));
+      return new CiStatus(CiConclusion.FAILURE, ref, checks);
+    }
+    if (anyInconclusive) {
+      log.info(
+          "github_real read_check_runs repoRef={} ref={} conclusion=neutral reason=cancelled_stale "
+              + "durationMs={}",
+          repoRefValue.value(),
+          ref,
+          elapsedMs(startedAt));
+      return new CiStatus(CiConclusion.NEUTRAL, ref, List.of());
+    }
+    if (paginationTruncated) {
+      // All collected checks passed, but the page budget was exhausted — an unread check could
+      // still be failing. Report PENDING (not a terminal SUCCESS) so the sweep polls again rather
+      // than dropping a possibly-red ref as green.
+      log.warn(
+          "github_real read_check_runs repoRef={} ref={} conclusion=pending "
+              + "reason=all_collected_green_but_truncated durationMs={}",
+          repoRefValue.value(),
+          ref,
+          elapsedMs(startedAt));
+      return new CiStatus(CiConclusion.PENDING, ref, List.of());
+    }
+    log.info(
+        "github_real read_check_runs repoRef={} ref={} conclusion=success durationMs={}",
+        repoRefValue.value(),
+        ref,
+        elapsedMs(startedAt));
+    return new CiStatus(CiConclusion.SUCCESS, ref, List.of());
+  }
+
+  /**
+   * Compose a bounded, redaction-bound failure body for a failed check run from its {@code output}
+   * ({@code title}/{@code summary}/{@code text}) plus its {@code failure}-level annotations. The
+   * annotation fetch happens only for failed runs. Never logs the composed bytes — only their
+   * length. The composed text is redaction-policed downstream when it lands as a CI
+   * runner_executions raw output (story 3h-5 AC5).
+   */
+  private CiCheck toFailedCiCheck(ParsedRepoRef repo, JsonNode run) {
+    String name = run.path("name").asText("");
+    String conclusion = run.path("conclusion").asText("");
+    String detailsUrl = optText(run, "details_url");
+    JsonNode output = run.path("output");
+    String title = optText(output, "title");
+    String summary = optText(output, "summary");
+    String text = optText(output, "text");
+    long checkRunId = run.path("id").asLong(-1L);
+
+    StringBuilder body = new StringBuilder();
+    appendIfPresent(body, "check", name);
+    appendIfPresent(body, "conclusion", conclusion);
+    appendIfPresent(body, "title", title);
+    appendIfPresent(body, "summary", summary);
+    appendIfPresent(body, "text", text);
+
+    if (checkRunId >= 0) {
+      List<String> failureAnnotations = fetchFailureAnnotations(repo, checkRunId);
+      if (!failureAnnotations.isEmpty()) {
+        body.append("annotations:\n");
+        for (String annotation : failureAnnotations) {
+          body.append("  ").append(annotation).append('\n');
+        }
+      }
+    }
+
+    String failureText = boundBytes(body.toString());
+    log.info(
+        "github_real read_check_runs failed_check repoRef={}/{} check={} failureTextBytes={}",
+        repo.owner(),
+        repo.name(),
+        name,
+        failureText.getBytes(StandardCharsets.UTF_8).length);
+    return new CiCheck(
+        name.isBlank() ? "unnamed-check" : name, conclusion, detailsUrl, summary, failureText);
+  }
+
+  /**
+   * GET /repos/{owner}/{repo}/check-runs/{id}/annotations, keeping only {@code annotation_level ==
+   * "failure"} and rendering each as {@code path:start_line — message}. Bounded to the first {@link
+   * #MAX_FAILURE_ANNOTATIONS}. A read failure here degrades to an empty list (the check
+   * title/summary/text already carry a usable body) — the sweep's retry budget covers the run as a
+   * whole.
+   */
+  private List<String> fetchFailureAnnotations(ParsedRepoRef repo, long checkRunId) {
+    URI annotationsUri =
+        UriComponentsBuilder.fromPath("")
+            .pathSegment(
+                "repos",
+                repo.owner(),
+                repo.name(),
+                "check-runs",
+                String.valueOf(checkRunId),
+                "annotations")
+            .query("per_page=100")
+            .build()
+            .encode()
+            .toUri();
+    Optional<JsonNode> body =
+        getOrEmptyOnNotFound(
+            annotationsUri,
+            "readCheckRunAnnotations",
+            IntegrationFailureCategory.GITHUB_REPO_NOT_FOUND);
+    if (body.isEmpty() || !body.get().isArray()) {
+      return List.of();
+    }
+    List<String> failures = new ArrayList<>();
+    for (JsonNode annotation : body.get()) {
+      if (!"failure".equals(annotation.path("annotation_level").asText(""))) {
+        continue;
+      }
+      String path = optText(annotation, "path");
+      long startLine = annotation.path("start_line").asLong(-1L);
+      String message = optText(annotation, "message");
+      StringBuilder rendered = new StringBuilder();
+      rendered.append(path.isBlank() ? "(unknown)" : path);
+      if (startLine >= 0) {
+        rendered.append(':').append(startLine);
+      }
+      if (!message.isBlank()) {
+        rendered.append(" — ").append(message);
+      }
+      failures.add(rendered.toString());
+      if (failures.size() >= MAX_FAILURE_ANNOTATIONS) {
+        break;
+      }
+    }
+    return failures;
+  }
+
+  private static void appendIfPresent(StringBuilder body, String label, String value) {
+    if (value != null && !value.isBlank()) {
+      body.append(label).append(": ").append(value).append('\n');
+    }
+  }
+
+  private static String optText(JsonNode node, String field) {
+    JsonNode value = node.path(field);
+    return value.isMissingNode() || value.isNull() ? "" : value.asText("");
+  }
+
+  /**
+   * Truncate to at most {@link #MAX_FAILURE_TEXT_BYTES} UTF-8 bytes INCLUDING the truncation suffix
+   * (whole-char safe). Reserves the suffix's byte budget before trimming so the returned string
+   * never exceeds the cap.
+   */
+  private static String boundBytes(String value) {
+    byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+    if (bytes.length <= MAX_FAILURE_TEXT_BYTES) {
+      return value;
+    }
+    // Trim by characters until under the byte budget (UTF-8 chars are ≤ 4 bytes; the loop
+    // converges). Reserve the suffix bytes so value + suffix stays within MAX_FAILURE_TEXT_BYTES.
+    int budget =
+        Math.max(
+            0, MAX_FAILURE_TEXT_BYTES - TRUNCATION_SUFFIX.getBytes(StandardCharsets.UTF_8).length);
+    String truncated = value;
+    while (truncated.getBytes(StandardCharsets.UTF_8).length > budget && !truncated.isEmpty()) {
+      truncated = truncated.substring(0, truncated.length() - Math.max(1, truncated.length() / 16));
+    }
+    return truncated + TRUNCATION_SUFFIX;
   }
 
   @Override

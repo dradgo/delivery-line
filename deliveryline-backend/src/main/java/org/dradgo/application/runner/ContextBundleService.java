@@ -1347,6 +1347,15 @@ public class ContextBundleService {
             // referenced LINT execution's already-captured, redacted findings/raw-output are the
             // body — NEVER inlined (the 256 KB reference-by-id invariant holds).
             references.add(new PriorFeedbackReference(execution.publicId(), "lint.findings"));
+          } else if (execution.stage() == RunnerStage.CI) {
+            // Story 3h-5 (Task 8, AC2/AC5) — thread prior CI-build failures into the regenerated
+            // execution bundle so the re-dispatched implementation runner (via the CI fix loop)
+            // sees
+            // why CI went red. Reference-by-id ONLY (kind "ci.failure"): the referenced CI
+            // execution's already-captured, redacted check-run output + failure annotations are the
+            // body — NEVER inlined (the 256 KB reference-by-id invariant holds). The runner prompt
+            // treats ci.failure like build.failure (no runner-image / runner.mjs / mock change).
+            references.add(new PriorFeedbackReference(execution.publicId(), "ci.failure"));
           }
         }
       }

@@ -51,5 +51,7 @@ class RepositoryHostCapabilitiesTest {
     assertTrue(caps.supportsBranchProtection(), "GitHub supports branch protection");
     assertTrue(caps.supportsForkPushes(), "GitHub supports fork pushes");
     assertTrue(caps.supportsRequiredStatusChecks(), "GitHub supports required status checks");
+    // Story 3h-5 (AC1) — the 6th capability component: GitHub supports CI status reads.
+    assertTrue(caps.supportsCiStatusReads(), "GitHub supports CI status reads");
   }
 }

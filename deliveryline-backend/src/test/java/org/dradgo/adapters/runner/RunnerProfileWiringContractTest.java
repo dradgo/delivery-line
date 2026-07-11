@@ -134,6 +134,16 @@ class RunnerProfileWiringContractTest {
       return Mockito.mock(org.dradgo.application.runner.RunnerExecutionService.class);
     }
 
+    // DinD Testcontainers Task 6/8: under runners.docker the scanned docker sub-package now
+    // includes
+    // DindSidecarService (@Component @Profile("runners.docker")), wired into the adapter via the
+    // optional setter and needing TestcontainersProperties. Wiring-only slice → the defaults()
+    // instance satisfies it (mirrors the secrets + capture beans above).
+    @Bean
+    org.dradgo.application.runner.TestcontainersProperties testcontainersProperties() {
+      return org.dradgo.application.runner.TestcontainersProperties.defaults();
+    }
+
     @Bean
     RunnerProperties runnerProperties() {
       return RunnerProperties.defaults();

@@ -90,4 +90,10 @@ public record UpdateProjectRequest(
                 "Story 3h-4 — whether a pull/merge request is created wherever the push fires, "
                     + "full-replace on update. Default true (pre-3h parity).",
             example = "true")
-        Boolean autoCreatePullRequest) {}
+        Boolean autoCreatePullRequest,
+    @Schema(
+            description =
+                "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this "
+                    + "project's runs, editable here. Default false (pre-task-4 parity).",
+            example = "false")
+        boolean testcontainersEnabled) {}

@@ -80,6 +80,11 @@ public record ProjectResponse(
             description =
                 "Story 3h-4 — whether a pull/merge request is created wherever the push fires.")
         boolean autoCreatePullRequest,
+    @Schema(
+            description =
+                "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this "
+                    + "project's runs.")
+        boolean testcontainersEnabled,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -110,6 +115,7 @@ public record ProjectResponse(
         project.lintCommands(),
         project.pushMode().value(),
         project.autoCreatePullRequest(),
+        project.testcontainersEnabled(),
         project.createdAt(),
         credentials,
         allowedActions);

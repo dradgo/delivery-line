@@ -265,6 +265,15 @@ class WorkflowTransitionTableTest {
         FailureCategory.RUNNER_SECRET_LEAK,
         "runner secret leak");
 
+    // A pre-dispatch testcontainers-infra failure fails the run from EXECUTING like any runner
+    // failure (the sidecar could not be provisioned for an opted-in run).
+    table.assertTransitionAllowed(
+        "run_demo1234",
+        WorkflowState.EXECUTING,
+        WorkflowState.FAILED,
+        FailureCategory.TESTCONTAINERS_INFRA_FAILED,
+        "testcontainers sidecar unavailable");
+
     DomainException missingCategory =
         assertThrows(
             DomainException.class,

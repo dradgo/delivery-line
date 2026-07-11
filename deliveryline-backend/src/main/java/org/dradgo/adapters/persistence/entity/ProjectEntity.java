@@ -126,6 +126,12 @@ public class ProjectEntity {
   @Column(name = "archived_at")
   private OffsetDateTime archivedAt;
 
+  // Task 4 (DinD Testcontainers sidecar) — per-project opt-in for a dockerd sidecar during a run
+  // (V40). NOT NULL boolean, default false ⇒ pre-task-4 parity (no sidecar), mirrors
+  // openspec_enabled/build_stage_enabled/lint_stage_enabled.
+  @Column(name = "testcontainers_enabled", nullable = false)
+  private boolean testcontainersEnabled;
+
   public Long getId() {
     return id;
   }
@@ -280,5 +286,13 @@ public class ProjectEntity {
 
   public void setArchivedAt(OffsetDateTime archivedAt) {
     this.archivedAt = archivedAt;
+  }
+
+  public boolean isTestcontainersEnabled() {
+    return testcontainersEnabled;
+  }
+
+  public void setTestcontainersEnabled(boolean testcontainersEnabled) {
+    this.testcontainersEnabled = testcontainersEnabled;
   }
 }

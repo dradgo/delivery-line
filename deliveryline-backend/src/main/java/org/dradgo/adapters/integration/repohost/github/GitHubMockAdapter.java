@@ -14,6 +14,9 @@ import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CiCheck;
+import org.dradgo.domain.integration.repohost.CiConclusion;
+import org.dradgo.domain.integration.repohost.CiStatus;
 import org.dradgo.domain.integration.repohost.CommentResult;
 import org.dradgo.domain.integration.repohost.PullRequest;
 import org.dradgo.domain.integration.repohost.PullRequestRef;
@@ -215,6 +218,59 @@ public class GitHubMockAdapter implements RepositoryHostAdapter {
         prRef,
         fingerprint);
     return CommentResult.POSTED;
+  }
+
+  @Override
+  public CiStatus readCheckRuns(RepositoryRef repo, String ref) {
+    Objects.requireNonNull(repo, "repo");
+    Objects.requireNonNull(ref, "ref");
+    if (ref.isBlank()) {
+      // Parity with GitHubRealAdapter.readCheckRuns — a blank commit SHA is a caller bug, not a
+      // green build; the mock must surface it identically instead of returning SUCCESS.
+      throw new RepositoryHostAdapterException(
+          IntegrationFailureCategory.GITHUB_NETWORK_FAILURE,
+          "GitHub readCheckRuns: ref (commit SHA) must be non-blank");
+    }
+    // Story 3h-5 (AC5) — deterministic red build whose body carries a planted GitHub PAT, so the
+    // capture path's redaction can be asserted end-to-end on the persisted CI raw output. Kept
+    // separate from the plain red sentinel so the happy red-loop fixtures stay secret-free.
+    if (GitHubMockScenarioRegistry.CI_RED_WITH_SECRET_HEAD_SHA.equals(ref)) {
+      CiCheck failed =
+          new CiCheck(
+              "ci-build",
+              "failure",
+              "https://github.com/" + repo.value() + "/runs/2",
+              "1 failing check",
+              "check: ci-build\n"
+                  + "conclusion: failure\n"
+                  + "title: Build failed\n"
+                  + "text: build log leaked ghp_1234567890abcdef1234567890abcdef1234\n");
+      log.warn(
+          "github_mock read_check_runs repoRef={} ref={} conclusion=failure", repo.value(), ref);
+      return new CiStatus(CiConclusion.FAILURE, ref, List.of(failed));
+    }
+    // Story 3h-5 (AC1) — deterministic verdict: the CI_RED_HEAD_SHA sentinel returns a red build
+    // (one failing check + one fixture failure annotation); every other ref is green. No
+    // wall-clock,
+    // no network, no randomness — parity with the real adapter's shape.
+    if (GitHubMockScenarioRegistry.CI_RED_HEAD_SHA.equals(ref)) {
+      CiCheck failed =
+          new CiCheck(
+              "ci-build",
+              "failure",
+              "https://github.com/" + repo.value() + "/runs/1",
+              "1 failing check",
+              "check: ci-build\n"
+                  + "conclusion: failure\n"
+                  + "title: Build failed\n"
+                  + "annotations:\n"
+                  + "  src/main/java/Example.java:12 — cannot find symbol");
+      log.warn(
+          "github_mock read_check_runs repoRef={} ref={} conclusion=failure", repo.value(), ref);
+      return new CiStatus(CiConclusion.FAILURE, ref, List.of(failed));
+    }
+    log.info("github_mock read_check_runs repoRef={} ref={} conclusion=success", repo.value(), ref);
+    return new CiStatus(CiConclusion.SUCCESS, ref, List.of());
   }
 
   @Override

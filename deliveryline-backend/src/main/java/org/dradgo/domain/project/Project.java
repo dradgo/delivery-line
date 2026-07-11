@@ -85,7 +85,65 @@ public record Project(
     // pre-3h parity (a PR is created wherever the push fires). Detached POJO fields — safe on the
     // worker thread (no lazy proxy).
     PushMode pushMode,
-    boolean autoCreatePullRequest) {
+    boolean autoCreatePullRequest,
+    // Task 4 (DinD Testcontainers sidecar) — per-project opt-in for a dockerd sidecar during a run.
+    // Plain boolean, default false ⇒ pre-task-4 parity (no sidecar). Mirrors openspecEnabled/
+    // buildStageEnabled/lintStageEnabled: a plain flag with no validation, read on the worker
+    // thread
+    // (detached POJO, no lazy proxy) by ProjectRuntimeConfigResolver.resolveTestcontainersEnabled.
+    boolean testcontainersEnabled) {
+
+  /**
+   * Back-compat constructor for the pre-task-4 20-arg shape (canonical through {@code
+   * autoCreatePullRequest}) — defaults {@code testcontainersEnabled} to {@code false} (no sidecar,
+   * pre-task-4 parity). Keeps the existing 20-arg {@code new Project(...)} call sites (tests,
+   * resolver fixtures) compiling unchanged; only the create/update/persistence/seed paths that
+   * actually carry the testcontainers flag use the full 21-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled,
+      List<String> lintCommands,
+      boolean lintStageEnabled,
+      PushMode pushMode,
+      boolean autoCreatePullRequest) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        lintCommands,
+        lintStageEnabled,
+        pushMode,
+        autoCreatePullRequest,
+        false);
+  }
 
   /**
    * Back-compat constructor for the pre-3e-4 13-arg shape — defaults {@code stepRunnerKinds} to an

@@ -12,6 +12,7 @@ import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Network;
 import com.github.dockerjava.api.model.StreamType;
 import com.github.dockerjava.api.model.Volume;
 import java.io.ByteArrayOutputStream;
@@ -502,6 +503,31 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
         labelKey,
         labelValuePrefix,
         out.size());
+    return out;
+  }
+
+  @Override
+  public List<DockerHostPort.NetworkInfo> listNetworksByLabel(String labelKey) {
+    Objects.requireNonNull(labelKey, "labelKey");
+    // Label presence match applied client-side after the engine returns the network set (mirrors
+    // listContainersByLabel's client-side value-prefix filtering; keeps this off any version-
+    // specific ListNetworksCmd filter API). The label value carries the owning runnerExecutionId,
+    // which the dind sweep correlates to a run row.
+    List<Network> networks = client.listNetworksCmd().exec();
+    if (networks == null || networks.isEmpty()) {
+      log.info("docker network ls --filter label={} matches=0", labelKey);
+      return List.of();
+    }
+    List<DockerHostPort.NetworkInfo> out = new ArrayList<>(networks.size());
+    for (Network network : networks) {
+      Map<String, String> labels = network.getLabels();
+      String rex = labels == null ? null : labels.get(labelKey);
+      if (rex == null) {
+        continue;
+      }
+      out.add(new DockerHostPort.NetworkInfo(network.getId(), network.getName(), rex));
+    }
+    log.info("docker network ls --filter label={} matches={}", labelKey, out.size());
     return out;
   }
 

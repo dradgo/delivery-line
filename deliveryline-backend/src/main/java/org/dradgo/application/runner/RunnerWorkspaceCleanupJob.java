@@ -39,6 +39,10 @@ public class RunnerWorkspaceCleanupJob {
 
   private static final String LABEL_KEY = "deliveryline.runnerExecutionId";
   private static final String LABEL_VALUE_PREFIX = "rex_";
+  // DinD Testcontainers Task 7 — the per-run dockerd sidecar carries deliveryline.dind=<rex>, and
+  // its bridge network deliveryline-net-<rex> carries the same label; the dind sweep reaps both
+  // when their run row is terminal/gone.
+  private static final String DIND_LABEL_KEY = "deliveryline.dind";
 
   private final RunnerExecutionRecordPort recordPort;
   private final RunnerWorkspaceStore workspaceStore;
@@ -69,12 +73,20 @@ public class RunnerWorkspaceCleanupJob {
     int workspacesDeleted = sweepWorkspaces();
     int orphanDirsPreserved = sweepWorkspaceOrphanDirs();
     int danglingContainersRemoved = sweepDanglingContainers();
-    int total = workspacesDeleted + orphanDirsPreserved + danglingContainersRemoved;
+    // DinD Testcontainers Task 7 — normal-completion backstop for the per-run dockerd sidecars +
+    // networks (the DockerRunnerAdapter only tears down on cancel / dispatch-failure; a run that
+    // completes normally leaves its sidecar for this sweep to reap). Runs AFTER the
+    // runner-container
+    // sweep — independent label space, order not load-bearing.
+    int danglingDindReaped = sweepDanglingDind();
+    int total =
+        workspacesDeleted + orphanDirsPreserved + danglingContainersRemoved + danglingDindReaped;
     log.info(
-        "workspace cleanup tick done workspacesDeleted={} orphanDirsPreserved={} danglingContainersRemoved={}",
+        "workspace cleanup tick done workspacesDeleted={} orphanDirsPreserved={} danglingContainersRemoved={} danglingDindReaped={}",
         workspacesDeleted,
         orphanDirsPreserved,
-        danglingContainersRemoved);
+        danglingContainersRemoved,
+        danglingDindReaped);
     return total;
   }
 
@@ -239,6 +251,145 @@ public class RunnerWorkspaceCleanupJob {
       }
     }
     return removed;
+  }
+
+  /**
+   * DinD Testcontainers Task 7 — reap orphan per-run dockerd sidecars ({@code
+   * deliveryline.dind=rex_*}) and their per-run bridge networks ({@code deliveryline-net-rex_*})
+   * whose run row is terminal or gone. Sidecars are stopped+removed BEFORE their networks (a
+   * network cannot be removed while a container is still attached). Best-effort + per-resource
+   * guarded like the sibling sweeps; a still-active (PENDING/RUNNING) run's resources are
+   * preserved, and an uncorrelatable (invalid-id label) resource is preserved rather than destroyed
+   * (Trap-T7 posture, mirroring {@link #sweepDanglingContainers}). Returns the count of resources
+   * reaped (sidecars + networks). No-op under {@code runners.mock} (no {@link DockerHostPort}
+   * bean).
+   *
+   * <p>Unlike {@link #sweepDanglingContainers}, this sweep needs NO min-age grace guard: the
+   * sidecar is provisioned inside {@code DockerRunnerAdapter.dispatch} only on the queue-worker
+   * path, which runs off a row the queue already leased with a committed {@code RUNNING} status —
+   * so a just-provisioned sidecar always has a present+active row ({@code isStillActive} ⇒
+   * preserved) and can never be seen as row-gone mid-provision (the dispatch→row-insert race the
+   * container guard defends against does not exist here because the row precedes provision rather
+   * than following it).
+   */
+  public int sweepDanglingDind() {
+    DockerHostPort docker = dockerHostPortProvider.getIfAvailable();
+    if (docker == null) {
+      return 0;
+    }
+    int reaped = 0;
+    // Sidecars first: a network cannot be removed while a container is attached to it.
+    List<DockerHostPort.DanglingContainerInfo> sidecars;
+    try {
+      sidecars = docker.listContainersByLabel(DIND_LABEL_KEY, LABEL_VALUE_PREFIX);
+    } catch (RuntimeException error) {
+      log.warn("sweepDanglingDind sidecar list failure cause={}", error.toString());
+      sidecars = List.of();
+    }
+    for (DockerHostPort.DanglingContainerInfo sidecar : sidecars) {
+      try {
+        RowLookup lookup = safeFindRow(sidecar.runnerExecutionId());
+        if (!lookup.correlatable()) {
+          // Uncorrelatable label value (invalid public id) — preserve, do not destroy.
+          log.warn(
+              "dind sidecar sweep skip containerId={} reason=invalid_id labelValue={}",
+              sidecar.containerId(),
+              sidecar.runnerExecutionId());
+          continue;
+        }
+        if (lookup.row().isPresent() && isStillActive(lookup.row().get())) {
+          continue;
+        }
+        String status = sidecar.status();
+        boolean running =
+            status != null
+                && ("running".equals(status)
+                    || "paused".equals(status)
+                    || "restarting".equals(status)
+                    || "unknown".equals(status));
+        if (running) {
+          docker.stopContainer(sidecar.containerId(), Duration.ofSeconds(10L));
+          // force=true: avoid the brief stop→rm 409 race for a container that was still running.
+          docker.removeContainer(sidecar.containerId(), true);
+        } else {
+          docker.removeContainer(sidecar.containerId(), false);
+        }
+        log.info(
+            "dind sidecar reaped runnerExecutionId={} containerId={} status={}",
+            sidecar.runnerExecutionId(),
+            sidecar.containerId(),
+            sidecar.status());
+        reaped++;
+      } catch (RuntimeException error) {
+        log.warn(
+            "dind sidecar sweep best-effort failure runnerExecutionId={} containerId={} cause={}",
+            sidecar.runnerExecutionId(),
+            sidecar.containerId(),
+            error.toString());
+      }
+    }
+    // Then orphan networks whose run row is gone/terminal.
+    List<DockerHostPort.NetworkInfo> networks;
+    try {
+      networks = docker.listNetworksByLabel(DIND_LABEL_KEY);
+    } catch (RuntimeException error) {
+      log.warn("sweepDanglingDind network list failure cause={}", error.toString());
+      networks = List.of();
+    }
+    for (DockerHostPort.NetworkInfo network : networks) {
+      try {
+        RowLookup lookup = safeFindRow(network.labelValue());
+        if (!lookup.correlatable()) {
+          log.warn(
+              "dind network sweep skip network={} reason=invalid_id labelValue={}",
+              network.name(),
+              network.labelValue());
+          continue;
+        }
+        if (lookup.row().isPresent() && isStillActive(lookup.row().get())) {
+          continue;
+        }
+        docker.removeNetwork(network.name());
+        log.info(
+            "dind network reaped runnerExecutionId={} network={}",
+            network.labelValue(),
+            network.name());
+        reaped++;
+      } catch (RuntimeException error) {
+        log.warn(
+            "dind network sweep best-effort failure network={} cause={}",
+            network.name(),
+            error.toString());
+      }
+    }
+    return reaped;
+  }
+
+  /**
+   * Look up the run row for a {@code deliveryline.dind} label value. The three-valued result is
+   * deliberate: {@code correlatable=false} ⇒ an UNCORRELATABLE label value (an invalid public id
+   * that {@link RunnerExecutionRecordPort#findByPublicId} rejects) which the sweep treats as
+   * preserve-not-destroy; {@code correlatable=true} with an empty {@code row} ⇒ the row is
+   * genuinely gone (reapable); a present {@code row} ⇒ inspect its status. Modeled as an explicit
+   * result rather than a nullable {@link Optional} so the uncorrelatable signal cannot be confused
+   * with a genuinely-empty lookup.
+   */
+  private RowLookup safeFindRow(String rexId) {
+    try {
+      return RowLookup.correlated(recordPort.findByPublicId(rexId));
+    } catch (DomainException invalidId) {
+      return RowLookup.uncorrelatable();
+    }
+  }
+
+  private record RowLookup(boolean correlatable, Optional<RunnerExecutionSnapshot> row) {
+    static RowLookup uncorrelatable() {
+      return new RowLookup(false, Optional.empty());
+    }
+
+    static RowLookup correlated(Optional<RunnerExecutionSnapshot> row) {
+      return new RowLookup(true, row);
+    }
   }
 
   private static boolean isStillActive(RunnerExecutionSnapshot row) {

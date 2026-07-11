@@ -17,6 +17,10 @@ package org.dradgo.domain.integration.repohost;
  *   <li>{@code supportsForkPushes} — the host accepts pushes from forks.
  *   <li>{@code supportsRequiredStatusChecks} — the host enforces required status checks before
  *       merge.
+ *   <li>{@code supportsCiStatusReads} — the host exposes a readable CI build verdict for a pushed
+ *       commit ({@code readCheckRuns}). Story 3h-5 (FR79): {@code true} for GitHub (Actions /
+ *       check-runs), {@code false} for the GitLab stub and (until story 3i-3 AC2 lands) Bitbucket.
+ *       The scheduled CI-investigation sweep gates every poll on this flag.
  * </ul>
  */
 public record RepositoryHostCapabilities(
@@ -24,14 +28,16 @@ public record RepositoryHostCapabilities(
     boolean supportsPullRequestComments,
     boolean supportsBranchProtection,
     boolean supportsForkPushes,
-    boolean supportsRequiredStatusChecks) {
+    boolean supportsRequiredStatusChecks,
+    boolean supportsCiStatusReads) {
 
   /**
    * The GitHub capability set — GitHub supports draft PRs, PR comments, branch protection, fork
-   * pushes, and required status checks, so all five are {@code true} today.
+   * pushes, required status checks, and CI status reads (story 3h-5), so all six are {@code true}
+   * today.
    */
   public static RepositoryHostCapabilities githubDefaults() {
-    return new RepositoryHostCapabilities(true, true, true, true, true);
+    return new RepositoryHostCapabilities(true, true, true, true, true, true);
   }
 
   /**
@@ -42,11 +48,12 @@ public record RepositoryHostCapabilities(
    * It does support PR comments, branch restrictions (branch protection), fork pushes, and
    * merge/required-status checks.
    *
-   * <p>{@code supportsCiStatusReads} (the Pipelines CI read) is deliberately absent — that flag and
-   * the CI-checks port are story 3h-5's deliverable, and AC2 of this story is split forward until
-   * 3h-5 merges (Dev Notes §0). When AC2 lands it flips on here.
+   * <p>{@code supportsCiStatusReads} (the Pipelines CI read) is {@code false} — story 3h-5 landed
+   * the CI-checks port and this 6th capability component, but the Bitbucket <em>Pipelines</em>
+   * reader is story 3i-3 AC2, split forward until it merges (Dev Notes §0). When 3i-3 AC2 lands it
+   * flips to {@code true} here.
    */
   public static RepositoryHostCapabilities bitbucketDefaults() {
-    return new RepositoryHostCapabilities(false, true, true, true, true);
+    return new RepositoryHostCapabilities(false, true, true, true, true, false);
   }
 }

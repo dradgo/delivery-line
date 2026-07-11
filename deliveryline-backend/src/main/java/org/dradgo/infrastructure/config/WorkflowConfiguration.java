@@ -4,6 +4,7 @@ import org.dradgo.application.workflow.ArchiveProperties;
 import org.dradgo.application.workflow.ComplexTicketFlowProperties;
 import org.dradgo.application.workflow.RollupSweepProperties;
 import org.dradgo.application.workflow.WorkflowProperties;
+import org.dradgo.application.workflow.ci.CiInvestigationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -20,6 +21,7 @@ import org.springframework.context.annotation.Configuration;
   WorkflowProperties.class,
   ArchiveProperties.class,
   ComplexTicketFlowProperties.class,
-  RollupSweepProperties.class
+  RollupSweepProperties.class,
+  CiInvestigationProperties.class
 })
 public class WorkflowConfiguration {}

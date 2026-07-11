@@ -1348,6 +1348,11 @@ export interface components {
             stepRunnerKinds?: {
                 [key: string]: string;
             } | null;
+            /**
+             * @description Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs. Default false (pre-task-4 parity, no sidecar).
+             * @example false
+             */
+            testcontainersEnabled?: boolean;
             /** @example linear */
             ticketSourceKind: string;
         };
@@ -1748,6 +1753,8 @@ export interface components {
             stepRunnerKinds?: {
                 [key: string]: string;
             };
+            /** @description Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs. */
+            testcontainersEnabled?: boolean;
             /**
              * @description Ticket-source connector kind.
              * @example linear
@@ -2209,6 +2216,11 @@ export interface components {
             stepRunnerKinds?: {
                 [key: string]: string;
             } | null;
+            /**
+             * @description Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs, editable here. Default false (pre-task-4 parity).
+             * @example false
+             */
+            testcontainersEnabled?: boolean;
             /** @example linear */
             ticketSourceKind: string;
         };
@@ -2224,6 +2236,27 @@ export interface components {
         WorkflowDetail: {
             /** @description Child workflow run public ids for this parent run. */
             childRunIds?: string[];
+            /**
+             * @description Whether the run's repository host enforces required status checks (RepositoryHostCapabilities.supportsRequiredStatusChecks, story 3h-5 AC3). False when the host is unknown.
+             * @example true
+             */
+            ciChecksEnforced?: boolean;
+            /**
+             * Format: int32
+             * @description How many bounded CI fix attempts this run has accumulated (story 3h-5). 0 when no red CI has been investigated.
+             * @example 0
+             */
+            ciFixLoopCount?: number;
+            /**
+             * @description The pushed commit SHA the CI verdict was read for (story 3h-5). Null when never stamped.
+             * @example a1b2c3d4
+             */
+            ciHeadSha?: string | null;
+            /**
+             * @description Latest CI build verdict for this run's pushed commit (story 3h-5, FR79): pending/success/failure/neutral/unavailable. Null when the run was never pushed or the repo host does not support CI status reads.
+             * @example pending
+             */
+            ciStatus?: string | null;
             currentActorIdentity?: string;
             currentActorType?: string;
             /** @example WaitingForSpecApproval */

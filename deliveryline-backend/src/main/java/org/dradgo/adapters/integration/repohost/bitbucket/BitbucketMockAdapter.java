@@ -14,6 +14,7 @@ import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CiStatus;
 import org.dradgo.domain.integration.repohost.CommentResult;
 import org.dradgo.domain.integration.repohost.PullRequest;
 import org.dradgo.domain.integration.repohost.PullRequestRef;
@@ -82,6 +83,19 @@ public class BitbucketMockAdapter implements RepositoryHostAdapter {
   @Override
   public RepositoryHostCapabilities getCapabilities() {
     return RepositoryHostCapabilities.bitbucketDefaults();
+  }
+
+  @Override
+  public CiStatus readCheckRuns(RepositoryRef repo, String ref) {
+    Objects.requireNonNull(repo, "repo");
+    // Story 3h-5 (AC1) — bitbucketDefaults() reports supportsCiStatusReads=false; capability-gating
+    // callers never reach here. The Bitbucket Pipelines reader is story 3i-3 AC2 (split forward);
+    // until then a typed not-implemented signal, never a fabricated verdict.
+    throw new RepositoryHostAdapterException(
+        IntegrationFailureCategory.SYNC_FAILURE,
+        "bitbucket_mock readCheckRuns: Pipelines CI read is not implemented yet (story 3i-3 AC2) "
+            + "for repoRef="
+            + repo.value());
   }
 
   @Override

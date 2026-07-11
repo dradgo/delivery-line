@@ -35,7 +35,51 @@ public record UpdateProjectCommand(
     // ProjectManagementService.parsePushMode (null ⇒ AUTO). autoCreatePullRequest full-replaces.
     String pushMode,
     boolean autoCreatePullRequest,
+    // Task 4 (DinD Testcontainers sidecar) — per-project opt-in for a dockerd sidecar during a run,
+    // editable here. Default false ⇒ no sidecar (pre-task-4 parity); full-replace on update.
+    boolean testcontainersEnabled,
     String actorIdentity) {
+
+  /**
+   * Task 4 back-compat overload for the pre-task-4 15-arg shape (canonical through {@code
+   * autoCreatePullRequest}) — defaults {@code testcontainersEnabled} to {@code false}. Keeps
+   * existing 15-arg callers (delivery update tests) compiling unchanged.
+   */
+  public UpdateProjectCommand(
+      String name,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      String reviewerModelKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      boolean buildStageEnabled,
+      String buildCommand,
+      boolean lintStageEnabled,
+      java.util.List<String> lintCommands,
+      String pushMode,
+      boolean autoCreatePullRequest,
+      String actorIdentity) {
+    this(
+        name,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        reviewerModelKind,
+        stepRunnerKinds,
+        buildStageEnabled,
+        buildCommand,
+        lintStageEnabled,
+        lintCommands,
+        pushMode,
+        autoCreatePullRequest,
+        false,
+        actorIdentity);
+  }
+
   public UpdateProjectCommand(
       String name,
       String repositoryUrl,

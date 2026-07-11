@@ -123,7 +123,9 @@ public class ProjectManagementService {
             // Story 3h-4 (AC1) — per-project delivery config from the create command (null pushMode
             // ⇒ AUTO; autoCreatePullRequest is a plain boolean).
             parsePushMode(command.pushMode()),
-            command.autoCreatePullRequest());
+            command.autoCreatePullRequest(),
+            // Task 4 (DinD Testcontainers sidecar) — per-project opt-in from the create command.
+            command.testcontainersEnabled());
     Project created = projectStore.insert(project);
     log.info(
         "project created projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -183,7 +185,10 @@ public class ProjectManagementService {
             // Story 3h-4 (AC1) — delivery config is editable; full-replace from the update command
             // (null pushMode ⇒ AUTO).
             parsePushMode(command.pushMode()),
-            command.autoCreatePullRequest());
+            command.autoCreatePullRequest(),
+            // Task 4 (DinD Testcontainers sidecar) — editable; full-replace from the update
+            // command.
+            command.testcontainersEnabled());
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -250,7 +255,11 @@ public class ProjectManagementService {
             // Story 3h-4 — preserve delivery config across a status-only change (the back-compat
             // 18-arg ctor would default it to (AUTO,true) and silently wipe a non-auto mode).
             existing.pushMode(),
-            existing.autoCreatePullRequest());
+            existing.autoCreatePullRequest(),
+            // Task 4 — preserve the testcontainers flag across a status-only change (the
+            // back-compat
+            // 20-arg ctor would default it to false and silently wipe it).
+            existing.testcontainersEnabled());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -296,7 +305,9 @@ public class ProjectManagementService {
             existing.lintStageEnabled(),
             // Story 3h-4 — preserve delivery config across the status-only re-enable.
             existing.pushMode(),
-            existing.autoCreatePullRequest());
+            existing.autoCreatePullRequest(),
+            // Task 4 — preserve the testcontainers flag across the status-only re-enable.
+            existing.testcontainersEnabled());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",

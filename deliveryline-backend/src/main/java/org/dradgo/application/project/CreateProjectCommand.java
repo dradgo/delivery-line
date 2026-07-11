@@ -40,8 +40,54 @@ public record CreateProjectCommand(
     // TRUE ⇒ a PR is created (pre-3h parity). No enum validation on the boolean.
     String pushMode,
     boolean autoCreatePullRequest,
+    // Task 4 (DinD Testcontainers sidecar) — per-project opt-in for a dockerd sidecar during a run.
+    // Default false ⇒ no sidecar (pre-task-4 parity). No enum validation on the boolean.
+    boolean testcontainersEnabled,
     String idempotencyKey,
     String actorIdentity) {
+
+  /**
+   * Task 4 back-compat overload for the pre-task-4 16-arg shape (canonical through {@code
+   * autoCreatePullRequest}) — defaults {@code testcontainersEnabled} to {@code false}. Keeps
+   * existing 16-arg callers (delivery create tests) compiling unchanged.
+   */
+  public CreateProjectCommand(
+      String name,
+      String slug,
+      String repositoryUrl,
+      String ticketSourceKind,
+      String repoHostKind,
+      boolean openspecEnabled,
+      String runnerKind,
+      java.util.Map<String, String> stepRunnerKinds,
+      boolean buildStageEnabled,
+      String buildCommand,
+      boolean lintStageEnabled,
+      java.util.List<String> lintCommands,
+      String pushMode,
+      boolean autoCreatePullRequest,
+      String idempotencyKey,
+      String actorIdentity) {
+    this(
+        name,
+        slug,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        runnerKind,
+        stepRunnerKinds,
+        buildStageEnabled,
+        buildCommand,
+        lintStageEnabled,
+        lintCommands,
+        pushMode,
+        autoCreatePullRequest,
+        false,
+        idempotencyKey,
+        actorIdentity);
+  }
+
   public CreateProjectCommand(
       String name,
       String slug,

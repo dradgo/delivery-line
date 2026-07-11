@@ -82,7 +82,35 @@ public record WorkflowDetailResponse(
                     + " 3g-4, FR74). Null when no step reported tokens.",
             nullable = true,
             example = "12345")
-        Integer totalTokens) {
+        Integer totalTokens,
+    @Schema(
+            description =
+                "Latest CI build verdict for this run's pushed commit (story 3h-5, FR79):"
+                    + " pending/success/failure/neutral/unavailable. Null when the run was never"
+                    + " pushed or the repo host does not support CI status reads.",
+            nullable = true,
+            example = "pending")
+        String ciStatus,
+    @Schema(
+            description =
+                "The pushed commit SHA the CI verdict was read for (story 3h-5). Null when never"
+                    + " stamped.",
+            nullable = true,
+            example = "a1b2c3d4")
+        String ciHeadSha,
+    @Schema(
+            description =
+                "How many bounded CI fix attempts this run has accumulated (story 3h-5). 0 when no"
+                    + " red CI has been investigated.",
+            example = "0")
+        int ciFixLoopCount,
+    @Schema(
+            description =
+                "Whether the run's repository host enforces required status checks"
+                    + " (RepositoryHostCapabilities.supportsRequiredStatusChecks, story 3h-5 AC3)."
+                    + " False when the host is unknown.",
+            example = "true")
+        boolean ciChecksEnforced) {
 
   public static WorkflowDetailResponse from(WorkflowStatusView view) {
     return new WorkflowDetailResponse(
@@ -111,7 +139,11 @@ public record WorkflowDetailResponse(
         view.projectSlug(),
         RunDependencies.from(view.dependencyGraph()),
         view.decompositionStatus(),
-        view.totalTokens());
+        view.totalTokens(),
+        view.ciStatus(),
+        view.ciHeadSha(),
+        view.ciFixLoopCount(),
+        view.ciChecksEnforced());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

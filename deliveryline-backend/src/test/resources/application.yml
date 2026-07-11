@@ -154,6 +154,11 @@ deliveryline:
     # @Value default of :true would already bind this, but pin explicitly since this file
     # already pins the other runner keys.
     maven-cache-enabled: true
+    # Per-run DinD Testcontainers sidecar (only used when a project has testcontainers-enabled=true).
+    testcontainers:
+      dind-image: docker:27-dind
+      memory-bytes: 2147483648   # 2 GiB cap on the privileged sidecar
+      readiness-timeout: 60s
     # Story 3.1 — under tests, override the Docker runner image tags to a stable, tiny
     # image (alpine:3.20) so docker-runner ITs do not depend on the not-yet-built
     # Codex / Claude images (stories 3.3 / 3.4). The fast tier never activates the

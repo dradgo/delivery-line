@@ -5,6 +5,7 @@ import java.util.concurrent.Executors;
 import org.dradgo.application.runner.RunnerBroker;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerWorkerPoolProperties;
+import org.dradgo.application.runner.TestcontainersProperties;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -28,7 +29,11 @@ import org.springframework.scheduling.annotation.Scheduled;
  * </ul>
  */
 @Configuration
-@EnableConfigurationProperties({RunnerProperties.class, RunnerWorkerPoolProperties.class})
+@EnableConfigurationProperties({
+  RunnerProperties.class,
+  RunnerWorkerPoolProperties.class,
+  TestcontainersProperties.class
+})
 @EnableScheduling
 public class RunnerConfiguration {
 

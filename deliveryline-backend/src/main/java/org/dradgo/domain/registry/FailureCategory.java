@@ -16,6 +16,10 @@ public enum FailureCategory implements RegistryValue {
   // row)
   // for Epic-4 recovery; NOT DomainErrorCode-shaped (no ProblemDetails / SQL CHECK / API manifest).
   RUNNER_BUILD_FAILED("runner_build_failed"),
+  // Per-run testcontainers dockerd sidecar could not be provisioned (network/sidecar create or
+  // readiness timeout) for an opted-in execution run. Carried on the terminal FAILED transition for
+  // Epic-4 recovery; retryable. NOT DomainErrorCode-shaped.
+  TESTCONTAINERS_INFRA_FAILED("testcontainers_infra_failed"),
   ORPHAN("orphan");
 
   private static final Map<String, FailureCategory> LOOKUP = RegistryParsers.index(values());

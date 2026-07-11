@@ -25,7 +25,9 @@ public final class WorkflowTransitionTable {
           // A post-execution workspace secret leak (RunnerBroker.onResult) fails the run from
           // EXECUTING or INVESTIGATING. Omitting it here made driveWorkflowFailed swallow the
           // resulting ILLEGAL_TRANSITION, stranding leaked-secret runs in EXECUTING forever.
-          FailureCategory.RUNNER_SECRET_LEAK);
+          FailureCategory.RUNNER_SECRET_LEAK,
+          // A pre-dispatch testcontainers-infra failure fails the run from EXECUTING/INVESTIGATING.
+          FailureCategory.TESTCONTAINERS_INFRA_FAILED);
 
   private final Map<WorkflowState, Set<WorkflowState>> allowedTargets;
 

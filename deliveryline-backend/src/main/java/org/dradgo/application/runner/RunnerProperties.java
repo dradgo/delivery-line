@@ -222,6 +222,15 @@ public record RunnerProperties(
           throw new IllegalStateException(
               "kindForStage must not be called for RunnerStage.LINT; the lint stage runs "
                   + "backend-side via BuildCommandPort and is never runner-kind dispatched");
+      // Story 3h-5 (AC2, Decision 3) — CI runs BACKEND-SIDE (an HTTP read of the repository host's
+      // check-runs via RepositoryHostAdapter.readCheckRuns + the CiStatusPollingService sweep),
+      // never through the Docker runner, so it is NEVER runner-kind dispatched. Reaching here for
+      // CI is a routing bug — fail loud (same posture as REVIEW/BUILD/LINT).
+      case CI ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.CI; the CI stage runs "
+                  + "backend-side via RepositoryHostAdapter.readCheckRuns and is never "
+                  + "runner-kind dispatched");
     };
   }
 

@@ -150,6 +150,13 @@ public class RunnerBroker {
   // there is no construction cycle to break.
   private java.util.function.Supplier<org.dradgo.application.workflow.DeliveryGateService>
       deliveryGateServiceSupplier = () -> null;
+  // Story 3h-5 (AC2/AC4) — stamps ci_status='pending' after a successful backend push, resolved
+  // LAZILY via optional SETTER injection (an ObjectProvider) so NONE of the broker's ctor sites
+  // change (the same lint/delivery-gate precedent). Supplies null in lean test contexts, so
+  // mock/no-CI dispatches run the tail unchanged (nothing stamped ⇒ the sweep finds nothing). The
+  // capability gate + defensive probe live in CiPollStampService, not here.
+  private java.util.function.Supplier<org.dradgo.application.workflow.ci.CiPollStampService>
+      ciPollStampServiceSupplier = () -> null;
   // Story 3.10 (OQ-1) — resolves the run's Linear ticketRef for the EXECUTION-stage deterministic
   // branch (story 3.9 AC2) so prepareWorkspace checks out the right branch and captureAndPush
   // pushes
@@ -545,6 +552,20 @@ public class RunnerBroker {
     this.deliveryGateServiceSupplier = provider::getIfAvailable;
   }
 
+  /**
+   * Story 3h-5 (AC2/AC4) — optional setter injection of the CI-poll stamp service (via an {@link
+   * org.springframework.beans.factory.ObjectProvider} so the resolution is lazy + absent-tolerant).
+   * Keeps every broker ctor site untouched; production Spring wires the {@code CiPollStampService}
+   * bean, lean test contexts leave the default {@code () -> null} (no stamp ⇒ tail unchanged).
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setCiPollStampServiceProvider(
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.ci.CiPollStampService>
+          provider) {
+    this.ciPollStampServiceSupplier = provider::getIfAvailable;
+  }
+
   // Story 3a-1 test ctor (repo seam + a resolved orchestration instance) — wraps the instance in a
   // Supplier and delegates to the Supplier-based ctor above. Lets unit tests pass a mock
   // orchestration directly without constructing an ObjectProvider.
@@ -879,7 +900,10 @@ public class RunnerBroker {
               resolvedTicketRef,
               executionSubStage,
               // Story 3c-7 (AC2) — per-run OpenSpec opt-in resolved from the run's Project.
-              resolveDispatchOpenSpec(workflowRunId));
+              resolveDispatchOpenSpec(workflowRunId),
+              // DinD Testcontainers Task 6 — per-run testcontainers opt-in resolved from the run's
+              // Project.
+              resolveDispatchTestcontainers(workflowRunId));
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
 
       // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy
@@ -1182,7 +1206,10 @@ public class RunnerBroker {
                 composed.resolvedTicketRef(),
                 composed.executionSubStage(),
                 // Story 3c-7 (AC2) — per-run OpenSpec opt-in resolved from the run's Project.
-                resolveDispatchOpenSpec(workflowRunId));
+                resolveDispatchOpenSpec(workflowRunId),
+                // DinD Testcontainers Task 6 — per-run testcontainers opt-in resolved from the
+                // run's Project.
+                resolveDispatchTestcontainers(workflowRunId));
         // Story 3.19 (AC5) — time the adapter dispatch (histogram, tagged stage) + count
         // dispatches.
         io.micrometer.core.instrument.Timer.Sample dispatchSample =
@@ -1214,7 +1241,17 @@ public class RunnerBroker {
           idempotencyService.complete(
               idempotencyKey, runnerExecutionId, IdempotencyRecordStatus.FAILED);
         }
-        FailureCategory category = FailureCategory.RUNNER_CRASH;
+        // DinD Testcontainers Task 6 — a DockerRunnerAdapter dispatch failure is RUNNER_CRASH by
+        // default, EXCEPT when the adapter already knows the precise category (today: a
+        // pre-dispatch DinD sidecar provisioning failure), signalled via the typed
+        // RunnerDispatchException so it is recorded as TESTCONTAINERS_INFRA_FAILED instead of the
+        // generic crash bucket.
+        FailureCategory category =
+            dispatchError
+                    instanceof
+                    org.dradgo.application.runner.spi.RunnerDispatchException typedFailure
+                ? typedFailure.failureCategory()
+                : FailureCategory.RUNNER_CRASH;
         recordFailedBestEffort(runnerExecutionId, category);
         if (isReview) {
           // Story 3d-2 (AC6) — graceful degrade: a reviewer dispatch fault never strands the run.
@@ -1305,6 +1342,35 @@ public class RunnerBroker {
         project.publicId(),
         openspec);
     return openspec;
+  }
+
+  /**
+   * DinD Testcontainers Task 6 — the per-run testcontainers opt-in resolved from the run's Project
+   * via {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveTestcontainersEnabled} and
+   * threaded onto the {@link RunnerDispatchRequest} so {@code DockerRunnerAdapter} gates the DinD
+   * sidecar provisioning from {@code request.testcontainersEnabled()} — mirrors {@link
+   * #resolveDispatchOpenSpec} exactly (R2: resolve-in-broker, pass-via-request). The {@code
+   * default} project seeds {@code false} (no global fallback property exists for this flag), so a
+   * single-project deployment that never opts in stays byte-identical (no sidecar). Falls back to
+   * {@code false} only in the lean broker unit contexts where no resolver is wired.
+   */
+  private boolean resolveDispatchTestcontainers(String workflowRunId) {
+    if (projectRuntimeConfigResolver == null) {
+      log.info(
+          "testcontainers resolved workflowRunId={} projectId={} testcontainers=false"
+              + " source=no_resolver",
+          workflowRunId,
+          "none");
+      return false;
+    }
+    boolean testcontainers =
+        projectRuntimeConfigResolver.resolveTestcontainersEnabled(workflowRunId);
+    log.info(
+        "testcontainers resolved workflowRunId={} testcontainers={} source=run_project",
+        workflowRunId,
+        testcontainers);
+    return testcontainers;
   }
 
   /**
@@ -2467,6 +2533,11 @@ public class RunnerBroker {
           prOutputRunnerExecutionId);
     }
 
+    // Story 3h-5 (AC2/AC4) — the APPROVE-mode (lint-approve resume) delivery path: after a
+    // successful, changes-bearing backend push, stamp the run pending a CI poll (capability-gated
+    // inside the stamp service). A clean/no-op push or a manual project is never stamped.
+    stampCiPollPendingIfCommitted(workflowRunId, pushOutcome);
+
     // Enqueue the reviewer over the now-enriched artifact. The run is ALREADY WaitingForReview
     // (approve_lint transitioned it in-tx), so this only enqueues — no transition here.
     org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
@@ -2590,6 +2661,31 @@ public class RunnerBroker {
    * continuation (a broker-side lambda) can reach it; 3h-4 later moves this seam behind the
    * WaitingForDelivery gate — keep it a single clean call site.
    */
+  /**
+   * Story 3h-5 (AC2/AC4) — stamp {@code ci_status='pending'} after a successful backend push,
+   * shared by the two and only two backend-push tail sites ({@link
+   * #completeExecutionTailAndAdvance} auto / inline, {@link #resumeDeliveryTailFromGate}
+   * approve-mode resume). Only a changes-bearing push ({@code committed()==true}) is stamped; the
+   * capability gate + defensive probe live in {@code CiPollStampService}. A lean context with no
+   * stamp service wired is a no-op (tail unchanged).
+   */
+  private void stampCiPollPendingIfCommitted(
+      String workflowRunId,
+      Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome) {
+    org.dradgo.application.workflow.ci.CiPollStampService stamp = ciPollStampServiceSupplier.get();
+    if (stamp == null) {
+      return;
+    }
+    if (pushOutcome.isPresent() && pushOutcome.get().committed()) {
+      stamp.stampIfCapable(workflowRunId, pushOutcome.get().commitSha());
+    } else {
+      // Story 3h-5 review (D3): no new commit. If this run is mid CI-fix-loop, its re-dispatch
+      // produced nothing to re-poll — escalate the dead-end instead of leaving it silently parked
+      // red. A no-op for every non-CI-fix run (the common case).
+      stamp.escalateStalledCiFixIfNoCommit(workflowRunId);
+    }
+  }
+
   void completeExecutionTailAndAdvance(
       String runnerExecutionId,
       String workflowRunId,
@@ -2692,6 +2788,12 @@ public class RunnerBroker {
         runnerExecutionId,
         workflowRunId,
         artifactRefs.size());
+
+    // Story 3h-5 (AC2/AC4) — the AUTO/inline delivery path: after a successful, changes-bearing
+    // backend push, stamp the run pending a CI poll (capability-gated inside the stamp service). A
+    // clean/no-op push (committed()==false) or a manual project (never reaches this tail) is never
+    // stamped, so the sweep finds nothing (parity).
+    stampCiPollPendingIfCommitted(workflowRunId, pushOutcome);
 
     // Story 3a-1 (AC2/AC3 — the central gap): once the spec artifact for an INVESTIGATION-stage
     // execution is available + the execution is COMPLETED, delegate the terminal outcome to
@@ -3088,6 +3190,11 @@ public class RunnerBroker {
       // artifact (same as BUILD/REVIEW). LINT never flows through onResult/handleSuccess in the
       // backend-side model, so this empty set is a belt-and-braces guard.
       case LINT -> java.util.EnumSet.noneOf(ArtifactType.class);
+      // Story 3h-5 (AC2, Decision 3) — CI is a backend-side HTTP read; it emits NO artifacts-table
+      // artifact (same as BUILD/LINT/REVIEW). CI never flows through onResult/handleSuccess, so
+      // this
+      // empty set is a belt-and-braces guard.
+      case CI -> java.util.EnumSet.noneOf(ArtifactType.class);
     };
   }
 
@@ -4005,7 +4112,7 @@ public class RunnerBroker {
           // was harvested + built (then failed the gate), so a subsequent arrival is a duplicate.
           RUNNER_BUILD_FAILED ->
           true;
-      case RUNNER_CRASH, RUNNER_TIMEOUT, ORPHAN -> false;
+      case RUNNER_CRASH, RUNNER_TIMEOUT, ORPHAN, TESTCONTAINERS_INFRA_FAILED -> false;
     };
   }
 

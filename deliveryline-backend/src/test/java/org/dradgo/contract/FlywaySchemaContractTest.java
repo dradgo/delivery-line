@@ -575,6 +575,50 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void ciInvestigationColumnsConstraintsAndPartialIndexExist() {
+    // Story 3h-5 / V41: five CI-investigation columns on workflow_runs.
+    assertColumnType("workflow_runs", "ci_status", "text");
+    assertColumnNullable("workflow_runs", "ci_status", true);
+    assertColumnType("workflow_runs", "ci_head_sha", "text");
+    assertColumnNullable("workflow_runs", "ci_head_sha", true);
+    assertColumnType("workflow_runs", "ci_last_polled_at", "timestamp with time zone");
+    assertColumnNullable("workflow_runs", "ci_last_polled_at", true);
+    assertColumnType("workflow_runs", "ci_poll_attempts", "integer");
+    assertColumnNullable("workflow_runs", "ci_poll_attempts", false);
+    assertColumnType("workflow_runs", "ci_fix_loop_count", "integer");
+    assertColumnNullable("workflow_runs", "ci_fix_loop_count", false);
+
+    // Three CHECK constraints: the closed ci_status vocabulary + two non-negative guards.
+    assertConstraintDefinitionContains("ck_workflow_runs_ci_status", "ci_status");
+    assertConstraintDefinitionContains("ck_workflow_runs_ci_status", "pending");
+    assertConstraintDefinitionContains("ck_workflow_runs_ci_status", "success");
+    assertConstraintDefinitionContains("ck_workflow_runs_ci_status", "failure");
+    assertConstraintDefinitionContains("ck_workflow_runs_ci_status", "neutral");
+    assertConstraintDefinitionContains("ck_workflow_runs_ci_status", "unavailable");
+    assertConstraintDefinitionContains(
+        "ck_workflow_runs_ci_fix_loop_count_nonneg", "ci_fix_loop_count");
+    assertConstraintDefinitionContains(
+        "ck_workflow_runs_ci_poll_attempts_nonneg", "ci_poll_attempts");
+
+    // Partial index the sweep's keyset scan relies on: ci_status='pending' only.
+    List<Map<String, Object>> indexes =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'workflow_runs'
+              and indexname = 'ix_workflow_runs_ci_pending'
+            """);
+    assertEquals(
+        1, indexes.size(), () -> "V41 partial index ix_workflow_runs_ci_pending must exist");
+    String indexDef = (String) indexes.get(0).get("indexdef");
+    assertTrue(
+        indexDef.toLowerCase().contains("where") && indexDef.contains("'pending'"),
+        () -> "Index must be partial on ci_status='pending': " + indexDef);
+  }
+
+  @Test
   void flywayMigrateIsReplaySafeAndChecksumStable() {
     Integer appliedBefore =
         jdbcTemplate.queryForObject(

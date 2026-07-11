@@ -75,6 +75,22 @@ public class GitHubMockScenarioRegistry {
   public static final String REF_PR_CONFLICT = "PR-conflict";
 
   /**
+   * Story 3h-5 (AC1) — the deterministic commit-SHA sentinel that makes {@link
+   * GitHubMockAdapter#readCheckRuns} return a red CI verdict (one failing check with one fixture
+   * failure annotation). Any other ref returns a green {@code SUCCESS}. Tests seed a run with this
+   * as {@code ci_head_sha} to exercise the red path without touching the Behaviour enum.
+   */
+  public static final String CI_RED_HEAD_SHA = "ci-red";
+
+  /**
+   * Story 3h-5 (AC5) — a red-CI sentinel whose failing check-run body carries a planted secret (a
+   * GitHub PAT). Tests seed a run with this {@code ci_head_sha} to assert that the composed CI
+   * failure log is redaction-policed on the way into the persisted CI {@code runner_executions} raw
+   * output ({@code [REDACTED_GITHUB_TOKEN]}, never the token). [redaction-fixture-two-gates]
+   */
+  public static final String CI_RED_WITH_SECRET_HEAD_SHA = "ci-red-secret";
+
+  /**
    * The repository a {@link GitHubMockScenario.Behaviour#CONFLICT} PR deliberately points at — it
    * differs from any seeded happy repo so callers detect a {@code PR_REF_CONTEXT_MISMATCH} (AC4).
    */

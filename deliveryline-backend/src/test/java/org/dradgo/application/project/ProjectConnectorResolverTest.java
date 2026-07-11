@@ -169,7 +169,7 @@ class ProjectConnectorResolverTest {
     FakeRepoHost degradedRh =
         new FakeRepoHost(
             ConnectorKind.GITLAB,
-            new RepositoryHostCapabilities(false, false, false, false, false));
+            new RepositoryHostCapabilities(false, false, false, false, false, false));
     ProjectConnectorResolver resolver = resolver(List.of(degradedTs), List.of(degradedRh));
 
     TicketSourceAdapter ts =
@@ -563,6 +563,13 @@ class ProjectConnectorResolverTest {
     public org.dradgo.domain.integration.repohost.CommentResult commentOnPullRequest(
         PullRequestRef ref, String body) {
       return org.dradgo.domain.integration.repohost.CommentResult.SKIPPED_DUPLICATE;
+    }
+
+    @Override
+    public org.dradgo.domain.integration.repohost.CiStatus readCheckRuns(
+        RepositoryRef repo, String ref) {
+      throw new RepositoryHostAdapterException(
+          IntegrationFailureCategory.SYNC_FAILURE, "fake: not implemented");
     }
 
     @Override

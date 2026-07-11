@@ -190,7 +190,8 @@ public class RecommendationService {
 
   private static boolean isCautionRetryCategory(String failureCategory) {
     return FailureCategory.RUNNER_BUILD_FAILED.value().equals(failureCategory)
-        || FailureCategory.ORPHAN.value().equals(failureCategory);
+        || FailureCategory.ORPHAN.value().equals(failureCategory)
+        || FailureCategory.TESTCONTAINERS_INFRA_FAILED.value().equals(failureCategory);
   }
 
   private static String describeCategory(String failureCategory) {

@@ -184,7 +184,11 @@ public class DefaultProjectSeeder {
             lintStageEnabled,
             // Story 3h-4 (AC1) — seed delivery config from global props.
             pushMode,
-            autoCreatePullRequest);
+            autoCreatePullRequest,
+            // Task 4 (DinD Testcontainers sidecar) — the default project seeds no sidecar (no
+            // global config property exists for this flag; a project owner opts in per-project via
+            // the update surface).
+            false);
     try {
       Project seeded = projectStore.insert(defaultProject);
       log.info("seeded default project publicId={}", seeded.publicId());
