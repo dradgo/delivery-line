@@ -104,5 +104,9 @@ class WorkflowCommandTypeTest {
                 "reason",
                 org.dradgo.domain.registry.WorkflowState.INVESTIGATING)
             .commandType());
+    assertEquals(
+        "PauseWorkflowCommand",
+        new PauseWorkflowCommand("run_x", "alex", ActorType.HUMAN, "k", null, "reason")
+            .commandType());
   }
 }

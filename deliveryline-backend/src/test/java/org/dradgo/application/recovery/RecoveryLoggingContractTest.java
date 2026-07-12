@@ -84,6 +84,7 @@ class RecoveryLoggingContractTest {
   private IntegrationConflictService conflictService;
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
+  private org.dradgo.application.runner.spi.RunnerAdapter runnerAdapter;
 
   @BeforeEach
   void setUp() {
@@ -99,6 +100,7 @@ class RecoveryLoggingContractTest {
     conflictService = mock(IntegrationConflictService.class);
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
+    runnerAdapter = mock(org.dradgo.application.runner.spi.RunnerAdapter.class);
     service =
         new RecoveryService(
             runReadPort,
@@ -120,7 +122,8 @@ class RecoveryLoggingContractTest {
             callthroughTemplate(),
             mock(org.dradgo.application.approval.ApprovalService.class),
             mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class),
-            mock(org.dradgo.application.workflow.WorkflowTransitionService.class));
+            mock(org.dradgo.application.workflow.WorkflowTransitionService.class),
+            runnerAdapter);
 
     appender = new ListAppender<>();
     appender.start();
@@ -515,6 +518,112 @@ class RecoveryLoggingContractTest {
     assertTrue(rejected.getFormattedMessage().contains("workflowRunId=" + RUN));
     assertTrue(rejected.getFormattedMessage().contains("targetStep=investigating"));
     assertTrue(rejected.getFormattedMessage().contains("reason=ILLEGAL_TRANSITION"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.8 — pause log lines (start / success / replay / rejected).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void pauseHappyPathEmitsStartAndSuccessLogsAtInfoWithExpectedKeys() {
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 7L, 0, false)));
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(pauseActionSnapshot("rcv_pse-log1", "pending", null));
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(pauseActionSnapshot("rcv_pse-log1", "succeeded", "evt_pse-log1"));
+    when(runnerRecordPort.findByWorkflowRunPublicIdAndStatusIn(eq(RUN), any()))
+        .thenReturn(List.of());
+
+    service.pause(RUN, IDEMPOTENCY_KEY, ACTOR, "suspected config issue");
+
+    ILoggingEvent start = findFirst(Level.INFO, "recovery pause start");
+    assertTrue(start.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(start.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+    assertTrue(start.getFormattedMessage().contains("actorIdentity=" + ACTOR.actorIdentity()));
+
+    ILoggingEvent success = findFirst(Level.INFO, "recovery pause success");
+    assertTrue(success.getFormattedMessage().contains("recoveryActionId=rcv_pse-log1"));
+    assertTrue(success.getFormattedMessage().contains("priorState=Executing"));
+    assertTrue(success.getFormattedMessage().contains("cancelledInFlightCount=0"));
+    assertTrue(success.getFormattedMessage().contains("cancelledQueuedCount=0"));
+    assertTrue(success.getFormattedMessage().contains("durationMs="));
+
+    assertEquals(RUN, start.getMDCPropertyMap().get("workflowRunId"));
+    assertEquals(RUN, success.getMDCPropertyMap().get("workflowRunId"));
+
+    long errorCount =
+        appender.list.stream().filter(event -> event.getLevel() == Level.ERROR).count();
+    assertEquals(0L, errorCount, "RecoveryService.pause must not emit ERROR on the happy path");
+  }
+
+  @Test
+  void pauseReplayEmitsReplayLogAtInfoWithRecoveryActionIdAndIdempotencyKey() {
+    // The prior row MUST be a pause action — a cross-action key reuse (retry/resume/reconcile/
+    // takeover) is a conflict, never a pause replay (actionType-guarded Step 1 pre-check).
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY))
+        .thenReturn(
+            Optional.of(pauseActionSnapshot("rcv_pse-prior", "succeeded", "evt_pse-prior")));
+    when(eventReadPort.listByWorkflowRunPublicId(RUN, null))
+        .thenReturn(
+            List.of(
+                new WorkflowEventRecord(
+                    "evt_pse-prior",
+                    RUN,
+                    WorkflowEventType.RECOVERY_PAUSED,
+                    WorkflowState.EXECUTING,
+                    WorkflowState.PAUSED,
+                    ACTOR.actorIdentity(),
+                    ACTOR.actorType(),
+                    "suspected config issue",
+                    null,
+                    true,
+                    FIXED_NOW,
+                    Map.of())));
+
+    service.pause(RUN, IDEMPOTENCY_KEY, ACTOR, "suspected config issue");
+
+    ILoggingEvent replay = findFirst(Level.INFO, "recovery pause replay");
+    assertTrue(replay.getFormattedMessage().contains("recoveryActionId=rcv_pse-prior"));
+    assertTrue(replay.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+  }
+
+  @Test
+  void pauseOnNonPausableStateEmitsRejectedLogAtWarnWithReason() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.COMPLETED, null, 1L, 0, false)));
+
+    assertThrows(
+        DomainException.class,
+        () -> service.pause(RUN, IDEMPOTENCY_KEY, ACTOR, "suspected config issue"));
+
+    ILoggingEvent rejected = findFirst(Level.WARN, "recovery pause rejected");
+    assertTrue(rejected.getFormattedMessage().contains("workflowRunId=" + RUN));
+    // 4.8 review — the story's logging spec requires currentState on the rejected WARN.
+    assertTrue(
+        rejected.getFormattedMessage().contains("currentState=" + WorkflowState.COMPLETED.value()));
+    assertTrue(rejected.getFormattedMessage().contains("reason=PAUSE_NOT_APPLICABLE"));
+  }
+
+  private RecoveryActionSnapshot pauseActionSnapshot(
+      String publicId, String resultStatus, String resultingEventId) {
+    return new RecoveryActionSnapshot(
+        publicId,
+        1L,
+        RUN,
+        "pause",
+        "evt_trigger-aaaaa",
+        resultingEventId,
+        ACTOR.actorIdentity(),
+        ACTOR.actorType(),
+        IDEMPOTENCY_KEY,
+        resultStatus,
+        Instant.now().atOffset(ZoneOffset.UTC),
+        "workflow_owner");
   }
 
   private RecoveryActionSnapshot rerunActionSnapshot(

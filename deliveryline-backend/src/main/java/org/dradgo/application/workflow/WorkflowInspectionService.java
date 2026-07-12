@@ -1714,6 +1714,9 @@ public class WorkflowInspectionService {
           actions.add(AllowedAction.VIEW_RUNNER_LOGS);
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
             actions.add(AllowedAction.OPEN_DIAGNOSTIC_CONSOLE);
+            // Story 4.8 (AC10): pause is offered at every PAUSABLE_SOURCE_STATES arm for the
+            // workflow_owner gate role (canonical executor RecoveryService.pause).
+            actions.add(AllowedAction.PAUSE_WORKFLOW);
           }
           return List.copyOf(actions);
         }
@@ -1745,11 +1748,13 @@ public class WorkflowInspectionService {
           // + workflow_owner here). The run owner can also drive them; other recognized roles (e.g.
           // developer) keep the view + answer set only.
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
             return List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.ANSWER_CLARIFICATION,
                 AllowedAction.ACCEPT_CLARIFICATION,
-                AllowedAction.REGENERATE_SPEC);
+                AllowedAction.REGENERATE_SPEC,
+                AllowedAction.PAUSE_WORKFLOW);
           }
           return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
         }
@@ -1762,12 +1767,14 @@ public class WorkflowInspectionService {
         // live-container states where a container exists to attach; the endpoint re-checks liveness
         // at attach time (LIVE-ONLY, DD-3).
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
           return List.of(
               AllowedAction.VIEW_ONLY,
               AllowedAction.AWAIT_OUTCOME,
               AllowedAction.VIEW_RUNNER_LOGS,
               AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
-              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+              AllowedAction.PAUSE_WORKFLOW);
         }
         return List.of(
             AllowedAction.VIEW_ONLY,
@@ -1795,8 +1802,10 @@ public class WorkflowInspectionService {
         // if attempted — the flat action does not enumerate the sub-steps, that is story
         // 4.12/4.22).
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
           return List.of(
               AllowedAction.RERUN_FROM_STEP,
+              AllowedAction.PAUSE_WORKFLOW,
               AllowedAction.VIEW_ONLY,
               AllowedAction.VIEW_RUNNER_LOGS,
               AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
@@ -1811,10 +1820,17 @@ public class WorkflowInspectionService {
         // other role gets view_only. The endpoints that honor these land in 3d-4; 3d-3 only
         // registers + surfaces them so the run already advertises them when 3d-4 wires the routes.
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only). The
+          // parked awaiting_manual row is NOT cancelled by pause (Reconciliation 5) — while
+          // Paused, a manual-artifact submission gets a clean ILLEGAL_TRANSITION 409 from
+          // ManualArtifactSubmissionService's explicit current-state gate (4.8 review: the
+          // PAUSED → WaitingForSpecApproval/WaitingForReview resume edges made the transition
+          // itself legal, so the table alone no longer rejects it); the operator resumes first.
           return List.of(
               AllowedAction.OBTAIN_MANUAL_BUNDLE,
               AllowedAction.SUBMIT_MANUAL_ARTIFACT,
-              AllowedAction.VIEW_ONLY);
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.PAUSE_WORKFLOW);
         }
         return List.of(AllowedAction.VIEW_ONLY);
       case SPLIT:
@@ -1831,12 +1847,14 @@ public class WorkflowInspectionService {
         // ([recovery-bar-wrong-allowed-actions-role]); every other role gets view-only + the log/
         // usage views (the LINT + producing runner execution logs are a primary diagnostic here).
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
           return List.of(
               AllowedAction.APPROVE_LINT,
               AllowedAction.REQUEST_LINT_FIX,
               AllowedAction.VIEW_ONLY,
               AllowedAction.VIEW_RUNNER_LOGS,
-              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+              AllowedAction.PAUSE_WORKFLOW);
         }
         return List.of(
             AllowedAction.VIEW_ONLY,
@@ -1850,11 +1868,13 @@ public class WorkflowInspectionService {
         // usage views (the producing PR_OUTPUT runner execution logs are a primary diagnostic
         // here).
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
           return List.of(
               AllowedAction.APPROVE_DELIVERY,
               AllowedAction.VIEW_ONLY,
               AllowedAction.VIEW_RUNNER_LOGS,
-              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+              AllowedAction.PAUSE_WORKFLOW);
         }
         return List.of(
             AllowedAction.VIEW_ONLY,
@@ -1870,9 +1890,12 @@ public class WorkflowInspectionService {
             // Story 4.7 (AC10): rerun_from_step is surfaced alongside retry for the workflow_owner
             // (canonical executor RecoveryService.rerunFromStep). FAILED has a legal rerun edge to
             // both Investigating and Executing.
+            // Story 4.8 (AC10): + pause_workflow — FAILED is a MANDATORY pausable source (4.4's
+            // RecommendationService already advertises pause as safe on Failed runs).
             return List.of(
                 AllowedAction.RETRY,
                 AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS);

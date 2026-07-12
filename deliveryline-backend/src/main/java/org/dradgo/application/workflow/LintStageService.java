@@ -77,6 +77,7 @@ public class LintStageService {
   private final RunnerLogCaptureService logCaptureService;
   private final AfterCommitSideEffectRunner afterCommit;
   private final WorkflowTransitionService transitionService;
+  private final org.dradgo.application.workflow.spi.WorkflowRunReadPort workflowRunReadPort;
   private final LintFindingsClassifier classifier;
   private final RedactionPolicyService redactionPolicyService;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -96,6 +97,7 @@ public class LintStageService {
       RunnerLogCaptureService logCaptureService,
       AfterCommitSideEffectRunner afterCommit,
       WorkflowTransitionService transitionService,
+      org.dradgo.application.workflow.spi.WorkflowRunReadPort workflowRunReadPort,
       LintFindingsClassifier classifier,
       RedactionPolicyService redactionPolicyService,
       @Qualifier("lintStageExecutor") Executor lintExecutor) {
@@ -108,6 +110,7 @@ public class LintStageService {
     this.logCaptureService = logCaptureService;
     this.afterCommit = afterCommit;
     this.transitionService = transitionService;
+    this.workflowRunReadPort = workflowRunReadPort;
     this.classifier = classifier;
     this.redactionPolicyService = redactionPolicyService;
     this.lintExecutor = lintExecutor;
@@ -310,6 +313,13 @@ public class LintStageService {
    */
   private void parkForLintApproval(
       String workflowRunId, String prOutputRunnerExecutionId, String lintRunnerExecutionId) {
+    // Story 4.8 review — executor-as-gate: a stage success landing while the run is Paused must
+    // NOT park it (PAUSED → WaitingForLintApproval became a LEGAL resume edge, so the transition
+    // table alone no longer rejects it). Log + ignore, like the broker's late-result guard; the
+    // operator's resume owns the next transition.
+    if (isPausedIgnoringStageSuccess("lint-stage-park", workflowRunId, lintRunnerExecutionId)) {
+      return;
+    }
     // Finalize the producing PR_OUTPUT execution FIRST — it succeeded (only the backend-side LINT
     // gated) and is still `running` (its completion lives in the delivery tail that never ran). A
     // dangling running row would be timeout-reaped as RUNNER_TIMEOUT during the (possibly long)
@@ -323,6 +333,39 @@ public class LintStageService {
         "critical lint findings require operator approval",
         "lint-gate:" + workflowRunId,
         Map.of("runnerExecutionId", lintRunnerExecutionId));
+  }
+
+  // Story 4.8 review — shared paused-run guard for stage-success side effects (see
+  // parkForLintApproval). Reads the CURRENT committed state (this runs in the afterCommit hook's
+  // fresh tx, after the pause would have committed).
+  private boolean isPausedIgnoringStageSuccess(
+      String seam, String workflowRunId, String runnerExecutionId) {
+    boolean paused;
+    try {
+      paused =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .map(run -> run.currentState() == WorkflowState.PAUSED)
+              .orElse(false);
+    } catch (RuntimeException readError) {
+      // Best-effort: the guard must never break the park path. An unreadable run proceeds to the
+      // transition, whose own guards still apply.
+      log.warn(
+          "{} paused-guard read failed workflowRunId={} errorClass={} — proceeding",
+          seam,
+          workflowRunId,
+          readError.getClass().getSimpleName());
+      return false;
+    }
+    if (paused) {
+      log.warn(
+          "{} ignored workflowRunId={} runnerExecutionId={} reason=run_paused — stage success "
+              + "arrived while the run is Paused; operator resume owns the next transition",
+          seam,
+          workflowRunId,
+          runnerExecutionId);
+    }
+    return paused;
   }
 
   /**

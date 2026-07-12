@@ -24,7 +24,15 @@ public enum RunnerExecutionStatus implements RegistryValue {
   // and NO completed_at. It must NOT join ck_runner_executions_completed_correlation (exactly as
   // `queued` is excluded). The kind (`manual`) is carried by the manual.executionRequested event
   // detail, not a column (R3). On 3d-4 submission the row finalizes to `completed`.
-  AWAITING_MANUAL("awaiting_manual");
+  AWAITING_MANUAL("awaiting_manual"),
+  // Story 4.8 (AC4) — manual-pause terminal status, the reversible sibling of
+  // cancelled_for_takeover. When an operator pauses a run, every {queued, pending, running}
+  // runner_executions row is flipped HERE inside the pause prep transaction — the authoritative
+  // "stop dispatch" signal (invisible to dequeueNext's status='queued' lease AND the broker's
+  // ACTIVE_STATUSES = {pending, running}). Unlike takeover, an awaiting_manual parked row is NOT
+  // cancelled (pause is reversible; there is no re-park path on resume) and the status is EXCLUDED
+  // from the workspace-cleanup horizon (a paused run keeps its workspace for resume).
+  CANCELLED_FOR_PAUSE("cancelled_for_pause");
 
   private static final Map<String, RunnerExecutionStatus> LOOKUP = RegistryParsers.index(values());
 

@@ -30,6 +30,7 @@
     "approve_delivery",
     "resume_workflow",
     "reconcile_conflict",
-    "rerun_from_step"
+    "rerun_from_step",
+    "pause_workflow"
   ]
 }

@@ -643,6 +643,16 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Missing reason text",
         false);
+    // Story 4.8 (AC3) — pausing a run whose current state is outside the explicit
+    // PAUSABLE_SOURCE_STATES allow-list is a precondition mismatch on the run's state, not a
+    // transient fault; mirror RESUME_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The
+    // type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.PAUSE_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Pause not applicable",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

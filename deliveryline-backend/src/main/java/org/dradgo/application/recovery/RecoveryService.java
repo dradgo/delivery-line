@@ -4,12 +4,15 @@ import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.dradgo.application.approval.ApprovalService;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
@@ -26,11 +29,14 @@ import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.recovery.spi.RecoveryActionWriteCommand;
 import org.dradgo.application.runner.RunnerDispatchResult;
+import org.dradgo.application.runner.spi.RunnerAdapter;
+import org.dradgo.application.runner.spi.RunnerExecutionCancellation;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
 import org.dradgo.application.workflow.WorkflowTransitionService;
+import org.dradgo.application.workflow.commands.PauseWorkflowCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
 import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
@@ -69,15 +75,16 @@ import org.springframework.transaction.support.TransactionTemplate;
  * exposes {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
  * ActorContext, String)} (story 4.5), {@link #reconcile(String, String, String, ActorContext,
  * String, String)} (story 4.6), {@link #rerunFromStep(String, String, String, ActorContext,
- * String)} (story 4.7), and {@link #describeFailure(String)}. The former ArchUnit tripwire {@code
+ * String)} (story 4.7), {@link #pause(String, String, ActorContext, String)} (story 4.8), and
+ * {@link #describeFailure(String)}. The former ArchUnit tripwire {@code
  * RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper recovery surface
  * out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see {@code
  * docs/adr/0033-recovery-service-scope-lift.md}. The set of recovery methods allowed to land on
  * this service is now governed by that ADR's "what new scope is now allowed" list rather than by a
  * build-breaking rule; adding a method outside that list requires a new ADR (or updating 0033).
  *
- * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code pause(...)},
- * {@code classifyFailure(...)} — see the ADR 0033 (c) allow-list for the exhaustive set. {@code
+ * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code
+ * classifyFailure(...)} — see the ADR 0033 (c) allow-list for the exhaustive set. {@code
  * takeover(...)} lives on the sibling {@code DeveloperTakeoverService}, which remains ArchUnit
  * scope-protected.
  *
@@ -175,6 +182,8 @@ public class RecoveryService {
   // 'rerun_from_step' reconciles to 'rerun' (the finer semantic lives in the recovery.rerunFromStep
   // event + details.targetStep — no recovery_actions.details column, mirror 4.5/4.6).
   static final String ACTION_TYPE_RERUN = "rerun";
+  // Story 4.8 — the pre-reserved V1 recovery_actions CHECK slot for manual pause (no migration).
+  static final String ACTION_TYPE_PAUSE = "pause";
   static final String INVALIDATED_REASON_RERUN = "superseded_by_rerun_from_step";
   static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
   static final String RESULT_STATUS_PENDING = "pending";
@@ -208,6 +217,40 @@ public class RecoveryService {
   private static final List<WorkflowState> RERUN_SOURCE_STATES =
       List.of(WorkflowState.FAILED, WorkflowState.WAITING_FOR_REVIEW);
 
+  // Story 4.8 (AC3 / Reconciliation 1) — the EXPLICIT allow-list of pause source states, NOT the
+  // epic's literal "any non-terminal state" and deliberately NOT derived by subtracting
+  // TERMINAL_STATES (terminal-subtraction would silently re-admit the four excluded states below).
+  // INBOX / PLANNED / SPLIT / WAITING_FOR_DEPENDENCIES are EXCLUDED because an autonomous driver
+  // owns their out-edge and pausing them silently consumes a one-shot trigger
+  // (RunDependencyReleaseService fires WaitingForDependencies → Investigating exactly once; the
+  // 3f-7 rollup drives Split → Completed) — the run would wedge permanently. FAILED is MANDATORY:
+  // 4.4's RecommendationService already advertises `pause` as a safe action on Failed runs.
+  // Executor-as-gate current-state precondition (retry: != FAILED; resume: != PAUSED); every
+  // member has a symmetric → PAUSED / PAUSED → return edge pair in WorkflowTransitionTable
+  // (PauseTransitionSymmetryTest pins the invariant).
+  static final Set<WorkflowState> PAUSABLE_SOURCE_STATES =
+      Collections.unmodifiableSet(
+          EnumSet.of(
+              WorkflowState.INVESTIGATING,
+              WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+              WorkflowState.EXECUTING,
+              WorkflowState.WAITING_FOR_REVIEW,
+              WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+              WorkflowState.WAITING_FOR_LINT_APPROVAL,
+              WorkflowState.WAITING_FOR_DELIVERY,
+              WorkflowState.FAILED));
+
+  // Story 4.8 (AC4 / Reconciliation 5) — the dispatch-visible statuses pause scans and flips to
+  // cancelled_for_pause. Deliberately NARROWER than takeover's CANCEL_SCAN_STATUSES: an
+  // AWAITING_MANUAL parked row is NOT cancelled (pause is reversible; a cancelled manual park has
+  // no re-park path on resume, and the parked row is already invisible to the dequeuer and to
+  // ACTIVE_STATUSES). Resume from priorState=WaitingForManualExecution finds its park intact.
+  private static final List<RunnerExecutionStatus> PAUSE_CANCEL_SCAN_STATUSES =
+      List.of(
+          RunnerExecutionStatus.QUEUED,
+          RunnerExecutionStatus.PENDING,
+          RunnerExecutionStatus.RUNNING);
+
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
   private final RunnerExecutionRecordPort runnerExecutionRecordPort;
@@ -240,6 +283,11 @@ public class RecoveryService {
   // recoverable. Nullable in the resume/reconcile-only test constructors; rerunFromStep guards
   // non-null at call time (like approvalService/artifactRecordPort).
   private final WorkflowTransitionService workflowTransitionService;
+  // Story 4.8 (AC4) — pause's post-commit best-effort `docker stop` for previously-RUNNING rows
+  // (cancel never throws; DeveloperTakeoverService injects the same port). Nullable in the
+  // pre-pause
+  // test constructors; pause guards non-null at call time (like approvalService).
+  private final RunnerAdapter runnerAdapter;
   private final Clock clock;
   private final TransactionTemplate retryPrepTransactionTemplate;
   private final TransactionTemplate resultStatusTransactionTemplate;
@@ -263,6 +311,7 @@ public class RecoveryService {
       ApprovalService approvalService,
       ArtifactRecordPort artifactRecordPort,
       WorkflowTransitionService workflowTransitionService,
+      RunnerAdapter runnerAdapter,
       PlatformTransactionManager transactionManager) {
     this(
         workflowRunReadPort,
@@ -284,7 +333,8 @@ public class RecoveryService {
         requiresNewTemplate(transactionManager),
         approvalService,
         artifactRecordPort,
-        workflowTransitionService);
+        workflowTransitionService,
+        runnerAdapter);
   }
 
   RecoveryService(
@@ -326,7 +376,8 @@ public class RecoveryService {
         resultStatusTransactionTemplate,
         approvalService,
         artifactRecordPort,
-        workflowTransitionService);
+        workflowTransitionService,
+        null);
   }
 
   RecoveryService(
@@ -349,7 +400,8 @@ public class RecoveryService {
       TransactionTemplate resultStatusTransactionTemplate,
       ApprovalService approvalService,
       ArtifactRecordPort artifactRecordPort,
-      WorkflowTransitionService workflowTransitionService) {
+      WorkflowTransitionService workflowTransitionService,
+      RunnerAdapter runnerAdapter) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -381,6 +433,8 @@ public class RecoveryService {
     this.approvalService = approvalService;
     this.artifactRecordPort = artifactRecordPort;
     this.workflowTransitionService = workflowTransitionService;
+    // Nullable: the pre-pause test constructors pass null; pause guards non-null at call time.
+    this.runnerAdapter = runnerAdapter;
     this.clock = Objects.requireNonNull(clock, "clock");
     this.retryPrepTransactionTemplate =
         Objects.requireNonNull(retryPrepTransactionTemplate, "retryPrepTransactionTemplate");
@@ -1024,6 +1078,452 @@ public class RecoveryService {
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
+  }
+
+  /**
+   * Story 4.8 — manually pause a run for operator intervention (NFR5: pause when uncertain).
+   * Structural twin of {@link #resume} for the action shape and of {@code DeveloperTakeoverService}
+   * for the cancellation shape: MDC scope → idempotency validate → require reason (trimmed; BEFORE
+   * the replay pre-check — review R1) → replay pre-check (actionType-guarded {@code pause}) →
+   * explicit {@code PAUSABLE_SOURCE_STATES} current-state fast-path gate → resolve the triggering
+   * event <strong>BEFORE</strong> the prep tx (inside it the pause's own {@code
+   * WORKFLOW_STATE_CHANGED → Paused} would win the latest-event read) → REQUIRES_NEW prep tx (in-tx
+   * re-gate → transition via {@link WorkflowCommandService#pauseWorkflow} → read the authoritative
+   * priorState back off the transition event + flip every {@code {queued, pending, running}} runner
+   * row to {@code cancelled_for_pause} + append {@code recovery.paused} + insert {@code
+   * recovery_actions}) → post-commit best-effort {@code docker stop} for previously-RUNNING rows →
+   * {@code markSucceeded} → return. Differs from resume in: the target is the constant {@code
+   * Paused}; the prep tx cancels runner work instead of re-dispatching (so there is NO
+   * dispatch-failure compensation branch — pause enqueues nothing); and the linking event is the
+   * run's latest {@code WORKFLOW_STATE_CHANGED} (nullable, best-effort like reconcile). The DB
+   * status flip — not {@code docker stop} — is what makes pause hold: no poller filters on workflow
+   * state, so without the flip a paused run's {@code queued} row would still be leased by {@code
+   * DEQUEUE_SQL} and its in-flight row reaped by {@code scanForTimeouts}. Prior-state preservation
+   * for resume (4.5) is BY TRANSITION: the {@code WORKFLOW_STATE_CHANGED → Paused} event stamps the
+   * typed {@code priorState} resume reads; no detail key is added and resume is not repointed.
+   */
+  public PauseRecoveryResult pause(
+      String workflowRunId, String idempotencyKey, ActorContext actor, String reasonText) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(actor, "actor");
+    if (runnerAdapter == null) {
+      throw new IllegalStateException("RunnerAdapter is required for pause");
+    }
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(idempotencyKey);
+      long start = System.nanoTime();
+      log.info(
+          "recovery pause start workflowRunId={} idempotencyKey={} actorIdentity={}",
+          workflowRunId,
+          validatedIdempotencyKey,
+          actor.actorIdentity());
+
+      // Step 1 — pause requires an explicit reason (AC2) BEFORE the replay pre-check (review R1:
+      // reasonText composes the fingerprint identity — Reconciliation 9 — so a same-key retry
+      // that omits it is an invalid request, not a replay; letting a blank reason skip the replay
+      // discriminator gave the same key two different equality semantics). The transition table
+      // does NOT mandate a reason for → Paused, so this is a story-level guard (shared
+      // MISSING_REASON_TEXT, minted by 4.7). Trimmed so the stored audit rows and the replay
+      // comparison share the fingerprint's normalizeOptional semantics.
+      String effectiveReason = requirePauseReasonText(reasonText);
+
+      // Step 2 — replay pre-check. Guard on ACTION_TYPE_PAUSE so a prior
+      // retry/resume/reconcile/takeover row under the same key is a conflict, never a false pause
+      // replay (the 4.5 review catch — retry's Step 1 still lacks the guard; do not copy retry).
+      Optional<RecoveryActionSnapshot> priorAction =
+          recoveryActionRecordPort.findByIdempotencyKey(validatedIdempotencyKey);
+      if (priorAction.isPresent()) {
+        RecoveryActionSnapshot prior = priorAction.get();
+        if (!ACTION_TYPE_PAUSE.equals(prior.actionType())
+            || !workflowRunId.equals(prior.workflowRunPublicId())
+            || !RESULT_STATUS_SUCCEEDED.equals(prior.resultStatus())) {
+          throw idempotencyConflict(validatedIdempotencyKey, workflowRunId, prior);
+        }
+        return replayPauseResultOrConflict(
+            workflowRunId, effectiveReason, validatedIdempotencyKey, actor, prior);
+      }
+
+      // Step 3 — explicit allow-list current-state gate (Reconciliation 1). NOT terminal-
+      // subtraction: Inbox/Planned/Split/WaitingForDependencies are non-terminal but NOT pausable
+      // (an autonomous driver owns their out-edge; pausing consumes a one-shot trigger).
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+      WorkflowState sourceState = run.currentState();
+      if (!PAUSABLE_SOURCE_STATES.contains(sourceState)) {
+        // The outer catch (DomainException rejected) emits the single WARN with reason=<code>.
+        throw pauseNotApplicable(workflowRunId, sourceState);
+      }
+
+      // Step 4 — resolve the triggering event BEFORE the prep tx opens (ordering trap): inside the
+      // tx the pause's own transition appends its WORKFLOW_STATE_CHANGED → Paused FIRST, so a
+      // post-transition read would select the pause's own event as its own trigger. Nullable /
+      // best-effort like reconcile.
+      String triggeringEventPublicId =
+          workflowEventReadPort
+              .findLatestByWorkflowRunPublicIdAndEventTypeIn(
+                  workflowRunId, List.of(WorkflowEventType.WORKFLOW_STATE_CHANGED.value()))
+              .map(WorkflowEventRecord::publicId)
+              .orElse(null);
+
+      String correlationId = actor.correlationId();
+      PausePrep prep;
+      try {
+        prep =
+            retryPrepTransactionTemplate.execute(
+                status ->
+                    performPausePrep(
+                        workflowRunId,
+                        validatedIdempotencyKey,
+                        actor,
+                        triggeringEventPublicId,
+                        effectiveReason,
+                        correlationId));
+      } catch (DomainException prepError) {
+        // Concurrent-pause race (mirror retry F532): a sibling won the recovery_actions insert (or
+        // the inner pauseWorkflow's idempotency record) between our pre-check and our prep tx.
+        // Forward the resolved reason so a same-key/different-reason concurrent loser conflicts
+        // exactly like the serial Step-1 path.
+        if (prepError.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          Optional<PauseRecoveryResult> raceReplay =
+              resolveConcurrentPauseReplay(
+                  workflowRunId, effectiveReason, validatedIdempotencyKey, actor);
+          if (raceReplay.isPresent()) {
+            return raceReplay.get();
+          }
+        }
+        throw prepError;
+      }
+
+      // Step 5 — best-effort container stop for previously-RUNNING rows, POST-commit and OUTSIDE
+      // any tx (mirror DeveloperTakeoverService Step 3). cancel() never throws; the defensive
+      // try/catch + WARN is belt-and-braces. The DB flip already stopped dispatch, so a failure
+      // here never fails the pause. There is NO dispatch-failure compensation branch — pause
+      // enqueues nothing, so there is no dispatch to fail.
+      for (String runningRexId : prep.runningRunnerExecutionIds()) {
+        try {
+          runnerAdapter.cancel(runningRexId);
+        } catch (RuntimeException cancelError) {
+          log.warn(
+              "recovery pause best-effort container-cancel failed workflowRunId={} runnerExecutionId={} cause={} — DB flip already stopped dispatch",
+              workflowRunId,
+              runningRexId,
+              cancelError.getClass().getSimpleName());
+        }
+      }
+
+      // Step 6 — flip the recovery_actions row to succeeded in a fresh REQUIRES_NEW tx. Leaving it
+      // `pending` while reporting success would lie about audit terminality (mirror resume Step
+      // 6).
+      try {
+        resultStatusTransactionTemplate.executeWithoutResult(
+            status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));
+      } catch (RuntimeException completionError) {
+        log.error(
+            "recovery pause completion status update failed workflowRunId={} recoveryActionId={} idempotencyKey={} errorClass={} — run paused and runners cancelled but recovery_actions row stays pending; operator reconciliation required",
+            workflowRunId,
+            prep.recoveryActionPublicId(),
+            validatedIdempotencyKey,
+            completionError.getClass().getSimpleName());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("recoveryActionId", prep.recoveryActionPublicId());
+        details.put("idempotencyKey", validatedIdempotencyKey);
+        details.put("reason", "result_status_flip_failed_after_pause");
+        DomainException terminal =
+            new DomainException(
+                DomainErrorCode.INTERNAL_ERROR,
+                "Run paused and runners cancelled but recovery_actions.result_status flip to "
+                    + "succeeded failed; row remains pending. Operator reconciliation required.",
+                details);
+        terminal.addSuppressed(completionError);
+        throw terminal;
+      }
+
+      long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+      log.info(
+          "recovery pause success workflowRunId={} recoveryActionId={} priorState={} cancelledInFlightCount={} cancelledQueuedCount={} durationMs={}",
+          workflowRunId,
+          prep.recoveryActionPublicId(),
+          prep.sourceState().value(),
+          prep.cancelledInFlightCount(),
+          prep.cancelledQueuedCount(),
+          elapsedMs);
+      return new PauseRecoveryResult(
+          prep.recoveryActionPublicId(),
+          prep.pausedEventPublicId(),
+          prep.sourceState(),
+          prep.cancelledInFlightCount(),
+          prep.cancelledQueuedCount(),
+          WorkflowState.PAUSED,
+          correlationId,
+          false);
+    } catch (DomainException rejected) {
+      // Rejection observability (mirror rerunFromStep): every guarded rejection surfaces ONE WARN
+      // carrying the reason before propagating — no competing per-site WARNs. currentState rides
+      // the exception details when the rejecting guard captured it (review R1: the story's logging
+      // spec requires it on the WARN, not only in the problem payload).
+      Object rejectedCurrentState =
+          rejected.details() == null ? null : rejected.details().get("currentState");
+      log.warn(
+          "recovery pause rejected workflowRunId={} currentState={} reason={}",
+          workflowRunId,
+          rejectedCurrentState == null ? "unknown" : rejectedCurrentState,
+          rejected.errorCode());
+      throw rejected;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private PausePrep performPausePrep(
+      String workflowRunId,
+      String idempotencyKey,
+      ActorContext actor,
+      String triggeringEventPublicId,
+      String effectiveReason,
+      String correlationId) {
+    // Review R1 (TOCTOU) — re-gate INSIDE the prep tx: the outer Step-3 gate read an unlocked
+    // snapshot, so a run that advanced to a NON-pausable state in the gap must reject with the
+    // typed 409 here, not with the transition's raw ILLEGAL_TRANSITION.
+    WorkflowState gatedState =
+        workflowRunReadPort
+            .findByPublicId(workflowRunId)
+            .orElseThrow(() -> runNotFound(workflowRunId))
+            .currentState();
+    if (!PAUSABLE_SOURCE_STATES.contains(gatedState)) {
+      throw pauseNotApplicable(workflowRunId, gatedState);
+    }
+
+    PauseWorkflowCommand command =
+        new PauseWorkflowCommand(
+            workflowRunId,
+            actor.actorIdentity(),
+            actor.actorType(),
+            idempotencyKey,
+            correlationId,
+            effectiveReason);
+    workflowCommandService.pauseWorkflow(command);
+
+    // Review R1 (TOCTOU) — the authoritative priorState is whatever the transition just stamped
+    // on its workflow.stateChanged → Paused event, read back inside this same tx: if the run
+    // advanced to ANOTHER pausable state between the outer gate and this tx, the recovery.paused
+    // anchor, the success log, and the returned result must agree with the transition event that
+    // resume derives its priorState from. Falls back to the in-tx gated read only if the command
+    // replayed without a visible transition event (crash-recovery window).
+    WorkflowState sourceState =
+        workflowEventReadPort
+            .findLatestTransitionToState(workflowRunId, WorkflowState.PAUSED)
+            .map(WorkflowEventRecord::priorState)
+            .orElse(gatedState);
+
+    // AC4 — cancel dispatch: flip every {queued, pending, running} row to cancelled_for_pause
+    // INSIDE this prep tx so the flip cannot commit-skew from the transition (the flip is the
+    // authoritative stop-dispatch signal). Optional.empty() = already-terminal idempotent skip.
+    // Prep-tx race note: markCancelledForPause locks via findByPublicIdForUpdate while DEQUEUE_SQL
+    // uses FOR UPDATE SKIP LOCKED — if a worker leases a queued row this instant, our flip blocks,
+    // then observes previousStatus == RUNNING and routes the rex id into the post-commit docker
+    // stop
+    // list. Both orderings are safe; no extra locking.
+    List<RunnerExecutionSnapshot> dispatchable =
+        runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
+            workflowRunId, PAUSE_CANCEL_SCAN_STATUSES);
+    OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+    List<String> runningRunnerExecutionIds = new ArrayList<>();
+    int cancelledQueuedCount = 0;
+    int cancelledInFlightCount = 0;
+    for (RunnerExecutionSnapshot row : dispatchable) {
+      Optional<RunnerExecutionCancellation> cancellation =
+          runnerExecutionRecordPort.markCancelledForPause(row.publicId(), now);
+      if (cancellation.isEmpty()) {
+        log.info(
+            "recovery pause runner already terminal workflowRunId={} runnerExecutionId={}",
+            workflowRunId,
+            row.publicId());
+        continue;
+      }
+      RunnerExecutionStatus from = cancellation.get().previousStatus();
+      log.info(
+          "runner execution cancelled for pause workflowRunId={} runnerExecutionId={} previousStatus={}",
+          workflowRunId,
+          row.publicId(),
+          from.value());
+      if (from == RunnerExecutionStatus.QUEUED) {
+        cancelledQueuedCount++;
+      } else {
+        cancelledInFlightCount++;
+      }
+      if (from == RunnerExecutionStatus.RUNNING) {
+        runningRunnerExecutionIds.add(row.publicId());
+      }
+    }
+
+    // AC5/AC6 — the recovery.paused audit anchor. Prior-state preservation for resume is NOT here:
+    // the transition above already stamped the typed priorState on its WORKFLOW_STATE_CHANGED →
+    // Paused event (Reconciliation 6 — no priorState detail key, no workflow.paused type). This
+    // event exists as the non-null recovery_actions.resulting_event_id FK anchor and carries the
+    // same typed prior/resulting states for the audit trail.
+    String recoveryEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    if (triggeringEventPublicId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.TRIGGERING_EVENT_ID, triggeringEventPublicId);
+    }
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            recoveryEventPublicId,
+            workflowRunId,
+            WorkflowEventType.RECOVERY_PAUSED,
+            sourceState,
+            WorkflowState.PAUSED,
+            actor.actorIdentity(),
+            actor.actorType(),
+            effectiveReason,
+            null,
+            true,
+            OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+            eventDetails));
+
+    RecoveryActionSnapshot recoveryAction =
+        recoveryActionRecordPort.insert(
+            new RecoveryActionWriteCommand(
+                workflowRunId,
+                ACTION_TYPE_PAUSE,
+                triggeringEventPublicId,
+                recoveryEventPublicId,
+                actor.actorIdentity(),
+                actor.actorType(),
+                idempotencyKey,
+                RESULT_STATUS_PENDING,
+                REVIEWER_ROLE_WORKFLOW_OWNER));
+
+    return new PausePrep(
+        recoveryAction.publicId(),
+        recoveryEventPublicId,
+        sourceState,
+        List.copyOf(runningRunnerExecutionIds),
+        cancelledInFlightCount,
+        cancelledQueuedCount);
+  }
+
+  private PauseRecoveryResult replayPauseResultOrConflict(
+      String workflowRunId,
+      String effectiveReason,
+      String idempotencyKey,
+      ActorContext actor,
+      RecoveryActionSnapshot prior) {
+    if (prior.resultingEventPublicId() == null) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    WorkflowEventRecord event =
+        workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null).stream()
+            .filter(candidate -> prior.resultingEventPublicId().equals(candidate.publicId()))
+            .findFirst()
+            .orElseThrow(() -> idempotencyConflict(idempotencyKey, workflowRunId, prior));
+    // A same-key pause with a DIFFERENT reason is a conflict, never a replay (reasonText composes
+    // the fingerprint identity — Reconciliation 9). Compare against the event row's typed reason
+    // column (the 4.7 review lesson: event.reason(), not a detail key). Both sides are trimmed —
+    // the caller validated+trimmed effectiveReason (review R1: the reason guard runs BEFORE the
+    // replay pre-check) and the stored reason was trimmed at write time — matching the
+    // fingerprint's normalizeOptional semantics, so a whitespace-differing identical retry
+    // replays instead of conflicting.
+    String storedReason = event.reason();
+    if (!effectiveReason.equals(storedReason)) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    // priorState re-derivation: the recovery.paused event linked to THIS action carries the typed
+    // priorState of THIS pause — per-action precise even if the run was later resumed and re-paused
+    // under a different key (findLatestTransitionToState would return the LATEST pause's prior
+    // state). Fall back to the latest → Paused transition for defensive robustness.
+    WorkflowState priorState =
+        event.priorState() != null
+            ? event.priorState()
+            : resolvePriorExecutingStateForReplay(workflowRunId).orElse(null);
+    log.info(
+        "recovery pause replay workflowRunId={} recoveryActionId={} idempotencyKey={}",
+        workflowRunId,
+        prior.publicId(),
+        idempotencyKey);
+    // Cancellation counts are 0 on replay BY CONTRACT: this call cancelled nothing and the
+    // original call's counts are not recomputed. (Takeover signals "not recomputed" with null
+    // counts; this record uses primitive ints, so 0 + replayed=true is the equivalent signal —
+    // callers must branch on replayed(), not on the counts.)
+    return new PauseRecoveryResult(
+        prior.publicId(),
+        prior.resultingEventPublicId(),
+        priorState,
+        0,
+        0,
+        WorkflowState.PAUSED,
+        actor.correlationId(),
+        true);
+  }
+
+  private Optional<PauseRecoveryResult> resolveConcurrentPauseReplay(
+      String workflowRunId, String rawReason, String idempotencyKey, ActorContext actor) {
+    Optional<RecoveryActionSnapshot> prior =
+        recoveryActionRecordPort.findByIdempotencyKey(idempotencyKey);
+    if (prior.isEmpty()) {
+      return Optional.empty();
+    }
+    RecoveryActionSnapshot snapshot = prior.get();
+    // Guard ACTION_TYPE_PAUSE + non-null resulting_event_id (the FK is ON DELETE SET NULL; a
+    // link-less row cannot back a replay) — mirror resolveConcurrentResumeReplay.
+    if (!workflowRunId.equals(snapshot.workflowRunPublicId())
+        || !ACTION_TYPE_PAUSE.equals(snapshot.actionType())
+        || !RESULT_STATUS_SUCCEEDED.equals(snapshot.resultStatus())
+        || snapshot.resultingEventPublicId() == null) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        replayPauseResultOrConflict(workflowRunId, rawReason, idempotencyKey, actor, snapshot));
+  }
+
+  private static String requirePauseReasonText(String reasonText) {
+    if (reasonText != null && !reasonText.isBlank()) {
+      // Trimmed at the boundary (review R1) so every downstream site — the fingerprint
+      // (normalizeOptional trims), the transition's fallbackReason, the recovery.paused event's
+      // typed reason, and the replay discriminator — stores and compares the SAME value.
+      return reasonText.trim();
+    }
+    throw new DomainException(
+        DomainErrorCode.MISSING_REASON_TEXT,
+        "Pause requires a non-blank reason",
+        Map.of("field", "reasonText"));
+  }
+
+  private record PausePrep(
+      String recoveryActionPublicId,
+      String pausedEventPublicId,
+      WorkflowState sourceState,
+      List<String> runningRunnerExecutionIds,
+      int cancelledInFlightCount,
+      int cancelledQueuedCount) {}
+
+  // Review R1 — single construction site for the typed 409 (raised by the outer fast-path gate
+  // AND the in-tx re-gate); the pausable-source list in the message derives from
+  // PAUSABLE_SOURCE_STATES so it cannot drift from the constant it describes.
+  private static DomainException pauseNotApplicable(
+      String workflowRunId, WorkflowState currentState) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runId", workflowRunId);
+    details.put("currentState", currentState.value());
+    return new DomainException(
+        DomainErrorCode.PAUSE_NOT_APPLICABLE,
+        "Pause is not applicable from state "
+            + currentState.value()
+            + " (pausable sources: "
+            + PAUSABLE_SOURCE_STATES.stream()
+                .map(WorkflowState::value)
+                .collect(java.util.stream.Collectors.joining(", "))
+            + ")",
+        details);
   }
 
   public ReconcileRecoveryResult reconcile(
@@ -1911,10 +2411,13 @@ public class RecoveryService {
   /**
    * AC6 re-dispatch: resuming into {@code Executing} re-dispatches the EXECUTION-stage runner via
    * the sub-stage-aware {@code redispatchAfterRetry} (plan vs pr-output; NEVER transitions; returns
-   * {@code null} when auto-dispatch is off — tolerate the null). The {@code Investigating} branch
-   * is DEFERRED/untested (Reconciliation 4): no {@code Investigating → Paused} edge exists today,
-   * so a paused run's priorState is always {@code Executing}; the branch is coded for when pause
-   * (4.8) later supports more source states. Human-gate priorStates carry no runner work.
+   * {@code null} when auto-dispatch is off — tolerate the null). The {@code Investigating} branch —
+   * coded defensively by 4.5 when no {@code Investigating → Paused} edge existed — is LIVE since
+   * story 4.8 wired {@code Investigating} into {@code PAUSABLE_SOURCE_STATES} (pause cancels the
+   * spec runner, so resume must re-dispatch it); {@code PauseResumeRoundTripIT} exercises it.
+   * Human-gate priorStates (spec/review/lint/delivery/manual-park) and {@code Failed} carry no
+   * runner work to re-dispatch — pause left the gate approval / manual park / failure diagnostics
+   * intact, so resume just transitions back.
    */
   private RunnerDispatchResult redispatchForResume(
       String workflowRunId, WorkflowState priorState, String correlationId) {
@@ -1922,7 +2425,6 @@ public class RecoveryService {
       return workflowOrchestrationService.redispatchAfterRetry(workflowRunId, correlationId);
     }
     if (priorState == WorkflowState.INVESTIGATING) {
-      // DEFERRED / unreachable today — see javadoc.
       return workflowOrchestrationService.retrySpecGeneration(workflowRunId, correlationId);
     }
     return null;

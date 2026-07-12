@@ -74,6 +74,7 @@ public class WorkflowEventPersistenceAdapter
     return workflowEventRepository
         .findLatestTransitionToState(
             workflowRunPublicId,
+            org.dradgo.domain.registry.WorkflowEventType.WORKFLOW_STATE_CHANGED.value(),
             Objects.requireNonNull(targetState, "targetState").value(),
             org.springframework.data.domain.PageRequest.of(0, 1))
         .stream()

@@ -33,6 +33,7 @@ import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.PauseWorkflowCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
@@ -274,6 +275,19 @@ public class WorkflowCommandService {
     // tx commits (the double-dispatch caution). Replay pins targetState (an invariant post-state
     // per accepted command) in replayStateChange.
     return executeIdempotent(command, this::resumeWorkflowInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult pauseWorkflow(PauseWorkflowCommand command) {
+    // Story 4.8 (AC7 / Reconciliation 9): transition <pausable source> → Paused inside the shared
+    // idempotency envelope. The target is the CONSTANT Paused (no targetState on the command,
+    // unlike
+    // resume's derived one); the transition table validates the source edge and raises
+    // ILLEGAL_TRANSITION for unwired sources. Transition-ONLY: the runner cancel-flips + the
+    // recovery.paused event + the recovery_actions row live in RecoveryService.pause's prep tx
+    // (which this @Transactional REQUIRED joins), and the post-commit docker stop is single-sourced
+    // there. Replay pins PAUSED (the invariant post-state) in replayStateChange.
+    return executeIdempotent(command, this::pauseWorkflowInternal, this::replayStateChange);
   }
 
   @Transactional
@@ -862,6 +876,30 @@ public class WorkflowCommandService {
     }
   }
 
+  private WorkflowStateChangeResult pauseWorkflowInternal(PauseWorkflowCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      // Story 4.8 (Reconciliation 9): transition to the constant PAUSED via the generic transition
+      // helper — the transition table validates <source> → Paused is legal (the 8
+      // PAUSABLE_SOURCE_STATES rows). failureCategory is null by construction (the category guard
+      // admits it only on {Executing, Investigating} → Failed). NO runner cancellation here
+      // (RecoveryService.pause owns the cancel-flips inside its prep tx and the post-commit docker
+      // stop).
+      transition(
+          command.workflowRunId(),
+          WorkflowState.PAUSED,
+          command,
+          fallbackReason(command.reasonText(), "pause workflow"),
+          Map.of());
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(),
+          WorkflowState.PAUSED,
+          normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
   private WorkflowStateChangeResult reconcileWorkflowInternal(ReconcileWorkflowCommand command) {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
@@ -1143,6 +1181,10 @@ public class WorkflowCommandService {
           // the
           // run's later live state, mirroring resume.
           case RerunFromStepWorkflowCommand rerun -> rerun.targetState();
+          // Story 4.8 (Reconciliation 9): pause's post-state is the constant Paused — the
+          // invariant
+          // answer for a replay of this exact command, mirroring how reconcile pins Reconciled.
+          case PauseWorkflowCommand ignored -> WorkflowState.PAUSED;
           case ReconcileWorkflowCommand ignored -> WorkflowState.RECONCILED;
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           case AcceptClarificationCommand ignored -> clarificationReplayState(resultRef);

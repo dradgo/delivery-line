@@ -62,17 +62,23 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
     return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
   }
 
+  // Story 4.8 review — the eventType filter is load-bearing: recovery.* audit anchors (e.g.
+  // recovery.paused) also stamp typed prior/resulting states and are appended AFTER the transition
+  // event in the same tx, so without the filter the latest-row read would return the recovery
+  // event, de-facto repointing resume's priorState derivation off workflow.stateChanged.
   @Query(
       """
 		select event from WorkflowEventEntity event
 		where event.workflowRun.publicId = :publicId
 		  and event.archivedAt is null
+		  and event.eventType = :eventType
 		  and event.resultingState = :resultingState
 		  and event.priorState is not null
 		order by event.createdAt desc, event.id desc
 		""")
   List<WorkflowEventEntity> findLatestTransitionToState(
       @Param("publicId") String publicId,
+      @Param("eventType") String eventType,
       @Param("resultingState") String resultingState,
       Pageable pageable);
 

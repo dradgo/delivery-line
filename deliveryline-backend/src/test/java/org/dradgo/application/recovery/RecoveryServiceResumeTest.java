@@ -46,6 +46,8 @@ import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -209,6 +211,57 @@ class RecoveryServiceResumeTest {
     assertNull(result.newRunnerExecutionPublicId());
     assertEquals(WorkflowState.EXECUTING, result.resultingState());
     verify(recoveryRecordPort, times(1)).markSucceeded(IDEMPOTENCY_KEY);
+  }
+
+  @Test
+  void resumeFromInvestigatingPriorStateRedispatchesSpecGeneration() {
+    // Story 4.8 — 4.5's previously-unreachable branch is LIVE now that Investigating is a pausable
+    // source: resuming into Investigating re-dispatches the spec runner via retrySpecGeneration.
+    stubPausedRun();
+    stubPausedEvent(WorkflowState.INVESTIGATING);
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(resumeActionSnapshot("rcv_res-inv01", "pending"));
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(resumeActionSnapshot("rcv_res-inv01", "succeeded"));
+    when(workflowOrchestrationService.retrySpecGeneration(eq(RUN), any())).thenReturn(null);
+
+    ResumeRecoveryResult result = service.resume(RUN, IDEMPOTENCY_KEY, actor(), null);
+
+    assertEquals(WorkflowState.INVESTIGATING, result.resultingState());
+    verify(workflowOrchestrationService, times(1)).retrySpecGeneration(eq(RUN), any());
+    verify(workflowOrchestrationService, never()).redispatchAfterRetry(any(), any());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = WorkflowState.class,
+      names = {
+        "WAITING_FOR_SPEC_APPROVAL",
+        "WAITING_FOR_REVIEW",
+        "WAITING_FOR_MANUAL_EXECUTION",
+        "WAITING_FOR_LINT_APPROVAL",
+        "WAITING_FOR_DELIVERY",
+        "FAILED"
+      })
+  void resumeFromGateOrFailedPriorStateDispatchesNothing(WorkflowState priorState) {
+    // Story 4.8 (AC11) — ALL six gate/failed priorStates carry no runner work: pause left the
+    // gate approval / manual park / failure diagnostics intact, so resume just transitions back
+    // without any re-dispatch (only EXECUTING/INVESTIGATING re-dispatch, pinned above).
+    stubPausedRun();
+    stubPausedEvent(priorState);
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(resumeActionSnapshot("rcv_res-gate1", "pending"));
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(resumeActionSnapshot("rcv_res-gate1", "succeeded"));
+
+    ResumeRecoveryResult result = service.resume(RUN, IDEMPOTENCY_KEY, actor(), null);
+
+    assertEquals(priorState, result.resultingState());
+    assertNull(result.newRunnerExecutionPublicId());
+    verify(workflowOrchestrationService, never()).redispatchAfterRetry(any(), any());
+    verify(workflowOrchestrationService, never()).retrySpecGeneration(any(), any());
   }
 
   @Test

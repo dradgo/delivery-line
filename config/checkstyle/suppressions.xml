@@ -46,9 +46,11 @@
   <suppress id="ForbiddenThreadSleep"
             files="[\\/]application[\\/]idempotency[\\/]IdempotencyService\.java$"
             lines="108"/>
+  <!-- Line updated 1357 -> 1399 by story 4.8 (pauseWorkflow + its internal inserted above the
+       pauseBeforeReplayLookup helper shifted the pinned line). -->
   <suppress id="ForbiddenThreadSleep"
             files="[\\/]application[\\/]workflow[\\/]WorkflowCommandService\.java$"
-            lines="1357"/>
+            lines="1399"/>
 
   <!--
     DindSidecarService - Thread.sleep is the single concrete implementation of the

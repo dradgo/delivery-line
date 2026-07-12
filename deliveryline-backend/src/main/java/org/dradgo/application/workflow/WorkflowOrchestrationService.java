@@ -358,6 +358,10 @@ public class WorkflowOrchestrationService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
     try {
+      if (stageSuccessIgnoredWhilePaused(
+          "onSpecStageSucceeded", workflowRunId, runnerExecutionId)) {
+        return;
+      }
       String idempotencyKey = "spec-ready:" + runnerExecutionId;
       try {
         workflowTransitionService.transition(
@@ -756,6 +760,10 @@ public class WorkflowOrchestrationService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
     try {
+      if (stageSuccessIgnoredWhilePaused(
+          "onPlanStageSucceeded", workflowRunId, runnerExecutionId)) {
+        return;
+      }
       String idempotencyKey = "plan-ready:" + runnerExecutionId;
       try {
         workflowTransitionService.transition(
@@ -1001,6 +1009,10 @@ public class WorkflowOrchestrationService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
     try {
+      if (stageSuccessIgnoredWhilePaused(
+          "onPrOutputStageSucceeded", workflowRunId, runnerExecutionId)) {
+        return;
+      }
       String idempotencyKey = "pr-output-ready:" + runnerExecutionId;
       try {
         workflowTransitionService.transition(
@@ -1172,6 +1184,45 @@ public class WorkflowOrchestrationService {
   }
 
   // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Story 4.8 review — executor-as-gate for the runner-success auto-advance seams. Pause's symmetry
+   * edges made {@code PAUSED → WaitingForSpecApproval / WaitingForReview} LEGAL (they are resume's
+   * return edges), so the transition table alone no longer rejects a stage success that lands while
+   * the run is Paused — pre-4.8 it surfaced ILLEGAL_TRANSITION and the swallow handlers absorbed
+   * it. A paused run's late success is logged + ignored (mirroring the broker's late-result guard);
+   * the operator's resume owns the next transition. The window exists because a runner row enqueued
+   * AFTER pause's cancel-scan is invisible to the flip and completes normally.
+   */
+  private boolean stageSuccessIgnoredWhilePaused(
+      String seam, String workflowRunId, String runnerExecutionId) {
+    boolean paused;
+    try {
+      paused =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .map(snapshot -> snapshot.currentState() == WorkflowState.PAUSED)
+              .orElse(false);
+    } catch (RuntimeException readError) {
+      // Best-effort: the guard must never break the success path (shared poller tx). An
+      // unreadable run proceeds to the transition, whose own guards still apply.
+      log.warn(
+          "{} paused-guard read failed workflowRunId={} errorClass={} — proceeding",
+          seam,
+          workflowRunId,
+          readError.getClass().getSimpleName());
+      return false;
+    }
+    if (paused) {
+      log.warn(
+          "{} ignored workflowRunId={} runnerExecutionId={} reason=run_paused — stage success "
+              + "arrived while the run is Paused; operator resume owns the next transition",
+          seam,
+          workflowRunId,
+          runnerExecutionId);
+    }
+    return paused;
+  }
 
   private void ensureInvestigating(
       String workflowRunId, WorkflowRunSnapshot snapshot, String correlationId) {

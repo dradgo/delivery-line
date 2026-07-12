@@ -100,7 +100,8 @@ class RecoveryServiceReconcileTest {
             callthroughTemplate(),
             mock(org.dradgo.application.approval.ApprovalService.class),
             mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class),
-            mock(org.dradgo.application.workflow.WorkflowTransitionService.class));
+            mock(org.dradgo.application.workflow.WorkflowTransitionService.class),
+            mock(org.dradgo.application.runner.spi.RunnerAdapter.class));
   }
 
   @Test

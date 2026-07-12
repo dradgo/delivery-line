@@ -114,6 +114,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.INVESTIGATING,
             "product_reviewer",
             List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
+        // Story 4.8 (AC10) — pause_workflow joins EVERY pausable-source workflow_owner arm.
         Arguments.of(
             WorkflowState.INVESTIGATING,
             "workflow_owner",
@@ -121,6 +122,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
@@ -145,6 +147,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 // workflow_owner-only archive_run wrapper action).
                 AllowedAction.ACCEPT_CLARIFICATION,
                 AllowedAction.REGENERATE_SPEC,
+                // Story 4.8 (AC10) — pause_workflow closes the base arm (before the overlays).
+                AllowedAction.PAUSE_WORKFLOW,
                 // Story 3f-4 (AC1) — split overlay (request_split) is appended before the
                 // workflow_owner-only archive_run wrapper action.
                 AllowedAction.REQUEST_SPLIT,
@@ -170,6 +174,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
@@ -186,6 +191,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
             "workflow_owner",
             List.of(
                 AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -230,6 +236,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.OBTAIN_MANUAL_BUNDLE,
                 AllowedAction.SUBMIT_MANUAL_ARTIFACT,
                 AllowedAction.VIEW_ONLY,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
@@ -249,7 +256,28 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
+        // Story 4.8 (AC10) — the lint gate's matrix rows were previously unpinned here; pin both
+        // roles now that pause_workflow joins the workflow_owner arm.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            "workflow_owner",
+            List.of(
+                AllowedAction.APPROVE_LINT,
+                AllowedAction.REQUEST_LINT_FIX,
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.ARCHIVE_RUN)),
+        Arguments.of(
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            "product_reviewer",
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         Arguments.of(
             WorkflowState.WAITING_FOR_DELIVERY,
             "product_reviewer",
@@ -278,6 +306,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
             List.of(
                 AllowedAction.RETRY,
                 AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -420,10 +449,12 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.REQUEST_SPLIT);
       } else if (role.equals("workflow_owner")) {
         // Story 4.7 (AC10) — rerun_from_step leads the workflow_owner arm; archive_run is
-        // workflow_owner-only (3d-8/D1). Still orthogonal to the reviewer verdict panel.
+        // workflow_owner-only (3d-8/D1). Story 4.8 (AC10) — pause_workflow follows it. Still
+        // orthogonal to the reviewer verdict panel.
         expected =
             List.of(
                 AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -618,6 +649,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
             // Story 4.7 (AC10) — rerun_from_step joins the FAILED workflow_owner arm alongside
             // retry.
             AllowedAction.RERUN_FROM_STEP,
+            // Story 4.8 (AC10) — pause_workflow follows (FAILED is a mandatory pausable source).
+            AllowedAction.PAUSE_WORKFLOW,
             AllowedAction.VIEW_DIAGNOSTICS,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -868,12 +901,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
     // Story 3e-5 (AC2) — owner open-clarification branch: view_runner_logs +
     // open_diagnostic_console
     // join alongside view_only + answer_clarification (archive_run appended by the wrapper).
+    // Story 4.8 (AC10) — pause_workflow joins the owner branch (Investigating is pausable).
     assertThat(view.actions())
         .containsExactly(
             AllowedAction.VIEW_ONLY,
             AllowedAction.ANSWER_CLARIFICATION,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+            AllowedAction.PAUSE_WORKFLOW,
             AllowedAction.ARCHIVE_RUN);
   }
 

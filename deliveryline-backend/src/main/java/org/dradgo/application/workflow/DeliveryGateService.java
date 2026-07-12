@@ -52,17 +52,20 @@ public class DeliveryGateService {
   private final RunnerWorkspaceStore workspaceStore;
   private final RunnerExecutionService executionService;
   private final WorkflowTransitionService transitionService;
+  private final org.dradgo.application.workflow.spi.WorkflowRunReadPort workflowRunReadPort;
 
   public DeliveryGateService(
       ProjectRuntimeConfigResolver projectRuntimeConfigResolver,
       RunnerWorkspaceStore workspaceStore,
       RunnerExecutionService executionService,
-      WorkflowTransitionService transitionService) {
+      WorkflowTransitionService transitionService,
+      org.dradgo.application.workflow.spi.WorkflowRunReadPort workflowRunReadPort) {
     this.projectRuntimeConfigResolver =
         Objects.requireNonNull(projectRuntimeConfigResolver, "projectRuntimeConfigResolver");
     this.workspaceStore = Objects.requireNonNull(workspaceStore, "workspaceStore");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
     this.transitionService = Objects.requireNonNull(transitionService, "transitionService");
+    this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
   }
 
   /**
@@ -106,6 +109,37 @@ public class DeliveryGateService {
             prOutputRunnerExecutionId,
             pushMode.value());
         return false;
+      }
+
+      // Story 4.8 review — executor-as-gate: a stage success landing while the run is Paused must
+      // NOT park it (PAUSED → WaitingForDelivery became a LEGAL resume edge, so the transition
+      // table alone no longer rejects it). Park is reported as handled (true) so the caller does
+      // NOT fall through to an inline push on a paused run; log + leave the rest to the
+      // operator's resume, like the broker's late-result guard.
+      boolean paused;
+      try {
+        paused =
+            workflowRunReadPort
+                .findByPublicId(workflowRunId)
+                .map(run -> run.currentState() == WorkflowState.PAUSED)
+                .orElse(false);
+      } catch (RuntimeException readError) {
+        // Best-effort: the guard must never break the delivery tail. An unreadable run proceeds
+        // to the park, whose transition guards still apply.
+        log.warn(
+            "delivery gate paused-guard read failed workflowRunId={} errorClass={} — proceeding",
+            workflowRunId,
+            readError.getClass().getSimpleName());
+        paused = false;
+      }
+      if (paused) {
+        log.warn(
+            "delivery gate ignored workflowRunId={} runnerExecutionId={} reason=run_paused — "
+                + "stage success arrived while the run is Paused; operator resume owns the next "
+                + "transition",
+            workflowRunId,
+            prOutputRunnerExecutionId);
+        return true;
       }
 
       // Finalize the producing PR_OUTPUT execution FIRST — it succeeded (only the push is gated)

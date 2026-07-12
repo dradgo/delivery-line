@@ -1,6 +1,7 @@
 package org.dradgo.contract;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -500,6 +501,31 @@ class FlywaySchemaContractTest {
     assertColumnType("approvals", "invalidated_at", "timestamp with time zone");
     assertColumnNullable("approvals", "invalidated_reason", true);
     assertColumnType("approvals", "invalidated_reason", "text");
+  }
+
+  @Test
+  void cancelledForPauseJoinsBothRunnerExecutionChecksAndAwaitingManualSurvives() {
+    // Story 4.8 / V43 — the status CHECK re-states the FULL value set (V20's awaiting_manual must
+    // survive the restatement) plus the new cancelled_for_pause; the completed↔correlation
+    // biconditional gains cancelled_for_pause (a terminal status that stamps completed_at, exactly
+    // like V16's takeover status) while awaiting_manual stays OUT (non-terminal, no completed_at).
+    assertConstraintDefinitionContains("ck_runner_executions_status", "cancelled_for_pause");
+    assertConstraintDefinitionContains("ck_runner_executions_status", "awaiting_manual");
+    assertConstraintDefinitionContains("ck_runner_executions_status", "cancelled_for_takeover");
+    assertConstraintDefinitionContains(
+        "ck_runner_executions_completed_correlation", "cancelled_for_pause");
+    List<String> correlationDefs =
+        jdbcTemplate.queryForList(
+            """
+				select pg_get_constraintdef(oid)
+				from pg_constraint
+				where conname = 'ck_runner_executions_completed_correlation'
+				""",
+            String.class);
+    assertEquals(1, correlationDefs.size());
+    assertFalse(
+        correlationDefs.get(0).contains("awaiting_manual"),
+        "awaiting_manual must stay OUT of the completed↔correlation biconditional (V20 note)");
   }
 
   @Test

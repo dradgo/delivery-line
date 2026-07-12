@@ -174,6 +174,42 @@ class IntegrationConflictDetectionIT {
   }
 
   @Test
+  void pausedRunWithDriftedActiveLinkIsStillSurfacedBySweep() {
+    // Story 4.8 (AC8 / Reconciliation 10) — integration awareness continues while paused: the
+    // sweep's scan SQL has NO predicate on workflow_runs.current_state, so a Paused run's active
+    // link is scanned exactly like any other, and the sweep only RECORDS conflicts (it performs no
+    // transition, so it can never un-pause the run). Regression pin — no production change.
+    String link = seedGitHubLink("octo/repo#4808", "{\"prState\":\"open\"}");
+    String run = seededRuns.get(seededRuns.size() - 1);
+    // Guard against seed-helper drift: the drifted link must provably belong to the SAME run we
+    // pause below — otherwise the "still surfaced while Paused" assertion passes vacuously against
+    // some other (non-paused) run's link.
+    assertThat(runOwningLink(link)).isEqualTo(run);
+    jdbcTemplate.update(
+        "update workflow_runs set current_state = 'Paused' where public_id = ?", run);
+    gitHubScenarios.seedPullRequest(pr("octo/repo#4808", "octo/repo", "feature/x", "closed", true));
+
+    detectionService.sweep();
+
+    assertThat(categoryFor(link))
+        .isEqualTo(IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED.value());
+    List<ConflictSummary> listed =
+        conflictService.listUnresolvedConflicts(ConflictFilter.unfiltered());
+    // The surfaced conflict is anchored to the PAUSED run (not merely to any link).
+    assertThat(listed)
+        .anySatisfy(
+            c -> {
+              assertThat(c.integrationLinkId()).isEqualTo(link);
+              assertThat(c.workflowRunId()).isEqualTo(run);
+            });
+    // The sweep never un-pauses the run.
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "select current_state from workflow_runs where public_id = ?", String.class, run))
+        .isEqualTo("Paused");
+  }
+
+  @Test
   void deletedLinearTicketPersistsExternalResourceRemoved() {
     // An external_ref the Linear mock does not know → fetchTicketByReference empty → removed.
     String link = seedLinearLink("TEST-LIN-GONE-4177");
@@ -215,6 +251,15 @@ class IntegrationConflictDetectionIT {
         metadataJson);
     seededLinks.add(link);
     return link;
+  }
+
+  private String runOwningLink(String link) {
+    return jdbcTemplate.queryForObject(
+        "select r.public_id from workflow_runs r"
+            + " join integration_links l on l.workflow_run_id = r.id"
+            + " where l.public_id = ?",
+        String.class,
+        link);
   }
 
   private String categoryFor(String link) {

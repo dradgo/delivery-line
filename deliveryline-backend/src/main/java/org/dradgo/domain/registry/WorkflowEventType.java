@@ -141,7 +141,21 @@ public enum WorkflowEventType implements RegistryValue {
   // the forward linear.completionSyncFailed shape: NEVER rolls back the committed rerun; a missing
   // link / absent comment capability / adapter failure logs + skips. NO Flyway migration —
   // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
-  LINEAR_RUN_REOPENED_NOTIFICATION("linear.runReopenedNotification");
+  LINEAR_RUN_REOPENED_NOTIFICATION("linear.runReopenedNotification"),
+  // Story 4.8 (AC5/AC6) — appended in the same REQUIRES_NEW prep transaction as the → Paused
+  // transition + the runner cancel-flips + the recovery_actions insert when an operator manually
+  // pauses a run. Recovery namespace (lowerCamel), mirroring recovery.retried / recovery.resumed /
+  // recovery.reconciled (NOT workflow.paused as the epic AC5 text says — the same reconciliation
+  // applied to workflow.resumed → recovery.resumed). It exists as the non-null
+  // recovery_actions.resulting_event_id FK anchor the concurrent-replay guard depends on; the prior
+  // state that resume (4.5) reads stays on the TYPED priorState() of the transition's own
+  // WORKFLOW_STATE_CHANGED → Paused event (NO priorState detail key here). priorState = the
+  // pausable
+  // source state, resultingState = Paused, interventionMarker = true. Detail keys
+  // (triggeringEventId?, idempotencyKey, reason, correlationId?) are already allow-listed. NO
+  // Flyway
+  // migration — event_type is an un-CHECKed text column and the registry set is fixture-asserted.
+  RECOVERY_PAUSED("recovery.paused");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

@@ -45,6 +45,7 @@
     "integration.conflictDetected",
     "delivery.recordedManually",
     "recovery.rerunFromStep",
-    "linear.runReopenedNotification"
+    "linear.runReopenedNotification",
+    "recovery.paused"
   ]
 }

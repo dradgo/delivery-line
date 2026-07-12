@@ -29,6 +29,7 @@ import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.PauseWorkflowCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
@@ -109,6 +110,11 @@ class CommandModelSymmetryFoundationContract {
           // rerun-from-step endpoint + OpenAPI), following the RejectImplementationCommand
           // precedent.
           RerunFromStepWorkflowCommand.class,
+          // Story 4.8 (pause) added PauseWorkflowCommand (service-only surface via
+          // WorkflowCommandService.pauseWorkflow); recorded here as a known permit to keep the set
+          // explicit. Its REST round-trip capture is deferred to story 4.13 (the pause endpoint +
+          // OpenAPI), following the RejectImplementationCommand precedent.
+          PauseWorkflowCommand.class,
           AcceptClarificationCommand.class,
           RegenerateSpecCommand.class,
           ApproveLintCommand.class,

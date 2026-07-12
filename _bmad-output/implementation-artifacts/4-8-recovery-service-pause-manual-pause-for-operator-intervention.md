@@ -1,6 +1,6 @@
 # Story 4.8: `RecoveryService.pause` — Manual Pause for Operator Intervention
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -121,48 +121,76 @@ Dependencies: **4.5** (`resume`) `done`; **4.6** (`reconcile`) `done`; **4.28** 
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Registry fan-outs (AC2, AC3, AC5, AC10)**
-  - [ ] `RunnerExecutionStatus.CANCELLED_FOR_PAUSE("cancelled_for_pause")` — enum + `registry-api-schema-placeholders.json` `"runnerExecutionStatuses"` array. The drift gate is THREE-WAY (enum ↔ DB CHECK ↔ JSON): `RegistryContractTest.java:152,176-181`.
-  - [ ] `WorkflowEventType.RECOVERY_PAUSED("recovery.paused")` — enum + `contracts/events/workflow-event-types.fixture.json` (order-aligned) + `DomainRegistry.workflowEventTypes()` (auto) + `fixture-event-streams/schema/workflow-events-response.schema.json` ([[new-workfloweventtype-fixture-sites]]). NO `WorkflowEventDetailKeys` change.
-  - [ ] `DomainErrorCode.PAUSE_NOT_APPLICABLE` (409) — three sites: enum + `ProblemDetailsCatalog` (mirror `RESUME_NOT_APPLICABLE` `:553-558`) + `problemTypeUris` manifest ([[new-domainerrorcode-three-sites]]). Verify `-Pfoundation-gate`.
-  - [ ] `DomainErrorCode.MISSING_REASON_TEXT` (400) — **only if 4.7 has not already added it**; three sites; never duplicate.
-  - [ ] `AllowedAction.PAUSE_WORKFLOW("pause_workflow")` — enum + `contracts/frontend/allowed-actions.placeholder.json` + `AllowedActionRegistryPinTest.pauseWorkflowWireValueIsPinned()`. No OpenAPI regen.
-- [ ] **Task 2 — Transition table: the symmetric edge set (AC3, AC7) ⚠️ highest-risk**
-  - [ ] Add `WorkflowState.PAUSED` to the target set of `INVESTIGATING`, `WAITING_FOR_SPEC_APPROVAL`, `WAITING_FOR_REVIEW`, `WAITING_FOR_MANUAL_EXECUTION`, `WAITING_FOR_LINT_APPROVAL`, `WAITING_FOR_DELIVERY`, `FAILED` (`EXECUTING` already has it at `:94`). If 3h-4 has not merged, the `WAITING_FOR_DELIVERY` row does not exist — skip that arm and note it.
-  - [ ] Widen the `PAUSED` row (`:163-168`) to `{EXECUTING, INVESTIGATING, WAITING_FOR_SPEC_APPROVAL, WAITING_FOR_REVIEW, WAITING_FOR_MANUAL_EXECUTION, WAITING_FOR_LINT_APPROVAL, WAITING_FOR_DELIVERY, FAILED, TAKEN_OVER, RECONCILED}`.
-  - [ ] NEW `PauseTransitionSymmetryTest` pinning the invariant both ways. Add a table comment explaining WHY the sets are symmetric (resume transitions back to the recorded `priorState`).
-- [ ] **Task 3 — `cancelled_for_pause` runner status: Flyway V39 + state machine + port (AC4)**
-  - [ ] NEW `src/main/resources/db/migration/V39__add_cancelled_for_pause_status.sql` — copy `V16` in shape: drop+re-add `ck_runner_executions_status` restating the FULL set (`pending, running, queued, completed, failed, timed_out, orphaned, cancelled_for_takeover, awaiting_manual, cancelled_for_pause`); drop+re-add `ck_runner_executions_completed_correlation` adding `cancelled_for_pause` to the terminal list (keep `awaiting_manual` OUT). **Confirm V39 is still free — V38 is taken by uncommitted 3h-4 and 4.7 also drafts a V38** ([[flyway-v31-cross-branch-collision]]).
-  - [ ] `RunnerExecutionStateMachine` — add `CANCELLED_FOR_PAUSE` to `TERMINAL`; add it as a target from `PENDING`, `QUEUED`, `RUNNING`; add `CANCELLED_FOR_PAUSE → {}`. **No `AWAITING_MANUAL` edge.**
-  - [ ] NEW `application/runner/spi/RunnerExecutionCancellation.java` — `(String runnerExecutionId, RunnerExecutionStatus previousStatus)`.
-  - [ ] `RunnerExecutionRecordPort.markCancelledForPause(String, OffsetDateTime) → Optional<RunnerExecutionCancellation>` + `RunnerExecutionPersistenceAdapter`: extract the shared body of `markCancelledForTakeover` (`:645-674`) into a private `markCancelled(publicId, targetStatus, at)`; both public methods delegate. Leave `markCancelledForTakeover`'s signature untouched.
-  - [ ] `RunnerBroker.onResult` — late-result guard for `CANCELLED_FOR_PAUSE` mirroring `:1561-1568`.
-  - [ ] Add a code comment at `findCompletedBeforeAndNotArchived` (`:792-798`) stating `cancelled_for_pause` is deliberately EXCLUDED from the cleanup horizon (a paused run must keep its workspace for resume).
-- [ ] **Task 4 — `PauseWorkflowCommand` + `WorkflowCommandService.pauseWorkflow` + sealed fan-out (AC2, AC7)**
-  - [ ] NEW `application/workflow/commands/PauseWorkflowCommand.java` — mirror `TakeoverWorkflowCommand`: `(workflowRunId, actorIdentity, actorType, idempotencyKey, correlationId, reasonText)`; `implements WorkflowCommand`. **No `targetState` field.** Add to `WorkflowCommand` `permits`.
-  - [ ] `@Transactional public WorkflowStateChangeResult pauseWorkflow(PauseWorkflowCommand)` → `executeIdempotent(command, this::pauseWorkflowInternal, this::replayStateChange)`; internal: `transition(runId, WorkflowState.PAUSED, command, fallbackReason(reasonText, "pause workflow"), Map.of())`. Add `case PauseWorkflowCommand p -> WorkflowState.PAUSED` to `replayStateChange` (`:974-1001`).
-  - [ ] Sealed fan-out: `WorkflowCommandFingerprintFactory` arm (`workflowRunId + normalizeOptional(reasonText)`); `CommandModelSymmetryFoundationContract.EXPECTED_PERMITS += PauseWorkflowCommand.class` (reconcile the pre-existing 14-vs-15 drift); `WorkflowCommandTypeTest` pin.
-- [ ] **Task 5 — `RecoveryService.pause` (AC1–AC7, AC9)**
-  - [ ] Add `public PauseRecoveryResult pause(String workflowRunId, String idempotencyKey, ActorContext actor, String reasonText)` mirroring `resume` (`:676-972`): MDC scope (`MdcKeys.beginScope(WORKFLOW_RUN_ID, …)`); `idempotencyKeyValidator.requireValid`; require non-blank `reasonText` → else `MISSING_REASON_TEXT`; **Step-1 replay pre-check guarded on `ACTION_TYPE_PAUSE`**; read run snapshot → `currentState ∈ PAUSABLE_SOURCE_STATES` else `PAUSE_NOT_APPLICABLE` (`details.currentState`); **resolve `triggeringEventId` BEFORE the prep tx** (latest `WORKFLOW_STATE_CHANGED`, nullable); REQUIRES_NEW prep tx (`performPausePrep`) = `workflowCommandService.pauseWorkflow(...)` → scan+flip `{QUEUED,PENDING,RUNNING}` via `markCancelledForPause` (collect counts + the previously-`RUNNING` rex ids) → append `RECOVERY_PAUSED` event → insert `recovery_actions` (9-arg, `action_type='pause'`, pending); concurrent-replay catch → `resolveConcurrentPauseReplay`.
-  - [ ] `PauseRecoveryResult(String recoveryActionPublicId, String pausedEventPublicId, WorkflowState priorState, int cancelledInFlightCount, int cancelledQueuedCount, WorkflowState resultingState, String correlationId, boolean replayed)` record.
-  - [ ] Add `ACTION_TYPE_PAUSE = "pause"` + `PAUSABLE_SOURCE_STATES` + `PAUSE_CANCEL_SCAN_STATUSES` constants. Update the `RecoveryService` class javadoc (`:69-72`) — move `pause` to the present list; do NOT touch any ArchUnit rule. Inject `RunnerAdapter` (net-new ctor dep — `DeveloperTakeoverService` already injects the same port); update the two manual `new RecoveryService(...)` test sites (`RecoveryLoggingContractTest`, `RecoveryServiceUnitTest`); `@Autowired` full-context tests wire unchanged.
-- [ ] **Task 6 — Post-commit container stop (AC4)**
-  - [ ] After the prep tx commits, OUTSIDE any tx: for each rex id whose `previousStatus == RUNNING`, `runnerAdapter.cancel(rexId)` inside a try/catch that logs WARN and continues (mirror `DeveloperTakeoverService.java:274-284`; `cancel` is contractually idempotent and never throws). Then `markSucceeded(idempotencyKey)` in the `resultStatusTransactionTemplate`; an `INTERNAL_ERROR` on that flip mirrors resume (`:940-957`). **No dispatch-failure compensation branch** — pause enqueues nothing, so there is no dispatch to fail.
-- [ ] **Task 7 — Allowed-actions wiring + recommender truthfulness (AC10, AC3)**
-  - [ ] In `WorkflowInspectionService.baseActionMatrix` (`switch` at `:1676`): add `AllowedAction.PAUSE_WORKFLOW` to the `ROLE_WORKFLOW_OWNER` branch of all 8 pausable state arms; add a `workflow_owner` branch where none exists (e.g. `case WAITING_FOR_REVIEW` `:1771-1783`); other roles unchanged.
-  - [ ] Fix the stale `RecommendationService` class javadoc (`:19-21`) — the scope-lock is gone (4.28) and `resume`/`reconcile`/`pause` now exist.
-- [ ] **Task 8 — Tests + ArchUnit (AC11)**
-  - [ ] `RecoveryServicePauseTest` (unit) — the AC11 matrix.
-  - [ ] `PauseTransitionSymmetryTest` + `RecommendedPauseIsInvocableTest`.
-  - [ ] `PauseResumeRoundTripIT` — all 8 states; asserts re-dispatch fires for `EXECUTING`/`INVESTIGATING` only. **This activates 4.5's never-executed `INVESTIGATING` branch.**
-  - [ ] Runner-layer: state-machine edges; `onResult` late-result guard; `dequeueNext` skips a paused run's cancelled row; `scanForTimeouts` skips it.
-  - [ ] Integration-sweep regression test: a `Paused` run with a drifted active link is still surfaced (AC8).
-  - [ ] Extend `RecoveryLoggingContractTest` (pause start/success/replay/rejected) + `WorkflowInspectionServiceAllowedActionsTest` (8 arms).
-  - [ ] `RegistryContractTest` + `AllowedActionRegistryPinTest` + `CommandModelSymmetryFoundationContract` + `WorkflowCommandTypeTest` + `FlywaySchemaContractTest` (V39 replay + both CHECK shapes). Real-PG `RecoveryServicePauseIT`. ArchUnit (Failsafe) green.
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] SLF4J structured logs mirroring `resume`: `recovery pause start` (INFO, `workflowRunId`+`idempotencyKey`+`actorIdentity`), `recovery pause success` (INFO, `recoveryActionId`+`priorState`+`cancelledInFlightCount`+`cancelledQueuedCount`+`durationMs`), `recovery pause replay` (INFO), `recovery pause rejected` (WARN, `currentState`+`reason`), per-row `runner execution cancelled for pause` (INFO, `runnerExecutionId`+`previousStatus`), container-cancel failure (WARN, never ERROR — best-effort), ERROR only on the audit-append-outage / terminal-flip escalation path.
-  - [ ] Parameterized logging only. Carry `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`. MDC scope via `MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, …)`. Never log secrets/tokens/PII; sanitize `runId`.
-  - [ ] Pin the `recovery pause start`/`success`/`rejected` lines in `RecoveryLoggingContractTest` (ListAppender), mirroring the resume pins.
+- [x] **Task 1 — Registry fan-outs (AC2, AC3, AC5, AC10)**
+  - [x] `RunnerExecutionStatus.CANCELLED_FOR_PAUSE("cancelled_for_pause")` — enum + `registry-api-schema-placeholders.json` `"runnerExecutionStatuses"` array. The drift gate is THREE-WAY (enum ↔ DB CHECK ↔ JSON): `RegistryContractTest.java:152,176-181`.
+  - [x] `WorkflowEventType.RECOVERY_PAUSED("recovery.paused")` — enum + `contracts/events/workflow-event-types.fixture.json` (order-aligned) + `DomainRegistry.workflowEventTypes()` (auto) + `fixture-event-streams/schema/workflow-events-response.schema.json` ([[new-workfloweventtype-fixture-sites]]). NO `WorkflowEventDetailKeys` change.
+  - [x] `DomainErrorCode.PAUSE_NOT_APPLICABLE` (409) — three sites: enum + `ProblemDetailsCatalog` (mirror `RESUME_NOT_APPLICABLE`) + `problemTypeUris` manifest ([[new-domainerrorcode-three-sites]]).
+  - [x] `DomainErrorCode.MISSING_REASON_TEXT` (400) — 4.7 landed it (commit b56ec1d); REUSED, not duplicated.
+  - [x] `AllowedAction.PAUSE_WORKFLOW("pause_workflow")` — enum + `contracts/frontend/allowed-actions.placeholder.json` + `AllowedActionRegistryPinTest.pauseWorkflowWireValueIsPinned()`. No OpenAPI regen.
+- [x] **Task 2 — Transition table: the symmetric edge set (AC3, AC7) ⚠️ highest-risk**
+  - [x] Added `WorkflowState.PAUSED` to the target set of `INVESTIGATING`, `WAITING_FOR_SPEC_APPROVAL`, `WAITING_FOR_REVIEW`, `WAITING_FOR_MANUAL_EXECUTION`, `WAITING_FOR_LINT_APPROVAL`, `WAITING_FOR_DELIVERY`, `FAILED` (`EXECUTING` already had it). 3h-4 IS merged — the `WAITING_FOR_DELIVERY` row exists and got its edge.
+  - [x] Widened the `PAUSED` row to `{EXECUTING, INVESTIGATING, WAITING_FOR_SPEC_APPROVAL, WAITING_FOR_REVIEW, WAITING_FOR_MANUAL_EXECUTION, WAITING_FOR_LINT_APPROVAL, WAITING_FOR_DELIVERY, FAILED, TAKEN_OVER, RECONCILED}`. Also updated the two table-pinning tests (`WorkflowTransitionTableTest`, `TransitionTableCrossProductFoundationContract`).
+  - [x] NEW `PauseTransitionSymmetryTest` pinning the invariant both ways (+ tight both-directions set equality + no-non-pausable-inbound-edge sweep). Table comment added explaining WHY the sets are symmetric.
+- [x] **Task 3 — `cancelled_for_pause` runner status: Flyway **V43** + state machine + port (AC4)**
+  - [x] NEW `src/main/resources/db/migration/V43__add_cancelled_for_pause_status.sql` — V16 shape: drop+re-add `ck_runner_executions_status` restating the FULL set incl. `awaiting_manual` + `cancelled_for_pause`; drop+re-add `ck_runner_executions_completed_correlation` adding `cancelled_for_pause` (keeping `awaiting_manual` OUT). **Story's "V39" was stale — V39–V42 were claimed by 3i-3/testcontainers/CI/4.7; V43 verified next-free on this tree** ([[flyway-v31-cross-branch-collision]]).
+  - [x] `RunnerExecutionStateMachine` — `CANCELLED_FOR_PAUSE` in `TERMINAL`; target from `PENDING`, `QUEUED`, `RUNNING`; `CANCELLED_FOR_PAUSE → {}`. **No `AWAITING_MANUAL` edge.**
+  - [x] NEW `application/runner/spi/RunnerExecutionCancellation.java`.
+  - [x] `RunnerExecutionRecordPort.markCancelledForPause` + adapter: shared private `markCancelled(publicId, targetStatus, at)`; both public methods delegate; `markCancelledForTakeover` signature untouched (OQ-3 low-blast-radius option).
+  - [x] `RunnerBroker.onResult` — late-result guard for `CANCELLED_FOR_PAUSE` mirroring the takeover arm.
+  - [x] Code comment at `findCompletedBeforeAndNotArchived` — `cancelled_for_pause` deliberately EXCLUDED from the cleanup horizon (OQ-4).
+- [x] **Task 4 — `PauseWorkflowCommand` + `WorkflowCommandService.pauseWorkflow` + sealed fan-out (AC2, AC7)**
+  - [x] NEW `PauseWorkflowCommand` mirroring `TakeoverWorkflowCommand` (no `targetState`); added to `WorkflowCommand` `permits`.
+  - [x] `pauseWorkflow` → `executeIdempotent(command, this::pauseWorkflowInternal, this::replayStateChange)`; internal transitions to the constant `PAUSED`; `case PauseWorkflowCommand → WorkflowState.PAUSED` replay pin added.
+  - [x] Sealed fan-out: fingerprint arm (`workflowRunId + normalizeOptional(reasonText)`); `EXPECTED_PERMITS += PauseWorkflowCommand.class` (the 14-vs-15 drift had already been reconciled when 3h-4 merged); `WorkflowCommandTypeTest` pin.
+- [x] **Task 5 — `RecoveryService.pause` (AC1–AC7, AC9)**
+  - [x] `pause(...)` mirroring `resume`: MDC scope; key validation; ACTION_TYPE_PAUSE-guarded Step-1 replay; `MISSING_REASON_TEXT` guard; `PAUSABLE_SOURCE_STATES` gate (`PAUSE_NOT_APPLICABLE` + `details.currentState`); triggering event resolved BEFORE the prep tx; REQUIRES_NEW `performPausePrep` (transition → scan+flip `{QUEUED,PENDING,RUNNING}` w/ counts + RUNNING ids → `RECOVERY_PAUSED` event → 9-arg `recovery_actions` insert); `resolveConcurrentPauseReplay` on conflict (forwards resolved reason).
+  - [x] `PauseRecoveryResult` record (8 components).
+  - [x] `ACTION_TYPE_PAUSE` + `PAUSABLE_SOURCE_STATES` + `PAUSE_CANCEL_SCAN_STATUSES` constants; class javadoc moved `pause` to the present list (no ArchUnit rule touched); `RunnerAdapter` ctor dep added (nullable in test ctors, guarded at call time); manual `new RecoveryService(...)` sites updated (`RecoveryLoggingContractTest`, `RecoveryServiceReconcileTest` — the two that use the full ctor; `RecoveryServiceUnitTest`/`ResumeTest`/`RerunFromStepTest` use the unchanged middle ctor).
+- [x] **Task 6 — Post-commit container stop (AC4)**
+  - [x] Post-commit `runnerAdapter.cancel(rexId)` for `previousStatus == RUNNING` only, try/catch WARN; `markSucceeded` flip with `INTERNAL_ERROR` escalation mirroring resume. No dispatch-failure compensation branch (pause enqueues nothing).
+- [x] **Task 7 — Allowed-actions wiring + recommender truthfulness (AC10, AC3)**
+  - [x] `baseActionMatrix`: `PAUSE_WORKFLOW` added to the `ROLE_WORKFLOW_OWNER` branch of all 8 pausable state arms (incl. the INVESTIGATING open-clarification sub-branch; WAITING_FOR_REVIEW already had an owner branch from 4.7).
+  - [x] Fixed the stale `RecommendationService` class javadoc (scope-lock lifted by 4.28; pause now real + invocable, pinned by `RecommendedPauseIsInvocableTest`).
+- [x] **Task 8 — Tests + ArchUnit (AC11)**
+  - [x] `RecoveryServicePauseTest` (unit, 23 tests) — the AC11 matrix incl. counts split, RUNNING-only docker stop, awaiting_manual scan exclusion, already-terminal skip, blank reason, all 8 non-pausable rejections, replay/conflict/concurrent matrix.
+  - [x] `PauseTransitionSymmetryTest` (4) + `RecommendedPauseIsInvocableTest` (2).
+  - [x] `PauseResumeRoundTripIT` — all 8 states round-trip on real PG; typed priorState asserted; re-dispatch branch selection pinned at unit level in `RecoveryServiceResumeTest` (new INVESTIGATING→retrySpecGeneration + gate-state-no-dispatch tests) since auto-dispatch is off in the test profile. **Activates 4.5's never-executed `INVESTIGATING` branch.**
+  - [x] Runner-layer: state-machine edge tests (3 new); `onResult` late-result guard (`RunnerBrokerUnitTest`, 77/0); `dequeueNext` + ACTIVE_STATUSES-scan invisibility asserted in `RecoveryServicePauseIT`.
+  - [x] Integration-sweep regression test added to `IntegrationConflictDetectionIT` (AC8; also asserts the sweep never un-pauses).
+  - [x] Extended `RecoveryLoggingContractTest` (pause start/success/replay/rejected — 20/0) + `WorkflowInspectionServiceAllowedActionsTest` (8 arms + new lint-gate rows — 58/0).
+  - [x] `RegistryContractTest` + `AllowedActionRegistryPinTest` + `CommandModelSymmetryFoundationContract` + `WorkflowCommandTypeTest` + `FlywaySchemaContractTest` (V43 migrate + both CHECK shapes + awaiting_manual-stays-out negative). Real-PG `RecoveryServicePauseIT`. ArchUnit (Failsafe) green.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] SLF4J structured logs mirroring `resume`: start/success (with both counts)/replay INFO; single rejected WARN in the outer catch (the 4.7 R2 lesson — no competing per-site WARNs); per-row `runner execution cancelled for pause` INFO; container-cancel failure WARN (never ERROR); ERROR only on the terminal-flip escalation path.
+  - [x] Parameterized logging only; `correlationId`/`workflowRunId`/`idempotencyKey`/`actorIdentity` carried; MDC scope on WORKFLOW_RUN_ID; no secrets.
+  - [x] `recovery pause start`/`success`/`replay`/`rejected` lines pinned in `RecoveryLoggingContractTest` (ListAppender).
+
+### Review Findings (code review 2026-07-12, round 1)
+
+Layers: Blind Hunter (diff-only) + Edge Case Hunter (diff+project) + Acceptance Auditor (diff+spec). 3 decision-needed, 10 patch, 8 defer, 4 dismissed. Decisions resolved by Alex 2026-07-12: D1 ACCEPTED (dismissed), D2 fix-all-three (patched), D3 gate-success-callbacks (patched). All 12 patches applied same day — see per-item notes.
+
+- [x] [Review][Decision] ~~AC9 replay-priorState refinement sign-off~~ **RESOLVED: ACCEPTED** (per-action read via `resulting_event_id` is strictly more correct than literal AC9 under resume→re-pause; resume's own read untouched) — replay reads the typed `priorState()` off THIS action's own `recovery.paused` event (via `resulting_event_id`), keeping `findLatestTransitionToState` only as null-fallback, instead of AC9's literal "re-derive via `findLatestTransitionToState(runId, PAUSED)`". Auditor verdict: deliberate, flagged by dev, per-action correct under resume→re-pause (the AC9 mechanism would return the wrong pause's prior state), and resume's own read is untouched. Needs explicit accept/reject.
+- [x] [Review][Decision→Patch, APPLIED] Replay reason-identity semantics are inconsistent across three layers — **FIXED (all three)**: reason guard moved BEFORE the replay pre-check (blank same-key retry now raises `MISSING_REASON_TEXT`); `requirePauseReasonText` trims at the boundary so fingerprint/transition-reason/`recovery.paused` reason/replay comparison all share one value; replay comparison is now strict equality on the trimmed reason (whitespace-differing identical retry replays). New pins: `pauseWithBlankReasonRaisesMissingReasonText` (never reaches `findByIdempotencyKey`), `pauseReplayWithWhitespacePaddedIdenticalReasonStillReplays`, `pauseStoresTrimmedReasonOnRecoveryPausedEvent`. Original finding: (a) `replayPauseResultOrConflict` SKIPS the reason comparison when the incoming reason is null/blank, so a blank-reason same-key retry silently replays where AC2 (reason required) + AC9/Reconciliation-9 fingerprint semantics (`workflowRunId + normalizeOptional(reasonText)`) imply `MISSING_REASON_TEXT`/`IDEMPOTENCY_KEY_CONFLICT`; (b) the replay comparison is RAW string equality while the fingerprint trims (whitespace-differing identical pause → spurious conflict); (c) `WORKFLOW_STATE_CHANGED` stores the trimmed `fallbackReason` while `RECOVERY_PAUSED` stores raw `effectiveReason` — the two audit rows for one action can disagree. Dev also reordered Task 5 (replay pre-check before the reason guard) without listing it as a deviation. Accept-as-is (mirrors reconcile/rerun replay-first pattern) or fix.
+- [x] [Review][Decision→Patch, APPLIED] Widened `PAUSED →` edges let system success-callbacks legally yank a Paused run out of Paused — **FIXED (gate-success-callbacks)**: executor-as-gate paused-run guard added to ALL FIVE runner-success seams that target now-PAUSED-reachable states — `WorkflowOrchestrationService.onSpecStageSucceeded/onPlanStageSucceeded/onPrOutputStageSucceeded` (shared `stageSuccessIgnoredWhilePaused` helper), `LintStageService.parkForLintApproval`, `DeliveryGateService.tryGateBehindDelivery` (returns true = handled, so the caller never falls through to an inline push on a paused run; new `WorkflowRunReadPort` ctor dep on both, single test-ctor site each). Late success is logged WARN `reason=run_paused` + ignored, mirroring the broker's late-result guard. Pins: `onPlanStageSucceededIsIgnoredWhileRunIsPaused`, `onSpecStageSucceededIsIgnoredWhileRunIsPaused`. Original finding: a runner row enqueued AFTER the pause prep-tx scan (e.g. an async redispatch landing in the race window) is leased (`DEQUEUE_SQL` has no workflow-state predicate), completes, and `onResult` → `onPlanStageSucceeded` drives `PAUSED → WAITING_FOR_REVIEW`, now LEGAL — silent un-pause, no operator action. Pre-4.8 this ended in a swallowed `ILLEGAL_TRANSITION`; the failure twin is blocked only by the category-only-on-Executing/Investigating rule. Fix location ambiguous: gate in orchestration success callbacks vs `onResult` vs restricting who may drive `PAUSED →` edges. [WorkflowTransitionTable.java PAUSED row; RunnerBroker.java:1632; WorkflowOrchestrationService.java:761,354-365]
+- [x] [Review][Patch APPLIED] CRITICAL: manual-artifact submission silently un-pauses a Paused run — **FIXED**: explicit current-state gate in `ManualArtifactSubmissionService.submit` (after the parked-row check, so a non-parked run keeps `MANUAL_EXECUTION_NOT_APPLICABLE`): run not in `WaitingForManualExecution` → `ILLEGAL_TRANSITION` 409 with `details.currentState`, park intact, reservation rolls back. `stubParkedRunInState` now models pre/post-ingest states; new pin `pausedRunWithIntactParkIsRejectedWithIllegalTransitionAndNeverConsumesThePark`; `WorkflowInspectionService` comment corrected to name the gate. Original finding: `ManualArtifactSubmissionService.submit` has NO workflow-state gate (its only applicability gate is "exactly one parked awaiting_manual row", which pause deliberately preserves); with the new `PAUSED → WAITING_FOR_SPEC_APPROVAL / WAITING_FOR_REVIEW` edges the submission transition SUCCEEDS instead of the documented "clean ILLEGAL_TRANSITION 409" — run exits Paused without resume, park consumed, no recovery bookkeeping. Add the executor-as-gate current-state precondition + regression IT, and fix the false comment claiming the 409 [deliveryline-backend/src/main/java/org/dradgo/application/workflow/ManualArtifactSubmissionService.java:124-213; WorkflowInspectionService.java (pause comment)]
+- [x] [Review][Patch APPLIED] MAJOR: resume's priorState read is shadowed by `RECOVERY_PAUSED` + stale-sourceState TOCTOU — **FIXED (both halves)**: (a) `WorkflowEventRepository.findLatestTransitionToState` now filters `eventType = 'workflow.stateChanged'` (adapter passes the constant); pinned by new real-PG `WorkflowEventFindLatestTransitionToStateIT` (transition event wins over a later recovery.paused with divergent priorState). (b) `performPausePrep` re-gates in-tx (typed `PAUSE_NOT_APPLICABLE` instead of raw `ILLEGAL_TRANSITION` when the run advanced — also closes the minor E4 finding) and reads the authoritative priorState back off the transition event inside the same tx; `PausePrep` carries `sourceState`; success log + result use it. Pins: `pausePriorStateComesFromTheTransitionEventReadBackInsideThePrepTx`, `pauseInTxRegateRejectsWhenRunAdvancedToNonPausableStateAfterOuterGate`. Original finding: verified: the `findLatestTransitionToState` JPQL filters only `resultingState='Paused' and priorState is not null` (NO event-type filter) and `RECOVERY_PAUSED` stamps typed `sourceState`/`PAUSED` (RecoveryService.java:1358-1364) and is appended AFTER the transition event, so resume now de-facto reads the recovery event — contradicting Reconciliation 6's "resume MUST NOT be repointed". `sourceState` is snapshotted BEFORE the prep tx; if the run advances between gate and tx (both states pausable, e.g. EXECUTING→WAITING_FOR_REVIEW), `RECOVERY_PAUSED`/result/log record the stale state and resume restores the WRONG state (re-executing review-ready work). Fix: add `eventType='workflow.state.changed'` filter to `findLatestTransitionToState` + re-read state inside the prep tx (in-tx re-gate also converts the race's raw `ILLEGAL_TRANSITION` into typed `PAUSE_NOT_APPLICABLE`) [WorkflowEventRepository.java:65-77; RecoveryService.java pause Step 3/performPausePrep]
+- [x] [Review][Patch APPLIED] `PauseRecoveryResult.priorState` can be null on replay contra its javadoc — **FIXED**: javadoc now documents the degenerate-replay null case + the 4.13 mapper null-guard obligation [PauseRecoveryResult.java]
+- [x] [Review][Patch APPLIED] Rejected-path WARN omits `currentState` contra the story's logging spec — **FIXED**: outer catch extracts `details.currentState` (falls back to `unknown`) into the single pinned WARN; pinned assertion extended [RecoveryService.java outer catch; RecoveryLoggingContractTest]
+- [x] [Review][Patch APPLIED] `RecommendedPauseIsInvocableTest` drops the third spec-mandated conjunct — **FIXED**: "Leg 4" added — asserts `PAUSE_WORKFLOW` ∈ workflow_owner allowed-actions for FAILED via a real `WorkflowInspectionService.getAllowedActions` (no matrix duplication); 2/2 green [RecommendedPauseIsInvocableTest]
+- [x] [Review][Patch APPLIED] AC8 sweep IT never asserts the drifted link belongs to the paused run — **FIXED**: pre-pause `runOwningLink(link)` SQL-join assertion + listed-conflict check tightened to both `integrationLinkId` AND `workflowRunId`; 10/10 green (real PG) [IntegrationConflictDetectionIT]
+- [x] [Review][Patch APPLIED] No positive awaiting_manual park-survives-pause test — **FIXED**: new `pausePreservesTheAwaitingManualParkAndResumeFindsItIntact` in PauseResumeRoundTripIT — real awaiting_manual row seeded → pause (row untouched, counts 0, completed_at null) → resume (back to WaitingForManualExecution, park intact, no second park); 9/9 green (real PG) [PauseResumeRoundTripIT]
+- [x] [Review][Patch APPLIED] AC11 per-state no-op dispatch pins incomplete — **FIXED**: `resumeFromGateOrFailedPriorStateDispatchesNothing` parameterized over all six gate/failed states, identical assertions to the original single pin; 19/19 green [RecoveryServiceResumeTest]
+- [x] [Review][Patch APPLIED] AC11 `scanForTimeouts` invisibility asserted by proxy only — **FIXED**: IT now ages `timeout_at`, asserts the timeout-scan query (`findStaleByStatusInAndTimeoutAtBefore`) returns the running row PRE-pause (non-vacuous) and empty POST-pause; 3/3 green (real PG) [RecoveryServicePauseIT]
+- [x] [Review][Patch APPLIED] Comment/message hygiene — **FIXED**: (a) replay-counts comment now states the primitive-int 0 + `replayed`-flag contract honestly; (b) `PAUSE_NOT_APPLICABLE` message derives its state list from `PAUSABLE_SOURCE_STATES` via the new shared `pauseNotApplicable(...)` helper (single construction site for both gates) [RecoveryService.java]
+- [x] [Review][Defer] Stuck-`pending` recovery_actions row is a permanent same-key dead end (crash between prep-commit and markSucceeded → same key = eternal `IDEMPOTENCY_KEY_CONFLICT`, new key = `PAUSE_NOT_APPLICABLE`; no sweep/repair path) [RecoveryService.java pause Step 6] — deferred, pre-existing (mirrors resume; 4.7 defer family)
+- [x] [Review][Defer] Replay event lookup is an unbounded full-history scan and throws the history-ceiling error on event-heavy runs [RecoveryService.replayPauseResultOrConflict; WorkflowEventPersistenceAdapter.java:112-127] — deferred, pre-existing (4.7 defer, systemic)
+- [x] [Review][Defer] Crash between the inner COMPLETED idempotency flip and prep-tx commit wedges the run un-paused with runners cancelled on retry-replay [WorkflowCommandService.java:966-981] — deferred, pre-existing (`executeIdempotent` shape shared with resume/retry)
+- [x] [Review][Defer] Concurrent pending-window 409: loser conflicts although the winner succeeds moments later [RecoveryService.resolveConcurrentPauseReplay] — deferred, pre-existing (4.7 defer verbatim)
+- [x] [Review][Defer] Queued-row lease race: post-commit `cancel()` can fire before the worker launches the container → unsupervised orphan container runs to completion [RecoveryService.java:1305-1309] — deferred, pre-existing (same shape as takeover)
+- [x] [Review][Defer] Transition-only `WorkflowCommandService.pauseWorkflow` is publicly callable and pauses WITHOUT cancelling runner rows — nothing but a comment prevents a caller from producing a Paused run whose queued row is still leased [WorkflowCommandService.java] — deferred, pre-existing (mirrors 4.5's thin `resumeWorkflow`; 4.13 must wire the RICH `RecoveryService.pause`)
+- [x] [Review][Defer] Post-success terminal-flip failure is logged as `recovery pause rejected … reason=INTERNAL_ERROR` although the pause held — misleading grep surface [RecoveryService.java outer catch] — deferred, pre-existing (4.7 R2 single-pinned-reject-WARN pattern; changing it diverges from rerun/reconcile)
+- [x] [Review][Defer] `reasonText` > 512 chars passes the `MISSING_REASON_TEXT` pre-gate and fails deep in the prep tx as `INVALID_COMMAND_PAYLOAD`; never validated at all on the replay path [RecoveryService.requirePauseReasonText vs PauseWorkflowCommand @Size] — deferred, pre-existing (systemic command-validation shape)
+
+Dismissed as noise (4): RUNNING-only docker cancel (spec-bound mirror of takeover, Reconciliation 5); V43 completed-correlation "narrowing" (verified — the V1/V16 predicate never had a correlation term; name is historic); line-pinned checkstyle suppression (repo's established mechanism); "decorative" bean validation on `PauseWorkflowCommand` (factually wrong — `@Size` IS enforced via `executeIdempotent.validateForExecution`).
 
 ## Dev Notes
 
@@ -228,9 +256,126 @@ Dependencies: **4.5** (`resume`) `done`; **4.6** (`reconcile`) `done`; **4.28** 
 ### Agent Model Used
 
 claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow.
+claude-fable-5 (Claude Fable 5) — bmad-dev-story implementation (2026-07-12).
 
 ### Debug Log References
 
+- Working-tree reconciliation at dev time: 4.7 had LANDED (commit b56ec1d) since the story was
+  authored — `MISSING_REASON_TEXT` already existed (REUSED, per Reconciliation 6a) and Flyway
+  V38–V42 were all taken (3h-4/3i-3/testcontainers/CI/4.7), so the migration is **V43**, not the
+  story's provisional V39. 3h-4 is merged, so the `WAITING_FOR_DELIVERY` transition row existed and
+  received its edge; `EXPECTED_PERMITS` already held `ApproveDeliveryCommand` (the anticipated
+  14-vs-15 drift was gone).
+- `mvnw surefire:test` direct goal crashed on `@{argLine}` — used the `test` lifecycle phase +
+  `-Djacoco.skip=true` instead ([[maven-arglineation-goal-crash]]).
+- Focused Surefire run: 166/0 (RecoveryServicePauseTest 23, PauseTransitionSymmetryTest 4,
+  RecommendedPauseIsInvocableTest 2, RecoveryLoggingContractTest 20, RecoveryServiceReconcileTest
+  18, RecoveryServiceResumeTest 14, RunnerExecutionStateMachineTest 17, WorkflowCommandTypeTest 1,
+  WorkflowInspectionServiceAllowedActionsTest 58, WorkflowTransitionTableTest 9) +
+  RunnerBrokerUnitTest 77/0 + WorkflowEventDetailKeysContractTest 4/0.
+
 ### Completion Notes List
 
+- **4.5's deferred review finding is CLOSED BY CONSTRUCTION** (Reconciliation 2): every `X →
+  Paused` edge shipped together with its `Paused → X` return edge; `PauseTransitionSymmetryTest`
+  pins the invariant in both directions plus tight set-equality (`Paused` targets == pausable
+  sources + TakenOver/Reconciled) and the negative sweep (no non-pausable state gained a `→ Paused`
+  edge). `PauseResumeRoundTripIT` proves the round trip on real Postgres for all 8 states.
+- 4.5's never-executed `INVESTIGATING → retrySpecGeneration` resume branch is now LIVE and covered:
+  branch selection pinned at unit level (`RecoveryServiceResumeTest.
+  resumeFromInvestigatingPriorStateRedispatchesSpecGeneration` + the gate-state no-dispatch pin);
+  the round-trip IT executes it end-to-end (auto-dispatch off in the test profile → null handle,
+  branch runs without error). The `redispatchForResume` javadoc's "DEFERRED/unreachable" note was
+  updated.
+- **Deliberate refinement vs AC9's literal text**: on replay, `priorState` is re-derived from the
+  typed `priorState()` of the persisted `recovery.paused` event linked to THIS action
+  (`resulting_event_id`), not from `findLatestTransitionToState(runId, PAUSED)` — per-action
+  precise if the run was later resumed and re-paused under a different key; the latter is kept as
+  a defensive fallback when the event row carries no typed prior state. Same mechanism (typed
+  column), righter row.
+- Same-key/different-reason replays conflict (reason composes the fingerprint identity), compared
+  against the event row's typed `reason` column (the 4.7 review lesson), and the concurrent-replay
+  path forwards the resolved reason so the race enforces the same discriminator.
+- Rejection logging uses the single-outer-catch WARN pattern (the 4.7 R2 lesson) — no competing
+  per-site WARNs; `reason=<error code>`, `currentState` rides the exception details.
+- OQ provisional bindings all confirmed-as-bound: OQ-1 8-state allow-list; OQ-2 `recovery.paused`
+  minted; OQ-3 sibling port method + shared private body (takeover signature untouched); OQ-4
+  `cancelled_for_pause` EXCLUDED from the cleanup horizon (comment planted against "helpful"
+  refactors); OQ-5 counts live only on `PauseRecoveryResult` (no new detail keys); OQ-6 moot — 4.7
+  landed first, `MISSING_REASON_TEXT` reused, V43 claimed.
+- `WorkflowInspectionServiceAllowedActionsTest` previously had NO rows for
+  `WAITING_FOR_LINT_APPROVAL` — pinned both roles' rows while adding `pause_workflow` (net
+  coverage gain beyond the story).
+- NO REST/CLI/FE surfaces (4.13/4.22); NO `workflow.paused` type / `priorState` detail key /
+  resume repointing; NO `WorkflowState.isTerminal()` extraction (4.30 owns it); NO
+  `AWAITING_MANUAL` pause edge; NO workspace-cleanup enrollment.
+
 ### File List
+
+Main (modified):
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/RunnerExecutionStatus.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventType.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/AllowedAction.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowTransitionTable.java
+- deliveryline-backend/src/main/java/org/dradgo/application/runner/RunnerExecutionStateMachine.java
+- deliveryline-backend/src/main/java/org/dradgo/application/runner/RunnerBroker.java
+- deliveryline-backend/src/main/java/org/dradgo/application/runner/spi/RunnerExecutionRecordPort.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/RunnerExecutionPersistenceAdapter.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/commands/WorkflowCommand.java
+- deliveryline-backend/src/main/java/org/dradgo/application/idempotency/WorkflowCommandFingerprintFactory.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowCommandService.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecommendationService.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java
+
+Main (new):
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/commands/PauseWorkflowCommand.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/PauseRecoveryResult.java
+- deliveryline-backend/src/main/java/org/dradgo/application/runner/spi/RunnerExecutionCancellation.java
+- deliveryline-backend/src/main/resources/db/migration/V43__add_cancelled_for_pause_status.sql
+
+Test (new):
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServicePauseTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/PauseTransitionSymmetryTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecommendedPauseIsInvocableTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServicePauseIT.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/PauseResumeRoundTripIT.java
+
+Test (modified):
+- deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowTransitionTableTest.java
+- deliveryline-backend/src/test/java/org/dradgo/foundation/TransitionTableCrossProductFoundationContract.java
+- deliveryline-backend/src/test/java/org/dradgo/foundation/CommandModelSymmetryFoundationContract.java
+- deliveryline-backend/src/test/java/org/dradgo/application/workflow/commands/WorkflowCommandTypeTest.java
+- deliveryline-backend/src/test/java/org/dradgo/architecture/AllowedActionRegistryPinTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceAllowedActionsTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryLoggingContractTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServiceResumeTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServiceReconcileTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/runner/RunnerExecutionStateMachineTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/runner/RunnerBrokerUnitTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionIT.java
+- deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java
+
+Test resources (modified):
+- deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json
+- deliveryline-backend/src/test/resources/contracts/events/workflow-event-types.fixture.json
+- deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json
+- deliveryline-backend/src/test/resources/contracts/frontend/allowed-actions.placeholder.json
+
+Build config (modified):
+- config/checkstyle/suppressions.xml — the pre-existing line-pinned ForbiddenThreadSleep
+  suppression for WorkflowCommandService (1357) shifted to 1399 when pauseWorkflow/
+  pauseWorkflowInternal were inserted above the pinned helper; re-pinned with a comment.
+
+### Change Log
+
+- 2026-07-12 — Story 4.8 implemented (all 8 tasks + logging): `RecoveryService.pause` with the
+  8-state `PAUSABLE_SOURCE_STATES` gate, symmetric `→ Paused` / `Paused →` transition-table edge
+  set, `cancelled_for_pause` terminal runner status (Flyway **V43**, both CHECKs), transition-only
+  `WorkflowCommandService.pauseWorkflow` + `PauseWorkflowCommand` sealed fan-out, `recovery.paused`
+  audit anchor + `recovery_actions` `action_type='pause'` (pre-reserved V1 slot),
+  `PAUSE_NOT_APPLICABLE` (409, three sites), `pause_workflow` allowed-action across 8
+  workflow_owner arms, RecommendationService javadoc de-staled. Closes 4.5's deferred
+  `Paused → X` legality finding by construction.

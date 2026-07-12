@@ -129,8 +129,15 @@ class ManualArtifactSubmissionServiceTest {
 
   private void stubParkedRunInState(RunnerStage stage, WorkflowState postState) {
     RunnerExecutionSnapshot row = parkedRow(stage);
+    // First read (step-1 snapshot, feeds the 4.8-review current-state gate) sees the parked run
+    // still in WaitingForManualExecution; subsequent reads (the post-ingest step-6 read) see the
+    // post-transition state — mirroring the real pre/post-ingest sequence.
     when(workflowRunReadPort.findByPublicId(RUN_ID))
-        .thenReturn(Optional.of(new WorkflowRunSnapshot(RUN_ID, postState, null, 1L, 0, false)));
+        .thenReturn(
+            Optional.of(
+                new WorkflowRunSnapshot(
+                    RUN_ID, WorkflowState.WAITING_FOR_MANUAL_EXECUTION, null, 1L, 0, false)),
+            Optional.of(new WorkflowRunSnapshot(RUN_ID, postState, null, 1L, 0, false)));
     when(recordPort.findByWorkflowRunPublicIdAndStatusIn(
             RUN_ID, List.of(RunnerExecutionStatus.AWAITING_MANUAL)))
         .thenReturn(List.of(row));
@@ -186,6 +193,38 @@ class ManualArtifactSubmissionServiceTest {
     // ingest, no completion.
     verify(runnerBroker, never()).ingestManualResult(any(), any(), any());
     verify(idempotencyService, never()).complete(any(), any(), any());
+  }
+
+  @Test
+  void pausedRunWithIntactParkIsRejectedWithIllegalTransitionAndNeverConsumesThePark() {
+    // Story 4.8 review — pause deliberately preserves the awaiting_manual park, and the 4.8
+    // symmetry edges made PAUSED → WaitingForSpecApproval/WaitingForReview LEGAL (resume's return
+    // edges), so the transition table alone would let this submission silently un-pause the run.
+    // The explicit current-state gate restores the pre-4.8 contract: clean ILLEGAL_TRANSITION,
+    // park intact, no ingest — the operator resumes first.
+    RunnerExecutionSnapshot row = parkedRow(RunnerStage.EXECUTION);
+    when(workflowRunReadPort.findByPublicId(RUN_ID))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN_ID, WorkflowState.PAUSED, null, 1L, 0, false)));
+    when(recordPort.findByWorkflowRunPublicIdAndStatusIn(
+            RUN_ID, List.of(RunnerExecutionStatus.AWAITING_MANUAL)))
+        .thenReturn(List.of(row));
+    when(idempotencyService.checkAndReserve(eq(IDEMPOTENCY_KEY), any(), eq(ACTOR), any()))
+        .thenReturn(new ReservationOutcome(ReservationDecision.RESERVED, null));
+
+    assertThatThrownBy(() -> service.submit(command(VALID_PLAN_PAYLOAD)))
+        .isInstanceOf(DomainException.class)
+        .satisfies(
+            error -> {
+              DomainException domainError = (DomainException) error;
+              assertThat(domainError.errorCode()).isEqualTo(DomainErrorCode.ILLEGAL_TRANSITION);
+              assertThat(domainError.details().get("currentState"))
+                  .isEqualTo(WorkflowState.PAUSED.value());
+            });
+    // Park never consumed, nothing ingested, reservation rolls back with the tx.
+    verify(runnerBroker, never()).ingestManualResult(any(), any(), any());
+    verify(idempotencyService, never()).complete(any(), any(), any());
+    assertThat(logged(Level.WARN, "reason=run_not_awaiting_manual_submission")).isTrue();
   }
 
   @Test

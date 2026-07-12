@@ -9,6 +9,7 @@ import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
 import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
 import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.PauseWorkflowCommand;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
@@ -120,6 +121,16 @@ public class WorkflowCommandFingerprintFactory {
       case TakeoverWorkflowCommand takeover -> {
         append(digest, takeover.workflowRunId());
         append(digest, normalizeOptional(takeover.reasonText()));
+      }
+      case PauseWorkflowCommand pause -> {
+        // Story 4.8: canonical fingerprint fields beyond the shared envelope are workflowRunId +
+        // reasonText (mirrors RetryWorkflowCommand/TakeoverWorkflowCommand — the target state is
+        // the
+        // constant PAUSED, so there is nothing else to fingerprint). reasonText IS fingerprinted
+        // (symmetric with retry/takeover/resume): a same-key pause with a different reason is a
+        // distinct action, not a replay.
+        append(digest, pause.workflowRunId());
+        append(digest, normalizeOptional(pause.reasonText()));
       }
       case ResumeWorkflowCommand resume -> {
         // Story 4.5: canonical fingerprint fields beyond the shared envelope are workflowRunId +

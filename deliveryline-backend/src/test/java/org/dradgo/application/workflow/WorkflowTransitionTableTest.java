@@ -58,12 +58,15 @@ class WorkflowTransitionTableTest {
         Set.of(WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
     // Story 3a-1: INVESTIGATING gains a FAILED edge (spec-stage runner failures, AC4/AC8).
     // Story 3d-3: INVESTIGATING gains a WAITING_FOR_MANUAL_EXECUTION edge (spec-stage manual park).
+    // Story 4.8: every PAUSABLE_SOURCE_STATES member gains a PAUSED edge, symmetric with the
+    // widened PAUSED return row below (the pause symmetry invariant).
     expectedTargets.put(
         WorkflowState.INVESTIGATING,
         Set.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             WorkflowState.FAILED,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(
@@ -72,6 +75,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.EXECUTING,
             WorkflowState.INVESTIGATING,
             WorkflowState.SPLIT,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3d-3: EXECUTING gains a WAITING_FOR_MANUAL_EXECUTION edge (execution-stage manual
@@ -95,6 +99,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.COMPLETED,
             WorkflowState.EXECUTING,
             WorkflowState.SPLIT,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3d-3: a parked manual run leaves only on operator submission (spec → SpecApproval,
@@ -105,6 +110,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             WorkflowState.WAITING_FOR_REVIEW,
             WorkflowState.FAILED,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(
@@ -124,6 +130,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_REVIEW,
             WorkflowState.EXECUTING,
             WorkflowState.WAITING_FOR_DELIVERY,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3h-4: the delivery gate advances to WaitingForReview (approve_delivery), plus the
@@ -131,18 +138,34 @@ class WorkflowTransitionTableTest {
     expectedTargets.put(
         WorkflowState.WAITING_FOR_DELIVERY,
         Set.of(
-            WorkflowState.WAITING_FOR_REVIEW, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.PAUSED,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.COMPLETED, Set.of());
     expectedTargets.put(
         WorkflowState.FAILED,
         Set.of(
             WorkflowState.EXECUTING,
             WorkflowState.INVESTIGATING,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
+    // Story 4.8: the PAUSED return row mirrors every pausable source (the symmetry invariant —
+    // resume transitions back to the recorded priorState).
     expectedTargets.put(
         WorkflowState.PAUSED,
-        Set.of(WorkflowState.EXECUTING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
+        Set.of(
+            WorkflowState.EXECUTING,
+            WorkflowState.INVESTIGATING,
+            WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            WorkflowState.WAITING_FOR_DELIVERY,
+            WorkflowState.FAILED,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.TAKEN_OVER, Set.of());
     expectedTargets.put(WorkflowState.RECONCILED, Set.of());
 

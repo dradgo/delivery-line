@@ -274,7 +274,16 @@ public enum DomainErrorCode implements RegistryValue {
   // reasonText is null/blank — a STORY-level guard (the transition table does NOT mandate a reason
   // for Investigating/Executing targets), mirroring how reconcile enforces a required reasonText.
   INVALID_RERUN_TARGET_STEP("INVALID_RERUN_TARGET_STEP"),
-  MISSING_REASON_TEXT("MISSING_REASON_TEXT");
+  MISSING_REASON_TEXT("MISSING_REASON_TEXT"),
+  // Story 4.8 (AC3 / Reconciliation 7) — three-sites code (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). Mirrors RESUME_NOT_APPLICABLE / RECONCILE_NOT_APPLICABLE: there is
+  // NO generic ACTION_NOT_ALLOWED guard — command services enforce their own state preconditions.
+  // Raised by RecoveryService.pause when the run's current state is outside the explicit
+  // PAUSABLE_SOURCE_STATES allow-list (details.currentState) — terminal states, TakenOver, Paused
+  // itself, and the four autonomous-driver states (Inbox/Planned/Split/WaitingForDependencies)
+  // whose one-shot triggers a pause would silently consume. CONFLICT (409) + non-retryable (a
+  // precondition mismatch on the run's state, not a transient fault).
+  PAUSE_NOT_APPLICABLE("PAUSE_NOT_APPLICABLE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

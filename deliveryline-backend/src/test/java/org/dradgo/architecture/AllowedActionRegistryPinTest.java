@@ -141,4 +141,15 @@ class AllowedActionRegistryPinTest {
     // RegistryContractTest).
     assertThat(AllowedAction.RERUN_FROM_STEP.value()).isEqualTo("rerun_from_step");
   }
+
+  @Test
+  void pauseWorkflowWireValueIsPinned() {
+    // Story 4.8 AC10 — RecoveryService.pause (routing through
+    // WorkflowCommandService.pauseWorkflow) is the canonical executor; surfaced for the
+    // workflow_owner gate role at every PAUSABLE_SOURCE_STATES arm (Investigating,
+    // WaitingForSpecApproval, Executing, WaitingForReview, WaitingForManualExecution,
+    // WaitingForLintApproval, WaitingForDelivery, Failed). Guard against a silent rename (lockstep
+    // with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.PAUSE_WORKFLOW.value()).isEqualTo("pause_workflow");
+  }
 }

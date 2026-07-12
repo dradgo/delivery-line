@@ -16,9 +16,12 @@ import org.springframework.stereotype.Service;
  * pure function of {@code (currentState, failureCategory, linearDrift, githubDrift,
  * nextSafeAction)} → a safety-ranked {@link RecommendedAction} list. Keeping the ranking logic here
  * (not in an adapter) is what ArchUnit rule {@code
- * RECOMMENDATION_LOGIC_LIVES_IN_RECOMMENDATION_SERVICE} enforces (AC9). The scope-lock on {@link
- * RecoveryService} pins that service to exactly {@code retry}/{@code describeFailure}; this is a
- * permitted sibling class in the same package.
+ * RECOMMENDATION_LOGIC_LIVES_IN_RECOMMENDATION_SERVICE} enforces (AC9). The former ArchUnit
+ * scope-lock on {@link RecoveryService} was lifted by story 4.28 (ADR 0033); that service now also
+ * exposes {@code resume} (4.5), {@code reconcile} (4.6), {@code rerunFromStep} (4.7), and {@code
+ * pause} (4.8) — so the {@code pause} recommendation below points at a real, invocable method
+ * ({@code RecoveryService.pause}; {@code Failed} is in its pausable-source allow-list, pinned by
+ * {@code RecommendedPauseIsInvocableTest}).
  *
  * <p><strong>Advisory only.</strong> The returned list DISPLAYS ranked guidance. Only {@code retry}
  * has a wired one-click invocation today (Reconciliation 10) — the other verbs surface as ranked

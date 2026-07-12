@@ -1987,6 +1987,36 @@ class RunnerBrokerUnitTest {
         .transition(any(), any(), any(), any(), any(), any(), any());
   }
 
+  // Story 4.8 (AC4) — a container that finishes inside the pause race window is logged + ignored,
+  // mirroring the takeover arm above: no result side effects, no transition attempt on the Paused
+  // run.
+  @Test
+  void onResultAfterPauseCancellationPerformsNoResultSideEffects() {
+    RunnerExecutionSnapshot cancelled =
+        new RunnerExecutionSnapshot(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            RunnerExecutionStatus.CANCELLED_FOR_PAUSE,
+            1,
+            OffsetDateTime.now(CLOCK),
+            OffsetDateTime.now(CLOCK).minusSeconds(60),
+            null,
+            OffsetDateTime.now(CLOCK),
+            OffsetDateTime.now(CLOCK),
+            null);
+    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(cancelled));
+
+    broker.onResult(REX_ID, "{\"schemaVersion\":1".getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService, never()).recordFailed(any(), any());
+    verify(executionService, never()).recordCompleted(any());
+    verify(artifactOperationService, never()).recordOperation(any());
+    verify(eventPort, never()).append(any(), any(), any(), any(), any(), any(), any());
+    verify(workflowTransitionService, never())
+        .transition(any(), any(), any(), any(), any(), any(), any());
+  }
+
   @Test
   void onResultLateMalformedPayloadMarksLateResultFailedWithoutArtifactHarvest() {
     RunnerExecutionSnapshot timedOut =

@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -401,7 +402,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     // The branch is observable: benign replay is logged at INFO, NOT the WARN anomaly line.
     assertLoggedAt(Level.INFO, "idempotent replay");
   }
@@ -424,7 +427,9 @@ class WorkflowOrchestrationServiceTest {
     // No exception escapes even on a probable anomaly.
     service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     // The branch is observable: anomaly is logged at WARN, NOT the INFO benign-replay line.
     assertLoggedAt(Level.WARN, "probable anomaly");
   }
@@ -581,6 +586,33 @@ class WorkflowOrchestrationServiceTest {
   }
 
   @Test
+  void onPlanStageSucceededIsIgnoredWhileRunIsPaused() {
+    // Story 4.8 review — PAUSED → WaitingForReview is a LEGAL resume edge, so the transition
+    // table alone would let a late plan success silently un-pause the run (a runner row enqueued
+    // after pause's cancel-scan completes normally). The executor-as-gate guard logs + ignores.
+    stubRun(WorkflowState.PAUSED, 0);
+
+    service(true).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    verifyNoInteractions(transitionService);
+    verifyNoInteractions(runnerExecutionQueue);
+    assertLoggedAt(Level.WARN, "reason=run_paused");
+  }
+
+  @Test
+  void onSpecStageSucceededIsIgnoredWhileRunIsPaused() {
+    // Story 4.8 review — same guard as the plan seam: PAUSED → WaitingForSpecApproval is a legal
+    // resume edge; a late spec success must not un-pause the run.
+    stubRun(WorkflowState.PAUSED, 0);
+
+    service(true).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verifyNoInteractions(transitionService);
+    verifyNoInteractions(runnerExecutionQueue);
+    assertLoggedAt(Level.WARN, "reason=run_paused");
+  }
+
+  @Test
   void onPlanStageSucceededTransitionsToWaitingForReview() {
     service(true).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
@@ -659,7 +691,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.INFO, "idempotent replay");
   }
 
@@ -679,7 +713,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.WARN, "probable anomaly");
   }
 
@@ -957,7 +993,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.INFO, "idempotent replay");
   }
 
@@ -976,7 +1014,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.WARN, "probable anomaly");
   }
 

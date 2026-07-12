@@ -1632,6 +1632,17 @@ public class RunnerBroker {
         completionOutcome = "late_result";
         return;
       }
+      // Story 4.8 (AC4) — a container that finishes inside the pause race window (pause flipped
+      // the row while the container was still exiting) is logged + ignored, mirroring the takeover
+      // arm above. Driving a transition here would attempt an illegal edge on a Paused run.
+      if (row.status() == RunnerExecutionStatus.CANCELLED_FOR_PAUSE) {
+        log.info(
+            "onResult ignored runnerExecutionId={} workflowRunId={} reason=cancelled_for_pause",
+            runnerExecutionId,
+            workflowRunId);
+        completionOutcome = "late_result";
+        return;
+      }
       if (row.status() == RunnerExecutionStatus.TIMED_OUT
           || row.status() == RunnerExecutionStatus.ORPHANED) {
         handleLateResult(runnerExecutionId, workflowRunId, row, payloadBytes);

@@ -45,7 +45,8 @@
     "timed_out",
     "orphaned",
     "cancelled_for_takeover",
-    "awaiting_manual"
+    "awaiting_manual",
+    "cancelled_for_pause"
   ],
   "idempotencyRecordStatuses": [
     "reserved",
@@ -204,6 +205,7 @@
     "CONFLICT_NOT_FOUND": "https://deliveryline.local/problems/conflict-not-found",
     "CONFLICT_ALREADY_RESOLVED": "https://deliveryline.local/problems/conflict-already-resolved",
     "INVALID_RERUN_TARGET_STEP": "https://deliveryline.local/problems/invalid-rerun-target-step",
-    "MISSING_REASON_TEXT": "https://deliveryline.local/problems/missing-reason-text"
+    "MISSING_REASON_TEXT": "https://deliveryline.local/problems/missing-reason-text",
+    "PAUSE_NOT_APPLICABLE": "https://deliveryline.local/problems/pause-not-applicable"
   }
 }

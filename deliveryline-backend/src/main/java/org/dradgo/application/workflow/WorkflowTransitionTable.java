@@ -68,6 +68,16 @@ public final class WorkflowTransitionTable {
     // FAILED was EXECUTING, so RunnerBroker.driveWorkflowFailed silently swallowed the resulting
     // ILLEGAL_TRANSITION for spec-stage runs and they were stranded in INVESTIGATING. The
     // failure-category guard below now admits both EXECUTING and INVESTIGATING as FAILED sources.
+    // Story 4.8 (AC3/AC7) — THE PAUSE SYMMETRY INVARIANT. Every state in
+    // RecoveryService.PAUSABLE_SOURCE_STATES carries a → PAUSED edge here, and the PAUSED row below
+    // carries the matching PAUSED → source return edge, BY CONSTRUCTION: resume (4.5) transitions
+    // back to the typed priorState recorded on the → Paused event, so an inbound edge without its
+    // return edge would strand the run in Paused with a raw ILLEGAL_TRANSITION on resume (4.5's
+    // deferred review finding — closed here). PauseTransitionSymmetryTest pins both directions.
+    // INBOX / PLANNED / SPLIT / WAITING_FOR_DEPENDENCIES are deliberately NOT pausable: an
+    // autonomous driver owns their out-edge (RunDependencyReleaseService fires
+    // WaitingForDependencies → Investigating exactly once; the 3f-7 rollup drives
+    // Split → Completed), and pausing them would silently consume that one-shot trigger.
     put(
         rules,
         WorkflowState.INVESTIGATING,
@@ -76,6 +86,7 @@ public final class WorkflowTransitionTable {
         // resolved runner kind is `manual` (no container launched).
         WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
         WorkflowState.FAILED,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -84,6 +95,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.EXECUTING,
         WorkflowState.INVESTIGATING,
         WorkflowState.SPLIT,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -109,6 +121,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.COMPLETED,
         WorkflowState.EXECUTING,
         WorkflowState.SPLIT,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4 picks
@@ -122,6 +135,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.WAITING_FOR_SPEC_APPROVAL,
         WorkflowState.WAITING_FOR_REVIEW,
         WorkflowState.FAILED,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED, WorkflowState.RECONCILED);
@@ -148,6 +162,7 @@ public final class WorkflowTransitionTable {
         // Story 3h-4 (AC3, Decision 3) — when a lint approval lands on a non-auto push-mode
         // project, approve_lint routes into the delivery gate rather than resuming the push.
         WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     // Story 3h-4 (AC3 / AC4) — the unified delivery gate. approve_delivery advances the run to
@@ -159,6 +174,7 @@ public final class WorkflowTransitionTable {
         rules,
         WorkflowState.WAITING_FOR_DELIVERY,
         WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.COMPLETED);
@@ -167,12 +183,27 @@ public final class WorkflowTransitionTable {
         WorkflowState.FAILED,
         WorkflowState.EXECUTING,
         WorkflowState.INVESTIGATING,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
+    // Story 4.8 (AC3/AC7) — the PAUSED return edges: one PAUSED → S edge for EVERY pausable source
+    // S (the symmetry invariant — see the comment above the INVESTIGATING row). resume (4.5)
+    // transitions back to the typed priorState recorded on the → Paused event, so this row MUST
+    // stay
+    // the exact mirror of the inbound → PAUSED edges or resume throws raw ILLEGAL_TRANSITION.
+    // PAUSED → FAILED passes the failure-category guard with a null category (the category rule
+    // applies only to {EXECUTING, INVESTIGATING} → FAILED sources).
     put(
         rules,
         WorkflowState.PAUSED,
         WorkflowState.EXECUTING,
+        WorkflowState.INVESTIGATING,
+        WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+        WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.TAKEN_OVER);

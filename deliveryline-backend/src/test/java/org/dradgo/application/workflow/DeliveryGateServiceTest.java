@@ -53,7 +53,12 @@ class DeliveryGateServiceTest {
     deliverInline = mock(Runnable.class);
     service =
         new DeliveryGateService(
-            runtimeConfigResolver, workspaceStore, executionService, transitionService);
+            runtimeConfigResolver,
+            workspaceStore,
+            executionService,
+            transitionService,
+            // 4.8 review paused-run guard: the default empty Optional reads as "not paused".
+            mock(org.dradgo.application.workflow.spi.WorkflowRunReadPort.class));
 
     logAppender = new ListAppender<>();
     logAppender.start();

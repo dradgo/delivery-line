@@ -120,7 +120,16 @@ public enum AllowedAction implements RegistryValue {
   // in 4.22; the allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI
   // regen. The REST endpoint that honors it lands in story 4.12. No DB CHECK exists for
   // allowed-actions (enum <-> frontend placeholder JSON only).
-  RERUN_FROM_STEP("rerun_from_step");
+  RERUN_FROM_STEP("rerun_from_step"),
+  // Story 4.8 (AC10, FR47/NFR5) — the manual-pause affordance, surfaced for the workflow_owner
+  // gate role at every state in RecoveryService.PAUSABLE_SOURCE_STATES (Investigating,
+  // WaitingForSpecApproval, Executing, WaitingForReview, WaitingForManualExecution,
+  // WaitingForLintApproval, WaitingForDelivery, Failed). Canonical executor is
+  // RecoveryService.pause (routing the → Paused transition through
+  // WorkflowCommandService.pauseWorkflow). The REST endpoint that honors it lands in story 4.13.
+  // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
+  // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
+  PAUSE_WORKFLOW("pause_workflow");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

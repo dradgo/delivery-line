@@ -121,9 +121,10 @@ public class ManualArtifactSubmissionService {
           MdcKeys.sanitizeForLog(command.actorIdentity()));
 
       // 1. Run existence (RUN_NOT_FOUND wins over a fabricated-run replay).
-      workflowRunReadPort
-          .findByPublicId(workflowRunId)
-          .orElseThrow(() -> runNotFound(workflowRunId));
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
 
       // 2. Idempotency FIRST (fingerprint includes the artifact bytes — AC3). An honest retry of an
       // already-COMPLETED submission must replay the prior result EVEN THOUGH the run has since
@@ -146,9 +147,34 @@ public class ManualArtifactSubmissionService {
         return new WorkflowStateChangeResult(workflowRunId, replayedState, command.correlationId());
       }
 
-      // 3. Applicability gate — exactly one parked awaiting_manual row (else
-      // MANUAL_EXECUTION_NOT_APPLICABLE; the throw rolls back the reservation).
+      // 3. Applicability gates (both throws roll back the reservation):
+      //    (a) Exactly one parked awaiting_manual row (else MANUAL_EXECUTION_NOT_APPLICABLE) —
+      //    checked FIRST so a run with no park keeps its established error contract.
       RunnerExecutionSnapshot parkedRow = resolveParkedRow(workflowRunId);
+      //    (b) Current-state gate (story 4.8 review) — a parked awaiting_manual row deliberately
+      //    SURVIVES pause (pause is reversible), and 4.8's symmetry edges made
+      //    PAUSED → WaitingForSpecApproval / WaitingForReview legal for RESUME — so the transition
+      //    table alone no longer rejects a submission against a Paused run (pre-4.8 it did).
+      //    Executor-as-gate: a parked row with the run NOT in WaitingForManualExecution (Paused
+      //    being the designed case) gets the pre-4.8 contract — a clean ILLEGAL_TRANSITION 409 —
+      //    with the park left intact. The operator resumes first, then resubmits.
+      if (run.currentState() != WorkflowState.WAITING_FOR_MANUAL_EXECUTION) {
+        log.warn(
+            "manual artifact rejected workflowRunId={} currentState={} reason=run_not_awaiting_manual_submission",
+            workflowRunId,
+            run.currentState().value());
+        Map<String, Object> gateDetails = new LinkedHashMap<>();
+        gateDetails.put("runId", workflowRunId);
+        gateDetails.put("currentState", run.currentState().value());
+        gateDetails.put("reason", "run_not_awaiting_manual_submission");
+        throw new DomainException(
+            DomainErrorCode.ILLEGAL_TRANSITION,
+            "Manual artifact submission requires the run to be in WaitingForManualExecution; "
+                + "current state is "
+                + run.currentState().value()
+                + " (a Paused run must be resumed first)",
+            gateDetails);
+      }
       String runnerExecutionId = parkedRow.publicId();
       String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
       try {

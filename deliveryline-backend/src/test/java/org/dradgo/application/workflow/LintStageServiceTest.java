@@ -106,6 +106,8 @@ class LintStageServiceTest {
             logCaptureService,
             afterCommit,
             transitionService,
+            // 4.8 review paused-run guard: the default empty Optional reads as "not paused".
+            mock(org.dradgo.application.workflow.spi.WorkflowRunReadPort.class),
             new LintFindingsClassifier(), // the classifier is a pure value-mapper — use the real
             // one
             redactionPolicyService,
