@@ -41,9 +41,11 @@ import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
 import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
+import org.dradgo.application.workflow.spi.FailureClassificationRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowEventWritePort;
+import org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
@@ -51,6 +53,7 @@ import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.FailureTaxonomyValue;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.ReconciliationDecision;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
@@ -75,18 +78,17 @@ import org.springframework.transaction.support.TransactionTemplate;
  * exposes {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
  * ActorContext, String)} (story 4.5), {@link #reconcile(String, String, String, ActorContext,
  * String, String)} (story 4.6), {@link #rerunFromStep(String, String, String, ActorContext,
- * String)} (story 4.7), {@link #pause(String, String, ActorContext, String)} (story 4.8), and
- * {@link #describeFailure(String)}. The former ArchUnit tripwire {@code
+ * String)} (story 4.7), {@link #pause(String, String, ActorContext, String)} (story 4.8), {@link
+ * #classifyFailure(String, String, String, ActorContext, String)} (story 4.9), and {@link
+ * #describeFailure(String)}. The former ArchUnit tripwire {@code
  * RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper recovery surface
  * out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see {@code
  * docs/adr/0033-recovery-service-scope-lift.md}. The set of recovery methods allowed to land on
  * this service is now governed by that ADR's "what new scope is now allowed" list rather than by a
  * build-breaking rule; adding a method outside that list requires a new ADR (or updating 0033).
  *
- * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code
- * classifyFailure(...)} — see the ADR 0033 (c) allow-list for the exhaustive set. {@code
- * takeover(...)} lives on the sibling {@code DeveloperTakeoverService}, which remains ArchUnit
- * scope-protected.
+ * <p>The ADR 0033 (c) allow-list is now fully landed on this service. {@code takeover(...)} lives
+ * on the sibling {@code DeveloperTakeoverService}, which remains ArchUnit scope-protected.
  *
  * <p><strong>Idempotency-key namespacing:</strong> the user-supplied {@code idempotencyKey} flows
  * through three idempotency surfaces — {@link WorkflowCommandService#retryWorkflow} (workflow state
@@ -184,6 +186,9 @@ public class RecoveryService {
   static final String ACTION_TYPE_RERUN = "rerun";
   // Story 4.8 — the pre-reserved V1 recovery_actions CHECK slot for manual pause (no migration).
   static final String ACTION_TYPE_PAUSE = "pause";
+  // Story 4.9 — NOT a pre-reserved V1 slot (contrast rerun/pause): the V44 migration widened
+  // ck_recovery_actions_action_type with this value.
+  static final String ACTION_TYPE_CLASSIFY_FAILURE = "classify_failure";
   static final String INVALIDATED_REASON_RERUN = "superseded_by_rerun_from_step";
   static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
   static final String RESULT_STATUS_PENDING = "pending";
@@ -288,6 +293,10 @@ public class RecoveryService {
   // pre-pause
   // test constructors; pause guards non-null at call time (like approvalService).
   private final RunnerAdapter runnerAdapter;
+  // Story 4.9 — classify's targeted workflow_runs column writer (the columns are deliberately
+  // unmapped on WorkflowRunEntity; see the port's javadoc). Nullable in the pre-classify test
+  // constructors; classifyFailure guards non-null at call time (like runnerAdapter).
+  private final WorkflowRunFailureClassificationPort workflowRunFailureClassificationPort;
   private final Clock clock;
   private final TransactionTemplate retryPrepTransactionTemplate;
   private final TransactionTemplate resultStatusTransactionTemplate;
@@ -312,6 +321,7 @@ public class RecoveryService {
       ArtifactRecordPort artifactRecordPort,
       WorkflowTransitionService workflowTransitionService,
       RunnerAdapter runnerAdapter,
+      WorkflowRunFailureClassificationPort workflowRunFailureClassificationPort,
       PlatformTransactionManager transactionManager) {
     this(
         workflowRunReadPort,
@@ -334,7 +344,8 @@ public class RecoveryService {
         approvalService,
         artifactRecordPort,
         workflowTransitionService,
-        runnerAdapter);
+        runnerAdapter,
+        workflowRunFailureClassificationPort);
   }
 
   RecoveryService(
@@ -377,6 +388,7 @@ public class RecoveryService {
         approvalService,
         artifactRecordPort,
         workflowTransitionService,
+        null,
         null);
   }
 
@@ -401,7 +413,8 @@ public class RecoveryService {
       ApprovalService approvalService,
       ArtifactRecordPort artifactRecordPort,
       WorkflowTransitionService workflowTransitionService,
-      RunnerAdapter runnerAdapter) {
+      RunnerAdapter runnerAdapter,
+      WorkflowRunFailureClassificationPort workflowRunFailureClassificationPort) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -435,6 +448,9 @@ public class RecoveryService {
     this.workflowTransitionService = workflowTransitionService;
     // Nullable: the pre-pause test constructors pass null; pause guards non-null at call time.
     this.runnerAdapter = runnerAdapter;
+    // Nullable: the pre-classify test constructors pass null; classifyFailure guards non-null at
+    // call time.
+    this.workflowRunFailureClassificationPort = workflowRunFailureClassificationPort;
     this.clock = Objects.requireNonNull(clock, "clock");
     this.retryPrepTransactionTemplate =
         Objects.requireNonNull(retryPrepTransactionTemplate, "retryPrepTransactionTemplate");
@@ -1669,6 +1685,162 @@ public class RecoveryService {
   }
 
   /**
+   * Story 4.9 — apply a governed failure-taxonomy classification to a failed run (FR37/FR38). The
+   * STRUCTURAL OUTLIER of the 4.5–4.9 slice: a PURE METADATA operation (epic AC10 — no state
+   * transition, no runner re-dispatch, no integration side-effect), so it carries none of the
+   * siblings' command/transition/post-commit apparatus. Shape: MDC scope → idempotency validate →
+   * replay pre-check (actionType-guarded {@code classify_failure}, BEFORE input validation — the
+   * reconcile ordering; same key + same run + succeeded replays iff the prior event's {@code
+   * details.taxonomyValue} matches the request) → parse taxonomyValue ({@code
+   * MISSING_/INVALID_TAXONOMY_VALUE}) → deprecation write-guard ({@link
+   * FailureTaxonomyPolicy#requireNotDeprecated}) → current-state gate ({@code FAILED} only, else
+   * {@code CLASSIFY_NOT_APPLICABLE}) → resolve the triggering failure event (best-effort, nullable
+   * FK) → ONE {@code REQUIRES_NEW} prep tx ({@code applyClassification} column overwrite capturing
+   * the prior value → append {@code recovery.failureClassified} with {@code priorState ==
+   * resultingState == Failed}, {@code failureCategory = null}, {@code interventionMarker = true} →
+   * insert the {@code recovery_actions} row with {@code result_status='succeeded'} DIRECTLY) →
+   * return. There is NO {@code markSucceeded} flip and NO post-commit block: classify's entire
+   * effect commits atomically, so a {@code pending} row would have nothing to flip it and the
+   * replay pre-check keys on {@code succeeded} (story 4.9 R16). Re-classification overwrites the
+   * column but appends a NEW event carrying {@code priorTaxonomyValue} — history lives in the event
+   * chain (AC9, FR47 append-only).
+   */
+  public ClassifyFailureResult classifyFailure(
+      String workflowRunId,
+      String taxonomyValue,
+      String idempotencyKey,
+      ActorContext actor,
+      String reasonText) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(actor, "actor");
+    if (workflowRunFailureClassificationPort == null) {
+      throw new IllegalStateException(
+          "WorkflowRunFailureClassificationPort is required for classifyFailure");
+    }
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(idempotencyKey);
+      long start = System.nanoTime();
+      log.info(
+          "recovery classifyFailure start workflowRunId={} taxonomyValue={} idempotencyKey={} actorIdentity={}",
+          workflowRunId,
+          taxonomyValue,
+          validatedIdempotencyKey,
+          actor.actorIdentity());
+
+      // Step 1 — replay pre-check BEFORE input validation (mirror reconcile's replay-first order):
+      // a genuine retry of an already-succeeded classify must replay even if the client now sends
+      // a blank value. Guard on ACTION_TYPE_CLASSIFY_FAILURE so a prior
+      // retry/resume/reconcile/rerun/pause/takeover under the same key is a conflict, never a
+      // false classify replay (the 4.5 review catch).
+      Optional<RecoveryActionSnapshot> priorAction =
+          recoveryActionRecordPort.findByIdempotencyKey(validatedIdempotencyKey);
+      if (priorAction.isPresent()) {
+        RecoveryActionSnapshot prior = priorAction.get();
+        if (!ACTION_TYPE_CLASSIFY_FAILURE.equals(prior.actionType())
+            || !workflowRunId.equals(prior.workflowRunPublicId())
+            || !RESULT_STATUS_SUCCEEDED.equals(prior.resultStatus())) {
+          throw idempotencyConflict(validatedIdempotencyKey, workflowRunId, prior);
+        }
+        return replayClassifyFailureResultOrConflict(
+            workflowRunId, taxonomyValue, validatedIdempotencyKey, actor, prior);
+      }
+
+      // Step 2 — parse + deprecation write-guard. Reads over the registry stay total (NFR33);
+      // only this write path rejects a deprecated value.
+      FailureTaxonomyValue taxonomy = parseTaxonomyValue(taxonomyValue);
+      FailureTaxonomyPolicy.requireNotDeprecated(
+          taxonomy.value(), taxonomy.deprecatedReplacementValue());
+      String effectiveReason =
+          (reasonText == null || reasonText.isBlank()) ? null : reasonText.trim();
+
+      // Step 3 — current-state gate: FAILED only (AC3 provisional bind, OQ-1). A pure service
+      // precondition — there is no transition and therefore no transition-table guard; keeps this
+      // gate, baseActionMatrix case FAILED, and RecommendationService's FAILED-only early-return
+      // mutually consistent.
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+      if (run.currentState() != WorkflowState.FAILED) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("currentState", run.currentState().value());
+        throw new DomainException(
+            DomainErrorCode.CLASSIFY_NOT_APPLICABLE,
+            "Classify is not applicable from state "
+                + run.currentState().value()
+                + " (classifiable states: Failed)",
+            details);
+      }
+
+      // Step 4 — resolve the triggering event best-effort (nullable FK): the run's terminal
+      // failure event.
+      String triggeringEventPublicId =
+          workflowEventReadPort
+              .findLatestFailureEvent(workflowRunId)
+              .map(WorkflowEventRecord::publicId)
+              .orElse(null);
+
+      String correlationId = actor.correlationId();
+      ClassifyFailurePrep prep;
+      try {
+        prep =
+            retryPrepTransactionTemplate.execute(
+                status ->
+                    performClassifyFailurePrep(
+                        workflowRunId,
+                        validatedIdempotencyKey,
+                        actor,
+                        taxonomy,
+                        run.currentState(),
+                        triggeringEventPublicId,
+                        effectiveReason,
+                        correlationId));
+      } catch (DomainException prepError) {
+        if (prepError.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          Optional<ClassifyFailureResult> raceReplay =
+              resolveConcurrentClassifyReplay(
+                  workflowRunId, taxonomy.value(), validatedIdempotencyKey, actor);
+          if (raceReplay.isPresent()) {
+            return raceReplay.get();
+          }
+        }
+        throw prepError;
+      }
+
+      long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+      log.info(
+          "recovery classifyFailure success workflowRunId={} recoveryActionId={} classifiedEventId={} taxonomyValue={} priorTaxonomyValue={} durationMs={}",
+          workflowRunId,
+          prep.recoveryActionPublicId,
+          prep.classifiedEventPublicId,
+          taxonomy.value(),
+          prep.priorTaxonomyValue,
+          elapsedMs);
+      return new ClassifyFailureResult(
+          prep.recoveryActionPublicId,
+          prep.classifiedEventPublicId,
+          taxonomy.value(),
+          prep.priorTaxonomyValue,
+          correlationId,
+          false);
+    } catch (DomainException rejected) {
+      // Rejection observability: every guarded rejection (missing/invalid/deprecated value,
+      // RUN_NOT_FOUND, CLASSIFY_NOT_APPLICABLE, idempotency conflict) surfaces one WARN carrying
+      // the reason before propagating (mirror reconcile).
+      log.warn(
+          "recovery classifyFailure rejected workflowRunId={} taxonomyValue={} reason={}",
+          workflowRunId,
+          taxonomyValue,
+          rejected.errorCode());
+      throw rejected;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
    * Story 4.7 — rerun a run from a safe step boundary (Investigating/Executing). Structural twin of
    * {@link #resume} + {@link #reconcile}: MDC scope → idempotency validate → replay pre-check
    * (actionType-guarded {@code rerun}) → parse targetStep ({@link SafeRerunStep}) + require reason
@@ -2826,6 +2998,158 @@ public class RecoveryService {
       String recoveryActionPublicId,
       String reconciledEventPublicId,
       WorkflowState resultingState) {}
+
+  // Story 4.9 — the entire classify effect: column overwrite (capturing the prior value under FOR
+  // UPDATE) → recovery.failureClassified append → recovery_actions insert, all in ONE prep tx.
+  // The column write comes FIRST because its returned prior value feeds the event's
+  // priorTaxonomyValue detail. result_status='succeeded' on INSERT — nothing runs after this tx
+  // commits, so there is no pending→succeeded flip (R16).
+  private ClassifyFailurePrep performClassifyFailurePrep(
+      String workflowRunId,
+      String idempotencyKey,
+      ActorContext actor,
+      FailureTaxonomyValue taxonomy,
+      WorkflowState currentState,
+      String triggeringEventPublicId,
+      String effectiveReason,
+      String correlationId) {
+    OffsetDateTime classifiedAt = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+    Optional<FailureClassificationRecord> prior =
+        workflowRunFailureClassificationPort.applyClassification(
+            workflowRunId, taxonomy.value(), classifiedAt, actor.actorIdentity());
+    String priorTaxonomyValue =
+        prior
+            .map(FailureClassificationRecord::taxonomyValue)
+            .map(FailureTaxonomyValue::value)
+            .orElse(null);
+
+    String classifiedEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put(WorkflowEventDetailKeys.TAXONOMY_VALUE, taxonomy.value());
+    if (priorTaxonomyValue != null) {
+      eventDetails.put(WorkflowEventDetailKeys.PRIOR_TAXONOMY_VALUE, priorTaxonomyValue);
+    }
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    if (effectiveReason != null) {
+      eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    }
+    // Non-transition audit event (the audit.logDownloaded shape): priorState == resultingState ==
+    // the run's current state (Failed); failureCategory stays null — the taxonomy is the
+    // orthogonal HUMAN axis, never the runner-scoped FailureCategory; interventionMarker = true.
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            classifiedEventPublicId,
+            workflowRunId,
+            WorkflowEventType.RECOVERY_FAILURE_CLASSIFIED,
+            currentState,
+            currentState,
+            actor.actorIdentity(),
+            actor.actorType(),
+            effectiveReason,
+            null,
+            true,
+            classifiedAt,
+            eventDetails));
+
+    RecoveryActionSnapshot recoveryAction =
+        recoveryActionRecordPort.insert(
+            new RecoveryActionWriteCommand(
+                workflowRunId,
+                ACTION_TYPE_CLASSIFY_FAILURE,
+                triggeringEventPublicId,
+                classifiedEventPublicId,
+                actor.actorIdentity(),
+                actor.actorType(),
+                idempotencyKey,
+                RESULT_STATUS_SUCCEEDED,
+                REVIEWER_ROLE_WORKFLOW_OWNER));
+
+    return new ClassifyFailurePrep(
+        recoveryAction.publicId(), classifiedEventPublicId, priorTaxonomyValue);
+  }
+
+  private FailureTaxonomyValue parseTaxonomyValue(String rawValue) {
+    if (rawValue == null || rawValue.isBlank()) {
+      throw new DomainException(
+          DomainErrorCode.MISSING_TAXONOMY_VALUE,
+          "Missing taxonomy value",
+          Map.of("field", "taxonomyValue"));
+    }
+    try {
+      return FailureTaxonomyValue.fromValue(rawValue, "taxonomyValue");
+    } catch (DomainException ignored) {
+      throw new DomainException(
+          DomainErrorCode.INVALID_TAXONOMY_VALUE,
+          "Invalid taxonomy value: " + rawValue,
+          Map.of("provided", rawValue));
+    }
+  }
+
+  // Story 4.9 — replay contract: same key + same run + succeeded replays iff the prior
+  // recovery.failureClassified event's details.taxonomyValue equals the requested value ("same
+  // key + different fingerprint" realized without idempotency_records — mirror
+  // replayReconcileResultOrConflict). A blank/omitted requested value does not block replay
+  // (replay-first semantics, the reconcile decision-comparison precedent).
+  private ClassifyFailureResult replayClassifyFailureResultOrConflict(
+      String workflowRunId,
+      String rawTaxonomyValue,
+      String idempotencyKey,
+      ActorContext actor,
+      RecoveryActionSnapshot prior) {
+    if (prior.resultingEventPublicId() == null) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    WorkflowEventRecord event =
+        workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null).stream()
+            .filter(candidate -> prior.resultingEventPublicId().equals(candidate.publicId()))
+            .findFirst()
+            .orElseThrow(() -> idempotencyConflict(idempotencyKey, workflowRunId, prior));
+    Object storedValue = event.details().get(WorkflowEventDetailKeys.TAXONOMY_VALUE);
+    if (rawTaxonomyValue != null
+        && !rawTaxonomyValue.isBlank()
+        && !rawTaxonomyValue.trim().equals(storedValue)) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    Object storedPriorValue = event.details().get(WorkflowEventDetailKeys.PRIOR_TAXONOMY_VALUE);
+    log.info(
+        "recovery classifyFailure replay workflowRunId={} recoveryActionId={} taxonomyValue={} idempotencyKey={}",
+        workflowRunId,
+        prior.publicId(),
+        storedValue,
+        idempotencyKey);
+    return new ClassifyFailureResult(
+        prior.publicId(),
+        prior.resultingEventPublicId(),
+        storedValue == null ? null : storedValue.toString(),
+        storedPriorValue == null ? null : storedPriorValue.toString(),
+        actor.correlationId(),
+        true);
+  }
+
+  private Optional<ClassifyFailureResult> resolveConcurrentClassifyReplay(
+      String workflowRunId, String taxonomyValue, String idempotencyKey, ActorContext actor) {
+    Optional<RecoveryActionSnapshot> prior =
+        recoveryActionRecordPort.findByIdempotencyKey(idempotencyKey);
+    if (prior.isEmpty()) {
+      return Optional.empty();
+    }
+    RecoveryActionSnapshot snapshot = prior.get();
+    if (!workflowRunId.equals(snapshot.workflowRunPublicId())
+        || !ACTION_TYPE_CLASSIFY_FAILURE.equals(snapshot.actionType())
+        || !RESULT_STATUS_SUCCEEDED.equals(snapshot.resultStatus())
+        || snapshot.resultingEventPublicId() == null) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        replayClassifyFailureResultOrConflict(
+            workflowRunId, taxonomyValue, idempotencyKey, actor, snapshot));
+  }
+
+  private record ClassifyFailurePrep(
+      String recoveryActionPublicId, String classifiedEventPublicId, String priorTaxonomyValue) {}
 
   private RetryPrep performRetryPrep(
       String workflowRunId,

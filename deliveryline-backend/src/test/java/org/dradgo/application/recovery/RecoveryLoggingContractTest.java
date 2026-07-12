@@ -85,6 +85,8 @@ class RecoveryLoggingContractTest {
   private WorkflowEventWritePort eventWritePort;
   private RecoveryActionRecordPort recoveryRecordPort;
   private org.dradgo.application.runner.spi.RunnerAdapter runnerAdapter;
+  private org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort
+      failureClassificationPort;
 
   @BeforeEach
   void setUp() {
@@ -101,6 +103,8 @@ class RecoveryLoggingContractTest {
     eventWritePort = mock(WorkflowEventWritePort.class);
     recoveryRecordPort = mock(RecoveryActionRecordPort.class);
     runnerAdapter = mock(org.dradgo.application.runner.spi.RunnerAdapter.class);
+    failureClassificationPort =
+        mock(org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort.class);
     service =
         new RecoveryService(
             runReadPort,
@@ -123,7 +127,8 @@ class RecoveryLoggingContractTest {
             mock(org.dradgo.application.approval.ApprovalService.class),
             mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class),
             mock(org.dradgo.application.workflow.WorkflowTransitionService.class),
-            runnerAdapter);
+            runnerAdapter,
+            failureClassificationPort);
 
     appender = new ListAppender<>();
     appender.start();
@@ -607,6 +612,124 @@ class RecoveryLoggingContractTest {
     assertTrue(
         rejected.getFormattedMessage().contains("currentState=" + WorkflowState.COMPLETED.value()));
     assertTrue(rejected.getFormattedMessage().contains("reason=PAUSE_NOT_APPLICABLE"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.9 — classifyFailure log lines (start / success / replay / rejected).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void classifyFailureHappyPathEmitsStartAndSuccessLogsAtInfoWithExpectedKeys() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.FAILED, null, 5L, 0, false)));
+    when(eventReadPort.findLatestFailureEvent(RUN)).thenReturn(Optional.empty());
+    when(failureClassificationPort.applyClassification(any(), any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(classifyActionSnapshot("rcv_cls-log1", "succeeded", "evt_cls-log1"));
+
+    service.classifyFailure(RUN, "specification_gap", IDEMPOTENCY_KEY, ACTOR, null);
+
+    ILoggingEvent start = findFirst(Level.INFO, "recovery classifyFailure start");
+    assertTrue(start.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(start.getFormattedMessage().contains("taxonomyValue=specification_gap"));
+    assertTrue(start.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+    assertTrue(start.getFormattedMessage().contains("actorIdentity=" + ACTOR.actorIdentity()));
+
+    ILoggingEvent success = findFirst(Level.INFO, "recovery classifyFailure success");
+    assertTrue(success.getFormattedMessage().contains("recoveryActionId=rcv_cls-log1"));
+    assertTrue(success.getFormattedMessage().contains("classifiedEventId="));
+    assertTrue(success.getFormattedMessage().contains("taxonomyValue=specification_gap"));
+    assertTrue(success.getFormattedMessage().contains("priorTaxonomyValue=null"));
+    assertTrue(success.getFormattedMessage().contains("durationMs="));
+
+    assertEquals(RUN, start.getMDCPropertyMap().get("workflowRunId"));
+    assertEquals(RUN, success.getMDCPropertyMap().get("workflowRunId"));
+
+    // Story 4.9 R16 — classify has NO post-commit side-effect and therefore NO ERROR path.
+    long errorCount =
+        appender.list.stream().filter(event -> event.getLevel() == Level.ERROR).count();
+    assertEquals(
+        0L, errorCount, "RecoveryService.classifyFailure must not emit ERROR on the happy path");
+  }
+
+  @Test
+  void classifyFailureReplayEmitsReplayLogAtInfoWithRecoveryActionIdAndIdempotencyKey() {
+    // The prior row MUST be a classify_failure action — a cross-action key reuse is a conflict,
+    // never a classify replay (actionType-guarded Step 1 pre-check, the 4.5 review catch).
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY))
+        .thenReturn(
+            Optional.of(classifyActionSnapshot("rcv_cls-prior", "succeeded", "evt_cls-prior")));
+    when(eventReadPort.listByWorkflowRunPublicId(RUN, null))
+        .thenReturn(
+            List.of(
+                new WorkflowEventRecord(
+                    "evt_cls-prior",
+                    RUN,
+                    WorkflowEventType.RECOVERY_FAILURE_CLASSIFIED,
+                    WorkflowState.FAILED,
+                    WorkflowState.FAILED,
+                    ACTOR.actorIdentity(),
+                    ACTOR.actorType(),
+                    null,
+                    null,
+                    true,
+                    FIXED_NOW,
+                    Map.of("taxonomyValue", "specification_gap"))));
+
+    service.classifyFailure(RUN, "specification_gap", IDEMPOTENCY_KEY, ACTOR, null);
+
+    ILoggingEvent replay = findFirst(Level.INFO, "recovery classifyFailure replay");
+    assertTrue(replay.getFormattedMessage().contains("recoveryActionId=rcv_cls-prior"));
+    assertTrue(replay.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+  }
+
+  @Test
+  void classifyFailureOnNonFailedStateEmitsRejectedLogAtWarnWithReason() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.EXECUTING, null, 1L, 0, false)));
+
+    assertThrows(
+        DomainException.class,
+        () -> service.classifyFailure(RUN, "specification_gap", IDEMPOTENCY_KEY, ACTOR, null));
+
+    ILoggingEvent rejected = findFirst(Level.WARN, "recovery classifyFailure rejected");
+    assertTrue(rejected.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(rejected.getFormattedMessage().contains("reason=CLASSIFY_NOT_APPLICABLE"));
+  }
+
+  @Test
+  void classifyFailureInvalidValueEmitsRejectedLogAtWarnWithReason() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+
+    assertThrows(
+        DomainException.class,
+        () -> service.classifyFailure(RUN, "not_a_value", IDEMPOTENCY_KEY, ACTOR, null));
+
+    ILoggingEvent rejected = findFirst(Level.WARN, "recovery classifyFailure rejected");
+    assertTrue(rejected.getFormattedMessage().contains("taxonomyValue=not_a_value"));
+    assertTrue(rejected.getFormattedMessage().contains("reason=INVALID_TAXONOMY_VALUE"));
+  }
+
+  private RecoveryActionSnapshot classifyActionSnapshot(
+      String publicId, String resultStatus, String resultingEventId) {
+    return new RecoveryActionSnapshot(
+        publicId,
+        1L,
+        RUN,
+        "classify_failure",
+        null,
+        resultingEventId,
+        ACTOR.actorIdentity(),
+        ACTOR.actorType(),
+        IDEMPOTENCY_KEY,
+        resultStatus,
+        Instant.now().atOffset(ZoneOffset.UTC),
+        "workflow_owner");
   }
 
   private RecoveryActionSnapshot pauseActionSnapshot(

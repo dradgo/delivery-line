@@ -300,6 +300,8 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         // Story 4.7 (AC10) — the workflow_owner at FAILED may rerun-from-step alongside retry
         // (rerun_from_step follows retry, before the diagnostics/log views + archive_run wrapper).
+        // Story 4.9 (AC11) — classify_failure joins the FAILED workflow_owner arm (after
+        // pause_workflow, before the views).
         Arguments.of(
             WorkflowState.FAILED,
             "workflow_owner",
@@ -307,6 +309,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.RETRY,
                 AllowedAction.RERUN_FROM_STEP,
                 AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.CLASSIFY_FAILURE,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -651,10 +654,32 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.RERUN_FROM_STEP,
             // Story 4.8 (AC10) — pause_workflow follows (FAILED is a mandatory pausable source).
             AllowedAction.PAUSE_WORKFLOW,
+            // Story 4.9 (AC11) — classify_failure follows (FAILED-only, workflow_owner-only).
+            AllowedAction.CLASSIFY_FAILURE,
             AllowedAction.VIEW_DIAGNOSTICS,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
             AllowedAction.ARCHIVE_RUN);
+  }
+
+  @Test
+  void classifyFailureIsOfferedOnlyAtFailedAndOnlyToWorkflowOwner() {
+    // Story 4.9 (AC11) — the classify affordance is FAILED-only + workflow_owner-only, matching
+    // RecoveryService.classifyFailure's CLASSIFY_NOT_APPLICABLE gate and RecommendationService's
+    // FAILED-only early-return (the three-way agreement Reconciliation 14 pins).
+    stubRunWithState(WorkflowState.FAILED, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+    assertThat(service.getAllowedActions(RUN, "workflow_owner").actions())
+        .contains(AllowedAction.CLASSIFY_FAILURE);
+    assertThat(service.getAllowedActions(RUN, "product_reviewer").actions())
+        .doesNotContain(AllowedAction.CLASSIFY_FAILURE);
+    assertThat(service.getAllowedActions(RUN, "developer").actions())
+        .doesNotContain(AllowedAction.CLASSIFY_FAILURE);
+
+    stubRunWithState(WorkflowState.PAUSED, 0);
+    assertThat(service.getAllowedActions(RUN, "workflow_owner").actions())
+        .doesNotContain(AllowedAction.CLASSIFY_FAILURE);
   }
 
   // ---------------------------------------------------------------------------

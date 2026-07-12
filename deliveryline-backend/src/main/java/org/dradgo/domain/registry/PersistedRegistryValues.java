@@ -28,6 +28,14 @@ public final class PersistedRegistryValues {
     return FailureCategory.fromNullableValue(rawValue, "workflow_events.failure_category");
   }
 
+  // Story 4.9 (AC4) — the workflow_runs.failure_classification persistence boundary. Nullable:
+  // the column is null until an operator classifies the failed run. Reads are TOTAL over the
+  // registry (NFR33 — a deprecated value parses fine and renders with a "(deprecated)" affix);
+  // only the write path rejects deprecated values (FailureTaxonomyPolicy).
+  public static FailureTaxonomyValue workflowRunFailureClassification(String rawValue) {
+    return FailureTaxonomyValue.fromNullableValue(rawValue, "workflow_runs.failure_classification");
+  }
+
   public static ArtifactType artifactType(String rawValue) {
     return ArtifactType.fromValue(rawValue, "artifacts.artifact_type");
   }

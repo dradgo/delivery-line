@@ -30,6 +30,8 @@ public final class DomainRegistry {
   private static final Set<String> ARTIFACT_TYPES = valuesOf(ArtifactType.values());
   private static final Set<String> DATA_CLASSIFICATIONS = valuesOf(DataClassification.values());
   private static final Set<String> FAILURE_CATEGORIES = valuesOf(FailureCategory.values());
+  private static final Set<String> FAILURE_TAXONOMY_VALUES =
+      valuesOf(FailureTaxonomyValue.values());
   private static final Set<String> INTEGRATION_FAILURE_CATEGORIES =
       valuesOf(IntegrationFailureCategory.values());
   private static final Set<String> INTEGRATION_CONFLICT_CATEGORIES =
@@ -97,6 +99,10 @@ public final class DomainRegistry {
 
   public static Set<String> failureCategories() {
     return FAILURE_CATEGORIES;
+  }
+
+  public static Set<String> failureTaxonomyValues() {
+    return FAILURE_TAXONOMY_VALUES;
   }
 
   public static Set<String> integrationFailureCategories() {

@@ -152,4 +152,13 @@ class AllowedActionRegistryPinTest {
     // with allowed-actions.placeholder.json + RegistryContractTest).
     assertThat(AllowedAction.PAUSE_WORKFLOW.value()).isEqualTo("pause_workflow");
   }
+
+  @Test
+  void classifyFailureWireValueIsPinned() {
+    // Story 4.9 AC11 — RecoveryService.classifyFailure (a pure metadata operation, no transition)
+    // is the canonical executor; surfaced ONLY at FAILED for the workflow_owner gate role. Guard
+    // against a silent rename (lockstep with allowed-actions.placeholder.json +
+    // RegistryContractTest).
+    assertThat(AllowedAction.CLASSIFY_FAILURE.value()).isEqualTo("classify_failure");
+  }
 }

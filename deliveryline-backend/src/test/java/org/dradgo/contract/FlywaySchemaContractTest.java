@@ -182,6 +182,14 @@ class FlywaySchemaContractTest {
     // runner_executions.
     assertColumnType("workflow_runs", "lint_fix_loop_count", "integer");
     assertColumnNullable("workflow_runs", "lint_fix_loop_count", false);
+    // Story 4.9 / V44: governed failure-taxonomy classification triple (nullable — set only when
+    // an operator classifies a failed run; the _complete CHECK enforces all-or-nothing).
+    assertColumnType("workflow_runs", "failure_classification", "text");
+    assertColumnNullable("workflow_runs", "failure_classification", true);
+    assertColumnType("workflow_runs", "failure_classified_at", "timestamp with time zone");
+    assertColumnNullable("workflow_runs", "failure_classified_at", true);
+    assertColumnType("workflow_runs", "failure_classified_by", "text");
+    assertColumnNullable("workflow_runs", "failure_classified_by", true);
     assertColumnType("runner_executions", "lint_findings", "jsonb");
     assertColumnNullable("runner_executions", "lint_findings", true);
     assertColumnType("workflow_events", "stage_duration_ms", "bigint");

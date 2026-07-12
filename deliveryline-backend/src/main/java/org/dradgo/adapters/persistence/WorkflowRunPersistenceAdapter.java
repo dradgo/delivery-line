@@ -9,14 +9,17 @@ import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
 import org.dradgo.application.workflow.spi.CiPollRow;
 import org.dradgo.application.workflow.spi.CiRunView;
 import org.dradgo.application.workflow.spi.CiStatusPort;
+import org.dradgo.application.workflow.spi.FailureClassificationRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunArchivePort;
 import org.dradgo.application.workflow.spi.WorkflowRunCreatePort;
+import org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunRejectionLoopPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.application.workflow.spi.WorkflowRunStatePort;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +38,7 @@ public class WorkflowRunPersistenceAdapter
         WorkflowRunStatePort,
         WorkflowRunArchivePort,
         WorkflowRunRejectionLoopPort,
+        WorkflowRunFailureClassificationPort,
         CiStatusPort {
 
   private static final Logger log = LoggerFactory.getLogger(WorkflowRunPersistenceAdapter.class);
@@ -89,6 +93,28 @@ public class WorkflowRunPersistenceAdapter
        where public_id = :publicId
        returning ci_fix_loop_count
       """;
+  // Story 4.9 (AC4/AC9) — the failure-classification triple is read/written ONLY through these
+  // targeted raw-SQL statements (never a WorkflowRunEntity save — no @DynamicUpdate + full-row
+  // clobber risk, exactly like the ci_* columns below). The FOR UPDATE read captures the PRIOR
+  // classification inside the caller's classify prep transaction so a concurrent classify cannot
+  // interleave between the prior-read and the overwrite.
+  private static final String READ_FAILURE_CLASSIFICATION_SQL =
+      """
+      select failure_classification, failure_classified_at, failure_classified_by
+        from workflow_runs
+       where public_id = :publicId
+      """;
+  private static final String READ_FAILURE_CLASSIFICATION_FOR_UPDATE_SQL =
+      READ_FAILURE_CLASSIFICATION_SQL + " for update";
+  private static final String APPLY_FAILURE_CLASSIFICATION_SQL =
+      """
+      update workflow_runs
+         set failure_classification = :taxonomyValue,
+             failure_classified_at = :classifiedAt,
+             failure_classified_by = :classifiedBy
+       where public_id = :publicId
+      """;
+
   // Story 3h-5 (AC2, Decision 6) — the ci_* columns are written ONLY through these targeted raw-SQL
   // UPDATEs (never a WorkflowRunEntity save — no @DynamicUpdate + optimistic-version clobber risk).
   private static final String MARK_CI_POLL_PENDING_SQL =
@@ -427,6 +453,67 @@ public class WorkflowRunPersistenceAdapter
         workflowRunPublicId,
         newCount);
     return newCount;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // WorkflowRunFailureClassificationPort (story 4.9) — targeted raw-SQL reads/writes only; the
+  // triple is deliberately unmapped on WorkflowRunEntity/WorkflowRunSnapshot (R7).
+  // ---------------------------------------------------------------------------------------------
+
+  @Override
+  public Optional<FailureClassificationRecord> findClassification(String workflowRunPublicId) {
+    return readClassification(
+        READ_FAILURE_CLASSIFICATION_SQL, workflowRunPublicId, "findClassification");
+  }
+
+  @Override
+  public Optional<FailureClassificationRecord> applyClassification(
+      String workflowRunPublicId,
+      String taxonomyValue,
+      java.time.OffsetDateTime classifiedAt,
+      String classifiedBy) {
+    Optional<FailureClassificationRecord> prior =
+        readClassification(
+            READ_FAILURE_CLASSIFICATION_FOR_UPDATE_SQL, workflowRunPublicId, "applyClassification");
+    MapSqlParameterSource params =
+        params(workflowRunPublicId)
+            .addValue("taxonomyValue", taxonomyValue)
+            .addValue("classifiedAt", classifiedAt)
+            .addValue("classifiedBy", classifiedBy);
+    jdbcTemplate.update(APPLY_FAILURE_CLASSIFICATION_SQL, params);
+    log.debug(
+        "applyClassification publicId={} taxonomyValue={} priorPresent={}",
+        workflowRunPublicId,
+        taxonomyValue,
+        prior.isPresent());
+    return prior;
+  }
+
+  private Optional<FailureClassificationRecord> readClassification(
+      String sql, String workflowRunPublicId, String operation) {
+    List<Optional<FailureClassificationRecord>> rows =
+        jdbcTemplate.query(
+            sql,
+            params(workflowRunPublicId),
+            (rs, rowNum) -> {
+              String rawValue = rs.getString("failure_classification");
+              if (rawValue == null) {
+                return Optional.<FailureClassificationRecord>empty();
+              }
+              return Optional.of(
+                  new FailureClassificationRecord(
+                      PersistedRegistryValues.workflowRunFailureClassification(rawValue),
+                      rs.getObject("failure_classified_at", java.time.OffsetDateTime.class),
+                      rs.getString("failure_classified_by")));
+            });
+    if (rows.isEmpty()) {
+      log.warn("{} workflowRunNotFound publicId={}", operation, workflowRunPublicId);
+      throw new DomainException(
+          DomainErrorCode.RUN_NOT_FOUND,
+          "Workflow run not found: " + workflowRunPublicId,
+          Map.of("runId", workflowRunPublicId));
+    }
+    return rows.get(0);
   }
 
   // ---------------------------------------------------------------------------------------------

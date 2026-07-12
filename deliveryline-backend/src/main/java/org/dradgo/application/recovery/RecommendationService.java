@@ -18,16 +18,18 @@ import org.springframework.stereotype.Service;
  * (not in an adapter) is what ArchUnit rule {@code
  * RECOMMENDATION_LOGIC_LIVES_IN_RECOMMENDATION_SERVICE} enforces (AC9). The former ArchUnit
  * scope-lock on {@link RecoveryService} was lifted by story 4.28 (ADR 0033); that service now also
- * exposes {@code resume} (4.5), {@code reconcile} (4.6), {@code rerunFromStep} (4.7), and {@code
- * pause} (4.8) — so the {@code pause} recommendation below points at a real, invocable method
- * ({@code RecoveryService.pause}; {@code Failed} is in its pausable-source allow-list, pinned by
- * {@code RecommendedPauseIsInvocableTest}).
+ * exposes {@code resume} (4.5), {@code reconcile} (4.6), {@code rerunFromStep} (4.7), {@code pause}
+ * (4.8), and {@code classifyFailure} (4.9) — so the {@code pause} recommendation below points at a
+ * real, invocable method ({@code RecoveryService.pause}; {@code Failed} is in its pausable-source
+ * allow-list, pinned by {@code RecommendedPauseIsInvocableTest}), and so does the {@code
+ * classify_failure} recommendation ({@code RecoveryService.classifyFailure} gates on {@code Failed}
+ * only).
  *
  * <p><strong>Advisory only.</strong> The returned list DISPLAYS ranked guidance. Only {@code retry}
  * has a wired one-click invocation today (Reconciliation 10) — the other verbs surface as ranked
  * guidance until their recovery endpoints ship (stories 4.10–4.14/4.22). {@code actionType} values
  * stay within the {@code recovery_actions} CHECK vocabulary {@code
- * retry|rerun|resume|takeover|pause|reconcile}.
+ * retry|rerun|resume|takeover|pause|reconcile|classify_failure} (V44 widened the CHECK, story 4.9).
  */
 @Service
 public class RecommendationService {
@@ -39,6 +41,7 @@ public class RecommendationService {
   static final String ACTION_RETRY = "retry";
   static final String ACTION_PAUSE = "pause";
   static final String ACTION_RECONCILE = "reconcile";
+  static final String ACTION_CLASSIFY_FAILURE = "classify_failure";
 
   private static final String NEXT_SAFE_ACTION_AWAIT_MANUAL_RECONCILIATION =
       "await_manual_reconciliation";
@@ -157,11 +160,26 @@ public class RecommendationService {
               "verify orphaned artifact ownership"));
     }
 
-    // Drift makes reconcile the single safe move — every other safe action becomes caution.
+    // --- classify_failure (always surfaced, always safe — story 4.9 AC10) ---
+    // A pure metadata operation: no state transition, no runner re-dispatch, no integration
+    // side-effect, so nothing about the run's condition (including drift) can make it unsafe.
+    actions.add(
+        new RecommendedAction(
+            ACTION_CLASSIFY_FAILURE,
+            SAFE,
+            "Classifying the failure records operator triage for cross-run analysis; it changes"
+                + " no workflow state.",
+            "run is in a terminal-failure state"));
+
+    // Drift makes reconcile the single safe MUTATING move — every other safe action becomes
+    // caution, EXCEPT classify_failure, which mutates nothing and stays safe under drift (story
+    // 4.9 AC10's explicit exemption).
     if (drift) {
       for (int i = 0; i < actions.size(); i++) {
         RecommendedAction a = actions.get(i);
-        if (!ACTION_RECONCILE.equals(a.actionType()) && SAFE.equals(a.safetyLevel())) {
+        if (!ACTION_RECONCILE.equals(a.actionType())
+            && !ACTION_CLASSIFY_FAILURE.equals(a.actionType())
+            && SAFE.equals(a.safetyLevel())) {
           actions.set(
               i,
               new RecommendedAction(

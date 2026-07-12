@@ -10,8 +10,9 @@ import java.util.Optional;
  * persistence adapter directly. The implementation lives in {@code
  * adapters.persistence.RecoveryActionPersistenceAdapter}.
  *
- * <p>Story 1.18 only exercises {@code action_type = 'retry'}; Epic 4 will add resume / rerun /
- * reconcile / pause / takeover. The state machine for {@code result_status} is:
+ * <p>Story 1.18 only exercises {@code action_type = 'retry'}; Epic 4 added resume / rerun /
+ * reconcile / pause / takeover / classify_failure (V44 widened the CHECK, story 4.9). The state
+ * machine for {@code result_status} is:
  *
  * <pre>
  *        insert (pending)

@@ -127,6 +127,14 @@ public final class WorkflowEventDetailKeys {
   public static final String SUPERSEDED_ARTIFACT_IDS = "supersededArtifactIds";
   public static final String INVALIDATED_APPROVAL_IDS = "invalidatedApprovalIds";
 
+  // Failure-taxonomy classification keys (added story 4.9 AC7, emitted on
+  // RECOVERY_FAILURE_CLASSIFIED). Both allow-listed: taxonomyValue and priorTaxonomyValue are
+  // controlled-vocabulary FailureTaxonomyValue wire tokens (the same shareable posture as
+  // reconciliationDecision / targetStep). priorTaxonomyValue is present only on re-classification
+  // (AC9) — prior classifications are reconstructible from this event chain, never from the row.
+  public static final String TAXONOMY_VALUE = "taxonomyValue";
+  public static final String PRIOR_TAXONOMY_VALUE = "priorTaxonomyValue";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -186,7 +194,9 @@ public final class WorkflowEventDetailKeys {
           RECONCILIATION_DECISION,
           TARGET_STEP,
           SUPERSEDED_ARTIFACT_IDS,
-          INVALIDATED_APPROVAL_IDS);
+          INVALIDATED_APPROVAL_IDS,
+          TAXONOMY_VALUE,
+          PRIOR_TAXONOMY_VALUE);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

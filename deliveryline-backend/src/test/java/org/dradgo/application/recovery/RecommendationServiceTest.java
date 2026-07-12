@@ -43,12 +43,14 @@ class RecommendationServiceTest {
     List<RecommendedAction> actions =
         service.recommend(WorkflowState.FAILED, "runner_timeout", false, false, "retry");
 
-    assertThat(actions).hasSize(1);
+    // Story 4.9 (AC10) — classify_failure is always present alongside retry.
+    assertThat(actions).hasSize(2);
     RecommendedAction retry = actions.get(0);
     assertThat(retry.actionType()).isEqualTo("retry");
     assertThat(retry.safetyLevel()).isEqualTo("safe");
     assertThat(retry.precondition()).isNotBlank();
     assertThat(retry.reason()).isNotBlank();
+    assertThat(actionOf(actions, "classify_failure").safetyLevel()).isEqualTo("safe");
   }
 
   @Test
@@ -56,11 +58,13 @@ class RecommendationServiceTest {
     List<RecommendedAction> actions =
         service.recommend(WorkflowState.FAILED, "runner_timeout", true, false, "retry");
 
-    // reconcile is the single safe move; retry is downgraded to caution and ranked below it.
+    // reconcile is the single safe MUTATING move; retry is downgraded to caution and ranked below
+    // it. classify_failure stays safe under drift (story 4.9 AC10 — it mutates nothing).
     assertThat(actions)
         .extracting(RecommendedAction::actionType)
-        .containsExactly("reconcile", "retry");
+        .containsExactly("reconcile", "classify_failure", "retry");
     assertThat(actionOf(actions, "reconcile").safetyLevel()).isEqualTo("safe");
+    assertThat(actionOf(actions, "classify_failure").safetyLevel()).isEqualTo("safe");
     assertThat(actionOf(actions, "retry").safetyLevel()).isEqualTo("caution");
   }
 
@@ -71,9 +75,11 @@ class RecommendationServiceTest {
 
     assertThat(actionOf(actions, "retry").safetyLevel()).isEqualTo("risky");
     assertThat(actionOf(actions, "pause").safetyLevel()).isEqualTo("safe");
-    // safe pause outranks risky retry.
+    // safe pause outranks risky retry (classify_failure is also safe — story 4.9 AC10).
     assertThat(actions.get(0).actionType()).isEqualTo("pause");
-    assertThat(actions).extracting(RecommendedAction::safetyLevel).containsExactly("safe", "risky");
+    assertThat(actions)
+        .extracting(RecommendedAction::safetyLevel)
+        .containsExactly("safe", "safe", "risky");
   }
 
   @Test
@@ -99,8 +105,10 @@ class RecommendationServiceTest {
     List<RecommendedAction> actions =
         service.recommend(WorkflowState.FAILED, "runner_build_failed", false, false, "retry");
 
-    assertThat(actions).hasSize(1);
+    // Story 4.9 (AC10) — classify_failure (safe) joins and outranks the caution retry.
+    assertThat(actions).hasSize(2);
     assertThat(actionOf(actions, "retry").safetyLevel()).isEqualTo("caution");
+    assertThat(actions.get(0).actionType()).isEqualTo("classify_failure");
   }
 
   @Test
@@ -158,11 +166,54 @@ class RecommendationServiceTest {
                     })
             .toList();
     assertThat(ranks).isSorted();
-    // actionType stays within the recovery_actions CHECK vocabulary.
+    // actionType stays within the recovery_actions CHECK vocabulary (V44 added
+    // classify_failure).
     assertThat(actions)
         .allMatch(
             a ->
-                List.of("retry", "rerun", "resume", "takeover", "pause", "reconcile")
+                List.of(
+                        "retry",
+                        "rerun",
+                        "resume",
+                        "takeover",
+                        "pause",
+                        "reconcile",
+                        "classify_failure")
                     .contains(a.actionType()));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.9 (AC10) — classify_failure is always present and ALWAYS safe
+  // ---------------------------------------------------------------------------
+
+  @ParameterizedTest
+  @EnumSource(FailureCategory.class)
+  void classifyFailureIsAlwaysPresentAndSafeForEveryCategory(FailureCategory category) {
+    List<RecommendedAction> actions =
+        service.recommend(WorkflowState.FAILED, category.value(), false, false, "retry");
+
+    RecommendedAction classify = actionOf(actions, "classify_failure");
+    assertThat(classify.safetyLevel()).isEqualTo("safe");
+    assertThat(classify.reason()).isNotBlank();
+    assertThat(classify.precondition()).isNotBlank();
+  }
+
+  @Test
+  void classifyFailureStaysSafeUnderIntegrationDrift() {
+    // The drift-downgrade loop rewrites every non-reconcile SAFE action to CAUTION; classify is
+    // explicitly exempt — it mutates nothing (story 4.9 AC10).
+    List<RecommendedAction> linearDrift =
+        service.recommend(WorkflowState.FAILED, "runner_timeout", true, false, "retry");
+    List<RecommendedAction> bothDrift =
+        service.recommend(WorkflowState.FAILED, "runner_crash", true, true, "retry");
+
+    assertThat(actionOf(linearDrift, "classify_failure").safetyLevel()).isEqualTo("safe");
+    assertThat(actionOf(bothDrift, "classify_failure").safetyLevel()).isEqualTo("safe");
+  }
+
+  @Test
+  void classifyFailureAbsentForNonFailedRuns() {
+    assertThat(service.recommend(WorkflowState.EXECUTING, null, false, false, null)).isEmpty();
+    assertThat(service.recommend(WorkflowState.COMPLETED, null, false, false, null)).isEmpty();
   }
 }

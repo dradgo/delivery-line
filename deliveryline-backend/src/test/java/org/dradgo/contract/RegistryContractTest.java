@@ -38,6 +38,7 @@ import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.FailureTaxonomyValue;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
 import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
@@ -110,6 +111,8 @@ class RegistryContractTest {
     assertEquals(registryValues(ArtifactType.values()), DomainRegistry.artifactTypes());
     assertEquals(registryValues(DataClassification.values()), DomainRegistry.dataClassifications());
     assertEquals(registryValues(FailureCategory.values()), DomainRegistry.failureCategories());
+    assertEquals(
+        registryValues(FailureTaxonomyValue.values()), DomainRegistry.failureTaxonomyValues());
     assertEquals(
         registryValues(IntegrationFailureCategory.values()),
         DomainRegistry.integrationFailureCategories());
@@ -210,6 +213,23 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.integrationConflictCategories(),
         extractConstraintValues("ck_integration_conflicts_conflict_category"));
+  }
+
+  @Test
+  void failureTaxonomyValuesStayAlignedWithSqlCheck() {
+    // Story 4.9 (AC4/AC5) — FailureTaxonomyValue is SQL-CHECK-backed (the V44
+    // workflow_runs.failure_classification column), so the registry set must equal the
+    // ck_workflow_runs_failure_classification value-set. NO API-placeholder leg — 4.9 has no
+    // REST surface (story 4.14 owns POST /api/v1/workflows/{id}/classify-failure + its OpenAPI
+    // enum), so this drift gate is registry-vs-SQL only (contrast IntegrationFailureCategory,
+    // which is neither SQL-CHECK-backed nor in the API manifest). Set-equality is compatible with
+    // the NFR33 never-remove rule because the CHECK only ever grows in lockstep with the enum.
+    assertFalse(
+        DomainRegistry.failureTaxonomyValues().isEmpty(),
+        "FailureTaxonomyValue registry must not be empty");
+    assertEquals(
+        DomainRegistry.failureTaxonomyValues(),
+        extractConstraintValues("ck_workflow_runs_failure_classification"));
   }
 
   @Test

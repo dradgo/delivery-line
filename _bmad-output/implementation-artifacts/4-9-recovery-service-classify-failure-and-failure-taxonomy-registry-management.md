@@ -1,6 +1,6 @@
 # Story 4.9: `RecoveryService.classifyFailure` + Failure Taxonomy Registry Management
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -142,52 +142,52 @@ so that FR37 + FR38 (workflow owners can apply + review a governed failure taxon
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — `FailureTaxonomyValue` registry + governance (AC5, AC6)**
-  - [ ] NEW `domain/registry/FailureTaxonomyValue.java implements RegistryValue` — six values, `(String value, String deprecatedReplacementValue)` ctor (null == active), `LOOKUP`/`value()`/`fromValue`/`fromNullableValue` (clone `ReconciliationDecision.java`), plus `deprecated()`, `deprecatedReplacementValue()`, `displayLabel()`, and the package-private `static String displayLabel(String wireValue, String replacementWireValue)` test seam. Class javadoc MUST state the orthogonality to `FailureCategory` (copy `IntegrationFailureCategory`'s wording) and the "deprecate, never remove; additions require an ADR" rule.
-  - [ ] `DomainRegistry.FAILURE_TAXONOMY_VALUES` + `failureTaxonomyValues()` (mirror `:32,97-99`).
-  - [ ] `RegistryContractTest.registryCatalogExposesTheAuthoritativeFoundationValueSets` — add the set-equality line (mirror `:119`).
-  - [ ] NEW `failureTaxonomyValuesStayAlignedWithSqlCheck()` in `RegistryContractTest` — `extractConstraintValues("ck_workflow_runs_failure_classification")`; copy `integrationConflictCategoryStaysAlignedWithSqlCheck` (`:196-211`) incl. the "registry-vs-SQL only, no API leg" comment.
-  - [ ] NEW `FailureTaxonomyValueTest` — frozen `FROZEN_WIRE_VALUES` + `containsAll` stability assertion (AC6 "no hard removal"), `noConstantIsDeprecatedToday`, `displayLabel` synthetic-pair cases, `fromValue` round-trip.
-- [ ] **Task 2 — Flyway migration + schema contract (AC4, AC7)**
-  - [ ] NEW `src/main/resources/db/migration/V{NN}__add_failure_classification.sql` — **re-confirm `{NN}` = next free on disk** (expected V40; V38 is uncommitted 3h-4, 4-7 also claims V38, 4-8 claims V39 — [[flyway-v31-cross-branch-collision]]). Rich header comment (house style, mirror V38): story id + FR + head confirmation + rationale.
+- [x] **Task 1 — `FailureTaxonomyValue` registry + governance (AC5, AC6)**
+  - [x] NEW `domain/registry/FailureTaxonomyValue.java implements RegistryValue` — six values, `(String value, String deprecatedReplacementValue)` ctor (null == active), `LOOKUP`/`value()`/`fromValue`/`fromNullableValue` (clone `ReconciliationDecision.java`), plus `deprecated()`, `deprecatedReplacementValue()`, `displayLabel()`, and the package-private `static String displayLabel(String wireValue, String replacementWireValue)` test seam. Class javadoc MUST state the orthogonality to `FailureCategory` (copy `IntegrationFailureCategory`'s wording) and the "deprecate, never remove; additions require an ADR" rule.
+  - [x] `DomainRegistry.FAILURE_TAXONOMY_VALUES` + `failureTaxonomyValues()` (mirror `:32,97-99`).
+  - [x] `RegistryContractTest.registryCatalogExposesTheAuthoritativeFoundationValueSets` — add the set-equality line (mirror `:119`).
+  - [x] NEW `failureTaxonomyValuesStayAlignedWithSqlCheck()` in `RegistryContractTest` — `extractConstraintValues("ck_workflow_runs_failure_classification")`; copy `integrationConflictCategoryStaysAlignedWithSqlCheck` (`:196-211`) incl. the "registry-vs-SQL only, no API leg" comment.
+  - [x] NEW `FailureTaxonomyValueTest` — frozen `FROZEN_WIRE_VALUES` + `containsAll` stability assertion (AC6 "no hard removal"), `noConstantIsDeprecatedToday`, `displayLabel` synthetic-pair cases, `fromValue` round-trip.
+- [x] **Task 2 — Flyway migration + schema contract (AC4, AC7)**
+  - [x] NEW `src/main/resources/db/migration/V{NN}__add_failure_classification.sql` — **re-confirm `{NN}` = next free on disk** (expected V40; V38 is uncommitted 3h-4, 4-7 also claims V38, 4-8 claims V39 — [[flyway-v31-cross-branch-collision]]). Rich header comment (house style, mirror V38): story id + FR + head confirmation + rationale. **RESOLVED: on-disk head at dev time was V43 (3h-4→V38, 3i-3→V39, testcontainers→V40, CI→V41, 4-7→V42, 4-8→V43 all landed), so this story took `V44__add_failure_classification.sql`.**
     - `alter table workflow_runs add column failure_classification text null;` `+ failure_classified_at timestamptz null;` `+ failure_classified_by text null;`
     - `constraint ck_workflow_runs_failure_classification check (failure_classification is null or failure_classification in (...six...))`
     - `constraint ck_workflow_runs_failure_classification_complete check ((all three null) or (all three not null))`
     - `alter table recovery_actions drop constraint ck_recovery_actions_action_type;` + re-add with `'classify_failure'` appended to the six existing values.
-  - [ ] `FlywaySchemaContractTest` — add the three columns + two CHECKs to the `workflow_runs` shape assertions (`:167-183` pattern); replay-safety (`:578-607`) passes unchanged.
-  - [ ] Update the three `action_type` javadocs that enumerate the old six: `RecoveryActionRecordPort.java:14`, `RecoveryActionWriteCommand.java:18`, `RecoveryActionEntity.java:20-23`.
-- [ ] **Task 3 — `workflow_runs` classification port (AC4, AC9)**
-  - [ ] NEW `application/workflow/spi/WorkflowRunFailureClassificationPort` + `FailureClassificationRecord(FailureTaxonomyValue, OffsetDateTime, String)`. Mirror `WorkflowRunRejectionLoopPort`. `applyClassification(...)` returns the PRIOR record (`Optional.empty()` on first classify).
-  - [ ] Implement on the existing `WorkflowRunPersistenceAdapter` (add to its `implements` list, `:28-34`): `select … for update` (capture prior) then `update`, both joining the caller's tx; `RUN_NOT_FOUND` on missing row (mirror `:318-325`). Raw `NamedParameterJdbcTemplate`, SQL constants next to `:37-89`.
-  - [ ] `PersistedRegistryValues.workflowRunFailureClassification(String)` nullable parse wrapper (mirror `:27-29`). **Do NOT add fields to `WorkflowRunEntity` or `WorkflowRunSnapshot`** (R7).
-- [ ] **Task 4 — Registry fan-outs: event type, detail keys, error codes, allowed-action (AC3, AC7, AC8, AC11)**
-  - [ ] `WorkflowEventType.RECOVERY_FAILURE_CLASSIFIED("recovery.failureClassified")` + Story-4.9 javadoc block — enum + `contracts/events/workflow-event-types.fixture.json` (order-aligned) + `fixture-event-streams/schema/workflow-events-response.schema.json` (`DomainRegistry` auto-derives). [[new-workfloweventtype-fixture-sites]]
-  - [ ] `WorkflowEventDetailKeys.TAXONOMY_VALUE = "taxonomyValue"` + `PRIOR_TAXONOMY_VALUE = "priorTaxonomyValue"` — constants + `ALLOW_LISTED_KEYS` + `src/main/resources/schemas/cli/workflow-history.v1.schema.json` (all three in lockstep or `WorkflowEventDetailKeysContractTest:56-61` reds).
-  - [ ] Four NEW `DomainErrorCode`s (three sites each — [[new-domainerrorcode-three-sites]]): `CLASSIFY_NOT_APPLICABLE` (409 CONFLICT), `MISSING_TAXONOMY_VALUE` (400), `INVALID_TAXONOMY_VALUE` (400), `DEPRECATED_TAXONOMY_VALUE` (400) — enum + `ProblemDetailsCatalog.register(...)` non-retryable + `contracts/openapi/registry-api-schema-placeholders.json` `problemTypeUris`. Verify `-Pfoundation-gate` green.
-  - [ ] `AllowedAction.CLASSIFY_FAILURE("classify_failure")` — enum (+ Story-4.9 javadoc) + `contracts/frontend/allowed-actions.placeholder.json` + `AllowedActionRegistryPinTest`. No OpenAPI regen.
-- [ ] **Task 5 — `RecoveryService.classifyFailure` (AC1, AC2, AC3, AC7, AC8, AC9)**
-  - [ ] NEW `application/recovery/FailureTaxonomyPolicy.java` — pure static `requireNotDeprecated(String wireValue, String replacementWireValue)` ⇒ `DEPRECATED_TAXONOMY_VALUE` + `details{provided, replacementValue}`. NEW `FailureTaxonomyPolicyTest`.
-  - [ ] Add `ACTION_TYPE_CLASSIFY_FAILURE = "classify_failure"` to the constants block (`RecoveryService.java:158-166`).
-  - [ ] `public ClassifyFailureResult classifyFailure(String workflowRunId, String taxonomyValue, String idempotencyKey, ActorContext actor, String reasonText)`:
+  - [x] `FlywaySchemaContractTest` — add the three columns + two CHECKs to the `workflow_runs` shape assertions (`:167-183` pattern); replay-safety (`:578-607`) passes unchanged.
+  - [x] Update the three `action_type` javadocs that enumerate the old six: `RecoveryActionRecordPort.java:14`, `RecoveryActionWriteCommand.java:18`, `RecoveryActionEntity.java:20-23`.
+- [x] **Task 3 — `workflow_runs` classification port (AC4, AC9)**
+  - [x] NEW `application/workflow/spi/WorkflowRunFailureClassificationPort` + `FailureClassificationRecord(FailureTaxonomyValue, OffsetDateTime, String)`. Mirror `WorkflowRunRejectionLoopPort`. `applyClassification(...)` returns the PRIOR record (`Optional.empty()` on first classify).
+  - [x] Implement on the existing `WorkflowRunPersistenceAdapter` (add to its `implements` list, `:28-34`): `select … for update` (capture prior) then `update`, both joining the caller's tx; `RUN_NOT_FOUND` on missing row (mirror `:318-325`). Raw `NamedParameterJdbcTemplate`, SQL constants next to `:37-89`.
+  - [x] `PersistedRegistryValues.workflowRunFailureClassification(String)` nullable parse wrapper (mirror `:27-29`). **Do NOT add fields to `WorkflowRunEntity` or `WorkflowRunSnapshot`** (R7).
+- [x] **Task 4 — Registry fan-outs: event type, detail keys, error codes, allowed-action (AC3, AC7, AC8, AC11)**
+  - [x] `WorkflowEventType.RECOVERY_FAILURE_CLASSIFIED("recovery.failureClassified")` + Story-4.9 javadoc block — enum + `contracts/events/workflow-event-types.fixture.json` (order-aligned) + `fixture-event-streams/schema/workflow-events-response.schema.json` (`DomainRegistry` auto-derives). [[new-workfloweventtype-fixture-sites]]
+  - [x] `WorkflowEventDetailKeys.TAXONOMY_VALUE = "taxonomyValue"` + `PRIOR_TAXONOMY_VALUE = "priorTaxonomyValue"` — constants + `ALLOW_LISTED_KEYS` + `src/main/resources/schemas/cli/workflow-history.v1.schema.json` (all three in lockstep or `WorkflowEventDetailKeysContractTest:56-61` reds).
+  - [x] Four NEW `DomainErrorCode`s (three sites each — [[new-domainerrorcode-three-sites]]): `CLASSIFY_NOT_APPLICABLE` (409 CONFLICT), `MISSING_TAXONOMY_VALUE` (400), `INVALID_TAXONOMY_VALUE` (400), `DEPRECATED_TAXONOMY_VALUE` (400) — enum + `ProblemDetailsCatalog.register(...)` non-retryable + `contracts/openapi/registry-api-schema-placeholders.json` `problemTypeUris`. Verify `-Pfoundation-gate` green.
+  - [x] `AllowedAction.CLASSIFY_FAILURE("classify_failure")` — enum (+ Story-4.9 javadoc) + `contracts/frontend/allowed-actions.placeholder.json` + `AllowedActionRegistryPinTest`. No OpenAPI regen.
+- [x] **Task 5 — `RecoveryService.classifyFailure` (AC1, AC2, AC3, AC7, AC8, AC9)**
+  - [x] NEW `application/recovery/FailureTaxonomyPolicy.java` — pure static `requireNotDeprecated(String wireValue, String replacementWireValue)` ⇒ `DEPRECATED_TAXONOMY_VALUE` + `details{provided, replacementValue}`. NEW `FailureTaxonomyPolicyTest`.
+  - [x] Add `ACTION_TYPE_CLASSIFY_FAILURE = "classify_failure"` to the constants block (`RecoveryService.java:158-166`).
+  - [x] `public ClassifyFailureResult classifyFailure(String workflowRunId, String taxonomyValue, String idempotencyKey, ActorContext actor, String reasonText)`:
     MDC scope (`MdcKeys.beginScope(WORKFLOW_RUN_ID, …)`) → `idempotencyKeyValidator.requireValid` → **Step-1 replay pre-check FIRST** (before input validation — the reconcile ordering, `:1000-1011`), guarded on `ACTION_TYPE_CLASSIFY_FAILURE` + same run + `succeeded`, then compare the prior event's `details.taxonomyValue` (equal ⇒ replay; different ⇒ `IDEMPOTENCY_KEY_CONFLICT`) → parse `taxonomyValue` (`MISSING_`/`INVALID_`) → `FailureTaxonomyPolicy.requireNotDeprecated(...)` → read run (`RUN_NOT_FOUND`), guard `currentState == FAILED` else `CLASSIFY_NOT_APPLICABLE` → resolve the triggering failure event best-effort (nullable) → **one `REQUIRES_NEW` prep tx** (`retryPrepTransactionTemplate`): `applyClassification(...)` → append `RECOVERY_FAILURE_CLASSIFIED` (`priorState==resultingState==currentState`, `failureCategory=null`, `interventionMarker=true`, `details{taxonomyValue, priorTaxonomyValue?, idempotencyKey, reason?, correlationId?}`) → `recoveryActionRecordPort.insert(9-arg, action_type='classify_failure', result_status='succeeded', reviewerRole='workflow_owner')` → catch `IDEMPOTENCY_KEY_CONFLICT` ⇒ `resolveConcurrentClassifyReplay(...)`. **No `markSucceeded`, no post-commit block, no dispatch, no transition** (R16).
-  - [ ] `ClassifyFailureResult(String recoveryActionPublicId, String classifiedEventPublicId, String taxonomyValue, String priorTaxonomyValue, String correlationId, boolean replayed)` record — mirror `ReconcileRecoveryResult`.
-  - [ ] Inject `WorkflowRunFailureClassificationPort` — net-new ctor dep; update the manual `new RecoveryService(...)` test sites (`@Autowired` full-context tests wire unchanged). Update the class javadoc: move `classifyFailure` from the "not yet present" list to the present list; **do NOT touch any ArchUnit rule.**
-- [ ] **Task 6 — Recommendation + allowed-actions + inspection read (AC9, AC10, AC11)**
-  - [ ] `RecommendationService`: `ACTION_CLASSIFY_FAILURE = "classify_failure"` constant; append a `SAFE` recommendation before the sort; **exempt it from the drift-downgrade loop (`:158-171`)**; update the class javadoc CHECK-vocabulary line (`:26-27`).
-  - [ ] `WorkflowInspectionService.baseActionMatrix` `case FAILED` (`:1839-1855`) — add `CLASSIFY_FAILURE` to the `ROLE_WORKFLOW_OWNER` branch only.
-  - [ ] NEW `WorkflowInspectionService.getFailureClassification(String workflowRunId) → FailureClassificationView` (`@Transactional(readOnly = true)`) — current columns via `findClassification` + prior chain from `recovery.failureClassified` events; render `displayLabel()` so deprecated values carry the `(deprecated)` affix. NEW nested `FailureClassificationView` + `PriorClassification` records. **Do NOT touch `FailureDiagnostics` / `FailureDiagnosticsResponse` / `FailureDescription`.**
-- [ ] **Task 7 — ADR (AC5, AC6)**
-  - [ ] NEW `docs/adr/00NN-failure-taxonomy-governance.md` — **next free number on disk** (highest is 0033; story 4-7 claims 0034 for `rerun-safe-boundaries`, so expect 0035 — re-confirm against `docs/adr/` at authoring time; `docs/adr/README.md:37-43` mandates next-free, never backfill). House format: `## Context` / `## Decision` (lettered) / `## Alternatives Considered` / `## Consequences`. Decide: (a) the six canonical values; (b) `FailureTaxonomyValue` is orthogonal to `FailureCategory`; (c) NFR33 — deprecate-with-replacement, never hard-remove; (d) reads total / writes reject deprecated; (e) new values require an ADR + a `FROZEN_WIRE_VALUES` append + a CHECK widening. Append the `README.md` index row. **ADR 0033 already lists `classifyFailure` on its allow-list (`:43`) — no edit needed there.**
-- [ ] **Task 8 — Tests + ArchUnit (AC12)**
-  - [ ] `RecoveryServiceClassifyFailureTest` (unit) — the AC12 matrix (happy path, re-classify, all four rejection codes, cross-action key conflict seeded with a `resume` snapshot, same-key-different-value conflict, idempotent replay, concurrent-replay).
-  - [ ] `FailureTaxonomyValueTest`, `FailureTaxonomyPolicyTest`, `WorkflowInspectionServiceFailureClassificationTest` (new).
-  - [ ] Extend `RecoveryLoggingContractTest` (classify start/success/replay/rejected); `WorkflowInspectionServiceAllowedActionsTest` (FAILED + workflow_owner); `RecommendationServiceTest` (classify SAFE, still SAFE under drift, absent for non-FAILED, existing exact-list assertions updated).
-  - [ ] `RegistryContractTest` (set-equality + SQL-CHECK leg + 4 error codes + 1 event type), `AllowedActionRegistryPinTest`, `WorkflowEventDetailKeysContractTest` green.
-  - [ ] Real-PG `RecoveryServiceClassifyFailureIT` + `FlywaySchemaContractTest` (migration replay + shape). ArchUnit (Failsafe) green — no rule added, none removed.
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] SLF4J structured logs mirroring `resume`/`reconcile`: `recovery classifyFailure start` (INFO — `workflowRunId`, `taxonomyValue`, `idempotencyKey`, `actorIdentity`), `success` (INFO — `recoveryActionId`, `classifiedEventId`, `taxonomyValue`, `priorTaxonomyValue`, `durationMs`), `replay` (INFO), `rejected` (WARN — `reason` + `currentState`/`provided`/`priorActionType`). **No ERROR paths** — there is no post-commit side-effect and therefore no `INTERNAL_ERROR` status-flip escalation (contrast resume/reconcile, R16); a prep-tx failure rolls back and surfaces as-is.
-  - [ ] Parameterized logging only. Carry `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`. MDC scope via `MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, …)`; sanitize ids with `MdcKeys.sanitizeForLog`. Never log secrets/tokens/PII; `reasonText` rides the redacted event path, never a raw log line.
-  - [ ] Pin start/success/replay/rejected in `RecoveryLoggingContractTest` (ListAppender).
+  - [x] `ClassifyFailureResult(String recoveryActionPublicId, String classifiedEventPublicId, String taxonomyValue, String priorTaxonomyValue, String correlationId, boolean replayed)` record — mirror `ReconcileRecoveryResult`.
+  - [x] Inject `WorkflowRunFailureClassificationPort` — net-new ctor dep; update the manual `new RecoveryService(...)` test sites (`@Autowired` full-context tests wire unchanged). Update the class javadoc: move `classifyFailure` from the "not yet present" list to the present list; **do NOT touch any ArchUnit rule.**
+- [x] **Task 6 — Recommendation + allowed-actions + inspection read (AC9, AC10, AC11)**
+  - [x] `RecommendationService`: `ACTION_CLASSIFY_FAILURE = "classify_failure"` constant; append a `SAFE` recommendation before the sort; **exempt it from the drift-downgrade loop (`:158-171`)**; update the class javadoc CHECK-vocabulary line (`:26-27`).
+  - [x] `WorkflowInspectionService.baseActionMatrix` `case FAILED` (`:1839-1855`) — add `CLASSIFY_FAILURE` to the `ROLE_WORKFLOW_OWNER` branch only.
+  - [x] NEW `WorkflowInspectionService.getFailureClassification(String workflowRunId) → FailureClassificationView` (`@Transactional(readOnly = true)`) — current columns via `findClassification` + prior chain from `recovery.failureClassified` events; render `displayLabel()` so deprecated values carry the `(deprecated)` affix. NEW nested `FailureClassificationView` + `PriorClassification` records. **Do NOT touch `FailureDiagnostics` / `FailureDiagnosticsResponse` / `FailureDescription`.** (Port wired via OPTIONAL SETTER injection — the operatorRunReadPort precedent — so the ~10 lean `new WorkflowInspectionService(...)` unit ctors stay untouched; unwired ⇒ typed INTERNAL_ERROR.)
+- [x] **Task 7 — ADR (AC5, AC6)**
+  - [x] NEW `docs/adr/00NN-failure-taxonomy-governance.md` — **next free number on disk** (highest is 0033; story 4-7 claims 0034 for `rerun-safe-boundaries`, so expect 0035 — re-confirm against `docs/adr/` at authoring time; `docs/adr/README.md:37-43` mandates next-free, never backfill). House format: `## Context` / `## Decision` (lettered) / `## Alternatives Considered` / `## Consequences`. Decide: (a) the six canonical values; (b) `FailureTaxonomyValue` is orthogonal to `FailureCategory`; (c) NFR33 — deprecate-with-replacement, never hard-remove; (d) reads total / writes reject deprecated; (e) new values require an ADR + a `FROZEN_WIRE_VALUES` append + a CHECK widening. Append the `README.md` index row. **ADR 0033 already lists `classifyFailure` on its allow-list (`:43`) — no edit needed there.** (Confirmed 0034 landed with 4-7 → this story took **ADR 0035**.)
+- [x] **Task 8 — Tests + ArchUnit (AC12)**
+  - [x] `RecoveryServiceClassifyFailureTest` (unit) — the AC12 matrix (happy path, re-classify, all four rejection codes, cross-action key conflict seeded with a `resume` snapshot, same-key-different-value conflict, idempotent replay, concurrent-replay). 13/0.
+  - [x] `FailureTaxonomyValueTest` (8/0), `FailureTaxonomyPolicyTest` (3/0), `WorkflowInspectionServiceFailureClassificationTest` (5/0) (new).
+  - [x] Extend `RecoveryLoggingContractTest` (classify start/success/replay/rejected — 24/0); `WorkflowInspectionServiceAllowedActionsTest` (FAILED + workflow_owner — 59/0); `RecommendationServiceTest` (classify SAFE, still SAFE under drift, absent for non-FAILED, existing exact-list assertions updated — 53/0).
+  - [x] `RegistryContractTest` (set-equality + SQL-CHECK leg + 4 error codes + 1 event type), `AllowedActionRegistryPinTest`, `WorkflowEventDetailKeysContractTest` green.
+  - [x] Real-PG `RecoveryServiceClassifyFailureIT` + `FlywaySchemaContractTest` (migration replay + shape). ArchUnit (Failsafe) green — no rule added, none removed.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] SLF4J structured logs mirroring `resume`/`reconcile`: `recovery classifyFailure start` (INFO — `workflowRunId`, `taxonomyValue`, `idempotencyKey`, `actorIdentity`), `success` (INFO — `recoveryActionId`, `classifiedEventId`, `taxonomyValue`, `priorTaxonomyValue`, `durationMs`), `replay` (INFO), `rejected` (WARN — `reason` + `currentState`/`provided`/`priorActionType`). **No ERROR paths** — there is no post-commit side-effect and therefore no `INTERNAL_ERROR` status-flip escalation (contrast resume/reconcile, R16); a prep-tx failure rolls back and surfaces as-is.
+  - [x] Parameterized logging only. Carry `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`. MDC scope via `MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, …)`; sanitize ids with `MdcKeys.sanitizeForLog`. Never log secrets/tokens/PII; `reasonText` rides the redacted event path, never a raw log line.
+  - [x] Pin start/success/replay/rejected in `RecoveryLoggingContractTest` (ListAppender) — happy-path pin also asserts ZERO ERROR-level events (the R16 no-ERROR-path contract).
 
 ## Dev Notes
 
@@ -250,9 +250,96 @@ so that FR37 + FR38 (workflow owners can apply + review a governed failure taxon
 ### Agent Model Used
 
 claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow.
+claude-fable-5 (Claude Fable 5) — bmad-dev-story implementation (2026-07-12).
+
+### Implementation Plan
+
+Copied `reconcile`'s shape (MDC scope → key validation → actionType-guarded replay pre-check BEFORE input validation → parse → state guard → REQUIRES_NEW prep tx → concurrent-replay catch → return), then subtracted everything transition-shaped per R8/R16: no `WorkflowCommand`, no `WorkflowCommandService` call, no fingerprint arm, no `EXPECTED_PERMITS` edit, no post-commit block, no `markSucceeded` flip (row inserts `result_status='succeeded'` directly). Added `applyClassification` as the FIRST statement in the prep tx (its returned prior feeds `details.priorTaxonomyValue`). The three `workflow_runs` columns are owned by a new JDBC `WorkflowRunFailureClassificationPort` on `WorkflowRunPersistenceAdapter` (R7 — never the entity/snapshot); the prior-read uses `SELECT … FOR UPDATE` in the caller's tx so a concurrent classify cannot interleave between prior-read and overwrite.
 
 ### Debug Log References
 
+- Focused unit run: FailureTaxonomyValueTest 8/0, FailureTaxonomyPolicyTest 3/0, RecoveryServiceClassifyFailureTest 13/0, WorkflowInspectionServiceFailureClassificationTest 5/0, RecommendationServiceTest 53/0, WorkflowInspectionServiceAllowedActionsTest 59/0, RecoveryLoggingContractTest 24/0.
+- Full Surefire: **2010 tests, 0 failures** (`mvnw -pl deliveryline-backend test -Djacoco.skip=true`, BUILD SUCCESS).
+- Full `mvnw -pl deliveryline-backend verify` (Docker up): **BUILD SUCCESS** — Failsafe green incl. RecoveryServiceClassifyFailureIT 2/0 (real PG), FlywaySchemaContractTest 34/0 (V44 migrate/shape/replay), RegistryContractTest 24/0 (set-equality + new SQL-CHECK leg + 4 error codes + 1 event type), WorkflowEventDetailKeysContractTest 4/0, AllowedActionRegistryPinTest 16/0, ArchitectureBoundaryTest 60/0, RecoveryServiceScopeLiftMetaTest 4/0 (scope rule stays deleted), PauseResumeRoundTripIT/RerunFromStepIT/PauseIT unchanged-green; checkstyle/SpotBugs/jacoco gates passed.
+- `mvnw -pl deliveryline-backend verify -Pfoundation-gate`: **71/0, BUILD SUCCESS** (ProblemDetails round-trip covers the 4 new codes; command-model symmetry untouched-green — classify adds no permit by design).
+
 ### Completion Notes List
 
+- **Flyway version resolved to V44** (story's provisional V40 was stale — V38–V43 all landed on this branch via 3h-4/3i-3/testcontainers/3h-5-CI/4-7/4-8). ADR number resolved to **0035** (0034 landed with 4-7).
+- **All 16 Headline/Additional Reconciliations honored**, including the four DO-NOT-BUILD rows: no `WorkflowCommand`/transition apparatus, no `recovery_actions.details` column, no fields on `WorkflowRunEntity`/`WorkflowRunSnapshot`/`FailureDiagnostics`, no `FailureCategory` touch, no pending→succeeded flip.
+- **AC3 provisional bind applied: `FAILED` only** (OQ-1 unchanged — widening to COMPLETED remains a deliberate one-line + matrix decision for Alex).
+- **OQ-3 shipped as provisioned**: `DEPRECATED_TAXONOMY_VALUE` exists with zero deprecated values; the guard semantics are pinned through the pure `FailureTaxonomyPolicy` seam with synthetic args (never a fake deprecated constant).
+- **OQ-4 shipped as provisioned**: `result_status='succeeded'` on INSERT; the unit test's negative assertions (`never().markSucceeded`, `verifyNoInteractions(workflowCommandService/runnerExecutionQueue)`) pin the metadata-only contract.
+- `WorkflowInspectionService` gained the classification read port via OPTIONAL SETTER injection (the `operatorRunReadPort` precedent) so the ~10 lean `new WorkflowInspectionService(...)` unit-test ctors stay untouched; unwired ⇒ typed `INTERNAL_ERROR`.
+- `RecoveryService` ctor fan-out: `WorkflowRunFailureClassificationPort` appended to the `@Autowired` + full package-private ctors (22-arg); the middle 18-arg convenience ctor passes null. 3 manual test ctor sites updated (Pause/Reconcile pass null; LoggingContractTest passes a mock).
+- Known systemic quirk (pre-existing, shared with `audit.logDownloaded`/`workflow.archived`): `findLatestFailureEvent` matches ANY event with `resulting_state='Failed'` + non-null prior, so a re-classify's best-effort `triggering_event_id` may resolve to the prior classify event rather than the original failure transition. Matches the retry/rerun resolution precedent; audit linkage to the true failure event remains reachable through the chain.
+- `RecommendationService` drift-downgrade exemption implemented exactly as R13 (classify stays SAFE under drift); existing exact-list `RecommendationServiceTest` assertions absorbed the new element (hasSize(1)→2 etc.).
+
+### Change Log
+
+- 2026-07-12 (Claude Fable 5, bmad-dev-story): Story 4.9 implemented end-to-end — `FailureTaxonomyValue` registry + deprecation machinery, Flyway **V44** (3 `workflow_runs` columns + 2 CHECKs + `ck_recovery_actions_action_type` widening), `WorkflowRunFailureClassificationPort` (JDBC, FOR-UPDATE prior capture), `RecoveryService.classifyFailure` (+`ClassifyFailureResult`, `FailureTaxonomyPolicy`), `recovery.failureClassified` event (+2 detail keys, 4 error codes, `classify_failure` allowed-action), `RecommendationService` always-safe + drift exemption, `WorkflowInspectionService.getFailureClassification`, ADR **0035**, full test matrix.
+
 ### File List
+
+**New (main):**
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/FailureTaxonomyValue.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/FailureTaxonomyPolicy.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/ClassifyFailureResult.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/spi/WorkflowRunFailureClassificationPort.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/spi/FailureClassificationRecord.java
+- deliveryline-backend/src/main/resources/db/migration/V44__add_failure_classification.sql
+- docs/adr/0035-failure-taxonomy-governance.md
+
+**Modified (main):**
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainRegistry.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/PersistedRegistryValues.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventType.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/AllowedAction.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/WorkflowRunPersistenceAdapter.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/entity/RecoveryActionEntity.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecommendationService.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/spi/RecoveryActionRecordPort.java
+- deliveryline-backend/src/main/java/org/dradgo/application/recovery/spi/RecoveryActionWriteCommand.java
+- deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java
+- deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json
+- docs/adr/README.md
+
+**New (test):**
+- deliveryline-backend/src/test/java/org/dradgo/domain/registry/FailureTaxonomyValueTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/FailureTaxonomyPolicyTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServiceClassifyFailureTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServiceClassifyFailureIT.java
+- deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceFailureClassificationTest.java
+
+**Modified (test):**
+- deliveryline-backend/src/test/java/org/dradgo/contract/RegistryContractTest.java
+- deliveryline-backend/src/test/java/org/dradgo/contract/FlywaySchemaContractTest.java
+- deliveryline-backend/src/test/java/org/dradgo/architecture/AllowedActionRegistryPinTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryLoggingContractTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecommendationServiceTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServicePauseTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServiceReconcileTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceAllowedActionsTest.java
+- deliveryline-backend/src/test/resources/contracts/events/workflow-event-types.fixture.json
+- deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json
+- deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json
+- deliveryline-backend/src/test/resources/contracts/frontend/allowed-actions.placeholder.json
+
+### Review Findings
+
+_Adversarial code review (bmad-code-review, 2026-07-12) — Blind Hunter + Edge Case Hunter + Acceptance Auditor. Diff = uncommitted (V44 slice). All 12 ACs + 16 Reconciliations verified conformant; DO-NOT-BUILD rows honored; fan-out sites complete. Triage: 1 patch, 2 deferred, 4 dismissed. (2 decision-needed resolved by Alex 2026-07-12 → 1b patch, 2a dismiss.)_
+
+**Patch (resolved from decision 1b):**
+
+- [x] [Review][Patch] **Re-classify links `triggering_event_id` to the prior classify event, not the original failure transition** [`RecoveryService.java:1779-1783`; `WorkflowEventRepository.java:85-93`] — `findLatestFailureEvent` matched any event with `resulting_state='Failed' AND prior_state IS NOT NULL`. The `recovery.failureClassified` event is written non-transition with `priorState==resultingState==Failed` (`RecoveryService.java:3047-3055`), so it self-qualified as a "failure event"; on a second `classifyFailure` the new `recovery_actions.triggering_event_id` resolved to the *first classify event* rather than the runner `Executing→Failed` transition, corrupting audit lineage on the AC9 re-classify flow. **FIXED (Alex → 1b, 2026-07-12):** added `and event.eventType <> 'recovery.failureClassified'` to the `findLatestFailureEvent` JPQL (`WorkflowEventRepository.java`), and added a re-classify triggering-link assertion to `RecoveryServiceClassifyFailureIT` (the 2nd action's `triggering_event_id` now resolves to the original `Executing→Failed` event). Verified real-PG: classify unit 13/0 + `RecoveryServiceClassifyFailureIT` 2/0; sibling ITs regression-free (rerun/pause/resume/reconcile/takeover 29/0); spotless clean.
+
+**Deferred (checked = not actioned now):**
+
+- [x] [Review][Defer] History-ceiling (>1000 events) breaks classify replay + `getFailureClassification` read [`RecoveryService.java:3106`, `WorkflowInspectionService.java:3168`] — deferred, systemic + latent (no live consumer until 4.14)
+- [x] [Review][Defer] TOCTOU on the `FAILED` gate — state read non-locking before the prep tx, never re-validated under `FOR UPDATE` [`RecoveryService.java:1761-1775`] — deferred, metadata-only, narrow window, no state corruption
+
+**Dismissed (4):** No archived-run guard (Alex → 2a: archived `Failed` runs remain classifiable — the cross-run analytics use case wants historical failures triageable); RecommendationService "unconditional classify add" (false positive — `recommend()` early-returns for non-`FAILED`, pinned by `RecommendationServiceTest`); port "not requireNonNull at construction" (by-design nullable optional injection; call-time typed guard at `RecoveryService.java:1716`, not NPE); constraint-name "47 vs 48 chars" (spec-comment miscount, migration correct, well under the 63-byte limit).

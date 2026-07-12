@@ -114,7 +114,8 @@ class RecoveryServicePauseTest {
             mock(org.dradgo.application.approval.ApprovalService.class),
             mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class),
             mock(org.dradgo.application.workflow.WorkflowTransitionService.class),
-            runnerAdapter);
+            runnerAdapter,
+            null);
   }
 
   @Test

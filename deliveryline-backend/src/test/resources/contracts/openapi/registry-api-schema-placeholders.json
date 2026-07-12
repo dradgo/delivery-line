@@ -206,6 +206,10 @@
     "CONFLICT_ALREADY_RESOLVED": "https://deliveryline.local/problems/conflict-already-resolved",
     "INVALID_RERUN_TARGET_STEP": "https://deliveryline.local/problems/invalid-rerun-target-step",
     "MISSING_REASON_TEXT": "https://deliveryline.local/problems/missing-reason-text",
-    "PAUSE_NOT_APPLICABLE": "https://deliveryline.local/problems/pause-not-applicable"
+    "PAUSE_NOT_APPLICABLE": "https://deliveryline.local/problems/pause-not-applicable",
+    "CLASSIFY_NOT_APPLICABLE": "https://deliveryline.local/problems/classify-not-applicable",
+    "MISSING_TAXONOMY_VALUE": "https://deliveryline.local/problems/missing-taxonomy-value",
+    "INVALID_TAXONOMY_VALUE": "https://deliveryline.local/problems/invalid-taxonomy-value",
+    "DEPRECATED_TAXONOMY_VALUE": "https://deliveryline.local/problems/deprecated-taxonomy-value"
   }
 }

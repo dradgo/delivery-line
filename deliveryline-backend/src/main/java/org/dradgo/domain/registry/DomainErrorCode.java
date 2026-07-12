@@ -283,7 +283,22 @@ public enum DomainErrorCode implements RegistryValue {
   // itself, and the four autonomous-driver states (Inbox/Planned/Split/WaitingForDependencies)
   // whose one-shot triggers a pause would silently consume. CONFLICT (409) + non-retryable (a
   // precondition mismatch on the run's state, not a transient fault).
-  PAUSE_NOT_APPLICABLE("PAUSE_NOT_APPLICABLE");
+  PAUSE_NOT_APPLICABLE("PAUSE_NOT_APPLICABLE"),
+  // Story 4.9 (AC3 / Reconciliation 11) — four three-sites codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). CLASSIFY_NOT_APPLICABLE mirrors RESUME_NOT_APPLICABLE /
+  // PAUSE_NOT_APPLICABLE: there is NO generic ACTION_NOT_ALLOWED guard — command services enforce
+  // their own state preconditions. Raised by RecoveryService.classifyFailure when the run is not
+  // in Failed (details.runId + details.currentState); CONFLICT (409) + non-retryable. The three
+  // taxonomy-input codes are 400 BAD_REQUEST non-retryable, mirroring
+  // MISSING_/INVALID_RECONCILIATION_DECISION: MISSING_TAXONOMY_VALUE (null/blank),
+  // INVALID_TAXONOMY_VALUE (not in the FailureTaxonomyValue registry — details.provided), and
+  // DEPRECATED_TAXONOMY_VALUE (registry value marked deprecated; write path rejects while reads
+  // stay total per NFR33 — details.provided + details.replacementValue, the hint 4.14 AC4 puts on
+  // the wire).
+  CLASSIFY_NOT_APPLICABLE("CLASSIFY_NOT_APPLICABLE"),
+  MISSING_TAXONOMY_VALUE("MISSING_TAXONOMY_VALUE"),
+  INVALID_TAXONOMY_VALUE("INVALID_TAXONOMY_VALUE"),
+  DEPRECATED_TAXONOMY_VALUE("DEPRECATED_TAXONOMY_VALUE");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

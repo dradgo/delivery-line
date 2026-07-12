@@ -31,6 +31,7 @@
     "resume_workflow",
     "reconcile_conflict",
     "rerun_from_step",
-    "pause_workflow"
+    "pause_workflow",
+    "classify_failure"
   ]
 }

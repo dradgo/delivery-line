@@ -276,6 +276,12 @@
                   "type": "string",
                   "pattern": "^apr_"
                 }
+              },
+              "taxonomyValue": {
+                "type": "string"
+              },
+              "priorTaxonomyValue": {
+                "type": "string"
               }
             }
           }

@@ -14,7 +14,8 @@ import org.dradgo.domain.registry.ActorType;
  * the 8-arg convenience constructor, preserving every existing call site.
  *
  * @param workflowRunPublicId required FK target ({@code run_…})
- * @param actionType one of {@code retry, rerun, resume, takeover, pause, reconcile}
+ * @param actionType one of {@code retry, rerun, resume, takeover, pause, reconcile,
+ *     classify_failure}
  * @param triggeringEventPublicId nullable FK target ({@code evt_…}) — the event that caused the
  *     recovery
  * @param resultingEventPublicId nullable FK target ({@code evt_…}) — the event the recovery emitted
@@ -23,7 +24,9 @@ import org.dradgo.domain.registry.ActorType;
  * @param idempotencyKey caller-supplied idempotency key; uniqueness enforced by V1 CHECK
  * @param resultStatus one of {@code pending, succeeded, failed} — start with {@code pending} and
  *     flip via {@link RecoveryActionRecordPort#markSucceeded(String)} / {@link
- *     RecoveryActionRecordPort#markFailed(String)}.
+ *     RecoveryActionRecordPort#markFailed(String)}. Exception: {@code classify_failure} inserts
+ *     {@code succeeded} directly — its whole effect commits in one transaction, so there is no
+ *     post-commit side-effect that a {@code pending} row could wait on (story 4.9 R16).
  * @param reviewerRole nullable {@code reviewer_role} — {@code 'developer'} for takeover; {@code
  *     null} for retry
  */

@@ -55,12 +55,14 @@ import org.dradgo.application.runner.spi.RunnerQueueCounts;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
+import org.dradgo.application.workflow.spi.FailureClassificationRecord;
 import org.dradgo.application.workflow.spi.OperatorRunAggregate;
 import org.dradgo.application.workflow.spi.OperatorRunQuery;
 import org.dradgo.application.workflow.spi.OperatorRunReadPort;
 import org.dradgo.application.workflow.spi.OperatorRunRowSnapshot;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
@@ -72,6 +74,7 @@ import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.FailureTaxonomyValue;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
@@ -263,6 +266,19 @@ public class WorkflowInspectionService {
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setRecommendationService(RecommendationService recommendationService) {
     this.recommendationService = recommendationService;
+  }
+
+  // Story 4.9 (AC9) — the failure-classification read port, backing getFailureClassification.
+  // Optional SETTER injection (mirroring operatorRunReadPort) so the ~10 lean `new
+  // WorkflowInspectionService(...)` unit ctors stay untouched; production Spring wires
+  // WorkflowRunPersistenceAdapter. Absent in lean ctors → getFailureClassification throws
+  // INTERNAL_ERROR (requireFailureClassificationPortWired), never a NullPointerException.
+  private WorkflowRunFailureClassificationPort failureClassificationPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setFailureClassificationPort(
+      WorkflowRunFailureClassificationPort failureClassificationPort) {
+    this.failureClassificationPort = failureClassificationPort;
   }
 
   // Story 4.4 (AC5) — the durable redacted runner-log store, backing getRedactedRunnerLog (the seam
@@ -1892,10 +1908,15 @@ public class WorkflowInspectionService {
             // both Investigating and Executing.
             // Story 4.8 (AC10): + pause_workflow — FAILED is a MANDATORY pausable source (4.4's
             // RecommendationService already advertises pause as safe on Failed runs).
+            // Story 4.9 (AC11): + classify_failure — the governed failure-taxonomy affordance
+            // (canonical executor RecoveryService.classifyFailure, a pure metadata operation).
+            // FAILED-only + workflow_owner-only, matching the service's CLASSIFY_NOT_APPLICABLE
+            // gate.
             return List.of(
                 AllowedAction.RETRY,
                 AllowedAction.RERUN_FROM_STEP,
                 AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.CLASSIFY_FAILURE,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
@@ -3115,6 +3136,87 @@ public class WorkflowInspectionService {
   }
 
   /**
+   * Story 4.9 (AC9) — the failure-classification read surface: the CURRENT classification triple
+   * from the {@code workflow_runs} columns plus the full PRIOR chain reconstructed from the run's
+   * {@code recovery.failureClassified} events (FR47 append-only — re-classification overwrites the
+   * column but every application is preserved as an event). Deliberately a NEW method, NOT a
+   * widening of {@link FailureDiagnostics} — that record is mirrored 1:1 by {@code
+   * FailureDiagnosticsResponse} and pinned by the OpenAPI snapshot contract, and 4.9 ships no REST
+   * surface (4.14 consumes this).
+   *
+   * <p>Labels render via {@code FailureTaxonomyValue.displayLabel()}, so a future deprecated value
+   * reads {@code "legacy_value (deprecated)"} while staying fully parseable (NFR33 — reads are
+   * total). A never-classified run returns a view with null current fields and an empty prior list.
+   *
+   * @param workflowRunId the {@code run_}-prefixed run id (prefix-validated first; {@code
+   *     RUN_NOT_FOUND} when absent)
+   */
+  @Transactional(readOnly = true)
+  public FailureClassificationView getFailureClassification(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    requireFailureClassificationPortWired();
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      log.info("getFailureClassification entry workflowRunId={}", workflowRunId);
+      Optional<FailureClassificationRecord> current =
+          failureClassificationPort.findClassification(workflowRunId);
+
+      // The classify event chain, ascending; every event's own taxonomyValue is one applied
+      // classification. The LAST one mirrors the current column value; everything before it is a
+      // prior classification, rendered most-recent-first (AC9 "previously Y at Z").
+      List<WorkflowEventRecord> classifyEvents =
+          workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null).stream()
+              .filter(event -> event.eventType() == WorkflowEventType.RECOVERY_FAILURE_CLASSIFIED)
+              .toList();
+      List<PriorClassification> priors = new ArrayList<>();
+      for (int i = classifyEvents.size() - 2; i >= 0; i--) {
+        WorkflowEventRecord event = classifyEvents.get(i);
+        Object wire = event.details().get(WorkflowEventDetailKeys.TAXONOMY_VALUE);
+        if (wire == null) {
+          continue;
+        }
+        FailureTaxonomyValue taxonomy =
+            FailureTaxonomyValue.fromNullableValue(wire.toString(), "details.taxonomyValue");
+        priors.add(
+            new PriorClassification(
+                taxonomy.value(),
+                taxonomy.displayLabel(),
+                event.createdAt(),
+                event.actorIdentity()));
+      }
+
+      FailureTaxonomyValue currentTaxonomy =
+          current.map(FailureClassificationRecord::taxonomyValue).orElse(null);
+      FailureClassificationView view =
+          new FailureClassificationView(
+              currentTaxonomy == null ? null : currentTaxonomy.value(),
+              currentTaxonomy == null ? null : currentTaxonomy.displayLabel(),
+              currentTaxonomy != null && currentTaxonomy.deprecated(),
+              currentTaxonomy == null ? null : currentTaxonomy.deprecatedReplacementValue(),
+              current.map(FailureClassificationRecord::classifiedAt).orElse(null),
+              current.map(FailureClassificationRecord::classifiedBy).orElse(null),
+              List.copyOf(priors));
+      log.info(
+          "getFailureClassification success workflowRunId={} classified={} priorCount={}",
+          workflowRunId,
+          currentTaxonomy != null,
+          priors.size());
+      return view;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private void requireFailureClassificationPortWired() {
+    if (failureClassificationPort == null) {
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowRunFailureClassificationPort is not wired",
+          Map.of("reason", "failure_classification_port_unwired"));
+    }
+  }
+
+  /**
    * Story 4.4 (AC5) — surface the ALREADY-redacted runner log (stdout/stderr/truncated) + the
    * on-disk classification/byteSize metadata + the resolved {@code workflowRunId} (for the download
    * endpoint's {@code view_runner_logs} gate) through {@code application.workflow}, so {@code
@@ -4127,6 +4229,30 @@ public class WorkflowInspectionService {
       IntegrationSyncStatusView linearSyncStatus,
       IntegrationSyncStatusView githubSyncStatus,
       List<RecommendedActionView> recommendedRecoveryActions) {}
+
+  /**
+   * Story 4.9 (AC9/AC6) — the failure-classification read view: current classification (null fields
+   * when the run was never classified) + the prior chain from the {@code
+   * recovery.failureClassified} events, most-recent-first. {@code currentDisplayLabel} carries the
+   * {@code (deprecated)} affix for a deprecated-but-historical value; {@code
+   * deprecatedReplacementValue} is the remediation hint (null for an active value). Consumers are
+   * stories 4.14 (REST/CLI) + 4.24 (FE).
+   */
+  public record FailureClassificationView(
+      String currentTaxonomyValue,
+      String currentDisplayLabel,
+      boolean deprecated,
+      String deprecatedReplacementValue,
+      OffsetDateTime classifiedAt,
+      String classifiedBy,
+      List<PriorClassification> priorClassifications) {}
+
+  /** Story 4.9 (AC9) — one overwritten prior classification, reconstructed from the event chain. */
+  public record PriorClassification(
+      String taxonomyValue,
+      String displayLabel,
+      OffsetDateTime classifiedAt,
+      String classifiedBy) {}
 
   /**
    * Story 4.4 (AC1/AC5) — flat, content-free reference to a run's redacted runner log, projected

@@ -653,6 +653,37 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Pause not applicable",
         false);
+    // Story 4.9 (AC3 / Reconciliation 11) — classifying a run that is not Failed is a
+    // precondition mismatch on the run's state, not a transient fault; mirror
+    // RESUME_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The three taxonomy-input
+    // guards are malformed classify requests, mirroring MISSING_/INVALID_RECONCILIATION_DECISION's
+    // BAD_REQUEST (400) + non-retryable mapping (DEPRECATED_TAXONOMY_VALUE carries
+    // details.replacementValue — the remediation hint 4.14 AC4 puts on the wire). Type URIs
+    // auto-derive.
+    register(
+        metadata,
+        DomainErrorCode.CLASSIFY_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Classify not applicable",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_TAXONOMY_VALUE,
+        HttpStatus.BAD_REQUEST,
+        "Missing taxonomy value",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.INVALID_TAXONOMY_VALUE,
+        HttpStatus.BAD_REQUEST,
+        "Invalid taxonomy value",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DEPRECATED_TAXONOMY_VALUE,
+        HttpStatus.BAD_REQUEST,
+        "Deprecated taxonomy value",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

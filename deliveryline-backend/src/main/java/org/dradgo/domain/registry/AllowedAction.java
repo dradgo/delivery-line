@@ -129,7 +129,17 @@ public enum AllowedAction implements RegistryValue {
   // WorkflowCommandService.pauseWorkflow). The REST endpoint that honors it lands in story 4.13.
   // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
   // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
-  PAUSE_WORKFLOW("pause_workflow");
+  PAUSE_WORKFLOW("pause_workflow"),
+  // Story 4.9 (AC11, FR37/FR38) — the failure-classification affordance, surfaced ONLY at FAILED
+  // for the workflow_owner gate role (other roles keep the view-only + diagnostics/log set).
+  // Canonical executor is RecoveryService.classifyFailure — a PURE METADATA operation (no
+  // transition, no re-dispatch), always rated `safe` by RecommendationService. This is a FLAT
+  // action — the available `taxonomyValue` sub-list (FailureTaxonomyValue enum) is served by the
+  // OpenAPI schema in story 4.14 / the Decision Bar dropdown in 4.24, exactly as rerun_from_step
+  // deferred its targetStep sub-list. The REST endpoint that honors it lands in story 4.14. No DB
+  // CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
+  // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
+  CLASSIFY_FAILURE("classify_failure");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

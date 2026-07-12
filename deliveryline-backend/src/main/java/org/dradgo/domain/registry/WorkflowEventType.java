@@ -155,7 +155,22 @@ public enum WorkflowEventType implements RegistryValue {
   // (triggeringEventId?, idempotencyKey, reason, correlationId?) are already allow-listed. NO
   // Flyway
   // migration — event_type is an un-CHECKed text column and the registry set is fixture-asserted.
-  RECOVERY_PAUSED("recovery.paused");
+  RECOVERY_PAUSED("recovery.paused"),
+  // Story 4.9 (AC8) — appended in the same REQUIRES_NEW prep transaction as the workflow_runs
+  // failure-classification column update + the recovery_actions insert when a workflow owner
+  // classifies a failed run against the governed failure taxonomy (FR37/FR38). Recovery namespace
+  // (lowerCamel), mirroring recovery.retried / recovery.resumed / recovery.reconciled (NOT
+  // workflow.failureClassified as the epic AC8 text says — the same reconciliation applied to
+  // workflow.resumed → recovery.resumed). classify is a PURE METADATA operation: no transition, so
+  // the event is a non-transition audit record exactly like audit.logDownloaded — priorState ==
+  // resultingState == the run's current state (Failed), failureCategory = null (the taxonomy is
+  // the orthogonal HUMAN axis; see FailureTaxonomyValue), interventionMarker = true. Detail keys:
+  // taxonomyValue + priorTaxonomyValue? (both NEW, allow-listed by this story) +
+  // triggeringEventId?/idempotencyKey/reason?/correlationId? (already allow-listed). Re-classifying
+  // appends a NEW event — prior classifications live in this event chain, never on the row (AC9).
+  // NO Flyway migration for the event itself — event_type is an un-CHECKed text column and the
+  // registry set is fixture-asserted, not DB-derived.
+  RECOVERY_FAILURE_CLASSIFIED("recovery.failureClassified");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

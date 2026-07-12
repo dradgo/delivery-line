@@ -82,6 +82,11 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
       @Param("resultingState") String resultingState,
       Pageable pageable);
 
+  // Story 4.9 review: excludes the non-transition RECOVERY_FAILURE_CLASSIFIED event
+  // (WorkflowEventType wire value 'recovery.failureClassified'). It is stamped
+  // priorState==resultingState==Failed, so without the exclusion it self-qualifies as a "failure
+  // event" and a re-classify would resolve its triggering_event_id to a prior classify event rather
+  // than the real Executing->Failed transition, corrupting audit lineage.
   @Query(
       """
 		select event from WorkflowEventEntity event
@@ -89,6 +94,7 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
 		  and event.archivedAt is null
 		  and event.resultingState = 'Failed'
 		  and event.priorState is not null
+		  and event.eventType <> 'recovery.failureClassified'
 		order by event.createdAt desc, event.id desc
 		""")
   List<WorkflowEventEntity> findLatestFailureEvent(

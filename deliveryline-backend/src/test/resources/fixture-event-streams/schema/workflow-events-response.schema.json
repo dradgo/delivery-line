@@ -139,7 +139,8 @@
         "delivery.recordedManually",
         "recovery.rerunFromStep",
         "linear.runReopenedNotification",
-        "recovery.paused"
+        "recovery.paused",
+        "recovery.failureClassified"
       ]
     },
     "artifactVariant": {
