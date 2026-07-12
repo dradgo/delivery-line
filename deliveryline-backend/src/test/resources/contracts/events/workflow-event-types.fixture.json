@@ -43,6 +43,8 @@
     "workflow.splitDepthOverride",
     "audit.logDownloaded",
     "integration.conflictDetected",
-    "delivery.recordedManually"
+    "delivery.recordedManually",
+    "recovery.rerunFromStep",
+    "linear.runReopenedNotification"
   ]
 }

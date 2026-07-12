@@ -51,6 +51,7 @@ import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.SafeRerunStep;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Tag;
@@ -117,6 +118,7 @@ class RegistryContractTest {
         DomainRegistry.integrationConflictCategories());
     assertEquals(
         registryValues(ReconciliationDecision.values()), DomainRegistry.reconciliationDecisions());
+    assertEquals(registryValues(SafeRerunStep.values()), DomainRegistry.safeRerunSteps());
     assertEquals(
         registryValues(IntegrationSyncStatus.values()), DomainRegistry.integrationSyncStatuses());
     assertEquals(

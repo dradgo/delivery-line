@@ -101,6 +101,7 @@ class ApprovalServiceApproveSpecTest {
             artifactRecordPort,
             artifactService,
             approvalWritePort,
+            org.mockito.Mockito.mock(org.dradgo.application.approval.spi.ApprovalReadPort.class),
             workflowEventWritePort,
             workflowTransitionService,
             new ApprovalVersionBinder(artifactRecordPort, runnerExecutionRecordPort),

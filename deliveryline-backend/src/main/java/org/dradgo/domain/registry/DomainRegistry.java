@@ -36,6 +36,7 @@ public final class DomainRegistry {
       valuesOf(IntegrationConflictCategory.values());
   private static final Set<String> RECONCILIATION_DECISIONS =
       valuesOf(ReconciliationDecision.values());
+  private static final Set<String> SAFE_RERUN_STEPS = valuesOf(SafeRerunStep.values());
   private static final Set<String> INTEGRATION_SYNC_STATUSES =
       valuesOf(IntegrationSyncStatus.values());
   private static final Set<String> RUNNER_SCHEMA_VERSIONS = valuesOf(RunnerSchemaVersion.values());
@@ -108,6 +109,10 @@ public final class DomainRegistry {
 
   public static Set<String> reconciliationDecisions() {
     return RECONCILIATION_DECISIONS;
+  }
+
+  public static Set<String> safeRerunSteps() {
+    return SAFE_RERUN_STEPS;
   }
 
   public static Set<String> integrationSyncStatuses() {

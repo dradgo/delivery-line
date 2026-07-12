@@ -265,7 +265,16 @@ public enum DomainErrorCode implements RegistryValue {
   MISSING_RECONCILIATION_DECISION("MISSING_RECONCILIATION_DECISION"),
   INVALID_RECONCILIATION_DECISION("INVALID_RECONCILIATION_DECISION"),
   CONFLICT_NOT_FOUND("CONFLICT_NOT_FOUND"),
-  CONFLICT_ALREADY_RESOLVED("CONFLICT_ALREADY_RESOLVED");
+  CONFLICT_ALREADY_RESOLVED("CONFLICT_ALREADY_RESOLVED"),
+  // Story 4.7 (AC3/AC4 / Reconciliation 8) — three-sites codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest), both 400 BAD_REQUEST non-retryable, mirroring
+  // INVALID_RECONCILIATION_DECISION / MISSING_RECONCILIATION_DECISION. INVALID_RERUN_TARGET_STEP is
+  // raised by RecoveryService.rerunFromStep when the targetStep is null/blank or not in the
+  // SafeRerunStep enum (details.provided). MISSING_REASON_TEXT is raised when the rerun's required
+  // reasonText is null/blank — a STORY-level guard (the transition table does NOT mandate a reason
+  // for Investigating/Executing targets), mirroring how reconcile enforces a required reasonText.
+  INVALID_RERUN_TARGET_STEP("INVALID_RERUN_TARGET_STEP"),
+  MISSING_REASON_TEXT("MISSING_REASON_TEXT");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

@@ -257,6 +257,25 @@
               },
               "reconciliationDecision": {
                 "type": "string"
+              },
+              "targetStep": {
+                "type": "string"
+              },
+              "supersededArtifactIds": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "pattern": "^art_"
+                }
+              },
+              "invalidatedApprovalIds": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "pattern": "^apr_"
+                }
               }
             }
           }

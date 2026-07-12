@@ -178,10 +178,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
+        // Story 4.7 (AC10) — the workflow_owner at WAITING_FOR_REVIEW may rerun-from-step
+        // (rerun_from_step leads the arm, before the view/log actions + the workflow_owner-only
+        // archive_run wrapper action).
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "workflow_owner",
             List.of(
+                AllowedAction.RERUN_FROM_STEP,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -266,11 +270,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
+        // Story 4.7 (AC10) — the workflow_owner at FAILED may rerun-from-step alongside retry
+        // (rerun_from_step follows retry, before the diagnostics/log views + archive_run wrapper).
         Arguments.of(
             WorkflowState.FAILED,
             "workflow_owner",
             List.of(
                 AllowedAction.RETRY,
+                AllowedAction.RERUN_FROM_STEP,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -412,9 +419,11 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 // the review gate; it is advisory and orthogonal to the reviewer verdict panel.
                 AllowedAction.REQUEST_SPLIT);
       } else if (role.equals("workflow_owner")) {
-        // archive_run is workflow_owner-only (3d-8/D1).
+        // Story 4.7 (AC10) — rerun_from_step leads the workflow_owner arm; archive_run is
+        // workflow_owner-only (3d-8/D1). Still orthogonal to the reviewer verdict panel.
         expected =
             List.of(
+                AllowedAction.RERUN_FROM_STEP,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -606,6 +615,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
     assertThat(view.actions())
         .containsExactly(
             AllowedAction.RETRY,
+            // Story 4.7 (AC10) — rerun_from_step joins the FAILED workflow_owner arm alongside
+            // retry.
+            AllowedAction.RERUN_FROM_STEP,
             AllowedAction.VIEW_DIAGNOSTICS,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.VIEW_PROVIDER_USAGE_STATUS,

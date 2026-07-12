@@ -1521,6 +1521,131 @@ public class WorkflowOrchestrationService {
   }
 
   /**
+   * Story 4.7 (AC7 / Reconciliation 6) — best-effort reverse notification posted to the run's
+   * source ticket when a rerun-from-step reopens the run. Mirrors {@link #syncCompletionToLinear}'s
+   * gating (active ticket link + resolvable adapter + {@code supportsCommentOnTicket}) and posts a
+   * governed "run reopened" comment with a DISTINCT fingerprint basis, appending {@code
+   * linear.runReopenedNotification} on success. It NEVER throws and never rolls back the
+   * already-committed rerun: a missing link / missing capability / adapter failure logs + skips.
+   * Runs in its own {@code REQUIRES_NEW} transaction (called by {@code
+   * RecoveryService.rerunFromStep} after the prep tx commits, OUTSIDE any tx).
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void notifyLinearRunReopened(
+      String workflowRunId, String targetStep, String correlationId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      Optional<IntegrationLink> ticketLink =
+          integrationLinkService.findActiveLinearTicketLink(workflowRunId);
+      if (ticketLink.isEmpty()) {
+        log.warn(
+            "notifyLinearRunReopened no_linear_ticket_link workflowRunId={} (nothing to post to)",
+            workflowRunId);
+        return;
+      }
+      String ticketRef = ticketLink.get().externalRef();
+      Project project;
+      Optional<TicketSourceAdapter> adapterOpt;
+      try {
+        project = projectRuntimeConfigResolver.resolveForRun(workflowRunId);
+        adapterOpt = projectConnectorResolver.findTicketSource(project);
+      } catch (DomainException error) {
+        log.warn(
+            "notifyLinearRunReopened project_resolution_failed workflowRunId={} reason={}; skipping",
+            workflowRunId,
+            error.errorCode().value());
+        return;
+      }
+      if (adapterOpt.isEmpty()) {
+        log.warn(
+            "notifyLinearRunReopened linear_adapter_unavailable workflowRunId={}; skipping",
+            workflowRunId);
+        return;
+      }
+      TicketSourceAdapter adapter = adapterOpt.get();
+      TicketSourceCapabilities capabilities;
+      try {
+        capabilities = adapter.getCapabilities();
+      } catch (RuntimeException error) {
+        log.warn(
+            "notifyLinearRunReopened capability_probe_failed workflowRunId={} errorClass={}; skipping",
+            workflowRunId,
+            error.getClass().getSimpleName());
+        return;
+      }
+      if (capabilities == null || !capabilities.supportsCommentOnTicket()) {
+        log.warn(
+            "event=linear.runReopenedSkipped reason=ticket_source_does_not_support_comments "
+                + "workflowRunId={} ticketRef={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef));
+        return;
+      }
+      String canonicalBody =
+          "DeliveryLine run "
+              + workflowRunId
+              + " was reopened via rerun-from-step (target step: "
+              + targetStep
+              + "). The prior stage decision has been invalidated and the run will be re-run.";
+      RedactionResult redaction =
+          redactionPolicyService.redact(canonicalBody, DataClassification.SHAREABLE_FULL.value());
+      String body = redaction.sanitizedText();
+      // Distinct fingerprint basis from the completion comment so the reopen notification is its
+      // own
+      // at-most-once post per (run, targetStep).
+      String reopenFingerprint =
+          fingerprint("rerun-reopened\nrunId=" + workflowRunId + "\ntargetStep=" + targetStep);
+      try {
+        CommentResult result =
+            adapter.postGovernedRunComment(
+                TicketRef.of(ticketRef),
+                new GovernedRunComment(
+                    workflowRunId, reopenFingerprint, body, DataClassification.SHAREABLE_FULL));
+        log.info(
+            "notifyLinearRunReopened posted workflowRunId={} ticketRef={} fingerprint={} result={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef),
+            reopenFingerprint,
+            result);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put(WorkflowEventDetailKeys.LINEAR_TICKET_REFERENCE, ticketRef);
+        details.put(WorkflowEventDetailKeys.TARGET_STEP, targetStep);
+        if (correlationId != null && !correlationId.isBlank()) {
+          details.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+        }
+        workflowEventWritePort.append(
+            new WorkflowEventRecord(
+                PublicIdPrefixes.WORKFLOW_EVENT.next(),
+                workflowRunId,
+                WorkflowEventType.LINEAR_RUN_REOPENED_NOTIFICATION,
+                null,
+                null,
+                ActorContext.SYSTEM.actorIdentity(),
+                ActorType.SYSTEM,
+                "linear_run_reopened_notification",
+                null,
+                false,
+                OffsetDateTime.now(java.time.ZoneOffset.UTC),
+                details));
+      } catch (RuntimeException error) {
+        log.warn(
+            "notifyLinearRunReopened post_failed workflowRunId={} ticketRef={} errorClass={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef),
+            error.getClass().getSimpleName());
+      }
+    } catch (RuntimeException error) {
+      log.warn(
+          "notifyLinearRunReopened unexpected_failure workflowRunId={} errorClass={}",
+          workflowRunId,
+          error.getClass().getSimpleName());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
    * Resolve template placeholder values defensively (Decision D5) — every optional datum that
    * cannot be resolved renders as a documented fallback ({@code n/a} / {@code unknown}) rather than
    * failing the sync.

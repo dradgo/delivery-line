@@ -81,6 +81,15 @@ public class ApprovalEntity {
   @Column(name = "archived_at")
   private OffsetDateTime archivedAt;
 
+  // Story 4.7 (V42) — approval invalidation. Set when a rerun-from-step supersedes this approval's
+  // stage decision; `invalidated_at IS NULL` means the approval is still current. Mirrors the
+  // archived_at nullable-timestamp shape.
+  @Column(name = "invalidated_at")
+  private OffsetDateTime invalidatedAt;
+
+  @Column(name = "invalidated_reason")
+  private String invalidatedReason;
+
   public Long getId() {
     return id;
   }
@@ -199,6 +208,22 @@ public class ApprovalEntity {
 
   public void setArchivedAt(OffsetDateTime archivedAt) {
     this.archivedAt = archivedAt;
+  }
+
+  public OffsetDateTime getInvalidatedAt() {
+    return invalidatedAt;
+  }
+
+  public void setInvalidatedAt(OffsetDateTime invalidatedAt) {
+    this.invalidatedAt = invalidatedAt;
+  }
+
+  public String getInvalidatedReason() {
+    return invalidatedReason;
+  }
+
+  public void setInvalidatedReason(String invalidatedReason) {
+    this.invalidatedReason = invalidatedReason;
   }
 
   @PrePersist

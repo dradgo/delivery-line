@@ -1788,6 +1788,19 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_RUNNER_LOGS,
               AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
+        // Story 4.7 (AC10): rerun_from_step is surfaced to the workflow_owner here (canonical
+        // executor RecoveryService.rerunFromStep). WAITING_FOR_REVIEW has a legal rerun edge to
+        // Executing (WAITING_FOR_REVIEW→INVESTIGATING is unwired and would surface
+        // ILLEGAL_TRANSITION
+        // if attempted — the flat action does not enumerate the sub-steps, that is story
+        // 4.12/4.22).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.RERUN_FROM_STEP,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+        }
         return List.of(
             AllowedAction.VIEW_ONLY,
             AllowedAction.VIEW_RUNNER_LOGS,
@@ -1854,8 +1867,12 @@ public class WorkflowInspectionService {
           // Story 3d-5 (AC6): the failed runner execution's logs are a primary diagnostic surface,
           // so view_runner_logs is offered to every role here.
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            // Story 4.7 (AC10): rerun_from_step is surfaced alongside retry for the workflow_owner
+            // (canonical executor RecoveryService.rerunFromStep). FAILED has a legal rerun edge to
+            // both Investigating and Executing.
             return List.of(
                 AllowedAction.RETRY,
+                AllowedAction.RERUN_FROM_STEP,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS);

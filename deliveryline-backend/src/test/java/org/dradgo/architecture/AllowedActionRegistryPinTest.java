@@ -131,4 +131,14 @@ class AllowedActionRegistryPinTest {
     // allowed-actions.placeholder.json + RegistryContractTest).
     assertThat(AllowedAction.RESUME_WORKFLOW.value()).isEqualTo("resume_workflow");
   }
+
+  @Test
+  void rerunFromStepWireValueIsPinned() {
+    // Story 4.7 AC10 — RecoveryService.rerunFromStep (routing through
+    // WorkflowCommandService.rerunFromStepWorkflow) is the canonical executor; surfaced for the
+    // workflow_owner gate role at FAILED + WAITING_FOR_REVIEW (states with a legal rerun edge).
+    // Guard against a silent rename (lockstep with allowed-actions.placeholder.json +
+    // RegistryContractTest).
+    assertThat(AllowedAction.RERUN_FROM_STEP.value()).isEqualTo("rerun_from_step");
+  }
 }

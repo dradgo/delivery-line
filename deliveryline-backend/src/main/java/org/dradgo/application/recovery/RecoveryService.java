@@ -3,14 +3,18 @@ package org.dradgo.application.recovery;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.dradgo.application.approval.ApprovalService;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.artifact.ArtifactRecordSnapshot;
 import org.dradgo.application.artifact.spi.ArtifactOperationPort;
+import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.integration.IntegrationLinkService;
 import org.dradgo.application.integration.conflict.ConflictFilter;
@@ -26,7 +30,9 @@ import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowOrchestrationService;
+import org.dradgo.application.workflow.WorkflowTransitionService;
 import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
+import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
 import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
@@ -36,11 +42,14 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.ReconciliationDecision;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.SafeRerunStep;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
@@ -59,17 +68,18 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p><strong>Scope governed by ADR 0033 (was ArchUnit scope-protected):</strong> today this service
  * exposes {@link #retry(String, String, ActorContext, String)}, {@link #resume(String, String,
  * ActorContext, String)} (story 4.5), {@link #reconcile(String, String, String, ActorContext,
- * String, String)} (story 4.6), and {@link #describeFailure(String)}. The former ArchUnit tripwire
- * {@code RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper recovery
- * surface out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see {@code
+ * String, String)} (story 4.6), {@link #rerunFromStep(String, String, String, ActorContext,
+ * String)} (story 4.7), and {@link #describeFailure(String)}. The former ArchUnit tripwire {@code
+ * RECOVERY_SERVICE_IS_SCOPE_PROTECTED} (installed by story 1.18 to keep the deeper recovery surface
+ * out until Epic 4 justified it) was <strong>lifted by story 4.28</strong> — see {@code
  * docs/adr/0033-recovery-service-scope-lift.md}. The set of recovery methods allowed to land on
  * this service is now governed by that ADR's "what new scope is now allowed" list rather than by a
  * build-breaking rule; adding a method outside that list requires a new ADR (or updating 0033).
  *
- * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code
- * rerunFromStep(...)}, {@code pause(...)}, {@code classifyFailure(...)} — see the ADR 0033 (c)
- * allow-list for the exhaustive set. {@code takeover(...)} lives on the sibling {@code
- * DeveloperTakeoverService}, which remains ArchUnit scope-protected.
+ * <p>Methods <strong>not</strong> yet present (later Epic-4 stories will add): {@code pause(...)},
+ * {@code classifyFailure(...)} — see the ADR 0033 (c) allow-list for the exhaustive set. {@code
+ * takeover(...)} lives on the sibling {@code DeveloperTakeoverService}, which remains ArchUnit
+ * scope-protected.
  *
  * <p><strong>Idempotency-key namespacing:</strong> the user-supplied {@code idempotencyKey} flows
  * through three idempotency surfaces — {@link WorkflowCommandService#retryWorkflow} (workflow state
@@ -161,6 +171,11 @@ public class RecoveryService {
   // (audit-only label; RBAC deferred).
   static final String ACTION_TYPE_RESUME = "resume";
   static final String ACTION_TYPE_RECONCILE = "reconcile";
+  // Story 4.7 — the pre-reserved V1 recovery_actions CHECK slot for rerun-from-step. The literal
+  // 'rerun_from_step' reconciles to 'rerun' (the finer semantic lives in the recovery.rerunFromStep
+  // event + details.targetStep — no recovery_actions.details column, mirror 4.5/4.6).
+  static final String ACTION_TYPE_RERUN = "rerun";
+  static final String INVALIDATED_REASON_RERUN = "superseded_by_rerun_from_step";
   static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
   static final String RESULT_STATUS_PENDING = "pending";
   static final String RESULT_STATUS_SUCCEEDED = "succeeded";
@@ -182,6 +197,16 @@ public class RecoveryService {
 
   private static final List<WorkflowState> TERMINAL_STATES =
       List.of(WorkflowState.COMPLETED, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED);
+
+  // Story 4.7 [Review 2026-07-12] — the ONLY states from which a rerun-from-step may be launched.
+  // Mirrors the AC10 allowed-actions gate (RERUN_FROM_STEP is offered only at FAILED +
+  // WAITING_FOR_REVIEW) so the service enforces the same source boundary the read-model advertises.
+  // Without this, the transition table's broader legal edges (e.g. WAITING_FOR_SPEC_APPROVAL →
+  // EXECUTING/INVESTIGATING) would let a non-UI caller rerun from a state that destroys a live PM
+  // approval — the exact case ADR-0034 scopes out. Executor-as-gate precedent (retry: != FAILED;
+  // resume: != PAUSED).
+  private static final List<WorkflowState> RERUN_SOURCE_STATES =
+      List.of(WorkflowState.FAILED, WorkflowState.WAITING_FOR_REVIEW);
 
   private final WorkflowRunReadPort workflowRunReadPort;
   private final WorkflowEventReadPort workflowEventReadPort;
@@ -206,6 +231,15 @@ public class RecoveryService {
   private final WorkflowEventWritePort workflowEventWritePort;
   private final RecoveryActionRecordPort recoveryActionRecordPort;
   private final IdempotencyKeyValidator idempotencyKeyValidator;
+  // Story 4.7 — approval invalidation (routed through the approval package) + active-leaf artifact
+  // reads for the rerun audit detail. Both nullable in the resume/retry-only test constructor.
+  private final ApprovalService approvalService;
+  private final ArtifactRecordPort artifactRecordPort;
+  // Story 4.7 [Review D1] — dispatch-failure compensation drives the run to FAILED directly (mirror
+  // RunnerBroker.driveWorkflowFailed) so a rerun whose post-commit re-enqueue fails stays
+  // recoverable. Nullable in the resume/reconcile-only test constructors; rerunFromStep guards
+  // non-null at call time (like approvalService/artifactRecordPort).
+  private final WorkflowTransitionService workflowTransitionService;
   private final Clock clock;
   private final TransactionTemplate retryPrepTransactionTemplate;
   private final TransactionTemplate resultStatusTransactionTemplate;
@@ -226,6 +260,9 @@ public class RecoveryService {
       RecoveryActionRecordPort recoveryActionRecordPort,
       IntegrationConflictService integrationConflictService,
       IdempotencyKeyValidator idempotencyKeyValidator,
+      ApprovalService approvalService,
+      ArtifactRecordPort artifactRecordPort,
+      WorkflowTransitionService workflowTransitionService,
       PlatformTransactionManager transactionManager) {
     this(
         workflowRunReadPort,
@@ -244,7 +281,10 @@ public class RecoveryService {
         idempotencyKeyValidator,
         Clock.systemUTC(),
         requiresNewTemplate(transactionManager),
-        requiresNewTemplate(transactionManager));
+        requiresNewTemplate(transactionManager),
+        approvalService,
+        artifactRecordPort,
+        workflowTransitionService);
   }
 
   RecoveryService(
@@ -262,7 +302,10 @@ public class RecoveryService {
       IdempotencyKeyValidator idempotencyKeyValidator,
       Clock clock,
       TransactionTemplate retryPrepTransactionTemplate,
-      TransactionTemplate resultStatusTransactionTemplate) {
+      TransactionTemplate resultStatusTransactionTemplate,
+      ApprovalService approvalService,
+      ArtifactRecordPort artifactRecordPort,
+      WorkflowTransitionService workflowTransitionService) {
     this(
         workflowRunReadPort,
         workflowEventReadPort,
@@ -280,7 +323,10 @@ public class RecoveryService {
         idempotencyKeyValidator,
         clock,
         retryPrepTransactionTemplate,
-        resultStatusTransactionTemplate);
+        resultStatusTransactionTemplate,
+        approvalService,
+        artifactRecordPort,
+        workflowTransitionService);
   }
 
   RecoveryService(
@@ -300,7 +346,10 @@ public class RecoveryService {
       IdempotencyKeyValidator idempotencyKeyValidator,
       Clock clock,
       TransactionTemplate retryPrepTransactionTemplate,
-      TransactionTemplate resultStatusTransactionTemplate) {
+      TransactionTemplate resultStatusTransactionTemplate,
+      ApprovalService approvalService,
+      ArtifactRecordPort artifactRecordPort,
+      WorkflowTransitionService workflowTransitionService) {
     this.workflowRunReadPort = Objects.requireNonNull(workflowRunReadPort, "workflowRunReadPort");
     this.workflowEventReadPort =
         Objects.requireNonNull(workflowEventReadPort, "workflowEventReadPort");
@@ -326,6 +375,12 @@ public class RecoveryService {
         Objects.requireNonNull(recoveryActionRecordPort, "recoveryActionRecordPort");
     this.idempotencyKeyValidator =
         Objects.requireNonNull(idempotencyKeyValidator, "idempotencyKeyValidator");
+    // Nullable: the resume/retry-only test constructor does not exercise rerunFromStep, so it
+    // passes null for both. rerunFromStep guards non-null at call time (like reconcile guards
+    // integrationConflictService).
+    this.approvalService = approvalService;
+    this.artifactRecordPort = artifactRecordPort;
+    this.workflowTransitionService = workflowTransitionService;
     this.clock = Objects.requireNonNull(clock, "clock");
     this.retryPrepTransactionTemplate =
         Objects.requireNonNull(retryPrepTransactionTemplate, "retryPrepTransactionTemplate");
@@ -1112,6 +1167,684 @@ public class RecoveryService {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
   }
+
+  /**
+   * Story 4.7 — rerun a run from a safe step boundary (Investigating/Executing). Structural twin of
+   * {@link #resume} + {@link #reconcile}: MDC scope → idempotency validate → replay pre-check
+   * (actionType-guarded {@code rerun}) → parse targetStep ({@link SafeRerunStep}) + require reason
+   * → current-state read (terminal / unwired pairs surface {@code ILLEGAL_TRANSITION} from the
+   * transition table) → resolve triggering event + read active-leaf artifact ids at/beyond the
+   * target step → REQUIRES_NEW prep tx (transition via {@link
+   * WorkflowCommandService#rerunFromStepWorkflow} + invalidate the prior stage approval via {@link
+   * ApprovalService#invalidateCurrentApproval} + append {@code recovery.rerunFromStep} + insert
+   * {@code recovery_actions}) → post-commit runner re-enqueue (single-sourced here) with
+   * compensation → best-effort Linear reopen notification → {@code markSucceeded} → return. Differs
+   * from resume in: the target is operator-chosen (String → {@code SafeRerunStep} → {@link
+   * WorkflowState}); a prior approval is invalidated in the prep tx; there are TWO post-commit
+   * side-effects (runner re-enqueue + best-effort Linear reopen); and it reads leaf artifact ids
+   * for the audit detail.
+   */
+  public RerunFromStepRecoveryResult rerunFromStep(
+      String workflowRunId,
+      String targetStep,
+      String idempotencyKey,
+      ActorContext actor,
+      String reasonText) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    Objects.requireNonNull(actor, "actor");
+    if (approvalService == null
+        || artifactRecordPort == null
+        || workflowTransitionService == null) {
+      throw new IllegalStateException(
+          "ApprovalService, ArtifactRecordPort and WorkflowTransitionService are required for"
+              + " rerunFromStep");
+    }
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(idempotencyKey);
+      long start = System.nanoTime();
+      log.info(
+          "recovery rerunFromStep start workflowRunId={} targetStep={} idempotencyKey={} actorIdentity={}",
+          workflowRunId,
+          targetStep,
+          validatedIdempotencyKey,
+          actor.actorIdentity());
+
+      // Step 1 — replay pre-check BEFORE input validation (mirror reconcile's replay-first order):
+      // a
+      // genuine retry of an already-succeeded rerun must replay even if the client now omits
+      // reason.
+      // Guard on ACTION_TYPE_RERUN so a prior retry/resume/reconcile/takeover under the same key is
+      // a conflict, never a false rerun replay.
+      Optional<RecoveryActionSnapshot> priorAction =
+          recoveryActionRecordPort.findByIdempotencyKey(validatedIdempotencyKey);
+      if (priorAction.isPresent()) {
+        RecoveryActionSnapshot prior = priorAction.get();
+        if (!ACTION_TYPE_RERUN.equals(prior.actionType())
+            || !workflowRunId.equals(prior.workflowRunPublicId())
+            || !RESULT_STATUS_SUCCEEDED.equals(prior.resultStatus())) {
+          throw idempotencyConflict(validatedIdempotencyKey, workflowRunId, prior);
+        }
+        return replayRerunResultOrConflict(
+            workflowRunId, targetStep, reasonText, validatedIdempotencyKey, actor, prior);
+      }
+
+      // Step 2 — parse the operator-chosen target step (null/blank or unknown → INVALID_RERUN_...).
+      WorkflowState targetState = resolveTargetState(targetStep);
+      // Step 3 — rerun requires an explicit reason (AC2); the transition table does NOT mandate one
+      // for Investigating/Executing targets, so this is a story-level guard (mirror reconcile).
+      String effectiveReason = requireReasonText(reasonText);
+
+      // Step 4 — current-state read + explicit source-state gate. Rerun-from-step may launch ONLY
+      // from RERUN_SOURCE_STATES ({FAILED, WAITING_FOR_REVIEW}), matching the AC10 allowed-actions
+      // gate. The transition table alone is too permissive (it legally allows, e.g.,
+      // WAITING_FOR_SPEC_APPROVAL → EXECUTING/INVESTIGATING); rerunning from such a state would
+      // invalidate a live PM approval + re-dispatch — the ADR-0034 out-of-scope case. This
+      // executor-as-gate check (retry: != FAILED; resume: != PAUSED) also subsumes the terminal
+      // states, which are not in the allow-list. Short-circuit here for a clean ILLEGAL_TRANSITION
+      // before consuming any state.
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+      if (!RERUN_SOURCE_STATES.contains(run.currentState())) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("currentState", run.currentState().value());
+        details.put("targetStep", targetState.value());
+        // The outer catch (DomainException rejected) emits the single WARN with reason=<code>.
+        throw new DomainException(
+            DomainErrorCode.ILLEGAL_TRANSITION,
+            "Rerun-from-step is not applicable from state "
+                + run.currentState().value()
+                + " (allowed sources: Failed, WaitingForReview)",
+            details);
+      }
+
+      // Step 5 — resolve the triggering event (best-effort, nullable FK): the run's latest failure
+      // event, else the latest event overall.
+      String triggeringEventPublicId =
+          workflowEventReadPort
+              .findLatestFailureEvent(workflowRunId)
+              .or(() -> workflowEventReadPort.findLatestByWorkflowRunPublicId(workflowRunId))
+              .map(WorkflowEventRecord::publicId)
+              .orElse(null);
+
+      // Step 6 — read the active-leaf artifact ids at/beyond the target step for the audit detail
+      // (READ ONLY — there is NO artifact-supersession write; the leaf advances via lineage graft
+      // when the re-run runner produces its next version). INVESTIGATING⇒{spec,plan,prOutput};
+      // EXECUTING⇒{plan,prOutput}.
+      List<String> supersededArtifactIds = resolveSupersededArtifactIds(workflowRunId, targetState);
+      // Which prior approval this rerun invalidates: INVESTIGATING⇒spec, EXECUTING⇒plan.
+      ArtifactType approvalArtifactType = invalidatedApprovalArtifactType(targetState);
+
+      String correlationId = actor.correlationId();
+      RerunPrep prep;
+      try {
+        prep =
+            retryPrepTransactionTemplate.execute(
+                status ->
+                    performRerunPrep(
+                        workflowRunId,
+                        validatedIdempotencyKey,
+                        actor,
+                        targetState,
+                        run.currentState(),
+                        triggeringEventPublicId,
+                        supersededArtifactIds,
+                        approvalArtifactType,
+                        effectiveReason,
+                        correlationId));
+      } catch (DomainException prepError) {
+        if (prepError.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          Optional<RerunFromStepRecoveryResult> raceReplay =
+              resolveConcurrentRerunReplay(
+                  workflowRunId,
+                  safeStepValueOf(targetState),
+                  effectiveReason,
+                  validatedIdempotencyKey,
+                  actor);
+          if (raceReplay.isPresent()) {
+            return raceReplay.get();
+          }
+        }
+        throw prepError;
+      }
+
+      // Step 7 — re-enqueue the runner OUTSIDE any transaction so the audit trail above is durable
+      // before any side effect (single-sourced here — rerunFromStepWorkflowInternal did the
+      // transition ONLY; the double-dispatch caution). manual-kind parks. Retry-style compensation.
+      RunnerStage targetStage = runnerStageFor(targetState);
+      String dispatchKey = validatedIdempotencyKey + ":runner";
+      String newRunnerExecutionId;
+      try {
+        org.dradgo.domain.registry.RunnerKind kind =
+            projectRuntimeConfigResolver.resolveRunnerKind(workflowRunId, targetStage);
+        if (kind == org.dradgo.domain.registry.RunnerKind.MANUAL) {
+          org.dradgo.application.runner.RunnerDispatchResult.Parked parked =
+              (org.dradgo.application.runner.RunnerDispatchResult.Parked)
+                  manualExecutionDispatcher.park(workflowRunId, targetStage, dispatchKey, actor);
+          newRunnerExecutionId = parked.handle().runnerExecutionId();
+        } else {
+          org.dradgo.application.runner.queue.QueuedRunnerExecution dispatchResult =
+              runnerExecutionQueue.enqueue(
+                  workflowRunId, targetStage, dispatchKey, actor, RECOVERY_QUEUE_PRIORITY);
+          newRunnerExecutionId = dispatchResult.runnerExecutionPublicId();
+        }
+      } catch (RuntimeException error) {
+        boolean compensationFailed = false;
+        try {
+          resultStatusTransactionTemplate.executeWithoutResult(
+              status -> recoveryActionRecordPort.markFailed(validatedIdempotencyKey));
+        } catch (RuntimeException compensationError) {
+          compensationFailed = true;
+          error.addSuppressed(compensationError);
+        }
+        try {
+          appendRerunDispatchFailedEvent(
+              workflowRunId,
+              targetState,
+              prep,
+              validatedIdempotencyKey,
+              correlationId,
+              effectiveReason,
+              actor,
+              error,
+              compensationFailed);
+        } catch (RuntimeException auditError) {
+          error.addSuppressed(auditError);
+          String dispatchErrorCode =
+              (error instanceof DomainException d) ? d.errorCode().value() : "RUNTIME_ERROR";
+          log.error(
+              "recovery rerunFromStep dispatch-failed event append failed workflowRunId={} "
+                  + "recoveryActionId={} rerunEventId={} idempotencyKey={} targetStep={} "
+                  + "errorCode={} errorClass={} correlationId={} compensationFailed={} "
+                  + "auditErrorClass={} — audit event missing; structured log is the only audit "
+                  + "trail for this attempt",
+              workflowRunId,
+              prep.recoveryActionPublicId(),
+              prep.rerunEventPublicId(),
+              validatedIdempotencyKey,
+              targetState.value(),
+              dispatchErrorCode,
+              error.getClass().getSimpleName(),
+              correlationId,
+              compensationFailed,
+              auditError.getClass().getSimpleName());
+        }
+        // [Review D1] Compensate the committed prep so the dispatch failure does not strand the
+        // run:
+        // restore the invalidated approval(s) and drive the run to FAILED (a legal retry/rerun
+        // source). Best-effort — a compensation failure is suppressed onto the original error.
+        compensateRerunDispatchFailure(
+            workflowRunId, targetState, prep, actor, effectiveReason, error);
+        log.warn(
+            "recovery rerunFromStep dispatch failed workflowRunId={} targetStep={} errorClass={} — compensated (approval restored + run driven to Failed); operator retry/rerun available",
+            workflowRunId,
+            targetState.value(),
+            error.getClass().getSimpleName());
+        throw error;
+      }
+
+      // Step 8 — flip the recovery_actions row to succeeded (mirror resume Step 6). A failed flip
+      // must not silently strand the row as pending (poisons later same-key replays) — escalate.
+      try {
+        resultStatusTransactionTemplate.executeWithoutResult(
+            status -> recoveryActionRecordPort.markSucceeded(validatedIdempotencyKey));
+      } catch (RuntimeException completionError) {
+        log.error(
+            "recovery rerunFromStep completion status update failed workflowRunId={} recoveryActionId={} idempotencyKey={} newRunnerExecutionId={} errorClass={} — run rerun but recovery_actions row stays pending; operator reconciliation required",
+            workflowRunId,
+            prep.recoveryActionPublicId(),
+            validatedIdempotencyKey,
+            newRunnerExecutionId,
+            completionError.getClass().getSimpleName());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("recoveryActionId", prep.recoveryActionPublicId());
+        details.put("idempotencyKey", validatedIdempotencyKey);
+        details.put("newRunnerExecutionId", newRunnerExecutionId);
+        details.put("reason", "result_status_flip_failed_after_rerun");
+        DomainException terminal =
+            new DomainException(
+                DomainErrorCode.INTERNAL_ERROR,
+                "Run rerun but recovery_actions.result_status flip to succeeded failed; "
+                    + "row remains pending. Operator reconciliation required.",
+                details);
+        terminal.addSuppressed(completionError);
+        throw terminal;
+      }
+
+      // Step 9 — best-effort Linear reopen notification (LAST side-effect, never fails the rerun).
+      bestEffortLinearReopenNotification(workflowRunId, targetState, correlationId);
+
+      long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+      log.info(
+          "recovery rerunFromStep success workflowRunId={} recoveryActionId={} newRunnerExecutionId={} resultingState={} invalidatedApprovalCount={} durationMs={}",
+          workflowRunId,
+          prep.recoveryActionPublicId(),
+          newRunnerExecutionId,
+          targetState.value(),
+          prep.invalidatedApprovalIds().size(),
+          elapsedMs);
+      return new RerunFromStepRecoveryResult(
+          prep.recoveryActionPublicId(),
+          prep.rerunEventPublicId(),
+          supersededArtifactIds,
+          prep.invalidatedApprovalIds(),
+          newRunnerExecutionId,
+          targetState,
+          correlationId,
+          false);
+    } catch (DomainException rejected) {
+      // Rejection observability: every guarded rejection surfaces one WARN carrying the reason.
+      log.warn(
+          "recovery rerunFromStep rejected workflowRunId={} targetStep={} reason={}",
+          workflowRunId,
+          targetStep,
+          rejected.errorCode());
+      throw rejected;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private WorkflowState resolveTargetState(String targetStep) {
+    SafeRerunStep step;
+    try {
+      step = SafeRerunStep.fromNullableValue(targetStep, "targetStep");
+    } catch (DomainException invalid) {
+      throw invalidRerunTargetStep(targetStep);
+    }
+    if (step == null) {
+      throw invalidRerunTargetStep(targetStep);
+    }
+    return switch (step) {
+      case INVESTIGATING -> WorkflowState.INVESTIGATING;
+      case EXECUTING -> WorkflowState.EXECUTING;
+    };
+  }
+
+  private static DomainException invalidRerunTargetStep(String provided) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("provided", provided);
+    return new DomainException(
+        DomainErrorCode.INVALID_RERUN_TARGET_STEP,
+        "Invalid rerun target step: " + provided,
+        details);
+  }
+
+  private static String requireReasonText(String reasonText) {
+    if (reasonText != null && !reasonText.isBlank()) {
+      return reasonText;
+    }
+    throw new DomainException(
+        DomainErrorCode.MISSING_REASON_TEXT,
+        "Rerun-from-step requires a non-blank reason",
+        Map.of("field", "reasonText"));
+  }
+
+  private static ArtifactType invalidatedApprovalArtifactType(WorkflowState targetState) {
+    // INVESTIGATING (re-spec) invalidates the current spec approval; EXECUTING (re-implement) the
+    // current implementationPlan approval.
+    return targetState == WorkflowState.INVESTIGATING
+        ? ArtifactType.SPEC
+        : ArtifactType.IMPLEMENTATION_PLAN;
+  }
+
+  private static RunnerStage runnerStageFor(WorkflowState targetState) {
+    return targetState == WorkflowState.INVESTIGATING
+        ? RunnerStage.INVESTIGATION
+        : RunnerStage.EXECUTION;
+  }
+
+  /**
+   * The {@link SafeRerunStep} wire token for a resolved target state ({@code "investigating"} /
+   * {@code "executing"}). This — NOT the capitalized {@link WorkflowState#value()} — is what {@code
+   * details.targetStep} carries, so it matches the operator-supplied token on the idempotent-replay
+   * comparison and stays consistent with the {@code SafeRerunStep} vocabulary.
+   */
+  private static String safeStepValueOf(WorkflowState targetState) {
+    return targetState == WorkflowState.INVESTIGATING
+        ? SafeRerunStep.INVESTIGATING.value()
+        : SafeRerunStep.EXECUTING.value();
+  }
+
+  private List<String> resolveSupersededArtifactIds(
+      String workflowRunId, WorkflowState targetState) {
+    List<ArtifactType> types =
+        targetState == WorkflowState.INVESTIGATING
+            ? List.of(ArtifactType.SPEC, ArtifactType.IMPLEMENTATION_PLAN, ArtifactType.PR_OUTPUT)
+            : List.of(ArtifactType.IMPLEMENTATION_PLAN, ArtifactType.PR_OUTPUT);
+    List<String> leafIds = new ArrayList<>();
+    for (ArtifactType type : types) {
+      artifactRecordPort
+          .findLatestByWorkflowRunIdAndArtifactType(workflowRunId, type.value())
+          .map(ArtifactRecordSnapshot::publicId)
+          .ifPresent(leafIds::add);
+    }
+    return List.copyOf(leafIds);
+  }
+
+  private RerunPrep performRerunPrep(
+      String workflowRunId,
+      String idempotencyKey,
+      ActorContext actor,
+      WorkflowState targetState,
+      WorkflowState priorState,
+      String triggeringEventPublicId,
+      List<String> supersededArtifactIds,
+      ArtifactType approvalArtifactType,
+      String effectiveReason,
+      String correlationId) {
+    RerunFromStepWorkflowCommand command =
+        new RerunFromStepWorkflowCommand(
+            workflowRunId,
+            actor.actorIdentity(),
+            actor.actorType(),
+            idempotencyKey,
+            correlationId,
+            effectiveReason,
+            targetState);
+    workflowCommandService.rerunFromStepWorkflow(command);
+
+    // Approval invalidation is the enforced supersession (Reconciliation 2), routed through the
+    // approval package (write-boundary spirit, mirror 4.6). MANDATORY joins this prep tx.
+    List<String> invalidatedApprovalIds = new ArrayList<>();
+    approvalService
+        .invalidateCurrentApproval(
+            workflowRunId, approvalArtifactType.value(), INVALIDATED_REASON_RERUN)
+        .ifPresent(invalidatedApprovalIds::add);
+
+    String recoveryEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put(WorkflowEventDetailKeys.TARGET_STEP, safeStepValueOf(targetState));
+    eventDetails.put(WorkflowEventDetailKeys.SUPERSEDED_ARTIFACT_IDS, supersededArtifactIds);
+    if (!invalidatedApprovalIds.isEmpty()) {
+      eventDetails.put(WorkflowEventDetailKeys.INVALIDATED_APPROVAL_IDS, invalidatedApprovalIds);
+    }
+    if (triggeringEventPublicId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.TRIGGERING_EVENT_ID, triggeringEventPublicId);
+    }
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    if (effectiveReason != null && !effectiveReason.isBlank()) {
+      eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    }
+    workflowEventWritePort.append(
+        new WorkflowEventRecord(
+            recoveryEventPublicId,
+            workflowRunId,
+            WorkflowEventType.RECOVERY_RERUN_FROM_STEP,
+            priorState,
+            targetState,
+            actor.actorIdentity(),
+            actor.actorType(),
+            effectiveReason,
+            null,
+            true,
+            OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+            eventDetails));
+
+    RecoveryActionSnapshot recoveryAction =
+        recoveryActionRecordPort.insert(
+            new RecoveryActionWriteCommand(
+                workflowRunId,
+                ACTION_TYPE_RERUN,
+                triggeringEventPublicId,
+                recoveryEventPublicId,
+                actor.actorIdentity(),
+                actor.actorType(),
+                idempotencyKey,
+                RESULT_STATUS_PENDING,
+                REVIEWER_ROLE_WORKFLOW_OWNER));
+
+    return new RerunPrep(
+        recoveryAction.publicId(), recoveryEventPublicId, List.copyOf(invalidatedApprovalIds));
+  }
+
+  private void appendRerunDispatchFailedEvent(
+      String workflowRunId,
+      WorkflowState targetState,
+      RerunPrep prep,
+      String idempotencyKey,
+      String correlationId,
+      String effectiveReason,
+      ActorContext actor,
+      RuntimeException error,
+      boolean compensationFailed) {
+    String errorCode =
+        (error instanceof DomainException domainError)
+            ? domainError.errorCode().value()
+            : "RUNTIME_ERROR";
+    String errorClass = error.getClass().getSimpleName();
+    String dispatchFailedReason = "rerun re-enqueue failed: " + errorCode;
+    String dispatchFailedEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put(WorkflowEventDetailKeys.RECOVERY_ACTION_ID, prep.recoveryActionPublicId());
+    // The recovery-event-id detail key (retry-flavored name) carries the recovery.rerunFromStep
+    // event id — the only recovery-event-id allow-listed key (matches resume's deferred note).
+    eventDetails.put(WorkflowEventDetailKeys.RECOVERY_RETRIED_EVENT_ID, prep.rerunEventPublicId());
+    eventDetails.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+    eventDetails.put(WorkflowEventDetailKeys.ERROR_CODE, errorCode);
+    eventDetails.put(WorkflowEventDetailKeys.ERROR_CLASS, errorClass);
+    if (correlationId != null) {
+      eventDetails.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+    }
+    if (effectiveReason != null && !effectiveReason.isBlank()) {
+      eventDetails.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+    }
+    if (compensationFailed) {
+      eventDetails.put(WorkflowEventDetailKeys.COMPENSATION_FAILED, true);
+    }
+    resultStatusTransactionTemplate.executeWithoutResult(
+        status -> {
+          workflowEventWritePort.append(
+              new WorkflowEventRecord(
+                  dispatchFailedEventPublicId,
+                  workflowRunId,
+                  WorkflowEventType.RECOVERY_DISPATCH_FAILED,
+                  targetState,
+                  targetState,
+                  actor.actorIdentity(),
+                  actor.actorType(),
+                  dispatchFailedReason,
+                  null,
+                  true,
+                  OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
+                  eventDetails));
+          log.info(
+              "recovery rerunFromStep dispatch-failed event appended workflowRunId={} dispatchFailedEventId={} errorCode={} errorClass={}",
+              workflowRunId,
+              dispatchFailedEventPublicId,
+              errorCode,
+              errorClass);
+        });
+  }
+
+  /**
+   * [Review D1] Compensate a post-commit runner-dispatch failure. The prep tx already committed the
+   * transition to {@code targetState} + the prior-approval invalidation, but no runner was enqueued
+   * — leaving the run stranded (target state is not a legal retry/rerun source) with a destroyed
+   * approval. This restores the invalidated approval(s) and drives the run to {@code FAILED} (a
+   * legal {@code retry}/{@code rerunFromStep} source) via the {@code RECOVERY_DISPATCH_FAILED}
+   * category — the only {@code INVESTIGATING/EXECUTING→FAILED} edges are failure-category-guarded.
+   * Every step is best-effort: any compensation failure is suppressed onto the original dispatch
+   * {@code error} so it never masks the real cause, and an {@code ILLEGAL_TRANSITION} (e.g. a
+   * concurrent move) is logged-and-skipped like {@code RunnerBroker.driveWorkflowFailed}.
+   */
+  private void compensateRerunDispatchFailure(
+      String workflowRunId,
+      WorkflowState targetState,
+      RerunPrep prep,
+      ActorContext actor,
+      String effectiveReason,
+      RuntimeException error) {
+    String fromStep = safeStepValueOf(targetState);
+    for (String approvalId : prep.invalidatedApprovalIds()) {
+      try {
+        approvalService.restoreInvalidatedApproval(approvalId);
+      } catch (RuntimeException restoreError) {
+        error.addSuppressed(restoreError);
+        log.warn(
+            "recovery rerunFromStep compensation approval-restore failed workflowRunId={} approvalId={} errorClass={} — approval stays invalidated; operator action required",
+            workflowRunId,
+            approvalId,
+            restoreError.getClass().getSimpleName());
+      }
+    }
+    try {
+      workflowTransitionService.transition(
+          workflowRunId,
+          WorkflowState.FAILED,
+          new WorkflowTransitionService.TransitionActor(actor.actorIdentity(), actor.actorType()),
+          "rerun-from-step re-enqueue failed; compensated to Failed",
+          "rerun-compensation:"
+              + workflowRunId
+              + ":"
+              + FailureCategory.RECOVERY_DISPATCH_FAILED.value(),
+          FailureCategory.RECOVERY_DISPATCH_FAILED,
+          Map.of(WorkflowEventDetailKeys.TARGET_STEP, fromStep));
+      log.warn(
+          "recovery rerunFromStep compensation drove run to Failed workflowRunId={} fromStep={} category={}",
+          workflowRunId,
+          fromStep,
+          FailureCategory.RECOVERY_DISPATCH_FAILED.value());
+    } catch (DomainException transitionError) {
+      if (transitionError.errorCode() == DomainErrorCode.ILLEGAL_TRANSITION) {
+        log.warn(
+            "recovery rerunFromStep compensation transition-to-Failed skipped (illegal transition) workflowRunId={} fromStep={} — run left in target state; operator action required",
+            workflowRunId,
+            fromStep);
+      } else {
+        error.addSuppressed(transitionError);
+        log.warn(
+            "recovery rerunFromStep compensation transition-to-Failed failed workflowRunId={} errorClass={} — run left in target state; operator action required",
+            workflowRunId,
+            transitionError.getClass().getSimpleName());
+      }
+    } catch (RuntimeException transitionError) {
+      error.addSuppressed(transitionError);
+      log.warn(
+          "recovery rerunFromStep compensation transition-to-Failed failed workflowRunId={} errorClass={} — run left in target state; operator action required",
+          workflowRunId,
+          transitionError.getClass().getSimpleName());
+    }
+  }
+
+  private RerunFromStepRecoveryResult replayRerunResultOrConflict(
+      String workflowRunId,
+      String rawTargetStep,
+      String rawReason,
+      String idempotencyKey,
+      ActorContext actor,
+      RecoveryActionSnapshot prior) {
+    if (prior.resultingEventPublicId() == null) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    WorkflowEventRecord event =
+        workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null).stream()
+            .filter(candidate -> prior.resultingEventPublicId().equals(candidate.publicId()))
+            .findFirst()
+            .orElseThrow(() -> idempotencyConflict(idempotencyKey, workflowRunId, prior));
+    // A same-key rerun requesting a DIFFERENT step OR a DIFFERENT non-blank reason than the
+    // persisted one is a conflict, never a replay (targetStep AND reasonText both compose the
+    // fingerprint identity — Reconciliation 9 / WorkflowCommandFingerprintFactory). A null/blank
+    // raw
+    // value skips its own comparison so a genuine retry that omits it still replays; the
+    // concurrent-
+    // replay path now forwards the resolved step + reason (not null) so the race enforces the same
+    // discriminators as the serial Step-1 path.
+    Object storedTargetStep = event.details().get(WorkflowEventDetailKeys.TARGET_STEP);
+    if (rawTargetStep != null
+        && !rawTargetStep.isBlank()
+        && !rawTargetStep.equals(storedTargetStep)) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    String storedReason = event.reason();
+    if (rawReason != null && !rawReason.isBlank() && !rawReason.equals(storedReason)) {
+      throw idempotencyConflict(idempotencyKey, workflowRunId, prior);
+    }
+    WorkflowState resultingState = event.resultingState();
+    log.info(
+        "recovery rerunFromStep replay workflowRunId={} recoveryActionId={} idempotencyKey={}",
+        workflowRunId,
+        prior.publicId(),
+        idempotencyKey);
+    return new RerunFromStepRecoveryResult(
+        prior.publicId(),
+        prior.resultingEventPublicId(),
+        stringListDetail(event, WorkflowEventDetailKeys.SUPERSEDED_ARTIFACT_IDS),
+        stringListDetail(event, WorkflowEventDetailKeys.INVALIDATED_APPROVAL_IDS),
+        null,
+        resultingState,
+        actor.correlationId(),
+        true);
+  }
+
+  private Optional<RerunFromStepRecoveryResult> resolveConcurrentRerunReplay(
+      String workflowRunId,
+      String rawTargetStep,
+      String rawReason,
+      String idempotencyKey,
+      ActorContext actor) {
+    Optional<RecoveryActionSnapshot> prior =
+        recoveryActionRecordPort.findByIdempotencyKey(idempotencyKey);
+    if (prior.isEmpty()) {
+      return Optional.empty();
+    }
+    RecoveryActionSnapshot snapshot = prior.get();
+    if (!workflowRunId.equals(snapshot.workflowRunPublicId())
+        || !ACTION_TYPE_RERUN.equals(snapshot.actionType())
+        || !RESULT_STATUS_SUCCEEDED.equals(snapshot.resultStatus())
+        || snapshot.resultingEventPublicId() == null) {
+      return Optional.empty();
+    }
+    // Forward the resolved step + reason (NOT null) so a same-key/different-step (or /different-
+    // reason) concurrent loser raises IDEMPOTENCY_KEY_CONFLICT — matching the serial Step-1 path —
+    // instead of falsely replaying the winner's result.
+    return Optional.of(
+        replayRerunResultOrConflict(
+            workflowRunId, rawTargetStep, rawReason, idempotencyKey, actor, snapshot));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<String> stringListDetail(WorkflowEventRecord event, String key) {
+    Object value = event.details().get(key);
+    if (value instanceof List<?> list) {
+      List<String> result = new ArrayList<>();
+      for (Object element : list) {
+        if (element != null) {
+          result.add(element.toString());
+        }
+      }
+      return List.copyOf(result);
+    }
+    return List.of();
+  }
+
+  private void bestEffortLinearReopenNotification(
+      String workflowRunId, WorkflowState targetState, String correlationId) {
+    try {
+      workflowOrchestrationService.notifyLinearRunReopened(
+          workflowRunId, safeStepValueOf(targetState), correlationId);
+    } catch (RuntimeException error) {
+      // The reopen notification is itself best-effort and swallows internally; this outer guard is
+      // defense-in-depth so a proxy/tx-boundary surprise can NEVER fail the already-committed
+      // rerun.
+      log.warn(
+          "recovery rerunFromStep linear reopen notification failed workflowRunId={} errorClass={} — rerun already committed; skipping",
+          workflowRunId,
+          error.getClass().getSimpleName());
+    }
+  }
+
+  private record RerunPrep(
+      String recoveryActionPublicId,
+      String rerunEventPublicId,
+      List<String> invalidatedApprovalIds) {}
 
   private ResumePrep performResumePrep(
       String workflowRunId,

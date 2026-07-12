@@ -34,6 +34,7 @@ import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
 import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -101,6 +102,13 @@ class CommandModelSymmetryFoundationContract {
           TakeoverWorkflowCommand.class,
           ResumeWorkflowCommand.class,
           ReconcileWorkflowCommand.class,
+          // Story 4.7 (rerun-from-step) added RerunFromStepWorkflowCommand (service-only surface
+          // via
+          // WorkflowCommandService.rerunFromStepWorkflow); recorded here as a known permit to keep
+          // the set explicit. Its REST round-trip capture is deferred to story 4.12 (the
+          // rerun-from-step endpoint + OpenAPI), following the RejectImplementationCommand
+          // precedent.
+          RerunFromStepWorkflowCommand.class,
           AcceptClarificationCommand.class,
           RegenerateSpecCommand.class,
           ApproveLintCommand.class,

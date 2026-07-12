@@ -1,5 +1,6 @@
 package org.dradgo.application.approval.spi;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.domain.registry.ActorType;
@@ -26,6 +27,34 @@ public interface ApprovalWritePort {
    *     persistence exception is mapped without leaking implementation details.
    */
   ApprovalSnapshot insert(NewApproval newApproval);
+
+  /**
+   * Story 4.7 (AC7 / Reconciliation 2) — invalidate a currently-valid approval row (rerun-from-step
+   * supersession). Sets {@code invalidated_at}/{@code invalidated_reason} only when the row is
+   * still valid ({@code invalidated_at IS NULL}), so a second rerun on the same run is idempotent
+   * at the DB level. Participates in the caller's transaction (REQUIRED — joins the RecoveryService
+   * prep tx).
+   *
+   * @param approvalPublicId {@code apr_…} of the approval to invalidate
+   * @param invalidatedReason controlled reason token (e.g. {@code superseded_by_rerun_from_step})
+   * @param invalidatedAt server-stamped invalidation instant
+   * @return {@code true} when a row was flipped (rows-affected == 1); {@code false} when the row
+   *     was already invalidated or not found
+   */
+  boolean markInvalidated(String approvalPublicId, String invalidatedReason, Instant invalidatedAt);
+
+  /**
+   * Story 4.7 [Review D1] — restore (un-invalidate) an approval row, compensating a rerun-from-step
+   * whose post-commit runner re-enqueue failed after the prep tx already invalidated the prior
+   * approval. Clears {@code invalidated_at}/{@code invalidated_reason} only when the row is
+   * currently invalidated ({@code invalidated_at IS NOT NULL}), so the compensation is idempotent
+   * and never disturbs a still-valid approval. Participates in the caller's transaction (REQUIRED).
+   *
+   * @param approvalPublicId {@code apr_…} of the approval to restore
+   * @return {@code true} when a row was restored (rows-affected == 1); {@code false} when the row
+   *     was already valid or not found
+   */
+  boolean clearInvalidation(String approvalPublicId);
 
   /**
    * Caller-built insert payload. {@code publicId} is supplied externally (caller-generated via

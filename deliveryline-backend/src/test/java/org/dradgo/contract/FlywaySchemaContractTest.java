@@ -493,6 +493,16 @@ class FlywaySchemaContractTest {
   }
 
   @Test
+  void approvalInvalidationColumnsHaveTheExpectedShape() {
+    // Story 4.7 / V42 — approval invalidation. Both columns are nullable (existing rows default
+    // NULL == "still current"); invalidated_at is a UTC timestamp, invalidated_reason free text.
+    assertColumnNullable("approvals", "invalidated_at", true);
+    assertColumnType("approvals", "invalidated_at", "timestamp with time zone");
+    assertColumnNullable("approvals", "invalidated_reason", true);
+    assertColumnType("approvals", "invalidated_reason", "text");
+  }
+
+  @Test
   void uniqueConstraintsCoverPublicIdsAndIdempotencyKeys() {
     Set<String> uniqueConstraintNames =
         new HashSet<>(

@@ -29,6 +29,7 @@
     "request_lint_fix",
     "approve_delivery",
     "resume_workflow",
-    "reconcile_conflict"
+    "reconcile_conflict",
+    "rerun_from_step"
   ]
 }

@@ -33,6 +33,7 @@ When you add one, append its row to the index table here.
 | [0031](0031-remote-runner-architecture.md) | Remote Runner Architecture & Full-Access Execution Boundary | Proposed (2026-06-29) |
 | [0032](0032-replay-safe-aftercommit-helper.md) | Shared Replay-Safe afterCommit Side-Effect Helper (B1) | Proposed (2026-07-04) |
 | [0033](0033-recovery-service-scope-lift.md) | RecoveryService Scope Lift (Retire the Epic-1 Scope-Protection Tripwire) | Proposed (2026-07-08) |
+| [0034](0034-rerun-safe-boundaries.md) | Rerun-from-Step Restricted to Safe Step Boundaries (Investigating/Executing) | Proposed (2026-07-11) |
 
 ## A note on numbering gaps
 

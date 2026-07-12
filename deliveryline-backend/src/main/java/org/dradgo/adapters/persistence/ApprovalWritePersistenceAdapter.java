@@ -175,6 +175,42 @@ public class ApprovalWritePersistenceAdapter implements ApprovalWritePort {
     }
   }
 
+  @Override
+  @Transactional(propagation = Propagation.REQUIRED)
+  public boolean markInvalidated(
+      String approvalPublicId, String invalidatedReason, java.time.Instant invalidatedAt) {
+    String priorApprovalId = MdcKeys.beginScope(MdcKeys.APPROVAL_ID, approvalPublicId);
+    try {
+      int rows =
+          approvalRepository.markInvalidated(
+              approvalPublicId,
+              invalidatedReason,
+              invalidatedAt.atOffset(java.time.ZoneOffset.UTC));
+      log.info(
+          "approval invalidate approvalId={} reason={} rowsAffected={}",
+          approvalPublicId,
+          invalidatedReason,
+          rows);
+      return rows > 0;
+    } finally {
+      MdcKeys.endScope(MdcKeys.APPROVAL_ID, priorApprovalId);
+    }
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.REQUIRED)
+  public boolean clearInvalidation(String approvalPublicId) {
+    String priorApprovalId = MdcKeys.beginScope(MdcKeys.APPROVAL_ID, approvalPublicId);
+    try {
+      int rows = approvalRepository.clearInvalidation(approvalPublicId);
+      log.info(
+          "approval restore-invalidation approvalId={} rowsAffected={}", approvalPublicId, rows);
+      return rows > 0;
+    } finally {
+      MdcKeys.endScope(MdcKeys.APPROVAL_ID, priorApprovalId);
+    }
+  }
+
   /**
    * Resolve the constraint name from the exception chain. Preferred path: the Hibernate-wrapped
    * {@link ConstraintViolationException} exposes {@code getConstraintName()} directly. Fallback:

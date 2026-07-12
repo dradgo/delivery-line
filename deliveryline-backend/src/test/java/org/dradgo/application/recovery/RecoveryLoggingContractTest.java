@@ -117,7 +117,10 @@ class RecoveryLoggingContractTest {
             new IdempotencyKeyValidator(),
             Clock.fixed(FIXED_NOW.toInstant(), ZoneOffset.UTC),
             callthroughTemplate(),
-            callthroughTemplate());
+            callthroughTemplate(),
+            mock(org.dradgo.application.approval.ApprovalService.class),
+            mock(org.dradgo.application.artifact.spi.ArtifactRecordPort.class),
+            mock(org.dradgo.application.workflow.WorkflowTransitionService.class));
 
     appender = new ListAppender<>();
     appender.start();
@@ -427,6 +430,108 @@ class RecoveryLoggingContractTest {
     assertTrue(rejected.getFormattedMessage().contains("workflowRunId=" + RUN));
     assertTrue(rejected.getFormattedMessage().contains("conflictId=icf_log-aaaaa"));
     assertTrue(rejected.getFormattedMessage().contains("reason=MISSING_RECONCILIATION_DECISION"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.7 — rerunFromStep log lines (start / success / replay / rejected).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void rerunHappyPathEmitsStartAndSuccessLogsAtInfoWithExpectedKeys() {
+    stubFailedRunPath();
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(rerunActionSnapshot("rcv_rr-log1", "pending", null));
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(rerunActionSnapshot("rcv_rr-log1", "succeeded", "evt_rr-log1"));
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN), eq(RunnerStage.INVESTIGATION), any(), any(), anyInt()))
+        .thenReturn(
+            new QueuedRunnerExecution(
+                "rex_rr-log1", RUN, RunnerStage.INVESTIGATION, 100, "corr", 1L, "evt_q-rr1"));
+
+    service.rerunFromStep(RUN, "investigating", IDEMPOTENCY_KEY, ACTOR, "re-spec");
+
+    ILoggingEvent start = findFirst(Level.INFO, "recovery rerunFromStep start");
+    assertTrue(start.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(start.getFormattedMessage().contains("targetStep=investigating"));
+    assertTrue(start.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+    assertTrue(start.getFormattedMessage().contains("actorIdentity=" + ACTOR.actorIdentity()));
+
+    ILoggingEvent success = findFirst(Level.INFO, "recovery rerunFromStep success");
+    assertTrue(success.getFormattedMessage().contains("recoveryActionId=rcv_rr-log1"));
+    assertTrue(success.getFormattedMessage().contains("newRunnerExecutionId=rex_rr-log1"));
+    assertTrue(success.getFormattedMessage().contains("resultingState=Investigating"));
+    assertTrue(success.getFormattedMessage().contains("durationMs="));
+    assertEquals(RUN, start.getMDCPropertyMap().get("workflowRunId"));
+    assertEquals(RUN, success.getMDCPropertyMap().get("workflowRunId"));
+
+    long errorCount =
+        appender.list.stream().filter(event -> event.getLevel() == Level.ERROR).count();
+    assertEquals(
+        0L, errorCount, "RecoveryService.rerunFromStep must not emit ERROR on the happy path");
+  }
+
+  @Test
+  void rerunReplayEmitsReplayLogAtInfoWithRecoveryActionIdAndIdempotencyKey() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY))
+        .thenReturn(Optional.of(rerunActionSnapshot("rcv_rr-prior", "succeeded", "evt_rr-prior")));
+    when(eventReadPort.listByWorkflowRunPublicId(RUN, null))
+        .thenReturn(
+            List.of(
+                new WorkflowEventRecord(
+                    "evt_rr-prior",
+                    RUN,
+                    WorkflowEventType.RECOVERY_RERUN_FROM_STEP,
+                    WorkflowState.FAILED,
+                    WorkflowState.INVESTIGATING,
+                    ACTOR.actorIdentity(),
+                    ACTOR.actorType(),
+                    "re-spec",
+                    null,
+                    true,
+                    FIXED_NOW,
+                    Map.of("targetStep", "investigating"))));
+
+    service.rerunFromStep(RUN, "investigating", IDEMPOTENCY_KEY, ACTOR, "re-spec");
+
+    ILoggingEvent replay = findFirst(Level.INFO, "recovery rerunFromStep replay");
+    assertTrue(replay.getFormattedMessage().contains("recoveryActionId=rcv_rr-prior"));
+    assertTrue(replay.getFormattedMessage().contains("idempotencyKey=" + IDEMPOTENCY_KEY));
+  }
+
+  @Test
+  void rerunOnTerminalRunEmitsRejectedLogAtWarnWithReason() {
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(runReadPort.findByPublicId(RUN))
+        .thenReturn(
+            Optional.of(new WorkflowRunSnapshot(RUN, WorkflowState.COMPLETED, null, 1L, 0, false)));
+
+    assertThrows(
+        DomainException.class,
+        () -> service.rerunFromStep(RUN, "investigating", IDEMPOTENCY_KEY, ACTOR, "re-spec"));
+
+    ILoggingEvent rejected = findFirst(Level.WARN, "recovery rerunFromStep rejected");
+    assertTrue(rejected.getFormattedMessage().contains("workflowRunId=" + RUN));
+    assertTrue(rejected.getFormattedMessage().contains("targetStep=investigating"));
+    assertTrue(rejected.getFormattedMessage().contains("reason=ILLEGAL_TRANSITION"));
+  }
+
+  private RecoveryActionSnapshot rerunActionSnapshot(
+      String publicId, String resultStatus, String resultingEventId) {
+    return new RecoveryActionSnapshot(
+        publicId,
+        1L,
+        RUN,
+        "rerun",
+        "evt_failure-aaaaa",
+        resultingEventId,
+        ACTOR.actorIdentity(),
+        ACTOR.actorType(),
+        IDEMPOTENCY_KEY,
+        resultStatus,
+        Instant.now().atOffset(ZoneOffset.UTC),
+        "workflow_owner");
   }
 
   private void stubPausedRunPath() {

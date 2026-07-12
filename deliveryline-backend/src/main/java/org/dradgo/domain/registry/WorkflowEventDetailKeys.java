@@ -118,6 +118,15 @@ public final class WorkflowEventDetailKeys {
   public static final String CONFLICT_CATEGORY = "conflictCategory";
   public static final String RECONCILIATION_DECISION = "reconciliationDecision";
 
+  // Rerun-from-step keys (added story 4.7 AC5, emitted on RECOVERY_RERUN_FROM_STEP). All
+  // allow-listed: targetStep is the controlled-vocabulary SafeRerunStep wire token; the two
+  // *ArtifactIds / *ApprovalIds arrays are opaque art_/apr_ public ids (non-secret references, the
+  // same shareable posture as triggeringEventId). NEVER carries artifact bodies or approval
+  // reasons.
+  public static final String TARGET_STEP = "targetStep";
+  public static final String SUPERSEDED_ARTIFACT_IDS = "supersededArtifactIds";
+  public static final String INVALIDATED_APPROVAL_IDS = "invalidatedApprovalIds";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -174,7 +183,10 @@ public final class WorkflowEventDetailKeys {
           PR_STATE,
           CONFLICT_ID,
           CONFLICT_CATEGORY,
-          RECONCILIATION_DECISION);
+          RECONCILIATION_DECISION,
+          TARGET_STEP,
+          SUPERSEDED_ARTIFACT_IDS,
+          INVALIDATED_APPROVAL_IDS);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

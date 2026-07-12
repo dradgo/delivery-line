@@ -48,7 +48,7 @@
             lines="108"/>
   <suppress id="ForbiddenThreadSleep"
             files="[\\/]application[\\/]workflow[\\/]WorkflowCommandService\.java$"
-            lines="1307"/>
+            lines="1357"/>
 
   <!--
     DindSidecarService - Thread.sleep is the single concrete implementation of the

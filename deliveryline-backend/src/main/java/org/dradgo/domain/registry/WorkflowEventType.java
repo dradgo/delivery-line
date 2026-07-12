@@ -123,7 +123,25 @@ public enum WorkflowEventType implements RegistryValue {
   // keys reuse the already-allow-listed runnerExecutionId / workflowRunId / correlationId. NOT in
   // any scenario stream fixture (like console.opened / integration.conflictDetected). NO Flyway —
   // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
-  DELIVERY_RECORDED_MANUALLY("delivery.recordedManually");
+  DELIVERY_RECORDED_MANUALLY("delivery.recordedManually"),
+  // Story 4.7 (AC5) — appended in the same REQUIRES_NEW prep transaction as the → targetStep
+  // transition + the recovery_actions insert + the prior-approval invalidation when an operator
+  // reruns a run from a safe step boundary (Investigating/Executing). Recovery namespace
+  // (lowerCamel), mirroring recovery.retried / recovery.resumed / recovery.reconciled (NOT
+  // workflow.rerunFromStep as the epic AC5 text says — same reconciliation applied to
+  // workflow.resumed → recovery.resumed). priorState = the run's state at rerun time,
+  // resultingState
+  // = the caller-chosen targetStep, interventionMarker = true. Detail keys: targetStep +
+  // supersededArtifactIds (both NEW, allow-listed here) + invalidatedApprovalIds? +
+  // triggeringEventId/idempotencyKey/reason?/correlationId? (already allow-listed). NO Flyway
+  // migration — event_type is an un-CHECKed text column and the registry set is fixture-asserted.
+  RECOVERY_RERUN_FROM_STEP("recovery.rerunFromStep"),
+  // Story 4.7 (AC7) — appended (best-effort, in its own post-commit transaction) when a rerun-from-
+  // step reopens a run and the reverse Linear notification is posted to the source ticket. Mirrors
+  // the forward linear.completionSyncFailed shape: NEVER rolls back the committed rerun; a missing
+  // link / absent comment capability / adapter failure logs + skips. NO Flyway migration —
+  // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
+  LINEAR_RUN_REOPENED_NOTIFICATION("linear.runReopenedNotification");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

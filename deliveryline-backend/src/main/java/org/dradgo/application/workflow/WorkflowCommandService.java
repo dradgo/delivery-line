@@ -38,6 +38,7 @@ import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
 import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
 import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
@@ -278,6 +279,16 @@ public class WorkflowCommandService {
   @Transactional
   public WorkflowStateChangeResult reconcileWorkflow(ReconcileWorkflowCommand command) {
     return executeIdempotent(command, this::reconcileWorkflowInternal, this::replayStateChange);
+  }
+
+  @Transactional
+  public WorkflowStateChangeResult rerunFromStepWorkflow(RerunFromStepWorkflowCommand command) {
+    // Story 4.7 (AC4/AC5 / Reconciliation 9): transition to the caller-chosen targetState (the
+    // safe step boundary — Investigating/Executing) inside the shared idempotency envelope. Unlike
+    // retryWorkflow this does NOT re-enqueue here — the runner re-enqueue is single-sourced by
+    // RecoveryService.rerunFromStep after the prep tx commits (the double-dispatch caution). Replay
+    // pins targetState (an invariant post-state per accepted command) in replayStateChange.
+    return executeIdempotent(command, this::rerunFromStepWorkflowInternal, this::replayStateChange);
   }
 
   @Transactional
@@ -818,6 +829,39 @@ public class WorkflowCommandService {
     }
   }
 
+  private WorkflowStateChangeResult rerunFromStepWorkflowInternal(
+      RerunFromStepWorkflowCommand command) {
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
+    try {
+      // Story 4.7 (Reconciliation 9): transition to the caller-chosen targetState via the generic
+      // transition helper — the transition table validates the (currentState → targetState) edge is
+      // legal (FAILED→{INVESTIGATING,EXECUTING}, WAITING_FOR_REVIEW→EXECUTING today) and raises
+      // ILLEGAL_TRANSITION otherwise (a terminal run or an unwired pair). NO re-enqueue here
+      // (RecoveryService.rerunFromStep owns the single runner re-enqueue after this prep tx
+      // commits).
+      transition(
+          command.workflowRunId(),
+          command.targetState(),
+          command,
+          fallbackReason(command.reasonText(), "rerun from step"),
+          // targetStep carries the SafeRerunStep wire token (lowercase —
+          // "investigating"/"executing")
+          // to stay consistent with the recovery.rerunFromStep event's detail key, NOT the
+          // capitalized WorkflowState value.
+          Map.of(
+              "targetStep",
+              command.targetState() == WorkflowState.INVESTIGATING
+                  ? "investigating"
+                  : "executing"));
+      return new WorkflowStateChangeResult(
+          command.workflowRunId(),
+          command.targetState(),
+          normalizeOptional(command.correlationId()));
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
   private WorkflowStateChangeResult reconcileWorkflowInternal(ReconcileWorkflowCommand command) {
     String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, command.workflowRunId());
     try {
@@ -1093,6 +1137,12 @@ public class WorkflowCommandService {
           // Executing; pin it from the command payload rather than re-reading the run's later
           // live state.
           case ResumeWorkflowCommand resume -> resume.targetState();
+          // Story 4.7 (Reconciliation 9): rerun-from-step's post-state is the accepted command's
+          // targetState (the operator-chosen safe step boundary). It is the invariant answer for a
+          // replay of this exact command; pin it from the command payload rather than re-reading
+          // the
+          // run's later live state, mirroring resume.
+          case RerunFromStepWorkflowCommand rerun -> rerun.targetState();
           case ReconcileWorkflowCommand ignored -> WorkflowState.RECONCILED;
           case SubmitClarificationCommand ignored -> clarificationReplayState(resultRef);
           case AcceptClarificationCommand ignored -> clarificationReplayState(resultRef);

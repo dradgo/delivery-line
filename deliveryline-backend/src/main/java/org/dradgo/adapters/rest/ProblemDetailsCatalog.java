@@ -628,6 +628,21 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Integration conflict already resolved",
         false);
+    // Story 4.7 (Reconciliation 8) — the two rerun-from-step guards. Both a malformed rerun request
+    // (a target step outside the SafeRerunStep enum / a missing reason), not a transient fault;
+    // mirror INVALID_RECONCILIATION_DECISION's BAD_REQUEST (400) + non-retryable mapping.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_RERUN_TARGET_STEP,
+        HttpStatus.BAD_REQUEST,
+        "Invalid rerun target step",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_REASON_TEXT,
+        HttpStatus.BAD_REQUEST,
+        "Missing reason text",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

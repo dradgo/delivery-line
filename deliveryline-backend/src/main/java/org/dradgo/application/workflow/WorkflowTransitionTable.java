@@ -27,7 +27,10 @@ public final class WorkflowTransitionTable {
           // resulting ILLEGAL_TRANSITION, stranding leaked-secret runs in EXECUTING forever.
           FailureCategory.RUNNER_SECRET_LEAK,
           // A pre-dispatch testcontainers-infra failure fails the run from EXECUTING/INVESTIGATING.
-          FailureCategory.TESTCONTAINERS_INFRA_FAILED);
+          FailureCategory.TESTCONTAINERS_INFRA_FAILED,
+          // Story 4.7 [Review D1] — a recovery rerun-from-step re-enqueue failure compensates by
+          // driving the (INVESTIGATING/EXECUTING) run to FAILED so it stays recoverable.
+          FailureCategory.RECOVERY_DISPATCH_FAILED);
 
   private final Map<WorkflowState, Set<WorkflowState>> allowedTargets;
 

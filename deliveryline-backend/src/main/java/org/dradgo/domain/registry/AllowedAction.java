@@ -110,7 +110,17 @@ public enum AllowedAction implements RegistryValue {
   // 4.10. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
   // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
   RESUME_WORKFLOW("resume_workflow"),
-  RECONCILE_CONFLICT("reconcile_conflict");
+  RECONCILE_CONFLICT("reconcile_conflict"),
+  // Story 4.7 (AC10, Reconciliation 7) — the rerun-from-step affordance, surfaced for the
+  // workflow_owner gate role at the states with a legal rerun edge (FAILED, WAITING_FOR_REVIEW).
+  // Canonical executor is RecoveryService.rerunFromStep (routing the → targetStep transition
+  // through
+  // WorkflowCommandService.rerunFromStepWorkflow). This is a FLAT action — the allowed `targetStep`
+  // sub-list (SafeRerunStep enum) is served by the OpenAPI schema in story 4.12 / the Decision Bar
+  // in 4.22; the allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI
+  // regen. The REST endpoint that honors it lands in story 4.12. No DB CHECK exists for
+  // allowed-actions (enum <-> frontend placeholder JSON only).
+  RERUN_FROM_STEP("rerun_from_step");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

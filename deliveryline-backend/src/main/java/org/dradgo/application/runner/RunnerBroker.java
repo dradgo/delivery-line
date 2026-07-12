@@ -4112,7 +4112,14 @@ public class RunnerBroker {
           // was harvested + built (then failed the gate), so a subsequent arrival is a duplicate.
           RUNNER_BUILD_FAILED ->
           true;
-      case RUNNER_CRASH, RUNNER_TIMEOUT, ORPHAN, TESTCONTAINERS_INFRA_FAILED -> false;
+      case RUNNER_CRASH,
+          RUNNER_TIMEOUT,
+          ORPHAN,
+          TESTCONTAINERS_INFRA_FAILED,
+          // Story 4.7 [Review D1] — a recovery re-dispatch failure never harvested a runner result,
+          // so a subsequent arrival is not a duplicate.
+          RECOVERY_DISPATCH_FAILED ->
+          false;
     };
   }
 

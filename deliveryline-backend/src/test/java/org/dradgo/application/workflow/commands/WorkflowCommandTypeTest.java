@@ -93,5 +93,16 @@ class WorkflowCommandTypeTest {
                 org.dradgo.domain.registry.ReconciliationDecision.ACCEPT_INTERNAL_STATE,
                 "reason")
             .commandType());
+    assertEquals(
+        "RerunFromStepWorkflowCommand",
+        new RerunFromStepWorkflowCommand(
+                "run_x",
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "reason",
+                org.dradgo.domain.registry.WorkflowState.INVESTIGATING)
+            .commandType());
   }
 }
