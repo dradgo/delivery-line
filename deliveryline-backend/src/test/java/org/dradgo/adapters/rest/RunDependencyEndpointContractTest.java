@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.BlockedDependencyView;
@@ -57,6 +58,9 @@ class RunDependencyEndpointContractTest {
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — WorkflowController gained the recovery service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private RecoveryService recoveryService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
   @MockitoBean private RunDependencyService runDependencyService;
   @MockitoBean private SplitProposalService splitProposalService;

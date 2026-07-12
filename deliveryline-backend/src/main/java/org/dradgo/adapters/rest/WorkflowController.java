@@ -14,8 +14,11 @@ import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -97,6 +100,12 @@ public class WorkflowController {
   // endpoint (cancelled-runner counts + preserved PR ref). The pre-existing transition-only POST
   // /takeover-workflow endpoint keeps using workflowCommandService.takeoverWorkflow (R1 / R9).
   private final DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — the RICH recovery service (story 4.5). Wired by the new POST /resume endpoint,
+  // which re-dispatches the runner, writes the recovery_actions row + recovery.resumed event, and
+  // enforces the PAUSED current-state guard. The transition-only
+  // WorkflowCommandService.resumeWorkflow
+  // is deliberately NOT wired here — see the /resume method comment (R2).
+  private final RecoveryService recoveryService;
   // Story 3d-8 — governed soft-hide / un-hide of obsolete runs (archive marker + audit event).
   private final WorkflowArchiveService workflowArchiveService;
   // Story 3d-4 — the operator manual-artifact submission path (validate → ingest → finalize →
@@ -124,6 +133,7 @@ public class WorkflowController {
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
       DeveloperTakeoverService developerTakeoverService,
+      RecoveryService recoveryService,
       WorkflowArchiveService workflowArchiveService,
       ManualArtifactSubmissionService manualArtifactSubmissionService,
       org.dradgo.application.workflow.RunDependencyService runDependencyService,
@@ -134,6 +144,7 @@ public class WorkflowController {
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
     this.developerTakeoverService = developerTakeoverService;
+    this.recoveryService = recoveryService;
     this.workflowArchiveService = workflowArchiveService;
     this.manualArtifactSubmissionService = manualArtifactSubmissionService;
     this.runDependencyService = runDependencyService;
@@ -2055,6 +2066,95 @@ public class WorkflowController {
         response.recoveryActionId(),
         response.cancelledInFlightCount(),
         response.cancelledQueuedCount(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.10 (AC1, AC3–AC5, AC7, AC8) — resume a paused run back to its prior executing state.
+   * Structural twin of {@link #takeover}: same header-derived actor + required {@code
+   * Idempotency-Key} convention, same {@code workflow_owner} boundary role gate as {@code
+   * approve-lint}, mapped onto the RICH {@link RecoveryService#resume} (NOT the transition-only
+   * {@code WorkflowCommandService.resumeWorkflow} — R2). The rich path single-sources the runner
+   * re-dispatch, the {@code recovery_actions} row + {@code recovery.resumed} event, and the {@code
+   * PAUSED} current-state guard that surfaces {@code RESUME_NOT_APPLICABLE} (409) for a wrong-state
+   * call. Wiring the thin service would silently skip all four (invisible to a happy-path test).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/resume",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "resume",
+      summary = "Resume a paused workflow run (story 4.10)",
+      description =
+          "Operator (workflow_owner) recovery action that resumes a Paused run back to its prior"
+              + " executing state: re-dispatches the runner, records a recovery_actions row + a"
+              + " recovery.resumed audit event, and stamps the resolved actor onto the audit trail."
+              + " Idempotent under Idempotency-Key. Resuming a run that is not Paused surfaces"
+              + " RESUME_NOT_APPLICABLE (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Resume recorded; run is back at its prior executing state."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "RESUME_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT, or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ResumeResponse resume(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ResumeWorkflowRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.10 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.resume hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors approve-lint).
+    // Request-
+    // shape validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("resume", request.role());
+    log.info(
+        "REST resume received workflowRunId={} actorIdentity={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // reasonText is OPTIONAL for resume (epic AC2) — null-guard before .length(); the free-form
+        // operator prose is never logged verbatim.
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    ResumeRecoveryResult result =
+        recoveryService.resume(workflowRunId, idempotencyKey, actor, request.reasonText());
+    ResumeResponse response = ResumeResponse.from(workflowRunId, result);
+    log.info(
+        "REST resume success workflowRunId={} currentState={} recoveryActionId={} runnerExecutionId={} replayed={}",
+        workflowRunId,
+        response.currentState(),
+        response.recoveryActionId(),
+        response.runnerExecutionId(),
         response.replayed());
     return response;
   }

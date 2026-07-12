@@ -9,6 +9,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Method;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -40,7 +43,11 @@ class OperatorCliCommandRegistrationIT {
                       mock(WorkflowInspectionService.class),
                       new WorkflowCommandOutputs(new ObjectMapper().findAndRegisterModules()),
                       mock(CliInteractivityDetector.class),
-                      () -> "01964c38-1c45-7000-8000-000000000000"));
+                      mock(RecoveryService.class),
+                      new IdempotencyKeyValidator(),
+                      new LocalActorIdentityResolver("local-operator"),
+                      () -> "01964c38-1c45-7000-8000-000000000000",
+                      () -> "01964c38-1c45-7000-8000-000000000001"));
 
   @Test
   void operatorStatusIsRegisteredUnderTheDeliverylineOperatorPath() {
@@ -56,6 +63,10 @@ class OperatorCliCommandRegistrationIT {
           // Story 4.4 (AC3) — the deep-dive diagnose command registers under the same group prefix.
           assertTrue(
               commandNames.contains("deliveryline operator diagnose"),
+              () -> "registered commands: " + commandNames);
+          // Story 4.10 (AC6) — the mutating resume command registers under the same group prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator resume"),
               () -> "registered commands: " + commandNames);
         });
   }

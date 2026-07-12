@@ -1,6 +1,6 @@
 # Story 4.10: REST Endpoint — `resume` + OpenAPI
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -102,45 +102,45 @@ so that resume initiation flows through the same idempotency + Problem Details +
 
 ## Tasks / Subtasks
 
-- [ ] **Task 0 — Verify the "already done" surface before writing anything (Reconciliation 1)**
-  - [ ] Confirm `RecoveryService.resume` exists (`:676`), `RESUME_NOT_APPLICABLE` is mapped 409 (`ProblemDetailsCatalog.java:553-558`), `AllowedAction.RESUME_WORKFLOW` exists (`:113`), and `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` is **absent** from `ArchitectureRuleCatalog`. If any is missing, STOP — the branch is not on top of 4.5 + 4.28.
-  - [ ] Confirm no Flyway migration is needed (`recovery_actions` `action_type='resume'` is a V1 CHECK slot). Create none.
+- [x] **Task 0 — Verify the "already done" surface before writing anything (Reconciliation 1)**
+  - [x] Confirm `RecoveryService.resume` exists (`:801`), `RESUME_NOT_APPLICABLE` is mapped 409 (`ProblemDetailsCatalog.java:595-600`), `AllowedAction.RESUME_WORKFLOW` exists (`:112`), and `RECOVERY_SERVICE_IS_SCOPE_PROTECTED` is **absent** from `ArchitectureRuleCatalog` (guarded by `RecoveryServiceScopeLiftMetaTest`). All present — branch is on top of 4.5 + 4.28.
+  - [x] Confirmed no Flyway migration is needed (`recovery_actions` `action_type='resume'` is a V1 CHECK slot). None created.
 
-- [ ] **Task 1 — REST DTOs (AC2, AC8)**
-  - [ ] `adapters/rest/ResumeWorkflowRequest.java` — `record ResumeWorkflowRequest(@NotBlank @Size(max=128) String role, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on both (mirror `ApproveLintRequest.java`).
-  - [ ] `adapters/rest/ResumeResponse.java` — 7-component record per AC8 with `@Schema(requiredMode=…)` on each; `static ResumeResponse from(String workflowRunId, ResumeRecoveryResult result)`. Guard the null state: `result.resultingState() == null ? null : result.resultingState().value()`. Javadoc the replay nullability (Reconciliation 6).
+- [x] **Task 1 — REST DTOs (AC2, AC8)**
+  - [x] `adapters/rest/ResumeWorkflowRequest.java` — `record ResumeWorkflowRequest(@NotBlank @Size(max=128) String role, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on both (mirror `ApproveLintRequest.java`).
+  - [x] `adapters/rest/ResumeResponse.java` — 7-component record per AC8 with `@Schema(requiredMode=…)` on each; `static ResumeResponse from(String workflowRunId, ResumeRecoveryResult result)`. Guards the null state: `result.resultingState() == null ? null : result.resultingState().value()`. Javadoc documents the replay nullability (Reconciliation 6).
 
-- [ ] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
-  - [ ] Add `RecoveryService` to the `WorkflowController` ctor (`:121-142`) + field, with a `// Story 4.10 —` comment.
-  - [ ] Add `public ResumeResponse resume(...)` after the rich `takeover` (`:2060`): `@PostMapping(value="/{workflowRunId}/resume", consumes=…, produces=…)`, `@Operation(operationId="resume", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`).
-  - [ ] Guard prologue (Reconciliation 3) → `requireWorkflowOwnerRole("resume", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.resume(workflowRunId, idempotencyKey, actor, request.reasonText())` → `ResumeResponse.from(workflowRunId, result)`.
-  - [ ] **Do NOT call `workflowCommandService.resumeWorkflow`** (Reconciliation 2).
+- [x] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
+  - [x] Added `RecoveryService` to the `WorkflowController` ctor (10→11 args) + field, with a `// Story 4.10 —` comment.
+  - [x] Added `public ResumeResponse resume(...)` after the rich `takeover`: `@PostMapping(value="/{workflowRunId}/resume", …)`, `@Operation(operationId="resume", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`).
+  - [x] Guard prologue (Reconciliation 3) → `requireWorkflowOwnerRole("resume", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.resume(workflowRunId, idempotencyKey, actor, request.reasonText())` → `ResumeResponse.from(workflowRunId, result)`.
+  - [x] Did NOT call `workflowCommandService.resumeWorkflow` (Reconciliation 2).
 
-- [ ] **Task 3 — `@WebMvcTest` slice repair (Reconciliation 8)**
-  - [ ] Add `@MockitoBean private RecoveryService recoveryService;` to all **17** listed slices, with the house comment idiom. Run `mvnw -o test` and confirm no `UnsatisfiedDependencyException`.
+- [x] **Task 3 — `@WebMvcTest` slice repair (Reconciliation 8)**
+  - [x] Added `@MockitoBean private RecoveryService recoveryService;` to all **17** listed slices, with the house comment idiom. Full app context boots (OpenApiSnapshotContractTest) + representative slices pass — no `UnsatisfiedDependencyException`.
 
-- [ ] **Task 4 — CLI `deliveryline operator resume` (AC6)**
-  - [ ] Extend BOTH `OperatorCommands` constructors with `RecoveryService`, `IdempotencyKeyValidator`, `LocalActorIdentityResolver`, and a generated-idempotency-key `Supplier<String>`; update every manual `new OperatorCommands(...)` test site.
-  - [ ] Add `@Command(name = "resume", exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)` with positional `@Argument(index=0) String runId` + options `--reason` (optional), `--idempotency-key`, `--actor-identity` (optional), `--correlation-id`, `--format`, `--verbose`. **Mirror `WorkflowCommands.takeover` (`:1404-1453`) — NOT `retry`** (Reconciliation 9): optional `--actor-identity` → `resolveActorIdentity(...)`, `ActorType.HUMAN` hard-coded, no `--actor-type`. Reuse `pushCorrelation`/`CorrelationScope` and the `finally { MdcKeys.endScope(...) }`.
-  - [ ] Render `rcv_… resume submitted (state: <resultingState>)` + `[runner-execution: rex_…]` when non-null + `[replayed]` when replayed; `--verbose` appends `[correlation-id: …]` and `[generated-idempotency-key: …]` when the flag was omitted. Text output only appends the verbose footer (never JSON — the `diagnose` precedent, `:190-195`).
-  - [ ] Pin `deliveryline operator resume` in `OperatorCliCommandRegistrationIT`.
+- [x] **Task 4 — CLI `deliveryline operator resume` (AC6)**
+  - [x] Extended BOTH `OperatorCommands` constructors with `RecoveryService`, `IdempotencyKeyValidator`, `LocalActorIdentityResolver`, and a generated-idempotency-key `Supplier<String>`; updated both manual `new OperatorCommands(...)` test sites (`OperatorCommandsTest`, `OperatorCliCommandRegistrationIT`).
+  - [x] Added `@Command(name = "resume", …)` with positional `@Argument(index=0) String runId` + options `--reason` (optional), `--idempotency-key`, `--actor-identity` (optional), `--correlation-id`, `--format`, `--verbose`. Mirrors `WorkflowCommands.takeover`: optional `--actor-identity` → `resolveActorIdentity(...)`, `ActorType.HUMAN` hard-coded, no `--actor-type`. Reuses `pushCorrelation`/`CorrelationScope` + `finally { MdcKeys.endScope(...) }`.
+  - [x] Renders `rcv_… resume submitted (state: <resultingState>)` + `[runner-execution: rex_…]` when non-null + `[replayed]` when replayed; `--verbose` appends `[correlation-id: …]` and `[generated-idempotency-key: …]` when the key flag was omitted. JSON via new `WorkflowCommandOutputs.renderOperatorResumeJson` (operator-resume.v1); the verbose footer is text-only.
+  - [x] Pinned `deliveryline operator resume` in `OperatorCliCommandRegistrationIT`.
 
-- [ ] **Task 5 — OpenAPI + frontend client (AC5, Reconciliation 10)**
-  - [ ] Regenerate: `mvnw -o test -Dtest=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true`; review the `openapi.json` diff (expect exactly one new path + two new schemas).
-  - [ ] `cd deliveryline-frontend && npm run generate-api`; commit `src/lib/api/schema.d.ts`. Verify `npm run check:api` green ([[openapi-regen-frontend-client-drift-cascade]]).
+- [x] **Task 5 — OpenAPI + frontend client (AC5, Reconciliation 10)**
+  - [x] Regenerated via `verify -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true`; diff is exactly one new path (`/resume`) + two new schemas (`ResumeWorkflowRequest`, `ResumeResponse`). `OpenApiSnapshotContractTest` green without the write flag.
+  - [x] `npm run generate-api` → `src/lib/api/schema.d.ts` (95 insertions); `npm run check:api` green; `npm run build` green.
 
-- [ ] **Task 6 — Tests (AC9)**
-  - [ ] New `adapters/rest/ResumeEndpointContractTest` — the ten cases enumerated in AC9; mirror `TakeoverEndpointContractTest` (`@WebMvcTest` + `ListAppender` + `LocalActorIdentityResolver` call-through stub). Assert Problem Details `code`/`status`/`details` only, never human text.
-  - [ ] CLI/REST equivalence test (Reconciliation 4): capture the four positional `recoveryService.resume(...)` args from REST (MockMvc) and CLI (`new OperatorCommands(...)`), assert equal — including `ActorContext` record equality and the `local-operator` fallback on both surfaces.
-  - [ ] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green.
-  - [ ] Optional real-PG `ResumeEndpointIT` (`*IT`) seeding `Paused` via `Executing → Paused`, asserting the `recovery_actions` row (`action_type='resume'`, `reviewer_role='workflow_owner'`) and the `recovery.resumed` event.
-  - [ ] ⚠️ New `@WebMvcTest` classes null the redaction holder and poison `CapturedOutput` in a reused fork — add the identity-holder `@BeforeAll`/`@AfterAll` ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
+- [x] **Task 6 — Tests (AC9)**
+  - [x] New `adapters/rest/ResumeEndpointContractTest` (15 tests) — the ten AC9 cases + logging pins; mirrors `TakeoverEndpointContractTest`. Asserts Problem Details `code`/`status`/`details` only.
+  - [x] CLI/REST equivalence test `adapters/cli/ResumeCliRestEquivalenceContractTest` (Reconciliation 4): captures the four positional `recoveryService.resume(...)` args from REST (MockMvc) and CLI (`new OperatorCommands(...)`), asserts equal — `ActorContext` by record equality + `local-operator` fallback on both surfaces. (Lives in `adapters.cli` to use the package-private test ctor.)
+  - [x] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green.
+  - [x] **DEFERRED (optional):** real-PG `ResumeEndpointIT` — the recovery end-to-end (recovery_actions row + recovery.resumed event, Paused seeding) is already covered by 4.5's real-PG `RecoveryServiceResumeTest`; the controller→service wiring is covered by the @WebMvcTest slice + the full-context OpenApiSnapshotContractTest boot. Marked optional by the story; skipped to keep 4.10 a pure adapter story.
+  - [x] Added the identity-holder `@BeforeAll`/`@AfterAll` to `ResumeEndpointContractTest` ([[webmvctest-redaction-holder-poisons-capturedoutput]]); plus 7 CLI resume render/log tests in `OperatorCommandsTest`.
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] REST: `INFO "REST resume received workflowRunId={} actorIdentity={} reasonLength={}"` on entry (reasonLength null-guarded — Reconciliation 12) and `INFO "REST resume success workflowRunId={} currentState={} recoveryActionId={} runnerExecutionId={} replayed={}"` on success. `WARN` on the role rejection is already emitted inside `requireWorkflowOwnerRole`. No `ERROR` — `DomainException`s are mapped by `ProblemDetailsMapper`.
-  - [ ] CLI: reuse the `emit*` completion-log idiom — `INFO` with `correlationId`, `commandName='operator resume'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
-  - [ ] Parameterized logging only; sanitize `workflowRunId`/`actorIdentity` via `MdcKeys.sanitizeForLog`. Never log `reasonText` prose, the idempotency key value, secrets, tokens, or PII.
-  - [ ] Pin the REST entry/success lines and the role-rejection `WARN` in `ResumeEndpointContractTest` via `ListAppender` on the `WorkflowController` logger (the `TakeoverEndpointContractTest` pattern, `:106-110`).
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] REST: `INFO "REST resume received workflowRunId={} actorIdentity={} reasonLength={}"` on entry (reasonLength null-guarded — Reconciliation 12) and `INFO "REST resume success workflowRunId={} currentState={} recoveryActionId={} runnerExecutionId={} replayed={}"` on success. `WARN` on role rejection emitted inside `requireWorkflowOwnerRole`. No `ERROR`.
+  - [x] CLI: reuses the `emit*` completion-log idiom — `INFO` with `correlationId`, `commandName='operator resume'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
+  - [x] Parameterized logging only; `workflowRunId`/`actorIdentity` sanitized via `MdcKeys.sanitizeForLog`. `reasonText` prose / idempotency key never logged.
+  - [x] Pinned the REST entry/success lines and the role-rejection `WARN` in `ResumeEndpointContractTest` via `ListAppender` on the `WorkflowController` logger.
 
 ## Dev Notes
 
@@ -208,12 +208,57 @@ so that resume initiation flows through the same idempotency + Problem Details +
 
 ### Agent Model Used
 
-claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow.
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow (spec); bmad-dev-story workflow (implementation).
 
 ### Debug Log References
 
+- `blankRoleRejectedAsInvalidReviewerRoleForEndpoint` initially expected `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` for a blank `role`. Because `ResumeWorkflowRequest.role` carries `@NotBlank` (the `ApproveLintRequest` binding), a blank value is caught by bean validation as `INVALID_COMMAND_PAYLOAD` *before* `requireWorkflowOwnerRole` runs; only a non-blank wrong role (e.g. `developer`) reaches the boundary gate. Renamed/split the test accordingly (blank → `INVALID_COMMAND_PAYLOAD`, non-blank-wrong → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` + WARN pin).
+- CLI resume tests first used a too-short idempotency key (`idem-key`, `idem-generated`); the real `IdempotencyKeyValidator.requireValid` rejects `<16` chars. Switched to valid keys (`idem-resume-key-0000001` / `idem-generated-0000001`).
+- OpenApiSnapshotContractTest / all `*ContractTest` route through **Failsafe** (`**/*ContractTest.java` include), not Surefire; ran regen + verification via the `verify` lifecycle with `-Djacoco.skip=true` (direct-goal `@{argLine}` crash avoidance).
+
 ### Change Log
+
+- 2026-07-13 — Implemented story 4.10 (REST `resume` endpoint + CLI `operator resume` + OpenAPI/FE regen). Pure adapter wiring onto the `done` `RecoveryService.resume` (story 4.5). Status ready-for-dev → review.
 
 ### Completion Notes List
 
+- **Wired the RICH `RecoveryService.resume`, not the thin `WorkflowCommandService.resumeWorkflow`** (Reconciliation 2) — single-sources runner re-dispatch, the `recovery_actions` row, the `recovery.resumed` event, and the `PAUSED` current-state guard.
+- **`ResumeResponse.currentState` is nullable (`NOT_REQUIRED`)** — resolves story 4.5's deferred replay-path finding whose named consumer is this story (Reconciliation 6 / OQ-3). Kept 4.10 a pure adapter story; no `application/` change.
+- **`--format text|json` included** (per the story's repeated binding + sibling operator-command consistency). Added `WorkflowCommandOutputs.renderOperatorResumeJson` (`operator-resume.v1`); the `WorkflowCliJsonSchemaContractTest` is per-command enumerated, so no schema-file obligation was triggered.
+- **OQ bindings applied as provisional-spec'd:** OQ-1 `role` field validated-and-discarded (mirrors `ApproveLintRequest`); OQ-2 positional `runId`; OQ-3 nullable `currentState`; OQ-4 command on `OperatorCommands` (first mutating command there — full ctor fan-out); OQ-5 ships dark.
+- **Optional real-PG `ResumeEndpointIT` deferred** — recovery end-to-end already covered by 4.5's `RecoveryServiceResumeTest`; wiring covered by the @WebMvcTest slice + full-context OpenApi boot.
+- **Verification (all green):** backend `test-compile`; `OperatorCommandsTest` (22); `ResumeEndpointContractTest` (15); `ResumeCliRestEquivalenceContractTest` (1); `OperatorCliCommandRegistrationIT` (2); `TakeoverEndpointContractTest` (13); `OpenApiSnapshotContractTest` (no-write, full app boot); `ProblemDetailsContractTest` (11); `WorkflowAdapterEquivalenceTest`; `CommandModelSymmetryFoundationContract` (3) + `CliRestEquivalenceContractTest` (7) via `-Pfoundation-gate`; FE `check:api` + `npm run build`.
+
 ### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ResumeWorkflowRequest.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ResumeResponse.java`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java` (ctor +`RecoveryService`; `resume` endpoint)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java` (both ctors; `resume` command + helpers)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (`renderOperatorResumeJson` + `OPERATOR_RESUME_SCHEMA_VERSION`)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated — one new path + two schemas)
+
+**Modified (frontend):**
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ResumeEndpointContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/ResumeCliRestEquivalenceContractTest.java`
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java` (ctor site + 7 resume tests)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java` (ctor site + resume pin)
+- The **17** `@WebMvcTest(controllers = WorkflowController.class)` slices — added `@MockitoBean RecoveryService`:
+  `foundation/CommandModelSymmetryFoundationContract`, `foundation/CliRestEquivalenceContractTest`, `contract/ProblemDetailsContractTest`, `adapters/WorkflowAdapterEquivalenceTest`, and `adapters/rest/{TakeoverEndpointContractTest, RejectImplementationEndpointContractTest, ManualArtifactEndpointContractTest, ClarificationsEndpointContractTest, ArchiveRunEndpointContractTest, AllowedActionsEndpointContractTest, WorkflowControllerLoggingContractTest, RunDependencyEndpointContractTest, RejectSpecEndpointContractTest, ManualBundleEndpointContractTest, ApproveSpecEndpointContractTest, AnswerClarificationEndpointContractTest, AcceptImplementationEndpointContractTest}`.
+
+### Review Findings
+
+> 3-layer adversarial code review (Blind Hunter / Edge Case Hunter / Acceptance Auditor) over the uncommitted diff (~2173 lines: 22 modified + 4 untracked incl. both new DTOs + both new tests), 2026-07-13. Acceptance Auditor: **all 9 ACs + all 12 Reconciliations + all 5 OQ bindings verified IN CODE** (Reconciliation 2 rich-vs-thin wiring correct; 5/6 nullable `currentState` guarded; all 17 `@WebMvcTest` slices repaired; Reconciliation 12 reason-length null-guarded; `ACTION_NOT_ALLOWED` correctly absent; zero lines in `application/`/`domain/`/`db/migration`). No HIGH/MEDIUM/CRITICAL correctness defect survived triage. Outcome: **0 decision-needed, 0 patch, 2 defer, 2 dismissed**.
+
+- [x] [Review][Defer] Re-dispatch failure inside `RecoveryService.resume` surfaces as an opaque, undocumented 500 leaving the run Paused-without-runner [RecoveryService.java:993-1047] — deferred, pre-existing (application-layer behavior; 4.10 is pure adapter-wiring and must not touch `application/`).
+- [x] [Review][Defer] `markSucceeded` failure after a successful re-dispatch returns 500 for a succeeded op, then wedges follow-up retries (409 `IDEMPOTENCY_KEY_CONFLICT` / 409 `RESUME_NOT_APPLICABLE`) [RecoveryService.java:1052-1077] — deferred, pre-existing (application-layer edge surfaced by this wiring, not caused by it).
+
+**Dismissed as noise (2):** (1) REST success-log passes raw `workflowRunId` while the entry line sanitizes it — matches the established `/takeover` house pattern (`WorkflowController.java:2063-2064`); only already-validated system run ids reach the success line (a forged id 404s first). (2) `sanitizeForLog(MDC correlationId)` reused as the persisted audit correlation id — this is the spec-prescribed verbatim guard prologue (Reconciliation 3), identical to the live `/takeover` convention.

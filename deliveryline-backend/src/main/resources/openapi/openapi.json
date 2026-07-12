@@ -1936,6 +1936,62 @@
         ],
         "type" : "object"
       },
+      "ResumeResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "resumedEventId" : {
+            "type" : "string"
+          },
+          "runnerExecutionId" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "recoveryActionId",
+          "replayed",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
+      "ResumeWorkflowRequest" : {
+        "description" : "Resume a paused workflow run (resume).",
+        "properties" : {
+          "reasonText" : {
+            "description" : "Optional operator note.",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "role"
+        ],
+        "type" : "object"
+      },
       "RetryWorkflowRequest" : {
         "properties" : {
           "actorIdentity" : {
@@ -6359,6 +6415,94 @@
           }
         },
         "summary" : "Feed the lint findings back to the implementation runner (request_lint_fix)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/resume" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that resumes a Paused run back to its prior executing state: re-dispatches the runner, records a recovery_actions row + a recovery.resumed audit event, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Resuming a run that is not Paused surfaces RESUME_NOT_APPLICABLE (409).",
+        "operationId" : "resume",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ResumeWorkflowRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ResumeResponse"
+                }
+              }
+            },
+            "description" : "Resume recorded; run is back at its prior executing state."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RESUME_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT, or ILLEGAL_TRANSITION."
+          }
+        },
+        "summary" : "Resume a paused workflow run (story 4.10)",
         "tags" : [
           "Workflows"
         ]

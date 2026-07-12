@@ -7,12 +7,18 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
+import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.ResumeRecoveryResult;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunFilter;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunSummary;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +57,7 @@ public class OperatorCommands {
 
   private static final String COMMAND_NAME = "operator status";
   private static final String COMMAND_NAME_DIAGNOSE = "operator diagnose";
+  private static final String COMMAND_NAME_RESUME = "operator resume";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -62,26 +69,56 @@ public class OperatorCommands {
   private final WorkflowCommandOutputs outputs;
   private final CliInteractivityDetector interactivity;
   private final Supplier<String> correlationIdSupplier;
+  // Story 4.10 — the first MUTATING operator command (resume) needs the rich recovery service plus
+  // the idempotency-key / actor-identity resolution seam that the workflow-command surface uses.
+  // The
+  // read-only status/diagnose commands ignore these.
+  private final RecoveryService recoveryService;
+  private final IdempotencyKeyValidator idempotencyKeyValidator;
+  private final LocalActorIdentityResolver localActorIdentityResolver;
+  private final Supplier<String> generatedIdempotencyKeySupplier;
 
   @Autowired
   public OperatorCommands(
       WorkflowInspectionService inspection,
       WorkflowCommandOutputs outputs,
       CliInteractivityDetector interactivity,
+      RecoveryService recoveryService,
+      IdempotencyKeyValidator idempotencyKeyValidator,
+      LocalActorIdentityResolver localActorIdentityResolver,
       UuidV7Generator uuidV7Generator) {
-    this(inspection, outputs, interactivity, uuidV7Generator::generate);
+    this(
+        inspection,
+        outputs,
+        interactivity,
+        recoveryService,
+        idempotencyKeyValidator,
+        localActorIdentityResolver,
+        uuidV7Generator::generate,
+        uuidV7Generator::generate);
   }
 
   OperatorCommands(
       WorkflowInspectionService inspection,
       WorkflowCommandOutputs outputs,
       CliInteractivityDetector interactivity,
-      Supplier<String> correlationIdSupplier) {
+      RecoveryService recoveryService,
+      IdempotencyKeyValidator idempotencyKeyValidator,
+      LocalActorIdentityResolver localActorIdentityResolver,
+      Supplier<String> correlationIdSupplier,
+      Supplier<String> generatedIdempotencyKeySupplier) {
     this.inspection = Objects.requireNonNull(inspection, "inspection");
     this.outputs = Objects.requireNonNull(outputs, "outputs");
     this.interactivity = Objects.requireNonNull(interactivity, "interactivity");
+    this.recoveryService = Objects.requireNonNull(recoveryService, "recoveryService");
+    this.idempotencyKeyValidator =
+        Objects.requireNonNull(idempotencyKeyValidator, "idempotencyKeyValidator");
+    this.localActorIdentityResolver =
+        Objects.requireNonNull(localActorIdentityResolver, "localActorIdentityResolver");
     this.correlationIdSupplier =
         Objects.requireNonNull(correlationIdSupplier, "correlationIdSupplier");
+    this.generatedIdempotencyKeySupplier =
+        Objects.requireNonNull(generatedIdempotencyKeySupplier, "generatedIdempotencyKeySupplier");
   }
 
   @Command(
@@ -215,6 +252,154 @@ public class OperatorCommands {
         MdcKeys.sanitizeForLog(runId),
         outcome,
         elapsedMs);
+  }
+
+  // Story 4.10 (AC6) — the FIRST mutating operator command. Resumes a Paused run through the RICH
+  // RecoveryService.resume (runner re-dispatch + recovery_actions row + recovery.resumed event +
+  // PAUSED current-state guard), the CLI face of POST /{runId}/resume. Mirrors WorkflowCommands
+  // .takeover (positional runId, optional --actor-identity resolved with local-operator fallback,
+  // ActorType.HUMAN hard-coded, NO --actor-type/--reviewer-role — the service hard-codes
+  // workflow_owner). Divergence from takeover: --reason is OPTIONAL (the service accepts a null
+  // reason) and --format text|json is supported (the operator-command idiom, like status/diagnose).
+  @Command(
+      name = "resume",
+      description =
+          "Resume a Paused governed workflow run back to its prior executing state (story 4.10 —"
+              + " CLI/REST equivalence). Re-dispatches the runner, records a recovery_actions row +"
+              + " recovery.resumed audit event, and stamps the resolved actor onto the audit trail."
+              + " Idempotent under --idempotency-key. A run that is not Paused ⇒"
+              + " RESUME_NOT_APPLICABLE. --format=json emits a stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String resume(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "reason",
+              description = "Optional operator note (why the run is being resumed)",
+              required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Parse --format INSIDE the try (before the mutation) so an unsupported value raises
+      // INVALID_COMMAND_PAYLOAD without performing the resume, and still emits the completion log +
+      // runs the finally/endScope (no leaked MDC correlation-id scope).
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      ResumeRecoveryResult result =
+          recoveryService.resume(runId, resolvedIdempotencyKey, actor, reason);
+      String rendered =
+          json
+              ? outputs.renderOperatorResumeJson(runId, result)
+              : renderResumeText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitResume(resolvedCorrelation, runId, start, OUTCOME_SUCCESS);
+      // Audit the reason length only — the free-form operator prose is never logged verbatim
+      // (reason is optional for resume, so null-guard the length).
+      log.info(
+          "operator resume reason supplied correlationId={} workflowRunId={} reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(runId),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitResume(resolvedCorrelation, runId, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitResume(resolvedCorrelation, runId, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator resume` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorResumeJson).
+  // The verbose footer (correlation-id + generated-idempotency-key) is appended to TEXT output only
+  // —
+  // gluing it onto JSON would break the operator-resume.v1 schema for machine consumers.
+  private static String renderResumeText(
+      ResumeRecoveryResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionPublicId())
+            .append(" resume submitted (state: ")
+            .append(result.resultingState() == null ? "unknown" : result.resultingState().value())
+            .append(")");
+    if (result.newRunnerExecutionPublicId() != null) {
+      output.append(" [runner-execution: ").append(result.newRunnerExecutionPublicId()).append(']');
+    }
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitResume(String correlationId, String runId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_RESUME,
+        MdcKeys.sanitizeForLog(runId),
+        outcome,
+        elapsedMs);
+  }
+
+  // Story 4.10 — mirror WorkflowCommands.resolveActorIdentity: fail-closed on unsafe values, then
+  // resolve with the local-operator property fallback for null/blank (never returns blank, so the
+  // ActorContext non-blank invariant holds).
+  private String resolveActorIdentity(String supplied) {
+    localActorIdentityResolver.requireSafe(supplied);
+    return localActorIdentityResolver.resolve(supplied);
+  }
+
+  // Story 4.10 — mirror WorkflowCommands.resolveIdempotencyKey: an explicit key passes through; an
+  // omitted key auto-generates only for an interactive TTY, else surfaces MISSING_IDEMPOTENCY_KEY
+  // so
+  // a scripted caller must supply one (idempotency is the caller's contract).
+  private String resolveIdempotencyKey(String idempotencyKey) {
+    if (idempotencyKey != null) {
+      return idempotencyKey;
+    }
+    if (interactivity.isInteractive()) {
+      return generatedIdempotencyKeySupplier.get();
+    }
+    throw idempotencyKeyValidator.missingKeyException();
   }
 
   // Format is a RENDER choice made by this adapter (mirrors WorkflowCommands/DoctorCommands); an

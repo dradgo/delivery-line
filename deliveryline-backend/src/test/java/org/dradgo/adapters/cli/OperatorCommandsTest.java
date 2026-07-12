@@ -3,7 +3,9 @@ package org.dradgo.adapters.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -13,7 +15,11 @@ import java.time.ZoneOffset;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.security.DataClassificationService;
+import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowInspectionService.OperatorRunRow;
@@ -80,7 +86,18 @@ class OperatorCommandsTest {
   private OperatorCommands commands(boolean interactive) {
     CliInteractivityDetector detector = mock(CliInteractivityDetector.class);
     when(detector.isInteractive()).thenReturn(interactive);
-    return new OperatorCommands(inspection, outputs, detector, () -> "corr-fixed");
+    // Story 4.10 — the status/diagnose tests here ignore the recovery/idempotency/actor deps;
+    // supply
+    // benign instances so the widened constructor is satisfiable.
+    return new OperatorCommands(
+        inspection,
+        outputs,
+        detector,
+        mock(RecoveryService.class),
+        new IdempotencyKeyValidator(),
+        new LocalActorIdentityResolver("local-operator"),
+        () -> "corr-fixed",
+        () -> "idem-fixed");
   }
 
   private static OperatorRunSummary fixture() {
@@ -362,6 +379,170 @@ class OperatorCommandsTest {
         .contains("commandName=operator diagnose")
         .contains("workflowRunId=run_diag12345678")
         .contains("outcome=success");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.10 (AC6) — `deliveryline operator resume {runId}` rendering + completion log.
+  // ---------------------------------------------------------------------------
+
+  private OperatorCommands resumeCommands(RecoveryService rs, boolean interactive) {
+    CliInteractivityDetector detector = mock(CliInteractivityDetector.class);
+    when(detector.isInteractive()).thenReturn(interactive);
+    return new OperatorCommands(
+        inspection,
+        outputs,
+        detector,
+        rs,
+        new IdempotencyKeyValidator(),
+        new LocalActorIdentityResolver("local-operator"),
+        () -> "corr-fixed",
+        () -> "idem-generated-0000001");
+  }
+
+  @Test
+  void resumeTextRendersRecoveryActionStateAndRunnerExecution() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.resume(any(), any(), any(), any()))
+        .thenReturn(
+            new ResumeRecoveryResult(
+                "rcv_res001",
+                "evt_res001",
+                "rex_res001",
+                WorkflowState.EXECUTING,
+                "corr-1",
+                false));
+
+    String out =
+        resumeCommands(rs, true)
+            .resume("run_res001", "note", "idem-resume-key-0000001", null, "corr-1", "text", false);
+
+    assertThat(out).contains("rcv_res001 resume submitted (state: Executing)");
+    assertThat(out).contains("[runner-execution: rex_res001]");
+    assertThat(out).doesNotContain("[replayed]");
+    // Actor resolved to local-operator (omitted --actor-identity), passed as an ActorContext.
+    verify(rs).resume(eq("run_res001"), eq("idem-resume-key-0000001"), any(), eq("note"));
+  }
+
+  @Test
+  void resumeReplayTextShowsReplayedAndOmitsRunnerExecution() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.resume(any(), any(), any(), any()))
+        .thenReturn(
+            new ResumeRecoveryResult(
+                "rcv_res002", "evt_res002", null, WorkflowState.EXECUTING, "corr-1", true));
+
+    String out =
+        resumeCommands(rs, true)
+            .resume("run_res002", null, "idem-resume-key-0000001", null, "corr-1", "text", false);
+
+    assertThat(out).contains("rcv_res002 resume submitted (state: Executing)");
+    assertThat(out).contains("[replayed]");
+    assertThat(out).doesNotContain("[runner-execution:");
+  }
+
+  @Test
+  void resumeVerboseAppendsCorrelationIdAndGeneratedKeyWhenKeyOmitted() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.resume(any(), any(), any(), any()))
+        .thenReturn(
+            new ResumeRecoveryResult(
+                "rcv_res003",
+                "evt_res003",
+                "rex_res003",
+                WorkflowState.EXECUTING,
+                "corr-1",
+                false));
+
+    // Interactive TTY + omitted --idempotency-key ⇒ the key is auto-generated; verbose surfaces it.
+    String out =
+        resumeCommands(rs, true).resume("run_res003", "note", null, null, "corr-1", "text", true);
+
+    assertThat(out).contains("[correlation-id: corr-1]");
+    assertThat(out).contains("[generated-idempotency-key: idem-generated-0000001]");
+    verify(rs).resume(eq("run_res003"), eq("idem-generated-0000001"), any(), eq("note"));
+  }
+
+  @Test
+  void resumeJsonEmitsStableSchemaWithoutVerboseFooter() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.resume(any(), any(), any(), any()))
+        .thenReturn(
+            new ResumeRecoveryResult(
+                "rcv_res004",
+                "evt_res004",
+                "rex_res004",
+                WorkflowState.EXECUTING,
+                "corr-1",
+                false));
+
+    // --verbose must NOT glue a "correlation-id" footer onto JSON (would break operator-resume.v1).
+    String out =
+        resumeCommands(rs, true)
+            .resume("run_res004", "note", "idem-resume-key-0000001", null, "corr-1", "json", true);
+
+    assertThat(out).doesNotContain("[correlation-id:");
+    JsonNode body = readJson(out);
+    assertThat(body.path("schemaVersion").asInt()).isEqualTo(1);
+    assertThat(body.path("workflowRunId").asText()).isEqualTo("run_res004");
+    assertThat(body.path("currentState").asText()).isEqualTo("Executing");
+    assertThat(body.path("recoveryActionId").asText()).isEqualTo("rcv_res004");
+    assertThat(body.path("runnerExecutionId").asText()).isEqualTo("rex_res004");
+    assertThat(body.path("replayed").asBoolean()).isFalse();
+  }
+
+  @Test
+  void resumeInvalidFormatRaisesInvalidCommandPayloadBeforeMutating() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                resumeCommands(rs, true)
+                    .resume(
+                        "run_res005", null, "idem-resume-key-0000001", null, null, "xml", false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    // The mutation must not have fired when --format is rejected.
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void resumeNonInteractiveWithoutKeyRaisesMissingIdempotencyKey() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                resumeCommands(rs, false)
+                    .resume("run_res006", null, null, null, "corr-1", "text", false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.MISSING_IDEMPOTENCY_KEY);
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void resumeEmitsCompletionLogLine(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.resume(any(), any(), any(), any()))
+        .thenReturn(
+            new ResumeRecoveryResult(
+                "rcv_res007",
+                "evt_res007",
+                "rex_res007",
+                WorkflowState.EXECUTING,
+                "corr-abc",
+                false));
+
+    resumeCommands(rs, true)
+        .resume("run_res007", "note", "idem-resume-key-0000001", null, "corr-abc", "text", false);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator resume")
+        .contains("workflowRunId=run_res007")
+        .contains("outcome=success");
+    // The free-form reason prose is never logged verbatim (length only).
+    assertThat(output.getOut() + output.getErr()).doesNotContain("note");
   }
 
   private static JsonNode readJson(String json) {

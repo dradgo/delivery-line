@@ -707,6 +707,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a paused workflow run (story 4.10)
+         * @description Operator (workflow_owner) recovery action that resumes a Paused run back to its prior executing state: re-dispatches the runner, records a recovery_actions row + a recovery.resumed audit event, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Resuming a run that is not Paused surfaces RESUME_NOT_APPLICABLE (409).
+         */
+        post: operations["resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/retry-workflow": {
         parameters: {
             query?: never;
@@ -1849,6 +1869,25 @@ export interface components {
         /** @description Feed the lint findings back to the implementation runner (request_lint_fix). */
         RequestLintFixRequest: {
             /** @description Optional operator note for the fix re-dispatch. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        ResumeResponse: {
+            correlationId?: string;
+            currentState?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            resumedEventId?: string;
+            runnerExecutionId?: string;
+            workflowRunId: string;
+        };
+        /** @description Resume a paused workflow run (resume). */
+        ResumeWorkflowRequest: {
+            /** @description Optional operator note. */
             reasonText?: string | null;
             /**
              * @description Governing role; must be 'workflow_owner'.
@@ -4477,6 +4516,62 @@ export interface operations {
                 };
             };
             /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    resume: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Resume recorded; run is back at its prior executing state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RESUME_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT, or ILLEGAL_TRANSITION. */
             409: {
                 headers: {
                     [name: string]: unknown;

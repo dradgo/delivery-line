@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
+import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.FailureDiagnostics;
 import org.dradgo.application.workflow.WorkflowInspectionService.IntegrationSyncStatusView;
 import org.dradgo.application.workflow.WorkflowInspectionService.LatestArtifactView;
@@ -55,6 +56,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_STATUS_SCHEMA_VERSION = 1;
   static final int AUDIT_QUERY_SCHEMA_VERSION = 1;
   static final int OPERATOR_DIAGNOSE_SCHEMA_VERSION = 1;
+  static final int OPERATOR_RESUME_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -561,6 +563,26 @@ public class WorkflowCommandOutputs {
       actions.add(entry);
     }
     payload.put("recommendedRecoveryActions", actions);
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.10 — stable {@code operator-resume.v1} JSON document for {@code deliveryline operator
+   * resume --format json}. {@code workflowRunId} is passed explicitly because {@link
+   * ResumeRecoveryResult} carries none. {@code currentState} and {@code runnerExecutionId} are
+   * nullable, mirroring the result contract (replay / auto-dispatch-off leave them null).
+   */
+  public String renderOperatorResumeJson(String workflowRunId, ResumeRecoveryResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_RESUME_SCHEMA_VERSION);
+    payload.put("workflowRunId", workflowRunId);
+    payload.put(
+        "currentState", result.resultingState() == null ? null : result.resultingState().value());
+    payload.put("recoveryActionId", result.recoveryActionPublicId());
+    payload.put("resumedEventId", result.resumedEventPublicId());
+    payload.put("runnerExecutionId", result.newRunnerExecutionPublicId());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
     return writeJson(payload);
   }
 
