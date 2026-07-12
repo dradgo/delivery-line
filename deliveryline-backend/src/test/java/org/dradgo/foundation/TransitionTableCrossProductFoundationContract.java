@@ -165,7 +165,8 @@ class TransitionTableCrossProductFoundationContract {
           // Mirror of the WorkflowTransitionTable allow-list addition.
           FailureCategory.TESTCONTAINERS_INFRA_FAILED,
           // Story 4.7 [Review D1] — a recovery rerun-from-step re-enqueue failure compensates by
-          // driving the (INVESTIGATING/EXECUTING) run to FAILED; mirrors the WorkflowTransitionTable
+          // driving the (INVESTIGATING/EXECUTING) run to FAILED; mirrors the
+          // WorkflowTransitionTable
           // allow-list addition.
           FailureCategory.RECOVERY_DISPATCH_FAILED);
 
