@@ -727,6 +727,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/rerun-from-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rerun a workflow run from a safe step boundary (story 4.12)
+         * @description Operator (workflow_owner) recovery action that reruns a Failed or WaitingForReview run from a SafeRerunStep boundary (investigating = re-spec, executing = re-implement): invalidates the prior approval at that boundary, records a recovery_actions row + a recovery.rerunFromStep audit event, re-enqueues the runner with a fresh context-bundle version, best-effort reopens the Linear issue, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Rerunning from any state outside {Failed, WaitingForReview} surfaces ILLEGAL_TRANSITION (409).
+         */
+        post: operations["rerunFromStep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/resume": {
         parameters: {
             query?: never;
@@ -1925,6 +1945,33 @@ export interface components {
              * @example workflow_owner
              */
             role: string;
+        };
+        /** @description Rerun a governed workflow run from a safe step boundary (rerun-from-step). */
+        RerunFromStepRequest: {
+            /** @description Required operator note explaining the rerun. Validated by the service (no @NotBlank) so the typed MISSING_REASON_TEXT code is reachable — the defining divergence from ReconcileWorkflowRequest.reasonText. */
+            reasonText: string;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+            /**
+             * @description Safe step boundary to rerun the run from. Validated by the service (no @NotBlank and not typed as the enum) so the typed INVALID_RERUN_TARGET_STEP code is reachable.
+             * @example investigating
+             * @enum {string}
+             */
+            targetStep: "investigating" | "executing";
+        };
+        RerunFromStepResponse: {
+            correlationId?: string;
+            currentState: string;
+            invalidatedApprovalIds: string[];
+            recoveryActionId: string;
+            replayed: boolean;
+            rerunEventId?: string;
+            runnerExecutionId?: string;
+            supersededArtifactIds: string[];
+            workflowRunId: string;
         };
         ResumeResponse: {
             correlationId?: string;
@@ -4622,6 +4669,62 @@ export interface operations {
                 };
             };
             /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    rerunFromStep: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RerunFromStepRequest"];
+            };
+        };
+        responses: {
+            /** @description Rerun recorded; run is at the requested safe step boundary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RerunFromStepResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_RERUN_TARGET_STEP, MISSING_REASON_TEXT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ILLEGAL_TRANSITION (wrong source state, incl. terminal) or IDEMPOTENCY_KEY_CONFLICT. */
             409: {
                 headers: {
                     [name: string]: unknown;

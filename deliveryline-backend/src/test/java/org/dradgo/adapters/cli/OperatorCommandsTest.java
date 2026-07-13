@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.security.DataClassificationService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
@@ -543,6 +544,232 @@ class OperatorCommandsTest {
         .contains("outcome=success");
     // The free-form reason prose is never logged verbatim (length only).
     assertThat(output.getOut() + output.getErr()).doesNotContain("note");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.12 (AC6) — `deliveryline operator rerun-from-step {runId}` rendering + completion log.
+  // ---------------------------------------------------------------------------
+
+  private OperatorCommands rerunCommands(RecoveryService rs, boolean interactive) {
+    CliInteractivityDetector detector = mock(CliInteractivityDetector.class);
+    when(detector.isInteractive()).thenReturn(interactive);
+    return new OperatorCommands(
+        inspection,
+        outputs,
+        detector,
+        rs,
+        new IdempotencyKeyValidator(),
+        new LocalActorIdentityResolver("local-operator"),
+        () -> "corr-fixed",
+        () -> "idem-generated-0000001");
+  }
+
+  private static RerunFromStepRecoveryResult rerunResult(
+      String recoveryId, String runnerExecId, WorkflowState state, boolean replayed) {
+    return new RerunFromStepRecoveryResult(
+        recoveryId,
+        "evt_" + recoveryId,
+        List.of("art_superseded_1"),
+        List.of("apr_invalidated_1"),
+        runnerExecId,
+        state,
+        "corr-1",
+        replayed);
+  }
+
+  @Test
+  void rerunTextRendersRecoveryActionStateAndRunnerExecution() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.rerunFromStep(any(), any(), any(), any(), any()))
+        .thenReturn(rerunResult("rcv_rr001", "rex_rr001", WorkflowState.INVESTIGATING, false));
+
+    String out =
+        rerunCommands(rs, true)
+            .rerunFromStep(
+                "run_rr001",
+                "investigating",
+                "note",
+                "idem-rerun-key-00000001",
+                null,
+                "corr-1",
+                "text",
+                false);
+
+    assertThat(out).contains("rcv_rr001 rerun-from-step submitted (state: Investigating)");
+    assertThat(out).contains("[runner-execution: rex_rr001]");
+    assertThat(out).doesNotContain("[replayed]");
+    // Positional arg order: targetStep SECOND, before idempotencyKey (Reconciliation 4).
+    verify(rs)
+        .rerunFromStep(
+            eq("run_rr001"), eq("investigating"), eq("idem-rerun-key-00000001"), any(), eq("note"));
+  }
+
+  @Test
+  void rerunReplayTextShowsReplayedAndOmitsRunnerExecution() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.rerunFromStep(any(), any(), any(), any(), any()))
+        .thenReturn(rerunResult("rcv_rr002", null, WorkflowState.EXECUTING, true));
+
+    String out =
+        rerunCommands(rs, true)
+            .rerunFromStep(
+                "run_rr002",
+                "executing",
+                null,
+                "idem-rerun-key-00000001",
+                null,
+                "corr-1",
+                "text",
+                false);
+
+    assertThat(out).contains("rcv_rr002 rerun-from-step submitted (state: Executing)");
+    assertThat(out).contains("[replayed]");
+    assertThat(out).doesNotContain("[runner-execution:");
+  }
+
+  @Test
+  void rerunVerboseAppendsCorrelationIdAndGeneratedKeyWhenKeyOmitted() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.rerunFromStep(any(), any(), any(), any(), any()))
+        .thenReturn(rerunResult("rcv_rr003", "rex_rr003", WorkflowState.INVESTIGATING, false));
+
+    // Interactive TTY + omitted --idempotency-key ⇒ the key is auto-generated; verbose surfaces it.
+    String out =
+        rerunCommands(rs, true)
+            .rerunFromStep(
+                "run_rr003", "investigating", "note", null, null, "corr-1", "text", true);
+
+    assertThat(out).contains("[correlation-id: corr-1]");
+    assertThat(out).contains("[generated-idempotency-key: idem-generated-0000001]");
+    verify(rs)
+        .rerunFromStep(
+            eq("run_rr003"), eq("investigating"), eq("idem-generated-0000001"), any(), eq("note"));
+  }
+
+  @Test
+  void rerunJsonEmitsStableSchemaWithoutVerboseFooter() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.rerunFromStep(any(), any(), any(), any(), any()))
+        .thenReturn(rerunResult("rcv_rr004", "rex_rr004", WorkflowState.INVESTIGATING, false));
+
+    // --verbose must NOT glue a "correlation-id" footer onto JSON (would break
+    // operator-rerun-from-step.v1).
+    String out =
+        rerunCommands(rs, true)
+            .rerunFromStep(
+                "run_rr004",
+                "investigating",
+                "note",
+                "idem-rerun-key-00000001",
+                null,
+                "corr-1",
+                "json",
+                true);
+
+    assertThat(out).doesNotContain("[correlation-id:");
+    JsonNode body = readJson(out);
+    assertThat(body.path("schemaVersion").asInt()).isEqualTo(1);
+    assertThat(body.path("workflowRunId").asText()).isEqualTo("run_rr004");
+    assertThat(body.path("currentState").asText()).isEqualTo("Investigating");
+    assertThat(body.path("recoveryActionId").asText()).isEqualTo("rcv_rr004");
+    assertThat(body.path("rerunEventId").asText()).isEqualTo("evt_rcv_rr004");
+    assertThat(body.path("supersededArtifactIds").isArray()).isTrue();
+    assertThat(body.path("supersededArtifactIds").get(0).asText()).isEqualTo("art_superseded_1");
+    assertThat(body.path("invalidatedApprovalIds").get(0).asText()).isEqualTo("apr_invalidated_1");
+    assertThat(body.path("runnerExecutionId").asText()).isEqualTo("rex_rr004");
+    assertThat(body.path("replayed").asBoolean()).isFalse();
+  }
+
+  @Test
+  void rerunInvalidFormatRaisesInvalidCommandPayloadBeforeMutating() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                rerunCommands(rs, true)
+                    .rerunFromStep(
+                        "run_rr005",
+                        "investigating",
+                        null,
+                        "idem-rerun-key-00000001",
+                        null,
+                        null,
+                        "xml",
+                        false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    // The mutation must not have fired when --format is rejected.
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void rerunNonInteractiveWithoutKeyRaisesMissingIdempotencyKey() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                rerunCommands(rs, false)
+                    .rerunFromStep(
+                        "run_rr006", "investigating", null, null, null, "corr-1", "text", false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.MISSING_IDEMPOTENCY_KEY);
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void rerunEmitsCompletionLogLineSuccess(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.rerunFromStep(any(), any(), any(), any(), any()))
+        .thenReturn(rerunResult("rcv_rr007", "rex_rr007", WorkflowState.INVESTIGATING, false));
+
+    rerunCommands(rs, true)
+        .rerunFromStep(
+            "run_rr007",
+            "investigating",
+            "note",
+            "idem-rerun-key-00000001",
+            null,
+            "corr-abc",
+            "text",
+            false);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator rerun-from-step")
+        .contains("workflowRunId=run_rr007")
+        .contains("outcome=success");
+    // The free-form reason prose is never logged verbatim (length only).
+    assertThat(output.getOut() + output.getErr()).doesNotContain("note");
+  }
+
+  @Test
+  void rerunEmitsCompletionLogLineFailureOnServiceError(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.rerunFromStep(any(), any(), any(), any(), any()))
+        .thenThrow(
+            new DomainException(
+                DomainErrorCode.INVALID_RERUN_TARGET_STEP, "bad target", Map.of("provided", "x")));
+
+    assertThatThrownBy(
+            () ->
+                rerunCommands(rs, true)
+                    .rerunFromStep(
+                        "run_rr008",
+                        "bogus",
+                        "note",
+                        "idem-rerun-key-00000001",
+                        null,
+                        "corr-abc",
+                        "text",
+                        false))
+        .isInstanceOf(DomainException.class);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator rerun-from-step")
+        .contains("outcome=failure:INVALID_RERUN_TARGET_STEP");
   }
 
   private static JsonNode readJson(String json) {

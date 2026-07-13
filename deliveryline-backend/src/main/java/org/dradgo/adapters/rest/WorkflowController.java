@@ -19,6 +19,7 @@ import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
@@ -2262,6 +2263,117 @@ public class WorkflowController {
         response.currentState(),
         response.recoveryActionId(),
         response.resolvedConflictId(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.12 (AC1, AC3–AC5, AC7, AC8) — rerun a run from a safe {@code SafeRerunStep} boundary
+   * ({@code investigating} / {@code executing}). Structural twin of {@link #reconcile}: same
+   * header-derived actor + required {@code Idempotency-Key} convention, same {@code workflow_owner}
+   * boundary role gate, mapped onto the RICH {@link RecoveryService#rerunFromStep} (NOT the
+   * transition-only {@code WorkflowCommandService.rerunFromStepWorkflow} — R2). The rich path
+   * single-sources the {@code RERUN_SOURCE_STATES} gate ({FAILED, WAITING_FOR_REVIEW} →
+   * ILLEGAL_TRANSITION for any other source, incl. terminal), the prior-approval invalidation, the
+   * {@code recovery_actions} row + {@code recovery.rerunFromStep} event, the runner re-enqueue, and
+   * the best-effort Linear reopen. Wiring the thin service would silently skip all of that
+   * (invisible to a happy-path test — the ADR-0034 out-of-scope disaster). Differs from reconcile
+   * in exactly: two domain body fields ({@code targetStep}, {@code reasonText}) BOTH
+   * un-{@code @NotBlank} so the service surfaces {@code INVALID_RERUN_TARGET_STEP} / {@code
+   * MISSING_REASON_TEXT} (R5/R6), a five-arg service call with {@code targetStep} SECOND (before
+   * {@code idempotencyKey}), a response carrying two never-null {@code List<String>} fields, and
+   * the error set (no {@code *_NOT_APPLICABLE} — the wrong-source-state code is {@code
+   * ILLEGAL_TRANSITION}).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/rerun-from-step",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "rerunFromStep",
+      summary = "Rerun a workflow run from a safe step boundary (story 4.12)",
+      description =
+          "Operator (workflow_owner) recovery action that reruns a Failed or WaitingForReview run"
+              + " from a SafeRerunStep boundary (investigating = re-spec, executing = re-implement):"
+              + " invalidates the prior approval at that boundary, records a recovery_actions row +"
+              + " a recovery.rerunFromStep audit event, re-enqueues the runner with a fresh"
+              + " context-bundle version, best-effort reopens the Linear issue, and stamps the"
+              + " resolved actor onto the audit trail. Idempotent under Idempotency-Key. Rerunning"
+              + " from any state outside {Failed, WaitingForReview} surfaces ILLEGAL_TRANSITION"
+              + " (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Rerun recorded; run is at the requested safe step boundary."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_RERUN_TARGET_STEP,"
+                + " MISSING_REASON_TEXT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "ILLEGAL_TRANSITION (wrong source state, incl. terminal) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public RerunFromStepResponse rerunFromStep(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody RerunFromStepRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.12 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.rerunFromStep hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume/reconcile).
+    // Request-shape validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("rerun-from-step", request.role());
+    log.info(
+        "REST rerun-from-step received workflowRunId={} actorIdentity={} targetStep={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // targetStep is a plain @Size(max=64) String not yet validated here (this log runs before
+        // the service's resolveTargetState; the enum constraint is OpenAPI-doc-only), so sanitize
+        // it
+        // like the other identifiers to prevent CRLF/log injection. The free-form reasonText prose
+        // is
+        // never logged (length only, null-guarded).
+        MdcKeys.sanitizeForLog(request.targetStep()),
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    RerunFromStepRecoveryResult result =
+        recoveryService.rerunFromStep(
+            workflowRunId, request.targetStep(), idempotencyKey, actor, request.reasonText());
+    RerunFromStepResponse response = RerunFromStepResponse.from(workflowRunId, result);
+    log.info(
+        "REST rerun-from-step success workflowRunId={} currentState={} recoveryActionId={}"
+            + " runnerExecutionId={} supersededCount={} invalidatedApprovalCount={} replayed={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.currentState(),
+        response.recoveryActionId(),
+        response.runnerExecutionId(),
+        response.supersededArtifactIds().size(),
+        response.invalidatedApprovalIds().size(),
         response.replayed());
     return response;
   }

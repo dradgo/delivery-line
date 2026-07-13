@@ -2014,6 +2014,87 @@
         ],
         "type" : "object"
       },
+      "RerunFromStepRequest" : {
+        "description" : "Rerun a governed workflow run from a safe step boundary (rerun-from-step).",
+        "properties" : {
+          "reasonText" : {
+            "description" : "Required operator note explaining the rerun. Validated by the service (no @NotBlank) so the typed MISSING_REASON_TEXT code is reachable — the defining divergence from ReconcileWorkflowRequest.reasonText.",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "targetStep" : {
+            "description" : "Safe step boundary to rerun the run from. Validated by the service (no @NotBlank and not typed as the enum) so the typed INVALID_RERUN_TARGET_STEP code is reachable.",
+            "enum" : [
+              "investigating",
+              "executing"
+            ],
+            "example" : "investigating",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "reasonText",
+          "role",
+          "targetStep"
+        ],
+        "type" : "object"
+      },
+      "RerunFromStepResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "invalidatedApprovalIds" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "rerunEventId" : {
+            "type" : "string"
+          },
+          "runnerExecutionId" : {
+            "type" : "string"
+          },
+          "supersededArtifactIds" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "currentState",
+          "invalidatedApprovalIds",
+          "recoveryActionId",
+          "replayed",
+          "supersededArtifactIds",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "ResumeResponse" : {
         "properties" : {
           "correlationId" : {
@@ -6581,6 +6662,94 @@
           }
         },
         "summary" : "Feed the lint findings back to the implementation runner (request_lint_fix)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/rerun-from-step" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that reruns a Failed or WaitingForReview run from a SafeRerunStep boundary (investigating = re-spec, executing = re-implement): invalidates the prior approval at that boundary, records a recovery_actions row + a recovery.rerunFromStep audit event, re-enqueues the runner with a fresh context-bundle version, best-effort reopens the Linear issue, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Rerunning from any state outside {Failed, WaitingForReview} surfaces ILLEGAL_TRANSITION (409).",
+        "operationId" : "rerunFromStep",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RerunFromStepRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RerunFromStepResponse"
+                }
+              }
+            },
+            "description" : "Rerun recorded; run is at the requested safe step boundary."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_RERUN_TARGET_STEP, MISSING_REASON_TEXT."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "ILLEGAL_TRANSITION (wrong source state, incl. terminal) or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Rerun a workflow run from a safe step boundary (story 4.12)",
         "tags" : [
           "Workflows"
         ]

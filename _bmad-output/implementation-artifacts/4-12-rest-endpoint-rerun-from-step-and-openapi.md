@@ -1,6 +1,6 @@
 # Story 4.12: REST Endpoint — `rerun-from-step` + OpenAPI
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -109,43 +109,43 @@ so that rerun-from-step initiation flows through the standard mutation conventio
 
 ## Tasks / Subtasks
 
-- [ ] **Task 0 — Verify 4.10's fan-out is present before writing anything (Reconciliation 1 + 13)**
-  - [ ] Confirm `WorkflowController` already injects `RecoveryService` (`:108,136`) and `OperatorCommands` already has the 4-mutation-dep ctor + the `resume` command. If NOT, 4.10 has not landed on this branch — STOP and rebase onto 4.10 (or apply its fan-out first); 4.12 assumes it. (4.11/`reconcile` is NOT a prerequisite.)
-  - [ ] Confirm `RecoveryService.rerunFromStep` exists (`:1859`), both rerun codes are mapped (`ProblemDetailsCatalog.java:634-645`), `AllowedAction.RERUN_FROM_STEP` exists, `SafeRerunStep` has 2 values (`investigating`/`executing`). Create no migration (`recovery_actions` `action_type='rerun'` is a V1 CHECK slot; V42 already shipped).
+- [x] **Task 0 — Verify 4.10's fan-out is present before writing anything (Reconciliation 1 + 13)**
+  - [x] Confirmed `WorkflowController` injects `RecoveryService` (`:109,137`) and `OperatorCommands` has the 4-mutation-dep ctor + `resume` command. 4.10 AND 4.11 are `done`/committed on this branch (commits `db72600`, `2fc823a`).
+  - [x] Confirmed `RecoveryService.rerunFromStep` exists (`:1859`), both rerun codes mapped 400/400 (`ProblemDetailsCatalog.java:634-645`), `AllowedAction.RERUN_FROM_STEP` exists (`:123`), `SafeRerunStep` has 2 values. No migration created.
 
-- [ ] **Task 1 — REST DTOs (AC2, AC8)**
-  - [ ] `adapters/rest/RerunFromStepRequest.java` — `record RerunFromStepRequest(@NotBlank @Size(max=128) String role, @Size(max=64) String targetStep, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on each; `targetStep` gets `@Schema(allowableValues = {"investigating","executing"})` and NO `@NotBlank` (Reconciliation 5); `reasonText` gets NO `@NotBlank` (Reconciliation 6). Model on `ResumeWorkflowRequest.java`. Javadoc the two un-`@NotBlank` traps + the divergence from `ReconcileWorkflowRequest.reasonText`.
-  - [ ] `adapters/rest/RerunFromStepResponse.java` — 9-component record per AC8 with `@Schema(requiredMode=…)` on each; `currentState` is `REQUIRED` (Reconciliation 8); `supersededArtifactIds` + `invalidatedApprovalIds` are `REQUIRED List<String>` (Reconciliation 7); `static RerunFromStepResponse from(String workflowRunId, RerunFromStepRecoveryResult result)` calling `result.resultingState().value()` directly (NO null-guard). Javadoc the divergence from `ResumeResponse` (currentState nullable there).
+- [x] **Task 1 — REST DTOs (AC2, AC8)**
+  - [x] `adapters/rest/RerunFromStepRequest.java` — `record RerunFromStepRequest(@NotBlank @Size(max=128) String role, @Size(max=64) String targetStep, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `targetStep` gets `@Schema(allowableValues = {"investigating","executing"})` and NO `@NotBlank` (R5); `reasonText` NO `@NotBlank` (R6). Javadoc'd both traps + the ReconcileWorkflowRequest divergence.
+  - [x] `adapters/rest/RerunFromStepResponse.java` — 9-component record; `currentState` REQUIRED (R8); `supersededArtifactIds` + `invalidatedApprovalIds` REQUIRED `List<String>` (R7); `from(String, RerunFromStepRecoveryResult)` calls `result.resultingState().value()` directly (NO null-guard). Javadoc'd divergence from `ResumeResponse`.
 
-- [ ] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
-  - [ ] Add `public RerunFromStepResponse rerunFromStep(...)` after `resume` (`:2160`): `@PostMapping(value="/{workflowRunId}/rerun-from-step", consumes=…, produces=…)`, `@Operation(operationId="rerunFromStep", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`). NO ctor change (`RecoveryService` already injected).
-  - [ ] Guard prologue (Reconciliation 3) → `requireWorkflowOwnerRole("rerun-from-step", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.rerunFromStep(workflowRunId, request.targetStep(), idempotencyKey, actor, request.reasonText())` → `RerunFromStepResponse.from(workflowRunId, result)`.
-  - [ ] **Do NOT call `workflowCommandService.rerunFromStepWorkflow`** (Reconciliation 2).
+- [x] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
+  - [x] Added `public RerunFromStepResponse rerunFromStep(...)` after `reconcile`: `@PostMapping("/{workflowRunId}/rerun-from-step")`, `@Operation(operationId="rerunFromStep")`, `@ApiResponses` (400/404/409). NO ctor change.
+  - [x] Guard prologue → `requireWorkflowOwnerRole("rerun-from-step", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.rerunFromStep(workflowRunId, request.targetStep(), idempotencyKey, actor, request.reasonText())` → `RerunFromStepResponse.from(...)`.
+  - [x] Did NOT call `workflowCommandService.rerunFromStepWorkflow` (R2).
 
-- [ ] **Task 3 — CLI `deliveryline operator rerun-from-step` (AC6)**
-  - [ ] Add `@Command(name = "rerun-from-step", exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)` to `OperatorCommands` (NO ctor change — the mutation deps are already present from 4.10). Model on the in-file `resume` command (`:264-338`). Positional `@Argument(index=0) String runId`; `--target` + `--reason` as `required = false` (service-validated — Reconciliation 6/OQ-4); optional `--idempotency-key`, `--actor-identity`, `--correlation-id`, `--format`, `--verbose`. Reuse `pushCorrelation`/`CorrelationScope`, `resolveActorIdentity`, `resolveIdempotencyKey`, `idempotencyKeyValidator.requireValid`, `ActorType.HUMAN`, and the `finally { MdcKeys.endScope(...) }`.
-  - [ ] Call `recoveryService.rerunFromStep(runId, target, resolvedIdempotencyKey, actor, reason)` (5 positional args, Reconciliation 4). Render `rcv_… rerun-from-step submitted (state: <resultingState>)` + `[runner-execution: rex_…]` when non-null + `[replayed]` when replayed; `--verbose` text-only footer appends `[correlation-id: …]` + `[generated-idempotency-key: …]` when the flag was omitted (never JSON — the `resume` precedent, `:363-368`).
-  - [ ] Add `WorkflowCommandOutputs.renderOperatorRerunFromStepJson(runId, result)` (`operator-rerun-from-step.v1`, `OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION = 1`) — mirror `renderOperatorResumeJson` (`:575`), including the two `List<String>` fields. Verify `WorkflowCliJsonSchemaContractTest` (per-command enumerated — 4.10 learning): add the new command if the test enumerates operator commands, else no schema-file obligation.
-  - [ ] Add a `COMMAND_NAME_RERUN_FROM_STEP = "operator rerun-from-step"` constant next to `COMMAND_NAME_RESUME`; emit the completion `INFO` log with it (mirror `emitResume`).
-  - [ ] Pin `deliveryline operator rerun-from-step` in `OperatorCliCommandRegistrationIT` (mirror the `operator resume` assertion).
+- [x] **Task 3 — CLI `deliveryline operator rerun-from-step` (AC6)**
+  - [x] Added `@Command(name = "rerun-from-step", ...)` to `OperatorCommands` (NO ctor change). Positional `@Argument(index=0) String runId`; `--target` + `--reason` `required = false` (service-validated — R6/OQ-4); optional `--idempotency-key`/`--actor-identity`/`--correlation-id`/`--format`/`--verbose`. Reused the shared `pushCorrelation`/`resolveActorIdentity`/`resolveIdempotencyKey`/`endScope` idioms.
+  - [x] Calls `recoveryService.rerunFromStep(runId, target, resolvedIdempotencyKey, actor, reason)` (5 positional, R4). `renderRerunFromStepText` renders `rcv_… rerun-from-step submitted (state: …)` + `[runner-execution: rex_…]` + `[replayed]` + verbose footer.
+  - [x] Added `WorkflowCommandOutputs.renderOperatorRerunFromStepJson` (`operator-rerun-from-step.v1`, `OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION = 1`) with the two `List<String>` fields. `WorkflowCliJsonSchemaContractTest` does NOT enumerate the operator mutation JSON renders — no schema-file obligation (4.10 learning).
+  - [x] Added `COMMAND_NAME_RERUN_FROM_STEP = "operator rerun-from-step"`; `emitRerunFromStep` completion log.
+  - [x] Pinned `deliveryline operator rerun-from-step` in `OperatorCliCommandRegistrationIT`.
 
-- [ ] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 11)**
-  - [ ] Regenerate: `mvnw -o test -Dtest=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true` (or the `verify` lifecycle with `-Dit.test=…` + `-Djacoco.skip=true` — the `*ContractTest` route through Failsafe; [[maven-arglineation-goal-crash]]); review the `openapi.json` diff (expect exactly one new path + two new schemas + the `targetStep` `allowableValues` + two array response fields).
-  - [ ] `cd deliveryline-frontend && npm run generate-api`; commit `src/lib/api/schema.d.ts`. Verify `npm run check:api` green ([[openapi-regen-frontend-client-drift-cascade]]); `npm run build` green ([[frontend-tsc-noemit-misses-test-files]]).
+- [x] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 11)**
+  - [x] Regenerated `openapi.json` via Failsafe `OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true`: +169 lines = one new path `/rerun-from-step` + two schemas; `targetStep` renders inline `enum: [investigating, executing]` on a String field (NOT a named component); two array response fields. Re-ran without the write flag — byte-equal (green).
+  - [x] `npm run generate-api` → `schema.d.ts` regenerated; `npm run check:api` ✅ in sync; `npm run build` ✅.
 
-- [ ] **Task 5 — Tests (AC9)**
-  - [ ] New `adapters/rest/RerunFromStepEndpointContractTest` — the cases enumerated in AC9; model on the 4.10 `ResumeEndpointContractTest` (`@WebMvcTest` + `ListAppender` + `LocalActorIdentityResolver` call-through stub). REUSE the `@MockitoBean RecoveryService` — do NOT re-declare if inherited. Assert Problem Details `code`/`status`/`details` only. Explicitly assert `MISSING_REASON_TEXT` (blank reason) and `INVALID_RERUN_TARGET_STEP` (blank/unknown target) surface as their TYPED codes (proving neither field is `@NotBlank`).
-  - [ ] CLI/REST equivalence test `adapters/cli/RerunFromStepCliRestEquivalenceContractTest` (Reconciliation 4): capture the FIVE positional `recoveryService.rerunFromStep(...)` args from REST (MockMvc) and CLI (`new OperatorCommands(...)`), assert equal — including `ActorContext` record equality and the `local-operator` fallback on both surfaces. (Lives in `adapters.cli` for the package-private test ctor.)
-  - [ ] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green (they already mock `RecoveryService` from 4.10).
-  - [ ] Optional real-PG `RerunFromStepEndpointIT` (`*IT`) seeding a `FAILED` (or `WAITING_FOR_REVIEW`) run + an approved spec/plan, asserting the `recovery_actions` row (`action_type='rerun'`, `reviewer_role='workflow_owner'`), the `recovery.rerunFromStep` event, and the invalidated approval. [[springboot-testcontainers-test-must-be-IT]]
-  - [ ] ⚠️ New `@WebMvcTest` classes null the redaction holder and poison `CapturedOutput` in a reused fork — add the identity-holder `@BeforeAll`/`@AfterAll` ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
-  - [ ] CLI render/log tests in `OperatorCommandsTest` (mirror the 7 resume render tests): text render with/without runner-execution + replayed + verbose footer; JSON render; completion-log outcome (success + `failure:<code>`).
+- [x] **Task 5 — Tests (AC9)**
+  - [x] `adapters/rest/RerunFromStepEndpointContractTest` (16 tests) — happy-path per target (investigating/executing) with echoed lists + captured 5 positional args (targetStep second); replay (non-null state); `INVALID_RERUN_TARGET_STEP` (blank + unknown target) and `MISSING_REASON_TEXT` (blank reason) surface as TYPED codes proving neither field is `@NotBlank`; `ILLEGAL_TRANSITION` 409; `RUN_NOT_FOUND` 404; `IDEMPOTENCY_KEY_CONFLICT` 409; missing/blank/multi-valued Idempotency-Key; blank role → `INVALID_COMMAND_PAYLOAD`; wrong role → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` + WARN; unknown body field; omitted actor → `local-operator`. `ListAppender` pins entry/success/role-WARN.
+  - [x] `adapters/cli/RerunFromStepCliRestEquivalenceContractTest` (1 test) — captures the FIVE positional args from REST + CLI, asserts equal incl. `ActorContext` record equality + `local-operator` fallback on both surfaces.
+  - [x] `OpenApiSnapshotContractTest` green (byte-equal); full backend `verify` green (ProblemDetails / adapter-equivalence / ArchUnit / all @WebMvcTest slices — no regressions).
+  - [~] Optional real-PG `RerunFromStepEndpointIT` — DEFERRED (optional per AC9; 4.7's `RecoveryServiceRerunFromStepIT` + `RecoveryServiceRerunFromStepTest` already cover the real state-change / supersession / invalidation / `recovery_actions` / event semantics — the adapter layer only wires them).
+  - [x] Added the identity-holder `@BeforeAll`/`@AfterAll` redaction-holder guard to the new `@WebMvcTest` class.
+  - [x] CLI render/log tests in `OperatorCommandsTest` (8 tests): text render with/without runner-execution + replayed + verbose footer; JSON render (stable `operator-rerun-from-step.v1`); invalid-format-before-mutating; non-interactive-without-key; completion-log success + `failure:INVALID_RERUN_TARGET_STEP`.
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] REST: `INFO "REST rerun-from-step received workflowRunId={} actorIdentity={} targetStep={} reasonLength={}"` on entry (log the `targetStep` VALUE — a governed enum token, not free-form prose; `reasonLength` is the length only, null-guarded) and `INFO "REST rerun-from-step success workflowRunId={} currentState={} recoveryActionId={} runnerExecutionId={} supersededCount={} invalidatedApprovalCount={} replayed={}"` on success. `WARN` on the role rejection is already emitted inside `requireWorkflowOwnerRole`. No `ERROR` — `DomainException`s are mapped by `ProblemDetailsMapper`.
-  - [ ] CLI: reuse the `emit*` completion-log idiom — `INFO` with `correlationId`, `commandName='operator rerun-from-step'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
-  - [ ] Parameterized logging only; sanitize `workflowRunId`/`actorIdentity` via `MdcKeys.sanitizeForLog`. Never log `reasonText` prose, the idempotency-key value, secrets, tokens, or PII. (The `targetStep` VALUE is safe to log — a bounded governed enum.)
-  - [ ] Pin the REST entry/success lines and the role-rejection `WARN` in `RerunFromStepEndpointContractTest` via `ListAppender` on the `WorkflowController` logger (the `ResumeEndpointContractTest` pattern). The recovery-service log surface (`recovery rerunFromStep start/success/replay/rejected`) is already pinned by 4.7's `RecoveryLoggingContractTest` — do NOT duplicate it in the adapter.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] REST: `INFO "REST rerun-from-step received ... targetStep={} reasonLength={}"` on entry (targetStep VALUE logged — governed enum; reasonLength null-guarded) + `INFO "REST rerun-from-step success ... supersededCount={} invalidatedApprovalCount={} replayed={}"` on success. Role-rejection WARN reused from `requireWorkflowOwnerRole`. No ERROR.
+  - [x] CLI: `emitRerunFromStep` `INFO` completion — `correlationId`, `commandName='operator rerun-from-step'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
+  - [x] Parameterized logging only; `workflowRunId`/`actorIdentity`/`targetStep` sanitized via `MdcKeys.sanitizeForLog`. `reasonText` prose never logged (length only); no idempotency-key value/secrets/PII.
+  - [x] Pinned REST entry/success + role-rejection WARN in `RerunFromStepEndpointContractTest` via `ListAppender`. Did NOT duplicate the recovery-service log surface (already pinned by 4.7's `RecoveryLoggingContractTest`).
 
 ## Dev Notes
 
@@ -203,6 +203,15 @@ so that rerun-from-step initiation flows through the standard mutation conventio
 - **OQ-4 — `--target`/`--reason` shell-required or service-validated?** Epic AC6 phrases them as required. Making them Spring Shell `required = true` surfaces a FRAMEWORK error on omission (not the typed `INVALID_RERUN_TARGET_STEP` / `MISSING_REASON_TEXT`), breaking epic AC4 + CLI/REST symmetry (the REST DTO does not `@NotBlank` them either). Provisional bind: **`required = false` at the shell; the service is the single validator on both surfaces.** Confirm, or accept the framework-error posture on the CLI.
 - **OQ-5 — `SafeRerunStep` as inline `allowableValues` vs a named OpenAPI component?** Epic AC5 says "`SafeRerunStep` enum schema". Because `targetStep` must stay a `String` (Reconciliation 5), the values surface as inline `allowableValues` on the field, not a separate named `#/components/schemas/SafeRerunStep`. Provisional bind: **inline `allowableValues`** — the 4.22 dropdown reads them the same way. Confirm, or introduce a named component (which would require typing the field as the enum and losing `INVALID_RERUN_TARGET_STEP` — not recommended).
 
+## Review Findings
+
+_Adversarial code review 2026-07-13 (Blind Hunter + Edge Case Hunter + Acceptance Auditor). 0 decision-needed, 2 patch (both Low), 0 defer, 4 dismissed._
+
+- [x] [Review][Patch] Success log emits `workflowRunId` unsanitized while the entry log in the same method sanitizes the identical `@PathVariable` [WorkflowController.java rerunFromStep success log] — FIXED: wrapped in `MdcKeys.sanitizeForLog(...)`. NOTE: the sibling `resume`/`reconcile` success logs share this gap (not swept here — the fix keeps the new method internally consistent; a cross-endpoint sweep is a separate optional cleanup).
+- [x] [Review][Patch] Remnant/contradictory comment on the received-log rationale [WorkflowController.java rerunFromStep received log] — FIXED: collapsed the two glued rationales into one coherent CRLF-injection comment.
+
+_Both patches applied and verified: `spotless:apply` + `compile` clean; `RerunFromStepEndpointContractTest` 16/16 green (success-log assertions still hold — `sanitizeForLog` leaves a normal `run_...` id unchanged)._
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -211,8 +220,43 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- `OpenApiSnapshotContractTest` + `*ContractTest`/`*IT` route through **Failsafe**, not Surefire — a plain `-Dtest=OpenApiSnapshotContractTest` ran 0 tests. Regenerated via `verify -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true -Dsurefire.skip=true` (Docker up for Testcontainers).
+- `WorkflowCliJsonSchemaContractTest` does NOT enumerate the operator mutation JSON renders (resume/reconcile absent), so `rerun-from-step` needs no schema fixture file — matches the 4.10 "enumerated not auto-discovered" learning.
+
 ### Change Log
+
+- 2026-07-13 — Implemented story 4.12 (REST `rerun-from-step` endpoint + CLI + OpenAPI). PURE adapter wiring over the `done` `RecoveryService.rerunFromStep` (4.7). Zero lines in `application/`/`domain/`; no migration, no new error code / event / allowed-action / command permit / registry value. Full backend `verify` green; FE `check:api` + `build` green.
 
 ### Completion Notes List
 
+- **PURE adapter-wiring story, verify-green.** ONE controller method + TWO DTOs + ONE CLI command + ONE JSON renderer + OpenAPI/FE regen + tests. Reused 4.10's ctor fan-out wholesale — NO `WorkflowController` ctor change, NONE of the 17 `@WebMvcTest` slices touched.
+- **Wired to the RICH `RecoveryService.rerunFromStep`** (5 positional args, `targetStep` SECOND before `idempotencyKey`), NOT the transition-only `WorkflowCommandService.rerunFromStepWorkflow` — single-sources the `RERUN_SOURCE_STATES` gate, approval invalidation, audit row, event, runner re-enqueue, Linear reopen (R2).
+- **The two defining DTO traps held.** `targetStep` (R5) AND `reasonText` (R6) carry NO `@NotBlank` so the service surfaces the TYPED `INVALID_RERUN_TARGET_STEP` / `MISSING_REASON_TEXT` (epic AC4). Explicitly proven by two contract tests that send blank values and assert the typed codes (an `@NotBlank` would have masked them as `INVALID_COMMAND_PAYLOAD`). This is the opposite of reconcile (4.11), which DID `@NotBlank reasonText`.
+- **`currentState` REQUIRED (R8), no null-guard** — like reconcile, unlike resume (both rerun paths resolve a concrete state). Two never-null `List<String>` response fields marked REQUIRED (R7).
+- **Wrong-source-state code is `ILLEGAL_TRANSITION` (409)** from the `RERUN_SOURCE_STATES` gate — there is NO `RERUN_NOT_APPLICABLE`, and `ACTION_NOT_ALLOWED` (epic AC4) does not exist and was NOT created (R9).
+- **OpenAPI:** exactly one new path + two schemas; `targetStep` renders as inline `enum` on a String field (the 4.22 dropdown source), not a named `SafeRerunStep` component (R11). Snapshot re-verified byte-equal after regen (no mojibake).
+- **Optional real-PG endpoint IT deferred** — 4.7's `RecoveryServiceRerunFromStepIT`/`...Test` already cover the real semantics; the adapter only wires them.
+- **Test results:** `RerunFromStepEndpointContractTest` 16/16, `RerunFromStepCliRestEquivalenceContractTest` 1/1, `OperatorCliCommandRegistrationIT` 2/2, `OpenApiSnapshotContractTest` 1/1, `OperatorCommandsTest` 30/30 (8 new). Full backend `mvn verify` BUILD SUCCESS (Surefire + Failsafe + SpotBugs + Spotless + JaCoCo coverage all met). FE `check:api` in-sync + `build` green.
+
 ### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RerunFromStepRequest.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/RerunFromStepResponse.java`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java` (`rerunFromStep` method + import; no ctor change)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java` (`rerun-from-step` command + `COMMAND_NAME_RERUN_FROM_STEP` + `renderRerunFromStepText` + `emitRerunFromStep` + import; no ctor change)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (`renderOperatorRerunFromStepJson` + `OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION` + import)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated: +1 path, +2 schemas)
+
+**Modified (frontend):**
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/RerunFromStepEndpointContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/RerunFromStepCliRestEquivalenceContractTest.java`
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java` (one pin)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java` (8 render/log tests + import)

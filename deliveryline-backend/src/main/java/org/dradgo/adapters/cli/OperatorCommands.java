@@ -13,6 +13,7 @@ import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.WorkflowInspectionService;
@@ -60,6 +61,7 @@ public class OperatorCommands {
   private static final String COMMAND_NAME_DIAGNOSE = "operator diagnose";
   private static final String COMMAND_NAME_RESUME = "operator resume";
   private static final String COMMAND_NAME_RECONCILE = "operator reconcile";
+  private static final String COMMAND_NAME_RERUN_FROM_STEP = "operator rerun-from-step";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -539,6 +541,159 @@ public class OperatorCommands {
         "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
         correlationId,
         COMMAND_NAME_RECONCILE,
+        MdcKeys.sanitizeForLog(runId),
+        outcome,
+        elapsedMs);
+  }
+
+  // Story 4.12 (AC6) — the CLI face of POST /{runId}/rerun-from-step. Reruns a Failed or
+  // WaitingForReview run from a SafeRerunStep boundary through the RICH
+  // RecoveryService.rerunFromStep
+  // (RERUN_SOURCE_STATES gate + prior-approval invalidation + recovery_actions row +
+  // recovery.rerunFromStep event + runner re-enqueue + best-effort Linear reopen), NOT the
+  // transition-only WorkflowCommandService.rerunFromStepWorkflow. Mirrors `operator
+  // resume`/`operator
+  // reconcile` (positional runId, optional --actor-identity → local-operator, ActorType.HUMAN
+  // hard-coded, --format text|json). Divergence: --target + --reason are required domain inputs but
+  // both are passed as raw Strings with required=false so the SERVICE surfaces the typed
+  // INVALID_RERUN_TARGET_STEP / MISSING_REASON_TEXT codes on both surfaces (Reconciliation 6/OQ-4)
+  // —
+  // keeping the CLI symmetric with the REST DTO, which does NOT @NotBlank them either. The
+  // idempotency replay pre-check tolerates an omitted --reason on a genuine retry
+  // (RecoveryService.java:1891-1902).
+  @Command(
+      name = "rerun-from-step",
+      description =
+          "Rerun a Failed or WaitingForReview governed run from a safe step boundary"
+              + " (investigating|executing) (story 4.12 — CLI/REST equivalence). Invalidates the"
+              + " prior approval at that boundary, records a recovery_actions row +"
+              + " recovery.rerunFromStep audit event, re-enqueues the runner, and stamps the resolved"
+              + " actor onto the audit trail. Idempotent under --idempotency-key. A run outside"
+              + " {Failed, WaitingForReview} ⇒ ILLEGAL_TRANSITION. --format=json emits a"
+              + " stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String rerunFromStep(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "target",
+              description =
+                  "Safe step boundary to rerun from: investigating | executing (validated by the"
+                      + " service, not the CLI, so the typed INVALID_RERUN_TARGET_STEP is reachable)",
+              required = false)
+          String target,
+      @Option(
+              longName = "reason",
+              description =
+                  "Operator note explaining the rerun (required on a fresh rerun; validated by the"
+                      + " service, not the CLI, so an idempotent replay that omits it still replays)",
+              required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Parse --format INSIDE the try (before the mutation) so an unsupported value raises
+      // INVALID_COMMAND_PAYLOAD without performing the rerun, and still emits the completion log +
+      // runs the finally/endScope (no leaked MDC correlation-id scope).
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      // target/reason pass straight through: the service is the single source of target + reason
+      // validation (typed INVALID_RERUN_TARGET_STEP + MISSING_REASON_TEXT), so the CLI stays
+      // symmetric with the REST surface (Reconciliation 6/OQ-4). Note the arg order — targetStep is
+      // SECOND, before idempotencyKey (Reconciliation 4).
+      RerunFromStepRecoveryResult result =
+          recoveryService.rerunFromStep(runId, target, resolvedIdempotencyKey, actor, reason);
+      String rendered =
+          json
+              ? outputs.renderOperatorRerunFromStepJson(runId, result)
+              : renderRerunFromStepText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitRerunFromStep(resolvedCorrelation, runId, start, OUTCOME_SUCCESS);
+      // Audit the target value + reason length only; the free-form operator prose is never logged
+      // verbatim. `target` is sanitized like the other identifiers: on a fresh rerun the service
+      // validated it to a governed enum, but on an idempotency replay resolveTargetState is still
+      // called yet the raw client string reaches here first, so sanitize defensively.
+      log.info(
+          "operator rerun-from-step target applied correlationId={} workflowRunId={} targetStep={} reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(runId),
+          MdcKeys.sanitizeForLog(target),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitRerunFromStep(resolvedCorrelation, runId, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitRerunFromStep(resolvedCorrelation, runId, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator rerun-from-step` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorRerunFromStepJson). The verbose footer (correlation-id +
+  // generated-idempotency-key) is appended to TEXT output only — gluing it onto JSON would break
+  // the
+  // operator-rerun-from-step.v1 schema for machine consumers.
+  private static String renderRerunFromStepText(
+      RerunFromStepRecoveryResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionPublicId())
+            .append(" rerun-from-step submitted (state: ")
+            .append(result.resultingState() == null ? "unknown" : result.resultingState().value())
+            .append(')');
+    if (result.newRunnerExecutionPublicId() != null) {
+      output.append(" [runner-execution: ").append(result.newRunnerExecutionPublicId()).append(']');
+    }
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitRerunFromStep(
+      String correlationId, String runId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_RERUN_FROM_STEP,
         MdcKeys.sanitizeForLog(runId),
         outcome,
         elapsedMs);

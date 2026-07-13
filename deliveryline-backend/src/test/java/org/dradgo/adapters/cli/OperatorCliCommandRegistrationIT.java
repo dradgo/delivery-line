@@ -73,6 +73,11 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator reconcile"),
               () -> "registered commands: " + commandNames);
+          // Story 4.12 (AC6) — the mutating rerun-from-step command registers under the same group
+          // prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator rerun-from-step"),
+              () -> "registered commands: " + commandNames);
         });
   }
 

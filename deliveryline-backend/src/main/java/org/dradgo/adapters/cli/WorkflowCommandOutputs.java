@@ -12,6 +12,7 @@ import java.util.Map;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
+import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.FailureDiagnostics;
 import org.dradgo.application.workflow.WorkflowInspectionService.IntegrationSyncStatusView;
@@ -59,6 +60,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_DIAGNOSE_SCHEMA_VERSION = 1;
   static final int OPERATOR_RESUME_SCHEMA_VERSION = 1;
   static final int OPERATOR_RECONCILE_SCHEMA_VERSION = 1;
+  static final int OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -604,6 +606,31 @@ public class WorkflowCommandOutputs {
     payload.put("recoveryActionId", result.recoveryActionPublicId());
     payload.put("reconciledEventId", result.reconciledEventPublicId());
     payload.put("resolvedConflictId", result.resolvedConflictId());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.12 — stable {@code operator-rerun-from-step.v1} JSON document for {@code deliveryline
+   * operator rerun-from-step --format json}. {@code workflowRunId} is passed explicitly because
+   * {@link RerunFromStepRecoveryResult} carries none. {@code currentState} is non-null (both rerun
+   * paths resolve a concrete safe-boundary state — Reconciliation 8); {@code supersededArtifactIds}
+   * and {@code invalidatedApprovalIds} are never-null arrays (Reconciliation 7); {@code
+   * runnerExecutionId} is null on replay / auto-dispatch-off.
+   */
+  public String renderOperatorRerunFromStepJson(
+      String workflowRunId, RerunFromStepRecoveryResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION);
+    payload.put("workflowRunId", workflowRunId);
+    payload.put(
+        "currentState", result.resultingState() == null ? null : result.resultingState().value());
+    payload.put("recoveryActionId", result.recoveryActionPublicId());
+    payload.put("rerunEventId", result.rerunEventPublicId());
+    payload.put("supersededArtifactIds", result.supersededArtifactIds());
+    payload.put("invalidatedApprovalIds", result.invalidatedApprovalIds());
+    payload.put("runnerExecutionId", result.newRunnerExecutionPublicId());
     payload.put("correlationId", result.correlationId());
     payload.put("replayed", result.replayed());
     return writeJson(payload);
