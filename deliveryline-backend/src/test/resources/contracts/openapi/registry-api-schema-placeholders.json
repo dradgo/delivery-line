@@ -114,7 +114,8 @@
     "specClarificationAcknowledgement": "sca_",
     "splitProposal": "splprop_",
     "splitProposalFeedback": "splfb_",
-    "integrationConflict": "icf_"
+    "integrationConflict": "icf_",
+    "artifactDrift": "adr_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",

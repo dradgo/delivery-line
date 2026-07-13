@@ -43,6 +43,34 @@ public interface ArtifactOperationRepository extends JpaRepository<ArtifactOpera
   List<ArtifactOperationEntity> findByStatusAndCreatedAtOlderThanSeconds(
       @Param("status") String status, @Param("seconds") long seconds);
 
+  /**
+   * Story 4.15 (review D2) — bounded, KEYSET-PAGED variant for the artifact-drift-detection orphan
+   * scan, symmetric to {@code ArtifactRepository.findAvailableCreatedBefore}. The base finder above
+   * (shared with the auto-repair reconciliation) hard-caps at 500 with no cursor; because the drift
+   * sweep is detection-only (it never resolves an orphan), orphans beyond the oldest cap would
+   * never be recorded without rotation. {@code (afterCreatedAt, afterPublicId)} is the exclusive
+   * keyset cursor ({@code NULL} = start from the oldest) and {@code batchLimit} is the configured
+   * sweep cap.
+   */
+  @Query(
+      value =
+          "SELECT ao.* FROM artifact_operations ao "
+              + "JOIN artifacts a ON a.id = ao.artifact_id "
+              + "WHERE ao.status = :status "
+              + "AND ao.created_at < (now() - make_interval(secs => :seconds)) "
+              + "AND a.archived_at IS NULL "
+              + "AND (cast(:afterCreatedAt as timestamptz) is null "
+              + "     OR (ao.created_at, ao.public_id) > (:afterCreatedAt, :afterPublicId)) "
+              + "ORDER BY ao.created_at ASC, ao.public_id ASC "
+              + "LIMIT :batchLimit",
+      nativeQuery = true)
+  List<ArtifactOperationEntity> findPendingOlderThanKeyset(
+      @Param("status") String status,
+      @Param("seconds") long seconds,
+      @Param("batchLimit") int batchLimit,
+      @Param("afterCreatedAt") java.time.OffsetDateTime afterCreatedAt,
+      @Param("afterPublicId") String afterPublicId);
+
   Optional<ArtifactOperationEntity> findFirstByArtifactPublicIdOrderByCreatedAtDesc(
       String artifactPublicId);
 

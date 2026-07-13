@@ -118,6 +118,22 @@ public final class WorkflowEventDetailKeys {
   public static final String CONFLICT_CATEGORY = "conflictCategory";
   public static final String RECONCILIATION_DECISION = "reconciliationDecision";
 
+  // Artifact-drift keys (added story 4.15 AC4, emitted on ARTIFACT_DRIFT_DETECTED). All
+  // allow-listed:
+  // driftCategory is the controlled-vocabulary DriftCategory wire token (orphan_operation /
+  // missing_payload / checksum_mismatch); driftId is the opaque adr_ public id of the persisted
+  // drift row; operationId is the op_ public id of the drifted artifact operation (the ONLY target
+  // reference an orphan-operation drift carries — artifactId is null for that category, so without
+  // operationId in the allow-list an orphan drift event would render with no target at all). All
+  // are
+  // non-secret identifiers, the same shareable posture as the conflictId / conflictCategory pair
+  // emitted by the sibling integration-conflict detection sweep (story 4.17). The
+  // already-allow-listed
+  // artifactId / correlationId / reason / failureCategory keys carry the rest of the payload.
+  public static final String DRIFT_CATEGORY = "driftCategory";
+  public static final String DRIFT_ID = "driftId";
+  public static final String OPERATION_ID = "operationId";
+
   // Rerun-from-step keys (added story 4.7 AC5, emitted on RECOVERY_RERUN_FROM_STEP). All
   // allow-listed: targetStep is the controlled-vocabulary SafeRerunStep wire token; the two
   // *ArtifactIds / *ApprovalIds arrays are opaque art_/apr_ public ids (non-secret references, the
@@ -192,6 +208,9 @@ public final class WorkflowEventDetailKeys {
           CONFLICT_ID,
           CONFLICT_CATEGORY,
           RECONCILIATION_DECISION,
+          DRIFT_CATEGORY,
+          DRIFT_ID,
+          OPERATION_ID,
           TARGET_STEP,
           SUPERSEDED_ARTIFACT_IDS,
           INVALIDATED_APPROVAL_IDS,

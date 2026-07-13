@@ -37,6 +37,7 @@ import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
+import org.dradgo.domain.registry.DriftCategory;
 import org.dradgo.domain.registry.FailureCategory;
 import org.dradgo.domain.registry.FailureTaxonomyValue;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
@@ -119,6 +120,7 @@ class RegistryContractTest {
     assertEquals(
         registryValues(IntegrationConflictCategory.values()),
         DomainRegistry.integrationConflictCategories());
+    assertEquals(registryValues(DriftCategory.values()), DomainRegistry.driftCategories());
     assertEquals(
         registryValues(ReconciliationDecision.values()), DomainRegistry.reconciliationDecisions());
     assertEquals(registryValues(SafeRerunStep.values()), DomainRegistry.safeRerunSteps());
@@ -213,6 +215,21 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.integrationConflictCategories(),
         extractConstraintValues("ck_integration_conflicts_conflict_category"));
+  }
+
+  @Test
+  void driftCategoryStaysAlignedWithSqlCheck() {
+    // Story 4.15 (AC2/AC3) — DriftCategory is SQL-CHECK-backed (the V45
+    // artifact_drift_detected.drift_category column), so the registry set must equal the
+    // ck_artifact_drift_detected_drift_category value-set. NO API-placeholder leg — 4.15 has no
+    // REST
+    // surface (backend detection story; the repair REST/CLI is 4.16), so this drift gate is
+    // registry-vs-SQL only (mirrors integrationConflictCategoryStaysAlignedWithSqlCheck).
+    assertFalse(
+        DomainRegistry.driftCategories().isEmpty(), "DriftCategory registry must not be empty");
+    assertEquals(
+        DomainRegistry.driftCategories(),
+        extractConstraintValues("ck_artifact_drift_detected_drift_category"));
   }
 
   @Test
@@ -519,6 +536,10 @@ class RegistryContractTest {
     registryBoundaries.put(
         "artifact_operations.failure_category",
         PersistedRegistryValues::artifactOperationFailureCategory);
+    // Story 4.15 (AC2/Reconciliation 7) — the V45 artifact_drift_detected.drift_category boundary,
+    // parsed at the drift read adapter's row mapper. Non-nullable; fails fast on unknown.
+    registryBoundaries.put(
+        "artifact_drift_detected.drift_category", PersistedRegistryValues::artifactDriftCategory);
     registryBoundaries.put("approvals.actor_type", PersistedRegistryValues::approvalActorType);
     registryBoundaries.put(
         "runner_executions.status", PersistedRegistryValues::runnerExecutionStatus);

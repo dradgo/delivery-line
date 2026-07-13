@@ -46,7 +46,13 @@ public enum PublicIdPrefixes implements RegistryValue {
   // Story 4.17 (AC3) — public_id prefix for the V36 integration_conflicts table (the detected
   // internal-vs-external integration-drift conflict rows written by the conflict-detection sweep;
   // one unresolved row per (link, category)).
-  INTEGRATION_CONFLICT("integrationConflict", "icf_", "ck_integration_conflicts_public_id_format");
+  INTEGRATION_CONFLICT("integrationConflict", "icf_", "ck_integration_conflicts_public_id_format"),
+  // Story 4.15 (AC2) — public_id prefix for the V45 artifact_drift_detected table (the detected
+  // DB/file artifact-drift rows written by the drift-detection sweep; one unresolved row per
+  // (category, artifact/operation)). The V45 migration MUST create a public_id CHECK with this
+  // exact
+  // constraint name or RegistryContractTest fails.
+  ARTIFACT_DRIFT_DETECTED("artifactDrift", "adr_", "ck_artifact_drift_detected_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

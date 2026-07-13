@@ -100,4 +100,40 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
       @Param("workflowRunPublicId") String workflowRunPublicId,
       @Param("artifactType") String artifactType,
       @Param("lineageMemberPublicId") String lineageMemberPublicId);
+
+  /**
+   * Story 4.15 (AC1): bounded, KEYSET-PAGED oldest-first scan of {@code available} artifacts older
+   * than {@code now() - minAgeMinutes}, for the artifact-drift-detection sweep. DB-side staleness
+   * (both sides on the database clock — no JVM-derived cutoff) mirrors {@code
+   * ArtifactOperationRepository.findPendingOlderThan}. Backed by the V45 partial index {@code
+   * idx_artifacts_status_created_at WHERE status='available'}; {@code SELECT a.*} hydrates the full
+   * entity so the caller can map it via {@code ArtifactEntityMapper}.
+   *
+   * <p><strong>Keyset cursor (story 4.15 review D1).</strong> The sweep is detection-only — it
+   * never flips {@code status}, so a clean {@code available} artifact stays {@code available}
+   * forever. Without a cursor an {@code ORDER BY created_at LIMIT n} scan re-reads the same oldest
+   * {@code n} every tick and NEVER reaches drift on newer artifacts once more than {@code n} are
+   * eligible. {@code (afterCreatedAt, afterPublicId)} is the exclusive keyset cursor the caller
+   * advances each tick ({@code NULL} = start from the oldest); the {@code (created_at, public_id)}
+   * tuple ordering matches so successive ticks walk the whole eligible set. {@code public_id}
+   * (unique) is the stable tiebreak.
+   */
+  @Query(
+      value =
+          """
+          SELECT a.*
+            FROM artifacts a
+           WHERE a.status = 'available'
+             AND a.created_at < now() - (:minAgeMinutes * interval '1 minute')
+             AND (cast(:afterCreatedAt as timestamptz) is null
+                  OR (a.created_at, a.public_id) > (:afterCreatedAt, :afterPublicId))
+           ORDER BY a.created_at ASC, a.public_id ASC
+           LIMIT :batchLimit
+          """,
+      nativeQuery = true)
+  java.util.List<ArtifactEntity> findAvailableCreatedBefore(
+      @Param("minAgeMinutes") long minAgeMinutes,
+      @Param("batchLimit") int batchLimit,
+      @Param("afterCreatedAt") java.time.OffsetDateTime afterCreatedAt,
+      @Param("afterPublicId") String afterPublicId);
 }

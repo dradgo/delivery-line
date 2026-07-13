@@ -39,6 +39,16 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  artifact:
+    # Story 4.15 (AC1 / Trap) — mirror deliveryline.artifact.drift-detection.* (the test yaml
+    # SHADOWS, not merges with, main). Detection is DISABLED in the shared test profile so no
+    # @Scheduled trigger bean registers and no always-on sweep fires during unrelated
+    # @SpringBootTests; ArtifactDriftDetectionIT invokes detectDrift() directly (no scheduler wait).
+    drift-detection:
+      enabled: false
+      interval-ms: 900000
+      batch-limit: 100
+      min-age-minutes: 5
   complex-ticket-flow:
     # Story 3f-7 (AC5 / Trap) — mirror deliveryline.complex-ticket-flow.* so the validated
     # ComplexTicketFlowProperties binding does not shadow the default to a surprising value in the

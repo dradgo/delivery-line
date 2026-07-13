@@ -1,5 +1,7 @@
 package org.dradgo.application.artifact.spi;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.artifact.ArtifactChecksum;
@@ -87,4 +89,26 @@ public interface ArtifactRecordPort {
       String artifactId, FailureCategory failureCategory, String reason);
 
   ArtifactRecordSnapshot markLateOrStale(String artifactId);
+
+  /**
+   * Story 4.15 (AC1) — bounded, KEYSET-PAGED scan seam for the artifact-drift-detection sweep.
+   * Returns up to {@code batchLimit} {@code available}-status artifacts whose {@code created_at} is
+   * older than {@code now() - minAge} AND that sort strictly after the {@code (afterCreatedAt,
+   * afterPublicId)} cursor, ordered oldest-first by {@code (created_at, public_id)}. Pass {@code
+   * (null, null)} to start from the oldest.
+   *
+   * <p>The cursor exists because detection is status-neutral (story 4.15 review D1): a clean {@code
+   * available} artifact never leaves the {@code available} set, so an uncursored oldest-N scan
+   * would re-read the same oldest {@code batchLimit} rows every tick and never reach drift on newer
+   * artifacts. The caller advances the cursor to the last returned row each tick and resets it to
+   * {@code (null, null)} on a partial batch (tail reached) so the next cycle rescans from the
+   * oldest.
+   *
+   * <p>The staleness comparison runs DB-side (both sides on the database clock) like {@link
+   * ArtifactOperationPort#findPendingOlderThan(Duration)}, so JVM/DB clock skew never masks or
+   * hallucinates a candidate. Backed by the V45 partial index {@code
+   * idx_artifacts_status_created_at WHERE status='available'}.
+   */
+  List<ArtifactRecordSnapshot> findAvailableCreatedBefore(
+      Duration minAge, int batchLimit, OffsetDateTime afterCreatedAt, String afterPublicId);
 }

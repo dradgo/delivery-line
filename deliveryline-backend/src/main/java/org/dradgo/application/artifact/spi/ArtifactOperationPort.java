@@ -1,6 +1,7 @@
 package org.dradgo.application.artifact.spi;
 
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.application.artifact.ArtifactOperationSnapshot;
@@ -56,6 +57,19 @@ public interface ArtifactOperationPort {
    * sides on the same clock so the staleness window is honest.
    */
   List<ArtifactOperationSnapshot> findPendingOlderThan(Duration threshold);
+
+  /**
+   * Story 4.15 (review D2) — bounded, KEYSET-PAGED orphan finder for the drift-detection sweep,
+   * symmetric to {@link ArtifactRecordPort#findAvailableCreatedBefore}. Returns up to {@code
+   * batchLimit} pending operations older than {@code now - threshold} sorting strictly after the
+   * {@code (afterCreatedAt, afterPublicId)} cursor, ordered oldest-first by {@code (created_at,
+   * public_id)}. Pass {@code (null, null)} to start from the oldest. The uncursored {@link
+   * #findPendingOlderThan(Duration)} (used by the auto-repair reconciliation, which DOES resolve
+   * orphans) is left as-is; the detection sweep never resolves, so it needs the rotating cursor to
+   * eventually record every orphan once the count exceeds one batch.
+   */
+  List<ArtifactOperationSnapshot> findPendingOlderThan(
+      Duration threshold, int batchLimit, OffsetDateTime afterCreatedAt, String afterPublicId);
 
   ArtifactOperationSnapshot markFailedOrphan(String operationPublicId, String reason);
 

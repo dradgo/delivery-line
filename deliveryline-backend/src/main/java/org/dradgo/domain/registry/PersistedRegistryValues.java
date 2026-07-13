@@ -56,6 +56,13 @@ public final class PersistedRegistryValues {
     return ArtifactOperationStatus.fromValue(rawValue, "artifact_operations.status");
   }
 
+  // Story 4.15 (AC2/Reconciliation 7) — the artifact_drift_detected.drift_category persistence
+  // boundary. Parsed at the drift read adapter's row mapper; a non-nullable column, so an unknown
+  // or null DB value fails fast with UNKNOWN_REGISTRY_VALUE.
+  public static DriftCategory artifactDriftCategory(String rawValue) {
+    return DriftCategory.fromValue(rawValue, "artifact_drift_detected.drift_category");
+  }
+
   public static ArtifactOperationType artifactOperationType(String rawValue) {
     return ArtifactOperationType.fromValue(rawValue, "artifact_operations.operation_type");
   }

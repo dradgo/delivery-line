@@ -258,6 +258,17 @@
               "reconciliationDecision": {
                 "type": "string"
               },
+              "driftCategory": {
+                "type": "string"
+              },
+              "driftId": {
+                "type": "string",
+                "pattern": "^adr_"
+              },
+              "operationId": {
+                "type": "string",
+                "pattern": "^op_"
+              },
               "targetStep": {
                 "type": "string"
               },

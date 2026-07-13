@@ -36,6 +36,7 @@ public final class DomainRegistry {
       valuesOf(IntegrationFailureCategory.values());
   private static final Set<String> INTEGRATION_CONFLICT_CATEGORIES =
       valuesOf(IntegrationConflictCategory.values());
+  private static final Set<String> DRIFT_CATEGORIES = valuesOf(DriftCategory.values());
   private static final Set<String> RECONCILIATION_DECISIONS =
       valuesOf(ReconciliationDecision.values());
   private static final Set<String> SAFE_RERUN_STEPS = valuesOf(SafeRerunStep.values());
@@ -111,6 +112,10 @@ public final class DomainRegistry {
 
   public static Set<String> integrationConflictCategories() {
     return INTEGRATION_CONFLICT_CATEGORIES;
+  }
+
+  public static Set<String> driftCategories() {
+    return DRIFT_CATEGORIES;
   }
 
   public static Set<String> reconciliationDecisions() {

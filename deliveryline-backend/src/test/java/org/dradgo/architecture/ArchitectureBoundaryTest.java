@@ -267,4 +267,8 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule only_conflict_package_may_write_integration_conflicts =
       ArchitectureRuleCatalog.ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS;
+
+  @ArchTest
+  static final ArchRule only_reconciliation_package_may_write_artifact_drift =
+      ArchitectureRuleCatalog.ONLY_RECONCILIATION_PACKAGE_MAY_WRITE_ARTIFACT_DRIFT;
 }

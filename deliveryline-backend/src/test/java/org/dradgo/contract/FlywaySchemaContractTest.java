@@ -48,7 +48,8 @@ class FlywaySchemaContractTest {
           "spec_clarification_acknowledgements",
           "split_proposals",
           "split_proposal_feedback",
-          "integration_conflicts");
+          "integration_conflicts",
+          "artifact_drift_detected");
 
   // Story 3e-4 / V26: project_runner_kinds is a pure mapping/association table (composite PK
   // (project_id, step)) — NOT a core table: it deliberately carries no bigserial id / public_id /
@@ -83,7 +84,8 @@ class FlywaySchemaContractTest {
           Map.entry("spec_clarification_acknowledgements", "sca_"),
           Map.entry("split_proposals", "splprop_"),
           Map.entry("split_proposal_feedback", "splfb_"),
-          Map.entry("integration_conflicts", "icf_"));
+          Map.entry("integration_conflicts", "icf_"),
+          Map.entry("artifact_drift_detected", "adr_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -432,12 +434,15 @@ class FlywaySchemaContractTest {
                               + ".workflow_run_id must point to workflow_runs");
                   // Story 3f-4 / V29: split_proposals.workflow_run_id references
                   // workflow_runs.public_id (text) — the 3f-2/3f-3 convention for new Epic-3f/4
-                  // tables that store the opaque run public id — as does story 4.17 / V36's
-                  // integration_conflicts.workflow_run_id — whereas the older tables reference .id.
+                  // tables that store the opaque run public id — as do story 4.17 / V36's
+                  // integration_conflicts.workflow_run_id and story 4.15 / V45's
+                  // artifact_drift_detected.workflow_run_id — whereas the older tables reference
+                  // .id.
                   String childTable = (String) row.get("child_table");
                   String expectedParentColumn =
                       ("split_proposals".equals(childTable)
-                              || "integration_conflicts".equals(childTable))
+                              || "integration_conflicts".equals(childTable)
+                              || "artifact_drift_detected".equals(childTable))
                           ? "public_id"
                           : "id";
                   assertEquals(expectedParentColumn, row.get("parent_column"));
@@ -451,10 +456,10 @@ class FlywaySchemaContractTest {
                 })
             .count();
     assertEquals(
-        11,
+        12,
         workflowRunFks,
         () ->
-            "Expected 11 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews, split_proposals, integration_conflicts). Found "
+            "Expected 12 workflow_run_id FKs (events, artifacts, artifact_operations, approvals, clarifications, runner_executions, integration_links, recovery_actions, step_reviews, split_proposals, integration_conflicts, artifact_drift_detected). Found "
                 + workflowRunFks);
 
     // recovery_actions soft event references: SET NULL.
@@ -1508,6 +1513,248 @@ class FlywaySchemaContractTest {
     jdbcTemplate.update("delete from integration_conflicts where workflow_run_id = ?", run);
     jdbcTemplate.update("delete from integration_links where public_id = ?", link);
     jdbcTemplate.update("delete from workflow_runs where public_id = ?", run);
+  }
+
+  @Test
+  void artifactDriftDetectedSchemaCarriesExpectedColumnsChecksForeignKeysAndDedupIndex() {
+    // Story 4.15 / V45: the detected DB/file artifact-drift table. The id/public_id/created_at/
+    // archived_at retention shape + uq/ck public_id format (prefix adr_) are asserted by the
+    // CORE_TABLES tests above. Probe the story-specific columns, the drift_category CHECK, the
+    // exactly-one-target CHECK, the four FKs (workflow_runs / artifacts / artifact_operations /
+    // recovery_actions, all ON DELETE RESTRICT ON UPDATE CASCADE), the MANDATORY partial-unique
+    // dedup index, and the partial available-scan index on artifacts.
+    assertColumnType("artifact_drift_detected", "workflow_run_id", "text");
+    assertColumnNullable("artifact_drift_detected", "workflow_run_id", false);
+    assertColumnType("artifact_drift_detected", "artifact_id", "text");
+    assertColumnNullable("artifact_drift_detected", "artifact_id", true);
+    assertColumnType("artifact_drift_detected", "artifact_operation_id", "text");
+    assertColumnNullable("artifact_drift_detected", "artifact_operation_id", true);
+    assertColumnType("artifact_drift_detected", "drift_category", "text");
+    assertColumnNullable("artifact_drift_detected", "drift_category", false);
+    assertColumnType("artifact_drift_detected", "detected_at", "timestamp with time zone");
+    assertColumnNullable("artifact_drift_detected", "detected_at", false);
+    assertColumnType("artifact_drift_detected", "last_known_state", "jsonb");
+    assertColumnNullable("artifact_drift_detected", "last_known_state", false);
+    assertColumnType("artifact_drift_detected", "resolved_at", "timestamp with time zone");
+    assertColumnNullable("artifact_drift_detected", "resolved_at", true);
+    assertColumnType("artifact_drift_detected", "resolved_by_action_id", "text");
+    assertColumnNullable("artifact_drift_detected", "resolved_by_action_id", true);
+
+    // drift_category CHECK value-set (the three DriftCategory registry values — the
+    // registry-vs-CHECK
+    // equality is asserted separately by
+    // RegistryContractTest.driftCategoryStaysAlignedWithSqlCheck).
+    assertConstraintDefinitionContains(
+        "ck_artifact_drift_detected_drift_category", "orphan_operation");
+    assertConstraintDefinitionContains(
+        "ck_artifact_drift_detected_drift_category", "missing_payload");
+    assertConstraintDefinitionContains(
+        "ck_artifact_drift_detected_drift_category", "checksum_mismatch");
+
+    // Exactly-one-target CHECK.
+    assertConstraintDefinitionContains("ck_artifact_drift_detected_one_target", "artifact_id");
+    assertConstraintDefinitionContains(
+        "ck_artifact_drift_detected_one_target", "artifact_operation_id");
+
+    // FKs to the four parents' public_id, all ON DELETE RESTRICT ON UPDATE CASCADE.
+    assertConstraintDefinitionContains(
+        "fk_artifact_drift_detected_workflow_runs", "workflow_run_id");
+    assertConstraintDefinitionContains("fk_artifact_drift_detected_workflow_runs", "public_id");
+    assertConstraintDefinitionContains(
+        "fk_artifact_drift_detected_workflow_runs", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains("fk_artifact_drift_detected_artifacts", "artifact_id");
+    assertConstraintDefinitionContains(
+        "fk_artifact_drift_detected_artifact_operations", "artifact_operation_id");
+    assertConstraintDefinitionContains(
+        "fk_artifact_drift_detected_recovery_actions", "resolved_by_action_id");
+    assertConstraintDefinitionContains(
+        "fk_artifact_drift_detected_recovery_actions", "ON DELETE RESTRICT");
+
+    // Category + recency index and dependent-direction index.
+    assertIndexDefinitionContains(
+        "idx_artifact_drift_detected_category_detected_at", "drift_category");
+    assertIndexDefinitionContains("idx_artifact_drift_detected_workflow_run_id", "workflow_run_id");
+
+    // MANDATORY partial-unique dedup index over UNRESOLVED, non-archived rows.
+    List<Map<String, Object>> dedupIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'artifact_drift_detected'
+              and indexname = 'uq_artifact_drift_detected_active'
+            """);
+    assertEquals(
+        1,
+        dedupIndex.size(),
+        () -> "Missing V45 partial unique index uq_artifact_drift_detected_active");
+    String dedupDef = ((String) dedupIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(dedupDef.contains("unique"), () -> "must be UNIQUE: " + dedupDef);
+    assertTrue(
+        dedupDef.contains("drift_category")
+            && dedupDef.contains("artifact_id")
+            && dedupDef.contains("artifact_operation_id"),
+        () -> "must cover (drift_category, artifact_id, artifact_operation_id): " + dedupDef);
+    assertTrue(
+        dedupDef.contains("resolved_at is null") && dedupDef.contains("archived_at is null"),
+        () -> "must be partial on resolved_at is null and archived_at is null: " + dedupDef);
+
+    // The V45 partial available-scan index on artifacts (status='available' only).
+    List<Map<String, Object>> availIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'artifacts'
+              and indexname = 'idx_artifacts_status_created_at'
+            """);
+    assertEquals(
+        1, availIndex.size(), () -> "Missing V45 partial index idx_artifacts_status_created_at");
+    String availDef = ((String) availIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(
+        availDef.contains("where") && availDef.contains("'available'"),
+        () -> "idx_artifacts_status_created_at must be partial on status='available': " + availDef);
+
+    // Functional probe: seed a full artifact chain, then exercise dedup, one-target + category
+    // CHECKs, and FK rejection.
+    String n = uniqueRowSuffix();
+    String run = "run_adr_schema" + n;
+    jdbcTemplate.update(
+        "insert into workflow_runs (public_id, current_state) values (?, 'Executing')", run);
+    Long runId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_runs where public_id = ?", Long.class, run);
+    String evt = "evt_adr_schema" + n;
+    jdbcTemplate.update(
+        "insert into workflow_events (public_id, workflow_run_id, event_type, actor_identity,"
+            + " actor_type) values (?, ?, 'artifact.draftCreated', 'system', 'system')",
+        evt,
+        runId);
+    Long eventId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_events where public_id = ?", Long.class, evt);
+    String art = "art_adr_schema" + n;
+    jdbcTemplate.update(
+        "insert into artifacts (public_id, workflow_run_id, artifact_type, version, classification,"
+            + " storage_ref, status, linked_event_id) values (?, ?, 'spec', 1, 'shareable_redacted',"
+            + " 'artifacts/x/y/v1/spec.md', 'available', ?)",
+        art,
+        runId,
+        eventId);
+    Long artId =
+        jdbcTemplate.queryForObject(
+            "select id from artifacts where public_id = ?", Long.class, art);
+    String op = "op_adr_schema" + n;
+    jdbcTemplate.update(
+        "insert into artifact_operations (public_id, workflow_run_id, artifact_id, artifact_type,"
+            + " linked_event_id, operation_type, status, idempotency_key)"
+            + " values (?, ?, ?, 'spec', ?, 'create', 'pending', ?)",
+        op,
+        runId,
+        artId,
+        eventId,
+        "idem_adr" + n);
+    try {
+      // Orphan drift (artifact_operation_id target, artifact_id NULL).
+      jdbcTemplate.update(
+          "insert into artifact_drift_detected"
+              + " (public_id, workflow_run_id, artifact_operation_id, drift_category)"
+              + " values (?, ?, ?, 'orphan_operation')",
+          "adr_orphan" + n,
+          run,
+          op);
+      // A second UNRESOLVED orphan drift of the same (category, NULL artifact, op) is rejected by
+      // the
+      // NULLS-NOT-DISTINCT dedup index (proves NULL targets still collapse duplicates).
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into artifact_drift_detected"
+                      + " (public_id, workflow_run_id, artifact_operation_id, drift_category)"
+                      + " values (?, ?, ?, 'orphan_operation')",
+                  "adr_orphandup" + n,
+                  run,
+                  op),
+          "Expected uq_artifact_drift_detected_active to reject a second unresolved orphan drift");
+      // A missing-payload drift (artifact_id target, artifact_operation_id NULL) is a different
+      // slice.
+      jdbcTemplate.update(
+          "insert into artifact_drift_detected"
+              + " (public_id, workflow_run_id, artifact_id, drift_category)"
+              + " values (?, ?, ?, 'missing_payload')",
+          "adr_missing" + n,
+          run,
+          art);
+      // A RESOLVED orphan drift of the same (category, op) as the first is allowed (dedup is over
+      // unresolved rows only) — the repair path (4.16) can resolve one and the sweep re-detect
+      // later.
+      jdbcTemplate.update(
+          "insert into artifact_drift_detected"
+              + " (public_id, workflow_run_id, artifact_operation_id, drift_category, resolved_at)"
+              + " values (?, ?, ?, 'orphan_operation', now())",
+          "adr_resolved" + n,
+          run,
+          op);
+      // one-target CHECK rejects both-null.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into artifact_drift_detected"
+                      + " (public_id, workflow_run_id, drift_category)"
+                      + " values (?, ?, 'missing_payload')",
+                  "adr_notarget" + n,
+                  run),
+          "Expected ck_artifact_drift_detected_one_target to reject a both-null-target row");
+      // one-target CHECK rejects both-set.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into artifact_drift_detected"
+                      + " (public_id, workflow_run_id, artifact_id, artifact_operation_id, drift_category)"
+                      + " values (?, ?, ?, ?, 'missing_payload')",
+                  "adr_bothtarget" + n,
+                  run,
+                  art,
+                  op),
+          "Expected ck_artifact_drift_detected_one_target to reject a both-set-target row");
+      // drift_category CHECK rejects an out-of-set value.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into artifact_drift_detected"
+                      + " (public_id, workflow_run_id, artifact_id, drift_category)"
+                      + " values (?, ?, ?, 'bogus_category')",
+                  "adr_badcat" + n,
+                  run,
+                  art),
+          "Expected ck_artifact_drift_detected_drift_category to reject an out-of-set category");
+      // FK rejects a dangling artifact_id.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into artifact_drift_detected"
+                      + " (public_id, workflow_run_id, artifact_id, drift_category)"
+                      + " values (?, ?, 'art_missing_adr', 'missing_payload')",
+                  "adr_danglingart" + n,
+                  run),
+          "Expected fk_artifact_drift_detected_artifacts to reject a dangling artifact id");
+    } finally {
+      // Clean up child rows BEFORE the parents — the ON DELETE RESTRICT FKs would otherwise leak
+      // the
+      // edge into every later contract test's cleanups (the RESTRICT-FK probe-row leak lesson).
+      jdbcTemplate.update("delete from artifact_drift_detected where workflow_run_id = ?", run);
+      jdbcTemplate.update("delete from artifact_operations where public_id = ?", op);
+      jdbcTemplate.update("delete from artifacts where public_id = ?", art);
+      jdbcTemplate.update("delete from workflow_events where public_id = ?", evt);
+      jdbcTemplate.update("delete from workflow_runs where public_id = ?", run);
+    }
   }
 
   @Test

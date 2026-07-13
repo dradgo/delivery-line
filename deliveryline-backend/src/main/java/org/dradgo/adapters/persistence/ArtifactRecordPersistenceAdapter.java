@@ -2,6 +2,7 @@ package org.dradgo.adapters.persistence;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -335,6 +336,36 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
         failureCategory.value(),
         reason);
     return persisted;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<ArtifactRecordSnapshot> findAvailableCreatedBefore(
+      Duration minAge,
+      int batchLimit,
+      java.time.OffsetDateTime afterCreatedAt,
+      String afterPublicId) {
+    if (batchLimit <= 0) {
+      throw new IllegalArgumentException("batchLimit must be positive but was: " + batchLimit);
+    }
+    long minAgeMinutes = minAge == null ? 0L : Math.max(0L, minAge.toMinutes());
+    // Both cursor components must be present to page; a half-set cursor starts from the oldest.
+    java.time.OffsetDateTime cursorCreatedAt = afterPublicId == null ? null : afterCreatedAt;
+    String cursorPublicId = afterCreatedAt == null ? null : afterPublicId;
+    List<ArtifactEntity> rows =
+        artifactRepository.findAvailableCreatedBefore(
+            minAgeMinutes, batchLimit, cursorCreatedAt, cursorPublicId);
+    List<ArtifactRecordSnapshot> snapshots = new ArrayList<>(rows.size());
+    for (ArtifactEntity row : rows) {
+      snapshots.add(artifactEntityMapper.toSnapshot(row));
+    }
+    log.debug(
+        "findAvailableCreatedBefore minAgeMinutes={} batchLimit={} afterPublicId={} returned={}",
+        minAgeMinutes,
+        batchLimit,
+        cursorPublicId,
+        snapshots.size());
+    return List.copyOf(snapshots);
   }
 
   @Override

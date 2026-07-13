@@ -83,6 +83,24 @@ deliveryline:
     # request body supplies a non-blank `reviewerRole`, it is used verbatim; otherwise this value
     # is stamped on the persisted approvals row and the approval.approved audit event.
     default-reviewer-role: product_reviewer
+  artifact:
+    # Story 4.15 (NFR2/FR47): the artifact drift-detection sweep scans for orphan operations (stale
+    # pending artifact_operations), missing payloads (available artifacts whose storage_ref the
+    # LocalArtifactStore can no longer resolve), and checksum mismatches (payload exists but its
+    # recomputed checksum <> checksum_value), recording each to artifact_drift_detected + emitting an
+    # artifact.driftDetected event. DETECTION ONLY — it never mutates status or resolves (repair is
+    # story 4.16). The @Scheduled trigger (ArtifactDriftDetectionConfiguration) is
+    # @ConditionalOnProperty-gated on `enabled`, so a disabled sweep registers no scheduled bean.
+    # `interval-ms` is the fixed-delay between ticks (<=0 normalized to 900000 = 15 min). `batch-limit`
+    # caps available artifacts scanned per tick — the sweep WARNs when a tick fills the batch (no
+    # silent truncation), remainder heals next tick (<=0 normalized to 100). `min-age-minutes` is the
+    # minimum artifact age before the payload/checksum scan considers it, so a just-written payload
+    # mid-flush is never flagged (<0 normalized to 5).
+    drift-detection:
+      enabled: true
+      interval-ms: 900000
+      batch-limit: 100
+      min-age-minutes: 5
   complex-ticket-flow:
     # Story 3f-7 (AC5): recursive-split depth cap. A run whose split depth (distance from the
     # lineage root, walking parentRunId; root = depth 0) is already >= this value is refused with

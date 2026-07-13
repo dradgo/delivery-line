@@ -170,7 +170,16 @@ public enum WorkflowEventType implements RegistryValue {
   // appends a NEW event — prior classifications live in this event chain, never on the row (AC9).
   // NO Flyway migration for the event itself — event_type is an un-CHECKed text column and the
   // registry set is fixture-asserted, not DB-derived.
-  RECOVERY_FAILURE_CLASSIFIED("recovery.failureClassified");
+  RECOVERY_FAILURE_CLASSIFIED("recovery.failureClassified"),
+  // Story 4.15 (AC4) — appended (once per first-inserted (category, artifact/operation) drift) by
+  // the ArtifactDriftDetectionService sweep when it detects an orphan operation / missing payload /
+  // checksum mismatch. DETECTION-ONLY, NON-lifecycle event like artifact.available / integration.
+  // conflictDetected (priorState == resultingState == null, actorType = SYSTEM); the insert-or-skip
+  // dedup prevents per-tick spam. Detail keys reuse artifactId / correlationId / reason /
+  // failureCategory + the new allow-listed driftCategory. NOT in any scenario stream fixture
+  // (non-lifecycle, like console.opened). NO Flyway migration for the event itself — event_type is
+  // an un-CHECKed text column and the registry set is fixture-asserted, not DB-derived.
+  ARTIFACT_DRIFT_DETECTED("artifact.driftDetected");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 
