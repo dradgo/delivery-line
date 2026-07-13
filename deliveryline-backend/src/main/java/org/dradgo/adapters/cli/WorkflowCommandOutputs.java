@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
+import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.workflow.WorkflowInspectionService.FailureDiagnostics;
 import org.dradgo.application.workflow.WorkflowInspectionService.IntegrationSyncStatusView;
@@ -57,6 +58,7 @@ public class WorkflowCommandOutputs {
   static final int AUDIT_QUERY_SCHEMA_VERSION = 1;
   static final int OPERATOR_DIAGNOSE_SCHEMA_VERSION = 1;
   static final int OPERATOR_RESUME_SCHEMA_VERSION = 1;
+  static final int OPERATOR_RECONCILE_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -581,6 +583,27 @@ public class WorkflowCommandOutputs {
     payload.put("recoveryActionId", result.recoveryActionPublicId());
     payload.put("resumedEventId", result.resumedEventPublicId());
     payload.put("runnerExecutionId", result.newRunnerExecutionPublicId());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.11 — stable {@code operator-reconcile.v1} JSON document for {@code deliveryline
+   * operator reconcile --format json}. {@code workflowRunId} is passed explicitly because {@link
+   * ReconcileRecoveryResult} carries none. {@code currentState} is non-null (both reconcile paths
+   * resolve a concrete state — Reconciliation 7); {@code resolvedConflictId} is the {@code icf_...}
+   * id that was closed.
+   */
+  public String renderOperatorReconcileJson(String workflowRunId, ReconcileRecoveryResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_RECONCILE_SCHEMA_VERSION);
+    payload.put("workflowRunId", workflowRunId);
+    payload.put(
+        "currentState", result.resultingState() == null ? null : result.resultingState().value());
+    payload.put("recoveryActionId", result.recoveryActionPublicId());
+    payload.put("reconciledEventId", result.reconciledEventPublicId());
+    payload.put("resolvedConflictId", result.resolvedConflictId());
     payload.put("correlationId", result.correlationId());
     payload.put("replayed", result.replayed());
     return writeJson(payload);

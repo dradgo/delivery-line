@@ -636,6 +636,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconcile an unresolved integration conflict (story 4.11)
+         * @description Operator (workflow_owner) recovery action that resolves an unresolved integration conflict on a non-terminal run per an explicit ReconciliationDecision (NFR19 — no silent overwrite): records a recovery_actions row + a recovery.reconciled audit event, closes the integration_conflicts row, applies the decision's external-sync side-effects, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Reconciling a terminal run surfaces RECONCILE_NOT_APPLICABLE (409).
+         */
+        post: operations["reconcile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/regenerate-spec": {
         parameters: {
             query?: never;
@@ -1836,6 +1856,36 @@ export interface components {
             reason: string;
             /** @example safe */
             safetyLevel: string;
+        };
+        ReconcileResponse: {
+            correlationId?: string;
+            currentState: string;
+            reconciledEventId?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            resolvedConflictId: string;
+            workflowRunId: string;
+        };
+        /** @description Reconcile an unresolved integration conflict on a workflow run (reconcile). */
+        ReconcileWorkflowRequest: {
+            /**
+             * @description Public id of the unresolved integration conflict to reconcile.
+             * @example icf_0190000000007000800000000000abcd
+             */
+            conflictId: string;
+            /** @description Required operator note explaining the reconciliation decision. */
+            reasonText: string;
+            /**
+             * @description Reconciliation decision governing how the internal/external state divergence is resolved. Validated by the service (no @NotBlank) so the typed MISSING_/INVALID_RECONCILIATION_DECISION codes are reachable.
+             * @example accept_external_state
+             * @enum {string}
+             */
+            resolutionDecision: "accept_external_state" | "accept_internal_state" | "mark_completed_externally" | "mark_failed_externally";
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
         };
         RejectImplementationRequest: {
             artifactId: string;
@@ -4288,6 +4338,62 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    reconcile: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Reconcile recorded; the integration conflict is resolved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_RECONCILIATION_DECISION, INVALID_RECONCILIATION_DECISION. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND, CONFLICT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RECONCILE_NOT_APPLICABLE, CONFLICT_ALREADY_RESOLVED, or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

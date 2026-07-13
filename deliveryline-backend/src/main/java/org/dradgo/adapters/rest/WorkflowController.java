@@ -17,6 +17,7 @@ import java.util.Map;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.recovery.TakeoverResult;
@@ -2155,6 +2156,112 @@ public class WorkflowController {
         response.currentState(),
         response.recoveryActionId(),
         response.runnerExecutionId(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.11 (AC1, AC3–AC5, AC7, AC8) — reconcile an unresolved integration conflict on a
+   * non-terminal run. Structural twin of {@link #resume}: same header-derived actor + required
+   * {@code Idempotency-Key} convention, same {@code workflow_owner} boundary role gate, mapped onto
+   * the RICH {@link RecoveryService#reconcile} (NOT the transition-only {@code
+   * WorkflowCommandService.reconcileWorkflow} — R2). The rich path single-sources the per-run
+   * advisory lock, the last-conflict terminalization decision, the {@code recovery_actions} row +
+   * {@code recovery.reconciled} event, the {@code integration_conflicts} {@code resolveConflict}
+   * side-effect, and the accept-external/accept-internal external-sync side-effects. Wiring the
+   * thin service would silently skip all of that (invisible to a happy-path test). Differs from
+   * resume in five ways: three domain body fields, a six-arg service call, a required {@code
+   * reasonText}, a non-null {@code currentState}, and the reconcile-specific error set.
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/reconcile",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "reconcile",
+      summary = "Reconcile an unresolved integration conflict (story 4.11)",
+      description =
+          "Operator (workflow_owner) recovery action that resolves an unresolved integration"
+              + " conflict on a non-terminal run per an explicit ReconciliationDecision (NFR19 — no"
+              + " silent overwrite): records a recovery_actions row + a recovery.reconciled audit"
+              + " event, closes the integration_conflicts row, applies the decision's external-sync"
+              + " side-effects, and stamps the resolved actor onto the audit trail. Idempotent under"
+              + " Idempotency-Key. Reconciling a terminal run surfaces RECONCILE_NOT_APPLICABLE"
+              + " (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Reconcile recorded; the integration conflict is resolved."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_RECONCILIATION_DECISION,"
+                + " INVALID_RECONCILIATION_DECISION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND, CONFLICT_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "RECONCILE_NOT_APPLICABLE, CONFLICT_ALREADY_RESOLVED, or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ReconcileResponse reconcile(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ReconcileWorkflowRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.11 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.reconcile hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume). Request-shape
+    // validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("reconcile", request.role());
+    log.info(
+        "REST reconcile received workflowRunId={} actorIdentity={} conflictId={} decision={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        MdcKeys.sanitizeForLog(request.conflictId()),
+        // resolutionDecision is NOT yet validated here — this log runs before the service's
+        // parseDecision, and the field is a plain @Size(max=64) String (the enum constraint is
+        // OpenAPI-doc-only). Sanitize it like the other identifiers to prevent CRLF/log injection.
+        // The free-form reasonText prose is never logged (length only).
+        MdcKeys.sanitizeForLog(request.resolutionDecision()),
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    ReconcileRecoveryResult result =
+        recoveryService.reconcile(
+            workflowRunId,
+            request.conflictId(),
+            request.resolutionDecision(),
+            idempotencyKey,
+            actor,
+            request.reasonText());
+    ReconcileResponse response = ReconcileResponse.from(workflowRunId, result);
+    log.info(
+        "REST reconcile success workflowRunId={} currentState={} recoveryActionId={} resolvedConflictId={} replayed={}",
+        workflowRunId,
+        response.currentState(),
+        response.recoveryActionId(),
+        response.resolvedConflictId(),
         response.replayed());
     return response;
   }

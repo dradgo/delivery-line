@@ -1802,6 +1802,84 @@
         ],
         "type" : "object"
       },
+      "ReconcileResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "reconciledEventId" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "resolvedConflictId" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "currentState",
+          "recoveryActionId",
+          "replayed",
+          "resolvedConflictId",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
+      "ReconcileWorkflowRequest" : {
+        "description" : "Reconcile an unresolved integration conflict on a workflow run (reconcile).",
+        "properties" : {
+          "conflictId" : {
+            "description" : "Public id of the unresolved integration conflict to reconcile.",
+            "example" : "icf_0190000000007000800000000000abcd",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reasonText" : {
+            "description" : "Required operator note explaining the reconciliation decision.",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "resolutionDecision" : {
+            "description" : "Reconciliation decision governing how the internal/external state divergence is resolved. Validated by the service (no @NotBlank) so the typed MISSING_/INVALID_RECONCILIATION_DECISION codes are reachable.",
+            "enum" : [
+              "accept_external_state",
+              "accept_internal_state",
+              "mark_completed_externally",
+              "mark_failed_externally"
+            ],
+            "example" : "accept_external_state",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "conflictId",
+          "reasonText",
+          "resolutionDecision",
+          "role"
+        ],
+        "type" : "object"
+      },
       "RejectImplementationRequest" : {
         "properties" : {
           "artifactId" : {
@@ -6066,6 +6144,94 @@
           }
         },
         "summary" : "Latest per-credential provider usage/limit status for a run",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/reconcile" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that resolves an unresolved integration conflict on a non-terminal run per an explicit ReconciliationDecision (NFR19 — no silent overwrite): records a recovery_actions row + a recovery.reconciled audit event, closes the integration_conflicts row, applies the decision's external-sync side-effects, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Reconciling a terminal run surfaces RECONCILE_NOT_APPLICABLE (409).",
+        "operationId" : "reconcile",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ReconcileWorkflowRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ReconcileResponse"
+                }
+              }
+            },
+            "description" : "Reconcile recorded; the integration conflict is resolved."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_RECONCILIATION_DECISION, INVALID_RECONCILIATION_DECISION."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND, CONFLICT_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RECONCILE_NOT_APPLICABLE, CONFLICT_ALREADY_RESOLVED, or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Reconcile an unresolved integration conflict (story 4.11)",
         "tags" : [
           "Workflows"
         ]

@@ -11,6 +11,7 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
@@ -58,6 +59,7 @@ public class OperatorCommands {
   private static final String COMMAND_NAME = "operator status";
   private static final String COMMAND_NAME_DIAGNOSE = "operator diagnose";
   private static final String COMMAND_NAME_RESUME = "operator resume";
+  private static final String COMMAND_NAME_RECONCILE = "operator reconcile";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -375,6 +377,168 @@ public class OperatorCommands {
         "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
         correlationId,
         COMMAND_NAME_RESUME,
+        MdcKeys.sanitizeForLog(runId),
+        outcome,
+        elapsedMs);
+  }
+
+  // Story 4.11 (AC6) — the CLI face of POST /{runId}/reconcile. Resolves an unresolved integration
+  // conflict on a non-terminal run through the RICH RecoveryService.reconcile (per-run advisory
+  // lock + recovery_actions row + recovery.reconciled event + integration_conflicts resolveConflict
+  // + external-sync side-effects), NOT the transition-only
+  // WorkflowCommandService.reconcileWorkflow.
+  // Mirrors `operator resume` (positional runId, optional --actor-identity → local-operator,
+  // ActorType.HUMAN hard-coded, --format text|json). Divergence from resume: --conflict +
+  // --decision
+  // are required domain inputs; --decision is passed as a raw String so the service surfaces the
+  // typed MISSING_/INVALID_RECONCILIATION_DECISION codes (Reconciliation 6). --reason is passed
+  // straight through (required=false) so the service's replay pre-check — which tolerates an
+  // omitted
+  // reason on an idempotent retry (RecoveryService.java:1568-1582) — stays reachable, matching the
+  // REST DTO (code review 2026-07-13). A blank/omitted reason on a FRESH reconcile still surfaces
+  // INVALID_COMMAND_PAYLOAD from the service.
+  @Command(
+      name = "reconcile",
+      description =
+          "Reconcile an unresolved integration conflict on a non-terminal governed run per an"
+              + " explicit --decision (story 4.11 — CLI/REST equivalence). Records a recovery_actions"
+              + " row + recovery.reconciled audit event, closes the integration_conflicts row,"
+              + " applies the decision's external-sync side-effects, and stamps the resolved actor"
+              + " onto the audit trail. Idempotent under --idempotency-key. A terminal run ⇒"
+              + " RECONCILE_NOT_APPLICABLE. --format=json emits a stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String reconcile(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "conflict",
+              description = "Public id of the unresolved integration conflict (icf_...)",
+              required = true)
+          String conflictId,
+      @Option(
+              longName = "decision",
+              description =
+                  "Reconciliation decision: accept_external_state | accept_internal_state |"
+                      + " mark_completed_externally | mark_failed_externally",
+              required = true)
+          String decision,
+      @Option(
+              longName = "reason",
+              description =
+                  "Operator note explaining the reconciliation decision (required on a fresh"
+                      + " reconcile; validated by the service, not the CLI, so an idempotent replay"
+                      + " that omits it still replays)",
+              required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Parse --format INSIDE the try (before the mutation) so an unsupported value raises
+      // INVALID_COMMAND_PAYLOAD without performing the reconcile, and still emits the completion
+      // log
+      // + runs the finally/endScope (no leaked MDC correlation-id scope).
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      // conflict/decision/reason pass straight through: the service is the single source of
+      // decision
+      // + reason validation (typed MISSING_/INVALID_RECONCILIATION_DECISION +
+      // INVALID_COMMAND_PAYLOAD
+      // on a blank reason), so the CLI stays symmetric with the REST surface (Reconciliation 6/6b).
+      ReconcileRecoveryResult result =
+          recoveryService.reconcile(
+              runId, conflictId, decision, resolvedIdempotencyKey, actor, reason);
+      String rendered =
+          json
+              ? outputs.renderOperatorReconcileJson(runId, result)
+              : renderReconcileText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitReconcile(resolvedCorrelation, runId, start, OUTCOME_SUCCESS);
+      // Audit the decision value + reason length only; the free-form operator prose is never logged
+      // verbatim. `decision` is sanitized like the other identifiers: on a fresh reconcile the
+      // service validated it to a governed enum, but on an idempotency replay parseDecision is
+      // skipped (RecoveryService.java:1568-1582), so the raw client string can still reach here.
+      log.info(
+          "operator reconcile decision applied correlationId={} workflowRunId={} conflictId={} decision={} reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(runId),
+          MdcKeys.sanitizeForLog(conflictId),
+          MdcKeys.sanitizeForLog(decision),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitReconcile(resolvedCorrelation, runId, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitReconcile(resolvedCorrelation, runId, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator reconcile` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorReconcileJson). The verbose footer (correlation-id +
+  // generated-idempotency-key) is appended to TEXT output only — gluing it onto JSON would break
+  // the
+  // operator-reconcile.v1 schema for machine consumers.
+  private static String renderReconcileText(
+      ReconcileRecoveryResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionPublicId())
+            .append(" reconcile submitted (state: ")
+            .append(result.resultingState() == null ? "unknown" : result.resultingState().value())
+            .append(')');
+    if (result.resolvedConflictId() != null) {
+      output.append(" [conflict: ").append(result.resolvedConflictId()).append(']');
+    }
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitReconcile(
+      String correlationId, String runId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_RECONCILE,
         MdcKeys.sanitizeForLog(runId),
         outcome,
         elapsedMs);

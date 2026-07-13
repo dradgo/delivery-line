@@ -68,6 +68,11 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator resume"),
               () -> "registered commands: " + commandNames);
+          // Story 4.11 (AC6) — the mutating reconcile command registers under the same group
+          // prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator reconcile"),
+              () -> "registered commands: " + commandNames);
         });
   }
 
