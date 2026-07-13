@@ -1,6 +1,6 @@
 # Story 4.14: REST Endpoint — `classify-failure` + OpenAPI
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -118,42 +118,42 @@ so that a Workflow Owner can apply a governed `FailureTaxonomyValue` to a failed
 
 ## Tasks / Subtasks
 
-- [ ] **Task 0 — Verify 4.9 + 4.10's fan-out are present before writing anything (Reconciliation 1 + 11)**
-  - [ ] Confirm `WorkflowController` already injects `RecoveryService` (`:109`) and `OperatorCommands` already has the 4-mutation-dep ctor + the `resume`/`reconcile` commands. If NOT, 4.10 has not landed on this branch — STOP and rebase onto 4.10 (or apply its fan-out first); 4.14 assumes it. (4.12/`rerun` and 4.13/`pause` are NOT prerequisites; 4.11/`reconcile` IS the primary template and is present in the working tree.)
-  - [ ] Confirm `RecoveryService.classifyFailure` exists (`:1708`), all four taxonomy codes are mapped (`ProblemDetailsCatalog.java:665,671,677,683`), `FailureTaxonomyValue` has the six values (`:24-30`), `AllowedAction.CLASSIFY_FAILURE` exists, Flyway V40 shipped. Create no migration, no error code, no event type, no registry value.
+- [x] **Task 0 — Verify 4.9 + 4.10's fan-out are present before writing anything (Reconciliation 1 + 11)**
+  - [x] Confirm `WorkflowController` already injects `RecoveryService` (`:111`) and `OperatorCommands` already has the 4-mutation-dep ctor + the `resume`/`reconcile` commands. **VERIFIED** — `RecoveryService recoveryService` at `WorkflowController.java:111`; `OperatorCommands` widened ctor present. (4.11/`reconcile` present AND 4.12/`rerun` + 4.13/`pause` now committed too — used as additional templates.)
+  - [x] Confirm `RecoveryService.classifyFailure` exists (`:1708`), all four taxonomy codes are mapped (`ProblemDetailsCatalog.java:665,671,677,683`), `FailureTaxonomyValue` has the six values (`:24-30`), `AllowedAction.CLASSIFY_FAILURE` exists, Flyway V40 shipped. **VERIFIED against live source** — signature is 5 positional args (`RecoveryService.java:1708-1713`); replay pre-check at `:1736` before parse at `:1751`; blanks reason to null at `:1754-1755`. NO migration/error-code/event/registry added.
 
-- [ ] **Task 1 — REST DTOs (AC2, AC8)**
-  - [ ] `adapters/rest/ClassifyFailureRequest.java` — `record ClassifyFailureRequest(@NotBlank @Size(max=128) String role, @Size(max=64) String taxonomyValue, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on each; `taxonomyValue` gets `@Schema(requiredMode=REQUIRED, allowableValues={"specification_gap","context_gap","agent_execution_failure","review_rejection","integration_or_merge_failure","tooling_or_infrastructure_failure"})` and NO `@NotBlank` (Reconciliation 4); `reasonText` gets `@Schema(requiredMode=NOT_REQUIRED, nullable=true)` and NO `@NotBlank` (Reconciliation 5). Model on `ReconcileWorkflowRequest.java`. Javadoc the two divergences: `taxonomyValue` = reconcile's `resolutionDecision` treatment; `reasonText` = resume's genuinely-optional treatment (NOT reconcile's required).
-  - [ ] `adapters/rest/ClassifyFailureResponse.java` — 7-component record per AC8 with `@Schema(requiredMode=…)` on each; `taxonomyValue` REQUIRED; `priorTaxonomyValue` NOT_REQUIRED (nullable String, mapped directly — no unwrap); `recoveryActionId` REQUIRED; `classifiedEventId` NOT_REQUIRED; `correlationId` NOT_REQUIRED; `replayed` REQUIRED; `static ClassifyFailureResponse from(String workflowRunId, ClassifyFailureResult result)`. Javadoc the NO-state-field trait (Reconciliation 6) and the divergence from `ReconcileResponse`/`ResumeResponse`/`PauseResponse` (all of which carry a state field).
+- [x] **Task 1 — REST DTOs (AC2, AC8)**
+  - [x] `adapters/rest/ClassifyFailureRequest.java` — `record ClassifyFailureRequest(@NotBlank @Size(max=128) String role, @Size(max=64) String taxonomyValue, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `taxonomyValue` = `@Schema(requiredMode=REQUIRED, allowableValues={6 values})` NO `@NotBlank` (Reconciliation 4); `reasonText` = `@Schema(requiredMode=NOT_REQUIRED, nullable=true)` NO `@NotBlank` (Reconciliation 5). Both divergences javadoc'd.
+  - [x] `adapters/rest/ClassifyFailureResponse.java` — 7-component record; `taxonomyValue` REQUIRED; `priorTaxonomyValue` NOT_REQUIRED (nullable String, mapped directly); `recoveryActionId` REQUIRED; `classifiedEventId`/`correlationId` NOT_REQUIRED; `replayed` REQUIRED; `static from(String workflowRunId, ClassifyFailureResult result)`. NO-state-field trait javadoc'd (Reconciliation 6).
 
-- [ ] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
-  - [ ] Add `public ClassifyFailureResponse classifyFailure(...)` after `reconcile` (`:2267`): `@PostMapping(value="/{workflowRunId}/classify-failure", consumes=…, produces=…)`, `@Operation(operationId="classifyFailure", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`; the 409 description names `CLASSIFY_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT`; the 400 names `MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_TAXONOMY_VALUE, INVALID_TAXONOMY_VALUE, DEPRECATED_TAXONOMY_VALUE`; the 404 names `RUN_NOT_FOUND`). NO ctor change (`RecoveryService` already injected; add only a `ClassifyFailureResult` import).
-  - [ ] Guard prologue (Reconciliation 3) → `requireWorkflowOwnerRole("classify-failure", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.classifyFailure(workflowRunId, request.taxonomyValue(), idempotencyKey, actor, request.reasonText())` (FIVE args, `taxonomyValue` 2nd — Reconciliation 7) → `ClassifyFailureResponse.from(workflowRunId, result)`.
+- [x] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
+  - [x] Added `public ClassifyFailureResponse classifyFailure(...)` (placed after `pause` to keep the recovery cluster contiguous — reconcile/rerun/pause all landed): `@PostMapping /{workflowRunId}/classify-failure`, `@Operation(operationId="classifyFailure")`, `@ApiResponses` 400/404/409 → `ProblemDetailsResponse` with the exact code lists. NO ctor change; added only the `ClassifyFailureResult` import.
+  - [x] Guard prologue → `requireWorkflowOwnerRole("classify-failure", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.classifyFailure(workflowRunId, request.taxonomyValue(), idempotencyKey, actor, request.reasonText())` (FIVE args, `taxonomyValue` 2nd) → `ClassifyFailureResponse.from(workflowRunId, result)`.
 
-- [ ] **Task 3 — CLI `deliveryline operator classify-failure` (AC6)**
-  - [ ] Add `@Command(name = "classify-failure", exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)` to `OperatorCommands` (NO ctor change — the mutation deps are already present from 4.10). Model on the in-file `reconcile` command (`:400-501`). Positional `@Argument(index=0) String runId`; `--taxonomy` as `required = false` (service-validated — Reconciliation 4 / OQ-4); `--reason` as `required = false` (genuinely optional); optional `--idempotency-key`, `--actor-identity`, `--correlation-id`, `--format`, `--verbose`. Reuse `pushCorrelation`/`CorrelationScope`, `resolveActorIdentity`, `resolveIdempotencyKey`, `idempotencyKeyValidator.requireValid`, `ActorType.HUMAN`, and the `finally { MdcKeys.endScope(...) }`.
-  - [ ] Call `recoveryService.classifyFailure(runId, taxonomy, resolvedIdempotencyKey, actor, reason)` (5 positional args, `taxonomy` 2nd — Reconciliation 7). Render `rcv_… classify submitted (taxonomy: <taxonomyValue>)` + `[prior: <priorTaxonomyValue>]` when non-null + `[replayed]` when replayed; `--verbose` text-only footer appends `[correlation-id: …]` + `[generated-idempotency-key: …]` when the flag was omitted (never JSON — the `reconcile` precedent, `:526-531`).
-  - [ ] Add `WorkflowCommandOutputs.renderOperatorClassifyFailureJson(runId, result)` (`operator-classify-failure.v1`, `OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION = 1`) — mirror `renderOperatorReconcileJson` (`:598`), including `taxonomyValue` + `priorTaxonomyValue` (null-tolerant) + `replayed`. If `WorkflowCliJsonSchemaContractTest` enumerates operator commands, add the new command (the 4.10 learning: the CLI schema test is enumerated, not auto-discovered).
-  - [ ] Add a `COMMAND_NAME_CLASSIFY_FAILURE = "operator classify-failure"` constant next to `COMMAND_NAME_RESUME`/`COMMAND_NAME_RECONCILE`; emit the completion `INFO` log with it (mirror `emitReconcile` → add `emitClassifyFailure`).
-  - [ ] Pin `deliveryline operator classify-failure` in `OperatorCliCommandRegistrationIT` (mirror the `operator resume`/`operator reconcile` assertions).
+- [x] **Task 3 — CLI `deliveryline operator classify-failure` (AC6)**
+  - [x] Added `@Command(name = "classify-failure", ...)` to `OperatorCommands` (NO ctor change). Positional `@Argument(index=0) String runId`; `--taxonomy` `required=false` (service-validated); `--reason` `required=false` (genuinely optional); optional `--idempotency-key`/`--actor-identity`/`--correlation-id`/`--format`/`--verbose`. Reuses `pushCorrelation`/`resolveActorIdentity`/`resolveIdempotencyKey`/`ActorType.HUMAN`/`finally endScope`.
+  - [x] Calls `recoveryService.classifyFailure(runId, taxonomy, resolvedIdempotencyKey, actor, reason)` (5 args, `taxonomy` 2nd). Renders `rcv_… classify submitted (taxonomy: <taxonomyValue>)` + `[prior: …]` (null-guarded) + `[replayed]`; verbose text-only footer appends correlation-id + generated-idempotency-key.
+  - [x] Added `WorkflowCommandOutputs.renderOperatorClassifyFailureJson(runId, result)` (`operator-classify-failure.v1`, `OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION = 1`) — mirrors `renderOperatorReconcileJson`, null-tolerant `priorTaxonomyValue`, NO state field. `WorkflowCliJsonSchemaContractTest` covers only WorkflowCommands (status/history) — it does NOT enumerate operator commands, so no change needed there.
+  - [x] Added `COMMAND_NAME_CLASSIFY_FAILURE = "operator classify-failure"` + `emitClassifyFailure`.
+  - [x] Pinned `deliveryline operator classify-failure` in `OperatorCliCommandRegistrationIT`.
 
-- [ ] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 9)**
-  - [ ] Regenerate: `mvnw -o verify -Dit.test=OpenApiSnapshotContractTest -DfailIfNoTests=false -Djacoco.skip=true -Dopenapi.snapshot.write=true` (the `*ContractTest` route through Failsafe, not the Surefire `test` goal — 4.11 learning; [[maven-arglineation-goal-crash]]); review the `openapi.json` diff (expect exactly one new path (`/classify-failure`) + two new schemas (`ClassifyFailureRequest`, `ClassifyFailureResponse`); `taxonomyValue` renders as `string` with an inline `enum:` of the six wire values; NO named `FailureTaxonomyValue` component). Re-run without the write flag → green. Watch for mojibake em-dashes ([[mojibake-emdash-openapi-drift]]).
-  - [ ] `cd deliveryline-frontend && npm run generate-api`; commit `src/lib/api/schema.d.ts`. Verify `npm run check:api` green ([[openapi-regen-frontend-client-drift-cascade]]); `npm run build` green ([[frontend-tsc-noemit-misses-test-files]]).
+- [x] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 9)**
+  - [x] Regenerated `openapi.json` via `-Dopenapi.snapshot.write=true` (Failsafe route). Diff = **+161 lines, purely additive**: exactly one new path (`/classify-failure`) + two new schemas (`ClassifyFailureRequest`, `ClassifyFailureResponse`); `taxonomyValue` renders as `string` with an inline `enum:` of the six wire values; NO named `FailureTaxonomyValue` component; NO `currentState` on the response. Re-ran WITHOUT the write flag → **byte-equal GREEN**. Mojibake check: only genuine U+2014 em-dash in the new content (verified by codepoint), no U+FFFD.
+  - [x] `npm run generate-api` → `schema.d.ts` (+101 lines); `npm run check:api` GREEN (in sync); `npm run build` GREEN (exit 0).
 
-- [ ] **Task 5 — Tests (AC9)**
-  - [ ] New `adapters/rest/ClassifyFailureEndpointContractTest` — the cases enumerated in AC9; model on the 4.11 `ReconcileEndpointContractTest` (`@WebMvcTest` + `ListAppender` + `LocalActorIdentityResolver` call-through stub). REUSE the `@MockitoBean RecoveryService` — do NOT re-declare if inherited. Assert Problem Details `code`/`status`/`details` only. Explicitly assert `MISSING_TAXONOMY_VALUE` (blank taxonomy) surfaces as its TYPED code (proving `taxonomyValue` is NOT `@NotBlank`), the omitted-`reasonText` 200 (proving `reasonText` is genuinely optional), and the `DEPRECATED_TAXONOMY_VALUE` `details.replacementValue` mapping.
-  - [ ] CLI/REST equivalence test `adapters/cli/ClassifyFailureCliRestEquivalenceContractTest` (Reconciliation 7): capture the FIVE positional `recoveryService.classifyFailure(...)` args from REST (MockMvc) and CLI (`new OperatorCommands(...)`), assert equal — including `ActorContext` record equality and the `local-operator` fallback on both surfaces. (Lives in `adapters.cli` for the package-private test ctor.)
-  - [ ] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green (they already mock `RecoveryService` from 4.10).
-  - [ ] Optional real-PG `ClassifyFailureEndpointIT` (`*IT`) seeding a `FAILED` run, asserting the `recovery_actions` row (`action_type='classify_failure'`, `reviewer_role='workflow_owner'`, `result_status='succeeded'`), the `recovery.failureClassified` event (`details.taxonomyValue`), and the `workflow_runs.failure_classification`/`_at`/`_by` column triple. Probe rows deleted children-first in a `finally` ([[flywayschema-restrict-fk-probe-rows-leak]], [[springboot-testcontainers-test-must-be-IT]]).
-  - [ ] ⚠️ New `@WebMvcTest` classes null the redaction holder and poison `CapturedOutput` in a reused fork — add the identity-holder `@BeforeAll`/`@AfterAll` ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
-  - [ ] CLI render/log tests in `OperatorCommandsTest` (mirror the reconcile render tests): text render with/without `priorTaxonomyValue` + replayed + verbose footer; JSON render (null-tolerant `priorTaxonomyValue`); completion-log outcome (success + `failure:<code>`).
+- [x] **Task 5 — Tests (AC9)**
+  - [x] New `adapters/rest/ClassifyFailureEndpointContractTest` (**19/0**) — all AC9 cases; asserts `MISSING_TAXONOMY_VALUE` on blank taxonomy (proving NO `@NotBlank`), omitted-`reasonText`→200 captured as null (proving genuinely optional), `DEPRECATED_TAXONOMY_VALUE.details.replacementValue`, `CLASSIFY_NOT_APPLICABLE.details.currentState`, NO `currentState` field on the response, and the FIVE positional args (taxonomy 2nd). Problem Details `code`/`status`/`details` only. Reuses the inherited `@MockitoBean RecoveryService`.
+  - [x] CLI/REST equivalence test `adapters/cli/ClassifyFailureCliRestEquivalenceContractTest` (**1/0**): FIVE positional args equal across REST + CLI, `ActorContext` by record equality, `local-operator` fallback both surfaces.
+  - [x] `OpenApiSnapshotContractTest` GREEN post-regen; full backend `verify` GREEN confirms `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` + all 17 `@WebMvcTest` slices + `ArchitectureBoundaryTest` unaffected.
+  - [~] **Optional real-PG `ClassifyFailureEndpointIT` — DEFERRED** (same as the 4.10/4.11/4.13 siblings, all of which deferred their optional adapter IT). The real classify/column-write/event semantics are already covered by 4.9's `RecoveryServiceClassifyFailureTest` + real-PG `RecoveryServiceClassifyFailureIT`; the adapter contract is fully covered by the `@WebMvcTest` above. Not blocking (AC9 marks it optional).
+  - [x] Identity-holder `@BeforeAll`/`@AfterAll` redaction guard present on the new `@WebMvcTest` ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
+  - [x] CLI render/log tests in `OperatorCommandsTest` (**50/0**, +9): text with/without `priorTaxonomyValue` + replayed + verbose footer; JSON (null-tolerant prior, NO state field); completion-log success + `failure:unknown` + `failure:<code>`; reason prose never logged.
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] REST: `INFO "REST classifyFailure received workflowRunId={} actorIdentity={} taxonomyValue={} reasonLength={}"` on entry (`taxonomyValue` sanitized via `MdcKeys.sanitizeForLog` — it is NOT yet validated at log time, exactly like reconcile's `decision`; `reasonLength` is the length only, null-guarded — prose never logged) and `INFO "REST classifyFailure success workflowRunId={} taxonomyValue={} priorTaxonomyValue={} recoveryActionId={} replayed={}"` on success. `WARN` on the role rejection is already emitted inside `requireWorkflowOwnerRole`. No `ERROR` — `DomainException`s are mapped by `ProblemDetailsMapper`.
-  - [ ] CLI: reuse the `emit*` completion-log idiom — `INFO` with `correlationId`, `commandName='operator classify-failure'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`. Plus a `operator classify-failure applied` line auditing `taxonomyValue` (sanitized) + `reasonLength` only (mirror `operator reconcile decision applied`, `:484-490`).
-  - [ ] Parameterized logging only; sanitize `workflowRunId`/`actorIdentity`/`taxonomyValue` via `MdcKeys.sanitizeForLog`. Never log `reasonText` prose, the idempotency-key value, secrets, tokens, or PII. (`taxonomyValue`/`priorTaxonomyValue` VALUES are safe to log once sanitized — bounded governed registry values, but sanitize the request one since it is raw pre-validation.)
-  - [ ] Pin the REST entry/success lines and the role-rejection `WARN` in `ClassifyFailureEndpointContractTest` via `ListAppender` on the `WorkflowController` logger. The recovery-service log surface (`recovery classifyFailure start/success/replay/rejected`) is already pinned by 4.9's `RecoveryLoggingContractTest` — do NOT duplicate it in the adapter.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] REST: `INFO "REST classifyFailure received … taxonomyValue={} reasonLength={}"` on entry (`taxonomyValue` sanitized via `MdcKeys.sanitizeForLog`; `reasonLength` null-guarded — prose never logged) and `INFO "REST classifyFailure success … taxonomyValue={} priorTaxonomyValue={} recoveryActionId={} replayed={}"` on success. `WARN` role rejection emitted inside `requireWorkflowOwnerRole`. No `ERROR`.
+  - [x] CLI: `emitClassifyFailure` completion-log (`commandName='operator classify-failure'`, `outcome=success|failure:<code>`) + `operator classify-failure applied` audit line (sanitized `taxonomyValue` + `reasonLength` only).
+  - [x] Parameterized logging only; `workflowRunId`/`actorIdentity`/`taxonomyValue` sanitized via `MdcKeys.sanitizeForLog`. `reasonText` prose / idempotency-key / secrets never logged.
+  - [x] Pinned the REST entry/success lines + the role-rejection `WARN` in `ClassifyFailureEndpointContractTest` via `ListAppender`; reason-prose-not-logged asserted with a distinctive multi-word phrase. Recovery-service log surface not duplicated (owned by 4.9's `RecoveryLoggingContractTest`).
 
 ## Dev Notes
 
@@ -216,12 +216,60 @@ so that a Workflow Owner can apply a governed `FailureTaxonomyValue` to a failed
 
 ### Agent Model Used
 
-claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow.
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow. Dev via bmad-dev-story (same model), 2026-07-13.
 
 ### Debug Log References
 
+- Full backend `mvnw -o -pl deliveryline-backend verify -Djacoco.skip=true` → **BUILD SUCCESS** (7:00, Docker up). Surefire + Failsafe + Spotless + SpotBugs (pre-existing MEDIUM only) + coverage gate all green.
+- Targeted: `OperatorCommandsTest` **50/0** (Surefire), `ClassifyFailureEndpointContractTest` **19/0**, `ClassifyFailureCliRestEquivalenceContractTest` **1/0**, `OperatorCliCommandRegistrationIT` **2/0** (Failsafe).
+- `OpenApiSnapshotContractTest`: regen pass (write flag) → intentional fail-with-regen message; re-run without write flag → **byte-equal GREEN**.
+- First full `verify` reded on `spotless:check` (google-java-format line-wrap only); `spotless:apply` → re-verified codepoints (no U+FFFD / no mojibake, em-dashes stayed U+2014) → full `verify` GREEN.
+- FE: `npm run generate-api` (+101), `npm run check:api` in-sync, `npm run build` exit 0.
+
 ### Change Log
+
+- 2026-07-13 — Story 4.14 implemented: REST `POST /api/v1/workflows/{workflowRunId}/classify-failure` + CLI `deliveryline operator classify-failure` wired to the `done`+committed `RecoveryService.classifyFailure` (4.9). PURE adapter wiring — ZERO lines in `application/`, `domain/`, or `db/migration`. Reused 4.10's committed ctor fan-out wholesale (no ctor change, none of the 17 `@WebMvcTest` slices touched). OpenAPI snapshot + FE `schema.d.ts` regenerated. Status: ready-for-dev → review.
 
 ### Completion Notes List
 
+- **Five defining traps all honored + proven by test.** (1) `reasonText` GENUINELY OPTIONAL — NO `@NotBlank`, `@Schema(NOT_REQUIRED, nullable)`; omitted-reason→200 captured as `null` (the RESUME posture, opposite of reconcile/rerun/pause). (2) Response carries NO `currentState`/state field (the ODD sibling) — asserted absent on both JSON success + CLI JSON. (3) `taxonomyValue` = plain `String` + inline `@Schema(allowableValues)` NO `@NotBlank`; blank taxonomy reaches the service → typed `MISSING_TAXONOMY_VALUE` (400). (4) Wired the RICH `RecoveryService.classifyFailure` — there is no thin-service twin. (5) FIVE positional args, `taxonomyValue` 2nd (before `idempotencyKey`), `reasonText` LAST — captured & asserted equal across REST+CLI.
+- **`ACTION_NOT_ALLOWED` dropped** (does not exist); wrong-state code is the dedicated `CLASSIFY_NOT_APPLICABLE` (409, `details.currentState`). All four taxonomy codes were already mapped by 4.9 — asserted, not added.
+- **OpenAPI**: exactly one new path + two new schemas; taxonomy enum is INLINE `allowableValues` (six active wire values), NOT a named `FailureTaxonomyValue` component; zero values deprecated today so AC5's "deprecated markers" is a no-op. Snapshot byte-equal after regen.
+- **OQ bindings** (provisional, unchanged from siblings): OQ-1 `role` field included (`@NotBlank`, `workflow_owner`-gated then discarded); OQ-2 full 7-field response; OQ-3 positional `runId`; OQ-4 `--taxonomy` service-validated (`required=false`); OQ-5 drift test NOT added (nice-to-have; the six values are hand-kept verbatim from `FailureTaxonomyValue`, governed by ADR 0035) — flag for reviewer.
+- **Deferred**: optional real-PG `ClassifyFailureEndpointIT` (consistent with 4.10/4.11/4.13; real semantics owned by 4.9's tests). Not blocking.
+- **Placement**: the controller method sits after `pause` (not after `reconcile` as the pre-4.12/4.13 story text said) to keep the whole recovery cluster (resume→reconcile→rerun→pause→classify) contiguous now that all landed.
+
 ### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ClassifyFailureRequest.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ClassifyFailureResponse.java`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java` (`classifyFailure` method + `ClassifyFailureResult` import; no ctor change)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java` (`classify-failure` command + `COMMAND_NAME_CLASSIFY_FAILURE` + `renderClassifyFailureText` + `emitClassifyFailure`; no ctor change)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (`renderOperatorClassifyFailureJson` + `OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION`)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated; +161)
+
+**Modified (frontend):**
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated; +101)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ClassifyFailureEndpointContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/ClassifyFailureCliRestEquivalenceContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ClassifyFailureRequestTaxonomyDriftTest.java` (code-review OQ-5 drift guard)
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java` (one pin)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java` (+9 render/log tests)
+
+### Review Findings
+
+_bmad-code-review 2026-07-13 — 3 adversarial layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor). All five defining traps + nine ACs + eleven reconciliations verified correct against actual source/regenerated artifacts. No blocking issues; no HIGH/MEDIUM. 1 decision-needed, 1 patch, 2 dismissed._
+
+- [x] [Review][Patch] OQ-5 `taxonomyValue` allowableValues ↔ registry drift test — FIXED. Added `ClassifyFailureRequestTaxonomyDriftTest` asserting the DTO's `@Schema(allowableValues)` set equals the ACTIVE (non-deprecated) `FailureTaxonomyValue` wire values (future-proof: a deprecated value is dropped from `allowableValues` per Reconciliation 4, so asserting against active-only — not the full `DomainRegistry.failureTaxonomyValues()` which retains deprecated values — keeps the test correct the day a value is first deprecated; the current coincidence with `failureTaxonomyValues()` is asserted as a secondary invariant). Surefire 1/0 green.
+- [x] [Review][Patch] REST success-log raw `workflowRunId` [WorkflowController.java `classifyFailure` success log] — FIXED. Wrapped in `MdcKeys.sanitizeForLog(workflowRunId)` for consistency with the received-log (defense-in-depth). `ClassifyFailureEndpointContractTest` 19/0 green — all log pins still hold.
+
+**Dismissed (noise / by-design / not adapter-layer):**
+- CLI vs REST length-cap divergence on `--taxonomy`/`--reason` (REST `@Size(64)`/`@Size(512)`; CLI uncapped) — deliberate pre-existing family pattern (identical to reconcile's `resolutionDecision`); both surfaces still return a typed 400-class code. By-design.
+- TRAP-4 replay-before-parse precedence "assert in tests" — not assertable in a `@WebMvcTest` where `RecoveryService` is mocked; correctly owned by 4.9's `RecoveryServiceClassifyFailureTest`. The binding adapter obligation (no controller `@NotBlank` on `taxonomyValue`) IS honored. Informational.

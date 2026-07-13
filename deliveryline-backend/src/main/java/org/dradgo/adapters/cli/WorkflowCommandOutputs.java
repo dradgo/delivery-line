@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
+import org.dradgo.application.recovery.ClassifyFailureResult;
 import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
@@ -63,6 +64,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_RECONCILE_SCHEMA_VERSION = 1;
   static final int OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION = 1;
   static final int OPERATOR_PAUSE_SCHEMA_VERSION = 1;
+  static final int OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -657,6 +659,27 @@ public class WorkflowCommandOutputs {
     payload.put("pausedEventId", result.pausedEventPublicId());
     payload.put("cancelledInFlightCount", result.cancelledInFlightCount());
     payload.put("cancelledQueuedCount", result.cancelledQueuedCount());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.14 — stable {@code operator-classify-failure.v1} JSON document for {@code deliveryline
+   * operator classify-failure --format json}. {@code workflowRunId} is passed explicitly because
+   * {@link ClassifyFailureResult} carries none. There is NO {@code currentState} field — classify
+   * is pure metadata (no transition — Reconciliation 6); {@code taxonomyValue} is always present,
+   * {@code priorTaxonomyValue} IS null-tolerant (null on a first classify per the result javadoc).
+   */
+  public String renderOperatorClassifyFailureJson(
+      String workflowRunId, ClassifyFailureResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION);
+    payload.put("workflowRunId", workflowRunId);
+    payload.put("taxonomyValue", result.taxonomyValue());
+    payload.put("priorTaxonomyValue", result.priorTaxonomyValue());
+    payload.put("recoveryActionId", result.recoveryActionPublicId());
+    payload.put("classifiedEventId", result.classifiedEventPublicId());
     payload.put("correlationId", result.correlationId());
     payload.put("replayed", result.replayed());
     return writeJson(payload);

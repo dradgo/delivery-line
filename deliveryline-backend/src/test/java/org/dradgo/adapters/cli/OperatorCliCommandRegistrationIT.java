@@ -82,6 +82,11 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator pause"),
               () -> "registered commands: " + commandNames);
+          // Story 4.14 (AC6) — the mutating classify-failure command registers under the same group
+          // prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator classify-failure"),
+              () -> "registered commands: " + commandNames);
         });
   }
 

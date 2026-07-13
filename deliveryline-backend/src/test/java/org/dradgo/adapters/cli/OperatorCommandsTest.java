@@ -16,6 +16,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.ClassifyFailureResult;
 import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
@@ -1009,6 +1010,299 @@ class OperatorCommandsTest {
         .contains("operator command completed")
         .contains("commandName=operator pause")
         .contains("outcome=failure:MISSING_REASON_TEXT");
+  }
+
+  // ---- Story 4.14 — deliveryline operator classify-failure -------------------------------------
+
+  private OperatorCommands classifyCommands(RecoveryService rs, boolean interactive) {
+    CliInteractivityDetector detector = mock(CliInteractivityDetector.class);
+    when(detector.isInteractive()).thenReturn(interactive);
+    return new OperatorCommands(
+        inspection,
+        outputs,
+        detector,
+        rs,
+        new IdempotencyKeyValidator(),
+        new LocalActorIdentityResolver("local-operator"),
+        () -> "corr-fixed",
+        () -> "idem-generated-0000001");
+  }
+
+  private static ClassifyFailureResult classifyResult(
+      String recoveryId, String taxonomyValue, String priorTaxonomyValue, boolean replayed) {
+    return new ClassifyFailureResult(
+        recoveryId, "evt_" + recoveryId, taxonomyValue, priorTaxonomyValue, "corr-1", replayed);
+  }
+
+  @Test
+  void classifyTextRendersRecoveryActionAndTaxonomy() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenReturn(classifyResult("rcv_cf001", "agent_execution_failure", null, false));
+
+    String out =
+        classifyCommands(rs, true)
+            .classifyFailure(
+                "run_cf001",
+                "agent_execution_failure",
+                "note",
+                "idem-classify-key-00000001",
+                null,
+                "corr-1",
+                "text",
+                false);
+
+    assertThat(out).contains("rcv_cf001 classify submitted (taxonomy: agent_execution_failure)");
+    // No state segment — classify is pure metadata (Reconciliation 6).
+    assertThat(out).doesNotContain("state:");
+    assertThat(out).doesNotContain("[prior:");
+    assertThat(out).doesNotContain("[replayed]");
+    // Five positional args, taxonomy SECOND (before idempotencyKey), reasonText LAST
+    // (Reconciliation 7). Actor resolved to local-operator (omitted --actor-identity).
+    verify(rs)
+        .classifyFailure(
+            eq("run_cf001"),
+            eq("agent_execution_failure"),
+            eq("idem-classify-key-00000001"),
+            any(),
+            eq("note"));
+  }
+
+  @Test
+  void classifyReplayTextShowsPriorTaxonomyAndReplayed() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenReturn(
+            classifyResult("rcv_cf002", "agent_execution_failure", "specification_gap", true));
+
+    String out =
+        classifyCommands(rs, true)
+            .classifyFailure(
+                "run_cf002",
+                "agent_execution_failure",
+                null,
+                "idem-classify-key-00000001",
+                null,
+                "corr-1",
+                "text",
+                false);
+
+    assertThat(out).contains("rcv_cf002 classify submitted (taxonomy: agent_execution_failure)");
+    assertThat(out).contains("[prior: specification_gap]");
+    assertThat(out).contains("[replayed]");
+  }
+
+  @Test
+  void classifyTextOmitsPriorSegmentWhenPriorTaxonomyNull() {
+    // priorTaxonomyValue is null on a first classify; renderClassifyFailureText null-guards the
+    // [prior: …] segment.
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenReturn(classifyResult("rcv_cf003", "context_gap", null, false));
+
+    String out =
+        classifyCommands(rs, true)
+            .classifyFailure(
+                "run_cf003",
+                "context_gap",
+                "note",
+                "idem-classify-key-00000001",
+                null,
+                "corr-1",
+                "text",
+                false);
+
+    assertThat(out).contains("rcv_cf003 classify submitted (taxonomy: context_gap)");
+    assertThat(out).doesNotContain("[prior:");
+  }
+
+  @Test
+  void classifyVerboseAppendsCorrelationIdAndGeneratedKeyWhenKeyOmitted() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenReturn(classifyResult("rcv_cf004", "review_rejection", null, false));
+
+    // Interactive TTY + omitted --idempotency-key ⇒ the key is auto-generated; verbose surfaces it.
+    String out =
+        classifyCommands(rs, true)
+            .classifyFailure(
+                "run_cf004", "review_rejection", "note", null, null, "corr-1", "text", true);
+
+    assertThat(out).contains("[correlation-id: corr-1]");
+    assertThat(out).contains("[generated-idempotency-key: idem-generated-0000001]");
+    verify(rs)
+        .classifyFailure(
+            eq("run_cf004"),
+            eq("review_rejection"),
+            eq("idem-generated-0000001"),
+            any(),
+            eq("note"));
+  }
+
+  @Test
+  void classifyJsonEmitsStableSchemaWithoutVerboseFooterAndNullTolerantPrior() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenReturn(classifyResult("rcv_cf005", "agent_execution_failure", null, true));
+
+    // --verbose must NOT glue a "correlation-id" footer onto JSON (would break
+    // operator-classify-failure.v1).
+    String out =
+        classifyCommands(rs, true)
+            .classifyFailure(
+                "run_cf005",
+                "agent_execution_failure",
+                "note",
+                "idem-classify-key-00000001",
+                null,
+                "corr-1",
+                "json",
+                true);
+
+    assertThat(out).doesNotContain("[correlation-id:");
+    JsonNode body = readJson(out);
+    assertThat(body.path("schemaVersion").asInt()).isEqualTo(1);
+    assertThat(body.path("workflowRunId").asText()).isEqualTo("run_cf005");
+    assertThat(body.path("taxonomyValue").asText()).isEqualTo("agent_execution_failure");
+    // priorTaxonomyValue null-tolerant → serialized as JSON null.
+    assertThat(body.path("priorTaxonomyValue").isNull()).isTrue();
+    assertThat(body.path("recoveryActionId").asText()).isEqualTo("rcv_cf005");
+    assertThat(body.path("replayed").asBoolean()).isTrue();
+    // Reconciliation 6 — classify carries NO state field, even in JSON.
+    assertThat(body.has("currentState")).isFalse();
+  }
+
+  @Test
+  void classifyInvalidFormatRaisesInvalidCommandPayloadBeforeMutating() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                classifyCommands(rs, true)
+                    .classifyFailure(
+                        "run_cf006",
+                        "agent_execution_failure",
+                        null,
+                        "idem-classify-key-00000001",
+                        null,
+                        null,
+                        "xml",
+                        false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void classifyNonInteractiveWithoutKeyRaisesMissingIdempotencyKey() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                classifyCommands(rs, false)
+                    .classifyFailure(
+                        "run_cf007",
+                        "agent_execution_failure",
+                        null,
+                        null,
+                        null,
+                        "corr-1",
+                        "text",
+                        false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.MISSING_IDEMPOTENCY_KEY);
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void classifyEmitsCompletionLogLineSuccessAndNeverLogsReasonProse(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenReturn(classifyResult("rcv_cf008", "agent_execution_failure", null, false));
+
+    classifyCommands(rs, true)
+        .classifyFailure(
+            "run_cf008",
+            "agent_execution_failure",
+            "quarantine the flaky upstream fixture",
+            "idem-classify-key-00000001",
+            null,
+            "corr-abc",
+            "text",
+            false);
+
+    String logged = output.getOut() + output.getErr();
+    assertThat(logged)
+        .contains("operator command completed")
+        .contains("commandName=operator classify-failure")
+        .contains("workflowRunId=run_cf008")
+        .contains("outcome=success");
+    // The applied taxonomy value IS audited (bounded governed registry value).
+    assertThat(logged)
+        .contains("operator classify-failure applied")
+        .contains("taxonomyValue=agent_execution_failure");
+    // The free-form reason prose is never logged verbatim (length only).
+    assertThat(logged)
+        .doesNotContain("quarantine the flaky upstream fixture")
+        .doesNotContain("quarantine")
+        .doesNotContain("flaky");
+  }
+
+  @Test
+  void classifyEmitsCompletionLogLineFailureUnknownOnNonDomainError(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("WorkflowRunFailureClassificationPort is required"));
+
+    assertThatThrownBy(
+            () ->
+                classifyCommands(rs, true)
+                    .classifyFailure(
+                        "run_cf010",
+                        "agent_execution_failure",
+                        "note",
+                        "idem-classify-key-00000001",
+                        null,
+                        "corr-abc",
+                        "text",
+                        false))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator classify-failure")
+        .contains("workflowRunId=run_cf010")
+        .contains("outcome=failure:unknown");
+  }
+
+  @Test
+  void classifyEmitsCompletionLogLineFailureOnServiceError(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.classifyFailure(any(), any(), any(), any(), any()))
+        .thenThrow(
+            new DomainException(
+                DomainErrorCode.MISSING_TAXONOMY_VALUE, "missing taxonomy", Map.of()));
+
+    assertThatThrownBy(
+            () ->
+                classifyCommands(rs, true)
+                    .classifyFailure(
+                        "run_cf009",
+                        null,
+                        null,
+                        "idem-classify-key-00000001",
+                        null,
+                        "corr-abc",
+                        "text",
+                        false))
+        .isInstanceOf(DomainException.class);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator classify-failure")
+        .contains("outcome=failure:MISSING_TAXONOMY_VALUE");
   }
 
   private static JsonNode readJson(String json) {

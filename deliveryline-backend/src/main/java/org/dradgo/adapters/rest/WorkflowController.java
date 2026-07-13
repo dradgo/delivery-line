@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.ClassifyFailureResult;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
@@ -2485,6 +2486,118 @@ public class WorkflowController {
         response.recoveryActionId(),
         response.cancelledInFlightCount(),
         response.cancelledQueuedCount(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.14 (AC1, AC3–AC5, AC7, AC8) — apply a governed failure-taxonomy classification to a
+   * FAILED run for cross-run pattern analysis. Mapped onto the RICH {@link
+   * RecoveryService#classifyFailure} — there is NO thin-service twin: classify performs no state
+   * transition (epic 4.9 AC10) so it never joined the {@code WorkflowCommand} family (story 4.9
+   * R8), and {@code RecoveryService.classifyFailure} is the single entry point (R2). The rich path
+   * single-sources the idempotency replay pre-check ({@code actionType='classify_failure'} guard),
+   * the taxonomy parse + deprecation write-guard, the {@code FAILED}-only state gate, the {@code
+   * applyClassification} column write (capturing {@code priorTaxonomyValue}), the {@code
+   * recovery.failureClassified} event append, and the {@code recovery_actions} row.
+   *
+   * <p>Closest structural sibling is {@link #reconcile} (a domain field — {@code taxonomyValue} —
+   * BEFORE {@code idempotencyKey}), diverging in four ways: (a) {@code reasonText} is GENUINELY
+   * OPTIONAL — NO {@code MISSING_REASON_TEXT} on this path (Reconciliation 5, the {@code
+   * ResumeWorkflowRequest} posture); (b) the response carries NO workflow-state field
+   * (Reconciliation 6 — the ODD sibling); (c) the service takes FIVE positional args ({@code
+   * taxonomyValue} SECOND, before {@code idempotencyKey}) not six; (d) the error set swaps the
+   * reconcile codes for the three taxonomy codes + {@code CLASSIFY_NOT_APPLICABLE}. {@code
+   * taxonomyValue} stays un-{@code @NotBlank} so the typed {@code
+   * MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE} codes are reachable (Reconciliation 4). {@code
+   * ACTION_NOT_ALLOWED} does not exist — the wrong-state code is the dedicated {@code
+   * CLASSIFY_NOT_APPLICABLE} (409, {@code details.currentState}).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/classify-failure",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "classifyFailure",
+      summary = "Classify a failed workflow run with a governed failure taxonomy (story 4.14)",
+      description =
+          "Operator (workflow_owner) recovery action that stamps a governed FailureTaxonomyValue"
+              + " onto a FAILED run for cross-run pattern analysis (WHY the run failed): writes the"
+              + " workflow_runs.failure_classification triple, records a recovery_actions row + a"
+              + " recovery.failureClassified audit event capturing any prior taxonomy value, and"
+              + " stamps the resolved actor onto the audit trail. Pure metadata — no state"
+              + " transition. Idempotent under Idempotency-Key. Classifying a run that is not in the"
+              + " Failed state surfaces CLASSIFY_NOT_APPLICABLE (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Classification recorded (or idempotent replay)."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_TAXONOMY_VALUE,"
+                + " INVALID_TAXONOMY_VALUE, DEPRECATED_TAXONOMY_VALUE.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "CLASSIFY_NOT_APPLICABLE (run not in the Failed state) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ClassifyFailureResponse classifyFailure(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ClassifyFailureRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.14 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.classifyFailure hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume/reconcile/
+    // rerun/pause). Request-shape validation only, so it stays within the thin-controller ArchUnit
+    // rule.
+    requireWorkflowOwnerRole("classify-failure", request.role());
+    log.info(
+        "REST classifyFailure received workflowRunId={} actorIdentity={} taxonomyValue={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // taxonomyValue is NOT yet validated here — this log runs before the service's
+        // parseTaxonomyValue, and the field is a plain @Size(max=64) String (the enum constraint is
+        // OpenAPI-doc-only). Sanitize it like the other identifiers to prevent CRLF/log injection.
+        // The free-form reasonText prose is never logged (length only; null-guarded — reasonText is
+        // genuinely optional here so it may be absent).
+        MdcKeys.sanitizeForLog(request.taxonomyValue()),
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    ClassifyFailureResult result =
+        recoveryService.classifyFailure(
+            workflowRunId, request.taxonomyValue(), idempotencyKey, actor, request.reasonText());
+    ClassifyFailureResponse response = ClassifyFailureResponse.from(workflowRunId, result);
+    log.info(
+        "REST classifyFailure success workflowRunId={} taxonomyValue={} priorTaxonomyValue={} recoveryActionId={} replayed={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.taxonomyValue(),
+        response.priorTaxonomyValue(),
+        response.recoveryActionId(),
         response.replayed());
     return response;
   }

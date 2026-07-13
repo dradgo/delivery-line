@@ -481,6 +481,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/classify-failure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Classify a failed workflow run with a governed failure taxonomy (story 4.14)
+         * @description Operator (workflow_owner) recovery action that stamps a governed FailureTaxonomyValue onto a FAILED run for cross-run pattern analysis (WHY the run failed): writes the workflow_runs.failure_classification triple, records a recovery_actions row + a recovery.failureClassified audit event capturing any prior taxonomy value, and stamps the resolved actor onto the audit trail. Pure metadata — no state transition. Idempotent under Idempotency-Key. Classifying a run that is not in the Failed state surfaces CLASSIFY_NOT_APPLICABLE (409).
+         */
+        post: operations["classifyFailure"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/dependencies": {
         parameters: {
             query?: never;
@@ -1343,6 +1363,31 @@ export interface components {
         /** @description Clarifications raised against a workflow run's specification. */
         ClarificationsResponse: {
             clarifications: components["schemas"]["Clarification"][];
+        };
+        /** @description Apply a governed failure-taxonomy classification to a failed workflow run. */
+        ClassifyFailureRequest: {
+            /** @description Optional operator note explaining the classification. Genuinely optional — the service stores a blank/absent reason as null (no MISSING_REASON_TEXT). */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+            /**
+             * @description Governed failure-taxonomy wire value recording the operator's judgment of WHY the run failed. Validated by the service (no @NotBlank) so the typed MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE codes are reachable.
+             * @example agent_execution_failure
+             * @enum {string}
+             */
+            taxonomyValue: "specification_gap" | "context_gap" | "agent_execution_failure" | "review_rejection" | "integration_or_merge_failure" | "tooling_or_infrastructure_failure";
+        };
+        ClassifyFailureResponse: {
+            classifiedEventId?: string;
+            correlationId?: string;
+            priorTaxonomyValue?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            taxonomyValue: string;
+            workflowRunId: string;
         };
         /** @description One connectivity check's tri-state result. */
         ConnectionCheckResult: {
@@ -3970,6 +4015,62 @@ export interface operations {
                 };
             };
             /** @description CLARIFICATION_ARTIFACT_VERSION_MISMATCH, CLARIFICATION_TERMINAL_STATE, ILLEGAL_CLARIFICATION_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    classifyFailure: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifyFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Classification recorded (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifyFailureResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_TAXONOMY_VALUE, INVALID_TAXONOMY_VALUE, DEPRECATED_TAXONOMY_VALUE. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description CLASSIFY_NOT_APPLICABLE (run not in the Failed state) or IDEMPOTENCY_KEY_CONFLICT. */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -736,6 +736,79 @@
         ],
         "type" : "object"
       },
+      "ClassifyFailureRequest" : {
+        "description" : "Apply a governed failure-taxonomy classification to a failed workflow run.",
+        "properties" : {
+          "reasonText" : {
+            "description" : "Optional operator note explaining the classification. Genuinely optional — the service stores a blank/absent reason as null (no MISSING_REASON_TEXT).",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "taxonomyValue" : {
+            "description" : "Governed failure-taxonomy wire value recording the operator's judgment of WHY the run failed. Validated by the service (no @NotBlank) so the typed MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE codes are reachable.",
+            "enum" : [
+              "specification_gap",
+              "context_gap",
+              "agent_execution_failure",
+              "review_rejection",
+              "integration_or_merge_failure",
+              "tooling_or_infrastructure_failure"
+            ],
+            "example" : "agent_execution_failure",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "role",
+          "taxonomyValue"
+        ],
+        "type" : "object"
+      },
+      "ClassifyFailureResponse" : {
+        "properties" : {
+          "classifiedEventId" : {
+            "type" : "string"
+          },
+          "correlationId" : {
+            "type" : "string"
+          },
+          "priorTaxonomyValue" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "taxonomyValue" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "recoveryActionId",
+          "replayed",
+          "taxonomyValue",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "ConnectionCheckResult" : {
         "description" : "One connectivity check's tri-state result.",
         "properties" : {
@@ -5688,6 +5761,94 @@
           }
         },
         "summary" : "Answer an open clarification on a spec",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/classify-failure" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that stamps a governed FailureTaxonomyValue onto a FAILED run for cross-run pattern analysis (WHY the run failed): writes the workflow_runs.failure_classification triple, records a recovery_actions row + a recovery.failureClassified audit event capturing any prior taxonomy value, and stamps the resolved actor onto the audit trail. Pure metadata — no state transition. Idempotent under Idempotency-Key. Classifying a run that is not in the Failed state surfaces CLASSIFY_NOT_APPLICABLE (409).",
+        "operationId" : "classifyFailure",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ClassifyFailureRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ClassifyFailureResponse"
+                }
+              }
+            },
+            "description" : "Classification recorded (or idempotent replay)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_TAXONOMY_VALUE, INVALID_TAXONOMY_VALUE, DEPRECATED_TAXONOMY_VALUE."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "CLASSIFY_NOT_APPLICABLE (run not in the Failed state) or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Classify a failed workflow run with a governed failure taxonomy (story 4.14)",
         "tags" : [
           "Workflows"
         ]

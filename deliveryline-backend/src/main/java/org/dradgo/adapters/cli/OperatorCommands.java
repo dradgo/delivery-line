@@ -11,6 +11,7 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.ClassifyFailureResult;
 import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
@@ -64,6 +65,7 @@ public class OperatorCommands {
   private static final String COMMAND_NAME_RECONCILE = "operator reconcile";
   private static final String COMMAND_NAME_RERUN_FROM_STEP = "operator rerun-from-step";
   private static final String COMMAND_NAME_PAUSE = "operator pause";
+  private static final String COMMAND_NAME_CLASSIFY_FAILURE = "operator classify-failure";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -844,6 +846,171 @@ public class OperatorCommands {
         "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
         correlationId,
         COMMAND_NAME_PAUSE,
+        MdcKeys.sanitizeForLog(runId),
+        outcome,
+        elapsedMs);
+  }
+
+  // Story 4.14 (AC6) — the CLI face of POST /{runId}/classify-failure. Applies a governed
+  // FailureTaxonomyValue to a FAILED run through the RICH RecoveryService.classifyFailure
+  // (idempotency
+  // replay pre-check + taxonomy parse/deprecation guard + FAILED-only gate + failure_classification
+  // column write + recovery_actions row + recovery.failureClassified event). There is NO
+  // thin-service
+  // twin — classify performs no transition, so it never joined the WorkflowCommand family (story
+  // 4.9
+  // R8). Mirrors `operator resume`/`reconcile`/`pause` (positional runId, optional --actor-identity
+  // →
+  // local-operator, ActorType.HUMAN hard-coded, --format text|json). Divergences from reconcile:
+  // --taxonomy is a single required domain input passed as a raw String (required=false at the
+  // shell)
+  // so the service surfaces the typed MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE codes on both
+  // surfaces (Reconciliation 4 / OQ-4), and --reason is GENUINELY optional — the service stores a
+  // blank/omitted reason as null with NO MISSING_REASON_TEXT (Reconciliation 5, the divergence from
+  // reconcile/rerun/pause). The service call is FIVE positional args, taxonomy SECOND
+  // (Reconciliation
+  // 7).
+  @Command(
+      name = "classify-failure",
+      description =
+          "Classify a FAILED governed run with a governed failure taxonomy via --taxonomy (story"
+              + " 4.14 — CLI/REST equivalence). Writes the workflow_runs.failure_classification"
+              + " triple, records a recovery_actions row + recovery.failureClassified audit event"
+              + " capturing any prior taxonomy value, and stamps the resolved actor onto the audit"
+              + " trail. Pure metadata — no state transition. Idempotent under --idempotency-key. A"
+              + " run not in the Failed state ⇒ CLASSIFY_NOT_APPLICABLE. --format=json emits a"
+              + " stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String classifyFailure(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "taxonomy",
+              description =
+                  "Failure-taxonomy wire value: specification_gap | context_gap |"
+                      + " agent_execution_failure | review_rejection | integration_or_merge_failure"
+                      + " | tooling_or_infrastructure_failure (validated by the service, not the"
+                      + " CLI, so the typed MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE codes stay"
+                      + " reachable)",
+              required = false)
+          String taxonomy,
+      @Option(
+              longName = "reason",
+              description =
+                  "Optional operator note explaining the classification (genuinely optional — a"
+                      + " blank/omitted reason is stored as null)",
+              required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Parse --format INSIDE the try (before the mutation) so an unsupported value raises
+      // INVALID_COMMAND_PAYLOAD without performing the classify, and still emits the completion log
+      // + runs the finally/endScope (no leaked MDC correlation-id scope).
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      // taxonomy/reason pass straight through: the service is the single source of taxonomy
+      // validation (typed MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE) and treats a blank/omitted
+      // reason as null (no MISSING_REASON_TEXT — Reconciliation 5), so the CLI stays symmetric with
+      // the REST surface. FIVE positional args, taxonomy SECOND (Reconciliation 7).
+      ClassifyFailureResult result =
+          recoveryService.classifyFailure(runId, taxonomy, resolvedIdempotencyKey, actor, reason);
+      String rendered =
+          json
+              ? outputs.renderOperatorClassifyFailureJson(runId, result)
+              : renderClassifyFailureText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitClassifyFailure(resolvedCorrelation, runId, start, OUTCOME_SUCCESS);
+      // Audit the applied taxonomy value + reason length only; the free-form operator prose is
+      // never
+      // logged verbatim. `taxonomy` is sanitized like the other identifiers: on a fresh classify
+      // the
+      // service validated it to a governed enum, but on an idempotency replay parseTaxonomyValue is
+      // skipped (RecoveryService.java:1736 before :1751), so the raw client string can still reach
+      // here. reasonLength is null-guarded (reason is genuinely optional).
+      log.info(
+          "operator classify-failure applied correlationId={} workflowRunId={} taxonomyValue={} reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(runId),
+          MdcKeys.sanitizeForLog(taxonomy),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitClassifyFailure(resolvedCorrelation, runId, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitClassifyFailure(resolvedCorrelation, runId, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator classify-failure` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorClassifyFailureJson). The verbose footer (correlation-id +
+  // generated-idempotency-key) is appended to TEXT output only — gluing it onto JSON would break
+  // the
+  // operator-classify-failure.v1 schema for machine consumers. There is NO state field (classify is
+  // pure metadata — Reconciliation 6); priorTaxonomyValue is null-guarded (null on a first
+  // classify).
+  private static String renderClassifyFailureText(
+      ClassifyFailureResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionPublicId())
+            .append(" classify submitted (taxonomy: ")
+            .append(result.taxonomyValue())
+            .append(')');
+    if (result.priorTaxonomyValue() != null) {
+      output.append(" [prior: ").append(result.priorTaxonomyValue()).append(']');
+    }
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitClassifyFailure(
+      String correlationId, String runId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_CLASSIFY_FAILURE,
         MdcKeys.sanitizeForLog(runId),
         outcome,
         elapsedMs);
