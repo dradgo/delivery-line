@@ -11,6 +11,7 @@ import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
@@ -62,6 +63,7 @@ public class OperatorCommands {
   private static final String COMMAND_NAME_RESUME = "operator resume";
   private static final String COMMAND_NAME_RECONCILE = "operator reconcile";
   private static final String COMMAND_NAME_RERUN_FROM_STEP = "operator rerun-from-step";
+  private static final String COMMAND_NAME_PAUSE = "operator pause";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -694,6 +696,154 @@ public class OperatorCommands {
         "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
         correlationId,
         COMMAND_NAME_RERUN_FROM_STEP,
+        MdcKeys.sanitizeForLog(runId),
+        outcome,
+        elapsedMs);
+  }
+
+  // Story 4.13 (AC6) — the CLI face of POST /{runId}/pause. Manually pauses a mid-flight run
+  // through the RICH RecoveryService.pause (PAUSABLE_SOURCE_STATES gate + runner cancel-flip to
+  // cancelled_for_pause + best-effort docker stop + recovery_actions row + recovery.paused event),
+  // NOT the transition-only WorkflowCommandService.pauseWorkflow. Closest sibling to `operator
+  // resume`: the SAME 4-positional-arg service call (runId, idempotencyKey, actor, reason) with NO
+  // domain field before idempotencyKey (unlike reconcile's --conflict/--decision and rerun's
+  // --target). Mirrors resume (positional runId, optional --actor-identity → local-operator,
+  // ActorType.HUMAN hard-coded, --format text|json). Divergence from resume: --reason is REQUIRED
+  // on a fresh pause but passed as a raw String with required=false so the SERVICE surfaces the
+  // typed MISSING_REASON_TEXT on both surfaces (Reconciliation 5/OQ-4) — keeping the CLI symmetric
+  // with the REST DTO, which does NOT @NotBlank it either. MISSING_REASON_TEXT fires BEFORE the
+  // idempotency replay pre-check (RecoveryService.java:1145 vs :1150) because reasonText composes
+  // the fingerprint identity, so an omitted reason is a 400 even on a same-key retry.
+  @Command(
+      name = "pause",
+      description =
+          "Manually pause a mid-flight governed run for operator intervention (story 4.13 —"
+              + " CLI/REST equivalence). Halts orchestrator dispatch by cancelling in-flight +"
+              + " queued runner work, records a recovery_actions row + recovery.paused audit event"
+              + " (preserving the prior state resume returns to), and stamps the resolved actor onto"
+              + " the audit trail. Idempotent under --idempotency-key. A run outside the pausable"
+              + " states (terminal, already Paused, or TakenOver) ⇒ PAUSE_NOT_APPLICABLE."
+              + " --format=json emits a stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String pause(
+      @Argument(index = 0, description = "Workflow run public id (run_...)") String runId,
+      @Option(
+              longName = "reason",
+              description =
+                  "Operator note explaining the pause (required on a fresh pause; validated by the"
+                      + " service, not the CLI, so the typed MISSING_REASON_TEXT is reachable and"
+                      + " fires before the idempotency replay check)",
+              required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      // Parse --format INSIDE the try (before the mutation) so an unsupported value raises
+      // INVALID_COMMAND_PAYLOAD without performing the pause, and still emits the completion log +
+      // runs the finally/endScope (no leaked MDC correlation-id scope).
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      // reason passes straight through: the service is the single source of reason validation
+      // (typed MISSING_REASON_TEXT), so the CLI stays symmetric with the REST surface
+      // (Reconciliation
+      // 5/OQ-4). Same 4-positional-arg shape as resume — reason is LAST, no domain field before
+      // idempotencyKey (Reconciliation 4).
+      PauseRecoveryResult result =
+          recoveryService.pause(runId, resolvedIdempotencyKey, actor, reason);
+      String rendered =
+          json
+              ? outputs.renderOperatorPauseJson(runId, result)
+              : renderPauseText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitPause(resolvedCorrelation, runId, start, OUTCOME_SUCCESS);
+      // Audit the reason length only — the free-form operator prose is never logged verbatim
+      // (null-guard the length; the service surfaces MISSING_REASON_TEXT on a blank reason).
+      log.info(
+          "operator pause reason supplied correlationId={} workflowRunId={} reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(runId),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitPause(resolvedCorrelation, runId, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitPause(resolvedCorrelation, runId, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator pause` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorPauseJson). The verbose footer (correlation-id +
+  // generated-idempotency-key) is appended to TEXT output only — gluing it onto JSON would break
+  // the operator-pause.v1 schema for machine consumers. priorState is null-guarded (may be null on
+  // a degenerate replay per the PauseRecoveryResult javadoc).
+  private static String renderPauseText(
+      PauseRecoveryResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionPublicId())
+            .append(" pause submitted (state: ")
+            .append(result.resultingState() == null ? "unknown" : result.resultingState().value())
+            .append(')');
+    if (result.priorState() != null) {
+      output.append(" [prior: ").append(result.priorState().value()).append(']');
+    }
+    output
+        .append(" [cancelled: inFlight=")
+        .append(result.cancelledInFlightCount())
+        .append(" queued=")
+        .append(result.cancelledQueuedCount())
+        .append(']');
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitPause(String correlationId, String runId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} workflowRunId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_PAUSE,
         MdcKeys.sanitizeForLog(runId),
         outcome,
         elapsedMs);

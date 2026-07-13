@@ -17,6 +17,7 @@ import java.util.Map;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
@@ -2374,6 +2375,116 @@ public class WorkflowController {
         response.runnerExecutionId(),
         response.supersededArtifactIds().size(),
         response.invalidatedApprovalIds().size(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.13 (AC1, AC3–AC5, AC7, AC8) — manually pause a run for operator intervention (NFR5:
+   * pause when uncertain). Structural twin of {@link #resume} (the CLOSEST of the later siblings):
+   * same header-derived actor + required {@code Idempotency-Key} convention, same {@code
+   * workflow_owner} boundary role gate, the SAME 4-positional-arg service-call shape {@code (runId,
+   * idempotencyKey, actor, reasonText)} with NO domain field before {@code idempotencyKey} (unlike
+   * reconcile's {@code conflictId}/{@code resolutionDecision} and rerun's {@code targetStep}).
+   * Mapped onto the RICH {@link RecoveryService#pause} (NOT the transition-only {@code
+   * WorkflowCommandService.pauseWorkflow} — R2). The rich path single-sources the {@code
+   * PAUSABLE_SOURCE_STATES} gate ({@code PAUSE_NOT_APPLICABLE} on any non-pausable / terminal /
+   * {@code Paused} / {@code TakenOver} source), the runner cancel-flip over {@code {queued,
+   * pending, running}} rows → {@code cancelled_for_pause} (the load-bearing "stop dispatch"
+   * signal), the post-commit best-effort {@code docker stop}, the {@code recovery_actions} row, and
+   * the {@code recovery.paused} event (carrying the typed {@code priorState}/{@code
+   * resultingState}). Wiring the thin service would silently skip all of that — the run would flip
+   * to {@code Paused} but its runner rows would keep getting dequeued and reaped into {@code
+   * Failed} (invisible to a happy-path test). Differs from resume in exactly: {@code reasonText}
+   * un-{@code @NotBlank} so the service surfaces {@code MISSING_REASON_TEXT} (R5); a response
+   * carrying the nullable {@code priorState} + two {@code int} cancellation counts; a non-null
+   * {@code currentState} (always {@code Paused}); and the error set ({@code PAUSE_NOT_APPLICABLE}
+   * instead of {@code RESUME_NOT_APPLICABLE}, plus {@code MISSING_REASON_TEXT}).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/pause",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "pause",
+      summary = "Manually pause a workflow run (story 4.13)",
+      description =
+          "Operator (workflow_owner) recovery action that pauses a run mid-flight without taking"
+              + " over: halts orchestrator dispatch by flipping every queued + in-flight runner"
+              + " execution to cancelled_for_pause, best-effort stops previously-running"
+              + " containers, records a recovery_actions row + a recovery.paused audit event"
+              + " (preserving the prior state resume will return to), and stamps the resolved actor"
+              + " onto the audit trail. Idempotent under Idempotency-Key. Pausing a run outside the"
+              + " pausable source states (terminal, already Paused, or TakenOver) surfaces"
+              + " PAUSE_NOT_APPLICABLE (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description =
+            "Pause recorded; run is Paused with in-flight + queued runner work cancelled."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "PAUSE_NOT_APPLICABLE (wrong/terminal source state) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public PauseResponse pause(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody PauseWorkflowRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.13 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.pause hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume/reconcile/
+    // rerun). Request-shape validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("pause", request.role());
+    log.info(
+        "REST pause received workflowRunId={} actorIdentity={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // reasonText is required-but-service-validated for pause (NOT @NotBlank — R5); null-guard
+        // before .length() so the entry log never NPEs on an absent reason (the service surfaces
+        // MISSING_REASON_TEXT downstream). The free-form operator prose is never logged verbatim.
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    PauseRecoveryResult result =
+        recoveryService.pause(workflowRunId, idempotencyKey, actor, request.reasonText());
+    PauseResponse response = PauseResponse.from(workflowRunId, result);
+    log.info(
+        "REST pause success workflowRunId={} currentState={} priorState={} recoveryActionId={}"
+            + " cancelledInFlightCount={} cancelledQueuedCount={} replayed={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.currentState(),
+        response.priorState(),
+        response.recoveryActionId(),
+        response.cancelledInFlightCount(),
+        response.cancelledQueuedCount(),
         response.replayed());
     return response;
   }

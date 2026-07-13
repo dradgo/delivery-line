@@ -1462,6 +1462,71 @@
         },
         "type" : "object"
       },
+      "PauseResponse" : {
+        "properties" : {
+          "cancelledInFlightCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "cancelledQueuedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "correlationId" : {
+            "type" : "string"
+          },
+          "currentState" : {
+            "type" : "string"
+          },
+          "pausedEventId" : {
+            "type" : "string"
+          },
+          "priorState" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "cancelledInFlightCount",
+          "cancelledQueuedCount",
+          "currentState",
+          "recoveryActionId",
+          "replayed",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
+      "PauseWorkflowRequest" : {
+        "description" : "Manually pause a workflow run (pause).",
+        "properties" : {
+          "reasonText" : {
+            "description" : "Required operator note explaining the pause. Validated by the service (no @NotBlank) so the typed MISSING_REASON_TEXT code is reachable — the defining divergence from ResumeWorkflowRequest.reasonText (genuinely optional) and ReconcileWorkflowRequest.reasonText (@NotBlank).",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "reasonText",
+          "role"
+        ],
+        "type" : "object"
+      },
       "ProblemDetailsResponse" : {
         "description" : "RFC 9457 Problem Details payload with DeliveryLine extension fields.",
         "properties" : {
@@ -6153,6 +6218,94 @@
           }
         },
         "summary" : "Get the parked manual step's redacted input bundle (story 3d-4)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/pause" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that pauses a run mid-flight without taking over: halts orchestrator dispatch by flipping every queued + in-flight runner execution to cancelled_for_pause, best-effort stops previously-running containers, records a recovery_actions row + a recovery.paused audit event (preserving the prior state resume will return to), and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Pausing a run outside the pausable source states (terminal, already Paused, or TakenOver) surfaces PAUSE_NOT_APPLICABLE (409).",
+        "operationId" : "pause",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PauseWorkflowRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PauseResponse"
+                }
+              }
+            },
+            "description" : "Pause recorded; run is Paused with in-flight + queued runner work cancelled."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "RUN_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "PAUSE_NOT_APPLICABLE (wrong/terminal source state) or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Manually pause a workflow run (story 4.13)",
         "tags" : [
           "Workflows"
         ]

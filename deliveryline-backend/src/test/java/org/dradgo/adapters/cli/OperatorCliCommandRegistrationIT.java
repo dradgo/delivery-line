@@ -78,6 +78,10 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator rerun-from-step"),
               () -> "registered commands: " + commandNames);
+          // Story 4.13 (AC6) — the mutating pause command registers under the same group prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator pause"),
+              () -> "registered commands: " + commandNames);
         });
   }
 

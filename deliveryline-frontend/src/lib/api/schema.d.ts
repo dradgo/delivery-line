@@ -616,6 +616,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually pause a workflow run (story 4.13)
+         * @description Operator (workflow_owner) recovery action that pauses a run mid-flight without taking over: halts orchestrator dispatch by flipping every queued + in-flight runner execution to cancelled_for_pause, best-effort stops previously-running containers, records a recovery_actions row + a recovery.paused audit event (preserving the prior state resume will return to), and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Pausing a run outside the pausable source states (terminal, already Paused, or TakenOver) surfaces PAUSE_NOT_APPLICABLE (409).
+         */
+        post: operations["pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/provider-usage": {
         parameters: {
             query?: never;
@@ -1683,6 +1703,29 @@ export interface components {
              * @example 12
              */
             total?: number;
+        };
+        PauseResponse: {
+            /** Format: int32 */
+            cancelledInFlightCount: number;
+            /** Format: int32 */
+            cancelledQueuedCount: number;
+            correlationId?: string;
+            currentState: string;
+            pausedEventId?: string;
+            priorState?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            workflowRunId: string;
+        };
+        /** @description Manually pause a workflow run (pause). */
+        PauseWorkflowRequest: {
+            /** @description Required operator note explaining the pause. Validated by the service (no @NotBlank) so the typed MISSING_REASON_TEXT code is reachable — the defining divergence from ResumeWorkflowRequest.reasonText (genuinely optional) and ReconcileWorkflowRequest.reasonText (@NotBlank). */
+            reasonText: string;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
         };
         /** @description RFC 9457 Problem Details payload with DeliveryLine extension fields. */
         ProblemDetailsResponse: {
@@ -4327,6 +4370,62 @@ export interface operations {
                 };
             };
             /** @description Run is not parked for manual execution (MANUAL_EXECUTION_NOT_APPLICABLE). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    pause: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PauseWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Pause recorded; run is Paused with in-flight + queued runner work cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PauseResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PAUSE_NOT_APPLICABLE (wrong/terminal source state) or IDEMPOTENCY_KEY_CONFLICT. */
             409: {
                 headers: {
                     [name: string]: unknown;

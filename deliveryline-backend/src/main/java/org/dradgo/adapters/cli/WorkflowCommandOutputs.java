@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
+import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
@@ -61,6 +62,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_RESUME_SCHEMA_VERSION = 1;
   static final int OPERATOR_RECONCILE_SCHEMA_VERSION = 1;
   static final int OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION = 1;
+  static final int OPERATOR_PAUSE_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -631,6 +633,30 @@ public class WorkflowCommandOutputs {
     payload.put("supersededArtifactIds", result.supersededArtifactIds());
     payload.put("invalidatedApprovalIds", result.invalidatedApprovalIds());
     payload.put("runnerExecutionId", result.newRunnerExecutionPublicId());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.13 — stable {@code operator-pause.v1} JSON document for {@code deliveryline operator
+   * pause --format json}. {@code workflowRunId} is passed explicitly because {@link
+   * PauseRecoveryResult} carries none. {@code currentState} is non-null (always {@code PAUSED} —
+   * Reconciliation 6); {@code priorState} IS null-tolerant (may be null on a degenerate replay per
+   * the result javadoc); {@code cancelledInFlightCount}/{@code cancelledQueuedCount} are {@code
+   * int} (0 on replay).
+   */
+  public String renderOperatorPauseJson(String workflowRunId, PauseRecoveryResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_PAUSE_SCHEMA_VERSION);
+    payload.put("workflowRunId", workflowRunId);
+    payload.put(
+        "currentState", result.resultingState() == null ? null : result.resultingState().value());
+    payload.put("priorState", result.priorState() == null ? null : result.priorState().value());
+    payload.put("recoveryActionId", result.recoveryActionPublicId());
+    payload.put("pausedEventId", result.pausedEventPublicId());
+    payload.put("cancelledInFlightCount", result.cancelledInFlightCount());
+    payload.put("cancelledQueuedCount", result.cancelledQueuedCount());
     payload.put("correlationId", result.correlationId());
     payload.put("replayed", result.replayed());
     return writeJson(payload);

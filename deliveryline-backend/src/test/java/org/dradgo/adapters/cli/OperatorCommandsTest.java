@@ -16,6 +16,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
+import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
@@ -770,6 +771,244 @@ class OperatorCommandsTest {
         .contains("operator command completed")
         .contains("commandName=operator rerun-from-step")
         .contains("outcome=failure:INVALID_RERUN_TARGET_STEP");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Story 4.13 (AC6) — `deliveryline operator pause {runId}` rendering + completion log.
+  // ---------------------------------------------------------------------------
+
+  private OperatorCommands pauseCommands(RecoveryService rs, boolean interactive) {
+    CliInteractivityDetector detector = mock(CliInteractivityDetector.class);
+    when(detector.isInteractive()).thenReturn(interactive);
+    return new OperatorCommands(
+        inspection,
+        outputs,
+        detector,
+        rs,
+        new IdempotencyKeyValidator(),
+        new LocalActorIdentityResolver("local-operator"),
+        () -> "corr-fixed",
+        () -> "idem-generated-0000001");
+  }
+
+  private static PauseRecoveryResult pauseResult(
+      String recoveryId, WorkflowState priorState, int inFlight, int queued, boolean replayed) {
+    return new PauseRecoveryResult(
+        recoveryId,
+        "evt_" + recoveryId,
+        priorState,
+        inFlight,
+        queued,
+        WorkflowState.PAUSED,
+        "corr-1",
+        replayed);
+  }
+
+  @Test
+  void pauseTextRendersRecoveryActionStatePriorAndCancellationCounts() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenReturn(pauseResult("rcv_pp001", WorkflowState.EXECUTING, 2, 3, false));
+
+    String out =
+        pauseCommands(rs, true)
+            .pause("run_pp001", "note", "idem-pause-key-00000001", null, "corr-1", "text", false);
+
+    assertThat(out).contains("rcv_pp001 pause submitted (state: Paused)");
+    assertThat(out).contains("[prior: Executing]");
+    assertThat(out).contains("[cancelled: inFlight=2 queued=3]");
+    assertThat(out).doesNotContain("[replayed]");
+    // Four positional args, reasonText LAST, no domain field before idempotencyKey (Reconciliation
+    // 4). Actor resolved to local-operator (omitted --actor-identity).
+    verify(rs).pause(eq("run_pp001"), eq("idem-pause-key-00000001"), any(), eq("note"));
+  }
+
+  @Test
+  void pauseReplayTextShowsReplayedWithZeroCounts() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenReturn(pauseResult("rcv_pp002", WorkflowState.WAITING_FOR_REVIEW, 0, 0, true));
+
+    String out =
+        pauseCommands(rs, true)
+            .pause("run_pp002", null, "idem-pause-key-00000001", null, "corr-1", "text", false);
+
+    assertThat(out).contains("rcv_pp002 pause submitted (state: Paused)");
+    assertThat(out).contains("[prior: WaitingForReview]");
+    assertThat(out).contains("[cancelled: inFlight=0 queued=0]");
+    assertThat(out).contains("[replayed]");
+  }
+
+  @Test
+  void pauseTextOmitsPriorSegmentWhenPriorStateNull() {
+    // ⚠️ Reconciliation 6 — priorState may be null on a degenerate replay; renderPauseText
+    // null-guards the [prior: …] segment (the cancellation-count segment stays).
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenReturn(pauseResult("rcv_pp003", null, 0, 0, true));
+
+    String out =
+        pauseCommands(rs, true)
+            .pause("run_pp003", "note", "idem-pause-key-00000001", null, "corr-1", "text", false);
+
+    assertThat(out).contains("rcv_pp003 pause submitted (state: Paused)");
+    assertThat(out).doesNotContain("[prior:");
+    assertThat(out).contains("[cancelled: inFlight=0 queued=0]");
+  }
+
+  @Test
+  void pauseVerboseAppendsCorrelationIdAndGeneratedKeyWhenKeyOmitted() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenReturn(pauseResult("rcv_pp004", WorkflowState.EXECUTING, 1, 0, false));
+
+    // Interactive TTY + omitted --idempotency-key ⇒ the key is auto-generated; verbose surfaces it.
+    String out =
+        pauseCommands(rs, true).pause("run_pp004", "note", null, null, "corr-1", "text", true);
+
+    assertThat(out).contains("[correlation-id: corr-1]");
+    assertThat(out).contains("[generated-idempotency-key: idem-generated-0000001]");
+    verify(rs).pause(eq("run_pp004"), eq("idem-generated-0000001"), any(), eq("note"));
+  }
+
+  @Test
+  void pauseJsonEmitsStableSchemaWithoutVerboseFooterAndNullTolerantPrior() {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenReturn(pauseResult("rcv_pp005", null, 0, 0, true));
+
+    // --verbose must NOT glue a "correlation-id" footer onto JSON (would break operator-pause.v1).
+    String out =
+        pauseCommands(rs, true)
+            .pause("run_pp005", "note", "idem-pause-key-00000001", null, "corr-1", "json", true);
+
+    assertThat(out).doesNotContain("[correlation-id:");
+    JsonNode body = readJson(out);
+    assertThat(body.path("schemaVersion").asInt()).isEqualTo(1);
+    assertThat(body.path("workflowRunId").asText()).isEqualTo("run_pp005");
+    assertThat(body.path("currentState").asText()).isEqualTo("Paused");
+    // priorState null-tolerant → serialized as JSON null.
+    assertThat(body.path("priorState").isNull()).isTrue();
+    assertThat(body.path("recoveryActionId").asText()).isEqualTo("rcv_pp005");
+    assertThat(body.path("cancelledInFlightCount").asInt()).isEqualTo(0);
+    assertThat(body.path("cancelledQueuedCount").asInt()).isEqualTo(0);
+    assertThat(body.path("replayed").asBoolean()).isTrue();
+  }
+
+  @Test
+  void pauseInvalidFormatRaisesInvalidCommandPayloadBeforeMutating() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                pauseCommands(rs, true)
+                    .pause("run_pp006", null, "idem-pause-key-00000001", null, null, "xml", false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.INVALID_COMMAND_PAYLOAD);
+    // The mutation must not have fired when --format is rejected.
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void pauseNonInteractiveWithoutKeyRaisesMissingIdempotencyKey() {
+    RecoveryService rs = mock(RecoveryService.class);
+
+    assertThatThrownBy(
+            () ->
+                pauseCommands(rs, false)
+                    .pause("run_pp007", null, null, null, "corr-1", "text", false))
+        .isInstanceOf(DomainException.class)
+        .extracting(e -> ((DomainException) e).errorCode())
+        .isEqualTo(DomainErrorCode.MISSING_IDEMPOTENCY_KEY);
+    org.mockito.Mockito.verifyNoInteractions(rs);
+  }
+
+  @Test
+  void pauseEmitsCompletionLogLineSuccess(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenReturn(pauseResult("rcv_pp008", WorkflowState.EXECUTING, 1, 0, false));
+
+    // A realistic multi-word reason with distinctive tokens — a partial leak of the prose (not just
+    // an exact-match on a 4-char token) would fail the doesNotContain assertions below.
+    pauseCommands(rs, true)
+        .pause(
+            "run_pp008",
+            "quarantine the flaky upstream fixture",
+            "idem-pause-key-00000001",
+            null,
+            "corr-abc",
+            "text",
+            false);
+
+    String logged = output.getOut() + output.getErr();
+    assertThat(logged)
+        .contains("operator command completed")
+        .contains("commandName=operator pause")
+        .contains("workflowRunId=run_pp008")
+        .contains("outcome=success");
+    // The free-form reason prose is never logged verbatim (length only) — assert both the full
+    // phrase and distinctive tokens are absent, so a partial leak cannot slip through.
+    assertThat(logged)
+        .doesNotContain("quarantine the flaky upstream fixture")
+        .doesNotContain("quarantine")
+        .doesNotContain("flaky");
+  }
+
+  @Test
+  void pauseEmitsCompletionLogLineFailureUnknownOnNonDomainError(CapturedOutput output) {
+    // The catch (RuntimeException) branch — any non-DomainException failure from the service (e.g.
+    // RecoveryService.pause's IllegalStateException("RunnerAdapter is required")) emits
+    // outcome=failure:unknown and rethrows unchanged.
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("RunnerAdapter is required for pause"));
+
+    assertThatThrownBy(
+            () ->
+                pauseCommands(rs, true)
+                    .pause(
+                        "run_pp010",
+                        "note",
+                        "idem-pause-key-00000001",
+                        null,
+                        "corr-abc",
+                        "text",
+                        false))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator pause")
+        .contains("workflowRunId=run_pp010")
+        .contains("outcome=failure:unknown");
+  }
+
+  @Test
+  void pauseEmitsCompletionLogLineFailureOnServiceError(CapturedOutput output) {
+    RecoveryService rs = mock(RecoveryService.class);
+    when(rs.pause(any(), any(), any(), any()))
+        .thenThrow(
+            new DomainException(DomainErrorCode.MISSING_REASON_TEXT, "missing reason", Map.of()));
+
+    assertThatThrownBy(
+            () ->
+                pauseCommands(rs, true)
+                    .pause(
+                        "run_pp009",
+                        null,
+                        "idem-pause-key-00000001",
+                        null,
+                        "corr-abc",
+                        "text",
+                        false))
+        .isInstanceOf(DomainException.class);
+
+    assertThat(output.getOut() + output.getErr())
+        .contains("operator command completed")
+        .contains("commandName=operator pause")
+        .contains("outcome=failure:MISSING_REASON_TEXT");
   }
 
   private static JsonNode readJson(String json) {

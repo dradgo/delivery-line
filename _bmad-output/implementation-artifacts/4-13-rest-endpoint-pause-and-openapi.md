@@ -1,6 +1,6 @@
 # Story 4.13: REST Endpoint — `pause` + OpenAPI
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -111,43 +111,55 @@ so that operators have a one-step manual pause — halting orchestrator dispatch
 
 ## Tasks / Subtasks
 
-- [ ] **Task 0 — Verify 4.10's fan-out is present before writing anything (Reconciliation 1 + 11)**
-  - [ ] Confirm `WorkflowController` already injects `RecoveryService` (`:109,137`) and `OperatorCommands` already has the 4-mutation-dep ctor + the `resume` command. If NOT, 4.10 has not landed on this branch — STOP and rebase onto 4.10 (or apply its fan-out first); 4.13 assumes it. (4.11/`reconcile` and 4.12/`rerun-from-step` are NOT prerequisites.)
-  - [ ] Confirm `RecoveryService.pause` exists (`:1121`), both pause codes are mapped (`ProblemDetailsCatalog.java:642` `MISSING_REASON_TEXT`, `:652` `PAUSE_NOT_APPLICABLE`), `AllowedAction.PAUSE_WORKFLOW` exists, `RunnerExecutionStatus.CANCELLED_FOR_PAUSE` + Flyway V43 shipped. Create no migration (`recovery_actions` `action_type='pause'` is a V1 CHECK slot; V43 already shipped).
+- [x] **Task 0 — Verify 4.10's fan-out is present before writing anything (Reconciliation 1 + 11)**
+  - [x] Confirm `WorkflowController` already injects `RecoveryService` (`:109,137`) and `OperatorCommands` already has the 4-mutation-dep ctor + the `resume` command. If NOT, 4.10 has not landed on this branch — STOP and rebase onto 4.10 (or apply its fan-out first); 4.13 assumes it. (4.11/`reconcile` and 4.12/`rerun-from-step` are NOT prerequisites.) — VERIFIED: ctor imports present, `resume`/`reconcile`/`rerun-from-step` all in tree.
+  - [x] Confirm `RecoveryService.pause` exists (`:1121`), both pause codes are mapped (`ProblemDetailsCatalog.java:642` `MISSING_REASON_TEXT`, `:652` `PAUSE_NOT_APPLICABLE`), `AllowedAction.PAUSE_WORKFLOW` exists, `RunnerExecutionStatus.CANCELLED_FOR_PAUSE` + Flyway V43 shipped. Create no migration (`recovery_actions` `action_type='pause'` is a V1 CHECK slot; V43 already shipped). — VERIFIED; NO migration created.
 
-- [ ] **Task 1 — REST DTOs (AC2, AC8)**
-  - [ ] `adapters/rest/PauseWorkflowRequest.java` — `record PauseWorkflowRequest(@NotBlank @Size(max=128) String role, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on each; `reasonText` gets NO `@NotBlank` and NO `@Schema(nullable=true)` (Reconciliation 5). Model on `ResumeWorkflowRequest.java`. Javadoc the un-`@NotBlank` trap + the divergence from BOTH `ResumeWorkflowRequest.reasonText` (genuinely optional) AND `ReconcileWorkflowRequest.reasonText` (`@NotBlank`).
-  - [ ] `adapters/rest/PauseResponse.java` — 10-component record per AC8 with `@Schema(requiredMode=…)` on each; `currentState` is `REQUIRED` (no null-guard); `priorState` is `NOT_REQUIRED` (null-guarded); `cancelledInFlightCount` + `cancelledQueuedCount` are `REQUIRED int`; `static PauseResponse from(String workflowRunId, PauseRecoveryResult result)` calling `result.resultingState().value()` directly for `currentState` and `result.priorState() == null ? null : result.priorState().value()` for `priorState`. Javadoc the two-different-nullabilities trap (Reconciliation 6) and the divergence from `ResumeResponse` (currentState nullable there) / `ReconcileResponse` (no prior field).
+- [x] **Task 1 — REST DTOs (AC2, AC8)**
+  - [x] `adapters/rest/PauseWorkflowRequest.java` — `record PauseWorkflowRequest(@NotBlank @Size(max=128) String role, @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on each; `reasonText` gets NO `@NotBlank` and NO `@Schema(nullable=true)` (Reconciliation 5). Model on `ResumeWorkflowRequest.java`. Javadoc the un-`@NotBlank` trap + the divergence from BOTH `ResumeWorkflowRequest.reasonText` (genuinely optional) AND `ReconcileWorkflowRequest.reasonText` (`@NotBlank`).
+  - [x] `adapters/rest/PauseResponse.java` — 9-component record per AC8 (`workflowRunId`, `currentState`, `priorState`, `recoveryActionId`, `pausedEventId`, `cancelledInFlightCount`, `cancelledQueuedCount`, `correlationId`, `replayed`) with `@Schema(requiredMode=…)` on each; `currentState` is `REQUIRED` (no null-guard); `priorState` is `NOT_REQUIRED` (null-guarded); `cancelledInFlightCount` + `cancelledQueuedCount` are `REQUIRED int`; `static PauseResponse from(String workflowRunId, PauseRecoveryResult result)` calling `result.resultingState().value()` directly for `currentState` and `result.priorState() == null ? null : result.priorState().value()` for `priorState`. Javadoc the two-different-nullabilities trap (Reconciliation 6) and the divergence from `ResumeResponse` (currentState nullable there) / `ReconcileResponse` (no prior field).
 
-- [ ] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
-  - [ ] Add `public PauseResponse pause(...)` after `reconcile` (`:2261`): `@PostMapping(value="/{workflowRunId}/pause", consumes=…, produces=…)`, `@Operation(operationId="pause", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`; the 409 description names `PAUSE_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT`; the 400 names `MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT`). NO ctor change (`RecoveryService` already injected; add only a `PauseRecoveryResult` import).
-  - [ ] Guard prologue (Reconciliation 3) → `requireWorkflowOwnerRole("pause", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.pause(workflowRunId, idempotencyKey, actor, request.reasonText())` → `PauseResponse.from(workflowRunId, result)`.
-  - [ ] **Do NOT call `workflowCommandService.pauseWorkflow`** (Reconciliation 2).
+- [x] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
+  - [x] Add `public PauseResponse pause(...)` after `rerunFromStep` (4.12 landed): `@PostMapping(value="/{workflowRunId}/pause", consumes=…, produces=…)`, `@Operation(operationId="pause", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`; the 409 description names `PAUSE_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT`; the 400 names `MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT`). NO ctor change (`RecoveryService` already injected; added only a `PauseRecoveryResult` import).
+  - [x] Guard prologue (Reconciliation 3) → `requireWorkflowOwnerRole("pause", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.pause(workflowRunId, idempotencyKey, actor, request.reasonText())` → `PauseResponse.from(workflowRunId, result)`.
+  - [x] **Did NOT call `workflowCommandService.pauseWorkflow`** (Reconciliation 2).
 
-- [ ] **Task 3 — CLI `deliveryline operator pause` (AC6)**
-  - [ ] Add `@Command(name = "pause", exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)` to `OperatorCommands` (NO ctor change — the mutation deps are already present from 4.10). Model on the in-file `resume` command (`:266-340`). Positional `@Argument(index=0) String runId`; `--reason` as `required = false` (service-validated — Reconciliation 5 / OQ-4); optional `--idempotency-key`, `--actor-identity`, `--correlation-id`, `--format`, `--verbose`. Reuse `pushCorrelation`/`CorrelationScope`, `resolveActorIdentity`, `resolveIdempotencyKey`, `idempotencyKeyValidator.requireValid`, `ActorType.HUMAN`, and the `finally { MdcKeys.endScope(...) }`.
-  - [ ] Call `recoveryService.pause(runId, resolvedIdempotencyKey, actor, reason)` (4 positional args, Reconciliation 4). Render `rcv_… pause submitted (state: <resultingState>)` + `[prior: <priorState>]` when non-null + `[cancelled: inFlight=<n> queued=<m>]` + `[replayed]` when replayed; `--verbose` text-only footer appends `[correlation-id: …]` + `[generated-idempotency-key: …]` when the flag was omitted (never JSON — the `resume` precedent, `:365-370`).
-  - [ ] Add `WorkflowCommandOutputs.renderOperatorPauseJson(runId, result)` (`operator-pause.v1`, `OPERATOR_PAUSE_SCHEMA_VERSION = 1`) — mirror `renderOperatorResumeJson` (`:577`), including `priorState` (null-tolerant) + both `int` counts. If `WorkflowCliJsonSchemaContractTest` enumerates operator commands, add the new command (the 4.10 learning: the CLI schema test is enumerated, not auto-discovered).
-  - [ ] Add a `COMMAND_NAME_PAUSE = "operator pause"` constant next to `COMMAND_NAME_RESUME`/`COMMAND_NAME_RECONCILE`; emit the completion `INFO` log with it (mirror `emitResume` → add `emitPause`).
-  - [ ] Pin `deliveryline operator pause` in `OperatorCliCommandRegistrationIT` (mirror the `operator resume`/`operator reconcile` assertions).
+- [x] **Task 3 — CLI `deliveryline operator pause` (AC6)**
+  - [x] Added `@Command(name = "pause", exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)` to `OperatorCommands` (NO ctor change — the mutation deps already present from 4.10). Modelled on the in-file `resume` command. Positional `@Argument(index=0) String runId`; `--reason` as `required = false` (service-validated — Reconciliation 5 / OQ-4); optional `--idempotency-key`, `--actor-identity`, `--correlation-id`, `--format`, `--verbose`. Reuses `pushCorrelation`/`CorrelationScope`, `resolveActorIdentity`, `resolveIdempotencyKey`, `idempotencyKeyValidator.requireValid`, `ActorType.HUMAN`, and the `finally { MdcKeys.endScope(...) }`.
+  - [x] Calls `recoveryService.pause(runId, resolvedIdempotencyKey, actor, reason)` (4 positional args, Reconciliation 4). Renders `rcv_… pause submitted (state: <resultingState>)` + `[prior: <priorState>]` when non-null + `[cancelled: inFlight=<n> queued=<m>]` + `[replayed]` when replayed; `--verbose` text-only footer appends `[correlation-id: …]` + `[generated-idempotency-key: …]` when the flag was omitted (never JSON).
+  - [x] Added `WorkflowCommandOutputs.renderOperatorPauseJson(runId, result)` (`operator-pause.v1`, `OPERATOR_PAUSE_SCHEMA_VERSION = 1`) — mirrors `renderOperatorResumeJson`, including `priorState` (null-tolerant) + both `int` counts. `WorkflowCliJsonSchemaContractTest` does NOT enumerate operator mutation commands (resume/reconcile/rerun absent), so no schema file / test entry needed.
+  - [x] Added a `COMMAND_NAME_PAUSE = "operator pause"` constant next to `COMMAND_NAME_RERUN_FROM_STEP`; emit the completion `INFO` log with it via `emitPause`.
+  - [x] Pinned `deliveryline operator pause` in `OperatorCliCommandRegistrationIT`.
 
-- [ ] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 9)**
-  - [ ] Regenerate: `mvnw -o verify -Dit.test=OpenApiSnapshotContractTest -DfailIfNoTests=false -Djacoco.skip=true -Dopenapi.snapshot.write=true` (the `*ContractTest` route through Failsafe, not the Surefire `test` goal — 4.11 learning; [[maven-arglineation-goal-crash]]); review the `openapi.json` diff (expect exactly one new path (`/pause`) + two new schemas (`PauseWorkflowRequest`, `PauseResponse`) + two `integer` response fields; NO `allowableValues`). Re-run without the write flag → green.
-  - [ ] `cd deliveryline-frontend && npm run generate-api`; commit `src/lib/api/schema.d.ts`. Verify `npm run check:api` green ([[openapi-regen-frontend-client-drift-cascade]]); `npm run build` green ([[frontend-tsc-noemit-misses-test-files]]).
+- [x] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 9)**
+  - [x] Regenerated via Failsafe write flag; `openapi.json` diff = +153 lines: exactly one new path (`/pause`) + two new schemas (`PauseWorkflowRequest`, `PauseResponse`) + two `integer` count fields; NO `allowableValues`/`enum`. Re-ran without the write flag → OpenApiSnapshotContractTest green (byte-stable).
+  - [x] `npm run generate-api` → `schema.d.ts` (+99 lines); `npm run check:api` green; `npm run build` green.
 
-- [ ] **Task 5 — Tests (AC9)**
-  - [ ] New `adapters/rest/PauseEndpointContractTest` — the cases enumerated in AC9; model on the 4.10 `ResumeEndpointContractTest` / 4.11 `ReconcileEndpointContractTest` (`@WebMvcTest` + `ListAppender` + `LocalActorIdentityResolver` call-through stub). REUSE the `@MockitoBean RecoveryService` — do NOT re-declare if inherited. Assert Problem Details `code`/`status`/`details` only. Explicitly assert `MISSING_REASON_TEXT` (blank reason) surfaces as its TYPED code (proving `reasonText` is NOT `@NotBlank`), and the degenerate-replay `priorState=null` mapping (proving the response null-guard).
-  - [ ] CLI/REST equivalence test `adapters/cli/PauseCliRestEquivalenceContractTest` (Reconciliation 4): capture the FOUR positional `recoveryService.pause(...)` args from REST (MockMvc) and CLI (`new OperatorCommands(...)`), assert equal — including `ActorContext` record equality and the `local-operator` fallback on both surfaces. (Lives in `adapters.cli` for the package-private test ctor.)
-  - [ ] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green (they already mock `RecoveryService` from 4.10).
-  - [ ] Optional real-PG `PauseEndpointIT` (`*IT`) seeding an `EXECUTING` run + a `queued`/`running` runner row, asserting the `recovery_actions` row (`action_type='pause'`, `reviewer_role='workflow_owner'`), the `recovery.paused` event (typed `priorState`/`resultingState`), and the `cancelled_for_pause` flips + counts. [[springboot-testcontainers-test-must-be-IT]]
-  - [ ] ⚠️ New `@WebMvcTest` classes null the redaction holder and poison `CapturedOutput` in a reused fork — add the identity-holder `@BeforeAll`/`@AfterAll` ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
-  - [ ] CLI render/log tests in `OperatorCommandsTest` (mirror the resume render tests): text render with/without `priorState` + counts + replayed + verbose footer; JSON render (null-tolerant `priorState`); completion-log outcome (success + `failure:<code>`).
+- [x] **Task 5 — Tests (AC9)**
+  - [x] New `adapters/rest/PauseEndpointContractTest` (15 tests) — all AC9 cases; `@WebMvcTest` + `ListAppender` + `LocalActorIdentityResolver` call-through stub; REUSES `@MockitoBean RecoveryService`. Asserts Problem Details `code`/`status`/`details` only. Explicitly asserts `MISSING_REASON_TEXT` (blank reason → typed code, proving `reasonText` NOT `@NotBlank`) and the degenerate-replay `priorState=null` mapping (proving the null-guard).
+  - [x] CLI/REST equivalence test `adapters/cli/PauseCliRestEquivalenceContractTest` — captures the FOUR positional `recoveryService.pause(...)` args from REST + CLI, asserts equal including `ActorContext` record equality + `local-operator` fallback on both surfaces.
+  - [x] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green (full backend verify).
+  - [x] Optional real-PG `PauseEndpointIT` — DEFERRED (not built): the `@WebMvcTest` contract test covers the adapter wiring; the real pause/cancellation/transition semantics are already covered by 4.8's `RecoveryServicePauseTest` + real-PG `RecoveryServicePauseIT`. Matches the 4.11/4.12 sibling decision.
+  - [x] New `@WebMvcTest` classes carry the identity-holder `@BeforeAll`/`@AfterAll` guard ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
+  - [x] CLI render/log tests added to `OperatorCommandsTest` (9 tests): text render with/without `priorState` + counts + replayed + verbose footer; JSON render (null-tolerant `priorState`); completion-log outcome (success + `failure:MISSING_REASON_TEXT`).
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] REST: `INFO "REST pause received workflowRunId={} actorIdentity={} reasonLength={}"` on entry (`reasonLength` is the length only, null-guarded — the free-form prose is never logged) and `INFO "REST pause success workflowRunId={} currentState={} priorState={} recoveryActionId={} cancelledInFlightCount={} cancelledQueuedCount={} replayed={}"` on success. `WARN` on the role rejection is already emitted inside `requireWorkflowOwnerRole`. No `ERROR` — `DomainException`s are mapped by `ProblemDetailsMapper`.
-  - [ ] CLI: reuse the `emit*` completion-log idiom — `INFO` with `correlationId`, `commandName='operator pause'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
-  - [ ] Parameterized logging only; sanitize `workflowRunId`/`actorIdentity` via `MdcKeys.sanitizeForLog`. Never log `reasonText` prose, the idempotency-key value, secrets, tokens, or PII. (`priorState`/`currentState` VALUES are safe to log — bounded governed enums.)
-  - [ ] Pin the REST entry/success lines and the role-rejection `WARN` in `PauseEndpointContractTest` via `ListAppender` on the `WorkflowController` logger. The recovery-service log surface (`recovery pause start/success/replay/rejected`) is already pinned by 4.8's `RecoveryLoggingContractTest` — do NOT duplicate it in the adapter.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] REST: `INFO "REST pause received workflowRunId={} actorIdentity={} reasonLength={}"` on entry (null-guarded length) and `INFO "REST pause success workflowRunId={} currentState={} priorState={} recoveryActionId={} cancelledInFlightCount={} cancelledQueuedCount={} replayed={}"` on success. `WARN` on the role rejection is emitted inside `requireWorkflowOwnerRole`. No `ERROR`.
+  - [x] CLI: `emitPause` completion-log — `INFO` with `correlationId`, `commandName='operator pause'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
+  - [x] Parameterized logging only; `workflowRunId`/`actorIdentity` sanitized via `MdcKeys.sanitizeForLog`. `reasonText` prose never logged (length only); idempotency-key value never logged.
+  - [x] Pinned the REST entry/success lines + role-rejection `WARN` in `PauseEndpointContractTest` via `ListAppender` on the `WorkflowController` logger. Did NOT duplicate 4.8's `RecoveryLoggingContractTest`.
+
+### Review Findings
+
+> Code review 2026-07-13 (bmad-code-review, 3 parallel layers: Blind Hunter + Edge Case Hunter + Acceptance Auditor). Acceptance Auditor: **zero AC/Reconciliation violations**. No Critical/High/Medium defects. 4 dismissed (see note). The 3 below are all **Low-severity, test-only** hardening — non-blocking.
+
+- [x] [Review][Patch] Strengthen the "reason never logged verbatim" assertion with a realistic multi-word reason [deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java] — FIXED: `pauseEmitsCompletionLogLineSuccess` now uses reason `"quarantine the flaky upstream fixture"` and asserts the full phrase + distinctive tokens (`quarantine`, `flaky`) are absent, so a partial leak fails.
+- [x] [Review][Patch] Add a CLI test for the non-`DomainException` failure path [deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java] — FIXED: added `pauseEmitsCompletionLogLineFailureUnknownOnNonDomainError` — stubs `rs.pause` to throw `IllegalStateException`, asserts `outcome=failure:unknown` + rethrow (exercises the `catch (RuntimeException)` branch).
+- [x] [Review][Patch] Add pause-specific `X-Actor-Identity` multi-valued/unsafe-value rejection tests [deliveryline-backend/src/test/java/org/dradgo/adapters/rest/PauseEndpointContractTest.java] — FIXED: added `multiValuedActorIdentityHeaderRejectedAsInvalidCommandPayload` (duplicate header → 400 `INVALID_COMMAND_PAYLOAD`, `details.header=X-Actor-Identity`) and `unsafeActorIdentityHeaderValueRejectedAsInvalidCommandPayload` (oversize > 128-char value → same). Both assert `verifyNoInteractions(recoveryService)`.
+
+**Verification:** `OperatorCommandsTest` 40/0, `PauseEndpointContractTest` 17/0, `PauseCliRestEquivalenceContractTest` 1/0 — full targeted `verify` = BUILD SUCCESS (jacoco skipped; SpotBugs warnings pre-existing/unrelated).
+
+Dismissed (4): (1) REST `PauseResponse.from` unguarded `resultingState()` deref vs CLI guards — `resultingState` is contractually always `PAUSED`; the direct deref is exactly what Reconciliation 6 mandates and the CLI guard is harmless. (2) null-`resultingState` branch untested — contract-impossible/unreachable defensive branch. (3) CLI `correlationId` "unsanitized" — false positive: `pushCorrelation` sanitizes at `OperatorCommands.java:914`. (4) equivalence-test inlined reason literal — the `isEqualTo(REASON)` assertion catches any drift.
 
 ## Dev Notes
 
@@ -212,8 +224,46 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- Spotless `check` (run inside `verify`) initially failed on javadoc line-wrapping in the new DTOs/controller/tests → `mvnw spotless:apply` reformatted; re-ran clean. ([[spotless-apply-before-pushing-java-edits]])
+- OpenAPI regen routed through **Failsafe** (`verify -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true`); the write pass fails by design (it rewrites the snapshot), the no-write re-run is green. ([[maven-arglineation-goal-crash]])
+- PowerShell splits `-Djacoco.skip=true` unless quoted — pass `"-Djacoco.skip=true"`.
+
 ### Change Log
+
+- 2026-07-13 — Story 4.13 implemented (`ready-for-dev → review`). PURE ADAPTER wiring over the `done` `RecoveryService.pause` (4.8), reusing 4.10's ctor fan-out wholesale (no ctor change, none of the 17 `@WebMvcTest` slices touched). Added the `POST /{workflowRunId}/pause` endpoint, `PauseWorkflowRequest`/`PauseResponse` DTOs, the `deliveryline operator pause` CLI command + `renderOperatorPauseJson`, OpenAPI + `schema.d.ts` regen, and the contract/equivalence/render tests. ZERO lines in `application/`, `domain/`, or `db/migration`. Full `mvnw -o -pl deliveryline-backend verify` BUILD SUCCESS + frontend `check:api`/`build` green.
 
 ### Completion Notes List
 
+- **Scope honored exactly:** one controller method + two DTOs + one CLI command + one JSON renderer + OpenAPI/`schema.d.ts` regen + tests. No new `DomainErrorCode`/`WorkflowEventType`/`AllowedAction`/`WorkflowCommand`/registry value/migration/ArchUnit edit. Wired the RICH `RecoveryService.pause` (Reconciliation 2), never `WorkflowCommandService.pauseWorkflow`.
+- **Defining trap (Reconciliation 5) proven:** `reasonText` carries NO `@NotBlank`; a blank reason surfaces the typed `MISSING_REASON_TEXT` (400) end-to-end — asserted at the REST layer (`blankReasonTextSurfacesTypedMissingReasonTextProvingNoNotBlank`) and mirrored on the CLI (`--reason required=false`, `pauseEmitsCompletionLogLineFailureOnServiceError`).
+- **Response two-nullability trap (Reconciliation 6) proven:** `currentState` REQUIRED / dereferenced directly (always `Paused`); `priorState` NOT_REQUIRED / null-guarded — the degenerate-replay `priorState=null` case (`degenerateReplayWithNullPriorStateOmitsPriorStateProvingNullGuard`) proves the wire field is omitted while `currentState` stays present. CLI text render null-guards the `[prior: …]` segment; JSON render is null-tolerant.
+- **4 positional args (Reconciliation 4):** `pause(runId, idempotencyKey, actor, reasonText)` — the SAME shape as `resume`, no domain field before `idempotencyKey`, `reasonText` LAST. The equivalence test captures all four from REST + CLI and asserts equality including `ActorContext` record equality + `local-operator` fallback.
+- **Error set (Reconciliation 7):** shipped the real set (`MISSING_REASON_TEXT` 400 · `PAUSE_NOT_APPLICABLE` 409 with `details.currentState` · `IDEMPOTENCY_KEY_CONFLICT` 409 · `RUN_NOT_FOUND` 404 · idempotency/role/payload 400s); `ACTION_NOT_ALLOWED` correctly ABSENT (does not exist).
+- **OpenAPI (Reconciliation 9):** exactly one new `/pause` path + two schemas + two `integer` count fields; NO `allowableValues`/`enum` component (pause has no enum request field). Snapshot byte-stable after regen; FE `check:api` in sync.
+- **Verification:** full `mvnw -o -pl deliveryline-backend verify` = **BUILD SUCCESS** (Surefire + Failsafe incl. `PauseEndpointContractTest` 15/0, `PauseCliRestEquivalenceContractTest` 1/0, `OperatorCommandsTest` +9, `OperatorCliCommandRegistrationIT`, `OpenApiSnapshotContractTest`, `ProblemDetailsContractTest`, `WorkflowAdapterEquivalenceTest`, `ArchitectureBoundaryTest`; SpotBugs pre-existing MEDIUM warnings only; jacoco gate met). Frontend `check:api` + `build` green.
+- **OQ bindings applied (unchanged from siblings):** OQ-1 `role` field included; OQ-2 full 9-field response DTO; OQ-3 positional `runId`; OQ-4 `--reason` service-validated (`required=false`).
+- Optional real-PG `PauseEndpointIT` DEFERRED — real pause/cancellation/transition semantics already covered by 4.8's `RecoveryServicePauseTest` + `RecoveryServicePauseIT`.
+- Recommend `code-review` with a **different** LLM than the one that implemented this story.
+
 ### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/PauseWorkflowRequest.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/PauseResponse.java`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java` (`pause` method + `PauseRecoveryResult` import)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java` (`pause` command + `COMMAND_NAME_PAUSE` + `renderPauseText` + `emitPause` + import)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (`renderOperatorPauseJson` + `OPERATOR_PAUSE_SCHEMA_VERSION` + import)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated: +`/pause` path + 2 schemas)
+
+**Modified (frontend):**
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/PauseEndpointContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/PauseCliRestEquivalenceContractTest.java`
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java` (one pin)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java` (pause render/log tests)
