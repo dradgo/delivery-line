@@ -1124,6 +1124,15 @@ public class WorkflowInspectionService {
             (wire, count) ->
                 byFailureCategory.put(FailureCategory.fromValue(wire, "failureCategory"), count));
 
+    // Story 4.18 (AC1) — batch-fetch the unresolved-conflict count for the page's runs in ONE
+    // grouped query (never per-row — that would N+1 the hot queue path). Nullable-guarded: absent
+    // the conflict service (lean contexts) every row reports 0.
+    List<String> pageRunIds = rows.stream().map(OperatorRunRowSnapshot::runId).toList();
+    Map<String, Integer> unresolvedConflictCounts =
+        integrationConflictService == null || pageRunIds.isEmpty()
+            ? Map.of()
+            : integrationConflictService.unresolvedCountByRun(pageRunIds);
+
     List<OperatorRunRow> runRows = new ArrayList<>(rows.size());
     for (OperatorRunRowSnapshot row : rows) {
       runRows.add(
@@ -1138,7 +1147,8 @@ public class WorkflowInspectionService {
               row.escalationMarker(),
               row.oldestEventAt(),
               row.operatorSignifier(),
-              row.runnerKind()));
+              row.runnerKind(),
+              unresolvedConflictCounts.getOrDefault(row.runId(), 0)));
     }
 
     OperatorRunSummary summary =
@@ -4501,7 +4511,12 @@ public class WorkflowInspectionService {
       boolean escalationMarker,
       OffsetDateTime oldestEventAt,
       String operatorSignifier,
-      String runnerKind) {}
+      String runnerKind,
+      // Story 4.18 (AC1) — count of unresolved integration conflicts on the run. A discrete field
+      // (NOT overloaded onto operatorSignifier — a run can be FAILED AND conflicted); the FE
+      // renders
+      // the non-color "Conflict" chip when > 0. Sourced via a single batch grouped query per page.
+      int unresolvedConflictCount) {}
 
   /**
    * Story 4.1 (AC2) — the operator fleet summary view. {@code byState} / {@code byFailureCategory}

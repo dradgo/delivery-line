@@ -63,7 +63,8 @@ class OperatorStatusJsonSchemaContractTest {
                     true,
                     t,
                     "ORPHANED",
-                    null),
+                    null,
+                    0),
                 new OperatorRunRow(
                     "run_active002",
                     WorkflowState.EXECUTING,
@@ -75,7 +76,8 @@ class OperatorStatusJsonSchemaContractTest {
                     false,
                     null,
                     "STALLED",
-                    null)),
+                    null,
+                    0)),
             null);
 
     String json = outputs.renderOperatorSummaryJson(view);

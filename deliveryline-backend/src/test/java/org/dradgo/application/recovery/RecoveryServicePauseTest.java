@@ -211,6 +211,31 @@ class RecoveryServicePauseTest {
   }
 
   @Test
+  void pauseWithSystemActorStampsReviewerRoleSystem() {
+    // Story 4.18 (AC4 / Reconciliation 3) — a SYSTEM-actor auto-pause records
+    // reviewer_role='system'
+    // (not the hardcoded workflow_owner) so the audit trail distinguishes it from an operator
+    // pause.
+    stubRunWithState(WorkflowState.WAITING_FOR_REVIEW);
+    stubTriggeringEvent();
+    when(recoveryRecordPort.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+    when(recoveryRecordPort.insert(any(RecoveryActionWriteCommand.class)))
+        .thenReturn(pauseActionSnapshot("rcv_pause-sys01", "pending"));
+    when(recoveryRecordPort.markSucceeded(IDEMPOTENCY_KEY))
+        .thenReturn(pauseActionSnapshot("rcv_pause-sys01", "succeeded"));
+    stubDispatchableRows();
+
+    service.pause(RUN, IDEMPOTENCY_KEY, ActorContext.SYSTEM, REASON);
+
+    ArgumentCaptor<RecoveryActionWriteCommand> writeCaptor =
+        ArgumentCaptor.forClass(RecoveryActionWriteCommand.class);
+    verify(recoveryRecordPort, times(1)).insert(writeCaptor.capture());
+    assertEquals("system", writeCaptor.getValue().reviewerRole());
+    assertEquals("system", writeCaptor.getValue().actorIdentity());
+    assertEquals(ActorType.SYSTEM, writeCaptor.getValue().actorType());
+  }
+
+  @Test
   void pauseFromFailedSucceeds() {
     // Reconciliation 3: FAILED is a MANDATORY pausable source — 4.4's RecommendationService
     // already advertises pause as a safe action on Failed runs.

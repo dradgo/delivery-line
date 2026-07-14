@@ -65,7 +65,8 @@ class OperatorControllerTest {
             true,
             t,
             "ORPHANED",
-            "claude");
+            "claude",
+            2);
     return new OperatorRunSummary(3, byState, byFailure, t, List.of(row), nextCursor);
   }
 
@@ -88,7 +89,9 @@ class OperatorControllerTest {
         .andExpect(jsonPath("$.runs[0].failureCategory").value("orphan"))
         .andExpect(jsonPath("$.runs[0].runnerKind").value("claude"))
         .andExpect(jsonPath("$.runs[0].operatorSignifier").value("ORPHANED"))
-        .andExpect(jsonPath("$.runs[0].escalationMarker").value(true));
+        .andExpect(jsonPath("$.runs[0].escalationMarker").value(true))
+        // Story 4.18 (AC1) — the unresolved-conflict indicator count is carried on the row.
+        .andExpect(jsonPath("$.runs[0].unresolvedConflictCount").value(2));
   }
 
   @Test

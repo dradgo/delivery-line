@@ -5,12 +5,16 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import org.dradgo.application.integration.conflict.ConflictFilter;
 import org.dradgo.application.integration.conflict.ConflictResolutionView;
 import org.dradgo.application.integration.conflict.ConflictSummary;
+import org.dradgo.application.integration.conflict.spi.ConflictListQuery;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictReadPort;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictScanPort;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictWritePort;
@@ -137,6 +141,62 @@ public class IntegrationConflictPersistenceAdapter
         left join integration_links l on l.public_id = c.integration_link_id
        where c.resolved_at is null and c.archived_at is null
        group by c.conflict_category, l.integration_type
+      """;
+
+  // Story 4.18 (AC2) — the keyset-paginated read for GET /api/v1/integration-conflicts.
+  // Three-valued
+  // `resolved` filter; the (detected_at DESC, id DESC) cursor uses a public_id → id subquery for
+  // the
+  // tiebreak so the opaque cursor need not carry the numeric id. Mirrors LIST_UNRESOLVED_SQL's
+  // filter axes but may include resolved rows.
+  private static final String LIST_CONFLICTS_SQL =
+      """
+      select c.public_id          as conflict_id,
+             c.integration_link_id as integration_link_id,
+             c.workflow_run_id     as workflow_run_id,
+             c.conflict_category   as conflict_category,
+             l.integration_type    as integration_type,
+             l.external_ref        as external_ref,
+             c.detected_at         as detected_at
+        from integration_conflicts c
+        left join integration_links l on l.public_id = c.integration_link_id
+       where c.archived_at is null
+         and (cast(:resolvedFilter as boolean) is null
+              or (cast(:resolvedFilter as boolean) = false and c.resolved_at is null)
+              or (cast(:resolvedFilter as boolean) = true and c.resolved_at is not null))
+         and (cast(:category as text) is null or c.conflict_category = :category)
+         and (cast(:integrationType as text) is null or l.integration_type = :integrationType)
+         and (cast(:ticketRef as text) is null or l.external_ref = :ticketRef)
+         and (cast(:runId as text) is null or c.workflow_run_id = :runId)
+         and (cast(:sinceSecs as double precision) is null
+              or c.detected_at >= now() - make_interval(secs => :sinceSecs))
+         and (cast(:cursorDetectedAt as timestamptz) is null
+              or c.detected_at < cast(:cursorDetectedAt as timestamptz)
+              or (c.detected_at = cast(:cursorDetectedAt as timestamptz)
+                  and c.id < (select ic.id from integration_conflicts ic
+                               where ic.public_id = :cursorConflictId)))
+       order by c.detected_at desc, c.id desc
+       limit :limit
+      """;
+
+  private static final String COUNT_RESOLVED_SQL =
+      """
+      select count(*) as cnt
+        from integration_conflicts
+       where resolved_at is not null
+         and archived_at is null
+      """;
+
+  // Story 4.18 (AC1) — grouped unresolved-conflict count for a page of run ids (one query, no N+1).
+  private static final String UNRESOLVED_COUNT_BY_RUN_SQL =
+      """
+      select c.workflow_run_id as run_id,
+             count(*)          as cnt
+        from integration_conflicts c
+       where c.resolved_at is null
+         and c.archived_at is null
+         and c.workflow_run_id in (:runIds)
+       group by c.workflow_run_id
       """;
 
   private static final String FIND_BY_PUBLIC_ID_SQL =
@@ -375,6 +435,67 @@ public class IntegrationConflictPersistenceAdapter
                     rs.getString("integration_type"),
                     rs.getLong("cnt")));
     return new ArrayList<>(counts);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<ConflictSummary> listConflicts(ConflictListQuery query) {
+    Objects.requireNonNull(query, "query");
+    MapSqlParameterSource params =
+        new MapSqlParameterSource()
+            .addValue("resolvedFilter", query.resolved())
+            .addValue("category", query.conflictCategory())
+            .addValue("integrationType", query.integrationType())
+            .addValue("ticketRef", query.ticketReference())
+            .addValue("runId", query.workflowRunId())
+            .addValue("sinceSecs", query.sinceSeconds())
+            // Bind the OffsetDateTime directly (pgjdbc maps it to timestamptz by instant), matching
+            // AuditEventPersistenceAdapter's cursor bind. A java.sql.Timestamp here would be sent
+            // in
+            // the JVM default zone and re-interpreted in the PG session zone, shifting the keyset
+            // anchor when the two zones differ (masked by the UTC-only Testcontainers env).
+            .addValue("cursorDetectedAt", query.cursorDetectedAt())
+            .addValue("cursorConflictId", query.cursorConflictId())
+            .addValue("limit", query.limit());
+    List<ConflictSummary> rows =
+        jdbcTemplate.query(
+            LIST_CONFLICTS_SQL,
+            params,
+            (rs, rowNum) ->
+                new ConflictSummary(
+                    rs.getString("conflict_id"),
+                    rs.getString("integration_link_id"),
+                    rs.getString("workflow_run_id"),
+                    rs.getString("conflict_category"),
+                    rs.getString("integration_type"),
+                    rs.getString("external_ref"),
+                    toInstant(rs.getObject("detected_at", OffsetDateTime.class))));
+    log.debug("listConflicts returned={} limit={}", rows.size(), query.limit());
+    return new ArrayList<>(rows);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public long countResolved() {
+    Long count =
+        jdbcTemplate.queryForObject(COUNT_RESOLVED_SQL, new MapSqlParameterSource(), Long.class);
+    return count == null ? 0L : count;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Map<String, Integer> unresolvedCountByRun(Collection<String> workflowRunIds) {
+    if (workflowRunIds == null || workflowRunIds.isEmpty()) {
+      return Map.of();
+    }
+    Map<String, Integer> counts = new LinkedHashMap<>();
+    jdbcTemplate.query(
+        UNRESOLVED_COUNT_BY_RUN_SQL,
+        new MapSqlParameterSource("runIds", workflowRunIds),
+        rs -> {
+          counts.put(rs.getString("run_id"), rs.getInt("cnt"));
+        });
+    return counts;
   }
 
   private static java.time.Instant toInstant(OffsetDateTime value) {

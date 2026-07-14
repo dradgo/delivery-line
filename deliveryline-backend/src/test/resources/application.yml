@@ -75,6 +75,15 @@ deliveryline:
       enabled: false
       interval-ms: 300000
       batch-limit: 100
+      # Story 4.18 (AC5 / Trap) — the shared test profile OPTS OUT of auto-pause (explicit empty
+      # list, which the compact ctor honors — vs an ABSENT key that would default to the two
+      # state-drift categories). Rationale: the always-direct 4.17 IntegrationConflictDetectionIT
+      # sweeps detect external_state_advanced/reverted on WaitingForReview runs; auto-pausing them
+      # would append RECOVERY_PAUSED + recovery_actions rows and surprise those detection-only tests
+      # (and complicate their FK cleanup). ConflictAutoPauseHandlerTest constructs the properties
+      # directly, and ConflictAutoPauseIT opts back in via @TestPropertySource — both exercise the
+      # production posture without imposing it on the whole @SpringBootTest tier.
+      auto-pause-on-categories: []
   workflow:
     # Story 3.9 Trap T2 — mirror the deliveryline.workflow.* keys so the validated WorkflowProperties
     # binding does not shadow defaults to surprising values in the @SpringBootTest tier (memory:

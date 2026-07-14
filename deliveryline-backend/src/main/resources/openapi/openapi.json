@@ -1144,6 +1144,180 @@
         ],
         "type" : "object"
       },
+      "IntegrationConflictDetail" : {
+        "description" : "Full integration-conflict detail with both state snapshots + ranked suggestions.",
+        "properties" : {
+          "conflictCategory" : {
+            "description" : "Conflict category wire string.",
+            "enum" : [
+              "external_state_advanced",
+              "external_state_reverted",
+              "external_resource_removed",
+              "metadata_drift",
+              "link_broken"
+            ],
+            "example" : "external_state_advanced",
+            "type" : "string"
+          },
+          "conflictId" : {
+            "description" : "Conflict public id.",
+            "example" : "icf_abc123",
+            "type" : "string"
+          },
+          "externalRef" : {
+            "description" : "External reference (PR/ticket ref).",
+            "example" : "octo/repo#7",
+            "type" : "string"
+          },
+          "externalStateSnapshot" : {
+            "description" : "External state snapshot as a raw JSON string.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "integrationLinkId" : {
+            "description" : "Owning integration link public id.",
+            "example" : "ilk_abc123",
+            "type" : "string"
+          },
+          "integrationType" : {
+            "description" : "Integration type wire string.",
+            "example" : "github_pr",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "internalStateSnapshot" : {
+            "description" : "Internal state snapshot as a raw JSON string.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "resolvedAt" : {
+            "description" : "Resolution timestamp (ISO-8601 UTC), or null while unresolved.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "suggestedDecisions" : {
+            "description" : "Safety-ranked reconciliation decision options (safe first).",
+            "items" : {
+              "$ref" : "#/components/schemas/SuggestedReconciliationDecision"
+            },
+            "type" : "array"
+          },
+          "workflowRunId" : {
+            "description" : "Owning run public id.",
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "IntegrationConflictListResponse" : {
+        "description" : "Integration-conflict list page with global unresolved/resolved counts.",
+        "properties" : {
+          "conflicts" : {
+            "description" : "The current page of conflicts (detected_at DESC).",
+            "items" : {
+              "$ref" : "#/components/schemas/IntegrationConflictSummary"
+            },
+            "type" : "array"
+          },
+          "nextCursor" : {
+            "description" : "Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "totalResolved" : {
+            "description" : "Total resolved, non-archived conflicts.",
+            "example" : 12,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "totalUnresolved" : {
+            "description" : "Total currently-unresolved, non-archived conflicts.",
+            "example" : 3,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "totalUnresolvedByCategory" : {
+            "additionalProperties" : {
+              "format" : "int64",
+              "type" : "integer"
+            },
+            "description" : "Unresolved-conflict counts keyed by conflict category (wire strings).",
+            "type" : "object"
+          },
+          "totalUnresolvedByIntegration" : {
+            "additionalProperties" : {
+              "format" : "int64",
+              "type" : "integer"
+            },
+            "description" : "Unresolved-conflict counts keyed by integration (linear/github/unknown).",
+            "type" : "object"
+          }
+        },
+        "type" : "object"
+      },
+      "IntegrationConflictSummary" : {
+        "description" : "One integration-conflict summary row.",
+        "properties" : {
+          "conflictCategory" : {
+            "description" : "Conflict category wire string.",
+            "enum" : [
+              "external_state_advanced",
+              "external_state_reverted",
+              "external_resource_removed",
+              "metadata_drift",
+              "link_broken"
+            ],
+            "example" : "external_state_advanced",
+            "type" : "string"
+          },
+          "conflictId" : {
+            "description" : "Conflict public id.",
+            "example" : "icf_abc123",
+            "type" : "string"
+          },
+          "detectedAt" : {
+            "description" : "Detection timestamp (ISO-8601 UTC).",
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "externalRef" : {
+            "description" : "External reference (PR/ticket ref).",
+            "example" : "octo/repo#7",
+            "type" : "string"
+          },
+          "integrationLinkId" : {
+            "description" : "Owning integration link public id.",
+            "example" : "ilk_abc123",
+            "type" : "string"
+          },
+          "integrationType" : {
+            "description" : "Integration type wire string.",
+            "example" : "github_pr",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "workflowRunId" : {
+            "description" : "Owning run public id.",
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "IntegrationSyncStatus" : {
         "properties" : {
           "externalRef" : {
@@ -1473,6 +1647,12 @@
               "string",
               "null"
             ]
+          },
+          "unresolvedConflictCount" : {
+            "description" : "Count of unresolved integration conflicts on the run (story 4.18). The UI renders a non-color \"Conflict\" chip when > 0, alongside the state signifier.",
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
           }
         },
         "type" : "object"
@@ -2831,6 +3011,32 @@
         },
         "type" : "object"
       },
+      "SuggestedReconciliationDecision" : {
+        "description" : "A reconciliation decision option with a coarse safety label.",
+        "properties" : {
+          "decision" : {
+            "description" : "Reconciliation decision wire string.",
+            "enum" : [
+              "accept_external_state",
+              "accept_internal_state",
+              "mark_completed_externally",
+              "mark_failed_externally"
+            ],
+            "example" : "accept_external_state",
+            "type" : "string"
+          },
+          "safety" : {
+            "description" : "Coarse safety label.",
+            "enum" : [
+              "safe",
+              "risky"
+            ],
+            "example" : "safe",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "TakeoverRequest" : {
         "properties" : {
           "reasonText" : {
@@ -3932,6 +4138,155 @@
         "summary" : "Query audit history by ticket",
         "tags" : [
           "Audit"
+        ]
+      }
+    },
+    "/api/v1/integration-conflicts" : {
+      "get" : {
+        "description" : "Detected integration conflicts, newest-first with cursor pagination, plus global unresolved/resolved counts. Filter by category, integration, run, detection time, and resolved state.",
+        "operationId" : "listIntegrationConflicts",
+        "parameters" : [
+          {
+            "description" : "Conflict-category filter.",
+            "in" : "query",
+            "name" : "category",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Integration filter.",
+            "in" : "query",
+            "name" : "integration",
+            "required" : false,
+            "schema" : {
+              "enum" : [
+                "linear",
+                "github"
+              ],
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Owning run public id filter.",
+            "example" : "run_abc123",
+            "in" : "query",
+            "name" : "workflowRunId",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Lower detection-time bound (inclusive), ISO-8601.",
+            "in" : "query",
+            "name" : "since",
+            "required" : false,
+            "schema" : {
+              "format" : "date-time",
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Resolved filter: omitted = both, false = unresolved only, true = resolved only.",
+            "in" : "query",
+            "name" : "resolved",
+            "required" : false,
+            "schema" : {
+              "type" : "boolean"
+            }
+          },
+          {
+            "description" : "Max conflicts per page (clamped to [1,200]). Defaults to 50.",
+            "in" : "query",
+            "name" : "limit",
+            "required" : false,
+            "schema" : {
+              "default" : 50,
+              "format" : "int32",
+              "type" : "integer"
+            }
+          },
+          {
+            "description" : "Opaque keyset cursor from a prior response's nextCursor.",
+            "in" : "query",
+            "name" : "cursor",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/IntegrationConflictListResponse"
+                }
+              }
+            },
+            "description" : "Integration-conflict list page."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed filter or cursor (INVALID_COMMAND_PAYLOAD)."
+          }
+        },
+        "summary" : "List integration conflicts",
+        "tags" : [
+          "Integration Conflicts"
+        ]
+      }
+    },
+    "/api/v1/integration-conflicts/{conflictId}" : {
+      "get" : {
+        "description" : "Full conflict detail: both internal + external state snapshots and safety-ranked reconciliation decision suggestions.",
+        "operationId" : "getIntegrationConflict",
+        "parameters" : [
+          {
+            "description" : "Conflict public id.",
+            "example" : "icf_abc123",
+            "in" : "path",
+            "name" : "conflictId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/IntegrationConflictDetail"
+                }
+              }
+            },
+            "description" : "The integration conflict."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such conflict (CONFLICT_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get an integration conflict",
+        "tags" : [
+          "Integration Conflicts"
         ]
       }
     },
@@ -7875,6 +8230,10 @@
     {
       "description" : "Inspect and download runner-execution artifacts.",
       "name" : "Runner executions"
+    },
+    {
+      "description" : "Inspection of detected integration conflicts (Linear/GitHub vs internal state).",
+      "name" : "Integration Conflicts"
     },
     {
       "description" : "Inspect and command governed workflow runs.",

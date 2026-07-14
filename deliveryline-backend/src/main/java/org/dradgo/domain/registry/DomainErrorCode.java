@@ -298,7 +298,16 @@ public enum DomainErrorCode implements RegistryValue {
   CLASSIFY_NOT_APPLICABLE("CLASSIFY_NOT_APPLICABLE"),
   MISSING_TAXONOMY_VALUE("MISSING_TAXONOMY_VALUE"),
   INVALID_TAXONOMY_VALUE("INVALID_TAXONOMY_VALUE"),
-  DEPRECATED_TAXONOMY_VALUE("DEPRECATED_TAXONOMY_VALUE");
+  DEPRECATED_TAXONOMY_VALUE("DEPRECATED_TAXONOMY_VALUE"),
+  // Story 4.18 (AC6 / Reconciliation 7) — three-sites code (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). Raised by WorkflowOrchestrationService.dispatchExecutionInternal
+  // when a run has an unresolved high-severity integration conflict
+  // ({external_state_advanced, external_state_reverted}): the EXECUTION dispatch is refused so the
+  // conflict is reconciled first (NFR19). The dispatch methods never transition, so throwing before
+  // enqueue inherently leaves the run in its prior state (AC6 "transient — workflow stays put").
+  // CONFLICT (409) + non-retryable (a precondition mismatch on the run's conflict state, not a
+  // transient fault), mirroring PAUSE_NOT_APPLICABLE.
+  DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT("DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

@@ -1,13 +1,21 @@
 package org.dradgo.application.integration.conflict;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.dradgo.application.integration.conflict.ConflictReconciliationSuggester.SuggestedDecision;
+import org.dradgo.application.integration.conflict.spi.ConflictListQuery;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictReadPort;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictWritePort;
+import org.dradgo.application.integration.conflict.spi.UnresolvedConflictCount;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.IntegrationConflictCategory;
@@ -31,18 +39,29 @@ public class IntegrationConflictService {
 
   private static final Logger log = LoggerFactory.getLogger(IntegrationConflictService.class);
 
+  /** Default page size for {@code listConflicts} when {@code limit} is omitted. */
+  static final int DEFAULT_LIMIT = 50;
+
+  /** Hard ceiling on the page size (mirrors {@code AuditQueryService.MAX_PAGE_SIZE}). */
+  static final int MAX_PAGE_SIZE = 200;
+
   private final IntegrationConflictReadPort readPort;
   private final IntegrationConflictWritePort writePort;
+  private final ConflictReconciliationSuggester reconciliationSuggester;
 
   public IntegrationConflictService(IntegrationConflictReadPort readPort) {
-    this(readPort, null);
+    this(readPort, null, new ConflictReconciliationSuggester());
   }
 
   @Autowired
   public IntegrationConflictService(
-      IntegrationConflictReadPort readPort, IntegrationConflictWritePort writePort) {
+      IntegrationConflictReadPort readPort,
+      IntegrationConflictWritePort writePort,
+      ConflictReconciliationSuggester reconciliationSuggester) {
     this.readPort = Objects.requireNonNull(readPort, "readPort");
     this.writePort = writePort;
+    this.reconciliationSuggester =
+        Objects.requireNonNull(reconciliationSuggester, "reconciliationSuggester");
   }
 
   @Transactional(readOnly = true)
@@ -62,6 +81,156 @@ public class IntegrationConflictService {
   public Optional<ConflictResolutionView> findConflictForResolution(String conflictPublicId) {
     Objects.requireNonNull(conflictPublicId, "conflictPublicId");
     return readPort.findByPublicId(conflictPublicId);
+  }
+
+  /**
+   * Story 4.18 (AC2) — the keyset-paginated conflict list for {@code GET
+   * /api/v1/integration-conflicts}. Validates + resolves the filter, decodes the opaque cursor,
+   * clamps the limit, fetches {@code pageSize + 1} to detect a next page, and bundles the page with
+   * the global unresolved/resolved counts (independent of the filter, so stable across pages).
+   */
+  @Transactional(readOnly = true)
+  public ConflictListResult listConflicts(ConflictFilter filter) {
+    Objects.requireNonNull(filter, "filter");
+    validate(filter);
+    int pageSize = clampLimit(filter.limit());
+    CursorKeyset cursor = decodeCursor(filter.cursor());
+    Double sinceSeconds =
+        filter.timeSince() == null ? null : filter.timeSince().toMillis() / 1000.0d;
+    ConflictListQuery query =
+        new ConflictListQuery(
+            blankToNull(filter.conflictCategory()),
+            blankToNull(filter.integrationType()),
+            blankToNull(filter.ticketReference()),
+            blankToNull(filter.workflowRunId()),
+            sinceSeconds,
+            filter.resolved(),
+            cursor.detectedAt(),
+            cursor.conflictId(),
+            pageSize + 1);
+    List<ConflictSummary> fetched = readPort.listConflicts(query);
+    boolean hasMore = fetched.size() > pageSize;
+    List<ConflictSummary> kept = hasMore ? new ArrayList<>(fetched.subList(0, pageSize)) : fetched;
+    String nextCursor = hasMore ? encodeCursor(kept.get(kept.size() - 1)) : null;
+
+    List<UnresolvedConflictCount> counts = readPort.countUnresolvedByCategoryAndIntegration();
+    Map<String, Long> byCategory = new LinkedHashMap<>();
+    Map<String, Long> byIntegration = new LinkedHashMap<>();
+    long totalUnresolved = 0L;
+    for (UnresolvedConflictCount count : counts) {
+      totalUnresolved += count.count();
+      byCategory.merge(count.conflictCategory(), count.count(), Long::sum);
+      // Coarse integration tag (mirrors IntegrationConflictMetricsBinder + AC2's linear|github wire
+      // vocabulary): github_pr → github, linear → linear, else unknown.
+      byIntegration.merge(integrationTag(count.integrationType()), count.count(), Long::sum);
+    }
+    long totalResolved = readPort.countResolved();
+    log.info(
+        "listConflicts returned={} totalUnresolved={} totalResolved={} nextCursorPresent={}"
+            + " resolvedFilter={} categoryFilter={} integrationTypeFilter={} runFilterPresent={}",
+        kept.size(),
+        totalUnresolved,
+        totalResolved,
+        nextCursor != null,
+        filter.resolved(),
+        filter.conflictCategory(),
+        filter.integrationType(),
+        filter.workflowRunId() != null);
+    return new ConflictListResult(
+        kept, totalUnresolved, totalResolved, byCategory, byIntegration, nextCursor);
+  }
+
+  /**
+   * Story 4.18 (AC3) — the typed detail for {@code GET /api/v1/integration-conflicts/{conflictId}}:
+   * the {@link ConflictResolutionView} (both snapshots + resolvedAt) plus the per-category
+   * safety-ranked {@link SuggestedDecision} options. {@code Optional.empty()} when the conflict
+   * does not exist (the controller maps that to {@code CONFLICT_NOT_FOUND} 404).
+   */
+  @Transactional(readOnly = true)
+  public Optional<ConflictDetail> getConflictDetail(String conflictPublicId) {
+    Objects.requireNonNull(conflictPublicId, "conflictPublicId");
+    return readPort
+        .findByPublicId(conflictPublicId)
+        .map(
+            view -> {
+              IntegrationConflictCategory category =
+                  IntegrationConflictCategory.fromNullableValue(
+                      view.conflictCategory(), "conflictCategory");
+              return new ConflictDetail(view, reconciliationSuggester.suggestFor(category));
+            });
+  }
+
+  /**
+   * Story 4.18 (AC1) — grouped unresolved-conflict count per run (one query) for the operator-queue
+   * indicator. Runs with zero unresolved conflicts are absent from the map.
+   */
+  @Transactional(readOnly = true)
+  public Map<String, Integer> unresolvedCountByRun(Collection<String> workflowRunIds) {
+    if (workflowRunIds == null || workflowRunIds.isEmpty()) {
+      return Map.of();
+    }
+    return readPort.unresolvedCountByRun(workflowRunIds);
+  }
+
+  private static int clampLimit(Integer limit) {
+    int requested = limit == null ? DEFAULT_LIMIT : limit;
+    return Math.min(Math.max(requested, 1), MAX_PAGE_SIZE);
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private static String integrationTag(String integrationType) {
+    if (ConflictIntegrationTypes.GITHUB_PR.equals(integrationType)) {
+      return "github";
+    }
+    if (ConflictIntegrationTypes.LINEAR.equals(integrationType)) {
+      return ConflictIntegrationTypes.LINEAR;
+    }
+    return "unknown";
+  }
+
+  // ---- cursor codec (opaque base64url of <detectedAt>|<conflictPublicId>) --------------------
+
+  private record CursorKeyset(OffsetDateTime detectedAt, String conflictId) {
+    static CursorKeyset inactive() {
+      return new CursorKeyset(null, null);
+    }
+  }
+
+  private CursorKeyset decodeCursor(String rawCursor) {
+    if (rawCursor == null || rawCursor.isBlank()) {
+      return CursorKeyset.inactive();
+    }
+    String decoded;
+    try {
+      decoded = new String(Base64.getUrlDecoder().decode(rawCursor.trim()), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException badBase64) {
+      throw invalidFilter("cursor", rawCursor);
+    }
+    int separator = decoded.indexOf('|');
+    if (separator < 0) {
+      throw invalidFilter("cursor", rawCursor);
+    }
+    try {
+      OffsetDateTime detectedAt = OffsetDateTime.parse(decoded.substring(0, separator));
+      String conflictId = decoded.substring(separator + 1);
+      if (conflictId.isBlank()) {
+        throw invalidFilter("cursor", rawCursor);
+      }
+      return new CursorKeyset(detectedAt, conflictId);
+    } catch (java.time.format.DateTimeParseException malformed) {
+      throw invalidFilter("cursor", rawCursor);
+    }
+  }
+
+  private String encodeCursor(ConflictSummary last) {
+    OffsetDateTime detectedAt = last.detectedAt().atOffset(java.time.ZoneOffset.UTC);
+    String raw = detectedAt + "|" + last.conflictId();
+    return Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
   }
 
   /**
@@ -151,4 +320,28 @@ public class IntegrationConflictService {
         "Invalid integration-conflict filter value for " + field,
         details);
   }
+
+  /**
+   * Story 4.18 (AC2) — the {@code listConflicts} result: the keyset-ordered page ({@code
+   * conflicts}, newest first), the FILTER-INDEPENDENT global {@code totalUnresolved} / {@code
+   * totalResolved} counts + their unresolved-by-category / by-integration breakdowns (mirroring the
+   * metrics gauge), and the opaque {@code nextCursor} for the next page ({@code null} on the last
+   * page). Nested here (not in {@code .spi}) so the REST controller can map it without tripping the
+   * thin-controller pin.
+   */
+  public record ConflictListResult(
+      List<ConflictSummary> conflicts,
+      long totalUnresolved,
+      long totalResolved,
+      Map<String, Long> totalUnresolvedByCategory,
+      Map<String, Long> totalUnresolvedByIntegration,
+      String nextCursor) {}
+
+  /**
+   * Story 4.18 (AC3) — the {@code getConflictDetail} result: the {@link ConflictResolutionView}
+   * (both state snapshots + resolvedAt) plus the per-category safety-ranked reconciliation
+   * suggestions.
+   */
+  public record ConflictDetail(
+      ConflictResolutionView view, List<SuggestedDecision> suggestedDecisions) {}
 }

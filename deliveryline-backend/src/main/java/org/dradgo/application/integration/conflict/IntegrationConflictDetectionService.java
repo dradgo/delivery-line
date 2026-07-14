@@ -115,6 +115,10 @@ public class IntegrationConflictDetectionService {
   private final ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider;
   private final IntegrationConflictDetectionProperties properties;
   private final MeterRegistry meterRegistry;
+  // Story 4.18 (AC4) — the conflict-driven auto-pause seam, invoked once per NEW conflict in the
+  // post-insert branch below. Best-effort (swallows all pause failures internally) so it never
+  // aborts the sweep.
+  private final ConflictAutoPauseHandler conflictAutoPauseHandler;
   // Phase-1 lock+scan runs in a short-lived REQUIRED tx (released before any external I/O); each
   // phase-2 conflict write runs in its own REQUIRES_NEW tx so one bad link never aborts the sweep.
   private final TransactionTemplate scanTemplate;
@@ -132,7 +136,8 @@ public class IntegrationConflictDetectionService {
       ObjectProvider<RepositoryHostAdapter> gitHubAdapterProvider,
       IntegrationConflictDetectionProperties properties,
       MeterRegistry meterRegistry,
-      PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager,
+      ConflictAutoPauseHandler conflictAutoPauseHandler) {
     this.scanPort = Objects.requireNonNull(scanPort, "scanPort");
     this.writePort = Objects.requireNonNull(writePort, "writePort");
     this.workflowEventWritePort =
@@ -142,6 +147,8 @@ public class IntegrationConflictDetectionService {
         Objects.requireNonNull(gitHubAdapterProvider, "gitHubAdapterProvider");
     this.properties = Objects.requireNonNull(properties, "properties");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
+    this.conflictAutoPauseHandler =
+        Objects.requireNonNull(conflictAutoPauseHandler, "conflictAutoPauseHandler");
     Objects.requireNonNull(transactionManager, "transactionManager");
     this.scanTemplate = new TransactionTemplate(transactionManager);
     this.perLinkTemplate = new TransactionTemplate(transactionManager);
@@ -486,6 +493,13 @@ public class IntegrationConflictDetectionService {
           row.integrationLinkPublicId(),
           integrationTag,
           decision.reason());
+      // Story 4.18 (AC4) — auto-pause the run on a NEW high-severity state-drift conflict. Runs
+      // here, AFTER the conflict-write REQUIRES_NEW tx has committed (not inside it), on the
+      // sweep's
+      // lock-free phase-2 path; the handler is best-effort and swallows every pause failure so a
+      // non-pausable run never aborts the sweep. Exactly-once per (link, category) via the dedup.
+      conflictAutoPauseHandler.maybeAutoPause(
+          row.workflowRunPublicId(), conflictId, decision.category(), correlationId);
     } else {
       tally.skippedDuplicate++;
       log.debug(

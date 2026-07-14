@@ -684,6 +684,16 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Deprecated taxonomy value",
         false);
+    // Story 4.18 (AC6 / Reconciliation 7) — dispatching a run that has an unresolved high-severity
+    // integration conflict is a precondition mismatch on the run's conflict state, not a transient
+    // fault; mirror PAUSE_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The type URI
+    // auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT,
+        HttpStatus.CONFLICT,
+        "Dispatch blocked by unresolved conflict",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

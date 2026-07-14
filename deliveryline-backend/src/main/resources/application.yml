@@ -141,6 +141,15 @@ deliveryline:
       enabled: true
       interval-ms: 300000
       batch-limit: 100
+      # Story 4.18 (AC4/AC5): the conflict categories that auto-pause the run (via
+      # ConflictAutoPauseHandler → RecoveryService.pause with actor='system') when the sweep first
+      # detects them on a non-terminal, non-Paused, non-TakenOver run (NFR21). An UNSET key defaults
+      # to [external_state_advanced, external_state_reverted]; an explicitly EMPTY list opts a pilot
+      # out of auto-pause entirely; unknown category tokens are skipped (never throw). Independent of
+      # the dispatch gate's fixed high-severity set. Documented in docs/integrations/conflict-handling.md.
+      auto-pause-on-categories:
+        - external_state_advanced
+        - external_state_reverted
   workflow:
     # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
     # escalation marker. The escalation event is appended exactly once (when the counter crosses

@@ -123,6 +123,10 @@ class OpenApiSnapshotContractTest {
     assertThat(canonical)
         .as("OpenAPI must expose the story 3i-2 filtered ticket-intake browse operation")
         .contains("queryProjectTickets");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.18 integration-conflict inspection operations")
+        .contains("listIntegrationConflicts")
+        .contains("getIntegrationConflict");
 
     JsonNode document = MAPPER.readTree(canonical);
     assertThat(document.at(pointer("servers")).isArray()).isTrue();

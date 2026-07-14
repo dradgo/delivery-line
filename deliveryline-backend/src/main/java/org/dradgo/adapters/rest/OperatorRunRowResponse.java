@@ -60,7 +60,13 @@ public record OperatorRunRowResponse(
                 "Server-derived UPPERCASE display signifier (ORPHANED/FAILED/TAKENOVER/STALLED/"
                     + "OVERRIDDEN, else the uppercased state). The UI renders the badge FROM this.",
             example = "STALLED")
-        String operatorSignifier) {
+        String operatorSignifier,
+    @Schema(
+            description =
+                "Count of unresolved integration conflicts on the run (story 4.18). The UI renders a"
+                    + " non-color \"Conflict\" chip when > 0, alongside the state signifier.",
+            example = "0")
+        int unresolvedConflictCount) {
 
   public static OperatorRunRowResponse from(OperatorRunRow row) {
     return new OperatorRunRowResponse(
@@ -74,7 +80,8 @@ public record OperatorRunRowResponse(
         row.linkedPrRef(),
         row.escalationMarker(),
         toUtc(row.oldestEventAt()),
-        row.operatorSignifier());
+        row.operatorSignifier(),
+        row.unresolvedConflictCount());
   }
 
   private static OffsetDateTime toUtc(OffsetDateTime value) {

@@ -60,6 +60,7 @@ class IntegrationConflictDetectionServiceTest {
   private TicketSourceAdapter linearAdapter;
   private RepositoryHostAdapter gitHubAdapter;
   private MeterRegistry meterRegistry;
+  private ConflictAutoPauseHandler conflictAutoPauseHandler;
   private IntegrationConflictDetectionService service;
 
   @BeforeEach
@@ -71,6 +72,7 @@ class IntegrationConflictDetectionServiceTest {
     linearAdapter = org.mockito.Mockito.mock(TicketSourceAdapter.class);
     gitHubAdapter = org.mockito.Mockito.mock(RepositoryHostAdapter.class);
     meterRegistry = new SimpleMeterRegistry();
+    conflictAutoPauseHandler = org.mockito.Mockito.mock(ConflictAutoPauseHandler.class);
 
     ObjectProvider<RepositoryHostAdapter> gitHubProvider =
         org.mockito.Mockito.mock(ObjectProvider.class);
@@ -94,7 +96,8 @@ class IntegrationConflictDetectionServiceTest {
             gitHubProvider,
             IntegrationConflictDetectionProperties.defaults(),
             meterRegistry,
-            txManager);
+            txManager,
+            conflictAutoPauseHandler);
   }
 
   @Test
@@ -110,6 +113,11 @@ class IntegrationConflictDetectionServiceTest {
         .isEqualTo(IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED.value());
     assertThat(conflictDetectedEvents()).isEqualTo(1);
     assertThat(counterCount("external_state_advanced", "github")).isEqualTo(1.0);
+    // Story 4.18 (AC4) — a NEW conflict fires the auto-pause hook with the run + category (the
+    // handler itself decides whether the category is configured for auto-pause).
+    verify(conflictAutoPauseHandler)
+        .maybeAutoPause(
+            eq("run_a"), any(), eq(IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED), any());
   }
 
   @Test
@@ -219,6 +227,10 @@ class IntegrationConflictDetectionServiceTest {
     assertThat(result.skippedDuplicate()).isEqualTo(1);
     verify(eventPort, never()).append(any());
     assertThat(counterCount("external_resource_removed", "github")).isZero();
+    // Story 4.18 (AC4) — a dedup-skipped (already-standing) conflict does NOT re-fire the
+    // auto-pause
+    // hook: exactly-once per (link, category), no per-tick pause spam.
+    verify(conflictAutoPauseHandler, never()).maybeAutoPause(any(), any(), any(), any());
   }
 
   @Test

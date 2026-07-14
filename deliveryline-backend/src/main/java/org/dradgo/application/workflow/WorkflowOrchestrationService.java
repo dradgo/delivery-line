@@ -5,12 +5,14 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
@@ -19,6 +21,9 @@ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.conflict.ConflictFilter;
+import org.dradgo.application.integration.conflict.ConflictSummary;
+import org.dradgo.application.integration.conflict.IntegrationConflictService;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.observability.MdcKeys;
@@ -50,6 +55,7 @@ import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -175,6 +181,23 @@ public class WorkflowOrchestrationService {
   private final WorkflowEventWritePort workflowEventWritePort;
   private final ClarificationReadPort clarificationReadPort;
 
+  // Story 4.18 (AC6/AC9 / Reconciliation 6) — the conflict read surface backing the dispatch gate +
+  // the Linear reopen-notification suppression. Optional SETTER injection (mirroring
+  // WorkflowInspectionService's nullable integrationConflictService) so the many `new
+  // WorkflowOrchestrationService(...)` test ctors stay untouched; production Spring wires it.
+  // Absent
+  // in lean ctors → the gate + suppression are no-ops (fail-open, never NPE).
+  private IntegrationConflictService integrationConflictService;
+
+  // Story 4.18 (AC6 / OQ-4) — the FIXED high-severity conflict set that blocks a dispatch,
+  // INDEPENDENT of the auto-pause config set (so emptying auto-pause-on-categories to opt out of
+  // auto-pause does NOT also open the dispatch gate). The two state-drift categories that must not
+  // silently advance (NFR19).
+  private static final Set<IntegrationConflictCategory> HIGH_SEVERITY_CONFLICT_CATEGORIES =
+      EnumSet.of(
+          IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED,
+          IntegrationConflictCategory.EXTERNAL_STATE_REVERTED);
+
   public WorkflowOrchestrationService(
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
@@ -222,6 +245,13 @@ public class WorkflowOrchestrationService {
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.clarificationReadPort =
         Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
+  }
+
+  // Story 4.18 (AC6/AC9) — optional injection of the conflict read surface (see field javadoc). The
+  // required=false setter keeps the lean test ctors untouched; production Spring supplies it.
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setIntegrationConflictService(IntegrationConflictService integrationConflictService) {
+    this.integrationConflictService = integrationConflictService;
   }
 
   /**
@@ -678,6 +708,70 @@ public class WorkflowOrchestrationService {
    * keys differ by prefix AND version (the plan dispatch consumes version N, the following
    * pr-output dispatch consumes N+1) — no collision.
    */
+  /**
+   * Story 4.18 (AC6) — refuse an EXECUTION dispatch when the run has an unresolved high-severity
+   * integration conflict ({@link #HIGH_SEVERITY_CONFLICT_CATEGORIES}). Nullable-guarded: absent the
+   * conflict service (lean test contexts) this is a no-op (fail-open). Throws {@code
+   * DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT} (409, non-retryable) with structured details {@code
+   * {runId, conflictCategory, conflictId}} — mirroring {@code RecoveryService}'s typed-throw shape.
+   */
+  private void requireNoBlockingConflict(String op, String workflowRunId) {
+    if (integrationConflictService == null) {
+      return;
+    }
+    List<ConflictSummary> unresolved =
+        integrationConflictService.listUnresolvedConflicts(ConflictFilter.forRun(workflowRunId));
+    ConflictSummary blocking = null;
+    for (ConflictSummary conflict : unresolved) {
+      IntegrationConflictCategory category =
+          IntegrationConflictCategory.fromNullableValue(
+              conflict.conflictCategory(), "conflictCategory");
+      if (category != null && HIGH_SEVERITY_CONFLICT_CATEGORIES.contains(category)) {
+        blocking = conflict;
+        break;
+      }
+    }
+    if (blocking == null) {
+      return;
+    }
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runId", workflowRunId);
+    details.put("conflictCategory", blocking.conflictCategory());
+    details.put("conflictId", blocking.conflictId());
+    log.info(
+        "{} dispatch blocked by unresolved conflict workflowRunId={} conflictId={}"
+            + " conflictCategory={} — operator must reconcile first",
+        op,
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(blocking.conflictId()),
+        blocking.conflictCategory());
+    throw new DomainException(
+        DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT,
+        "Dispatch blocked: run "
+            + workflowRunId
+            + " has an unresolved high-severity integration conflict ("
+            + blocking.conflictCategory()
+            + "); reconcile it before dispatching.",
+        details);
+  }
+
+  /**
+   * Story 4.18 (AC8) — true when the run has any unresolved conflict on a Linear ticket link.
+   * Nullable-guarded (fail-open: no conflict service → no suppression).
+   */
+  private boolean hasUnresolvedLinearConflict(String workflowRunId) {
+    if (integrationConflictService == null) {
+      return false;
+    }
+    return integrationConflictService
+        .listUnresolvedConflicts(ConflictFilter.forRun(workflowRunId))
+        .stream()
+        .anyMatch(
+            conflict ->
+                org.dradgo.application.integration.conflict.ConflictIntegrationTypes.LINEAR.equals(
+                    conflict.integrationType()));
+  }
+
   private RunnerDispatchResult dispatchExecutionInternal(
       String op,
       String workflowRunId,
@@ -701,6 +795,12 @@ public class WorkflowOrchestrationService {
           workflowRunId,
           snapshot.currentState().value(),
           subStageLabel);
+
+      // Story 4.18 (AC6/AC9) — conflict-driven dispatch gate: refuse the EXECUTION dispatch while
+      // the run has an unresolved high-severity integration conflict so it is reconciled first
+      // (NFR19). Thrown BEFORE enqueueDispatch — and these dispatch methods never transition (Trap
+      // T1) — so the run inherently stays in its prior state (AC6 "transient").
+      requireNoBlockingConflict(op, workflowRunId);
 
       // AC6 in-flight guard (Task 2 — sub-stage-aware): an EXECUTION execution already
       // pending/running for this run AND in the SAME sub-stage is a no-op returning the existing
@@ -1596,6 +1696,19 @@ public class WorkflowOrchestrationService {
         return;
       }
       String ticketRef = ticketLink.get().externalRef();
+      // Story 4.18 (AC8) — suppress the reopen comment while the run has an unresolved conflict on
+      // its Linear ticket link: posting "run reopened" before the operator reconciles would be a
+      // premature/misleading notification. Gate on ANY unresolved Linear-link conflict (a closed
+      // Linear ticket = external_resource_removed, NOT an auto-pause category), skip-with-log
+      // (this method never throws — best-effort). Nullable-guarded (fail-open in lean contexts).
+      if (hasUnresolvedLinearConflict(workflowRunId)) {
+        log.warn(
+            "notifyLinearRunReopened suppressed (unresolved conflict) workflowRunId={} ticketRef={}"
+                + " — skipping reopen comment until reconcile",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef));
+        return;
+      }
       Project project;
       Optional<TicketSourceAdapter> adapterOpt;
       try {

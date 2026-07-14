@@ -126,7 +126,8 @@ class OperatorCommandsTest {
                 true,
                 T2,
                 "ORPHANED",
-                null),
+                null,
+                0),
             new OperatorRunRow(
                 "run_taken0002",
                 WorkflowState.TAKEN_OVER,
@@ -138,7 +139,8 @@ class OperatorCommandsTest {
                 false,
                 T2,
                 "TAKENOVER",
-                null)),
+                null,
+                0)),
         null);
   }
 
@@ -185,7 +187,8 @@ class OperatorCommandsTest {
                     false,
                     T2,
                     "OVERRIDDEN",
-                    null)),
+                    null,
+                    0)),
             null);
     when(inspection.getOperatorRunSummary(any())).thenReturn(view);
 

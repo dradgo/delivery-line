@@ -44,6 +44,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integration-conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List integration conflicts
+         * @description Detected integration conflicts, newest-first with cursor pagination, plus global unresolved/resolved counts. Filter by category, integration, run, detection time, and resolved state.
+         */
+        get: operations["listIntegrationConflicts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration-conflicts/{conflictId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an integration conflict
+         * @description Full conflict detail: both internal + external state snapshots and safety-ranked reconciliation decision suggestions.
+         */
+        get: operations["getIntegrationConflict"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/runs": {
         parameters: {
             query?: never;
@@ -1548,6 +1588,117 @@ export interface components {
             /** @example rex_abc123 */
             runnerExecutionId: string;
         };
+        /** @description Full integration-conflict detail with both state snapshots + ranked suggestions. */
+        IntegrationConflictDetail: {
+            /**
+             * @description Conflict category wire string.
+             * @example external_state_advanced
+             * @enum {string}
+             */
+            conflictCategory?: "external_state_advanced" | "external_state_reverted" | "external_resource_removed" | "metadata_drift" | "link_broken";
+            /**
+             * @description Conflict public id.
+             * @example icf_abc123
+             */
+            conflictId?: string;
+            /**
+             * @description External reference (PR/ticket ref).
+             * @example octo/repo#7
+             */
+            externalRef?: string;
+            /** @description External state snapshot as a raw JSON string. */
+            externalStateSnapshot?: string | null;
+            /**
+             * @description Owning integration link public id.
+             * @example ilk_abc123
+             */
+            integrationLinkId?: string;
+            /**
+             * @description Integration type wire string.
+             * @example github_pr
+             */
+            integrationType?: string | null;
+            /** @description Internal state snapshot as a raw JSON string. */
+            internalStateSnapshot?: string | null;
+            /**
+             * Format: date-time
+             * @description Resolution timestamp (ISO-8601 UTC), or null while unresolved.
+             */
+            resolvedAt?: string | null;
+            /** @description Safety-ranked reconciliation decision options (safe first). */
+            suggestedDecisions?: components["schemas"]["SuggestedReconciliationDecision"][];
+            /**
+             * @description Owning run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
+        /** @description Integration-conflict list page with global unresolved/resolved counts. */
+        IntegrationConflictListResponse: {
+            /** @description The current page of conflicts (detected_at DESC). */
+            conflicts?: components["schemas"]["IntegrationConflictSummary"][];
+            /** @description Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description Total resolved, non-archived conflicts.
+             * @example 12
+             */
+            totalResolved?: number;
+            /**
+             * Format: int64
+             * @description Total currently-unresolved, non-archived conflicts.
+             * @example 3
+             */
+            totalUnresolved?: number;
+            /** @description Unresolved-conflict counts keyed by conflict category (wire strings). */
+            totalUnresolvedByCategory?: {
+                [key: string]: number;
+            };
+            /** @description Unresolved-conflict counts keyed by integration (linear/github/unknown). */
+            totalUnresolvedByIntegration?: {
+                [key: string]: number;
+            };
+        };
+        /** @description One integration-conflict summary row. */
+        IntegrationConflictSummary: {
+            /**
+             * @description Conflict category wire string.
+             * @example external_state_advanced
+             * @enum {string}
+             */
+            conflictCategory?: "external_state_advanced" | "external_state_reverted" | "external_resource_removed" | "metadata_drift" | "link_broken";
+            /**
+             * @description Conflict public id.
+             * @example icf_abc123
+             */
+            conflictId?: string;
+            /**
+             * Format: date-time
+             * @description Detection timestamp (ISO-8601 UTC).
+             */
+            detectedAt?: string;
+            /**
+             * @description External reference (PR/ticket ref).
+             * @example octo/repo#7
+             */
+            externalRef?: string;
+            /**
+             * @description Owning integration link public id.
+             * @example ilk_abc123
+             */
+            integrationLinkId?: string;
+            /**
+             * @description Integration type wire string.
+             * @example github_pr
+             */
+            integrationType?: string | null;
+            /**
+             * @description Owning run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
         IntegrationSyncStatus: {
             /** @example LIN-123 */
             externalRef?: string | null;
@@ -1710,6 +1861,12 @@ export interface components {
              * @enum {string|null}
              */
             runnerKind?: "codex" | "claude" | "manual" | null;
+            /**
+             * Format: int32
+             * @description Count of unresolved integration conflicts on the run (story 4.18). The UI renders a non-color "Conflict" chip when > 0, alongside the state signifier.
+             * @example 0
+             */
+            unresolvedConflictCount?: number;
         };
         /** @description Operator fleet-view summary with a runs page. */
         OperatorRunSummary: {
@@ -2333,6 +2490,21 @@ export interface components {
             currentState?: string;
             workflowRunId?: string;
         };
+        /** @description A reconciliation decision option with a coarse safety label. */
+        SuggestedReconciliationDecision: {
+            /**
+             * @description Reconciliation decision wire string.
+             * @example accept_external_state
+             * @enum {string}
+             */
+            decision?: "accept_external_state" | "accept_internal_state" | "mark_completed_externally" | "mark_failed_externally";
+            /**
+             * @description Coarse safety label.
+             * @example safe
+             * @enum {string}
+             */
+            safety?: "safe" | "risky";
+        };
         TakeoverRequest: {
             reasonText: string;
             reviewerRole?: string;
@@ -2797,6 +2969,88 @@ export interface operations {
             };
             /** @description Malformed filter (INVALID_AUDIT_FILTER) or bad time range (INVALID_TIME_RANGE). */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    listIntegrationConflicts: {
+        parameters: {
+            query?: {
+                /** @description Conflict-category filter. */
+                category?: string;
+                /** @description Integration filter. */
+                integration?: "linear" | "github";
+                /**
+                 * @description Owning run public id filter.
+                 * @example run_abc123
+                 */
+                workflowRunId?: string;
+                /** @description Lower detection-time bound (inclusive), ISO-8601. */
+                since?: string;
+                /** @description Resolved filter: omitted = both, false = unresolved only, true = resolved only. */
+                resolved?: boolean;
+                /** @description Max conflicts per page (clamped to [1,200]). Defaults to 50. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Integration-conflict list page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConflictListResponse"];
+                };
+            };
+            /** @description Malformed filter or cursor (INVALID_COMMAND_PAYLOAD). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getIntegrationConflict: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Conflict public id.
+                 * @example icf_abc123
+                 */
+                conflictId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The integration conflict. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConflictDetail"];
+                };
+            };
+            /** @description No such conflict (CONFLICT_NOT_FOUND). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

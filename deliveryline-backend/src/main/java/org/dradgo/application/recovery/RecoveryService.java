@@ -50,6 +50,7 @@ import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
+import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.FailureCategory;
@@ -191,6 +192,13 @@ public class RecoveryService {
   static final String ACTION_TYPE_CLASSIFY_FAILURE = "classify_failure";
   static final String INVALIDATED_REASON_RERUN = "superseded_by_rerun_from_step";
   static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
+  // Story 4.18 (AC4 / Reconciliation 3) — the reviewer_role stamped on the recovery_actions row of
+  // a SYSTEM-actor auto-pause (the story-4.17 conflict sweep's ConflictAutoPauseHandler passes
+  // ActorContext.SYSTEM). recovery_actions.reviewer_role is free `text not null` (V1:176, no
+  // CHECK),
+  // so no migration/registry change is needed; deriving it from the actor lets the audit trail
+  // distinguish an operator pause (workflow_owner) from an auto-pause (system).
+  static final String REVIEWER_ROLE_SYSTEM = "system";
   static final String RESULT_STATUS_PENDING = "pending";
   static final String RESULT_STATUS_SUCCEEDED = "succeeded";
 
@@ -1406,6 +1414,12 @@ public class RecoveryService {
             OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC),
             eventDetails));
 
+    // Story 4.18 (AC4 / Reconciliation 3) — derive reviewer_role from the actor: a SYSTEM-actor
+    // auto-pause (the conflict sweep) stamps 'system' so the audit trail is distinguishable from an
+    // operator (workflow_owner) pause; a same-key retry preserves the original by replaying, not
+    // re-inserting.
+    String reviewerRole =
+        actor.actorType() == ActorType.SYSTEM ? REVIEWER_ROLE_SYSTEM : REVIEWER_ROLE_WORKFLOW_OWNER;
     RecoveryActionSnapshot recoveryAction =
         recoveryActionRecordPort.insert(
             new RecoveryActionWriteCommand(
@@ -1417,7 +1431,7 @@ public class RecoveryService {
                 actor.actorType(),
                 idempotencyKey,
                 RESULT_STATUS_PENDING,
-                REVIEWER_ROLE_WORKFLOW_OWNER));
+                reviewerRole));
 
     return new PausePrep(
         recoveryAction.publicId(),
