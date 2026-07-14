@@ -179,7 +179,20 @@ public enum WorkflowEventType implements RegistryValue {
   // failureCategory + the new allow-listed driftCategory. NOT in any scenario stream fixture
   // (non-lifecycle, like console.opened). NO Flyway migration for the event itself — event_type is
   // an un-CHECKed text column and the registry set is fixture-asserted, not DB-derived.
-  ARTIFACT_DRIFT_DETECTED("artifact.driftDetected");
+  ARTIFACT_DRIFT_DETECTED("artifact.driftDetected"),
+  // Story 4.16 (AC2 / Reconciliation 10) — appended once per operator repair by
+  // ArtifactReconciliationService.repairArtifactDrift, inside the same REQUIRES_NEW prep
+  // transaction
+  // as the status mutation / approval invalidation / recovery_actions insert / drift resolve. ONE
+  // state-neutral event per repair (NOT per-method event types — OQ-4); details.repairAction (NEW,
+  // allow-listed by this story) discriminates the specific repair (mark_operation_failed /
+  // mark_operation_complete / mark_payload_unavailable / restore_from_backup / mark_corrupted /
+  // re_verify_checksum). NON-lifecycle audit event like artifact.driftDetected (priorState ==
+  // resultingState == null, actor-or-SYSTEM, interventionMarker = true); NOT in any scenario-stream
+  // fixture. Detail keys reuse driftCategory / artifactId / operationId / reason / correlationId +
+  // the new repairAction. NO Flyway migration for the event itself — event_type is an un-CHECKed
+  // text column and the registry set is fixture-asserted, not DB-derived.
+  ARTIFACT_DRIFT_REPAIRED("artifact.driftRepaired");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

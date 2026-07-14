@@ -127,6 +127,9 @@ class OpenApiSnapshotContractTest {
         .as("OpenAPI must expose the story 4.18 integration-conflict inspection operations")
         .contains("listIntegrationConflicts")
         .contains("getIntegrationConflict");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.16 artifact-drift repair command operation")
+        .contains("repairArtifactDrift");
 
     JsonNode document = MAPPER.readTree(canonical);
     assertThat(document.at(pointer("servers")).isArray()).isTrue();

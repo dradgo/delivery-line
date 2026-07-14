@@ -28,7 +28,8 @@
     "pending",
     "available",
     "failed",
-    "late_or_stale"
+    "late_or_stale",
+    "corrupted"
   ],
   "artifactOperationStatuses": [
     "pending",
@@ -212,6 +213,11 @@
     "MISSING_TAXONOMY_VALUE": "https://deliveryline.local/problems/missing-taxonomy-value",
     "INVALID_TAXONOMY_VALUE": "https://deliveryline.local/problems/invalid-taxonomy-value",
     "DEPRECATED_TAXONOMY_VALUE": "https://deliveryline.local/problems/deprecated-taxonomy-value",
-    "DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT": "https://deliveryline.local/problems/dispatch-blocked-by-unresolved-conflict"
+    "DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT": "https://deliveryline.local/problems/dispatch-blocked-by-unresolved-conflict",
+    "DRIFT_NOT_FOUND": "https://deliveryline.local/problems/drift-not-found",
+    "DRIFT_ALREADY_RESOLVED": "https://deliveryline.local/problems/drift-already-resolved",
+    "INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY": "https://deliveryline.local/problems/invalid-repair-action-for-drift-category",
+    "MISSING_REPAIR_REQUIRED_FIELD": "https://deliveryline.local/problems/missing-repair-required-field",
+    "REPAIR_ACTION_NOT_IMPLEMENTED": "https://deliveryline.local/problems/repair-action-not-implemented"
   }
 }

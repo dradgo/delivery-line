@@ -293,6 +293,9 @@
               },
               "priorTaxonomyValue": {
                 "type": "string"
+              },
+              "repairAction": {
+                "type": "string"
               }
             }
           }

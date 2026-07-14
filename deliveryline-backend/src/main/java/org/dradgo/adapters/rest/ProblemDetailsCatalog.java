@@ -694,6 +694,41 @@ public final class ProblemDetailsCatalog {
         HttpStatus.CONFLICT,
         "Dispatch blocked by unresolved conflict",
         false);
+    // Story 4.16 (AC6 / Reconciliation 5) — the four artifact-drift repair codes. DRIFT_NOT_FOUND
+    // mirrors CONFLICT_NOT_FOUND (404); DRIFT_ALREADY_RESOLVED mirrors CONFLICT_ALREADY_RESOLVED
+    // (409, a precondition mismatch on the drift's resolved state, not a transient fault); the two
+    // repair-request guards are malformed-request 400s mirroring INVALID_/MISSING_RECONCILIATION_
+    // DECISION. All non-retryable; type URIs auto-derive.
+    register(
+        metadata, DomainErrorCode.DRIFT_NOT_FOUND, HttpStatus.NOT_FOUND, "Drift not found", false);
+    register(
+        metadata,
+        DomainErrorCode.DRIFT_ALREADY_RESOLVED,
+        HttpStatus.CONFLICT,
+        "Drift already resolved",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY,
+        HttpStatus.BAD_REQUEST,
+        "Invalid repair action for drift category",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_REPAIR_REQUIRED_FIELD,
+        HttpStatus.BAD_REQUEST,
+        "Missing required repair field",
+        false);
+    // Story 4.16 code review (OQ-2 resolved → option 2) — a legal-but-unimplemented repair action
+    // (the restore_from_backup E4 stub) surfaces NOT_IMPLEMENTED (501) rather than a
+    // category-legality
+    // 400. Non-retryable — retrying will not help until the backup-integration epic ships.
+    register(
+        metadata,
+        DomainErrorCode.REPAIR_ACTION_NOT_IMPLEMENTED,
+        HttpStatus.NOT_IMPLEMENTED,
+        "Repair action not implemented",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

@@ -141,7 +141,8 @@
         "linear.runReopenedNotification",
         "recovery.paused",
         "recovery.failureClassified",
-        "artifact.driftDetected"
+        "artifact.driftDetected",
+        "artifact.driftRepaired"
       ]
     },
     "artifactVariant": {

@@ -334,6 +334,98 @@
         },
         "type" : "object"
       },
+      "ArtifactRepairRequest" : {
+        "description" : "Apply an operator-driven repair to a detected artifact drift.",
+        "properties" : {
+          "backupSource" : {
+            "description" : "Action-specific: the backup source for restore_from_backup (E4 stub — not yet honored).",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "completionEvidence" : {
+            "description" : "Action-specific: evidence the operation actually completed. REQUIRED for mark_operation_complete (else MISSING_REPAIR_REQUIRED_FIELD).",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "reasonText" : {
+            "description" : "Optional operator note explaining the repair.",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "repairAction" : {
+            "description" : "Typed repair action. Validated by the service against the drift's category (no @NotBlank) so the typed INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY code is reachable. restore_from_backup is a forward-compat E4 stub (rejected until backup integration lands).",
+            "enum" : [
+              "mark_operation_failed",
+              "mark_operation_complete",
+              "mark_payload_unavailable",
+              "restore_from_backup",
+              "mark_corrupted",
+              "re_verify_checksum"
+            ],
+            "example" : "mark_corrupted",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "repairAction",
+          "role"
+        ],
+        "type" : "object"
+      },
+      "ArtifactRepairResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "driftId" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "repairAction" : {
+            "type" : "string"
+          },
+          "repairedEventId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "resolved" : {
+            "type" : "boolean"
+          }
+        },
+        "required" : [
+          "driftId",
+          "recoveryActionId",
+          "repairAction",
+          "replayed",
+          "resolved"
+        ],
+        "type" : "object"
+      },
       "AuditEventRow" : {
         "description" : "One flat audit event row.",
         "properties" : {
@@ -3921,6 +4013,94 @@
   },
   "openapi" : "3.1.0",
   "paths" : {
+    "/api/v1/artifact-drift/{driftId}/repair" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that resolves a detected artifact_drift_detected row through an explicit, auditable repair (NFR19: no silent overwrite). Records a recovery_actions row + artifact.driftRepaired event and, for the resolving repairs, sets the drift's resolved_at/resolved_by_action_id. Idempotent under Idempotency-Key. A re_verify_checksum that still mismatches leaves the drift open (resolved=false).",
+        "operationId" : "repairArtifactDrift",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "driftId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ArtifactRepairRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ArtifactRepairResponse"
+                }
+              }
+            },
+            "description" : "Repair applied (or idempotent replay)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY, MISSING_REPAIR_REQUIRED_FIELD."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "DRIFT_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "DRIFT_ALREADY_RESOLVED or IDEMPOTENCY_KEY_CONFLICT."
+          }
+        },
+        "summary" : "Apply an operator-driven repair to a detected artifact drift (story 4.16)",
+        "tags" : [
+          "Artifact Drift"
+        ]
+      }
+    },
     "/api/v1/audit/by-run/{workflowRunId}" : {
       "get" : {
         "description" : "Events for a single workflow run, newest-first with cursor pagination. The same read model as `deliveryline audit query --run`.",
@@ -8246,6 +8426,10 @@
     {
       "description" : "Audit history query by ticket and by run over workflow_events.",
       "name" : "Audit"
+    },
+    {
+      "description" : "Operator-driven repair of detected artifact DB/file drift (story 4.16).",
+      "name" : "Artifact Drift"
     },
     {
       "description" : "Manage projects: CRUD, write-only credentials, connectivity.",

@@ -8,6 +8,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.artifact.ArtifactReconciliationService;
+import org.dradgo.application.artifact.ArtifactRepairResult;
+import org.dradgo.application.artifact.RepairArtifactDriftCommand;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
 import org.dradgo.application.observability.MdcKeys;
@@ -66,6 +69,7 @@ public class OperatorCommands {
   private static final String COMMAND_NAME_RERUN_FROM_STEP = "operator rerun-from-step";
   private static final String COMMAND_NAME_PAUSE = "operator pause";
   private static final String COMMAND_NAME_CLASSIFY_FAILURE = "operator classify-failure";
+  private static final String COMMAND_NAME_ARTIFACT_REPAIR = "operator artifact-repair";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -85,6 +89,13 @@ public class OperatorCommands {
   private final IdempotencyKeyValidator idempotencyKeyValidator;
   private final LocalActorIdentityResolver localActorIdentityResolver;
   private final Supplier<String> generatedIdempotencyKeySupplier;
+  // Story 4.16 — the operator artifact-repair command calls the reconciliation coordinator directly
+  // (CLI does NOT go through REST), mirroring how the mutating recovery commands call
+  // RecoveryService.
+  // Nullable so the story 4.1-4.14 test call-sites (which do not exercise artifact-repair) keep
+  // their
+  // existing 8-arg constructor.
+  private final ArtifactReconciliationService artifactReconciliationService;
 
   @Autowired
   public OperatorCommands(
@@ -94,6 +105,7 @@ public class OperatorCommands {
       RecoveryService recoveryService,
       IdempotencyKeyValidator idempotencyKeyValidator,
       LocalActorIdentityResolver localActorIdentityResolver,
+      ArtifactReconciliationService artifactReconciliationService,
       UuidV7Generator uuidV7Generator) {
     this(
         inspection,
@@ -103,7 +115,34 @@ public class OperatorCommands {
         idempotencyKeyValidator,
         localActorIdentityResolver,
         uuidV7Generator::generate,
-        uuidV7Generator::generate);
+        uuidV7Generator::generate,
+        artifactReconciliationService);
+  }
+
+  /**
+   * Legacy 8-arg test constructor (stories 4.1-4.14) — delegates with a {@code null}
+   * artifactReconciliationService (those tests do not exercise the story 4.16 artifact-repair
+   * command). The command still registers; only invoking it needs a non-null service.
+   */
+  OperatorCommands(
+      WorkflowInspectionService inspection,
+      WorkflowCommandOutputs outputs,
+      CliInteractivityDetector interactivity,
+      RecoveryService recoveryService,
+      IdempotencyKeyValidator idempotencyKeyValidator,
+      LocalActorIdentityResolver localActorIdentityResolver,
+      Supplier<String> correlationIdSupplier,
+      Supplier<String> generatedIdempotencyKeySupplier) {
+    this(
+        inspection,
+        outputs,
+        interactivity,
+        recoveryService,
+        idempotencyKeyValidator,
+        localActorIdentityResolver,
+        correlationIdSupplier,
+        generatedIdempotencyKeySupplier,
+        null);
   }
 
   OperatorCommands(
@@ -114,7 +153,8 @@ public class OperatorCommands {
       IdempotencyKeyValidator idempotencyKeyValidator,
       LocalActorIdentityResolver localActorIdentityResolver,
       Supplier<String> correlationIdSupplier,
-      Supplier<String> generatedIdempotencyKeySupplier) {
+      Supplier<String> generatedIdempotencyKeySupplier,
+      ArtifactReconciliationService artifactReconciliationService) {
     this.inspection = Objects.requireNonNull(inspection, "inspection");
     this.outputs = Objects.requireNonNull(outputs, "outputs");
     this.interactivity = Objects.requireNonNull(interactivity, "interactivity");
@@ -127,6 +167,8 @@ public class OperatorCommands {
         Objects.requireNonNull(correlationIdSupplier, "correlationIdSupplier");
     this.generatedIdempotencyKeySupplier =
         Objects.requireNonNull(generatedIdempotencyKeySupplier, "generatedIdempotencyKeySupplier");
+    // Nullable by design — see field javadoc.
+    this.artifactReconciliationService = artifactReconciliationService;
   }
 
   @Command(
@@ -1014,6 +1056,170 @@ public class OperatorCommands {
         MdcKeys.sanitizeForLog(runId),
         outcome,
         elapsedMs);
+  }
+
+  @Command(
+      name = "artifact-repair",
+      description =
+          "Apply an operator-driven repair to a detected artifact drift via --drift + --action"
+              + " (story 4.16 — CLI/REST equivalence). Resolves the artifact_drift_detected row"
+              + " through an explicit, auditable repair: records a recovery_actions row +"
+              + " artifact.driftRepaired event and, for the resolving repairs, sets the drift's"
+              + " resolved_at/resolved_by_action_id. Idempotent under --idempotency-key. The action"
+              + " is validated by the service against the drift's category (typed"
+              + " INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY / MISSING_REPAIR_REQUIRED_FIELD). A"
+              + " re_verify_checksum that still mismatches leaves the drift open. --format=json emits"
+              + " a stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String artifactRepair(
+      @Option(
+              longName = "drift",
+              description = "Artifact drift public id (adr_...)",
+              required = false)
+          String drift,
+      @Option(
+              longName = "action",
+              description =
+                  "Repair action: mark_operation_failed | mark_operation_complete |"
+                      + " mark_payload_unavailable | restore_from_backup | mark_corrupted |"
+                      + " re_verify_checksum (validated by the service against the drift category)",
+              required = false)
+          String action,
+      @Option(
+              longName = "reason",
+              description = "Optional operator note explaining the repair",
+              required = false)
+          String reason,
+      @Option(
+              longName = "completion-evidence",
+              description =
+                  "Action-specific: evidence for mark_operation_complete (required for it)",
+              required = false)
+          String completionEvidence,
+      @Option(
+              longName = "backup-source",
+              description = "Action-specific: backup source for restore_from_backup (E4 stub)",
+              required = false)
+          String backupSource,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      // drift/action/reason/fields pass straight through: the service is the single source of
+      // repair validation (typed DRIFT_NOT_FOUND / DRIFT_ALREADY_RESOLVED /
+      // INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY / MISSING_REPAIR_REQUIRED_FIELD), keeping the CLI
+      // symmetric with the REST surface (SEVEN-field command — Reconciliation 12/16).
+      ArtifactRepairResult result =
+          requireArtifactReconciliationService()
+              .repairArtifactDrift(
+                  new RepairArtifactDriftCommand(
+                      drift,
+                      action,
+                      reason,
+                      completionEvidence,
+                      backupSource,
+                      actor,
+                      resolvedIdempotencyKey));
+      String rendered =
+          json
+              ? outputs.renderOperatorArtifactRepairJson(result)
+              : renderArtifactRepairText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitArtifactRepair(resolvedCorrelation, drift, start, OUTCOME_SUCCESS);
+      log.info(
+          "operator artifact-repair applied correlationId={} driftId={} repairAction={} reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(drift),
+          MdcKeys.sanitizeForLog(action),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitArtifactRepair(resolvedCorrelation, drift, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitArtifactRepair(resolvedCorrelation, drift, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator artifact-repair` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorArtifactRepairJson). The verbose footer is appended to
+  // TEXT
+  // output only — gluing it onto JSON would break the operator-artifact-repair.v1 schema for
+  // machine
+  // consumers.
+  private static String renderArtifactRepairText(
+      ArtifactRepairResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionId())
+            .append(" repair submitted (action: ")
+            .append(result.repairAction())
+            .append(", resolved: ")
+            .append(result.resolved())
+            .append(')');
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitArtifactRepair(
+      String correlationId, String driftId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} driftId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_ARTIFACT_REPAIR,
+        MdcKeys.sanitizeForLog(driftId),
+        outcome,
+        elapsedMs);
+  }
+
+  private ArtifactReconciliationService requireArtifactReconciliationService() {
+    if (artifactReconciliationService == null) {
+      throw new IllegalStateException(
+          "ArtifactReconciliationService is required for operator artifact-repair");
+    }
+    return artifactReconciliationService;
   }
 
   // Story 4.10 — mirror WorkflowCommands.resolveActorIdentity: fail-closed on unsafe values, then

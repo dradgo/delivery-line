@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.artifact.ArtifactRepairResult;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
 import org.dradgo.application.recovery.ClassifyFailureResult;
@@ -65,6 +66,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_RERUN_FROM_STEP_SCHEMA_VERSION = 1;
   static final int OPERATOR_PAUSE_SCHEMA_VERSION = 1;
   static final int OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION = 1;
+  static final int OPERATOR_ARTIFACT_REPAIR_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -680,6 +682,26 @@ public class WorkflowCommandOutputs {
     payload.put("priorTaxonomyValue", result.priorTaxonomyValue());
     payload.put("recoveryActionId", result.recoveryActionPublicId());
     payload.put("classifiedEventId", result.classifiedEventPublicId());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.16 — stable {@code operator-artifact-repair.v1} JSON document for {@code deliveryline
+   * operator artifact-repair --format json}. All fields come straight off {@link
+   * ArtifactRepairResult}: {@code resolved} is {@code false} for a {@code re_verify_checksum} that
+   * still mismatched (the drift is left open); {@code replayed} is {@code true} on an idempotent
+   * replay. {@code repairedEventId} / {@code correlationId} are null-tolerant.
+   */
+  public String renderOperatorArtifactRepairJson(ArtifactRepairResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_ARTIFACT_REPAIR_SCHEMA_VERSION);
+    payload.put("driftId", result.driftId());
+    payload.put("repairAction", result.repairAction());
+    payload.put("recoveryActionId", result.recoveryActionId());
+    payload.put("repairedEventId", result.repairedEventId());
+    payload.put("resolved", result.resolved());
     payload.put("correlationId", result.correlationId());
     payload.put("replayed", result.replayed());
     return writeJson(payload);

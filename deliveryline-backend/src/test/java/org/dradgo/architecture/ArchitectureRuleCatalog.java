@@ -16,6 +16,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import jakarta.persistence.Entity;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -556,6 +557,38 @@ final class ArchitectureRuleCatalog {
               .should()
               .callMethod(
                   ArtifactDriftWritePort.class, "recordIfAbsent", DriftRecordRequest.class));
+
+  /**
+   * Story 4.16 (AC9) — only {@code ArtifactReconciliationService} may RESOLVE a drift row (or
+   * update its last-known-state) via the write port. The 4.15 rule above is method-name-specific to
+   * {@code recordIfAbsent}, so it does NOT bind the new {@code resolveDrift}/{@code
+   * updateLastKnownState} methods; this rule adds the missing guard. The repair methods
+   * legitimately live in {@code application.artifact.ArtifactReconciliationService} (which already
+   * owns the drift READ surface), so the guard is scoped to that single class rather than the
+   * {@code .reconciliation} subpackage. {@code callMethod} matches the interface owner, so the
+   * persistence adapter's own IMPLEMENTS body does not trip this.
+   */
+  static final ArchRule ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT =
+      namedRule(
+          "only ArtifactReconciliationService may resolve or update artifact drift via the write port",
+          "Remediation: route every artifact_drift_detected resolve / last-known-state update through ArtifactReconciliationService in application.artifact; no controller or adapter may call ArtifactDriftWritePort.resolveDrift or updateLastKnownState directly (story 4.16 AC9).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.application.artifact.ArtifactReconciliationService")
+              .should()
+              .callMethod(
+                  ArtifactDriftWritePort.class,
+                  "resolveDrift",
+                  String.class,
+                  String.class,
+                  Instant.class)
+              .orShould()
+              .callMethod(
+                  ArtifactDriftWritePort.class,
+                  "updateLastKnownState",
+                  String.class,
+                  String.class));
 
   /**
    * Story 3.11 (AC9) — the plan-stage twin of {@link

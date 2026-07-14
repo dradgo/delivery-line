@@ -151,6 +151,15 @@ public final class WorkflowEventDetailKeys {
   public static final String TAXONOMY_VALUE = "taxonomyValue";
   public static final String PRIOR_TAXONOMY_VALUE = "priorTaxonomyValue";
 
+  // Artifact-repair key (added story 4.16 AC2, emitted on ARTIFACT_DRIFT_REPAIRED). Allow-listed:
+  // repairAction is the controlled-vocabulary RepairAction wire token (mark_operation_failed /
+  // mark_operation_complete / mark_payload_unavailable / restore_from_backup / mark_corrupted /
+  // re_verify_checksum) that discriminates the single artifact.driftRepaired event — the same
+  // shareable posture as reconciliationDecision / taxonomyValue. The already-allow-listed
+  // driftCategory / driftId / artifactId / operationId / reason / correlationId keys carry the rest
+  // of the payload.
+  public static final String REPAIR_ACTION = "repairAction";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -215,7 +224,8 @@ public final class WorkflowEventDetailKeys {
           SUPERSEDED_ARTIFACT_IDS,
           INVALIDATED_APPROVAL_IDS,
           TAXONOMY_VALUE,
-          PRIOR_TAXONOMY_VALUE);
+          PRIOR_TAXONOMY_VALUE,
+          REPAIR_ACTION);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

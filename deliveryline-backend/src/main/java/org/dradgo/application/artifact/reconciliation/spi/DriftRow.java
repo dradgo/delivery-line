@@ -11,6 +11,12 @@ import org.dradgo.domain.registry.DriftCategory;
  * lastKnownStateJson} is the raw JSONB snapshot as text; the service parses it to a map for {@code
  * DriftSummary}. This carries no computed hint — {@code RepairActionHint} is derived in the service
  * (AC6).
+ *
+ * <p>{@code resolvedAt} (story 4.16 / Reconciliation 6) is {@code null} for the {@code
+ * listUnresolved} read (which hard-filters {@code resolved_at IS NULL}) and is populated only by
+ * {@code findByPublicId}, which returns EVEN resolved rows so the repair coordinator can
+ * distinguish a not-yet-resolved drift from an already-resolved one ({@code
+ * DRIFT_ALREADY_RESOLVED}).
  */
 public record DriftRow(
     String driftId,
@@ -19,4 +25,5 @@ public record DriftRow(
     String artifactOperationId,
     DriftCategory driftCategory,
     Instant detectedAt,
-    String lastKnownStateJson) {}
+    String lastKnownStateJson,
+    Instant resolvedAt) {}

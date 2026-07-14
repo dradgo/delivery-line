@@ -1,10 +1,13 @@
 package org.dradgo.adapters.persistence;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import org.dradgo.application.artifact.reconciliation.spi.ArtifactDriftReadPort;
 import org.dradgo.application.artifact.reconciliation.spi.ArtifactDriftWritePort;
 import org.dradgo.application.artifact.reconciliation.spi.DriftQuery;
@@ -89,6 +92,47 @@ public class ArtifactDriftPersistenceAdapter
        group by d.drift_category
       """;
 
+  // Story 4.16 — single-row lookup by adr_ public id. Returns EVEN resolved rows (no resolved_at
+  // filter) so the repair coordinator can distinguish DRIFT_NOT_FOUND from DRIFT_ALREADY_RESOLVED.
+  // Archived rows are excluded (treated as not found).
+  private static final String FIND_BY_PUBLIC_ID_SQL =
+      """
+      select d.public_id            as drift_id,
+             d.workflow_run_id      as workflow_run_id,
+             d.artifact_id          as artifact_id,
+             d.artifact_operation_id as artifact_operation_id,
+             d.drift_category       as drift_category,
+             d.detected_at          as detected_at,
+             d.last_known_state::text as last_known_state,
+             d.resolved_at          as resolved_at
+        from artifact_drift_detected d
+       where d.public_id = :driftId
+         and d.archived_at is null
+      """;
+
+  // Story 4.16 — resolve one UNRESOLVED, non-archived drift. resolved_by_action_id FKs
+  // recovery_actions(public_id) RESTRICT, so the recovery_actions row must already be inserted.
+  private static final String RESOLVE_DRIFT_SQL =
+      """
+      update artifact_drift_detected
+         set resolved_at = :resolvedAt,
+             resolved_by_action_id = :actionId
+       where public_id = :driftId
+         and resolved_at is null
+         and archived_at is null
+      """;
+
+  // Story 4.16 — refresh an UNRESOLVED drift's snapshot without resolving it (reVerifyChecksum
+  // still-mismatched path).
+  private static final String UPDATE_LAST_KNOWN_STATE_SQL =
+      """
+      update artifact_drift_detected
+         set last_known_state = cast(:lastKnownState as jsonb)
+       where public_id = :driftId
+         and resolved_at is null
+         and archived_at is null
+      """;
+
   private final NamedParameterJdbcTemplate jdbcTemplate;
 
   public ArtifactDriftPersistenceAdapter(NamedParameterJdbcTemplate jdbcTemplate) {
@@ -152,9 +196,72 @@ public class ArtifactDriftPersistenceAdapter
                     rs.getString("artifact_operation_id"),
                     PersistedRegistryValues.artifactDriftCategory(rs.getString("drift_category")),
                     toInstant(rs.getObject("detected_at", OffsetDateTime.class)),
-                    rs.getString("last_known_state")));
+                    rs.getString("last_known_state"),
+                    // Definitionally null — this query hard-filters resolved_at IS NULL.
+                    null));
     log.debug("listUnresolved (drift) returned={}", rows.size());
     return new ArrayList<>(rows);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<DriftRow> findByPublicId(String driftId) {
+    Objects.requireNonNull(driftId, "driftId");
+    MapSqlParameterSource params = new MapSqlParameterSource().addValue("driftId", driftId);
+    List<DriftRow> rows =
+        jdbcTemplate.query(
+            FIND_BY_PUBLIC_ID_SQL,
+            params,
+            (rs, rowNum) ->
+                new DriftRow(
+                    rs.getString("drift_id"),
+                    rs.getString("workflow_run_id"),
+                    rs.getString("artifact_id"),
+                    rs.getString("artifact_operation_id"),
+                    PersistedRegistryValues.artifactDriftCategory(rs.getString("drift_category")),
+                    toInstant(rs.getObject("detected_at", OffsetDateTime.class)),
+                    rs.getString("last_known_state"),
+                    toInstant(rs.getObject("resolved_at", OffsetDateTime.class))));
+    return rows.stream().findFirst();
+  }
+
+  @Override
+  @Transactional
+  public boolean resolveDrift(String driftId, String resolvedByActionPublicId, Instant resolvedAt) {
+    Objects.requireNonNull(driftId, "driftId");
+    Objects.requireNonNull(resolvedByActionPublicId, "resolvedByActionPublicId");
+    Objects.requireNonNull(resolvedAt, "resolvedAt");
+    MapSqlParameterSource params =
+        new MapSqlParameterSource()
+            .addValue("driftId", driftId)
+            .addValue("actionId", resolvedByActionPublicId)
+            // Bind an OffsetDateTime at UTC directly (NOT Timestamp.from) so the ::timestamptz
+            // column is not tz-shifted by a JVM-vs-PG-session offset mismatch
+            // ([[jdbc-timestamp-to-timestamptz-tz-shift]]).
+            .addValue("resolvedAt", OffsetDateTime.ofInstant(resolvedAt, ZoneOffset.UTC));
+    int updated = jdbcTemplate.update(RESOLVE_DRIFT_SQL, params);
+    if (updated > 0) {
+      log.info(
+          "resolving artifact_drift_detected driftId={} resolvedByActionId={}",
+          driftId,
+          resolvedByActionPublicId);
+    } else {
+      log.warn("resolveDrift no-op driftId={} (already resolved / archived / absent)", driftId);
+    }
+    return updated > 0;
+  }
+
+  @Override
+  @Transactional
+  public boolean updateLastKnownState(String driftId, String lastKnownStateJson) {
+    Objects.requireNonNull(driftId, "driftId");
+    MapSqlParameterSource params =
+        new MapSqlParameterSource()
+            .addValue("driftId", driftId)
+            .addValue("lastKnownState", lastKnownStateJson == null ? "{}" : lastKnownStateJson);
+    int updated = jdbcTemplate.update(UPDATE_LAST_KNOWN_STATE_SQL, params);
+    log.debug("updateLastKnownState driftId={} updated={}", driftId, updated > 0);
+    return updated > 0;
   }
 
   @Override

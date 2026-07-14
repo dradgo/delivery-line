@@ -87,6 +87,11 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator classify-failure"),
               () -> "registered commands: " + commandNames);
+          // Story 4.16 (AC8) — the mutating artifact-repair command registers under the same group
+          // prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator artifact-repair"),
+              () -> "registered commands: " + commandNames);
         });
   }
 

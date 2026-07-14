@@ -307,7 +307,32 @@ public enum DomainErrorCode implements RegistryValue {
   // enqueue inherently leaves the run in its prior state (AC6 "transient — workflow stays put").
   // CONFLICT (409) + non-retryable (a precondition mismatch on the run's conflict state, not a
   // transient fault), mirroring PAUSE_NOT_APPLICABLE.
-  DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT("DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT");
+  DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT("DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT"),
+  // Story 4.16 (AC6 / Reconciliation 5) — four three-sites codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest) for the operator-driven artifact-drift repair path. DRIFT_NOT_FOUND
+  // (404) is raised by ArtifactReconciliationService.repairArtifactDrift when the {@code adr_}
+  // driftId resolves to no row (mirror CONFLICT_NOT_FOUND). DRIFT_ALREADY_RESOLVED (409) is raised
+  // when the drift's {@code resolved_at} is already set (mirror CONFLICT_ALREADY_RESOLVED — a
+  // precondition mismatch, not a transient fault). INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY (400)
+  // is raised when the requested repairAction is not legal for the drift's DriftCategory (and for
+  // the E4 restore_from_backup stub until backup integration lands — OQ-2).
+  // MISSING_REPAIR_REQUIRED_FIELD
+  // (400) is raised when an action-specific required field is absent (e.g. markOperationComplete's
+  // completionEvidence). The last two are malformed-request 400s, mirroring
+  // MISSING_/INVALID_RECONCILIATION_DECISION. There is NO generic ACTION_NOT_ALLOWED code — the
+  // endpoint role gate reuses INVALID_REVIEWER_ROLE_FOR_ENDPOINT.
+  DRIFT_NOT_FOUND("DRIFT_NOT_FOUND"),
+  DRIFT_ALREADY_RESOLVED("DRIFT_ALREADY_RESOLVED"),
+  INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY("INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY"),
+  MISSING_REPAIR_REQUIRED_FIELD("MISSING_REPAIR_REQUIRED_FIELD"),
+  // Story 4.16 code review (OQ-2 resolved -> option 2) — three-sites code (enum +
+  // ProblemDetailsCatalog + problemTypeUris manifest). The restore_from_backup E4 stub is a
+  // valid-but-unimplemented action (it IS legal for the missing_payload category), so rejecting it
+  // with INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY ("invalid for category") is semantically wrong.
+  // This dedicated NOT_IMPLEMENTED (501) code is raised by
+  // ArtifactReconciliationService.repairArtifactDrift for a legal-but-stubbed action until the
+  // backup-integration epic lands. Non-retryable (retrying will not help until the feature ships).
+  REPAIR_ACTION_NOT_IMPLEMENTED("REPAIR_ACTION_NOT_IMPLEMENTED");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

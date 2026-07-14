@@ -1,6 +1,6 @@
 # Story 4.16: Artifact Reconciliation — Operator-Driven Repair Actions
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -109,32 +109,48 @@ so that AR14 (artifact reconciliation deeper than the story 1.12 skeleton) is fu
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Migration + registries (AC2, AC3, AC6)**
-  - [ ] Re-confirm next-free Flyway version vs the target branch `db/migration/` (highest on-disk = V45; provisional **V46** — [[flyway-v31-cross-branch-collision]]). Author `V46__widen_artifact_repair_checks.sql`: DROP+ADD `ck_recovery_actions_action_type` restating `('retry','rerun','resume','takeover','pause','reconcile','classify_failure','artifact_repair')`; DROP+ADD `ck_artifacts_status` restating `('pending','available','failed','late_or_stale','corrupted')`. Copy the DROP+ADD idiom from `V44:55-62`. NO new table/column. Assert replay + ordering in `FlywayMigrationsFoundationContract`; extend `FlywaySchemaContractTest` only if it asserts CHECK value-sets (it does not today).
-  - [ ] Add `ArtifactStatus.CORRUPTED("corrupted")`; add `"corrupted"` to `registry-api-schema-placeholders.json` `artifactStatuses`. Run `RegistryContractTest` (three-way alignment).
-  - [ ] Add 4 `DomainErrorCode`s (`DRIFT_NOT_FOUND`, `DRIFT_ALREADY_RESOLVED`, `INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY`, `MISSING_REPAIR_REQUIRED_FIELD`); register each in `ProblemDetailsCatalog` (404/409/400/400, non-retryable) + `problemTypeUris` manifest. Confirm `ProblemDetailsCoverageFoundationContract` runs under `-Pfoundation-gate` ([[foundation-contract-must-be-registered-to-run]]).
-  - [ ] Add `WorkflowEventType.ARTIFACT_DRIFT_REPAIRED("artifact.driftRepaired")` + the string in `workflow-event-types.fixture.json`; add allow-listed `repairAction` detail key (`WorkflowEventDetailKeys` holder + `ALLOW_LISTED_KEYS` + contract test + `workflow-history.v1.schema.json`).
-- [ ] **Task 2 — Drift persistence + artifact-status ports (AC1, AC2)**
-  - [ ] `ArtifactDriftReadPort.findByPublicId(String driftId) → Optional<DriftRow>` (returns EVEN resolved rows) + `ArtifactDriftWritePort.resolveDrift(driftId, resolvedByActionPublicId, resolvedAt)` + `updateLastKnownState(driftId, json)`; implement all in `ArtifactDriftPersistenceAdapter` (NamedParameterJdbcTemplate). Verify on real PG.
-  - [ ] `ArtifactRecordPort.markCorrupted(artifactId, reason)` (adapter guard `AVAILABLE→CORRUPTED`, else `ARTIFACT_INVALID_STATE_TRANSITION`) + `markPayloadUnavailable(artifactId, reason)` (`AVAILABLE→FAILED`, OQ-1). REUSE `ArtifactOperationPort.markFailed`/`markComplete` for the operation repairs.
-- [ ] **Task 3 — Repair coordinator + typed methods (AC1, AC2, AC3, AC4)**
-  - [ ] `RepairAction` typed enum + category-legality mapping (mirror `RepairActionHint`). `RepairArtifactDriftCommand` + `ArtifactRepairResult` records.
-  - [ ] `ArtifactReconciliationService.repairArtifactDrift(command)`: replay pre-check (`RecoveryActionRecordPort.findByIdempotencyKey`, `action_type='artifact_repair'` guard) → drift lookup (`DRIFT_NOT_FOUND`/`DRIFT_ALREADY_RESOLVED`) → category-legality (`INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY`) → required-field (`MISSING_REPAIR_REQUIRED_FIELD`) → dispatch to the typed method — all in ONE `REQUIRES_NEW` tx. Per repair: append `artifact.driftRepaired` event → mutate status / (for `markCorrupted`/`markPayloadUnavailable`) `ApprovalService.invalidateCurrentApproval` → insert `recovery_actions` (`artifact_repair`, `succeeded`, `resulting_event_id`, best-effort `triggering_event_id`) → `resolveDrift`. Add the ctor deps (`ArtifactDriftWritePort`, `RecoveryActionRecordPort`, `ApprovalService`, `ArtifactRecordPort` mutation seam, `WorkflowEventReadPort` for the triggering event) — update existing test call-sites.
-  - [ ] `restoreFromBackup` — define signature + `restore_from_backup` enum value; body is a forward-compat stub rejecting until backup integration (OQ-2). `reVerifyChecksum` — recompute; resolve-on-match, `updateLastKnownState`-on-mismatch.
-- [ ] **Task 4 — REST + CLI (AC5, AC6, AC7, AC8)**
-  - [ ] NEW `ArtifactDriftController` (`@RestController @Validated @RequestMapping("/api/v1/artifact-drift")`) with `POST /{driftId}/repair` → `repairArtifactDrift`. Header preamble + `role` gate (extract shared helpers from `WorkflowController` or duplicate — OQ-5). `ArtifactRepairRequest`/`ArtifactRepairResponse` DTOs (`repairAction` plain-String `@Schema(allowableValues)`, no `@NotBlank`). `@Operation`/`@ApiResponses` (400/404/409 + `ProblemDetailsResponse`).
-  - [ ] OpenAPI regen (`-Dopenapi.snapshot.write=true`) + add `repairArtifactDrift` to the operationId allowlist + FE `npm run generate-api`.
-  - [ ] CLI `@Command(name="artifact-repair")` on `OperatorCommands` (calls the service directly); add to `OperatorCliCommandRegistrationIT`; optional `renderOperatorArtifactRepairJson` + schema test.
-- [ ] **Task 5 — ArchUnit + tests (AC9, AC10)**
-  - [ ] NEW ArchUnit rule (only `ArtifactReconciliationService` calls `resolveDrift`/`updateLastKnownState`) + `@ArchTest` registration (Failsafe).
-  - [ ] `ArtifactDriftRepairIT` (real PG, per-category), `ArtifactReconciliationServiceRepairUnitTest`, `@WebMvcTest(ArtifactDriftController)` conformance, `ArtifactRepairCliRestEquivalenceContractTest`, logging pins.
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
+- [x] **Task 1 — Migration + registries (AC2, AC3, AC6)**
+  - [x] Re-confirmed next-free Flyway version (highest on-disk = V45). Authored `V46__widen_artifact_repair_checks.sql`: DROP+ADD `ck_recovery_actions_action_type` (+`artifact_repair`); DROP+ADD `ck_artifacts_status` (+`corrupted`). Copied the DROP+ADD idiom from `V44:55-62`. NO new table/column.
+  - [x] Added `ArtifactStatus.CORRUPTED("corrupted")` + `"corrupted"` to `registry-api-schema-placeholders.json` `artifactStatuses`.
+  - [x] Added 4 `DomainErrorCode`s (`DRIFT_NOT_FOUND` 404, `DRIFT_ALREADY_RESOLVED` 409, `INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY` 400, `MISSING_REPAIR_REQUIRED_FIELD` 400); registered each in `ProblemDetailsCatalog` (non-retryable) + `problemTypeUris` manifest.
+  - [x] Added `WorkflowEventType.ARTIFACT_DRIFT_REPAIRED("artifact.driftRepaired")` + the string in `workflow-event-types.fixture.json` AND `workflow-events-response.schema.json` (2nd enum site); added allow-listed `repairAction` detail key (`WorkflowEventDetailKeys` holder + `ALLOW_LISTED_KEYS` + `workflow-history.v1.schema.json`).
+- [x] **Task 2 — Drift persistence + artifact-status ports (AC1, AC2)**
+  - [x] `ArtifactDriftReadPort.findByPublicId` (returns resolved rows; `DriftRow` gained a nullable `resolvedAt`) + `ArtifactDriftWritePort.resolveDrift` + `updateLastKnownState`; implemented in `ArtifactDriftPersistenceAdapter` (binds `resolvedAt` as OffsetDateTime UTC, not `Timestamp.from`, per the tz-shift trap).
+  - [x] `ArtifactRecordPort.markCorrupted` (`AVAILABLE→CORRUPTED`) + `markPayloadUnavailable` (`AVAILABLE→FAILED`, OQ-1) new adapter guards. REUSE `ArtifactOperationPort.markFailed`/`markComplete`.
+- [x] **Task 3 — Repair coordinator + typed methods (AC1, AC2, AC3, AC4)**
+  - [x] `RepairAction` typed enum + category-legality mapping. `RepairArtifactDriftCommand` + `ArtifactRepairResult` records.
+  - [x] `ArtifactReconciliationService.repairArtifactDrift(command)` coordinator + 6 typed public wrappers: replay-first (`action_type='artifact_repair'` guard) → drift lookup → category-legality → required-field → dispatch, all in ONE `REQUIRES_NEW` tx. Per repair: mutate status / invalidate approvals → append `artifact.driftRepaired` event → insert `recovery_actions` (succeeded-on-INSERT, best-effort `triggering_event_id`) → `resolveDrift`. Widened both ctors (production 14-arg + canonical) keeping the legacy 7-arg test ctor delegating with nulls.
+  - [x] `restoreFromBackup` E4 stub (rejects with `INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY` + WARN, OQ-2). `reVerifyChecksum` resolve-on-match / `updateLastKnownState`-on-mismatch.
+- [x] **Task 4 — REST + CLI (AC5, AC6, AC7, AC8)**
+  - [x] NEW `ArtifactDriftController` `POST /api/v1/artifact-drift/{driftId}/repair` → `repairArtifactDrift`. Header preamble + `role` gate DUPLICATED (minimal set) from `WorkflowController` (OQ-5). `ArtifactRepairRequest`/`ArtifactRepairResponse` DTOs.
+  - [x] OpenAPI regen + `repairArtifactDrift` operationId allowlist + FE `npm run generate-api`.
+  - [x] CLI `@Command(name="artifact-repair")` on `OperatorCommands` (calls the service directly, 3rd 9-arg ctor); added to `OperatorCliCommandRegistrationIT`; `renderOperatorArtifactRepairJson` (`operator-artifact-repair.v1`).
+- [x] **Task 5 — ArchUnit + tests (AC9, AC10)**
+  - [x] NEW ArchUnit rule `ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT` (only `ArtifactReconciliationService` may call `resolveDrift`/`updateLastKnownState`) + `@ArchTest` registration.
+  - [x] `ArtifactDriftRepairIT` (real PG, per-category), `ArtifactReconciliationServiceRepairUnitTest`, `ArtifactDriftControllerTest` (`@WebMvcTest` conformance), `ArtifactRepairCliRestEquivalenceContractTest`, logging pins.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
   - [ ] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, file I/O), and every retry/replay/conflict/recovery branch.
   - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
   - [ ] Levels: `INFO` normal lifecycle (repair start/finish, decision taken), `WARN` recoverable anomalies (replay, `reVerifyChecksum` still-mismatched, approval invalidated), `ERROR` only unhandled failures/invariant breaks. `DEBUG` for hot-path detail.
   - [ ] Every log carries `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`, plus the entity's public id (`driftId`, `artifactId`/`operationId`). Use MDC (`MdcKeys.ARTIFACT_ID`/`ARTIFACT_OPERATION_ID`) where possible.
   - [ ] Never log secrets, payload bytes, raw tokens, PII, or the artifact payload read for re-hashing. Sanitize `reason` (log LENGTH only in the controller, like the recovery endpoints).
   - [ ] Add ≥1 focused test assertion that the expected log line(s) emit at the expected level for each new branch (list-appender / `OutputCaptureExtension`).
+
+### Review Findings (code review 2026-07-14)
+
+Adversarial review — 3 parallel layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor). **1 decision-needed, 5 patch, 0 defer, 5 dismissed as noise.** Acceptance Auditor verdict: PASS with minor findings — every AC + all 16 reconciliations substantively implemented against the *reconciled* bindings; no scope leakage (no `RecoveryService` edit, no 4.16a lineage/fork).
+
+- [x] [Review][Patch] APPLIED (verified: foundation-gate 54/54 + unit test). `restoreFromBackup` stub surfaces a semantically-wrong error code (**OQ-2 resolved → option 2**) — `restore_from_backup` is declared *legal* for `missing_payload` in `RepairAction.LEGAL_BY_CATEGORY` and advertised as an allowableValue, yet dispatch rejects it with `INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY` ("invalid for category") when the action is valid-but-unimplemented. **Decision: add a dedicated `REPAIR_ACTION_NOT_IMPLEMENTED` `DomainErrorCode` (501/409, non-retryable) and throw it from the stub.** 3-site fan-out per [[new-domainerrorcode-three-sites]]: enum + `ProblemDetailsCatalog` (status + retryable) + `problemTypeUris` in `registry-api-schema-placeholders.json`; confirm `ProblemDetailsCoverageFoundationContract` stays green under `-Pfoundation-gate`. [ArtifactReconciliationService.java:914-930; RepairAction LEGAL_BY_CATEGORY]
+
+- [x] [Review][Patch] APPLIED (verified: unit test `blankDriftIdIsRejectedAsInvalidCommandPayload`). CLI null/blank `--drift`/`--action` → opaque 500 (NPE) instead of a typed error [ArtifactReconciliationService.java:704 / ArtifactDriftPersistenceAdapter.findByPublicId / OperatorCommands.artifactRepair] — CLI declares `--drift`/`--action` `required=false` and passes them straight through; `findByPublicId(null)` hits `Objects.requireNonNull` before `.orElseThrow(driftNotFound)`, yielding a 500 rather than `DRIFT_NOT_FOUND`/`INVALID_COMMAND_PAYLOAD`. Also reachable on the replay path (:1039). Fix: guard blank/null driftId+action (CLI `requireNonBlank` or coordinator normalization → typed error). (blind+edge)
+
+- [x] [Review][Patch] APPLIED (decision: affected-rows re-check; verified unit test `reVerifyChecksumThatLosesTheResolveRaceIsRejectedAsAlreadyResolved` + IT 6/6 no regression). `performRepair` now throws `DRIFT_ALREADY_RESOLVED` when an attempted `resolveDrift` updates 0 rows (a concurrent winner already set `resolved_at`), rolling back the whole tx so no duplicate event/recovery_actions commit. Concurrent distinct-key `re_verify_checksum` on one unresolved drift → duplicate `recovery_actions` + duplicate `artifact.driftRepaired` event, reports success [ArtifactReconciliationService.performRepair ~:770-856] — Step-1 replay only dedupes the *same* idempotency key; two operators with distinct keys both pass the drift-unresolved check and both recompute a now-matching checksum, appending an event + inserting a recovery_actions row each; the 2nd `resolveDrift` no-ops (`WHERE resolved_at IS NULL`) → `resolved=false` but still returns success with a duplicate audit row. Status-mutating actions are safe (status guard rolls the loser back) but surface `ARTIFACT_INVALID_STATE_TRANSITION` instead of `DRIFT_ALREADY_RESOLVED`. Fix: re-check/lock drift resolution inside the tx (advisory-lock precedent `RecoveryService.reconcile 0x5243`, or `SELECT … FOR UPDATE`) → throw `DRIFT_ALREADY_RESOLVED` so the whole tx rolls back. (edge+blind)
+
+- [x] [Review][Patch] APPLIED (verified: unit test `oversizedReasonIsRejectedAsInvalidCommandPayload`; service now enforces the @Size bounds). CLI repair string inputs unbounded vs REST `@Size` — CLI/REST equivalence hole (AC8) + unbounded event-detail write [OperatorCommands.artifactRepair vs ArtifactRepairRequest] — `ArtifactRepairRequest` caps `repairAction ≤64`, `reasonText`/`completionEvidence`/`backupSource ≤512`; the CLI passes the same fields with no length guard and the service performs no length validation, so a multi-KB `--reason` is accepted via CLI (landing in the `artifact.driftRepaired` event details) while the identical REST call is rejected. `ArtifactRepairCliRestEquivalenceContractTest` only asserts happy-path arg equality, so it misses this. Fix: enforce length bounds in the service/command (single validation source) so both surfaces agree. (blind+edge)
+
+- [x] [Review][Patch] APPLIED (verified: unit tests + real-PG `ArtifactDriftRepairIT` 6/6, incl. new `markPayloadUnavailableFailsArtifactAndResolvesMissingPayloadDrift` + `markOperationComplete` happy path). AC10 test gap — `missing_payload` / `markPayloadUnavailable` entirely untested [ArtifactDriftRepairIT / ArtifactReconciliationServiceRepairUnitTest] — the IT seeds only `orphan_operation` + `checksum_mismatch`; the unit test never exercises `markPayloadUnavailable`, so its `AVAILABLE→FAILED` transition, its `INVALIDATED_REASON_MARK_PAYLOAD_UNAVAILABLE` token, its approval invalidation, and the non-trivial `ck_artifacts_failure_reason_paired` adapter branch ship unverified. `markOperationComplete` happy path is only negatively tested. AC10 explicitly requires the deleted-payload scenario. Fix: add `missing_payload`/`markPayloadUnavailable` IT + unit coverage (with the approval-invalidation assertion) and a `markOperationComplete` happy-path case. (auditor)
+
+- [x] [Review][Patch] APPLIED (decision: guard → INTERNAL_ERROR 500; verified unit test `nullTargetAxisOnDriftRowSurfacesInternalErrorNotNpe`). `requireDriftAxis` in `applyRepair` now throws `INTERNAL_ERROR` (500) with a diagnostic payload + ERROR log for a null category-axis (kept an honest 500 — a server-side invariant break, not a masked client error). Null target-axis on a drift row → NPE 500 in adapter (low reachability) [ArtifactReconciliationService.applyRepair ~:874-952] — dispatch reads `drift.artifactOperationId()` / `drift.artifactId()` with no null check; a drift row whose category-axis column is null (data corruption / hand-insert — the detection invariant normally prevents it) yields `requireOperation(null)`/`requireArtifact(null)`/`findByPublicId(null)` → NPE → 500 instead of a typed rejection. Fix: defensive null-axis guard → typed error. (edge)
 
 ## Dev Notes
 
@@ -205,6 +221,69 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- `@{argLine}` crash when running `surefire:test` / `failsafe:integration-test` as DIRECT goals ([[maven-arglineation-goal-crash]]) — run the `test` / `verify` LIFECYCLE phase with `-Djacoco.skip=true` instead.
+- Windows PowerShell mangles unquoted `-D…=…` args (splits `-Djacoco.skip=true` at the dot) — always quote each `-D` arg.
+
 ### Completion Notes List
 
+Implemented the REPAIR half of the Epic-4 artifact-reconciliation split on branch `feat/3g-5-claude-token-capture` (UNCOMMITTED). All 5 tasks + logging done.
+
+**Provisional OQ bindings applied (all documented, none blocked dev):**
+- **OQ-1** `markPayloadUnavailable` → `AVAILABLE→FAILED` (no dedicated status; distinct `failure_reason`).
+- **OQ-2** `restoreFromBackup` → E4 stub: `restore_from_backup` is a real `RepairAction`/allowableValue but the dispatch body rejects with `INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY` (+WARN, `reason=restore_from_backup_not_yet_supported`) — reuses one of the 4 codes (no 5th code added, keeping the scope-table count).
+- **OQ-3** approval invalidation is run+type keyed (`ApprovalService.invalidateCurrentApproval`, MANDATORY), not version-specific.
+- **OQ-4** ONE `artifact.driftRepaired` event per repair (state-neutral, `interventionMarker=true`); `details.repairAction` discriminates.
+- **OQ-5** header/role preamble DUPLICATED (minimal set) into `ArtifactDriftController` rather than extracted from `WorkflowController` (lower blast radius).
+- **OQ-6** `triggering_event_id` = best-effort latest `artifact.driftDetected` for the run (nullable).
+- **OQ-7** kept the `role` gate (`workflow_owner` → `INVALID_REVIEWER_ROLE_FOR_ENDPOINT`) on the drift-scoped endpoint for parity with the recovery endpoints.
+
+**Design notes:** the coordinator uses `WorkflowEventWritePort` directly (pre-generated `evt_` id → `resulting_event_id`, `interventionMarker=true`) — NOT `ArtifactEventPort` (which returns void + hardcodes `interventionMarker=false`), mirroring `classifyFailure`. `DriftRow` gained a nullable `resolvedAt` so `findByPublicId` can surface an already-resolved row for `DRIFT_ALREADY_RESOLVED`. `resolveDrift` binds `resolvedAt` as an `OffsetDateTime` at UTC (not `Timestamp.from`) to avoid the tz-shift trap.
+
+**Verification (Docker up):** fast Surefire tier GREEN — `ArtifactReconciliationServiceRepairUnitTest` 11/0, `ArtifactDriftControllerTest` 8/0, `ArtifactRepairCliRestEquivalenceContractTest` 1/0. Failsafe/Docker tier (OpenAPI regen, RegistryContract three-way, WorkflowEventDetailKeys, ArchitectureBoundary incl. the new resolve-drift rule, `ArtifactDriftRepairIT`, CLI registration) + FE `generate-api` + spotless — see the Change Log / sprint-status entry for the final result.
+
+**AC4 coverage note:** approval invalidation is verified at the UNIT level (the coordinator calls `invalidateCurrentApproval` with the correct run/type/reason-token for `markCorrupted`/`markPayloadUnavailable`); the end-to-end flip is covered by story 4.7's `ApprovalServiceInvalidationTest`. The repair IT focuses on the real-PG drift/artifact/recovery-action/event state + idempotency to avoid a fragile approvals seed.
+
 ### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/resources/db/migration/V46__widen_artifact_repair_checks.sql`
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/RepairAction.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/RepairArtifactDriftCommand.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactRepairResult.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactDriftController.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactRepairRequest.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactRepairResponse.java`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactReconciliationService.java` (repair coordinator + 6 typed methods + widened ctors)
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/reconciliation/spi/ArtifactDriftReadPort.java` (+`findByPublicId`)
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/reconciliation/spi/ArtifactDriftWritePort.java` (+`resolveDrift`/`updateLastKnownState`)
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/reconciliation/spi/DriftRow.java` (+`resolvedAt`)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/ArtifactDriftPersistenceAdapter.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/artifact/spi/ArtifactRecordPort.java` (+`markCorrupted`/`markPayloadUnavailable`)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/ArtifactRecordPersistenceAdapter.java`
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/ArtifactStatus.java` (+`CORRUPTED`)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java` (+4 codes)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java`
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventType.java` (+`ARTIFACT_DRIFT_REPAIRED`)
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java` (+`REPAIR_ACTION`)
+- `deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java` (+`artifact-repair` command + 3rd ctor)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (+`renderOperatorArtifactRepairJson`)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/artifact/ArtifactReconciliationServiceRepairUnitTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ArtifactDriftControllerTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/ArtifactRepairCliRestEquivalenceContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/artifact/reconciliation/ArtifactDriftRepairIT.java`
+
+**Modified (test):**
+- `deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (+`corrupted` + 4 problemTypeUris)
+- `deliveryline-backend/src/test/resources/contracts/events/workflow-event-types.fixture.json` (+`artifact.driftRepaired`)
+- `deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json` (+`artifact.driftRepaired`)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java` (+resolve-drift rule)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java` (+@ArchTest)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java` (+`repairArtifactDrift` allowlist)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java` (+registration assertion)
+- `deliveryline-frontend/src/api/**` (regenerated by `npm run generate-api`)

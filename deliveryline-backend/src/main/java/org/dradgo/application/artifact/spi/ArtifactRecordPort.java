@@ -91,6 +91,27 @@ public interface ArtifactRecordPort {
   ArtifactRecordSnapshot markLateOrStale(String artifactId);
 
   /**
+   * Story 4.16 (AC2 / Reconciliation 8) — operator repair for a confirmed checksum-mismatch drift
+   * on an {@code available} artifact: {@code AVAILABLE -> CORRUPTED}. The guard permits ONLY {@code
+   * AVAILABLE} as the source (checksum-mismatch drift is detected on an available artifact); any
+   * other current status raises {@code ARTIFACT_INVALID_STATE_TRANSITION}. {@code reason} is the
+   * operator note recorded on {@code failure_reason}. This is the only genuinely-new artifact
+   * status transition in story 4.16.
+   */
+  ArtifactRecordSnapshot markCorrupted(String artifactId, String reason);
+
+  /**
+   * Story 4.16 (AC2 / Reconciliation 8, OQ-1) — operator repair for a confirmed missing-payload
+   * drift on an {@code available} artifact: {@code AVAILABLE -> FAILED} with a distinct failure
+   * reason token. A dedicated adapter path (NOT {@link #markFailed} — its guard rejects {@code
+   * AVAILABLE}); the guard permits ONLY {@code AVAILABLE} as the source, else {@code
+   * ARTIFACT_INVALID_STATE_TRANSITION}. Reuses the {@code FAILED} status (no dedicated
+   * "unavailable" status exists — {@code ARTIFACT_PAYLOAD_UNAVAILABLE} is a DomainErrorCode, not a
+   * status); {@code reason} is recorded on {@code failure_reason}.
+   */
+  ArtifactRecordSnapshot markPayloadUnavailable(String artifactId, String reason);
+
+  /**
    * Story 4.15 (AC1) — bounded, KEYSET-PAGED scan seam for the artifact-drift-detection sweep.
    * Returns up to {@code batchLimit} {@code available}-status artifacts whose {@code created_at} is
    * older than {@code now() - minAge} AND that sort strictly after the {@code (afterCreatedAt,

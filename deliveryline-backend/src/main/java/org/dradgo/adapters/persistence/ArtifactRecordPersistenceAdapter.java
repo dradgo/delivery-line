@@ -390,6 +390,70 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
     return persisted;
   }
 
+  @Override
+  public ArtifactRecordSnapshot markCorrupted(String artifactId, String reason) {
+    ArtifactEntity artifact = requireArtifact(artifactId);
+    requireNotArchived(artifact, ArtifactStatus.CORRUPTED);
+    ArtifactStatus current = artifact.getStatus();
+    // Story 4.16 — checksum-mismatch drift is only ever detected on an 'available' artifact, so the
+    // only legal source is AVAILABLE. Any other status (pending / failed / late_or_stale / already
+    // corrupted) is a race or a misdirected repair and must be rejected.
+    if (current != ArtifactStatus.AVAILABLE) {
+      log.warn(
+          "markCorrupted rejected: invalid state transition artifactId={} currentStatus={} targetStatus=corrupted",
+          artifactId,
+          current.value());
+      throw invalidArtifactTransition(artifactId, current, ArtifactStatus.CORRUPTED);
+    }
+    // Leave failure_category / failure_reason BOTH null (like markLateOrStale): the artifacts
+    // table's
+    // ck_artifacts_failure_reason_paired CHECK requires the pair to be both-null or both-set, and
+    // there is no FailureCategory that fits "corrupted". The corruption cause is fully captured on
+    // the artifact.driftRepaired audit event (details.reason), so nothing is lost.
+    artifact.setStatus(ArtifactStatus.CORRUPTED);
+    ArtifactRecordSnapshot persisted =
+        artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(artifact));
+    log.warn(
+        "artifact transitioned to corrupted artifactId={} version={} reason={}",
+        persisted.publicId(),
+        persisted.version(),
+        reason);
+    return persisted;
+  }
+
+  @Override
+  public ArtifactRecordSnapshot markPayloadUnavailable(String artifactId, String reason) {
+    ArtifactEntity artifact = requireArtifact(artifactId);
+    requireNotArchived(artifact, ArtifactStatus.FAILED);
+    ArtifactStatus current = artifact.getStatus();
+    // Story 4.16 (OQ-1) — missing-payload drift is detected on an 'available' artifact; the repair
+    // flips it to FAILED (no dedicated 'unavailable' status). markFailed's guard rejects AVAILABLE,
+    // so this dedicated path permits ONLY AVAILABLE as the source.
+    if (current != ArtifactStatus.AVAILABLE) {
+      log.warn(
+          "markPayloadUnavailable rejected: invalid state transition artifactId={} currentStatus={} targetStatus=failed",
+          artifactId,
+          current.value());
+      throw invalidArtifactTransition(artifactId, current, ArtifactStatus.FAILED);
+    }
+    // FAILED requires a paired failure_category/failure_reason
+    // (ck_artifacts_failure_reason_paired).
+    // ORPHAN is the closest existing category for a payload that is no longer present ("payload
+    // never
+    // materialized" — the same category reconcileSingleOperation uses for missing payloads).
+    artifact.setStatus(ArtifactStatus.FAILED);
+    artifact.setFailureCategory(FailureCategory.ORPHAN);
+    artifact.setFailureReason(reason);
+    ArtifactRecordSnapshot persisted =
+        artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(artifact));
+    log.warn(
+        "artifact payload unavailable — transitioned to failed artifactId={} version={} failureReason={}",
+        persisted.publicId(),
+        persisted.version(),
+        reason);
+    return persisted;
+  }
+
   private WorkflowRunEntity requireWorkflowRunForUpdate(String workflowRunId) {
     WorkflowRunEntity run =
         workflowRunRepository

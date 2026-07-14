@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/artifact-drift/{driftId}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an operator-driven repair to a detected artifact drift (story 4.16)
+         * @description Operator (workflow_owner) recovery action that resolves a detected artifact_drift_detected row through an explicit, auditable repair (NFR19: no silent overwrite). Records a recovery_actions row + artifact.driftRepaired event and, for the resolving repairs, sets the drift's resolved_at/resolved_by_action_id. Idempotent under Idempotency-Key. A re_verify_checksum that still mismatches leaves the drift open (resolved=false).
+         */
+        post: operations["repairArtifactDrift"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/by-run/{workflowRunId}": {
         parameters: {
             query?: never;
@@ -1246,6 +1266,35 @@ export interface components {
              * @example 3
              */
             version?: number;
+        };
+        /** @description Apply an operator-driven repair to a detected artifact drift. */
+        ArtifactRepairRequest: {
+            /** @description Action-specific: the backup source for restore_from_backup (E4 stub — not yet honored). */
+            backupSource?: string | null;
+            /** @description Action-specific: evidence the operation actually completed. REQUIRED for mark_operation_complete (else MISSING_REPAIR_REQUIRED_FIELD). */
+            completionEvidence?: string | null;
+            /** @description Optional operator note explaining the repair. */
+            reasonText?: string | null;
+            /**
+             * @description Typed repair action. Validated by the service against the drift's category (no @NotBlank) so the typed INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY code is reachable. restore_from_backup is a forward-compat E4 stub (rejected until backup integration lands).
+             * @example mark_corrupted
+             * @enum {string}
+             */
+            repairAction: "mark_operation_failed" | "mark_operation_complete" | "mark_payload_unavailable" | "restore_from_backup" | "mark_corrupted" | "re_verify_checksum";
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        ArtifactRepairResponse: {
+            correlationId?: string;
+            driftId: string;
+            recoveryActionId: string;
+            repairAction: string;
+            repairedEventId?: string;
+            replayed: boolean;
+            resolved: boolean;
         };
         /** @description One flat audit event row. */
         AuditEventRow: {
@@ -2873,6 +2922,62 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    repairArtifactDrift: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                driftId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactRepairRequest"];
+            };
+        };
+        responses: {
+            /** @description Repair applied (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRepairResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY, MISSING_REPAIR_REQUIRED_FIELD. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description DRIFT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description DRIFT_ALREADY_RESOLVED or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     queryAuditByRun: {
         parameters: {
             query?: {
