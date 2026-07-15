@@ -38,9 +38,7 @@ import {
 import { useAllowedActions } from '../hooks/useAllowedActions';
 import { useFailureDiagnostics } from '../hooks/useFailureDiagnostics';
 import { usePauseWorkflow, type PauseWorkflowResult } from '../hooks/usePauseWorkflow';
-import {
-  usePreviewRerunFromStep,
-} from '../hooks/usePreviewRerunFromStep';
+import { usePreviewRerunFromStep } from '../hooks/usePreviewRerunFromStep';
 import {
   useRerunFromStep,
   type RerunFromStepResult,
@@ -283,7 +281,9 @@ export function RecoveryDecisionBarContainer({
     }
     console.warn({
       event: 'recovery.previewLoadError',
-      code: isProblemDetailsError(rerunPreviewQuery.error) ? rerunPreviewQuery.error.code : 'transport',
+      code: isProblemDetailsError(rerunPreviewQuery.error)
+        ? rerunPreviewQuery.error.code
+        : 'transport',
       transport: !isProblemDetailsError(rerunPreviewQuery.error),
     });
   }, [rerunPreviewQuery.isError, rerunPreviewQuery.error]);
@@ -297,7 +297,9 @@ export function RecoveryDecisionBarContainer({
     }
     console.warn({
       event: 'recovery.diagnosticsLoadError',
-      code: isProblemDetailsError(diagnosticsQuery.error) ? diagnosticsQuery.error.code : 'transport',
+      code: isProblemDetailsError(diagnosticsQuery.error)
+        ? diagnosticsQuery.error.code
+        : 'transport',
       transport: !isProblemDetailsError(diagnosticsQuery.error),
     });
   }, [diagnosticsQuery.isError, diagnosticsQuery.error]);

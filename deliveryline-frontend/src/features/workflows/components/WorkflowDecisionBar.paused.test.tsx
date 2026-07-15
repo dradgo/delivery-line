@@ -53,9 +53,14 @@ describe('WorkflowDecisionBar — Paused selects the recovery bar (story 4.22)',
   it('a Paused run renders the recovery_operator bar with Resume', async () => {
     server.use(
       http.get(ALLOWED_URL, () =>
-        HttpResponse.json({ actions: ['resume_workflow'], versionStamp: { workflowState: 'Paused' } }),
+        HttpResponse.json({
+          actions: ['resume_workflow'],
+          versionStamp: { workflowState: 'Paused' },
+        }),
       ),
-      http.get(DETAIL_URL, () => HttpResponse.json({ workflowRunId: RUN_ID, currentState: 'Paused' })),
+      http.get(DETAIL_URL, () =>
+        HttpResponse.json({ workflowRunId: RUN_ID, currentState: 'Paused' }),
+      ),
       http.get(DIAGNOSTICS_URL, () =>
         HttpResponse.json({
           workflowRunId: RUN_ID,
@@ -78,7 +83,10 @@ describe('WorkflowDecisionBar — Paused selects the recovery bar (story 4.22)',
     let resumed = false;
     server.use(
       http.get(ALLOWED_URL, () =>
-        HttpResponse.json({ actions: ['resume_workflow'], versionStamp: { workflowState: 'Paused' } }),
+        HttpResponse.json({
+          actions: ['resume_workflow'],
+          versionStamp: { workflowState: 'Paused' },
+        }),
       ),
       http.get(DETAIL_URL, () =>
         HttpResponse.json({

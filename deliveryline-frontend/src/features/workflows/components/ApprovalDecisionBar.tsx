@@ -151,7 +151,9 @@ export interface ApprovalDecisionBarProps {
   /** Story 4.22 (AC3) — confirm a resume (wired to `useResumeWorkflow`). */
   onResume?: (() => void) | undefined;
   /** Story 4.22 (AC5) — confirm a rerun-from-step with the captured step + reason. */
-  onRerunFromStep?: ((vars: { targetStep: RerunTargetStep; reasonText: string }) => void) | undefined;
+  onRerunFromStep?:
+    | ((vars: { targetStep: RerunTargetStep; reasonText: string }) => void)
+    | undefined;
   /** Story 4.22 (AC6) — confirm a pause with the captured reason (wired to `usePauseWorkflow`). */
   onPause?: ((reasonText: string) => void) | undefined;
   /**
@@ -177,7 +179,9 @@ export interface ApprovalDecisionBarProps {
    * Story 4.22 (AC5) — notify the container of the rerun dialog's open state + selected step so it
    * can enable/param the preview query (the container owns the hook; the bar owns the select).
    */
-  onRerunPreviewRequest?: ((args: { open: boolean; targetStep: RerunTargetStep }) => void) | undefined;
+  onRerunPreviewRequest?:
+    | ((args: { open: boolean; targetStep: RerunTargetStep }) => void)
+    | undefined;
 }
 
 /** Layout classes per AC4 — sticky footer vs in-flow inline section. */
@@ -208,7 +212,12 @@ const DECISION_PRESENTATION: Record<
  * to stories 4.23 / 4.24). Iterated in {@link RECOVERY_OPERATOR_ACTIONS} display order.
  */
 const RECOVERY_ACTION_LABELS: Record<
-  'retry' | 'resume_workflow' | 'reconcile_conflict' | 'rerun_from_step' | 'pause_workflow' | 'classify_failure',
+  | 'retry'
+  | 'resume_workflow'
+  | 'reconcile_conflict'
+  | 'rerun_from_step'
+  | 'pause_workflow'
+  | 'classify_failure',
   string
 > = {
   retry: 'Retry failed step',
@@ -813,7 +822,8 @@ export function ApprovalDecisionBar({
     // carry no affix (only the primary is the safe forward action; a second safe action is a
     // deterministic tie-break loser and needs no warning).
     const safety = recoverySafetyByToken?.[token];
-    const affix = safety !== undefined && safety !== 'safe' ? RECOVERY_SAFETY_AFFIX[safety] : undefined;
+    const affix =
+      safety !== undefined && safety !== 'safe' ? RECOVERY_SAFETY_AFFIX[safety] : undefined;
     return (
       <span key={token} className="inline-flex items-center gap-1.5" data-testid={testId}>
         <Button type="button" variant="outline" onClick={() => recoveryActionClick(token)}>
@@ -886,7 +896,11 @@ export function ApprovalDecisionBar({
           <DecisionArea
             ariaLabel="Recovery actions"
             primary={
-              <GovernedButton priority="primary" workflowState="submitting" testId="recovery-submitting">
+              <GovernedButton
+                priority="primary"
+                workflowState="submitting"
+                testId="recovery-submitting"
+              >
                 {pendingRecoveryAction !== null
                   ? RECOVERY_ACTION_LABELS[
                       pendingRecoveryAction as keyof typeof RECOVERY_ACTION_LABELS
@@ -1064,7 +1078,11 @@ export function ApprovalDecisionBar({
                   value={rerunStep}
                   onValueChange={(next) => changeRerunStep(next as RerunTargetStep)}
                 >
-                  <SelectTrigger id={rerunStepId} data-testid="rerun-step-select" className="w-full">
+                  <SelectTrigger
+                    id={rerunStepId}
+                    data-testid="rerun-step-select"
+                    className="w-full"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1099,7 +1117,10 @@ export function ApprovalDecisionBar({
           </p>
         ) : rerunPreview?.data !== undefined ? (
           <div className="flex flex-col gap-1">
-            <p className="text-meta text-text-secondary" data-testid="rerun-preview-superseded-count">
+            <p
+              className="text-meta text-text-secondary"
+              data-testid="rerun-preview-superseded-count"
+            >
               Superseded artifacts: {rerunPreview.data.supersededArtifactIds.length}
             </p>
             {rerunPreview.data.supersededArtifactIds.length > 0 ? (

@@ -48,7 +48,10 @@ function renderRecovery(
   safetyByToken: Partial<Record<DecisionAction, RecoverySafetyLevel>>,
   overrides: Partial<{
     onResume: () => void;
-    onRerunFromStep: (vars: { targetStep: 'investigating' | 'executing'; reasonText: string }) => void;
+    onRerunFromStep: (vars: {
+      targetStep: 'investigating' | 'executing';
+      reasonText: string;
+    }) => void;
     onPause: (reasonText: string) => void;
     onReconcile: () => void;
     onClassifyFailure: () => void;

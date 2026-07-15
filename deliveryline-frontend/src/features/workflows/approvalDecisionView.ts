@@ -705,7 +705,9 @@ export const RECOVERY_OPERATOR_ACTIONS: readonly DecisionAction[] = [
 ];
 
 /** Set form of {@link RECOVERY_OPERATOR_ACTIONS} for O(1) membership (drives {@link hasRecoveryAction}). */
-const RECOVERY_OPERATOR_ACTION_SET: ReadonlySet<DecisionAction> = new Set(RECOVERY_OPERATOR_ACTIONS);
+const RECOVERY_OPERATOR_ACTION_SET: ReadonlySet<DecisionAction> = new Set(
+  RECOVERY_OPERATOR_ACTIONS,
+);
 
 /** Compose the recovery decision-context line (AC3) from the live read model. */
 export function buildRecoveryContextLabel(detail: WorkflowDetail | undefined): string {
