@@ -146,7 +146,7 @@ test.describe('Recovery retry journey', () => {
     );
 
     // Reach + activate the retry control by keyboard.
-    const retry = page.getByTestId('recovery-retry');
+    const retry = page.getByTestId('recovery-action-retry');
     expect(await tabUntilFocused(page, retry)).toBe(true);
     await page.keyboard.press('Enter');
 
