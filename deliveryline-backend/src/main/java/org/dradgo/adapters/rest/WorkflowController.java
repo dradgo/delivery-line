@@ -21,6 +21,7 @@ import org.dradgo.application.recovery.DeveloperTakeoverService;
 import org.dradgo.application.recovery.PauseRecoveryResult;
 import org.dradgo.application.recovery.ReconcileRecoveryResult;
 import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.RerunFromStepPreviewResult;
 import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
 import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.recovery.TakeoverResult;
@@ -667,6 +668,105 @@ public class WorkflowController {
         workflowRunId,
         response.currentState(),
         response.recommendedRecoveryActions().size());
+    return response;
+  }
+
+  /**
+   * Story 4.22 (AC5) — the <strong>non-mutating</strong> preview of a rerun-from-step: which
+   * artifacts a rerun to {@code targetStep} would supersede + which approval it would invalidate,
+   * for the Decision Bar's "Show what will be superseded" section BEFORE the operator confirms.
+   * Read-only + idempotent — copies the {@link #getFailureDiagnostics}/{@link #getAllowedActions}
+   * shape: NO {@code Idempotency-Key}, NO actor header, NO {@code role} gate.
+   *
+   * <p>{@code targetStep} is a plain {@code String} with {@code required=false} and NO
+   * {@code @NotBlank}/{@code @Pattern} — the class is {@code @Validated}, so a bean-validation
+   * constraint here would throw {@code ConstraintViolationException} and mask the typed {@code
+   * INVALID_RERUN_TARGET_STEP} the service raises (see memory {@code
+   * validated-requestparam-becomes-500-not-400}); {@code required=false} avoids {@code
+   * MissingServletRequestParameterException}. Normalized with {@code .strip()} at the boundary like
+   * {@link #getAllowedActions}; the two safe values are documented via
+   * {@code @Schema(allowableValues ...)} (doc-only). A bogus/blank step → 400 {@code
+   * INVALID_RERUN_TARGET_STEP}; a run not in Failed/WaitingForReview → 409 {@code
+   * ILLEGAL_TRANSITION} (OQ-1); an unknown run → 404 {@code RUN_NOT_FOUND}; a malformed run id →
+   * 400 {@code INVALID_ID_PREFIX}.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/preview-rerun-from-step",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "previewRerunFromStep",
+      summary = "Preview which artifacts/approvals a rerun-from-step would supersede",
+      description =
+          "Non-mutating preview of POST .../rerun-from-step: returns the artifacts a rerun to the "
+              + "given safe step would supersede plus the approval it would invalidate, without "
+              + "writing anything. Read-only and idempotent — no Idempotency-Key/actor/role. Backs "
+              + "the Decision Bar recovery_operator rerun dialog (story 4.22).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Preview of superseded artifacts + approvals."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "Malformed run id (INVALID_ID_PREFIX) or invalid target step "
+                + "(INVALID_RERUN_TARGET_STEP).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "Run is not in a rerun-eligible source state (ILLEGAL_TRANSITION; allowed sources: "
+                + "Failed, WaitingForReview).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public PreviewRerunFromStepResponse previewRerunFromStep(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId,
+      @Parameter(
+              description =
+                  "Safe step boundary to rerun into. Recognized values are investigating and "
+                      + "executing; any other value returns 400 INVALID_RERUN_TARGET_STEP.",
+              example = "investigating",
+              schema =
+                  @Schema(
+                      type = "string",
+                      allowableValues = {"investigating", "executing"},
+                      nullable = true))
+          @RequestParam(name = "targetStep", required = false)
+          String targetStep) {
+    // Normalize at the boundary (mirror getAllowedActions) so the logged + echoed value matches
+    // what
+    // the service parses. Kept a plain String with NO bean-validation constraint so the service's
+    // resolveTargetState surfaces the typed INVALID_RERUN_TARGET_STEP instead of a masked 500.
+    String normalizedTargetStep = (targetStep == null) ? null : targetStep.strip();
+    log.info(
+        "REST preview-rerun-from-step received workflowRunId={} targetStep={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(normalizedTargetStep));
+    RerunFromStepPreviewResult result =
+        recoveryService.previewRerunFromStep(workflowRunId, normalizedTargetStep);
+    PreviewRerunFromStepResponse response =
+        PreviewRerunFromStepResponse.from(workflowRunId, normalizedTargetStep, result);
+    log.info(
+        "REST preview-rerun-from-step success workflowRunId={} targetStep={} supersededCount={}"
+            + " invalidatedApprovalCount={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(normalizedTargetStep),
+        response.supersededArtifactIds().size(),
+        response.invalidatedApprovalIds().size());
     return response;
   }
 

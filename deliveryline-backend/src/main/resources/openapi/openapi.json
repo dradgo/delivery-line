@@ -1902,6 +1902,35 @@
         ],
         "type" : "object"
       },
+      "PreviewRerunFromStepResponse" : {
+        "properties" : {
+          "invalidatedApprovalIds" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "supersededArtifactIds" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "targetStep" : {
+            "type" : "string"
+          },
+          "workflowRunId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "invalidatedApprovalIds",
+          "supersededArtifactIds",
+          "targetStep",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "ProblemDetailsResponse" : {
         "description" : "RFC 9457 Problem Details payload with DeliveryLine extension fields.",
         "properties" : {
@@ -7261,6 +7290,84 @@
           }
         },
         "summary" : "Manually pause a workflow run (story 4.13)",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/preview-rerun-from-step" : {
+      "get" : {
+        "description" : "Non-mutating preview of POST .../rerun-from-step: returns the artifacts a rerun to the given safe step would supersede plus the approval it would invalidate, without writing anything. Read-only and idempotent — no Idempotency-Key/actor/role. Backs the Decision Bar recovery_operator rerun dialog (story 4.22).",
+        "operationId" : "previewRerunFromStep",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Safe step boundary to rerun into. Recognized values are investigating and executing; any other value returns 400 INVALID_RERUN_TARGET_STEP.",
+            "example" : "investigating",
+            "in" : "query",
+            "name" : "targetStep",
+            "required" : false,
+            "schema" : {
+              "enum" : [
+                "investigating",
+                "executing"
+              ],
+              "type" : "null"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PreviewRerunFromStepResponse"
+                }
+              }
+            },
+            "description" : "Preview of superseded artifacts + approvals."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX) or invalid target step (INVALID_RERUN_TARGET_STEP)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Run is not in a rerun-eligible source state (ILLEGAL_TRANSITION; allowed sources: Failed, WaitingForReview)."
+          }
+        },
+        "summary" : "Preview which artifacts/approvals a rerun-from-step would supersede",
         "tags" : [
           "Workflows"
         ]

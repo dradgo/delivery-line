@@ -133,6 +133,21 @@ export const retryInitiated = 'Retrying the failed step.';
 /** Announced once a retry is recorded (success), mirroring the inline outcome (never a toast). */
 export const retryRecorded = 'Retry recorded. The previous failure is preserved in the timeline.';
 
+// ---- Recovery operator full activation (story 4.22) ----------------------------
+
+/** Announced while a resume submission is in flight. */
+export const recoveryResumeInitiated = 'Resuming the run.';
+/** Announced once a resume is recorded (success), mirroring the inline outcome. */
+export const recoveryResumeRecorded = 'Run resumed. Decision recorded.';
+/** Announced while a rerun-from-step submission is in flight. */
+export const recoveryRerunInitiated = 'Rerunning the run from the selected step.';
+/** Announced once a rerun-from-step is recorded (success), mirroring the inline outcome. */
+export const recoveryRerunRecorded = 'Rerun recorded. Decision recorded.';
+/** Announced while a pause submission is in flight. */
+export const recoveryPauseInitiated = 'Pausing the run.';
+/** Announced once a pause is recorded (success), mirroring the inline outcome. */
+export const recoveryPauseRecorded = 'Run paused. Decision recorded.';
+
 // ---- Implementation review (story 3.28) ----------------------------------------
 
 /** Announced once an implementation is accepted (success), mirroring the inline outcome. */

@@ -507,6 +507,98 @@ class RecoveryServiceRerunFromStepTest {
   }
 
   // ---------------------------------------------------------------------------
+  // Story 4.22 — previewRerunFromStep (non-mutating)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void previewToInvestigatingFromFailedReturnsSupersededAndInvalidatedWithoutAnyWrite() {
+    stubRun(WorkflowState.FAILED);
+    stubLeaf(ArtifactType.SPEC, "art_spec_1");
+    stubLeaf(ArtifactType.IMPLEMENTATION_PLAN, "art_plan_1");
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(RUN, "prOutput"))
+        .thenReturn(Optional.empty());
+    when(approvalService.findCurrentApprovalId(RUN, "spec")).thenReturn(Optional.of("apr_spec_1"));
+
+    RerunFromStepPreviewResult preview = service.previewRerunFromStep(RUN, "investigating");
+
+    assertEquals(WorkflowState.INVESTIGATING, preview.resultingState());
+    assertEquals(List.of("art_spec_1", "art_plan_1"), preview.supersededArtifactIds());
+    assertEquals(List.of("apr_spec_1"), preview.invalidatedApprovalIds());
+
+    // ZERO writes — this is the defining preview contract (AC5, Task 1).
+    verify(approvalService, never()).invalidateCurrentApproval(any(), any(), any());
+    verify(workflowCommandService, never()).rerunFromStepWorkflow(any());
+    verify(eventWritePort, never()).append(any());
+    verify(recoveryRecordPort, never()).insert(any(RecoveryActionWriteCommand.class));
+    verify(recoveryRecordPort, never()).markSucceeded(any());
+    verify(recoveryRecordPort, never()).markFailed(any());
+    verify(runnerExecutionQueue, never())
+        .enqueue(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt());
+  }
+
+  @Test
+  void previewToExecutingFromWaitingForReviewReadsPlanLeavesAndPlanApproval() {
+    stubRun(WorkflowState.WAITING_FOR_REVIEW);
+    stubLeaf(ArtifactType.IMPLEMENTATION_PLAN, "art_plan_2");
+    stubLeaf(ArtifactType.PR_OUTPUT, "art_pr_2");
+    when(approvalService.findCurrentApprovalId(RUN, "implementationPlan"))
+        .thenReturn(Optional.of("apr_plan_2"));
+
+    RerunFromStepPreviewResult preview = service.previewRerunFromStep(RUN, "executing");
+
+    assertEquals(WorkflowState.EXECUTING, preview.resultingState());
+    // EXECUTING supersedes {implementationPlan, prOutput} only (NOT spec) — mirrors the write path.
+    assertEquals(List.of("art_plan_2", "art_pr_2"), preview.supersededArtifactIds());
+    assertEquals(List.of("apr_plan_2"), preview.invalidatedApprovalIds());
+    verify(approvalService, never()).findCurrentApprovalId(RUN, "spec");
+    verify(approvalService, never()).invalidateCurrentApproval(any(), any(), any());
+  }
+
+  @Test
+  void previewWithNoCurrentApprovalReturnsEmptyInvalidatedList() {
+    stubRun(WorkflowState.FAILED);
+    when(artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(eq(RUN), any()))
+        .thenReturn(Optional.empty());
+    when(approvalService.findCurrentApprovalId(RUN, "spec")).thenReturn(Optional.empty());
+
+    RerunFromStepPreviewResult preview = service.previewRerunFromStep(RUN, "investigating");
+
+    assertEquals(List.of(), preview.supersededArtifactIds());
+    assertEquals(List.of(), preview.invalidatedApprovalIds());
+  }
+
+  @Test
+  void previewWithInvalidTargetStepRaisesInvalidRerunTargetStepBeforeReadingRun() {
+    DomainException error =
+        assertThrows(
+            DomainException.class, () -> service.previewRerunFromStep(RUN, "waiting_for_review"));
+    assertEquals(DomainErrorCode.INVALID_RERUN_TARGET_STEP, error.errorCode());
+    verify(runReadPort, never()).findByPublicId(any());
+    verify(approvalService, never()).findCurrentApprovalId(any(), any());
+  }
+
+  @Test
+  void previewWithBlankTargetStepRaisesInvalidRerunTargetStep() {
+    DomainException error =
+        assertThrows(DomainException.class, () -> service.previewRerunFromStep(RUN, "  "));
+    assertEquals(DomainErrorCode.INVALID_RERUN_TARGET_STEP, error.errorCode());
+  }
+
+  @Test
+  void previewOnNonSourceStateRaisesIllegalTransitionWithoutReads() {
+    // OQ-1 default: 409 ILLEGAL_TRANSITION (mirror rerunFromStep) so preview + mutation agree on
+    // eligibility; the FE only calls preview when rerun_from_step is in allowed-actions anyway.
+    stubRun(WorkflowState.COMPLETED);
+
+    DomainException error =
+        assertThrows(
+            DomainException.class, () -> service.previewRerunFromStep(RUN, "investigating"));
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
+    assertEquals("Completed", error.details().get("currentState"));
+    verify(approvalService, never()).findCurrentApprovalId(any(), any());
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 

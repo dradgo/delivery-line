@@ -736,6 +736,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/preview-rerun-from-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview which artifacts/approvals a rerun-from-step would supersede
+         * @description Non-mutating preview of POST .../rerun-from-step: returns the artifacts a rerun to the given safe step would supersede plus the approval it would invalidate, without writing anything. Read-only and idempotent — no Idempotency-Key/actor/role. Backs the Decision Bar recovery_operator rerun dialog (story 4.22).
+         */
+        get: operations["previewRerunFromStep"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/provider-usage": {
         parameters: {
             query?: never;
@@ -2016,6 +2036,12 @@ export interface components {
              * @example workflow_owner
              */
             role: string;
+        };
+        PreviewRerunFromStepResponse: {
+            invalidatedApprovalIds: string[];
+            supersededArtifactIds: string[];
+            targetStep: string;
+            workflowRunId: string;
         };
         /** @description RFC 9457 Problem Details payload with DeliveryLine extension fields. */
         ProblemDetailsResponse: {
@@ -5049,6 +5075,65 @@ export interface operations {
                 };
             };
             /** @description PAUSE_NOT_APPLICABLE (wrong/terminal source state) or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    previewRerunFromStep: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Safe step boundary to rerun into. Recognized values are investigating and executing; any other value returns 400 INVALID_RERUN_TARGET_STEP.
+                 * @example investigating
+                 */
+                targetStep?: "investigating" | "executing";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview of superseded artifacts + approvals. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewRerunFromStepResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX) or invalid target step (INVALID_RERUN_TARGET_STEP). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description Run is not in a rerun-eligible source state (ILLEGAL_TRANSITION; allowed sources: Failed, WaitingForReview). */
             409: {
                 headers: {
                     [name: string]: unknown;

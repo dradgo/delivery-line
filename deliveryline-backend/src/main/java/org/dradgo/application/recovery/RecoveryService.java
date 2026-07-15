@@ -2135,6 +2135,93 @@ public class RecoveryService {
     }
   }
 
+  /**
+   * Story 4.22 (AC5, AC12) — the <strong>non-mutating</strong> preview of {@link #rerunFromStep}:
+   * resolve which artifacts a rerun to {@code targetStep} would supersede and which approval it
+   * would invalidate, WITHOUT writing anything. Backs the Decision Bar's read-only {@code GET
+   * .../preview-rerun-from-step?targetStep=X} (AC5's "Show what will be superseded" section) so an
+   * operator sees the blast radius before confirming.
+   *
+   * <p>Reuses the exact pure reads from the write path — {@link #resolveTargetState} (typed {@code
+   * INVALID_RERUN_TARGET_STEP} on null/blank/unknown), the {@code RERUN_SOURCE_STATES} gate (typed
+   * {@code ILLEGAL_TRANSITION} when the run is not in {@code FAILED}/{@code WAITING_FOR_REVIEW} —
+   * OQ-1 default, mirrors {@code rerunFromStep} so the FE only calls preview when {@code
+   * rerun_from_step} is in allowed-actions), {@link #resolveSupersededArtifactIds} (already pure),
+   * and the READ HALF of the approval invalidation ({@link ApprovalService#findCurrentApprovalId}).
+   * It deliberately does NOT call {@code performRerunPrep} / {@code
+   * approvalService.invalidateCurrentApproval} (those write and require an active tx). No {@code
+   * recovery_actions} row, no {@code workflow_events} append, no approval flip.
+   *
+   * @param workflowRunId {@code run_…} public id (validated at the boundary)
+   * @param targetStep operator-chosen safe step ({@code "investigating"} / {@code "executing"})
+   * @return the resolved resulting state + superseded artifact ids + (0-or-1) invalidated approval
+   *     ids
+   */
+  public RerunFromStepPreviewResult previewRerunFromStep(String workflowRunId, String targetStep) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    if (approvalService == null || artifactRecordPort == null) {
+      throw new IllegalStateException(
+          "ApprovalService and ArtifactRecordPort are required for previewRerunFromStep");
+    }
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      log.info(
+          "recovery previewRerunFromStep start workflowRunId={} targetStep={}",
+          workflowRunId,
+          MdcKeys.sanitizeForLog(targetStep));
+
+      // Step 1 — parse the operator-chosen target step (null/blank or unknown → typed
+      // INVALID_RERUN_TARGET_STEP, NOT a 500). Mirrors rerunFromStep Step 2.
+      WorkflowState targetState = resolveTargetState(targetStep);
+
+      // Step 2 — current-state read + explicit source-state gate (OQ-1 default: 409 rather than an
+      // empty preview, so preview and the mutating rerun agree on eligibility).
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+      if (!RERUN_SOURCE_STATES.contains(run.currentState())) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("runId", workflowRunId);
+        details.put("currentState", run.currentState().value());
+        details.put("targetStep", targetState.value());
+        throw new DomainException(
+            DomainErrorCode.ILLEGAL_TRANSITION,
+            "Rerun-from-step is not applicable from state "
+                + run.currentState().value()
+                + " (allowed sources: Failed, WaitingForReview)",
+            details);
+      }
+
+      // Step 3 — pure reads, identical to rerunFromStep Step 6 (no writes).
+      List<String> supersededArtifactIds = resolveSupersededArtifactIds(workflowRunId, targetState);
+      ArtifactType approvalArtifactType = invalidatedApprovalArtifactType(targetState);
+      List<String> invalidatedApprovalIds =
+          approvalService
+              .findCurrentApprovalId(workflowRunId, approvalArtifactType.value())
+              .map(List::of)
+              .orElseGet(List::of);
+
+      log.info(
+          "recovery previewRerunFromStep success workflowRunId={} targetStep={} supersededCount={} invalidatedApprovalCount={}",
+          workflowRunId,
+          targetState.value(),
+          supersededArtifactIds.size(),
+          invalidatedApprovalIds.size());
+      return new RerunFromStepPreviewResult(
+          targetState, supersededArtifactIds, invalidatedApprovalIds);
+    } catch (DomainException rejected) {
+      log.warn(
+          "recovery previewRerunFromStep rejected workflowRunId={} targetStep={} reason={}",
+          workflowRunId,
+          MdcKeys.sanitizeForLog(targetStep),
+          rejected.errorCode());
+      throw rejected;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
   private WorkflowState resolveTargetState(String targetStep) {
     SafeRerunStep step;
     try {

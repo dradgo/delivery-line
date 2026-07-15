@@ -145,6 +145,14 @@ export const workflowKeys = {
   failureDiagnostics: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'failureDiagnostics'] as const,
 
+  /**
+   * A run's NON-MUTATING rerun-from-step preview (story 4.22). Keyed per `targetStep` so the
+   * investigating/executing previews are distinct cache entries. A structural PREFIX child of
+   * `detail(id)`, so a recovery mutation's `detail(id)` invalidation cascade refreshes it for free.
+   */
+  rerunPreview: (workflowRunId: string, targetStep: string) =>
+    [...workflowKeys.detail(workflowRunId), 'rerunPreview', targetStep] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
 } as const;

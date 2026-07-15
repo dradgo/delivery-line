@@ -577,6 +577,27 @@ public class ApprovalService {
   }
 
   /**
+   * Story 4.22 (AC5) — the READ HALF of {@link #invalidateCurrentApproval}: resolve the public id
+   * of the run's current approved artifact of the given type WITHOUT flipping it. Backs the
+   * non-mutating rerun-from-step preview ({@code RecoveryService.previewRerunFromStep}) so the
+   * Decision Bar can show which approval a rerun WOULD invalidate before the operator confirms.
+   * Keeps the approval read inside the approval package (no {@code ApprovalReadPort} leak into
+   * {@code RecoveryService}, mirroring the write-boundary discipline). Pure read — no
+   * {@code @Transactional} (single {@link ApprovalReadPort} query; adding a nested boundary would
+   * violate trap T4's no-annotation rule for this service).
+   *
+   * @return the {@code apr_…} id of the current approved artifact of that type, or {@code
+   *     Optional.empty()} when the run has no current approval at that stage (nothing would be
+   *     invalidated)
+   */
+  public Optional<String> findCurrentApprovalId(String workflowRunId, String artifactType) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    return approvalReadPort
+        .findLatestApprovedForArtifactLineage(workflowRunId, artifactType)
+        .map(ApprovalSnapshot::publicId);
+  }
+
+  /**
    * Story 4.7 [Review D1] — restore (un-invalidate) an approval that a rerun-from-step invalidated,
    * compensating a post-commit runner re-enqueue failure so the run is not stranded with a
    * destroyed approval. Keeps the approval WRITE inside the approval package (write-boundary
