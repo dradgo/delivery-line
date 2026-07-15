@@ -799,6 +799,37 @@ final class ArchitectureRuleCatalog {
               .allowEmptyShould(false));
 
   /**
+   * Story 4.19 (AC9) — the Compare Mode {@code RevisionDeltaService} lives under {@code
+   * application.compare} and its only collaborators are the (extended) {@code ArtifactService} +
+   * {@code RedactionPolicyService}: it depends only on {@code java..}, SLF4J, the Spring stereotype
+   * / transaction annotations, {@code org.dradgo.application..} (its own package's diff algorithms
+   * + view records + payload helper, plus the two application services it reaches persistence and
+   * redaction through), and {@code org.dradgo.domain..}. A JPA entity, an SPI port, or an adapter
+   * import would break the AC9 collaborator pin. Mirror of {@link
+   * #CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION}. The three differ classes are pure
+   * (java-only) and unit-tested independently.
+   */
+  static final ArchRule REVISION_DELTA_SERVICE_LIVES_IN_APPLICATION_COMPARE =
+      namedRule(
+          "RevisionDeltaService must live under application.compare with only ArtifactService + RedactionPolicyService as collaborators",
+          "Remediation: keep RevisionDeltaService in org.dradgo.application.compare (story 4.19 AC9). Reach artifact reads through the extended ArtifactService and redaction through RedactionPolicyService — never inject ArtifactRecordPort / ArtifactPayloadStore or any adapter/persistence type.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.compare.RevisionDeltaService")
+              .should()
+              .resideInAPackage("org.dradgo.application.compare..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
+  /**
    * Story 3.17a (AC6 / D4) sibling rule: the RunnerExecutionQueue substrate lives under {@code
    * application.runner.queue} and reaches persistence only through the {@code
    * application.runner.spi} ports — never {@code adapters.*}/{@code infrastructure.*} (Trap T11).

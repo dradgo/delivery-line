@@ -426,6 +426,36 @@
         ],
         "type" : "object"
       },
+      "ArtifactRevisionSummary" : {
+        "properties" : {
+          "checksum" : {
+            "description" : "Short-form checksum (<algorithm>:<first 12 hex>); null when unset.",
+            "example" : "SHA-256:9f86d081884c",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "producedByActor" : {
+            "description" : "Creating actor identity; null when unknown.",
+            "example" : "developer",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "version" : {
+            "example" : 3,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "AuditEventRow" : {
         "description" : "One flat audit event row.",
         "properties" : {
@@ -2667,6 +2697,161 @@
         },
         "type" : "object"
       },
+      "RevisionDelta" : {
+        "description" : "Typed delta between two artifact versions of one lineage.",
+        "properties" : {
+          "artifactType" : {
+            "example" : "spec",
+            "type" : "string"
+          },
+          "changes" : {
+            "items" : {
+              "$ref" : "#/components/schemas/RevisionDeltaChange"
+            },
+            "type" : "array"
+          },
+          "linkedDiffReferences" : {
+            "description" : "prOutput only: [artifactIdA, artifactIdB] so the UI can lazy-load the full diff via the per-artifact read; null for spec/implementationPlan.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : [
+              "array",
+              "null"
+            ]
+          },
+          "noMeaningfulDiff" : {
+            "description" : "True when the two artifacts are byte-equal or differ only in non-semantic whitespace (spec/plan).",
+            "type" : "boolean"
+          },
+          "revisionA" : {
+            "$ref" : "#/components/schemas/ArtifactRevisionSummary"
+          },
+          "revisionB" : {
+            "$ref" : "#/components/schemas/ArtifactRevisionSummary"
+          },
+          "summary" : {
+            "$ref" : "#/components/schemas/RevisionDeltaSummary"
+          }
+        },
+        "type" : "object"
+      },
+      "RevisionDeltaChange" : {
+        "properties" : {
+          "addedLines" : {
+            "description" : "prOutput only: added line count.",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "blockType" : {
+            "description" : "Variant discriminator: markdown | planStep | file.",
+            "example" : "markdown",
+            "type" : "string"
+          },
+          "changeKind" : {
+            "example" : "modified",
+            "type" : "string"
+          },
+          "currentStepOrder" : {
+            "description" : "implementationPlan only: revision-B step index.",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "currentStepText" : {
+            "description" : "implementationPlan only: revision-B step text.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "currentText" : {
+            "description" : "spec only: revision-B section body.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "filePath" : {
+            "description" : "prOutput only: changed file path.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "priorStepOrder" : {
+            "description" : "implementationPlan only: revision-A step index.",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "priorStepText" : {
+            "description" : "implementationPlan only: revision-A step text.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "priorText" : {
+            "description" : "spec only: revision-A section body.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "removedLines" : {
+            "description" : "prOutput only: removed line count.",
+            "format" : "int32",
+            "type" : [
+              "integer",
+              "null"
+            ]
+          },
+          "sectionPath" : {
+            "description" : "spec only: heading trail.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "stepId" : {
+            "description" : "implementationPlan only: positional step id.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type" : "object"
+      },
+      "RevisionDeltaSummary" : {
+        "properties" : {
+          "addedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "changedRegionCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "modifiedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "removedCount" : {
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "RunDependencies" : {
         "description" : "A run's prerequisites, dependents, and blocked-on subset in the dependency DAG.",
         "properties" : {
@@ -4098,6 +4283,80 @@
         "summary" : "Apply an operator-driven repair to a detected artifact drift (story 4.16)",
         "tags" : [
           "Artifact Drift"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{artifactIdA}/compare/{artifactIdB}" : {
+      "get" : {
+        "description" : "Returns a typed delta (spec section diff / implementation-plan step diff / prOutput file-level summary) between two artifacts of the same lineage. A = baseline/prior, B = target/current. Idempotent read; no Idempotency-Key. Backs Compare Mode (UX-DR13); full prOutput diff content is lazy-loaded via the per-artifact read using linkedDiffReferences (story 4.20).",
+        "operationId" : "compareArtifacts",
+        "parameters" : [
+          {
+            "description" : "Baseline/prior artifact public id.",
+            "example" : "art_abc123",
+            "in" : "path",
+            "name" : "artifactIdA",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "description" : "Target/current artifact public id.",
+            "example" : "art_def456",
+            "in" : "path",
+            "name" : "artifactIdB",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RevisionDelta"
+                }
+              }
+            },
+            "description" : "Typed revision delta."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed artifact id (INVALID_ID_PREFIX) or the two ids are not on one lineage (ARTIFACT_LINEAGE_MISMATCH)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such artifact for either id (ARTIFACT_RECORD_NOT_FOUND)."
+          },
+          "503" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "One of the artifacts is not available / its payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE)."
+          }
+        },
+        "summary" : "Compute the typed revision delta between two artifact versions of one lineage",
+        "tags" : [
+          "Artifacts"
         ]
       }
     },
@@ -8434,6 +8693,10 @@
     {
       "description" : "Manage projects: CRUD, write-only credentials, connectivity.",
       "name" : "Projects"
+    },
+    {
+      "description" : "Read-only cross-run artifact operations (Compare Mode / revision delta).",
+      "name" : "Artifacts"
     },
     {
       "description" : "Inspect the runner execution queue + worker pool.",

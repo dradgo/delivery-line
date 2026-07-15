@@ -40,6 +40,18 @@ public interface ArtifactRecordPort {
   Optional<String> findRunnerExecutionIdForArtifact(String artifactId);
 
   /**
+   * Story 4.19 (AC2 / Reconciliation 7) — resolve the actor identity that produced the artifact,
+   * read from the artifact's creation event ({@code workflow_events.actor_identity} on the
+   * artifact's {@code linked_event_id}). Single-statement native query — no entity hydration.
+   *
+   * <p>Returns {@link Optional#empty()} when the artifact does not exist, has no linked event, or
+   * the linked event carried no actor identity. Populates {@code ArtifactSummary.producedByActor}
+   * for the Compare Mode delta; kept behind {@code ArtifactService} so {@code RevisionDeltaService}
+   * never touches this port directly.
+   */
+  Optional<String> findProducingActorForArtifact(String artifactId);
+
+  /**
    * Creates the first artifact record (version 1, status PENDING) for a new lineage within the
    * given workflow run and artifact type.
    *

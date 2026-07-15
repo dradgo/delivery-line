@@ -24,6 +24,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{artifactIdA}/compare/{artifactIdB}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compute the typed revision delta between two artifact versions of one lineage
+         * @description Returns a typed delta (spec section diff / implementation-plan step diff / prOutput file-level summary) between two artifacts of the same lineage. A = baseline/prior, B = target/current. Idempotent read; no Idempotency-Key. Backs Compare Mode (UX-DR13); full prOutput diff content is lazy-loaded via the per-artifact read using linkedDiffReferences (story 4.20).
+         */
+        get: operations["compareArtifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/by-run/{workflowRunId}": {
         parameters: {
             query?: never;
@@ -1296,6 +1316,25 @@ export interface components {
             replayed: boolean;
             resolved: boolean;
         };
+        ArtifactRevisionSummary: {
+            /**
+             * @description Short-form checksum (<algorithm>:<first 12 hex>); null when unset.
+             * @example SHA-256:9f86d081884c
+             */
+            checksum?: string | null;
+            /** Format: date-time */
+            createdAt?: string;
+            /**
+             * @description Creating actor identity; null when unknown.
+             * @example developer
+             */
+            producedByActor?: string | null;
+            /**
+             * Format: int32
+             * @example 3
+             */
+            version?: number;
+        };
         /** @description One flat audit event row. */
         AuditEventRow: {
             /**
@@ -2335,6 +2374,72 @@ export interface components {
              */
             unavailableReason?: string | null;
         };
+        /** @description Typed delta between two artifact versions of one lineage. */
+        RevisionDelta: {
+            /** @example spec */
+            artifactType?: string;
+            changes?: components["schemas"]["RevisionDeltaChange"][];
+            /** @description prOutput only: [artifactIdA, artifactIdB] so the UI can lazy-load the full diff via the per-artifact read; null for spec/implementationPlan. */
+            linkedDiffReferences?: string[] | null;
+            /** @description True when the two artifacts are byte-equal or differ only in non-semantic whitespace (spec/plan). */
+            noMeaningfulDiff?: boolean;
+            revisionA?: components["schemas"]["ArtifactRevisionSummary"];
+            revisionB?: components["schemas"]["ArtifactRevisionSummary"];
+            summary?: components["schemas"]["RevisionDeltaSummary"];
+        };
+        RevisionDeltaChange: {
+            /**
+             * Format: int32
+             * @description prOutput only: added line count.
+             */
+            addedLines?: number | null;
+            /**
+             * @description Variant discriminator: markdown | planStep | file.
+             * @example markdown
+             */
+            blockType?: string;
+            /** @example modified */
+            changeKind?: string;
+            /**
+             * Format: int32
+             * @description implementationPlan only: revision-B step index.
+             */
+            currentStepOrder?: number | null;
+            /** @description implementationPlan only: revision-B step text. */
+            currentStepText?: string | null;
+            /** @description spec only: revision-B section body. */
+            currentText?: string | null;
+            /** @description prOutput only: changed file path. */
+            filePath?: string | null;
+            /**
+             * Format: int32
+             * @description implementationPlan only: revision-A step index.
+             */
+            priorStepOrder?: number | null;
+            /** @description implementationPlan only: revision-A step text. */
+            priorStepText?: string | null;
+            /** @description spec only: revision-A section body. */
+            priorText?: string | null;
+            /**
+             * Format: int32
+             * @description prOutput only: removed line count.
+             */
+            removedLines?: number | null;
+            /** @description spec only: heading trail. */
+            sectionPath?: string | null;
+            /** @description implementationPlan only: positional step id. */
+            stepId?: string | null;
+        };
+        RevisionDeltaSummary: {
+            /** Format: int32 */
+            addedCount?: number;
+            /** Format: int32 */
+            changedRegionCount?: number;
+            /** Format: int32 */
+            modifiedCount?: number;
+            /** Format: int32 */
+            removedCount?: number;
+        };
         /** @description A run's prerequisites, dependents, and blocked-on subset in the dependency DAG. */
         RunDependencies: {
             /**
@@ -2969,6 +3074,64 @@ export interface operations {
             };
             /** @description DRIFT_ALREADY_RESOLVED or IDEMPOTENCY_KEY_CONFLICT. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    compareArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Baseline/prior artifact public id.
+                 * @example art_abc123
+                 */
+                artifactIdA: string;
+                /**
+                 * @description Target/current artifact public id.
+                 * @example art_def456
+                 */
+                artifactIdB: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Typed revision delta. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionDelta"];
+                };
+            };
+            /** @description Malformed artifact id (INVALID_ID_PREFIX) or the two ids are not on one lineage (ARTIFACT_LINEAGE_MISMATCH). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such artifact for either id (ARTIFACT_RECORD_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description One of the artifacts is not available / its payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE). */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

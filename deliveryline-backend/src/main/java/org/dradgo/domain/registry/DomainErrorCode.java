@@ -332,7 +332,18 @@ public enum DomainErrorCode implements RegistryValue {
   // This dedicated NOT_IMPLEMENTED (501) code is raised by
   // ArtifactReconciliationService.repairArtifactDrift for a legal-but-stubbed action until the
   // backup-integration epic lands. Non-retryable (retrying will not help until the feature ships).
-  REPAIR_ACTION_NOT_IMPLEMENTED("REPAIR_ACTION_NOT_IMPLEMENTED");
+  REPAIR_ACTION_NOT_IMPLEMENTED("REPAIR_ACTION_NOT_IMPLEMENTED"),
+  // Story 4.19 (AC8 / Reconciliation 3/12) — three-sites code (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). The ONLY new error code in the Compare Mode backend. Raised by
+  // RevisionDeltaService.computeDelta when the two artifact ids passed to the compare endpoint do
+  // NOT belong to the same lineage — either they disagree on (workflowRunId, artifactType) or
+  // neither is reachable from the other by walking the parent_artifact_id chain (a fresh draft
+  // after a failed leaf, lineage_recovery=true, hosts a disjoint lineage under the same run+type).
+  // BAD_REQUEST (400) + non-retryable (a malformed cross-lineage request, not a transient fault —
+  // mirrors INVALID_COMMAND_PAYLOAD). Carries details{artifactIdA, artifactIdB, reason}. The other
+  // two epic codes are REUSED: ARTIFACT_NOT_FOUND -> ARTIFACT_RECORD_NOT_FOUND (404),
+  // ARTIFACT_PAYLOAD_UNAVAILABLE at its live 503 (NOT the epic's 409).
+  ARTIFACT_LINEAGE_MISMATCH("ARTIFACT_LINEAGE_MISMATCH");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

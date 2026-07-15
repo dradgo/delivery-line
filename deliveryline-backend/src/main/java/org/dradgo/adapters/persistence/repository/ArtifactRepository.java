@@ -40,6 +40,24 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
   String findRunnerExecutionIdForArtifact(@Param("artifactId") String artifactId);
 
   /**
+   * Story 4.19 (AC2 / Reconciliation 7): resolve the actor identity that produced the artifact,
+   * read from the artifact's creation event ({@code workflow_events.actor_identity} via {@code
+   * linked_event_id}). Single-statement native query — no entity hydration. Mirrors {@link
+   * #findRunnerExecutionIdForArtifact(String)}.
+   */
+  @Query(
+      value =
+          """
+          SELECT we.actor_identity
+            FROM artifacts a
+            JOIN workflow_events we ON we.id = a.linked_event_id
+           WHERE a.public_id = :artifactId
+           LIMIT 1
+          """,
+      nativeQuery = true)
+  String findProducingActorForArtifact(@Param("artifactId") String artifactId);
+
+  /**
    * Story 1.12c (AC1+AC2): bounded single-statement leaf resolver.
    *
    * <p>Replaces the legacy unbounded sibling load + JVM-side parent-chain walk in {@code

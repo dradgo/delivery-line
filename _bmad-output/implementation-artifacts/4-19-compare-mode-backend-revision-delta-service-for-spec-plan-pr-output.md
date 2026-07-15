@@ -1,6 +1,6 @@
 # Story 4.19: Compare Mode Backend — Revision Delta Service for Spec / Plan / PR-Output
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -94,47 +94,47 @@ The single most important thing to internalize: **the epic's AC text for 4.19 dr
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Extend `ArtifactService` with a compare-read seam (AC1, AC2, AC6)**
-  - [ ] Add a public typed read to `ArtifactService` that: loads the `ArtifactRecordSnapshot` via `artifactRecordPort.findByPublicId(id)` (missing → `ARTIFACT_RECORD_NOT_FOUND` 404), rejects a malformed id up-front (`INVALID_ID_PREFIX` 400 — mirror `getArtifact`), gates on `status == AVAILABLE` + non-null `storageRef`/checksum (else `ARTIFACT_PAYLOAD_UNAVAILABLE` 503), refuses `LOCAL_ONLY` classification, and returns a small typed carrier (e.g. `ArtifactCompareSource(ArtifactRecordSnapshot snapshot, byte[] payloadBytes, String producedByActor)`) with payload bytes read via `artifactPayloadStore.readBytes(storageRef)`. Reuse the already-injected `ArtifactRecordPort` + `ArtifactPayloadStore` — do NOT add new injections to `RevisionDeltaService`. (Reconciliation 1)
-  - [ ] Source `producedByActor` from the artifact's `linked_event_id → workflow_events.actor_identity` (add a narrow read on `ArtifactRecordPort`/repo, precedent `ArtifactRepository.findRunnerExecutionIdForArtifact:30-40`; keep it behind `ArtifactService`). If deferring per OQ-3, expose it nullable and note it. (Reconciliation 7)
-  - [ ] Keep `ArtifactService` collaborators unchanged in count — it already injects `ArtifactRecordPort` + `ArtifactPayloadStore` (`isApprovalEligible` uses both).
+- [x] **Task 1 — Extend `ArtifactService` with a compare-read seam (AC1, AC2, AC6)**
+  - [x] Add a public typed read to `ArtifactService` that: loads the `ArtifactRecordSnapshot` via `artifactRecordPort.findByPublicId(id)` (missing → `ARTIFACT_RECORD_NOT_FOUND` 404), rejects a malformed id up-front (`INVALID_ID_PREFIX` 400 — mirror `getArtifact`), gates on `status == AVAILABLE` + non-null `storageRef`/checksum (else `ARTIFACT_PAYLOAD_UNAVAILABLE` 503), refuses `LOCAL_ONLY` classification, and returns a small typed carrier (e.g. `ArtifactCompareSource(ArtifactRecordSnapshot snapshot, byte[] payloadBytes, String producedByActor)`) with payload bytes read via `artifactPayloadStore.readBytes(storageRef)`. Reuse the already-injected `ArtifactRecordPort` + `ArtifactPayloadStore` — do NOT add new injections to `RevisionDeltaService`. (Reconciliation 1)
+  - [x] Source `producedByActor` from the artifact's `linked_event_id → workflow_events.actor_identity` (add a narrow read on `ArtifactRecordPort`/repo, precedent `ArtifactRepository.findRunnerExecutionIdForArtifact:30-40`; keep it behind `ArtifactService`). If deferring per OQ-3, expose it nullable and note it. (Reconciliation 7)
+  - [x] Keep `ArtifactService` collaborators unchanged in count — it already injects `ArtifactRecordPort` + `ArtifactPayloadStore` (`isApprovalEligible` uses both).
 
-- [ ] **Task 2 — `application.compare` package: `RevisionDeltaService` + view records (AC1, AC2, AC9)**
-  - [ ] Create `org.dradgo.application.compare.RevisionDeltaService` (`@Service`), injecting ONLY `ArtifactService` + `RedactionPolicyService`. `computeDelta(String artifactIdA, String artifactIdB) → RevisionDelta`, `@Transactional(readOnly = true)`.
-  - [ ] Load both via the Task-1 compare-read; assert same `workflowRunId` + `artifactType`; verify parent-chain connectivity (walk `parentArtifactId` from the higher-version snapshot; the other must appear; cycle-guarded visited-set) — else `ARTIFACT_LINEAGE_MISMATCH` (400) with `details{artifactIdA, artifactIdB, reason}`. (Reconciliation 2)
-  - [ ] Fast-path: equal `checksumValue` → `noMeaningfulDiff=true` + empty `changes` (skip payload diff). (Reconciliation 9)
-  - [ ] Dispatch on `artifactType` to the matching differ (Task 3); assemble `DeltaSummary` counts + `revisionA`/`revisionB` `ArtifactSummary` (version/createdAt/producedByActor/short-checksum).
-  - [ ] Redact every `ChangeBlock` text field via `redactionPolicyService.redact(...).sanitizedText()` before it enters the returned `RevisionDelta`. (Reconciliation 11)
-  - [ ] Nested/sibling public records: `RevisionDelta`, `DeltaSummary`, `ArtifactSummary`, `MarkdownChangeBlock`, `PlanStepChangeBlock`, `FileChangeBlock` (+ a sealed/`ChangeBlock` marker or per-variant lists). Nullable fields via Javadoc, no `Optional`.
+- [x] **Task 2 — `application.compare` package: `RevisionDeltaService` + view records (AC1, AC2, AC9)**
+  - [x] Create `org.dradgo.application.compare.RevisionDeltaService` (`@Service`), injecting ONLY `ArtifactService` + `RedactionPolicyService`. `computeDelta(String artifactIdA, String artifactIdB) → RevisionDelta`, `@Transactional(readOnly = true)`.
+  - [x] Load both via the Task-1 compare-read; assert same `workflowRunId` + `artifactType`; verify parent-chain connectivity (walk `parentArtifactId` from the higher-version snapshot; the other must appear; cycle-guarded visited-set) — else `ARTIFACT_LINEAGE_MISMATCH` (400) with `details{artifactIdA, artifactIdB, reason}`. (Reconciliation 2)
+  - [x] Fast-path: equal `checksumValue` → `noMeaningfulDiff=true` + empty `changes` (skip payload diff). (Reconciliation 9)
+  - [x] Dispatch on `artifactType` to the matching differ (Task 3); assemble `DeltaSummary` counts + `revisionA`/`revisionB` `ArtifactSummary` (version/createdAt/producedByActor/short-checksum).
+  - [x] Redact every `ChangeBlock` text field via `redactionPolicyService.redact(...).sanitizedText()` before it enters the returned `RevisionDelta`. (Reconciliation 11)
+  - [x] Nested/sibling public records: `RevisionDelta`, `DeltaSummary`, `ArtifactSummary`, `MarkdownChangeBlock`, `PlanStepChangeBlock`, `FileChangeBlock` (+ a sealed/`ChangeBlock` marker or per-variant lists). Nullable fields via Javadoc, no `Optional`.
 
-- [ ] **Task 3 — Three dedicated diff-algorithm classes (AC3, AC4, AC5, AC10)**
-  - [ ] `MarkdownSectionDiffer` — split redacted markdown by ATX headings into `(sectionPath, body)`; align by `sectionPath`; emit `MarkdownChangeBlock` `added`/`removed`/`modified` with whitespace-normalized body comparison. (Reconciliation 5)
-  - [ ] `PlanStepDiffer` — parse `payload.steps` (mirror `parseSteps` contract: non-empty array, textual non-blank elements) into `List<String>`; LCS-align; emit `PlanStepChangeBlock` `added`/`removed`/`reordered`/`modified` with index-based `stepId`/order. (Reconciliation 6)
-  - [ ] `FileLevelDiffer` — parse the payload `diff` unified-diff text into `FileChangeBlock{filePath, changeKind, addedLines, removedLines}`; handle absent/empty `diff` → empty summary + null counts; caller sets `linkedDiffReferences`. (Reconciliation 5/8)
-  - [ ] Each differ is a pure class with an interface (no Spring/persistence deps) so it unit-tests standalone. Decide the line/LCS primitive: add `io.github.java-diff-utils:java-diff-utils` (explicit pinned version) to `deliveryline-backend/pom.xml` OR a small in-house LCS. (Reconciliation 10)
+- [x] **Task 3 — Three dedicated diff-algorithm classes (AC3, AC4, AC5, AC10)**
+  - [x] `MarkdownSectionDiffer` — split redacted markdown by ATX headings into `(sectionPath, body)`; align by `sectionPath`; emit `MarkdownChangeBlock` `added`/`removed`/`modified` with whitespace-normalized body comparison. (Reconciliation 5)
+  - [x] `PlanStepDiffer` — parse `payload.steps` (mirror `parseSteps` contract: non-empty array, textual non-blank elements) into `List<String>`; LCS-align; emit `PlanStepChangeBlock` `added`/`removed`/`reordered`/`modified` with index-based `stepId`/order. (Reconciliation 6)
+  - [x] `FileLevelDiffer` — parse the payload `diff` unified-diff text into `FileChangeBlock{filePath, changeKind, addedLines, removedLines}`; handle absent/empty `diff` → empty summary + null counts; caller sets `linkedDiffReferences`. (Reconciliation 5/8)
+  - [x] Each differ is a pure class with an interface (no Spring/persistence deps) so it unit-tests standalone. Decide the line/LCS primitive: **chose the in-house LCS (OQ-4 alt)** — no new dependency; JSON parsing isolated in the java-only `ComparePayloads` helper so the differs stay pure. (Reconciliation 10)
 
-- [ ] **Task 4 — REST controller + DTO + OpenAPI regen (AC7, AC8)**
-  - [ ] `org.dradgo.adapters.rest.ArtifactCompareController` `@RestController @Validated @RequestMapping("/api/v1/artifacts")` `@Tag(...)`; `@GetMapping("/{artifactIdA}/compare/{artifactIdB}")` `operationId="compareArtifacts"`; `@Parameter(example="art_abc123")` path vars; `@ApiResponses` 200 / 400 (`INVALID_ID_PREFIX`, `ARTIFACT_LINEAGE_MISMATCH`) / 404 (`ARTIFACT_RECORD_NOT_FOUND`) / 503 (`ARTIFACT_PAYLOAD_UNAVAILABLE`) each with `@Content(mediaType=APPLICATION_PROBLEM_JSON_VALUE, schema=@Schema(implementation=ProblemDetailsResponse.class))`. Thin: parse ids → `revisionDeltaService.computeDelta(...)` → `RevisionDeltaResponse.from(...)`. NO `Idempotency-Key`. `log.info` received/success with `MdcKeys.sanitizeForLog`. (Reconciliation 4)
-  - [ ] `RevisionDeltaResponse` record (+ nested response records) in `adapters.rest`, camelCase, ISO-8601 UTC, `.from(RevisionDelta)`.
-  - [ ] Regenerate `deliveryline-backend/src/main/resources/openapi/openapi.json` via the contract test's `-Dopenapi.snapshot.write=true`; extend `OpenApiSnapshotContractTest` additive-safety `.contains("compareArtifacts")`. Then FE: `npm run generate-api`, commit `deliveryline-frontend/src/lib/api/schema.d.ts`; verify `check:api` green. [[openapi-regen-frontend-client-drift-cascade]]
+- [x] **Task 4 — REST controller + DTO + OpenAPI regen (AC7, AC8)**
+  - [x] `org.dradgo.adapters.rest.ArtifactCompareController` `@RestController @Validated @RequestMapping("/api/v1/artifacts")` `@Tag(...)`; `@GetMapping("/{artifactIdA}/compare/{artifactIdB}")` `operationId="compareArtifacts"`; `@Parameter(example="art_abc123")` path vars; `@ApiResponses` 200 / 400 (`INVALID_ID_PREFIX`, `ARTIFACT_LINEAGE_MISMATCH`) / 404 (`ARTIFACT_RECORD_NOT_FOUND`) / 503 (`ARTIFACT_PAYLOAD_UNAVAILABLE`) each with `@Content(mediaType=APPLICATION_PROBLEM_JSON_VALUE, schema=@Schema(implementation=ProblemDetailsResponse.class))`. Thin: parse ids → `revisionDeltaService.computeDelta(...)` → `RevisionDeltaResponse.from(...)`. NO `Idempotency-Key`. `log.info` received/success with `MdcKeys.sanitizeForLog`. (Reconciliation 4)
+  - [x] `RevisionDeltaResponse` record (+ nested response records) in `adapters.rest`, camelCase, ISO-8601 UTC, `.from(RevisionDelta)`. Polymorphic change blocks flattened into one `ChangeResponse` with a `blockType` discriminator (single OpenAPI schema, no `oneOf`).
+  - [x] Regenerate `deliveryline-backend/src/main/resources/openapi/openapi.json` via the contract test's `-Dopenapi.snapshot.write=true` (263 additive insertions, 0 deletions); extend `OpenApiSnapshotContractTest` additive-safety `.contains("compareArtifacts")`. Then FE: `npm run generate-api`, committed `deliveryline-frontend/src/lib/api/schema.d.ts`; `check:api` green. [[openapi-regen-frontend-client-drift-cascade]]
 
-- [ ] **Task 5 — `ARTIFACT_LINEAGE_MISMATCH` three-site add (AC8)**
-  - [ ] Site 1: `DomainErrorCode.ARTIFACT_LINEAGE_MISMATCH("ARTIFACT_LINEAGE_MISMATCH")`.
-  - [ ] Site 2: `register(..., ARTIFACT_LINEAGE_MISMATCH, HttpStatus.BAD_REQUEST, "Artifact lineage mismatch", false)` in `ProblemDetailsCatalog.createMetadata()`.
-  - [ ] Site 3: add `"ARTIFACT_LINEAGE_MISMATCH": ".../problems/artifact-lineage-mismatch"` to `registry-api-schema-placeholders.json` `problemTypeUris`.
-  - [ ] Confirm `RegistryContractTest` + `ProblemDetailsCoverageFoundationContract` (foundation-gate) pass (they round-trip every code). [[new-domainerrorcode-three-sites]]
+- [x] **Task 5 — `ARTIFACT_LINEAGE_MISMATCH` three-site add (AC8)**
+  - [x] Site 1: `DomainErrorCode.ARTIFACT_LINEAGE_MISMATCH("ARTIFACT_LINEAGE_MISMATCH")`.
+  - [x] Site 2: `register(..., ARTIFACT_LINEAGE_MISMATCH, HttpStatus.BAD_REQUEST, "Artifact lineage mismatch", false)` in `ProblemDetailsCatalog.createMetadata()`.
+  - [x] Site 3: add `"ARTIFACT_LINEAGE_MISMATCH": ".../problems/artifact-lineage-mismatch"` to `registry-api-schema-placeholders.json` `problemTypeUris`.
+  - [x] Confirmed `RegistryContractTest` (25) + `ProblemDetailsCoverageFoundationContract` / foundation-gate (54) pass — the code round-trips 400 through the mapper. [[new-domainerrorcode-three-sites]]
 
-- [ ] **Task 6 — ArchUnit + tests + perf (AC9, AC10)**
-  - [ ] ArchUnit collaborator-constraint rule for `RevisionDeltaService` in `ArchitectureRuleCatalog` + `@ArchTest` in `ArchitectureBoundaryTest` (Failsafe). Confirm layered/naming rules pass for the new `application.compare` package (auto-covered by the `org.dradgo.application..` wildcard — no allow-list edit). [[archunit-runs-in-failsafe-not-surefire]]
-  - [ ] Unit: `MarkdownSectionDifferTest`, `PlanStepDifferTest`, `FileLevelDifferTest` (table-driven, all `changeKind`s + whitespace-only no-op + absent-diff).
-  - [ ] `RevisionDeltaServiceTest` (mock `ArtifactService`): lineage-mismatch, equal-checksum `noMeaningfulDiff`, redaction-on-serve pin, `LOCAL_ONLY` refusal, A/B direction.
-  - [ ] `ArtifactCompareControllerTest` (controller slice): 200 shape + 400/404/503 Problem Details `code`+`status` (never human text) [[jackson2-jsonnode-dto-500s-under-boot4-jackson3]] if any `JsonNode` body sneaks in.
-  - [ ] `RevisionDeltaCompareIT` (`@SpringBootTest`, `@Tag("integration")`, real PG, name `*IT` [[springboot-testcontainers-test-must-be-IT]]): seed real lineages (spec v1→v2, plan v1→v2, prOutput v1→v2) through the real artifact write path; assert deltas + a ≥ typical-pilot-size fixture under the AC7 target.
+- [x] **Task 6 — ArchUnit + tests + perf (AC9, AC10)**
+  - [x] ArchUnit collaborator-constraint rule `REVISION_DELTA_SERVICE_LIVES_IN_APPLICATION_COMPARE` in `ArchitectureRuleCatalog` + `@ArchTest` in `ArchitectureBoundaryTest` (Failsafe, 63 green). Layered/naming rules auto-cover `application.compare` (no allow-list edit). [[archunit-runs-in-failsafe-not-surefire]]
+  - [x] Unit: `MarkdownSectionDifferTest` (8), `PlanStepDifferTest` (6), `FileLevelDifferTest` (7) — table-driven, all `changeKind`s + whitespace-only no-op + absent-diff.
+  - [x] `RevisionDeltaServiceTest` (7, mock `ArtifactService`): lineage-mismatch (both reasons), equal-checksum `noMeaningfulDiff`, redaction-on-serve pin, A/B direction, prOutput linkedDiffReferences. (`LOCAL_ONLY` refusal + gating covered at the `ArtifactServiceUnitTest` seam where the logic lives.)
+  - [x] `ArtifactCompareControllerTest` (5, controller slice): 200 shape + 400/404/503 Problem Details `code`+`status` (never human text).
+  - [x] `RevisionDeltaCompareIT` (6, `@SpringBootTest`, `@Tag("integration")`, real PG, name `*IT`): seeds real spec/plan/prOutput v1→v2 lineages; asserts deltas, byte-equal no-meaningful-diff, disjoint-lineage rejection, and a 150-section fixture under the AC7 5s target. [[springboot-testcontainers-test-must-be-IT]]
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] `INFO` on `computeDelta` entry (`artifactIdA`, `artifactIdB`) + success (`artifactType`, `changedRegionCount`, `noMeaningfulDiff`, `durationMs`); `WARN` at the `ARTIFACT_LINEAGE_MISMATCH` / `LOCAL_ONLY`-refusal raise sites with sanitized ids; `DEBUG` for the two payload reads (hot path — reviewer may re-open). REST controller `log.info` received/success.
-  - [ ] Parameterized SLF4J only; carry `correlationId` (+ `artifactIdA`/`artifactIdB`) via MDC/params; never log payload bytes, diff content, secrets, or PII — the compare payload is already redacted but do not echo it into logs.
-  - [ ] Pin the completion-log line + the `WARN`-on-lineage-mismatch line with a `ListAppender`/`OutputCaptureExtension`.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] `INFO` on `computeDelta` entry (`artifactIdA`, `artifactIdB`) + success (`artifactType`, `changedRegionCount`, `noMeaningfulDiff`, `durationMs`); `WARN` at the `ARTIFACT_LINEAGE_MISMATCH` raise site + `LOCAL_ONLY`-refusal (in `loadCompareSource`) with sanitized ids; `DEBUG` for payload load. REST controller `log.info` received/success.
+  - [x] Parameterized SLF4J only; ids carried as params via `MdcKeys.sanitizeForLog`; never log payload bytes, diff content, secrets, or PII.
+  - [x] Pinned the completion-log line + the `WARN`-on-lineage-mismatch line with a `ListAppender` in `RevisionDeltaServiceTest`.
 
 ## Dev Notes
 
@@ -208,12 +208,99 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- Differ unit tests (Surefire): `MarkdownSectionDifferTest` 8, `PlanStepDifferTest` 6, `FileLevelDifferTest` 7 — all green.
+- Service/adapter unit (Surefire): `RevisionDeltaServiceTest` 7, `ArtifactServiceUnitTest` 11 (6 new compare-read gates), `ArtifactCompareControllerTest` 5 — all green.
+- Failsafe gates: `RevisionDeltaCompareIT` 6, `OpenApiSnapshotContractTest` 1, `RegistryContractTest` 25, `ArchitectureBoundaryTest` 63 — all green.
+- Foundation gate (`-Pfoundation-gate`): `FoundationGateVerificationTest` 54 green; log shows `ARTIFACT_LINEAGE_MISMATCH status=400` round-tripping the mapper.
+- `spotless:check` clean; FE `check:api` reports client in sync with the committed snapshot.
+
 ### Completion Notes List
 
+- **AC1/AC9 collaborator pin honored (OQ-1 applied).** `RevisionDeltaService` injects ONLY `ArtifactService` + `RedactionPolicyService`. The three differs are pure java-only classes instantiated internally (not injected), JSON parsing is isolated in the java-only `ComparePayloads` helper, and a new ArchUnit rule pins the FQN dependency set. `ArtifactService` was extended with `loadCompareSource(id)` (availability-gated carrier) + `findSnapshot(id)` (un-gated ancestor lookup for the parent-walk); its injected collaborator count is unchanged (still the two ports it already had).
+- **Reconciliation 2 lineage check** = same `(workflowRunId, artifactType)` + cycle-guarded parent-chain walk from the higher-version snapshot; disjoint lineages under one run+type (lineage_recovery) reject with `ARTIFACT_LINEAGE_MISMATCH` reason `not_on_parent_chain`; different run/type → reason `different_run_or_type`.
+- **Reconciliation 3 error codes** — only `ARTIFACT_LINEAGE_MISMATCH` (400) is new (three-site add). `ARTIFACT_NOT_FOUND` reuses `ARTIFACT_RECORD_NOT_FOUND` (404); `ARTIFACT_PAYLOAD_UNAVAILABLE` reused at its live **503**; `LOCAL_ONLY` refused as `ARTIFACT_RECORD_NOT_FOUND` (404 opacity, mirroring `getArtifactDetail`); malformed id → `INVALID_ID_PREFIX` (400).
+- **OQ-4 decision: in-house LCS** (no `java-diff-utils` dependency added) — the section split, plan-step alignment, and unified-diff header parsing are all ours; a small LCS covers the plan-step sequence alignment. No `pom.xml` change.
+- **OQ-2 (prOutput enrich bump)** — the delta is computed faithfully over whatever two ids are passed (the file-level differ unions the two resolved diffs; `linkedDiffReferences=[a,b]` always populated so 4.20 lazy-loads full diff). No special-casing of the v1→v2 enrich bump; left for the 4.20 UI to choose revisions.
+- **OQ-3 (producedByActor)** — implemented via a narrow native `linked_event_id → workflow_events.actor_identity` read on `ArtifactRecordPort` (mirrors `findRunnerExecutionIdForArtifact`), exposed behind `ArtifactService`; nullable when no linked event/actor.
+- **Redaction (AC6)** applied to every free-text `ChangeBlock` field (`priorText`/`currentText`, `priorStepText`/`currentStepText`) via `redact(...)` (never `redactForExport`). File blocks carry only path + counts (no free text), so they are not redacted.
+- **DTO shape** — polymorphic change blocks flattened to one `ChangeResponse` with a `blockType` discriminator (`markdown`/`planStep`/`file`) → single OpenAPI schema, no `oneOf`/Jackson polymorphism, no `JsonNode` body.
+- **No write path / migration / RecoveryService / new state-event-action touched** — read-only story as scoped.
+
 ### File List
+
+**New — main (`deliveryline-backend/src/main/java`):**
+- `org/dradgo/application/compare/ChangeKind.java`
+- `org/dradgo/application/compare/ChangeBlock.java` (sealed)
+- `org/dradgo/application/compare/MarkdownChangeBlock.java`
+- `org/dradgo/application/compare/PlanStepChangeBlock.java`
+- `org/dradgo/application/compare/FileChangeBlock.java`
+- `org/dradgo/application/compare/DeltaSummary.java`
+- `org/dradgo/application/compare/ArtifactSummary.java`
+- `org/dradgo/application/compare/RevisionDelta.java`
+- `org/dradgo/application/compare/MarkdownSectionDiffer.java` + `DefaultMarkdownSectionDiffer.java`
+- `org/dradgo/application/compare/PlanStepDiffer.java` + `DefaultPlanStepDiffer.java`
+- `org/dradgo/application/compare/FileLevelDiffer.java` + `DefaultFileLevelDiffer.java`
+- `org/dradgo/application/compare/ComparePayloads.java`
+- `org/dradgo/application/compare/RevisionDeltaService.java`
+- `org/dradgo/application/artifact/ArtifactCompareSource.java`
+- `org/dradgo/adapters/rest/ArtifactCompareController.java`
+- `org/dradgo/adapters/rest/RevisionDeltaResponse.java`
+
+**Modified — main:**
+- `org/dradgo/application/artifact/ArtifactService.java` (+ `loadCompareSource`, `findSnapshot`)
+- `org/dradgo/application/artifact/spi/ArtifactRecordPort.java` (+ `findProducingActorForArtifact`)
+- `org/dradgo/adapters/persistence/repository/ArtifactRepository.java` (+ native actor query)
+- `org/dradgo/adapters/persistence/ArtifactRecordPersistenceAdapter.java` (+ impl)
+- `org/dradgo/domain/registry/DomainErrorCode.java` (+ `ARTIFACT_LINEAGE_MISMATCH`)
+- `org/dradgo/adapters/rest/ProblemDetailsCatalog.java` (+ 400 registration)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated, additive)
+
+**New — test:**
+- `org/dradgo/application/compare/MarkdownSectionDifferTest.java`
+- `org/dradgo/application/compare/PlanStepDifferTest.java`
+- `org/dradgo/application/compare/FileLevelDifferTest.java`
+- `org/dradgo/application/compare/RevisionDeltaServiceTest.java`
+- `org/dradgo/application/compare/RevisionDeltaCompareIT.java`
+- `org/dradgo/adapters/rest/ArtifactCompareControllerTest.java`
+
+**Modified — test:**
+- `org/dradgo/application/artifact/ArtifactServiceUnitTest.java` (+ 6 compare-read gates)
+- `org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java` (+ `compareArtifacts` assertion)
+- `org/dradgo/architecture/ArchitectureRuleCatalog.java` (+ collaborator rule)
+- `org/dradgo/architecture/ArchitectureBoundaryTest.java` (+ `@ArchTest` registration)
+- `deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (+ URI)
+
+**Regenerated — frontend:**
+- `deliveryline-frontend/src/lib/api/schema.d.ts`
 
 ## Change Log
 
 | Date | Change |
 |---|---|
+| 2026-07-15 | Story 4.19 implemented via bmad-dev-story (Opus 4.8 [1m]). New `application.compare` package: `RevisionDeltaService` (@Service, collaborators pinned to `ArtifactService`+`RedactionPolicyService`) + 8 view records + 3 pure differ classes (in-house LCS, OQ-4 alt) + `ComparePayloads` JSON helper. Extended `ArtifactService` with `loadCompareSource`/`findSnapshot` + producing-actor native read (OQ-3). New top-level `GET /api/v1/artifacts/{a}/compare/{b}` (`compareArtifacts`) + `RevisionDeltaResponse` (flattened `blockType` change DTO). `ARTIFACT_LINEAGE_MISMATCH` (400) three-site add. OpenAPI regen (additive) + FE `schema.d.ts`. New ArchUnit collaborator rule. Tests: 26 unit (differs/service/controller) + 6 real-PG IT + gates (OpenAPI/Registry/ArchUnit/foundation) all green; spotless clean; `check:api` in sync. Status → review. |
 | 2026-07-05 | Story 4.19 created via bmad-create-story (Opus 4.8 [1m]). Compare Mode BACKEND: new `application.compare.RevisionDeltaService` computing typed deltas (spec section diff / plan step diff / prOutput file-level summary) between two artifact versions of one lineage, served via a NEW top-level `GET /api/v1/artifacts/{a}/compare/{b}`. Central reconciliations (epic AC drifts; live bindings win): (1) `ArtifactService` exposes only `isApprovalEligible` → EXTEND it with a compare-read so `RevisionDeltaService`'s only collaborators are `ArtifactService`+`RedactionPolicyService` (AC9); (2) lineage check must WALK `parent_artifact_id` (multi-lineage per run+type via `lineage_recovery`); (3) of the 3 epic error codes only `ARTIFACT_LINEAGE_MISMATCH` (400) is new — `ARTIFACT_NOT_FOUND`→reuse `ARTIFACT_RECORD_NOT_FOUND` (404), `ARTIFACT_PAYLOAD_UNAVAILABLE` reused at its live 503 (not 409); (5) `diff`/`steps`/`diffReference` are payload-JSON fields not columns; (6) plan steps are plain strings (no `stepId` → positional); (8) prOutput `diff` often absent + internal `v1→v2` enrich bump. Read-only: no Flyway/WorkflowEventType/AllowedAction/write path. OpenAPI regen + FE `generate-api`. Status → ready-for-dev. |
+
+### Review Findings
+
+_Code review 2026-07-15 (bmad-code-review, 3 adversarial layers: Blind Hunter / Edge Case Hunter / Acceptance Auditor). 13 distinct findings after dedup. Decisions resolved by Alex 2026-07-15: D1 → patch (full fix), D2 → accepted per Reconciliation 11. Patches batch-applied 2026-07-15: 4 fixed, 1 dismissed-on-verification (P4). Final: 4 patch FIXED, 1 patch dismissed, 4 deferred, 4 dismissed/accepted. Compare unit tier 45/0 green (6 new tests); 2 new perf ITs compile (run under Failsafe)._
+
+**Decisions resolved (2026-07-15)**
+
+- [x] [Review][Decision→Dismiss] `sectionPath` heading trail emitted unredacted (AC6 tension) — **ACCEPTED per binding Reconciliation 11** (which lists only prior/current/section-text; `sectionPath` is a structural alignment key, not body content — redacting it would break A/B section matching). Explicit accepted decision, no code change. [`RevisionDeltaService.java:185`]
+
+**Patch (batch-applied 2026-07-15)**
+
+- [x] [Review][Patch][FIXED] `noMeaningfulDiff` masks non-whitespace differences (was D1) — replaced the `changes.isEmpty()` shortcut with a positive per-type whitespace-only test: SPEC uses new `MarkdownSectionDiffer.isWhitespaceOnlyDifference` (order-preserving normalize → a reorder returns false); IMPLEMENTATION_PLAN requires `changes.isEmpty()` AND both payloads pass new `ComparePayloads.stepsPayloadParseable` (a swallowed parse failure no longer masquerades as equivalence); prOutput unchanged (never no-diff). Tests: `specSectionReorderIsNotClaimedAsNoMeaningfulDiff`, `bothUnparseablePlanPayloadsAreNotClaimedAsNoMeaningfulDiff`, `identicalPlanStepsWithDifferingChecksumIsNoMeaningfulDiff`. [`RevisionDeltaService.java`, `MarkdownSectionDiffer.java`, `ComparePayloads.java`]
+- [x] [Review][Patch][FIXED] Unified-diff parser misclassifies content lines starting `-- `/`++ ` as file headers — added hunk-state tracking to `DefaultFileLevelDiffer.parse`: `@@` sets `inHunk`, `diff --git` resets it, and `--- `/`+++ ` are only treated as headers when `!inHunk`, so content lines inside a hunk (e.g. a removed `-- sql comment`) are counted, not misparsed. Test: `contentLinesResemblingFileHeadersAreCountedNotMisparsed`. [`DefaultFileLevelDiffer.java`]
+- [x] [Review][Patch][FIXED] Mixed/interchangeable code-fence markers swallow following headings — `DefaultMarkdownSectionDiffer.split` now tracks the opening marker (`fenceMarker`) and only closes on a matching ` ``` `/`~~~`, so a `~~~` line inside a ` ``` ` fence no longer flips fence state and drops later headings. Test: `mismatchedFenceMarkersDoNotSwallowFollowingHeadings`. [`DefaultMarkdownSectionDiffer.java`]
+- [x] [Review][Patch][DISMISSED on verification] `createdAt` nullability contract — **NOT a bug.** `artifacts.created_at` is `NOT NULL DEFAULT now()` since V1 (`V1__create_workflow_core_tables.sql:116`), so `createdAt` can never actually serialize `null`; the OpenAPI non-nullable declaration is correct and the Java Javadoc/`toUtc` null-guard is merely dead-defensive (harmless). No contract change made. [`openapi.json:439`, `V1__create_workflow_core_tables.sql:116`]
+- [x] [Review][Patch][FIXED] Performance ACs for plan/prOutput unasserted (AC7/AC10) — added `planStepDeltaOfTypicalPilotSizeCompletesUnderTarget` (200-step plan, <5s) and `prOutputDeltaOfTypicalPilotSizeCompletesUnderTarget` (120-file diff, <10s) to `RevisionDeltaCompareIT`. [`RevisionDeltaCompareIT.java`]
+
+**Deferred**
+
+- [x] [Review][Defer] LCS DP matrix `int[n+1][m+1]` is O(n·m) unbounded — OOM on pathological plan sizes [`DefaultPlanStepDiffer.java:121`] — deferred: beyond AC7 "typical pilot size"; add a size guard/fallback when hardening.
+- [x] [Review][Defer] Duplicate heading trails merge into one section [`DefaultMarkdownSectionDiffer.java:95`] — deferred: `sections.merge(...)` concatenates same-`sectionPath` bodies; rare in well-formed specs, a change to one duplicate is mis-attributed.
+- [x] [Review][Defer] `normalize` strips whitespace inside fenced code blocks [`DefaultMarkdownSectionDiffer.java:99`] — deferred: an indentation-only change in a code sample inside a spec is normalized to equal → missed MODIFIED; whitespace-insensitivity is intended for prose.
+- [x] [Review][Defer] `extractGitPaths`/`stripDiffPath` mis-parse paths with spaces or git-quoted paths [`DefaultFileLevelDiffer.java:82`] — deferred: `indexOf(" b/")` can match inside a space-containing filename; rare input.
+
+**Dismissed (noise / by-design)** — 3: (1) plan differ zips leftover deleted/inserted steps as MODIFIED — explicitly documented design per Reconciliation 6; (2) `checksumsEqual` ignores the algorithm — algorithm is constant within one lineage, cross-algorithm hex collision astronomically unlikely; (3) fork-sibling compare rejected as `ARTIFACT_LINEAGE_MISMATCH` — sanctioned by binding Reconciliation 2 (parent-chain reachability).

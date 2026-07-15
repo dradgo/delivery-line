@@ -218,6 +218,7 @@
     "DRIFT_ALREADY_RESOLVED": "https://deliveryline.local/problems/drift-already-resolved",
     "INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY": "https://deliveryline.local/problems/invalid-repair-action-for-drift-category",
     "MISSING_REPAIR_REQUIRED_FIELD": "https://deliveryline.local/problems/missing-repair-required-field",
-    "REPAIR_ACTION_NOT_IMPLEMENTED": "https://deliveryline.local/problems/repair-action-not-implemented"
+    "REPAIR_ACTION_NOT_IMPLEMENTED": "https://deliveryline.local/problems/repair-action-not-implemented",
+    "ARTIFACT_LINEAGE_MISMATCH": "https://deliveryline.local/problems/artifact-lineage-mismatch"
   }
 }

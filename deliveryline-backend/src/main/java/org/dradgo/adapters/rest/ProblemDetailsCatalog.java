@@ -729,6 +729,15 @@ public final class ProblemDetailsCatalog {
         HttpStatus.NOT_IMPLEMENTED,
         "Repair action not implemented",
         false);
+    // Story 4.19 (AC8 / Reconciliation 3/12) — the two compare artifacts do not share a lineage.
+    // A malformed cross-lineage request, not a transient fault: BAD_REQUEST + non-retryable,
+    // mirroring INVALID_COMMAND_PAYLOAD. The type URI auto-derives (artifact-lineage-mismatch).
+    register(
+        metadata,
+        DomainErrorCode.ARTIFACT_LINEAGE_MISMATCH,
+        HttpStatus.BAD_REQUEST,
+        "Artifact lineage mismatch",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

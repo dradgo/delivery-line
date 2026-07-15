@@ -222,6 +222,12 @@ class ArchitectureBoundaryTest {
   static final ArchRule clarification_service_lives_in_application_clarification =
       ArchitectureRuleCatalog.CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION;
 
+  // Story 4.19 (AC9) — RevisionDeltaService stays in application.compare with only
+  // ArtifactService + RedactionPolicyService as collaborators.
+  @ArchTest
+  static final ArchRule revision_delta_service_lives_in_application_compare =
+      ArchitectureRuleCatalog.REVISION_DELTA_SERVICE_LIVES_IN_APPLICATION_COMPARE;
+
   // Story 3.17a (AC6) — RunnerExecutionQueue substrate stays in application.runner.queue.
   @ArchTest
   static final ArchRule runner_execution_queue_lives_in_application_runner_queue =

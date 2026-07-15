@@ -118,6 +118,16 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
 
   @Override
   @Transactional(readOnly = true)
+  public Optional<String> findProducingActorForArtifact(String artifactId) {
+    String value = artifactRepository.findProducingActorForArtifact(artifactId);
+    if (value == null || value.isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(value);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public Optional<ArtifactRecordSnapshot> findLatestByParentArtifactId(
       String lineageMemberArtifactId) {
     Optional<ArtifactEntity> member = artifactRepository.findByPublicId(lineageMemberArtifactId);
