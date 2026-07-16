@@ -39,6 +39,7 @@ import { useAllowedActions } from '../hooks/useAllowedActions';
 import { useFailureDiagnostics } from '../hooks/useFailureDiagnostics';
 import { usePauseWorkflow, type PauseWorkflowResult } from '../hooks/usePauseWorkflow';
 import { usePreviewRerunFromStep } from '../hooks/usePreviewRerunFromStep';
+import { useReconcileWorkflow, type ReconcileWorkflowResult } from '../hooks/useReconcileWorkflow';
 import {
   useRerunFromStep,
   type RerunFromStepResult,
@@ -46,8 +47,10 @@ import {
 } from '../hooks/useRerunFromStep';
 import { useResumeWorkflow, type ResumeWorkflowResult } from '../hooks/useResumeWorkflow';
 import { useRetryWorkflow, type RetryWorkflowResult } from '../hooks/useRetryWorkflow';
+import { useRunIntegrationConflicts, resolveConflictId } from '../hooks/useRunIntegrationConflicts';
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
+import { ReconciliationDialog } from './ReconciliationDialog';
 
 export interface RecoveryDecisionBarContainerProps {
   workflowRunId: string;
@@ -63,6 +66,12 @@ export interface RecoveryDecisionBarContainerProps {
   resume?: ResumeWorkflowResult | undefined;
   rerun?: RerunFromStepResult | undefined;
   pause?: PauseWorkflowResult | undefined;
+  /**
+   * Story 4.23 — the reconcile mutation, optionally LIFTED to `WorkflowDecisionBar` so a post-
+   * reconcile state flip (Paused→…) does not unmount this bar and tear down the dialog's success
+   * announcement before it is spoken. Defaults to an internal instance for standalone/test mounts.
+   */
+  reconcile?: ReconcileWorkflowResult | undefined;
 }
 
 /** The approve/reject callbacks are unused in recovery mode — a single shared no-op. */
@@ -75,6 +84,7 @@ export function RecoveryDecisionBarContainer({
   resume: resumeProp,
   rerun: rerunProp,
   pause: pauseProp,
+  reconcile: reconcileProp,
 }: RecoveryDecisionBarContainerProps) {
   // Request the workflow_owner action set — the backend matrix gates the recovery actions on this
   // role (a default product_reviewer request returns only view_only/view_diagnostics → "View only").
@@ -89,10 +99,12 @@ export function RecoveryDecisionBarContainer({
   const internalResume = useResumeWorkflow(workflowRunId);
   const internalRerun = useRerunFromStep(workflowRunId);
   const internalPause = usePauseWorkflow(workflowRunId);
+  const internalReconcile = useReconcileWorkflow(workflowRunId);
   const retry = retryProp ?? internalRetry;
   const resume = resumeProp ?? internalResume;
   const rerun = rerunProp ?? internalRerun;
   const pause = pauseProp ?? internalPause;
+  const reconcile = reconcileProp ?? internalReconcile;
 
   // The rerun preview is bar-driven: the bar reports the dialog's open state + selected step so we
   // enable/param the non-mutating preview query (AC5).
@@ -113,6 +125,34 @@ export function RecoveryDecisionBarContainer({
   const versionStamp: ApprovalVersionStamp | undefined = allowed?.versionStamp;
   const actions = normalizeActions(allowed?.actions);
   const recoverySafetyByToken = buildRecoverySafetyByToken(actions, diagnosticsQuery.data);
+
+  // Story 4.23 — the reconcile seam carries no conflictId (`onReconcile?.()`), so resolve one from the
+  // run's unresolved-conflict list. Only fetched when the backend actually offers `reconcile_conflict`.
+  const canReconcile = actions.includes('reconcile_conflict');
+  const conflictsQuery = useRunIntegrationConflicts(workflowRunId, { enabled: canReconcile });
+  // Resolve the concrete conflictId the dialog needs BEFORE offering the button. The conflicts query
+  // only starts once `reconcile_conflict` is offered, so there is a real window where the action is
+  // allowed but no conflict is resolvable yet (still loading, or the list came back empty because
+  // another operator just resolved it). Gate `onReconcile` on this so the bar renders the button
+  // disabled-and-explained instead of enabled-but-dead (a click that silently no-ops).
+  const resolvableConflictId = canReconcile
+    ? resolveConflictId(conflictsQuery.data?.conflicts)
+    : undefined;
+  const [reconcileState, setReconcileState] = useState<{ open: boolean; conflictId: string }>({
+    open: false,
+    conflictId: '',
+  });
+  const openReconcileDialog = useCallback(() => {
+    if (resolvableConflictId === undefined) {
+      // Guarded by the gated `onReconcile` below; defensive only.
+      console.warn({ event: 'recovery.reconcileNoConflict' });
+      return;
+    }
+    setReconcileState({ open: true, conflictId: resolvableConflictId });
+  }, [resolvableConflictId]);
+  const closeReconcileDialog = useCallback(() => {
+    setReconcileState((prev) => ({ ...prev, open: false }));
+  }, []);
 
   const view: ApprovalDecisionView = {
     workflowRunId,
@@ -251,12 +291,27 @@ export function RecoveryDecisionBarContainer({
     void allowedActionsQuery.refetch();
     void detailQuery.refetch();
     void diagnosticsQuery.refetch();
+    if (canReconcile) {
+      void conflictsQuery.refetch();
+    }
     retry.reset();
     resume.reset();
     rerun.reset();
     pause.reset();
+    reconcile.reset();
     setLastDecision(undefined);
-  }, [allowedActionsQuery, detailQuery, diagnosticsQuery, retry, resume, rerun, pause]);
+  }, [
+    allowedActionsQuery,
+    detailQuery,
+    diagnosticsQuery,
+    conflictsQuery,
+    canReconcile,
+    retry,
+    resume,
+    rerun,
+    pause,
+    reconcile,
+  ]);
 
   // Allowed-actions / detail load-error logging (live — either GET can genuinely fail). Field-only
   // (T-LOG-PII): the stable code + transport flag, never ids / reason.
@@ -305,27 +360,39 @@ export function RecoveryDecisionBarContainer({
   }, [diagnosticsQuery.isError, diagnosticsQuery.error]);
 
   return (
-    <ApprovalDecisionBar
-      view={view}
-      mutation={mutation}
-      loadError={loadError}
-      onApprove={NOOP}
-      onReject={NOOP}
-      onRefresh={handleRefresh}
-      onRetry={handleRetry}
-      onResume={handleResume}
-      onRerunFromStep={handleRerun}
-      onPause={handlePause}
-      recoverySafetyByToken={recoverySafetyByToken}
-      rerunPreview={{
-        data: rerunPreviewQuery.data,
-        isLoading: rerunPreviewQuery.isLoading,
-        isError: rerunPreviewQuery.isError,
-      }}
-      onRerunPreviewRequest={setRerunPreviewReq}
-      // onReconcile / onClassifyFailure are intentionally NOT wired here (OQ-2 seam-only default):
-      // stories 4.23 / 4.24 own those dialogs. Until then the bar renders those gated buttons
-      // disabled + explained (AC11), never silently gone.
-    />
+    <>
+      <ApprovalDecisionBar
+        view={view}
+        mutation={mutation}
+        loadError={loadError}
+        onApprove={NOOP}
+        onReject={NOOP}
+        onRefresh={handleRefresh}
+        onRetry={handleRetry}
+        onResume={handleResume}
+        onRerunFromStep={handleRerun}
+        onPause={handlePause}
+        recoverySafetyByToken={recoverySafetyByToken}
+        rerunPreview={{
+          data: rerunPreviewQuery.data,
+          isLoading: rerunPreviewQuery.isLoading,
+          isError: rerunPreviewQuery.isError,
+        }}
+        onRerunPreviewRequest={setRerunPreviewReq}
+        // Story 4.23 — the reconcile seam is now wired (the dialog resolves + reconciles a conflict).
+        // Only offered once a concrete conflict is resolvable; while it is still resolving (or none is
+        // available) the bar renders the button disabled + explained rather than enabled-but-dead.
+        // onClassifyFailure stays a seam until story 4.24 (bar renders it disabled + explained).
+        onReconcile={resolvableConflictId !== undefined ? openReconcileDialog : undefined}
+        reconcileResolving={canReconcile && resolvableConflictId === undefined}
+      />
+      <ReconciliationDialog
+        workflowRunId={workflowRunId}
+        conflictId={reconcileState.conflictId}
+        open={reconcileState.open}
+        onClose={closeReconcileDialog}
+        reconcile={reconcile}
+      />
+    </>
   );
 }

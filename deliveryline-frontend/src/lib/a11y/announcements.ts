@@ -148,6 +148,13 @@ export const recoveryPauseInitiated = 'Pausing the run.';
 /** Announced once a pause is recorded (success), mirroring the inline outcome. */
 export const recoveryPauseRecorded = 'Run paused. Decision recorded.';
 
+// ---- Reconciliation dialog (story 4.23) ----------------------------------------
+
+/** Announced while a reconcile submission is in flight. */
+export const recoveryReconcileInitiated = 'Recording your reconciliation decision.';
+/** Announced once a reconcile is recorded (success), mirroring the inline outcome (never a toast). */
+export const recoveryReconcileRecorded = 'Reconciliation recorded. The conflict has been resolved.';
+
 // ---- Compare Mode (story 4.20) -------------------------------------------------
 
 /** Announced once a revision delta loads, stating how many changed regions there are. */

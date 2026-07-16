@@ -1,6 +1,6 @@
 # Story 4.23: Operator Reconciliation Dialog UI
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -36,39 +36,39 @@ so that NFR19 (no silent overwrite) is enforced at the UI layer — an operator 
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — `useIntegrationConflict` query hook** (AC: #1, #6)
-  - [ ] Create `src/features/workflows/hooks/useIntegrationConflict.ts` modeled on `useFailureDiagnostics.ts`: `useQuery({ queryKey: workflowKeys.integrationConflict(conflictId), queryFn: () => unwrap(apiClient.GET('/api/v1/integration-conflicts/{conflictId}', { params: { path: { conflictId } } })), enabled: open && !!conflictId, staleTime: STALE_TIME.detail })`.
-  - [ ] Add `integrationConflict: (conflictId: string) => [...workflowKeys.all, 'integrationConflict', conflictId] as const` to `src/lib/queryKeys/workflowKeys.ts` (rooted at `all`, NOT under `detail(runId)` — the endpoint is keyed by `conflictId`, not run id). Update `workflowKeys.test.ts` for the new member. NEVER inline the key array (`no-inline-query-keys` ESLint rule).
-- [ ] **Task 2 — `useReconcileWorkflow` mutation hook** (AC: #5, #6, #10)
-  - [ ] Create `src/features/workflows/hooks/useReconcileWorkflow.ts` on the `useWorkflowMutation` factory, mirroring `useResumeWorkflow.ts` / `usePauseWorkflow.ts`. Variables: `{ conflictId: string; resolutionDecision: ReconciliationDecision; reasonText: string }`. `mutationFn({ variables, idempotencyKey })` POSTs `/api/v1/workflows/{workflowRunId}/reconcile` with body `{ conflictId, resolutionDecision, reasonText, role: RECOVERY_OPERATOR_ROLE }` and header `[IDEMPOTENCY_KEY_HEADER]: idempotencyKey`. Return type = `ReconcileResponse`.
-  - [ ] In `onSuccess`, in addition to the factory's `detail(runId)` + `lists()` invalidation, **also invalidate** `workflowKeys.integrationConflict(conflictId)` and `workflowKeys.failureDiagnostics(runId)` so the resolved conflict + drift indicator refresh (the factory does not know the conflict key).
-- [ ] **Task 3 — `ReconciliationDialog.tsx` shell + data states** (AC: #1, #2, #6, #9)
-  - [ ] Create `src/features/workflows/components/ReconciliationDialog.tsx`. Choose the container by `useResponsiveLayout()`: `BoundedDetailSheet` (`side="bottom"`, `fullHeightOnMobile`) on `'mobile'`, else `ConfirmationDialog`/right-sheet. Both are controlled (`open`, `onOpenChange`). Import overlays ONLY from `@/components/overlays` (generic infra; must not be imported the other way).
-  - [ ] Render loading (skeleton matching layout), error, and the resolved-conflict body; header shows category + integration type.
-- [ ] **Task 4 — Snapshot panels + defensive JSON diff** (AC: #2, #3, #9)
-  - [ ] Build `reconciliationDialogView.ts` (sibling `.ts`, NOT the `.tsx` — react-refresh forbids non-component exports from `.tsx`): pure helpers `parseSnapshot(raw: string | null): { ok: boolean; fields?: Record<string, unknown>; raw: string }`, `diffSnapshots(internal, external)` → per-field `{ status: 'added'|'removed'|'modified'|'unchanged' }`, and the decision-consequence copy map (Task 6).
-  - [ ] Panels render known labeled fields with added/removed/modified state-token treatment (reuse `SafeUnifiedDiffRenderer`/`SafeDiffRenderer` where the shape fits; otherwise labeled rows), an expandable "Raw metadata" prettified-JSON section, and a plain-text fallback for `null`/unparseable snapshots. Stack panels vertically on mobile (internal above external).
-- [ ] **Task 5 — Decision radio group + recommended pre-selection** (AC: #4)
-  - [ ] Render one radio per `suggestedDecisions[]` entry; pre-select `suggestedDecisions[0].decision` (safe-first order = recommended); tag it "Recommended".
-  - [ ] Show each option's safety via `safetyTone()` → `StateSignifierChip` (safe→success `[SAFE]`, risky→error `[RISKY]`). Map decision wire values to human-readable labels.
-- [ ] **Task 6 — Risky inline warning (FE consequence copy)** (AC: #4)
-  - [ ] In `reconciliationDialogView.ts`, author a static consequence-copy map keyed by `ReconciliationDecision` (optionally category-aware) derived from `ConflictReconciliationSuggester`'s per-category javadoc semantics. When the selected option's `safety === 'risky'`, render the warning inline (this text is the `aria-describedby` target per AC10).
-- [ ] **Task 7 — Required-fields gating + submit** (AC: #5, #7, #10)
-  - [ ] Disable "Confirm reconcile" until `resolutionDecision` selected AND `reasonText.trim().length > 0`.
-  - [ ] On confirm, call `useReconcileWorkflow(...).mutate({ conflictId, resolutionDecision, reasonText })`; announce `recoveryReconcileInitiated`; on success announce `recoveryReconcileRecorded`, close, and let query invalidation refresh surfaces.
-  - [ ] Esc / close-attempt while `reasonText` is dirty → nested "Discard your reconciliation note?" confirm-discard prompt before closing (custom; base dialog Esc is immediate by default).
-- [ ] **Task 8 — Error / stale-state handling** (AC: #6)
-  - [ ] Map `ProblemDetailsError.code`: `CONFLICT_ALREADY_RESOLVED` → stale notice + "Refresh and try again" (refetch detail); `CONFLICT_NOT_FOUND` / `RECONCILE_NOT_APPLICABLE` → explanatory terminal states; `IDEMPOTENCY_KEY_CONFLICT` → standard retry-safe surface; announce `decisionSubmitFailed` on unhandled errors.
-- [ ] **Task 9 — Announcements** (AC: #10)
-  - [ ] Add `recoveryReconcileInitiated` / `recoveryReconcileRecorded` (+ reuse `decisionSubmitFailed`) to `src/lib/a11y/announcements.ts` under the recovery section; satisfy the `announcement-vocabulary` node-test (`npm run check:a11y`).
-- [ ] **Task 10 — Wire launch contexts** (AC: #8)
-  - [ ] Decision Bar: in `RecoveryDecisionBarContainer.tsx`, own dialog open-state + pass `onReconcile={openReconcileDialog}` into `ApprovalDecisionBar` (mirror the container-owns-dialog pattern; if a post-reconcile state flip could unmount the bar, hoist the mutation into `WorkflowDecisionBar` as resume/rerun/pause were). Update `RecoveryDecisionBarContainer.full.test.tsx` + the reconcile-seam assertions in `ApprovalDecisionBar.recovery.test.tsx` (the disabled-placeholder path now has a handler).
-  - [ ] Failure diagnostics: in `FailureEventSurface.tsx` (the drift indicator at the deferred-modal comment ~L293), replace the static tooltip with a control opening this dialog.
-  - [ ] Operator queue: per OQ-3 resolution.
-- [ ] **Task 11 — Tests** (AC: #11)
-  - [ ] Component tests (`ReconciliationDialog.test.tsx`) with Vitest + Testing Library + `user-event`; mock the conflict GET + reconcile POST via MSW `server.use(...)` inside a per-test `QueryClientProvider` (`mutations: { retry: retryUnlessNonRetryable, retryDelay: 0 }`). Assert every AC11 case; run `await expectNoA11yViolations(document.body)` against the open (portaled) content, in both desktop and mobile layouts.
-- [ ] **Observability instrumentation** (cross-cutting — FE adaptation of the project logging standard)
-  - [ ] This is a **frontend-only** story; the SLF4J/Logback "Logging Requirements" below are the backend project standard and are **N/A** here (no server code is touched). The FE-equivalent observable surfaces are: (a) the ARIA live-region announcements (Task 9) for state changes, (b) `ProblemDetailsError`-typed error surfaces (Task 8) that carry `code` + `correlationId` (already stamped on every request by `headerMiddleware` / `X-Correlation-Id`), and (c) the standard TanStack Query error boundary. Do **not** `console.log` snapshot bytes, external metadata, or the `reasonText` (may contain operator-sensitive prose). No new `console.*` calls; rely on the existing error-surface + announcement channels.
+- [x] **Task 1 — `useIntegrationConflict` query hook** (AC: #1, #6)
+  - [x] Create `src/features/workflows/hooks/useIntegrationConflict.ts` modeled on `useFailureDiagnostics.ts`: `useQuery({ queryKey: workflowKeys.integrationConflict(conflictId), queryFn: () => unwrap(apiClient.GET('/api/v1/integration-conflicts/{conflictId}', { params: { path: { conflictId } } })), enabled: open && !!conflictId, staleTime: STALE_TIME.detail })`.
+  - [x] Add `integrationConflict: (conflictId: string) => [...workflowKeys.all, 'integrationConflict', conflictId] as const` to `src/lib/queryKeys/workflowKeys.ts` (rooted at `all`, NOT under `detail(runId)` — the endpoint is keyed by `conflictId`, not run id). Update `workflowKeys.test.ts` for the new member. NEVER inline the key array (`no-inline-query-keys` ESLint rule).
+- [x] **Task 2 — `useReconcileWorkflow` mutation hook** (AC: #5, #6, #10)
+  - [x] Create `src/features/workflows/hooks/useReconcileWorkflow.ts` on the `useWorkflowMutation` factory, mirroring `useResumeWorkflow.ts` / `usePauseWorkflow.ts`. Variables: `{ conflictId: string; resolutionDecision: ReconciliationDecision; reasonText: string }`. `mutationFn({ variables, idempotencyKey })` POSTs `/api/v1/workflows/{workflowRunId}/reconcile` with body `{ conflictId, resolutionDecision, reasonText, role: RECOVERY_OPERATOR_ROLE }` and header `[IDEMPOTENCY_KEY_HEADER]: idempotencyKey`. Return type = `ReconcileResponse`.
+  - [x] In `onSuccess`, in addition to the factory's `detail(runId)` + `lists()` invalidation, **also invalidate** `workflowKeys.integrationConflict(conflictId)` and `workflowKeys.failureDiagnostics(runId)` so the resolved conflict + drift indicator refresh (the factory does not know the conflict key).
+- [x] **Task 3 — `ReconciliationDialog.tsx` shell + data states** (AC: #1, #2, #6, #9)
+  - [x] Create `src/features/workflows/components/ReconciliationDialog.tsx`. Choose the container by `useResponsiveLayout()`: `BoundedDetailSheet` (`side="bottom"`, `fullHeightOnMobile`) on `'mobile'`, else `ConfirmationDialog`/right-sheet. Both are controlled (`open`, `onOpenChange`). Import overlays ONLY from `@/components/overlays` (generic infra; must not be imported the other way).
+  - [x] Render loading (skeleton matching layout), error, and the resolved-conflict body; header shows category + integration type.
+- [x] **Task 4 — Snapshot panels + defensive JSON diff** (AC: #2, #3, #9)
+  - [x] Build `reconciliationDialogView.ts` (sibling `.ts`, NOT the `.tsx` — react-refresh forbids non-component exports from `.tsx`): pure helpers `parseSnapshot(raw: string | null): { ok: boolean; fields?: Record<string, unknown>; raw: string }`, `diffSnapshots(internal, external)` → per-field `{ status: 'added'|'removed'|'modified'|'unchanged' }`, and the decision-consequence copy map (Task 6).
+  - [x] Panels render known labeled fields with added/removed/modified state-token treatment (reuse `SafeUnifiedDiffRenderer`/`SafeDiffRenderer` where the shape fits; otherwise labeled rows), an expandable "Raw metadata" prettified-JSON section, and a plain-text fallback for `null`/unparseable snapshots. Stack panels vertically on mobile (internal above external).
+- [x] **Task 5 — Decision radio group + recommended pre-selection** (AC: #4)
+  - [x] Render one radio per `suggestedDecisions[]` entry; pre-select `suggestedDecisions[0].decision` (safe-first order = recommended); tag it "Recommended".
+  - [x] Show each option's safety via `safetyTone()` → `StateSignifierChip` (safe→success `[SAFE]`, risky→error `[RISKY]`). Map decision wire values to human-readable labels.
+- [x] **Task 6 — Risky inline warning (FE consequence copy)** (AC: #4)
+  - [x] In `reconciliationDialogView.ts`, author a static consequence-copy map keyed by `ReconciliationDecision` (optionally category-aware) derived from `ConflictReconciliationSuggester`'s per-category javadoc semantics. When the selected option's `safety === 'risky'`, render the warning inline (this text is the `aria-describedby` target per AC10).
+- [x] **Task 7 — Required-fields gating + submit** (AC: #5, #7, #10)
+  - [x] Disable "Confirm reconcile" until `resolutionDecision` selected AND `reasonText.trim().length > 0`.
+  - [x] On confirm, call `useReconcileWorkflow(...).mutate({ conflictId, resolutionDecision, reasonText })`; announce `recoveryReconcileInitiated`; on success announce `recoveryReconcileRecorded`, close, and let query invalidation refresh surfaces.
+  - [x] Esc / close-attempt while `reasonText` is dirty → nested "Discard your reconciliation note?" confirm-discard prompt before closing (custom; base dialog Esc is immediate by default).
+- [x] **Task 8 — Error / stale-state handling** (AC: #6)
+  - [x] Map `ProblemDetailsError.code`: `CONFLICT_ALREADY_RESOLVED` → stale notice + "Refresh and try again" (refetch detail); `CONFLICT_NOT_FOUND` / `RECONCILE_NOT_APPLICABLE` → explanatory terminal states; `IDEMPOTENCY_KEY_CONFLICT` → standard retry-safe surface; announce `decisionSubmitFailed` on unhandled errors.
+- [x] **Task 9 — Announcements** (AC: #10)
+  - [x] Add `recoveryReconcileInitiated` / `recoveryReconcileRecorded` (+ reuse `decisionSubmitFailed`) to `src/lib/a11y/announcements.ts` under the recovery section; satisfy the `announcement-vocabulary` node-test (`npm run check:a11y`).
+- [x] **Task 10 — Wire launch contexts** (AC: #8)
+  - [x] Decision Bar: in `RecoveryDecisionBarContainer.tsx`, own dialog open-state + pass `onReconcile={openReconcileDialog}` into `ApprovalDecisionBar` (mirror the container-owns-dialog pattern; if a post-reconcile state flip could unmount the bar, hoist the mutation into `WorkflowDecisionBar` as resume/rerun/pause were). Update `RecoveryDecisionBarContainer.full.test.tsx` + the reconcile-seam assertions in `ApprovalDecisionBar.recovery.test.tsx` (the disabled-placeholder path now has a handler).
+  - [x] Failure diagnostics: in `FailureEventSurface.tsx` (the drift indicator at the deferred-modal comment ~L293), replace the static tooltip with a control opening this dialog.
+  - [x] Operator queue: per OQ-3 resolution.
+- [x] **Task 11 — Tests** (AC: #11)
+  - [x] Component tests (`ReconciliationDialog.test.tsx`) with Vitest + Testing Library + `user-event`; mock the conflict GET + reconcile POST via MSW `server.use(...)` inside a per-test `QueryClientProvider` (`mutations: { retry: retryUnlessNonRetryable, retryDelay: 0 }`). Assert every AC11 case; run `await expectNoA11yViolations(document.body)` against the open (portaled) content, in both desktop and mobile layouts.
+- [x] **Observability instrumentation** (cross-cutting — FE adaptation of the project logging standard)
+  - [x] This is a **frontend-only** story; the SLF4J/Logback "Logging Requirements" below are the backend project standard and are **N/A** here (no server code is touched). The FE-equivalent observable surfaces are: (a) the ARIA live-region announcements (Task 9) for state changes, (b) `ProblemDetailsError`-typed error surfaces (Task 8) that carry `code` + `correlationId` (already stamped on every request by `headerMiddleware` / `X-Correlation-Id`), and (c) the standard TanStack Query error boundary. Do **not** `console.log` snapshot bytes, external metadata, or the `reasonText` (may contain operator-sensitive prose). No new `console.*` calls; rely on the existing error-surface + announcement channels.
 
 ## Dev Notes
 
@@ -169,10 +169,73 @@ This is the **backend** SLF4J/Logback standard. **Story 4.23 touches no server c
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Opus 4.8 (1M context) — claude-opus-4-8[1m]
 
 ### Debug Log References
 
+- FE verify (all GREEN, 2026-07-16): `npx tsc -b` (No errors — typechecks test files per [[frontend-tsc-noemit-misses-test-files]]); `npm run lint` (No issues, `--max-warnings=0`); `npm run test` (vitest 1443/0, +34 new across 5 new suites); `npm run check:a11y` (4/0); `npm run check:api` (in sync — no OpenAPI change); `npm run build` (tsc -b + vite ✓ built); `prettier --check` clean on all touched files.
+- No backend change and no `generate-api` regen (OQ-1 default a — see below): the 4.11 reconcile + 4.18 conflict list/detail contracts were already live in `schema.d.ts`.
+
 ### Completion Notes List
 
+**Open Questions — resolved with the story's documented defaults (surfaced for review):**
+- **OQ-1 → (a)**: header shows `conflictCategory · integrationType` only (no `detectedAt` — it is absent from the detail DTO). Zero backend change.
+- **OQ-2 → render two tiers**: `suggestedDecisions` safety is `safe`/`risky` only; `coerceSuggestedSafety` maps anything else → `risky`. No synthetic `caution`. `safe`→success `[SAFE]` chip, `risky`→error `[RISKY]` chip via `safetyStateName` → `StateSignifierChip`.
+- **OQ-3 → (a)**: the operator-queue launch (AC8c) is treated as "navigates to a surface that launches the dialog" — NO code in this story (the queue row carries no `conflictId`). This story's owned launch points are the Decision Bar seam (AC8a) + the drift indicator (AC8b).
+- **OQ-4 → close immediately + announce**: on success the dialog calls `onClose()` and the persistent live region speaks `recoveryReconcileRecorded`.
+
+**Key design decisions / traps honored:**
+- **conflictId resolution (AC8):** neither the Decision Bar `onReconcile` seam (`onReconcile?.()`, no arg) nor the drift indicator carries a `conflictId` — only the run-scoped list does. Added `useRunIntegrationConflicts(runId)` (GET `…/integration-conflicts?workflowRunId&resolved=false`, keyed under `detail(runId)`) + `resolveConflictId(conflicts, hint?)` (integration-matched, else newest) so both surfaces resolve a concrete id before opening the (AC1-fixed `conflictId: string`) dialog.
+- **Announcement survival:** reconcile resolves the conflict and can flip the run out of `Paused`, which would unmount the container that renders the dialog. So (like 4.22 resume/rerun/pause) the reconcile mutation is HOISTED into `WorkflowDecisionBar` and `showRecovery` extended with `reconcile.isPending || reconcile.isSuccess`; the dialog's `aria-live` region is rendered OUTSIDE the radix portal so the "recorded" announcement survives the close.
+- **Factory extension:** `useWorkflowMutation` gained an OPTIONAL `onSuccess({queryClient,data,variables})` hook (backward compatible) so `useReconcileWorkflow` can invalidate the `conflictId`-keyed detail (rooted at `all`, outside the `detail(runId)` cascade — trap #7).
+- **Snapshots (trap #4):** parsed defensively (`parseSnapshot` degrades on null/array/primitive/malformed, never throws); rendered only as React-escaped text nodes (no `dangerouslySetInnerHTML`); unknown fields → "Raw metadata" `<details>`; field-level diff (added/removed/modified) over known fields, snake/camel-insensitive.
+- **Esc-dirty discard (AC7, trap #8):** `handleOpenChange` intercepts a close while `reasonText` is dirty and opens a separate `ConfirmationDialog` discard prompt (works for both the desktop dialog and the mobile sheet — not nested inside the sheet body, honoring T-NO-STACK).
+- No `confirmationCatalog` entry added (trap #10); query keys via the factory (trap #9); all view helpers + copy in the sibling `reconciliationDialogView.ts` (never the `.tsx`).
+
+**Launch context (b) — drift indicator:** `FailureEventSurface` `SyncStatusRow` now renders a "Reconcile" button (replacing the static tooltip) when the integration has drifted AND a matching unresolved conflict exists; otherwise the static tooltip remains.
+
 ### File List
+
+**Created:**
+- `deliveryline-frontend/src/features/workflows/components/ReconciliationDialog.tsx`
+- `deliveryline-frontend/src/features/workflows/components/reconciliationDialogView.ts`
+- `deliveryline-frontend/src/features/workflows/components/reconciliationDialogView.test.ts`
+- `deliveryline-frontend/src/features/workflows/components/ReconciliationDialog.test.tsx`
+- `deliveryline-frontend/src/features/workflows/hooks/useIntegrationConflict.ts`
+- `deliveryline-frontend/src/features/workflows/hooks/useIntegrationConflict.test.tsx`
+- `deliveryline-frontend/src/features/workflows/hooks/useReconcileWorkflow.ts`
+- `deliveryline-frontend/src/features/workflows/hooks/useReconcileWorkflow.test.tsx`
+- `deliveryline-frontend/src/features/workflows/hooks/useRunIntegrationConflicts.ts`
+- `deliveryline-frontend/src/features/workflows/hooks/useRunIntegrationConflicts.test.tsx`
+
+**Modified:**
+- `deliveryline-frontend/src/lib/queryKeys/workflowKeys.ts` (+`integrationConflict`, +`integrationConflicts`)
+- `deliveryline-frontend/src/lib/queryKeys/workflowKeys.test.ts`
+- `deliveryline-frontend/src/lib/a11y/announcements.ts` (+`recoveryReconcile*`)
+- `deliveryline-frontend/src/features/workflows/hooks/useWorkflowMutation.ts` (optional `onSuccess` extension)
+- `deliveryline-frontend/src/features/workflows/components/RecoveryDecisionBarContainer.tsx` (wire `onReconcile` + render dialog; **code-review:** gate `onReconcile` on a resolvable `conflictId` + pass `reconcileResolving`)
+- `deliveryline-frontend/src/features/workflows/components/RecoveryDecisionBarContainer.full.test.tsx` (+reconcile-seam test; **code-review:** +disabled-while-resolving test)
+- `deliveryline-frontend/src/features/workflows/components/ApprovalDecisionBar.tsx` (**code-review:** +backward-compatible `reconcileResolving` prop → accurate disabled-reconcile copy)
+- `deliveryline-frontend/src/features/workflows/components/WorkflowDecisionBar.tsx` (hoist reconcile mutation)
+- `deliveryline-frontend/src/features/workflows/components/FailureEventSurface.tsx` (drift indicator → open dialog)
+
+### Change Log
+
+| Date | Version | Description | Author |
+| ---- | ------- | ----------- | ------ |
+| 2026-07-16 | 0.1 | Story 4.23 implemented — Operator Reconciliation Dialog UI (FE-only over live 4.11/4.18 contracts). Two query hooks (`useIntegrationConflict`, `useRunIntegrationConflicts`) + `useReconcileWorkflow` mutation + `ReconciliationDialog` + `reconciliationDialogView` helpers + `recoveryReconcile*` announcements + `integrationConflict(s)` query keys. Wired the Decision Bar seam (`onReconcile`, reconcile mutation hoisted into `WorkflowDecisionBar`) and the drift indicator. All 11 ACs met; OQ-1..4 resolved with documented defaults. FE verify GREEN (tsc/lint/1443 tests/a11y/api/build/prettier). Status → review. | Amelia (Opus 4.8) |
+
+## Review Findings
+
+_Code review 2026-07-16 (adversarial 3-layer: Blind Hunter + Edge Case Hunter + Acceptance Auditor). 6 patch (1 resolved from decision-needed → option 1), 3 deferred, 4 dismissed as noise. **All 6 patches APPLIED + verified GREEN (tsc/lint/1449 tests/a11y/api/build/prettier).**_
+
+- [x] [Review][Patch] Decision Bar "Reconcile" button stays enabled before the conflicts query resolves (or when the unresolved list is empty), so a click is a silent no-op. **Resolution (Alex, option 1):** the container now computes `resolvableConflictId` and passes `onReconcile` only when it is defined, plus a new backward-compatible `reconcileResolving` prop on `ApprovalDecisionBar` so the disabled button reads "Loading the conflict to reconcile…" (not the seam-missing "upcoming increment" copy). New container test covers the disabled-while-resolving state. [RecoveryDecisionBarContainer.tsx + ApprovalDecisionBar.tsx]
+- [x] [Review][Patch] `resolveConflictId` hinted no-match now returns `undefined` (hint is a HARD filter) instead of falling back to `unresolved[0]` — a drifted Linear row whose run has only a GitHub conflict no longer opens the dialog on the GitHub conflict (the drift-row button hides). Updated hook test + new negative test at the `FailureEventSurface`. [useRunIntegrationConflicts.ts:66-79]
+- [x] [Review][Patch] Transport / non-`ProblemDetails` submit failure now renders a visible generic `ErrorNotice` (new `submitFailed` body prop gates it; `ErrorNotice`/`errorNoticeCopy` accept an undefined code → generic copy + `data-error-code="transport"`) rather than only the sr-only announcement. [ReconciliationDialog.tsx]
+- [x] [Review][Patch] AC8b drift-indicator launch context now has test coverage — new `FailureEventSurface — reconcile drift launch (story 4.23)` describe: a drifted Linear row opens the dialog on the matching unresolved conflict, and no Reconcile button is offered when no matching conflict exists. [FailureEventSurface.test.tsx]
+- [x] [Review][Patch] Reset effect now keyed on `[open, conflictId]` — reopening for a different conflict without an intervening close re-resets the decision/reason. [ReconciliationDialog.tsx reset effect]
+- [x] [Review][Patch] AC11 test fidelity — added an `{Escape}`-key dirty-reason discard test and a focus-into-dialog-on-open / return-to-trigger-on-close test (new `TriggerHarness`). [ReconciliationDialog.test.tsx]
+
+- [x] [Review][Defer] Announcement survival not hoisted on the `FailureEventSurface` drift launch path [deliveryline-frontend/src/features/workflows/components/FailureEventSurface.tsx] — deferred, symmetric-hardening; the Decision Bar path hoists the reconcile mutation into `WorkflowDecisionBar` to survive the post-reconcile state flip, but the drift path uses the internal mutation instance. Unproven that the diagnostics panel unmounts on the flip.
+- [x] [Review][Defer] Fast double-click on Confirm can fire two mutations with different idempotency keys (guard reads stale `isPending`) [deliveryline-frontend/src/features/workflows/components/ReconciliationDialog.tsx handleConfirm] — deferred, matches the established pattern across the other decision bars; tiny window, button disables on `isPending`.
+- [x] [Review][Defer] Both snapshot panels render mirrored diff rows — an external-only field appears on the internal panel labeled "(Added)" beside a dash (and vice-versa) [deliveryline-frontend/src/features/workflows/components/reconciliationDialogView.ts diffSnapshots] — deferred, possibly intentional aligned-comparison layout; UX-clarity polish.

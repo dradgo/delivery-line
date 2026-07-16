@@ -153,8 +153,30 @@ export const workflowKeys = {
   rerunPreview: (workflowRunId: string, targetStep: string) =>
     [...workflowKeys.detail(workflowRunId), 'rerunPreview', targetStep] as const,
 
+  /**
+   * Story 4.23 (AC1) — a run's UNRESOLVED integration conflicts (story 4.18
+   * `GET /api/v1/integration-conflicts?workflowRunId=…&resolved=false`). Keyed under
+   * `detail(runId)` — the launch surfaces (Decision Bar seam / drift indicator) carry only a
+   * run id, so this run-scoped list resolves a concrete `conflictId` to open the dialog with.
+   * A structural PREFIX child of `detail(id)`, so a reconcile mutation's `detail(id)`
+   * invalidation cascade refreshes it for free (a reconciled conflict drops off the list).
+   */
+  integrationConflicts: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'integrationConflicts'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
+
+  /**
+   * Story 4.23 (AC1) — a single integration conflict's detail (story 4.18
+   * `GET /api/v1/integration-conflicts/{conflictId}`). Keyed OFF `all` (a sibling of
+   * `artifact(id)`), NOT under `detail(runId)`: the endpoint is keyed by `conflictId`, not run
+   * id — a conflict spans an integration link, and the dialog fetches it dialog-scoped. Read-only
+   * + idempotent (no Idempotency-Key). The reconcile mutation invalidates it EXPLICITLY on success
+   * (it is not under any `detail(runId)` subtree, so the factory's cascade does not reach it).
+   */
+  integrationConflict: (conflictId: string) =>
+    [...workflowKeys.all, 'integrationConflict', conflictId] as const,
 
   /**
    * Story 4.20 (AC1) — a typed revision delta between two artifact versions of ONE lineage

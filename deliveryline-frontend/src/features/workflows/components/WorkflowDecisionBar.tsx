@@ -18,6 +18,7 @@
  */
 import { useAcceptImplementation } from '../hooks/useAcceptImplementation';
 import { usePauseWorkflow } from '../hooks/usePauseWorkflow';
+import { useReconcileWorkflow } from '../hooks/useReconcileWorkflow';
 import { useRejectImplementation } from '../hooks/useRejectImplementation';
 import { useRerunFromStep } from '../hooks/useRerunFromStep';
 import { useResumeWorkflow } from '../hooks/useResumeWorkflow';
@@ -55,6 +56,10 @@ export function WorkflowDecisionBar({
   const resume = useResumeWorkflow(workflowRunId);
   const rerun = useRerunFromStep(workflowRunId);
   const pause = usePauseWorkflow(workflowRunId);
+  // Story 4.23 — hoist reconcile too: it resolves a conflict and can flip the run out of Paused,
+  // which would otherwise unmount the recovery bar (+ its reconciliation dialog) before the success
+  // announcement is spoken. Kept alive through `reconcile.isSuccess` below.
+  const reconcile = useReconcileWorkflow(workflowRunId);
 
   // Keep each bar mounted through a settling decision (pending OR just-succeeded) so the
   // success summary / PR affordance / announcement are not torn down when `currentState`
@@ -80,7 +85,9 @@ export function WorkflowDecisionBar({
     rerun.isPending ||
     rerun.isSuccess ||
     pause.isPending ||
-    pause.isSuccess;
+    pause.isSuccess ||
+    reconcile.isPending ||
+    reconcile.isSuccess;
 
   if (showImplReview) {
     return (
@@ -102,6 +109,7 @@ export function WorkflowDecisionBar({
         resume={resume}
         rerun={rerun}
         pause={pause}
+        reconcile={reconcile}
       />
     );
   }

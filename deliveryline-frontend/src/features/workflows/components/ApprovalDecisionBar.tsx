@@ -163,6 +163,13 @@ export interface ApprovalDecisionBarProps {
    */
   onReconcile?: (() => void) | undefined;
   /**
+   * Story 4.23 — the reconcile seam is wired but its `conflictId` is resolved asynchronously from the
+   * run's conflict list. While that resolve is pending (or the list came back empty), the container
+   * leaves `onReconcile` undefined AND sets this flag so the disabled button explains it is preparing
+   * (rather than the seam-missing "upcoming increment" copy). Prevents an enabled-but-dead click.
+   */
+  reconcileResolving?: boolean | undefined;
+  /**
    * Story 4.22 (AC7) — the classify-failure entry-point seam (owned by story 4.24). When omitted
    * the gated button renders DISABLED + explained (AC11 / OQ-2).
    */
@@ -424,6 +431,7 @@ export function ApprovalDecisionBar({
   onRerunFromStep,
   onPause,
   onReconcile,
+  reconcileResolving,
   onClassifyFailure,
   rerunPreview,
   onRerunPreviewRequest,
@@ -788,7 +796,11 @@ export function ApprovalDecisionBar({
       const explId = `${idBase}-${token}-unavailable`;
       const explanation =
         token === 'reconcile_conflict'
-          ? 'Opens in the reconciliation dialog — available in an upcoming increment.'
+          ? reconcileResolving === true
+            ? // Seam IS wired (4.23) — the button is disabled only until the conflict to reconcile is
+              // resolved from the run's conflict list (or none is currently available).
+              'Loading the conflict to reconcile…'
+            : 'Opens in the reconciliation dialog — available in an upcoming increment.'
           : 'Opens in the classification dialog — available in an upcoming increment.';
       return (
         <span key={token} className="inline-flex flex-col gap-1" data-testid={testId}>

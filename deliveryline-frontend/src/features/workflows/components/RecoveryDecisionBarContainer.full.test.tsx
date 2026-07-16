@@ -31,6 +31,8 @@ const DETAIL_URL = `${API}/:runId`;
 const DIAGNOSTICS_URL = `${API}/:runId/failure-diagnostics`;
 const PREVIEW_URL = `${API}/:runId/preview-rerun-from-step`;
 const RESUME_URL = `${API}/:runId/resume`;
+const CONFLICTS_URL = 'http://localhost/api/v1/integration-conflicts';
+const CONFLICT_DETAIL_URL = 'http://localhost/api/v1/integration-conflicts/:conflictId';
 
 function allowed(actions: string[], workflowState = 'Failed') {
   return HttpResponse.json({ actions, versionStamp: { workflowState, lastEventId: 'evt_1' } });
@@ -211,5 +213,64 @@ describe('RecoveryDecisionBarContainer — full activation (story 4.22)', () => 
     const preview = await screen.findByTestId('rerun-preview');
     await waitFor(() => expect(preview).toHaveTextContent('art_super_9'));
     expect(preview).toHaveTextContent('apr_inv_9');
+  });
+
+  it('wires the reconcile seam: clicking Reconcile resolves a conflictId and opens the dialog (story 4.23, AC8)', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () => allowed(['reconcile_conflict'], 'Paused')),
+      http.get(DETAIL_URL, () => detail('Paused')),
+      http.get(DIAGNOSTICS_URL, () => diagnostics([])),
+      http.get(CONFLICTS_URL, () =>
+        HttpResponse.json({
+          conflicts: [{ conflictId: 'icf_seam_1', integrationType: 'github_pr' }],
+        }),
+      ),
+      http.get(CONFLICT_DETAIL_URL, () =>
+        HttpResponse.json({
+          conflictId: 'icf_seam_1',
+          workflowRunId: RUN_ID,
+          conflictCategory: 'external_state_advanced',
+          integrationType: 'github_pr',
+          internalStateSnapshot: '{"state":"open"}',
+          externalStateSnapshot: '{"state":"merged"}',
+          suggestedDecisions: [{ decision: 'accept_external_state', safety: 'safe' }],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderContainer();
+    // The button starts as the disabled placeholder and becomes ENABLED once the conflicts query
+    // resolves a concrete conflictId (handler wired) — re-query each poll (the node is swapped).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Reconcile conflict' })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole('button', { name: 'Reconcile conflict' }));
+    // The reconciliation dialog opens on the resolved conflict.
+    expect(await screen.findByTestId('reconciliation-decisions')).toBeInTheDocument();
+  });
+
+  it('keeps the reconcile button DISABLED + explained while no conflict is resolvable, so a click never dead-no-ops (story 4.23 D1)', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () => allowed(['reconcile_conflict'], 'Paused')),
+      http.get(DETAIL_URL, () => detail('Paused')),
+      http.get(DIAGNOSTICS_URL, () => diagnostics([])),
+      // The action is offered but the unresolved-conflict list is empty (another operator resolved
+      // it, or it is still loading) — no concrete conflictId to open the dialog on.
+      http.get(CONFLICTS_URL, () => HttpResponse.json({ conflicts: [] })),
+    );
+    renderContainer();
+    const reconcile = await screen.findByRole('button', { name: 'Reconcile conflict' });
+    // Never enabled (would be an enabled-but-dead click), and explained with resolving copy — NOT the
+    // 4.22 seam-missing "upcoming increment" placeholder.
+    await waitFor(() =>
+      expect(screen.getByTestId('recovery-action-reconcile_conflict')).toHaveTextContent(
+        /loading the conflict to reconcile/i,
+      ),
+    );
+    expect(reconcile).toBeDisabled();
+    // The resolving copy (not the 4.22 seam-missing "upcoming increment" placeholder) is shown.
+    expect(screen.getByTestId('recovery-action-reconcile_conflict')).not.toHaveTextContent(
+      /upcoming increment/i,
+    );
   });
 });

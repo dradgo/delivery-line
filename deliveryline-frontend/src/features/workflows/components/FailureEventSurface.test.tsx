@@ -268,6 +268,112 @@ describe('FailureEventSurface — failure-diagnostics deep-dive (story 4.4)', ()
 });
 
 // ---------------------------------------------------------------------------
+// Story 4.23 (Task 10, AC8b) — the drift-indicator reconcile launch context.
+// ---------------------------------------------------------------------------
+describe('FailureEventSurface — reconcile drift launch (story 4.23)', () => {
+  const DIAGNOSTICS_URL = 'http://localhost/api/v1/workflows/:runId/failure-diagnostics';
+  const ALLOWED_URL = 'http://localhost/api/v1/workflows/:runId/allowed-actions';
+  const CONFLICTS_URL = 'http://localhost/api/v1/integration-conflicts';
+  const CONFLICT_DETAIL_URL = 'http://localhost/api/v1/integration-conflicts/:conflictId';
+
+  /** Diagnostics with a drifted Linear sync (so the Linear row can offer Reconcile). */
+  function diagnosticsWithLinearDrift() {
+    return {
+      currentState: 'Failed',
+      failedStage: 'execution',
+      lastSuccessfulStage: 'Executing',
+      failureCategory: 'runner_crash',
+      failureReason: 'container exited with SIGSEGV',
+      correlationId: 'corr_fix_fail_001',
+      lastGoodState: 'Executing',
+      currentBlockingReason: null,
+      nextSafeAction: 'retry',
+      lastActorIdentity: 'codex-runner',
+      runnerLogReference: null,
+      integrationSyncStatus: {
+        linear: {
+          integrationType: 'linear',
+          externalRef: 'LIN-9',
+          syncStatus: 'stale',
+          lastSyncAt: '2026-06-17T09:00:00Z',
+        },
+        github: null,
+      },
+      recommendedRecoveryActions: [],
+    };
+  }
+
+  function serveAllowedActions() {
+    server.use(
+      http.get(ALLOWED_URL, () =>
+        HttpResponse.json({
+          actions: ['retry', 'view_diagnostics', 'view_runner_logs'],
+          versionStamp: { workflowState: 'Failed', lastEventId: 'evt_fix_fail_010' },
+        }),
+      ),
+    );
+  }
+
+  async function openSyncSection() {
+    serveAllowedActions();
+    const user = userEvent.setup();
+    renderSurface(FAILED_RUN);
+    await screen.findByTestId('failure-event-surface');
+    const failure = screen
+      .getAllByTestId('failure-event-row')
+      .find((row) => row.getAttribute('data-event-type') === 'runner.failed');
+    await user.click(failure as HTMLElement);
+    await screen.findByTestId('failure-diagnostics-summary');
+    await user.click(screen.getByTestId('failure-diagnostics-sync-trigger'));
+    return user;
+  }
+
+  it('a drifted Linear row opens the reconciliation dialog on the matching unresolved conflict (AC8b)', async () => {
+    server.use(
+      http.get(DIAGNOSTICS_URL, () => HttpResponse.json(diagnosticsWithLinearDrift())),
+      http.get(CONFLICTS_URL, () =>
+        HttpResponse.json({
+          conflicts: [{ conflictId: 'icf_linear_1', integrationType: 'linear' }],
+        }),
+      ),
+      http.get(CONFLICT_DETAIL_URL, () =>
+        HttpResponse.json({
+          conflictId: 'icf_linear_1',
+          workflowRunId: FAILED_RUN,
+          conflictCategory: 'metadata_drift',
+          integrationType: 'linear',
+          internalStateSnapshot: '{"state":"open"}',
+          externalStateSnapshot: '{"state":"done"}',
+          suggestedDecisions: [{ decision: 'accept_external_state', safety: 'safe' }],
+        }),
+      ),
+    );
+    const user = await openSyncSection();
+    // The Linear (drifted) row exposes a Reconcile control (replacing the static tooltip).
+    const reconcile = await screen.findByTestId('failure-diagnostics-reconcile');
+    await user.click(reconcile);
+    // The dialog opens on the resolved conflict.
+    expect(await screen.findByTestId('reconciliation-decisions')).toBeInTheDocument();
+  });
+
+  it('does NOT offer Reconcile on a drifted row whose integration has no matching unresolved conflict (patch #1 — no cross-integration launch)', async () => {
+    server.use(
+      http.get(DIAGNOSTICS_URL, () => HttpResponse.json(diagnosticsWithLinearDrift())),
+      // The run's only unresolved conflict is on GitHub — NOT the drifted Linear integration.
+      http.get(CONFLICTS_URL, () =>
+        HttpResponse.json({
+          conflicts: [{ conflictId: 'icf_github_1', integrationType: 'github_pr' }],
+        }),
+      ),
+    );
+    await openSyncSection();
+    // The Linear drift row is shown but must not launch onto the unrelated GitHub conflict.
+    await screen.findByTestId('failure-diagnostics-sync-status');
+    expect(screen.queryByTestId('failure-diagnostics-reconcile')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Story 3.29 (Task 5, AC5/R6) — the takeover row (a live workflow.stateChanged
 // → TakenOver event; NOT a recovery.takeover event type).
 // ---------------------------------------------------------------------------
