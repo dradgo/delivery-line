@@ -96,9 +96,10 @@ public class FailureTaxonomyCatalog {
   }
 
   /**
-   * The curated wire-value key set. Exposed package-private for {@code FailureTaxonomyCatalogTest}'s
-   * "no EXTRA prose" assertion: {@link #allValues()} iterates the enum, so a stray {@code CURATED}
-   * key that is not a governed registry value is never surfaced and would otherwise drift undetected.
+   * The curated wire-value key set. Exposed package-private for {@code
+   * FailureTaxonomyCatalogTest}'s "no EXTRA prose" assertion: {@link #allValues()} iterates the
+   * enum, so a stray {@code CURATED} key that is not a governed registry value is never surfaced
+   * and would otherwise drift undetected.
    */
   static java.util.Set<String> curatedWireValues() {
     return CURATED.keySet();

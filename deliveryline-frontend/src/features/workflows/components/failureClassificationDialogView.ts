@@ -15,7 +15,9 @@ export type FailureClassification = components['schemas']['FailureClassification
  * Compose the deprecated affix FROM the `deprecated` + `replacementValue` fields (NEVER a
  * pre-affixed backend string, AC4). Empty string for an active value.
  */
-export function deprecatedAffix(taxonomy: Pick<TaxonomyValue, 'deprecated' | 'replacementValue'>): string {
+export function deprecatedAffix(
+  taxonomy: Pick<TaxonomyValue, 'deprecated' | 'replacementValue'>,
+): string {
   if (!taxonomy.deprecated) {
     return '';
   }
@@ -59,7 +61,9 @@ export function resolvePreselectValue(
   // Deprecated prior → pre-select its replacement, but only if the replacement is a known active value.
   const replacement = priorEntry.replacementValue;
   const replacementEntry = findTaxonomy(values, replacement);
-  return replacementEntry !== undefined && !replacementEntry.deprecated ? (replacement as string) : '';
+  return replacementEntry !== undefined && !replacementEntry.deprecated
+    ? (replacement as string)
+    : '';
 }
 
 /**

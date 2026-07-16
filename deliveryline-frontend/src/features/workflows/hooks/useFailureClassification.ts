@@ -21,9 +21,7 @@ import { workflowKeys } from '@/lib/queryKeys/workflowKeys';
 
 export type FailureClassification = components['schemas']['FailureClassificationResponse'];
 
-async function fetchFailureClassification(
-  workflowRunId: string,
-): Promise<FailureClassification> {
+async function fetchFailureClassification(workflowRunId: string): Promise<FailureClassification> {
   try {
     return unwrap(
       await apiClient.GET('/api/v1/workflows/{workflowRunId}/failure-classification', {
@@ -41,10 +39,7 @@ async function fetchFailureClassification(
 }
 
 /** Read a run's current + prior failure classification. Pass `enabled: false` to skip the fetch. */
-export function useFailureClassification(
-  workflowRunId: string,
-  options?: { enabled?: boolean },
-) {
+export function useFailureClassification(workflowRunId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: workflowKeys.failureClassification(workflowRunId),
     queryFn: () => fetchFailureClassification(workflowRunId),

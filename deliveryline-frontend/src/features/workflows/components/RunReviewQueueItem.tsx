@@ -530,9 +530,7 @@ function OperatorRowBody({
         ) : null}
         {/* Story 4.24 (AC8a) — Classify launch context for a Failed row. Sits ABOVE the stretched
             navigation link (`relative z-[2]`) so it opens the taxonomy dialog rather than the run. */}
-        {onClassify !== undefined &&
-        row.currentState === 'Failed' &&
-        isValidRunId(row.runId) ? (
+        {onClassify !== undefined && row.currentState === 'Failed' && isValidRunId(row.runId) ? (
           <span className="relative z-[2] shrink-0">
             <Button
               type="button"
@@ -634,7 +632,12 @@ function OperatorRow({
       data-variant="operator"
       data-testid="run-review-queue-item"
     >
-      <OperatorRowBody row={row} density={density} nowMs={nowMs} classificationLabel={classificationLabel} />
+      <OperatorRowBody
+        row={row}
+        density={density}
+        nowMs={nowMs}
+        classificationLabel={classificationLabel}
+      />
     </div>
   );
 }

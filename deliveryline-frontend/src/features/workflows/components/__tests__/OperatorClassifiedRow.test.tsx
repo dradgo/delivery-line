@@ -134,9 +134,7 @@ describe('OperatorClassifiedRow (story 4.24 D2b/D3)', () => {
       operatorSignifier: 'STALLED',
     } as RunQueueRow);
 
-    await waitFor(() =>
-      expect(screen.getByTestId('run-review-queue-item')).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByTestId('run-review-queue-item')).toBeInTheDocument());
     expect(screen.queryByTestId('operator-classification-chip')).toBeNull();
     expect(screen.queryByTestId('operator-classify-action')).toBeNull();
     expect(onClassify).not.toHaveBeenCalled();

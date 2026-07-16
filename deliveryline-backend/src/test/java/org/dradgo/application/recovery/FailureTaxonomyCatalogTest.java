@@ -27,7 +27,8 @@ class FailureTaxonomyCatalogTest {
 
   @Test
   void curatedProseHasNoExtraKeysBeyondRegistry() {
-    // `allValues()` iterates the enum, so a stray CURATED key (prose for a value not in the governed
+    // `allValues()` iterates the enum, so a stray CURATED key (prose for a value not in the
+    // governed
     // registry) is never surfaced by the assertion above — assert the key set directly so an EXTRA
     // key reds the build too, not only a MISSING one.
     assertThat(FailureTaxonomyCatalog.curatedWireValues())
