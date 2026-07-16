@@ -1220,6 +1220,63 @@
         ],
         "type" : "object"
       },
+      "FailureClassificationResponse" : {
+        "properties" : {
+          "classifiedAt" : {
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "classifiedBy" : {
+            "example" : "local-operator",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "currentDisplayLabel" : {
+            "example" : "agent_execution_failure",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "currentTaxonomyValue" : {
+            "example" : "agent_execution_failure",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "deprecated" : {
+            "type" : "boolean"
+          },
+          "deprecatedReplacementValue" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "priorClassifications" : {
+            "items" : {
+              "$ref" : "#/components/schemas/PriorClassification"
+            },
+            "type" : "array"
+          },
+          "workflowRunId" : {
+            "example" : "run_abc123",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "deprecated",
+          "priorClassifications",
+          "workflowRunId"
+        ],
+        "type" : "object"
+      },
       "FailureDiagnosticsResponse" : {
         "properties" : {
           "correlationId" : {
@@ -1351,6 +1408,20 @@
           "redactionCount",
           "referencePath",
           "runnerExecutionId"
+        ],
+        "type" : "object"
+      },
+      "FailureTaxonomyRegistryResponse" : {
+        "properties" : {
+          "values" : {
+            "items" : {
+              "$ref" : "#/components/schemas/TaxonomyValue"
+            },
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "values"
         ],
         "type" : "object"
       },
@@ -2016,6 +2087,35 @@
           "supersededArtifactIds",
           "targetStep",
           "workflowRunId"
+        ],
+        "type" : "object"
+      },
+      "PriorClassification" : {
+        "properties" : {
+          "classifiedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "classifiedBy" : {
+            "example" : "local-operator",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "displayLabel" : {
+            "example" : "context_gap",
+            "type" : "string"
+          },
+          "taxonomyValue" : {
+            "example" : "context_gap",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "classifiedAt",
+          "displayLabel",
+          "taxonomyValue"
         ],
         "type" : "object"
       },
@@ -3516,6 +3616,45 @@
         "required" : [
           "actorIdentity",
           "actorType"
+        ],
+        "type" : "object"
+      },
+      "TaxonomyValue" : {
+        "properties" : {
+          "deprecated" : {
+            "type" : "boolean"
+          },
+          "description" : {
+            "type" : "string"
+          },
+          "examples" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "humanReadableName" : {
+            "example" : "Agent Execution Failure",
+            "type" : "string"
+          },
+          "replacementValue" : {
+            "description" : "Replacement wire value when this value is deprecated, else absent.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "value" : {
+            "example" : "agent_execution_failure",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "deprecated",
+          "description",
+          "examples",
+          "humanReadableName",
+          "value"
         ],
         "type" : "object"
       },
@@ -5594,6 +5733,27 @@
         ]
       }
     },
+    "/api/v1/registries/failure-taxonomy" : {
+      "get" : {
+        "operationId" : "getFailureTaxonomyRegistry",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/FailureTaxonomyRegistryResponse"
+                }
+              }
+            },
+            "description" : "The failure-taxonomy registry."
+          }
+        },
+        "summary" : "Get the governed failure-taxonomy registry with operator-facing prose",
+        "tags" : [
+          "Registries"
+        ]
+      }
+    },
     "/api/v1/runner-executions/{rexId}/logs/download" : {
       "get" : {
         "description" : "Returns the runner execution's ALREADY-redacted stdout/stderr as a text/plain attachment (story 3.6 post-hoc redaction is the authoritative guarantee; served verbatim, never re-redacted). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. The download is recorded as a best-effort audit.logDownloaded event. An unavailable log or gate denial returns 404 RUNNER_EXECUTION_NOT_FOUND.",
@@ -7111,6 +7271,59 @@
           }
         },
         "summary" : "Get workflow run event history",
+        "tags" : [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/workflows/{workflowRunId}/failure-classification" : {
+      "get" : {
+        "operationId" : "getFailureClassification",
+        "parameters" : [
+          {
+            "description" : "Run public id, e.g. run_abc123.",
+            "example" : "run_abc123",
+            "in" : "path",
+            "name" : "workflowRunId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/FailureClassificationResponse"
+                }
+              }
+            },
+            "description" : "Current + prior classification for the run."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "Malformed run id (INVALID_ID_PREFIX)."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "No such run (RUN_NOT_FOUND)."
+          }
+        },
+        "summary" : "Get the current + prior failure classification for a run",
         "tags" : [
           "Workflows"
         ]
@@ -8968,6 +9181,10 @@
     {
       "description" : "Operator-driven lineage recovery for ambiguous artifact history (story 4.16a).",
       "name" : "Artifact Lineage"
+    },
+    {
+      "description" : "Read governed vocabularies with operator-facing prose.",
+      "name" : "Registries"
     },
     {
       "description" : "Audit history query by ticket and by run over workflow_events.",

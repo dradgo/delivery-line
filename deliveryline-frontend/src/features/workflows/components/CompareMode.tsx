@@ -41,6 +41,8 @@ import {
   compareLoadFailed,
   compareLoaded,
   compareNoMeaningfulDiff,
+  compareShowingAfter,
+  compareShowingBefore,
 } from '@/lib/a11y/announcements';
 import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
 
@@ -48,6 +50,7 @@ import {
   compareLayout,
   type ChangeBlockView,
   type ChangeKind,
+  type CompareLayout,
   type CompareRevisionSummary,
   type CompareState,
   type CompareView,
@@ -71,6 +74,13 @@ export interface CompareModeProps {
    */
   readonly workflowRunId?: string | undefined;
   readonly artifactIdB?: string | undefined;
+  /**
+   * Story 4.21 (UX-DR23) — the resolved viewport, threaded from the container's `useResponsiveLayout()`
+   * read (Reconciliation 2). `'mobile'` (<768px) selects the dedicated full-screen single-column
+   * bounded state for the `default` comparison; `'desktop'` (tablet + desktop) keeps the 4.20 body.
+   * Defaults to `'desktop'` so fixture-driven presentational tests stay matchMedia-free.
+   */
+  readonly viewport?: 'mobile' | 'desktop';
 }
 
 /** A non-color change signifier (symbol + text label) — never color/icon alone (2.3 AC5). */
@@ -232,9 +242,14 @@ export function CompareMode({
   onRetry,
   workflowRunId,
   artifactIdB,
+  viewport = 'desktop',
 }: CompareModeProps) {
+  const isMobile = viewport === 'mobile';
   // AC7 — the "Show only changes" filter defaults ON where the diff is non-trivial.
   const [showOnlyChanges, setShowOnlyChanges] = useState(true);
+  // Story 4.21 (AC2) — the mobile before/after toggle: which single revision the column shows.
+  // Default `after` (the current/B artifact under review — OQ-2). Desktop ignores it.
+  const [side, setSide] = useState<'before' | 'after'>('after');
   // AC4 summary-first — OQ-4 provisional default: collapsed for prOutput (dense file diffs),
   // expanded for spec/plan (fewer, section/step-level blocks).
   const layout = view !== undefined ? compareLayout(view.artifactType) : 'side-by-side';
@@ -251,6 +266,23 @@ export function CompareMode({
       setShowOnlyChanges(true);
     }
   }, [view]);
+
+  // Review patch (4.21, OQ-2) — the mobile before/after toggle defaults to `after` per COMPARE, not
+  // per artifactType. Re-seed to `after` whenever the compared revision pair changes, so a NEW
+  // same-type compare on the same mounted instance (e.g. navigating between two spec compares) still
+  // opens on the current/B revision instead of leaking the operator's prior Before/After choice. The
+  // type-keyed seed above governs `summaryFirst`/`showOnlyChanges` only.
+  const initialisedPair = useRef<string | null>(null);
+  useEffect(() => {
+    if (view === undefined) {
+      return;
+    }
+    const pairKey = `${artifactIdB ?? ''}|${view.revisionA.version ?? ''}|${view.revisionB.version ?? ''}`;
+    if (initialisedPair.current !== pairKey) {
+      initialisedPair.current = pairKey;
+      setSide('after');
+    }
+  }, [view, artifactIdB]);
 
   // Per-region expand overrides (side-by-side); effective expanded = override ?? !summaryFirst.
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
@@ -326,6 +358,13 @@ export function CompareMode({
     onExit();
   }, [onExit]);
 
+  // Story 4.21 (AC2) — flip the mobile before/after toggle and announce the shown revision through
+  // the SAME single live region (reuses the transient-over-base announcement slot).
+  const showSide = useCallback((next: 'before' | 'after') => {
+    setSide(next);
+    setJumpAnnouncement(next === 'before' ? compareShowingBefore : compareShowingAfter);
+  }, []);
+
   // AC6 — J/K/arrow jump + Esc exit as region-level keyboard-shortcut ACCELERATORS. Bound as a
   // native listener on the section (not a JSX handler on the non-interactive landmark) so the
   // shortcuts layer over the natively-operable children (jump buttons, region toggles, exit).
@@ -361,9 +400,15 @@ export function CompareMode({
   // Compare button), so focus otherwise falls back to `document.body` — NOT a descendant of this
   // section — and the region-level `keydown` listener never receives events until the user
   // manually Tabs/clicks in. The section is `tabIndex={-1}`, so it is programmatically focusable.
+  // Review patch D1: on the mobile takeover, `CompareModeMobileBody` owns initial focus + the focus
+  // trap (its dialog is a descendant of this section, so the keydown accelerators still fire); do
+  // NOT steal that focus back to the section here.
   useEffect(() => {
+    if (isMobile && state === 'default') {
+      return;
+    }
     sectionRef.current?.focus();
-  }, []);
+  }, [isMobile, state]);
 
   const isRegionExpanded = (index: number): boolean => expanded[index] ?? !summaryFirst;
   const toggleRegion = (index: number) =>
@@ -381,6 +426,7 @@ export function CompareMode({
       aria-label="Compare revisions"
       data-testid="compare-mode"
       data-compare-state={state}
+      data-compare-viewport={viewport}
       tabIndex={-1}
       className="w-full outline-none"
     >
@@ -389,161 +435,187 @@ export function CompareMode({
         {announcement}
       </p>
 
-      {/* A minimal exit affordance is present in EVERY state so the operator can always leave. */}
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-section-heading">Compare revisions</h2>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={handleExit}
-          data-testid="compare-exit"
-        >
-          <X className="mr-1 size-4" aria-hidden />
-          Exit compare
-        </Button>
-      </div>
-
-      {state === 'loading' ? (
-        <div className="space-y-3" data-testid="compare-loading">
-          <Skeleton className="h-6 w-64" />
-          <div className="grid grid-cols-2 gap-4">
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        </div>
-      ) : null}
-
-      {state === 'no-baseline' ? (
-        <ErrorState
-          variant="unavailableDiffBaseline"
-          urgency="passive"
-          message="No earlier revision is available to compare against."
-          nextAction={{ kind: 'NavigateBack', label: 'Back to review' }}
+      {isMobile && state === 'default' && view !== undefined ? (
+        // Story 4.21 (AC1/AC5/AC6) — the dedicated full-screen single-column bounded state. Only the
+        // `default` comparison gets the bespoke takeover; non-default mobile states fall through to
+        // the shared exit header + existing responsive renders (OQ-4).
+        <CompareModeMobileBody
+          view={view}
+          layout={layout}
+          side={side}
+          onShowSide={showSide}
+          onJumpPrev={() => jump(-1)}
+          onJumpNext={() => jump(1)}
+          onExit={handleExit}
+          regionRefs={regionRefs}
+          lazyDiffEnabled={lazyDiffEnabled}
+          workflowRunId={workflowRunId ?? ''}
+          artifactIdB={artifactIdB ?? ''}
         />
-      ) : null}
-
-      {state === 'partial' ? (
-        <ErrorState
-          variant="failedRetrieval"
-          urgency="active"
-          title="Partial comparison"
-          message="One revision’s payload could not be read. This may be temporary."
-          nextAction={{ kind: 'Retry', onRetry: onRetry ?? (() => undefined) }}
-        />
-      ) : null}
-
-      {state === 'unavailable' ? (
-        <ErrorState
-          variant="failedRetrieval"
-          urgency="passive"
-          title="Comparison unavailable"
-          message="These revisions can’t be compared."
-          nextAction={{ kind: 'NavigateBack', label: 'Back to review' }}
-        />
-      ) : null}
-
-      {state === 'no-meaningful-diff' ? (
-        <div data-testid="compare-no-meaningful-diff">
-          {view !== undefined ? <CompareSummaryHeader view={view} showControls={false} /> : null}
-          <EmptyState
-            variant="noMeaningfulDiff"
-            title="These revisions are identical"
-            message="There are no meaningful differences between these two versions."
-          />
-        </div>
-      ) : null}
-
-      {state === 'default' && view !== undefined ? (
+      ) : (
         <>
-          <CompareSummaryHeader
-            view={view}
-            showControls
-            showOnlyChanges={showOnlyChanges}
-            onToggleShowOnlyChanges={() => setShowOnlyChanges((prev) => !prev)}
-            summaryFirst={summaryFirst}
-            onToggleSummaryFirst={() => setSummaryFirst((prev) => !prev)}
-            onJumpPrev={() => jump(-1)}
-            onJumpNext={() => jump(1)}
-          />
+          {/* A minimal exit affordance is present in EVERY state so the operator can always leave. */}
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-section-heading">Compare revisions</h2>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExit}
+              data-testid="compare-exit"
+            >
+              <X className="mr-1 size-4" aria-hidden />
+              Exit compare
+            </Button>
+          </div>
 
-          {!showOnlyChanges ? (
-            <p className="mb-2 text-meta text-text-tertiary" data-testid="compare-all-note">
-              A revision delta lists only the changed regions; there is no unchanged content to
-              show.
-            </p>
+          {state === 'loading' ? (
+            <div className="space-y-3" data-testid="compare-loading">
+              <Skeleton className="h-6 w-64" />
+              <div className="grid grid-cols-2 gap-4">
+                <Skeleton className="h-40 w-full" />
+                <Skeleton className="h-40 w-full" />
+              </div>
+            </div>
           ) : null}
 
-          <div className="flex gap-3">
-            {/* Non-color changed-region gutter (AC2 / 2.3 AC5) — one shape+label marker per region. */}
-            <nav
-              aria-label="Changed regions"
-              className="flex shrink-0 flex-col gap-1"
-              data-testid="compare-gutter"
-            >
-              {blocks.map((block, index) => {
-                const sig = changeKindSignifier(block.changeKind);
-                return (
-                  <button
-                    key={`marker-${index}`}
-                    type="button"
-                    onClick={() => goToRegion(index)}
-                    className="flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-annotation text-text-secondary hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
-                    data-compare-region-marker={index}
-                    data-change-kind={block.changeKind}
-                    aria-label={`${sig.label}: ${blockLabel(block)}`}
-                    title={`${sig.label}: ${blockLabel(block)}`}
-                  >
-                    <span aria-hidden className="font-mono">
-                      {sig.symbol}
-                    </span>
-                    <span className="max-w-[8rem] truncate">{blockLabel(block)}</span>
-                  </button>
-                );
-              })}
-            </nav>
+          {state === 'no-baseline' ? (
+            <ErrorState
+              variant="unavailableDiffBaseline"
+              urgency="passive"
+              message="No earlier revision is available to compare against."
+              nextAction={{ kind: 'NavigateBack', label: 'Back to review' }}
+            />
+          ) : null}
 
-            {/* Comparison surface — layout driven by artifactType (AC4). */}
-            <div
-              className="min-w-0 flex-1"
-              data-testid="compare-surface"
-              data-compare-layout={layout}
-            >
-              {total === 0 ? (
-                <p className="text-meta text-text-tertiary" data-testid="compare-surface-empty">
-                  No changed regions.
-                </p>
-              ) : layout === 'stacked' ? (
-                <StackedFileSurface
-                  blocks={blocks}
-                  regionRefs={regionRefs}
-                  summaryFirst={summaryFirst}
-                  lazyDiffEnabled={lazyDiffEnabled}
-                  workflowRunId={workflowRunId ?? ''}
-                  artifactIdB={artifactIdB ?? ''}
-                />
-              ) : (
-                // Single scrollport (inherently synced scroll — OQ-3) holding a 2-column
-                // prior|current row per changed region.
-                <div className="max-h-[32rem] overflow-y-auto" data-testid="compare-synced-scroll">
-                  {blocks.map((block, index) => (
-                    <SideBySideRegion
-                      key={`region-${index}`}
-                      block={block}
-                      index={index}
-                      expanded={isRegionExpanded(index)}
-                      onToggle={() => toggleRegion(index)}
-                      registerRef={(node) => {
-                        regionRefs.current[index] = node;
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
+          {state === 'partial' ? (
+            <ErrorState
+              variant="failedRetrieval"
+              urgency="active"
+              title="Partial comparison"
+              message="One revision’s payload could not be read. This may be temporary."
+              nextAction={{ kind: 'Retry', onRetry: onRetry ?? (() => undefined) }}
+            />
+          ) : null}
+
+          {state === 'unavailable' ? (
+            <ErrorState
+              variant="failedRetrieval"
+              urgency="passive"
+              title="Comparison unavailable"
+              message="These revisions can’t be compared."
+              nextAction={{ kind: 'NavigateBack', label: 'Back to review' }}
+            />
+          ) : null}
+
+          {state === 'no-meaningful-diff' ? (
+            <div data-testid="compare-no-meaningful-diff">
+              {view !== undefined ? (
+                <CompareSummaryHeader view={view} showControls={false} />
+              ) : null}
+              <EmptyState
+                variant="noMeaningfulDiff"
+                title="These revisions are identical"
+                message="There are no meaningful differences between these two versions."
+              />
             </div>
-          </div>
+          ) : null}
+
+          {state === 'default' && view !== undefined ? (
+            <>
+              <CompareSummaryHeader
+                view={view}
+                showControls
+                showOnlyChanges={showOnlyChanges}
+                onToggleShowOnlyChanges={() => setShowOnlyChanges((prev) => !prev)}
+                summaryFirst={summaryFirst}
+                onToggleSummaryFirst={() => setSummaryFirst((prev) => !prev)}
+                onJumpPrev={() => jump(-1)}
+                onJumpNext={() => jump(1)}
+              />
+
+              {!showOnlyChanges ? (
+                <p className="mb-2 text-meta text-text-tertiary" data-testid="compare-all-note">
+                  A revision delta lists only the changed regions; there is no unchanged content to
+                  show.
+                </p>
+              ) : null}
+
+              <div className="flex gap-3">
+                {/* Non-color changed-region gutter (AC2 / 2.3 AC5) — one shape+label marker per region. */}
+                <nav
+                  aria-label="Changed regions"
+                  className="flex shrink-0 flex-col gap-1"
+                  data-testid="compare-gutter"
+                >
+                  {blocks.map((block, index) => {
+                    const sig = changeKindSignifier(block.changeKind);
+                    return (
+                      <button
+                        key={`marker-${index}`}
+                        type="button"
+                        onClick={() => goToRegion(index)}
+                        className="flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-annotation text-text-secondary hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+                        data-compare-region-marker={index}
+                        data-change-kind={block.changeKind}
+                        aria-label={`${sig.label}: ${blockLabel(block)}`}
+                        title={`${sig.label}: ${blockLabel(block)}`}
+                      >
+                        <span aria-hidden className="font-mono">
+                          {sig.symbol}
+                        </span>
+                        <span className="max-w-[8rem] truncate">{blockLabel(block)}</span>
+                      </button>
+                    );
+                  })}
+                </nav>
+
+                {/* Comparison surface — layout driven by artifactType (AC4). */}
+                <div
+                  className="min-w-0 flex-1"
+                  data-testid="compare-surface"
+                  data-compare-layout={layout}
+                >
+                  {total === 0 ? (
+                    <p className="text-meta text-text-tertiary" data-testid="compare-surface-empty">
+                      No changed regions.
+                    </p>
+                  ) : layout === 'stacked' ? (
+                    <StackedFileSurface
+                      blocks={blocks}
+                      regionRefs={regionRefs}
+                      summaryFirst={summaryFirst}
+                      lazyDiffEnabled={lazyDiffEnabled}
+                      workflowRunId={workflowRunId ?? ''}
+                      artifactIdB={artifactIdB ?? ''}
+                    />
+                  ) : (
+                    // Single scrollport (inherently synced scroll — OQ-3) holding a 2-column
+                    // prior|current row per changed region.
+                    <div
+                      className="max-h-[32rem] overflow-y-auto"
+                      data-testid="compare-synced-scroll"
+                    >
+                      {blocks.map((block, index) => (
+                        <SideBySideRegion
+                          key={`region-${index}`}
+                          block={block}
+                          index={index}
+                          expanded={isRegionExpanded(index)}
+                          onToggle={() => toggleRegion(index)}
+                          registerRef={(node) => {
+                            regionRefs.current[index] = node;
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : null}
         </>
-      ) : null}
+      )}
     </section>
   );
 }
@@ -808,5 +880,307 @@ function StackedFileSurface({
         );
       })}
     </Accordion>
+  );
+}
+
+/** Compact revision label ("v2" / "unknown") for the mobile top bar. */
+function revisionVersionLabel(revision: CompareRevisionSummary): string {
+  return revision.version != null ? `v${revision.version}` : 'unknown';
+}
+
+/**
+ * Story 4.21 (AC1–AC6, UX-DR23) — the dedicated mobile bounded state: a `fixed inset-0` full-screen
+ * takeover (covers the AppShell nav rail + context panel — Reconciliation 4) with a persistent top
+ * bar (revision A/B labels + before/after toggle + prev/next change + exit) over a single-column
+ * body that scrolls beneath it. NEVER a shrunk side-by-side (AC6): one revision at a time for
+ * spec/plan (driven by the toggle); prOutput reuses the existing single-column file accordions
+ * (its per-file diff is inherently before/after, so the toggle is hidden — OQ-2). Reuses the
+ * parent's `regionRefs`/jump machinery + the SAME single aria-live region (via `onShowSide`).
+ */
+function CompareModeMobileBody({
+  view,
+  layout,
+  side,
+  onShowSide,
+  onJumpPrev,
+  onJumpNext,
+  onExit,
+  regionRefs,
+  lazyDiffEnabled,
+  workflowRunId,
+  artifactIdB,
+}: {
+  view: CompareView;
+  layout: CompareLayout;
+  side: 'before' | 'after';
+  onShowSide: (next: 'before' | 'after') => void;
+  onJumpPrev: () => void;
+  onJumpNext: () => void;
+  onExit: () => void;
+  regionRefs: React.MutableRefObject<(HTMLElement | null)[]>;
+  lazyDiffEnabled: boolean;
+  workflowRunId: string;
+  artifactIdB: string;
+}) {
+  // OQ-1 — a full-screen takeover locks background scroll while mounted (restored on exit).
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  // Review patch D1 (a11y) — the takeover is a modal dialog: the covered AppShell nav rail + context
+  // panel stay in the DOM, so contain Tab focus within the layer while it is open and restore focus
+  // to the trigger on close. Pairs with `role="dialog"`/`aria-modal` on the container below. (Esc
+  // exit is already handled by the parent section's keydown listener.)
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const container = containerRef.current;
+    // Move focus into the takeover on open (the container is programmatically focusable).
+    container?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || container === null) {
+        return;
+      }
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusables.length === 0) {
+        event.preventDefault();
+        container.focus();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (first === undefined || last === undefined) {
+        return;
+      }
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === container)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    container?.addEventListener('keydown', onKeyDown);
+    return () => {
+      container?.removeEventListener('keydown', onKeyDown);
+      if (previouslyFocused != null && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus();
+      }
+    };
+  }, []);
+
+  const { blocks } = view;
+  // prOutput file diffs are inherently before/after within one view → hide the toggle (OQ-2).
+  const showToggle = layout !== 'stacked';
+
+  return (
+    <div
+      ref={containerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="compare-mobile-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex flex-col bg-surface outline-none"
+      data-testid="compare-mobile-body"
+    >
+      {/* Persistent (sticky-by-flex) top bar — never scrolls with the body (AC5). */}
+      <div className="shrink-0 border-b border-border">
+        <div className="flex items-start justify-between gap-2 px-4 py-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2 id="compare-mobile-title" className="text-section-heading">
+              Compare revisions
+            </h2>
+            <p className="text-meta text-text-tertiary" data-testid="compare-mobile-revisions">
+              Before {revisionVersionLabel(view.revisionA)} · After{' '}
+              {revisionVersionLabel(view.revisionB)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onExit}
+            aria-label="Exit compare"
+            data-testid="compare-mobile-exit"
+            className="inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded-md border border-border text-text-secondary hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+          >
+            <X className="size-5" aria-hidden />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+          {showToggle ? (
+            <div
+              role="group"
+              aria-label="Show revision"
+              data-testid="compare-mobile-toggle"
+              data-compare-side={side}
+              className="inline-flex overflow-hidden rounded-md border border-border"
+            >
+              <button
+                type="button"
+                onClick={() => onShowSide('before')}
+                aria-pressed={side === 'before'}
+                data-testid="compare-mobile-before"
+                className={`inline-flex min-h-touch min-w-touch items-center justify-center px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus ${
+                  side === 'before'
+                    ? 'bg-surface-elevated text-text-primary'
+                    : 'text-text-secondary'
+                }`}
+              >
+                Before
+              </button>
+              <button
+                type="button"
+                onClick={() => onShowSide('after')}
+                aria-pressed={side === 'after'}
+                data-testid="compare-mobile-after"
+                className={`inline-flex min-h-touch min-w-touch items-center justify-center border-l border-border px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus ${
+                  side === 'after' ? 'bg-surface-elevated text-text-primary' : 'text-text-secondary'
+                }`}
+              >
+                After
+              </button>
+            </div>
+          ) : (
+            <p className="text-meta text-text-tertiary" data-testid="compare-mobile-proutput-note">
+              Each file shows its before/after diff together.
+            </p>
+          )}
+
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onJumpPrev}
+              aria-label="Previous change"
+              data-testid="compare-mobile-jump-prev"
+              className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-md border border-border text-text-secondary hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+            >
+              <ArrowUpWideNarrow className="size-5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={onJumpNext}
+              aria-label="Next change"
+              data-testid="compare-mobile-jump-next"
+              className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-md border border-border text-text-secondary hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+            >
+              <ArrowDownWideNarrow className="size-5" aria-hidden />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Single-column body — the ONLY scroll region (artifact-primacy, AC5). */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="compare-mobile-scroll">
+        {blocks.length === 0 ? (
+          <p className="text-meta text-text-tertiary" data-testid="compare-mobile-empty">
+            No changed regions.
+          </p>
+        ) : layout === 'stacked' ? (
+          // prOutput — the existing single-column file accordions (already one-file-at-a-time),
+          // registering their own region refs so prev/next still lands (AC3/AC4).
+          <StackedFileSurface
+            blocks={blocks}
+            regionRefs={regionRefs}
+            summaryFirst
+            lazyDiffEnabled={lazyDiffEnabled}
+            workflowRunId={workflowRunId}
+            artifactIdB={artifactIdB}
+          />
+        ) : (
+          <div className="space-y-3" data-testid="compare-mobile-column">
+            {blocks.map((block, index) => (
+              <MobileColumnBlock
+                key={`mobile-region-${index}`}
+                block={block}
+                index={index}
+                side={side}
+                registerRef={(node) => {
+                  regionRefs.current[index] = node;
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One changed region in the mobile single-column layout — shows ONLY the toggled side (AC4/AC6). */
+function MobileColumnBlock({
+  block,
+  index,
+  side,
+  registerRef,
+}: {
+  block: ChangeBlockView;
+  index: number;
+  side: 'before' | 'after';
+  registerRef: (node: HTMLElement | null) => void;
+}) {
+  const sig = changeKindSignifier(block.changeKind);
+  return (
+    <div
+      ref={registerRef}
+      tabIndex={-1}
+      data-testid={`compare-mobile-region-${index}`}
+      data-compare-region-index={index}
+      data-change-kind={block.changeKind}
+      data-block-kind={block.kind}
+      className="rounded-md border border-border p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
+    >
+      <div className="mb-1 flex items-center gap-2 text-sm font-medium text-text-primary">
+        <span
+          className="shrink-0 rounded-sm border border-border px-1 font-mono text-annotation"
+          aria-hidden
+        >
+          {sig.symbol}
+        </span>
+        <span className="shrink-0 text-annotation uppercase tracking-wide text-text-tertiary">
+          {sig.label}
+        </span>
+        <span className="min-w-0 truncate">{blockLabel(block)}</span>
+      </div>
+      <div data-testid={`compare-mobile-region-content-${index}`} data-compare-side={side}>
+        {block.kind === 'markdown' ? (
+          <MarkdownCell
+            text={side === 'before' ? block.priorText : block.currentText}
+            empty={
+              side === 'before'
+                ? 'Not present in the prior revision.'
+                : 'Removed in the current revision.'
+            }
+          />
+        ) : block.kind === 'planStep' ? (
+          <PlanStepCell
+            text={side === 'before' ? block.priorStepText : block.currentStepText}
+            order={side === 'before' ? block.priorStepOrder : block.currentStepOrder}
+            empty={
+              side === 'before'
+                ? 'Not present in the prior revision.'
+                : 'Removed in the current revision.'
+            }
+          />
+        ) : (
+          // A file block is routed to StackedFileSurface, not here; degrade safely if one appears.
+          <p className="text-meta text-text-tertiary">{blockLabel(block)}</p>
+        )}
+      </div>
+    </div>
   );
 }

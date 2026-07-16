@@ -21,8 +21,9 @@ import { operatorFilteredToRuns } from '@/lib/a11y/announcements';
 import { useLiveAnnouncement } from '@/lib/a11y/useLiveAnnouncement';
 import { operatorFiltersActive, type OperatorQueueFilters } from '@/lib/queryKeys/operatorKeys';
 
+import { FailureClassificationDialog } from './components/FailureClassificationDialog';
+import { OperatorClassifiedRow } from './components/OperatorClassifiedRow';
 import { OperatorFilterSidebar } from './components/OperatorFilterSidebar';
-import { RunReviewQueueItem } from './components/RunReviewQueueItem';
 import { toOperatorQueueRow } from './operatorQueueRow';
 import { queueErrorMessage } from './queueErrorMessage';
 import { QUEUE_ROW_MIN_HEIGHT, QUEUE_SKELETON_ROW_COUNT, resolveQueueState } from './queueState';
@@ -72,6 +73,12 @@ export function OperatorQueue({ filters, onFiltersChange }: OperatorQueueProps) 
   // Bulk-actions placeholder (AC6) — local-only selection state that wires to NOTHING.
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+
+  // Story 4.24 (AC8a) — a single lifted classify dialog opened from a failed row's "Classify" action
+  // (one open at a time; the row passes its run id). Review D2b/D3 — each Failed row is wrapped in
+  // `OperatorClassifiedRow`, which reads the run's classification: it offers Classify ONLY on a
+  // not-yet-classified row (AC8a) and surfaces the applied classification chip once classified (AC9).
+  const [classifyRunId, setClassifyRunId] = useState<string | undefined>(undefined);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
@@ -283,7 +290,10 @@ export function OperatorQueue({ filters, onFiltersChange }: OperatorQueueProps) 
                           </span>
                         ) : null}
                         <span className="min-w-0 flex-1">
-                          <RunReviewQueueItem run={toOperatorQueueRow(row)} variant="operator" />
+                          <OperatorClassifiedRow
+                            run={toOperatorQueueRow(row)}
+                            onClassify={setClassifyRunId}
+                          />
                         </span>
                       </li>
                     );
@@ -310,6 +320,12 @@ export function OperatorQueue({ filters, onFiltersChange }: OperatorQueueProps) 
           ) : null}
         </div>
       </div>
+      {classifyRunId !== undefined ? (
+        <FailureClassificationDialog
+          workflowRunId={classifyRunId}
+          onClose={() => setClassifyRunId(undefined)}
+        />
+      ) : null}
     </div>
   );
 }

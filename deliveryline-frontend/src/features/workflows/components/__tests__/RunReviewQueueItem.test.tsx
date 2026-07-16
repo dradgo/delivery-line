@@ -703,4 +703,48 @@ describe('RunReviewQueueItem - ticket title (story 3g-2)', () => {
     );
     await expectNoA11yViolations(container);
   });
+
+  // Story 4.24 (AC8a) — the operator-variant Classify launch context.
+  it('4.24 - a Failed operator row renders a Classify action that calls onClassify(runId)', async () => {
+    const onClassify = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'Failed' }}
+        variant="operator"
+        onClassify={onClassify}
+      />,
+    );
+
+    await user.click(screen.getByTestId('operator-classify-action'));
+    expect(onClassify).toHaveBeenCalledWith('run_abc123');
+  });
+
+  it('4.24 - a non-Failed operator row renders NO Classify action', () => {
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'WaitingForReview' }}
+        variant="operator"
+        onClassify={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('operator-classify-action')).toBeNull();
+  });
+
+  it('4.24 (AC9) - an operator row surfaces the applied classification chip when a label is given', () => {
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'Failed' }}
+        variant="operator"
+        classificationLabel="Agent Execution Failure"
+      />,
+    );
+    const chip = screen.getByTestId('operator-classification-chip');
+    expect(chip).toHaveTextContent('Classification: Agent Execution Failure');
+  });
+
+  it('4.24 (AC9) - no classification chip when no label is given', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, currentState: 'Failed' }} variant="operator" />);
+    expect(screen.queryByTestId('operator-classification-chip')).toBeNull();
+  });
 });

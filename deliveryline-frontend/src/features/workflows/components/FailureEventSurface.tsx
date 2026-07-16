@@ -42,8 +42,12 @@ import { cn } from '@/lib/utils';
 import { useWorkflowEvents } from '../hooks/useWorkflowEvents';
 import { useFailureDiagnostics } from '../hooks/useFailureDiagnostics';
 import { useAllowedActions } from '../hooks/useAllowedActions';
+import { useFailureClassification } from '../hooks/useFailureClassification';
+import { useFailureTaxonomy } from '../hooks/useFailureTaxonomy';
 import { useRetryWorkflow } from '../hooks/useRetryWorkflow';
 import { useRunIntegrationConflicts, resolveConflictId } from '../hooks/useRunIntegrationConflicts';
+import { FailureClassificationDialog } from './FailureClassificationDialog';
+import { humanNameForTaxonomy } from './failureClassificationDialogView';
 import { ReconciliationDialog } from './ReconciliationDialog';
 import { humanizeFailureCategory } from '../failureCategoryView';
 import {
@@ -634,7 +638,23 @@ export function FailureEventSurface({ workflowRunId }: FailureEventSurfaceProps)
   const query = useWorkflowEvents(workflowRunId);
   const [selected, setSelected] = useState<WorkflowEvent | undefined>(undefined);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [classifyOpen, setClassifyOpen] = useState(false);
   const nowMs = Date.now();
+
+  // Story 4.24 (AC8b/AC9) — the current classification (if any) surfaced with provenance next to the
+  // "Classify failure" trigger. Cached under `detail(id)`, so the classify mutation refreshes it.
+  const classificationQuery = useFailureClassification(workflowRunId);
+  // Review D1 — humanize via the governed registry (the wire `currentDisplayLabel` is the raw
+  // snake_case value); `humanNameForTaxonomy` title-cases as a fallback when the registry is
+  // unavailable, so this surface, the Run Context Strip chip, and the dialog render ONE name.
+  const taxonomyQuery = useFailureTaxonomy();
+  // Review D2 — only offer Classify when the run's live allowed-actions include it (parity with the
+  // Decision Bar). A failed-then-recovered run no longer shows an actionable trigger it would 409 on.
+  const allowedActionsQuery = useAllowedActions(workflowRunId, 'workflow_owner');
+  const classification = classificationQuery.data;
+  const currentClassification =
+    humanNameForTaxonomy(taxonomyQuery.data, classification?.currentTaxonomyValue) ?? undefined;
+  const canClassify = allowedActionsQuery.data?.actions.includes('classify_failure') ?? false;
 
   const surfaceEvents = (query.data?.events ?? []).filter(isSurfaceEvent);
 
@@ -651,7 +671,37 @@ export function FailureEventSurface({ workflowRunId }: FailureEventSurfaceProps)
 
   return (
     <section aria-label="Run events" data-testid="failure-event-surface" className="w-full">
-      <h2 className="mb-2 text-meta uppercase tracking-wide text-text-tertiary">Run events</h2>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-meta uppercase tracking-wide text-text-tertiary">Run events</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {currentClassification !== undefined ? (
+            <span
+              className="text-meta text-text-secondary"
+              data-testid="failure-diagnostics-classification"
+            >
+              Classified as{' '}
+              <span className="font-medium text-text-primary">{currentClassification}</span>
+              {/* Review D1 — the deprecated marker is surfaced SEPARATELY (never folded into the
+                  humanized name), so the taxonomy name stays the single canonical label. */}
+              {classification?.deprecated === true ? (
+                <span className="text-state-draft-foreground"> (deprecated)</span>
+              ) : null}
+              {classification?.classifiedBy != null ? <> by {classification.classifiedBy}</> : null}
+            </span>
+          ) : null}
+          {canClassify ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setClassifyOpen(true)}
+              data-testid="failure-diagnostics-classify-trigger"
+            >
+              Classify failure
+            </Button>
+          ) : null}
+        </div>
+      </div>
       <ul className="flex flex-col gap-2">
         {surfaceEvents.map((event) => (
           <FailureRow key={event.publicId} event={event} nowMs={nowMs} onSelect={handleSelect} />
@@ -668,6 +718,12 @@ export function FailureEventSurface({ workflowRunId }: FailureEventSurfaceProps)
           <DiagnosticsBody event={selected} workflowRunId={workflowRunId} />
         ) : null}
       </BoundedDetailSheet>
+      {classifyOpen ? (
+        <FailureClassificationDialog
+          workflowRunId={workflowRunId}
+          onClose={() => setClassifyOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }

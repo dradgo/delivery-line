@@ -291,3 +291,154 @@ describe('CompareMode — sanitization (AC5)', () => {
     expect(container.querySelector('img[onerror]')).toBeNull();
   });
 });
+
+describe('CompareMode — mobile bounded state (story 4.21)', () => {
+  it('AC1/AC6 — mobile default renders a single-column takeover; NO shrunk side-by-side', () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />);
+    const section = screen.getByTestId('compare-mode');
+    expect(section).toHaveAttribute('data-compare-viewport', 'mobile');
+    // The full-screen bounded body renders.
+    expect(screen.getByTestId('compare-mobile-body')).toBeInTheDocument();
+    expect(screen.getByTestId('compare-mobile-column')).toBeInTheDocument();
+    // AC6 — the desktop 2-col synced-scroll surface + region detail are ABSENT (one revision only).
+    expect(screen.queryByTestId('compare-synced-scroll')).toBeNull();
+    expect(screen.queryByTestId('compare-region-detail-0')).toBeNull();
+    expect(screen.queryByTestId('compare-surface')).toBeNull();
+  });
+
+  it('AC2/AC4 — the before/after toggle switches which single revision the column shows', async () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />);
+    // Default = after (current/B) — OQ-2.
+    const after = screen.getByTestId('compare-mobile-after');
+    const before = screen.getByTestId('compare-mobile-before');
+    expect(after).toHaveAttribute('aria-pressed', 'true');
+    expect(before).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('compare-mobile-region-content-0')).toHaveTextContent('new text');
+    expect(screen.getByTestId('compare-mobile-region-content-0')).not.toHaveTextContent('old text');
+    // Flip to before → the prior revision text renders instead.
+    await userEvent.click(before);
+    expect(before).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('compare-mobile-region-content-0')).toHaveTextContent('old text');
+    expect(screen.getByTestId('compare-mobile-region-content-0')).not.toHaveTextContent('new text');
+  });
+
+  it('AC10 — flipping the toggle announces the shown revision through the single live region', async () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />);
+    await userEvent.click(screen.getByTestId('compare-mobile-before'));
+    await waitFor(() =>
+      expect(screen.getByTestId('compare-announcer')).toHaveTextContent(
+        'Showing the before revision.',
+      ),
+    );
+    await userEvent.click(screen.getByTestId('compare-mobile-after'));
+    await waitFor(() =>
+      expect(screen.getByTestId('compare-announcer')).toHaveTextContent(
+        'Showing the after revision.',
+      ),
+    );
+  });
+
+  it('AC3 — the Previous/Next change buttons advance and announce the landed region', async () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />);
+    await userEvent.click(screen.getByTestId('compare-mobile-jump-next'));
+    await waitFor(() =>
+      expect(screen.getByTestId('compare-announcer')).toHaveTextContent('Changed region 1 of 2'),
+    );
+    await userEvent.click(screen.getByTestId('compare-mobile-jump-next'));
+    await waitFor(() =>
+      expect(screen.getByTestId('compare-announcer')).toHaveTextContent('Changed region 2 of 2'),
+    );
+  });
+
+  it('AC2/AC10 — every mobile control carries the 44px touch floor (static class-presence)', () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />);
+    // Toggle segments (text controls) carry min-h-touch.
+    expect(screen.getByTestId('compare-mobile-before')).toHaveClass('min-h-touch');
+    expect(screen.getByTestId('compare-mobile-after')).toHaveClass('min-h-touch');
+    // Icon-only controls carry BOTH floors.
+    for (const testId of [
+      'compare-mobile-jump-prev',
+      'compare-mobile-jump-next',
+      'compare-mobile-exit',
+    ]) {
+      const control = screen.getByTestId(testId);
+      expect(control).toHaveClass('min-h-touch');
+      expect(control).toHaveClass('min-w-touch');
+    }
+  });
+
+  it('AC7 — the mobile exit control calls onExit', async () => {
+    const onExit = vi.fn();
+    render(<CompareMode state="default" view={specView()} onExit={onExit} viewport="mobile" />);
+    await userEvent.click(screen.getByTestId('compare-mobile-exit'));
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC4 — prOutput mobile hides the before/after toggle and keeps file accordions', () => {
+    render(
+      <CompareMode state="default" view={prOutputView()} onExit={vi.fn()} viewport="mobile" />,
+    );
+    expect(screen.getByTestId('compare-mobile-body')).toBeInTheDocument();
+    // The per-file diff is inherently before/after → the toggle is hidden (OQ-2), a note replaces it.
+    expect(screen.queryByTestId('compare-mobile-toggle')).toBeNull();
+    expect(screen.getByTestId('compare-mobile-proutput-note')).toBeInTheDocument();
+    // File accordions still render (single-column, one file at a time).
+    expect(screen.getByTestId('compare-region-0')).toHaveAttribute('data-block-kind', 'file');
+    expect(screen.queryByTestId('compare-synced-scroll')).toBeNull();
+  });
+
+  it('AC9 — the desktop/tablet body renders NO mobile UI (mobile activates only at <768px)', () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="desktop" />);
+    expect(screen.getByTestId('compare-mode')).toHaveAttribute('data-compare-viewport', 'desktop');
+    expect(screen.queryByTestId('compare-mobile-body')).toBeNull();
+    // The 4.20 side-by-side surface is intact.
+    expect(screen.getByTestId('compare-synced-scroll')).toBeInTheDocument();
+  });
+
+  it('AC10 — axe-core: the mobile default render has zero violations', async () => {
+    const { container } = render(
+      <CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />,
+    );
+    await expectNoA11yViolations(container);
+  });
+
+  it('Review patch (a11y/D1) — the takeover is a labelled modal dialog and moves focus in', () => {
+    render(<CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />);
+    const dialog = screen.getByTestId('compare-mobile-body');
+    expect(dialog).toHaveAttribute('role', 'dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-labelledby', 'compare-mobile-title');
+    // Focus is contained — it moves into the takeover on open (the container is the initial target).
+    expect(dialog).toHaveFocus();
+  });
+
+  it('Review patch (OQ-2) — a NEW same-type compare re-seeds the toggle back to after', async () => {
+    const { rerender } = render(
+      <CompareMode state="default" view={specView()} onExit={vi.fn()} viewport="mobile" />,
+    );
+    // Operator flips to Before within the current compare.
+    await userEvent.click(screen.getByTestId('compare-mobile-before'));
+    expect(screen.getByTestId('compare-mobile-before')).toHaveAttribute('aria-pressed', 'true');
+    // A DIFFERENT revision pair of the SAME artifactType loads (a new compare, same instance).
+    rerender(
+      <CompareMode
+        state="default"
+        view={specView({
+          revisionB: {
+            version: 3,
+            producedByActor: null,
+            createdAt: '2026-07-03T00:00:00Z',
+            checksum: null,
+          },
+        })}
+        onExit={vi.fn()}
+        viewport="mobile"
+      />,
+    );
+    // The default re-seeds to `after` (the current/B revision under review) — no Before leak.
+    await waitFor(() =>
+      expect(screen.getByTestId('compare-mobile-after')).toHaveAttribute('aria-pressed', 'true'),
+    );
+    expect(screen.getByTestId('compare-mobile-before')).toHaveAttribute('aria-pressed', 'false');
+  });
+});

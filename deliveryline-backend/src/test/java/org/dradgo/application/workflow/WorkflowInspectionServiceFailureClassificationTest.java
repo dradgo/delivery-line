@@ -23,6 +23,7 @@ import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
 import org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
+import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -70,6 +71,7 @@ class WorkflowInspectionServiceFailureClassificationTest {
   @Test
   void classifiedRunSurfacesCurrentTripleAndPriorChainMostRecentFirst() {
     service.setFailureClassificationPort(classificationPort);
+    stubRunExists();
     when(classificationPort.findClassification(RUN))
         .thenReturn(
             Optional.of(
@@ -108,6 +110,7 @@ class WorkflowInspectionServiceFailureClassificationTest {
   @Test
   void neverClassifiedRunReturnsNullCurrentFieldsAndEmptyPriors() {
     service.setFailureClassificationPort(classificationPort);
+    stubRunExists();
     when(classificationPort.findClassification(RUN)).thenReturn(Optional.empty());
     when(events.listByWorkflowRunPublicId(RUN, null)).thenReturn(List.of());
 
@@ -125,6 +128,7 @@ class WorkflowInspectionServiceFailureClassificationTest {
   @Test
   void singleClassificationYieldsNoPriors() {
     service.setFailureClassificationPort(classificationPort);
+    stubRunExists();
     when(classificationPort.findClassification(RUN))
         .thenReturn(
             Optional.of(
@@ -142,6 +146,7 @@ class WorkflowInspectionServiceFailureClassificationTest {
   @Test
   void nonClassifyEventsAreIgnoredInThePriorChain() {
     service.setFailureClassificationPort(classificationPort);
+    stubRunExists();
     when(classificationPort.findClassification(RUN))
         .thenReturn(
             Optional.of(
@@ -166,6 +171,22 @@ class WorkflowInspectionServiceFailureClassificationTest {
         .isInstanceOfSatisfying(
             DomainException.class,
             ex -> assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.INTERNAL_ERROR));
+  }
+
+  @Test
+  void unknownRunThrowsRunNotFound() {
+    // Story 4.24 — an unknown run id is 404, distinct from a known-but-never-classified run (200).
+    service.setFailureClassificationPort(classificationPort);
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.getFailureClassification(RUN))
+        .isInstanceOfSatisfying(
+            DomainException.class,
+            ex -> assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.RUN_NOT_FOUND));
+  }
+
+  private void stubRunExists() {
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(mock(WorkflowRunSnapshot.class)));
   }
 
   private static WorkflowEventRecord classifiedEvent(

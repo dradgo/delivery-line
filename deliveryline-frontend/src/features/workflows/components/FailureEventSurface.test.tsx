@@ -499,3 +499,90 @@ describe('FailureEventSurface — takeover row (story 3.29)', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Story 4.24 review (D1/D2) — the classify launch context + the humanized
+// classification provenance rendered next to it (diagnostics launch surface).
+// ---------------------------------------------------------------------------
+describe('FailureEventSurface — classify launch + classification (story 4.24)', () => {
+  const ALLOWED_URL = 'http://localhost/api/v1/workflows/:runId/allowed-actions';
+  const TAXONOMY_URL = 'http://localhost/api/v1/registries/failure-taxonomy';
+  const CLASSIFICATION_URL = 'http://localhost/api/v1/workflows/:runId/failure-classification';
+
+  function serveAllowed(actions: string[]) {
+    server.use(
+      http.get(ALLOWED_URL, () =>
+        HttpResponse.json({
+          actions,
+          versionStamp: { workflowState: 'Failed', lastEventId: 'evt_fix_fail_010' },
+        }),
+      ),
+    );
+  }
+  function serveTaxonomy() {
+    server.use(
+      http.get(TAXONOMY_URL, () =>
+        HttpResponse.json({
+          values: [
+            {
+              value: 'agent_execution_failure',
+              humanReadableName: 'Agent Execution Failure',
+              description: 'The agent failed to produce a valid result.',
+              examples: ['malformed output'],
+              deprecated: false,
+            },
+          ],
+        }),
+      ),
+    );
+  }
+  function serveClassification(body: Record<string, unknown>) {
+    server.use(http.get(CLASSIFICATION_URL, () => HttpResponse.json(body)));
+  }
+
+  it('offers the Classify trigger only when classify_failure is an allowed action (D2)', async () => {
+    serveAllowed(['retry', 'classify_failure']);
+    serveTaxonomy();
+    serveClassification({ workflowRunId: FAILED_RUN, deprecated: false, priorClassifications: [] });
+    renderSurface(FAILED_RUN);
+    await screen.findByTestId('failure-event-surface');
+    expect(await screen.findByTestId('failure-diagnostics-classify-trigger')).toBeInTheDocument();
+  });
+
+  it('hides the Classify trigger for an ineligible run (classify_failure not allowed) (D2)', async () => {
+    serveAllowed(['retry', 'view_diagnostics']);
+    serveTaxonomy();
+    // A rendered classification chip proves the surface committed past its loading state; the gate is
+    // independent of it, so if the trigger were going to appear it would have by then.
+    serveClassification({
+      workflowRunId: FAILED_RUN,
+      currentTaxonomyValue: 'agent_execution_failure',
+      currentDisplayLabel: 'agent_execution_failure',
+      deprecated: false,
+      priorClassifications: [],
+    });
+    renderSurface(FAILED_RUN);
+    await screen.findByTestId('failure-event-surface');
+    await screen.findByTestId('failure-diagnostics-classification');
+    expect(screen.queryByTestId('failure-diagnostics-classify-trigger')).toBeNull();
+  });
+
+  it('renders the current classification humanized via the registry, not the raw wire value (D1)', async () => {
+    serveAllowed(['retry', 'classify_failure']);
+    serveTaxonomy();
+    serveClassification({
+      workflowRunId: FAILED_RUN,
+      currentTaxonomyValue: 'agent_execution_failure',
+      currentDisplayLabel: 'agent_execution_failure',
+      deprecated: false,
+      classifiedBy: 'alex',
+      priorClassifications: [],
+    });
+    renderSurface(FAILED_RUN);
+    await screen.findByTestId('failure-event-surface');
+    const chip = await screen.findByTestId('failure-diagnostics-classification');
+    expect(chip).toHaveTextContent('Agent Execution Failure');
+    expect(chip).not.toHaveTextContent('agent_execution_failure');
+    expect(chip).toHaveTextContent(/by alex/i);
+  });
+});

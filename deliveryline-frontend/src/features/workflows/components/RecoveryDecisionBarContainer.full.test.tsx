@@ -95,9 +95,10 @@ describe('RecoveryDecisionBarContainer — full activation (story 4.22)', () => 
     await screen.findByRole('button', { name: 'Retry failed step' });
     expect(screen.getByRole('button', { name: 'Rerun from step' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pause run' })).toBeInTheDocument();
-    // classify has no wired handler here (OQ-2) → disabled + explained, still present.
+    // Story 4.24 wired the classify seam → the button is now ENABLED when classify_failure is an
+    // allowed action (it opens the taxonomy dialog); it is no longer the disabled 4.22 seam stub.
     const classify = screen.getByRole('button', { name: 'Classify failure' });
-    expect(classify).toBeDisabled();
+    expect(classify).toBeEnabled();
     await waitFor(() =>
       expect(screen.getByTestId('recovery-action-retry')).toHaveAttribute(
         'data-priority',

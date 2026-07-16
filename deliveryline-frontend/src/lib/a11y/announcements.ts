@@ -173,6 +173,13 @@ export const compareExited = 'Exited compare mode.';
 /** Announced when a revision delta could not be loaded (any error sub-state). */
 export const compareLoadFailed = 'The revision comparison could not be loaded.';
 
+// ---- Compare Mode mobile (story 4.21) ------------------------------------------
+
+/** Announced on the mobile before/after toggle when the prior (before) revision is shown. */
+export const compareShowingBefore = 'Showing the before revision.';
+/** Announced on the mobile before/after toggle when the current (after) revision is shown. */
+export const compareShowingAfter = 'Showing the after revision.';
+
 // ---- Implementation review (story 3.28) ----------------------------------------
 
 /** Announced once an implementation is accepted (success), mirroring the inline outcome. */
@@ -247,3 +254,11 @@ export function connectionTestResult(
 /** Announced when a connectivity test could not run (project not found / unsupported kind). */
 export const connectionTestFailed =
   'The connection test could not run. Review the error and retry.';
+
+// ---- Failure classification (story 4.24) ---------------------------------------
+
+/**
+ * Announced once a failure classification is applied (AC10). The dialog closes itself on success, so
+ * this is spoken via the document-level `announce()` (see `liveAnnouncer.ts`), not an in-dialog region.
+ */
+export const failureClassificationApplied = 'Failure classification applied.';

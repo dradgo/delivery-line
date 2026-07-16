@@ -50,6 +50,7 @@ import { useRetryWorkflow, type RetryWorkflowResult } from '../hooks/useRetryWor
 import { useRunIntegrationConflicts, resolveConflictId } from '../hooks/useRunIntegrationConflicts';
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
+import { FailureClassificationDialog } from './FailureClassificationDialog';
 import { ReconciliationDialog } from './ReconciliationDialog';
 
 export interface RecoveryDecisionBarContainerProps {
@@ -153,6 +154,13 @@ export function RecoveryDecisionBarContainer({
   const closeReconcileDialog = useCallback(() => {
     setReconcileState((prev) => ({ ...prev, open: false }));
   }, []);
+
+  // Story 4.24 — the classify seam is now wired: the "Classify failure" entry-point opens the
+  // taxonomy dialog (self-contained; it owns its own queries + mutation). The bar gates the button on
+  // the live `classify_failure` allowed-action, so a non-classifiable run never reaches this handler.
+  const [classifyOpen, setClassifyOpen] = useState(false);
+  const openClassifyDialog = useCallback(() => setClassifyOpen(true), []);
+  const closeClassifyDialog = useCallback(() => setClassifyOpen(false), []);
 
   const view: ApprovalDecisionView = {
     workflowRunId,
@@ -382,9 +390,11 @@ export function RecoveryDecisionBarContainer({
         // Story 4.23 — the reconcile seam is now wired (the dialog resolves + reconciles a conflict).
         // Only offered once a concrete conflict is resolvable; while it is still resolving (or none is
         // available) the bar renders the button disabled + explained rather than enabled-but-dead.
-        // onClassifyFailure stays a seam until story 4.24 (bar renders it disabled + explained).
+        // Story 4.24 — the classify seam is wired; the bar still gates the button on the live
+        // `classify_failure` allowed-action, so passing a handler cannot enable it for an ineligible run.
         onReconcile={resolvableConflictId !== undefined ? openReconcileDialog : undefined}
         reconcileResolving={canReconcile && resolvableConflictId === undefined}
+        onClassifyFailure={openClassifyDialog}
       />
       <ReconciliationDialog
         workflowRunId={workflowRunId}
@@ -393,6 +403,9 @@ export function RecoveryDecisionBarContainer({
         onClose={closeReconcileDialog}
         reconcile={reconcile}
       />
+      {classifyOpen ? (
+        <FailureClassificationDialog workflowRunId={workflowRunId} onClose={closeClassifyDialog} />
+      ) : null}
     </>
   );
 }

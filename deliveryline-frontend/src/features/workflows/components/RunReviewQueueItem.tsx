@@ -29,6 +29,7 @@ import { type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 
 import { Inline } from '@/components/layout';
+import { Button } from '@/components/ui/button';
 import { densityGap, type Density } from '@/lib/density';
 import { isValidRunId } from '@/lib/routing/publicId';
 import type { StateName } from '@/lib/state-signifiers';
@@ -62,6 +63,19 @@ export interface RunReviewQueueItemProps {
   variant?: RunReviewQueueItemVariant | undefined;
   /** AC4 — inner spacing density (`standard` default); `densityGap` maps it. */
   density?: Density | undefined;
+  /**
+   * Story 4.24 (AC8a) — operator-variant "Classify" launch context. When provided, a failed row
+   * renders a Classify action (above the stretched navigation link) that opens the taxonomy dialog
+   * for `runId`. Omitted → no action (the reviewer variant + non-failed rows never render it). The
+   * `OperatorClassifiedRow` container passes it ONLY for a not-yet-classified Failed row (AC8a).
+   */
+  onClassify?: ((runId: string) => void) | undefined;
+  /**
+   * Story 4.24 (AC9) — the run's applied failure-taxonomy human name (registry-resolved). When
+   * present, the operator row surfaces it as a chip in its attention slot. Omitted → no chip (the
+   * `OperatorClassifiedRow` container supplies it for a classified Failed row).
+   */
+  classificationLabel?: string | undefined;
 }
 
 /** Per-row container classes per the single dominant state (AC3). Literal, purge-safe. */
@@ -441,10 +455,14 @@ function OperatorRowBody({
   row,
   density,
   nowMs,
+  onClassify,
+  classificationLabel,
 }: {
   row: RunQueueRow;
   density: Density;
   nowMs: number;
+  onClassify?: ((runId: string) => void) | undefined;
+  classificationLabel?: string | undefined;
 }) {
   const relative = formatRelativeTime(row.lastOperatorActionAt ?? row.lastTransitionAt, nowMs);
   const utc = formatUtcTimestamp(row.lastOperatorActionAt ?? row.lastTransitionAt);
@@ -478,6 +496,15 @@ function OperatorRowBody({
             testId="operator-failure-category"
           />
         ) : null}
+        {/* Story 4.24 (AC9) — the applied failure classification, surfaced in the attention slot for a
+            classified Failed row (the `OperatorClassifiedRow` container resolves the human name). */}
+        {classificationLabel !== undefined ? (
+          <StateSignifierChip
+            stateName="informational"
+            label={`Classification: ${classificationLabel}`}
+            testId="operator-classification-chip"
+          />
+        ) : null}
         {/* AC2 — runner kind chip (when the project carries a runner-kind override). */}
         {row.runnerKind !== undefined ? (
           <StateSignifierChip
@@ -501,6 +528,27 @@ function OperatorRowBody({
             {relative}
           </time>
         ) : null}
+        {/* Story 4.24 (AC8a) — Classify launch context for a Failed row. Sits ABOVE the stretched
+            navigation link (`relative z-[2]`) so it opens the taxonomy dialog rather than the run. */}
+        {onClassify !== undefined &&
+        row.currentState === 'Failed' &&
+        isValidRunId(row.runId) ? (
+          <span className="relative z-[2] shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="operator-classify-action"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onClassify(row.runId as string);
+              }}
+            >
+              Classify
+            </Button>
+          </span>
+        ) : null}
       </Inline>
     </div>
   );
@@ -519,12 +567,16 @@ function OperatorRow({
   unread,
   disabled,
   density,
+  onClassify,
+  classificationLabel,
 }: {
   row: RunQueueRow;
   selected?: boolean | undefined;
   unread?: boolean | undefined;
   disabled?: boolean | undefined;
   density: Density;
+  onClassify?: ((runId: string) => void) | undefined;
+  classificationLabel?: string | undefined;
 }) {
   const navigable = disabled !== true && isValidRunId(row.runId);
   const effectivelyDisabled = disabled === true || !navigable;
@@ -561,7 +613,13 @@ function OperatorRow({
           data-testid="run-review-queue-item"
           onKeyDown={handleKeyDown}
         />
-        <OperatorRowBody row={row} density={density} nowMs={nowMs} />
+        <OperatorRowBody
+          row={row}
+          density={density}
+          nowMs={nowMs}
+          onClassify={onClassify}
+          classificationLabel={classificationLabel}
+        />
       </div>
     );
   }
@@ -576,7 +634,7 @@ function OperatorRow({
       data-variant="operator"
       data-testid="run-review-queue-item"
     >
-      <OperatorRowBody row={row} density={density} nowMs={nowMs} />
+      <OperatorRowBody row={row} density={density} nowMs={nowMs} classificationLabel={classificationLabel} />
     </div>
   );
 }
@@ -588,6 +646,8 @@ export function RunReviewQueueItem({
   disabled,
   variant = 'reviewer',
   density = 'standard',
+  onClassify,
+  classificationLabel,
 }: RunReviewQueueItemProps) {
   if (variant === 'operator') {
     return (
@@ -597,6 +657,8 @@ export function RunReviewQueueItem({
         unread={unread}
         disabled={disabled}
         density={density}
+        onClassify={onClassify}
+        classificationLabel={classificationLabel}
       />
     );
   }

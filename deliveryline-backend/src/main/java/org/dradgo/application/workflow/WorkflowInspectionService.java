@@ -3198,6 +3198,13 @@ public class WorkflowInspectionService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     try {
       log.info("getFailureClassification entry workflowRunId={}", workflowRunId);
+      // Story 4.24 (AC/Task 3) — an unknown run id is RUN_NOT_FOUND (404); a KNOWN but
+      // never-classified run falls through to a null current classification + empty priors (200).
+      // The existence probe runs after requireFailureClassificationPortWired() so an unwired port
+      // still surfaces INTERNAL_ERROR first.
+      workflowRunReadPort
+          .findByPublicId(workflowRunId)
+          .orElseThrow(() -> runNotFound(workflowRunId));
       Optional<FailureClassificationRecord> current =
           failureClassificationPort.findClassification(workflowRunId);
 

@@ -164,6 +164,15 @@ export const workflowKeys = {
   integrationConflicts: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'integrationConflicts'] as const,
 
+  /**
+   * Story 4.24 (AC2/AC5/AC9) — a run's CURRENT + prior failure classification (story 4.9 read model,
+   * `GET /api/v1/workflows/{workflowRunId}/failure-classification`). A structural PREFIX child of
+   * `detail(id)`, so the classify mutation's `detail(id)` invalidation cascade refreshes the dialog's
+   * prior-classification section + the Run Context Strip badge for free (no extra invalidation wiring).
+   */
+  failureClassification: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'failureClassification'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
 

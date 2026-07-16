@@ -672,6 +672,54 @@ public class WorkflowController {
   }
 
   /**
+   * Story 4.24 (AC2/AC5/AC9) — the run's current operator-applied failure classification + the
+   * ordered prior classifications, projecting the {@code done} story 4.9 {@link
+   * WorkflowInspectionService#getFailureClassification} view. Read-only + idempotent (no
+   * Idempotency-Key/actor/role — copies the {@link #getFailureDiagnostics} read shape). A KNOWN but
+   * never-classified run returns 200 with {@code currentTaxonomyValue: null} + {@code
+   * priorClassifications: []}; an unknown run returns 404 {@code RUN_NOT_FOUND}; a malformed id
+   * returns 400 {@code INVALID_ID_PREFIX}.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/failure-classification",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getFailureClassification",
+      summary = "Get the current + prior failure classification for a run")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Current + prior classification for the run."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public FailureClassificationResponse getFailureClassification(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info("REST get failure-classification received workflowRunId={}", workflowRunId);
+    FailureClassificationResponse response =
+        FailureClassificationResponse.from(
+            workflowRunId, workflowInspectionService.getFailureClassification(workflowRunId));
+    log.info(
+        "REST get failure-classification success workflowRunId={} classified={} priorCount={}",
+        workflowRunId,
+        response.currentTaxonomyValue() != null,
+        response.priorClassifications().size());
+    return response;
+  }
+
+  /**
    * Story 4.22 (AC5) — the <strong>non-mutating</strong> preview of a rerun-from-step: which
    * artifacts a rerun to {@code targetStep} would supersede + which approval it would invalidate,
    * for the Decision Bar's "Show what will be superseded" section BEFORE the operator confirms.

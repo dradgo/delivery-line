@@ -62,6 +62,12 @@ export const STALE_TIME = {
   list: 5_000,
   /** Artifact content — long; the persisted redacted body is immutable for a given version. */
   artifact: 60_000,
+  /**
+   * Story 4.24 — governed registries (e.g. the failure taxonomy). Very long: the vocabulary + its
+   * curated prose change only under ADR-0035 governance, never during a session, so a 5-minute stale
+   * window avoids refetching a near-constant on every dialog open.
+   */
+  registry: 300_000,
 } as const;
 
 const MAX_RETRIES = 2;

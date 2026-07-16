@@ -285,6 +285,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registries/failure-taxonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the governed failure-taxonomy registry with operator-facing prose */
+        get: operations["getFailureTaxonomyRegistry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner-executions/{rexId}/logs/download": {
         parameters: {
             query?: never;
@@ -657,6 +674,23 @@ export interface paths {
          * @description Ordered event stream for a run, in the committed wire schema (workflow-events-response.schema.json).
          */
         get: operations["getWorkflowEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/failure-classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current + prior failure classification for a run */
+        get: operations["getFailureClassification"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1708,6 +1742,21 @@ export interface components {
              */
             dependsOnRunIds: string[];
         };
+        FailureClassificationResponse: {
+            /** Format: date-time */
+            classifiedAt?: string | null;
+            /** @example local-operator */
+            classifiedBy?: string | null;
+            /** @example agent_execution_failure */
+            currentDisplayLabel?: string | null;
+            /** @example agent_execution_failure */
+            currentTaxonomyValue?: string | null;
+            deprecated: boolean;
+            deprecatedReplacementValue?: string | null;
+            priorClassifications: components["schemas"]["PriorClassification"][];
+            /** @example run_abc123 */
+            workflowRunId: string;
+        };
         FailureDiagnosticsResponse: {
             /** @example corr_abc123 */
             correlationId?: string | null;
@@ -1750,6 +1799,9 @@ export interface components {
             referencePath: string;
             /** @example rex_abc123 */
             runnerExecutionId: string;
+        };
+        FailureTaxonomyRegistryResponse: {
+            values: components["schemas"]["TaxonomyValue"][];
         };
         /** @description Full integration-conflict detail with both state snapshots + ranked suggestions. */
         IntegrationConflictDetail: {
@@ -2097,6 +2149,16 @@ export interface components {
             supersededArtifactIds: string[];
             targetStep: string;
             workflowRunId: string;
+        };
+        PriorClassification: {
+            /** Format: date-time */
+            classifiedAt: string;
+            /** @example local-operator */
+            classifiedBy?: string | null;
+            /** @example context_gap */
+            displayLabel: string;
+            /** @example context_gap */
+            taxonomyValue: string;
         };
         /** @description RFC 9457 Problem Details payload with DeliveryLine extension fields. */
         ProblemDetailsResponse: {
@@ -2762,6 +2824,17 @@ export interface components {
             actorType: "HUMAN" | "AGENT" | "SYSTEM" | "SERVICE_ACCOUNT";
             correlationId?: string;
             reasonText?: string;
+        };
+        TaxonomyValue: {
+            deprecated: boolean;
+            description: string;
+            examples: string[];
+            /** @example Agent Execution Failure */
+            humanReadableName: string;
+            /** @description Replacement wire value when this value is deprecated, else absent. */
+            replacementValue?: string | null;
+            /** @example agent_execution_failure */
+            value: string;
         };
         /** @description Per-check connectivity probe results (HTTP 200). */
         TestConnection: {
@@ -3897,6 +3970,26 @@ export interface operations {
             };
         };
     };
+    getFailureTaxonomyRegistry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The failure-taxonomy registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureTaxonomyRegistryResponse"];
+                };
+            };
+        };
+    };
     downloadRunnerLog: {
         parameters: {
             query?: {
@@ -4915,6 +5008,50 @@ export interface operations {
                 };
             };
             /** @description Malformed run id (INVALID_ID_PREFIX) or history too large. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getFailureClassification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current + prior classification for the run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureClassificationResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProblemDetailsError } from '@/lib/api/problemDetails';
+import { installMatchMedia, uninstallMatchMedia } from '@/test/matchMedia';
 
 vi.mock('../hooks/useRevisionDelta', () => ({ useRevisionDelta: vi.fn() }));
 vi.mock('../hooks/useArtifact', () => ({ useArtifact: vi.fn(() => ({ data: undefined })) }));
@@ -54,8 +55,25 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  uninstallMatchMedia();
   vi.restoreAllMocks();
 });
+
+/** A resolved spec delta so the container settles on the `default` state (the mobile body renders). */
+function specDeltaQuery() {
+  return fakeQuery({
+    data: {
+      artifactType: 'spec',
+      revisionA: { version: 1 },
+      revisionB: { version: 2 },
+      summary: { changedRegionCount: 1 },
+      noMeaningfulDiff: false,
+      changes: [
+        { blockType: 'markdown', changeKind: 'modified', priorText: 'y', currentText: 'x' },
+      ],
+    },
+  });
+}
 
 const IDS = { workflowRunId: 'run_1', artifactIdA: 'art_prior', artifactIdB: 'art_current' };
 
@@ -132,5 +150,22 @@ describe('CompareModeContainer', () => {
     await userEvent.click(screen.getByTestId('compare-exit'));
     expect(infoSpy).toHaveBeenCalledWith({ event: 'compare.exit' });
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('story 4.21 — threads viewport="mobile" and renders the bounded body at <768px', () => {
+    installMatchMedia(375);
+    mockUseRevisionDelta.mockReturnValue(specDeltaQuery());
+    render(<CompareModeContainer {...IDS} onExit={vi.fn()} />);
+    expect(screen.getByTestId('compare-mode')).toHaveAttribute('data-compare-viewport', 'mobile');
+    expect(screen.getByTestId('compare-mobile-body')).toBeInTheDocument();
+  });
+
+  it('story 4.21 — threads viewport="desktop" and keeps the side-by-side body at ≥768px', () => {
+    installMatchMedia(1280);
+    mockUseRevisionDelta.mockReturnValue(specDeltaQuery());
+    render(<CompareModeContainer {...IDS} onExit={vi.fn()} />);
+    expect(screen.getByTestId('compare-mode')).toHaveAttribute('data-compare-viewport', 'desktop');
+    expect(screen.queryByTestId('compare-mobile-body')).toBeNull();
+    expect(screen.getByTestId('compare-synced-scroll')).toBeInTheDocument();
   });
 });

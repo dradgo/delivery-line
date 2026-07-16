@@ -18,6 +18,7 @@ import { isProblemDetailsError } from '@/lib/api/problemDetails';
 
 import { normalizeRevisionDelta, resolveCompareState, type CompareView } from '../compareView';
 import { useRevisionDelta } from '../hooks/useRevisionDelta';
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { CompareMode } from './CompareMode';
 
 export interface CompareModeContainerProps {
@@ -39,6 +40,12 @@ export function CompareModeContainer({
 }: CompareModeContainerProps) {
   const query = useRevisionDelta(artifactIdA, artifactIdB);
   const hasBaseline = artifactIdA.length > 0 && artifactIdB.length > 0;
+
+  // Story 4.21 (AC1/AC9) — the viewport decision is a hook read, so it lives here (the query/hook-
+  // owning seam) and is threaded down as a prop; `CompareMode` stays presentational + matchMedia-free.
+  // Mirrors `ReconciliationDialog`'s `const isMobile = useResponsiveLayout() === 'mobile'`. Only the
+  // mobile breakpoint (<768px) selects the bounded state; tablet/desktop keep the 4.20 body.
+  const viewport = useResponsiveLayout() === 'mobile' ? 'mobile' : 'desktop';
 
   const delta = query.data;
   const state = resolveCompareState({
@@ -96,6 +103,7 @@ export function CompareModeContainer({
       onRetry={handleRetry}
       workflowRunId={workflowRunId}
       artifactIdB={artifactIdB}
+      viewport={viewport}
     />
   );
 }
