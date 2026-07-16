@@ -44,6 +44,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{artifactId}/reconcile-lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an operator-driven lineage-recovery action to an ambiguous artifact (4.16a)
+         * @description Operator (workflow_owner) recovery action that resolves ambiguous artifact lineage through an explicit, auditable decision (NFR19: no silent overwrite). One of reattach_to_existing_lineage (re-parents an orphan onto a chosen leaf), terminate_ambiguous_lineage (flips the lineage terminal so replay cannot revive it), or create_explicit_fork (starts a fresh lineage_recovery branch). Records a recovery_actions row + artifact.lineageReconciled event. Idempotent under Idempotency-Key. The transient ARTIFACT_OPERATION_INTENT_CONFLICT / ARTIFACT_LINEAGE_ALREADY_EXISTS (409) keeps firing on re-ingest until the operator picks one of these actions.
+         */
+        post: operations["reconcileArtifactLineage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/by-run/{workflowRunId}": {
         parameters: {
             query?: never;
@@ -1311,6 +1331,36 @@ export interface components {
              * @example 3
              */
             version?: number;
+        };
+        /** @description Apply an operator-driven lineage-recovery action to an ambiguous artifact. */
+        ArtifactLineageReconcileRequest: {
+            /**
+             * @description Action-specific: the art_ id of the lineage leaf to re-parent onto. REQUIRED for reattach_to_existing_lineage (else MISSING_LINEAGE_RECOVERY_FIELD).
+             * @example art_9f3b2c1d
+             */
+            chosenParentArtifactId?: string | null;
+            /**
+             * @description Typed lineage-recovery action. Validated by the service (no @NotBlank) so the typed INVALID_LINEAGE_RECOVERY_ACTION code is reachable.
+             * @example reattach_to_existing_lineage
+             * @enum {string}
+             */
+            lineageAction: "reattach_to_existing_lineage" | "terminate_ambiguous_lineage" | "create_explicit_fork";
+            /** @description Optional operator note explaining the lineage-recovery decision. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        ArtifactLineageReconcileResponse: {
+            correlationId?: string;
+            lineageAction: string;
+            lineageReferenceArtifactId?: string;
+            reconciledEventId?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            targetArtifactId: string;
         };
         /** @description Apply an operator-driven repair to a detected artifact drift. */
         ArtifactRepairRequest: {
@@ -3163,6 +3213,62 @@ export interface operations {
             };
             /** @description One of the artifacts is not available / its payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE). */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    reconcileArtifactLineage: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                artifactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactLineageReconcileRequest"];
+            };
+        };
+        responses: {
+            /** @description Reconcile applied (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactLineageReconcileResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_LINEAGE_RECOVERY_ACTION, MISSING_LINEAGE_RECOVERY_FIELD, ARTIFACT_LINEAGE_MISMATCH. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

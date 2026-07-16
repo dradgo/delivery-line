@@ -105,6 +105,48 @@ class ApprovalServiceInvalidationTest {
   }
 
   @Test
+  void invalidateApprovalForArtifactInvalidatesTheArtifactVersionsApprovalAndReturnsItsId() {
+    // Story 4.16a [Review D3] — version-specific: keyed on the artifact public id (one version).
+    when(approvalReadPort.findLatestApprovedForArtifact("art_spec0001"))
+        .thenReturn(Optional.of(approvedSnapshotForArtifact("apr_spec_1", "art_spec0001")));
+    when(approvalWritePort.markInvalidated(
+            eq("apr_spec_1"), eq("superseded_by_lineage_termination"), any()))
+        .thenReturn(true);
+
+    Optional<String> result =
+        service.invalidateApprovalForArtifact("art_spec0001", "superseded_by_lineage_termination");
+
+    assertTrue(result.isPresent());
+    assertEquals("apr_spec_1", result.get());
+    verify(approvalWritePort)
+        .markInvalidated(eq("apr_spec_1"), eq("superseded_by_lineage_termination"), any());
+  }
+
+  @Test
+  void invalidateApprovalForArtifactNoOpsWhenTheArtifactHasNoCurrentApproval() {
+    when(approvalReadPort.findLatestApprovedForArtifact("art_spec0002"))
+        .thenReturn(Optional.empty());
+
+    Optional<String> result =
+        service.invalidateApprovalForArtifact("art_spec0002", "superseded_by_lineage_termination");
+
+    assertTrue(result.isEmpty());
+    verify(approvalWritePort, never()).markInvalidated(any(), any(), any());
+  }
+
+  @Test
+  void invalidateApprovalForArtifactReturnsEmptyWhenTheRowWasAlreadyInvalidated() {
+    when(approvalReadPort.findLatestApprovedForArtifact("art_spec0001"))
+        .thenReturn(Optional.of(approvedSnapshotForArtifact("apr_spec_1", "art_spec0001")));
+    when(approvalWritePort.markInvalidated(eq("apr_spec_1"), any(), any())).thenReturn(false);
+
+    Optional<String> result =
+        service.invalidateApprovalForArtifact("art_spec0001", "superseded_by_lineage_termination");
+
+    assertFalse(result.isPresent());
+  }
+
+  @Test
   void restoreInvalidatedApprovalDelegatesToClearInvalidationAndReturnsWhetherARowWasRestored() {
     // [Review D1] Dispatch-failure compensation restores the approval it invalidated in the prep
     // tx.
@@ -123,10 +165,14 @@ class ApprovalServiceInvalidationTest {
   }
 
   private static ApprovalSnapshot approvedSnapshot(String publicId) {
+    return approvedSnapshotForArtifact(publicId, "art_spec");
+  }
+
+  private static ApprovalSnapshot approvedSnapshotForArtifact(String publicId, String artifactId) {
     return new ApprovalSnapshot(
         publicId,
         RUN,
-        "art_spec",
+        artifactId,
         1,
         1,
         "alex",

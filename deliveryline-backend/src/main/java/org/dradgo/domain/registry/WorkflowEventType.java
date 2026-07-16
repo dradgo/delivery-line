@@ -192,7 +192,28 @@ public enum WorkflowEventType implements RegistryValue {
   // fixture. Detail keys reuse driftCategory / artifactId / operationId / reason / correlationId +
   // the new repairAction. NO Flyway migration for the event itself — event_type is an un-CHECKed
   // text column and the registry set is fixture-asserted, not DB-derived.
-  ARTIFACT_DRIFT_REPAIRED("artifact.driftRepaired");
+  ARTIFACT_DRIFT_REPAIRED("artifact.driftRepaired"),
+  // Story 4.16a (AC6 / Reconciliation 6) — appended once per operator lineage reconcile by
+  // ArtifactReconciliationService.reconcileLineage, inside the same REQUIRES_NEW prep transaction
+  // as
+  // the lineage mutation (reattach / terminate / fork) / optional approval invalidation /
+  // recovery_actions insert. ONE state-neutral audit event per reconcile (NOT per-action event
+  // types — mirror 4.16's ARTIFACT_DRIFT_REPAIRED); details.lineageAction (NEW, allow-listed by
+  // this
+  // story) discriminates the specific action (reattach_to_existing_lineage /
+  // terminate_ambiguous_lineage / create_explicit_fork). NON-lifecycle audit event like
+  // artifact.driftRepaired (priorState == resultingState == null, actor-or-SYSTEM,
+  // interventionMarker
+  // = true); NOT in any scenario-stream fixture. Detail keys reuse artifactId (=target) / reason /
+  // correlationId + the new lineageAction / lineageReferenceArtifactId (chosen-parent for reattach,
+  // new-fork id for create_explicit_fork). Distinct from the pre-existing
+  // ARTIFACT_LINEAGE_RECOVERED
+  // ("artifact.lineageRecovered") — that is a legacy value; this is "artifact.lineageReconciled".
+  // NO
+  // Flyway migration for the event itself — event_type is an un-CHECKed text column and the
+  // registry
+  // set is fixture-asserted, not DB-derived.
+  ARTIFACT_LINEAGE_RECONCILED("artifact.lineageReconciled");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

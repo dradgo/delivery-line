@@ -160,6 +160,19 @@ public final class WorkflowEventDetailKeys {
   // of the payload.
   public static final String REPAIR_ACTION = "repairAction";
 
+  // Artifact-lineage-reconcile keys (added story 4.16a AC6, emitted on
+  // ARTIFACT_LINEAGE_RECONCILED).
+  // Both allow-listed: lineageAction is the controlled-vocabulary LineageAction wire token
+  // (reattach_to_existing_lineage / terminate_ambiguous_lineage / create_explicit_fork) that
+  // discriminates the single artifact.lineageReconciled event — the same shareable posture as
+  // repairAction / reconciliationDecision. lineageReferenceArtifactId is the SECONDARY artifact the
+  // action involves: the chosen new parent for reattach, the newly created fork head for
+  // create_explicit_fork (absent for terminate) — an opaque art_ public id, non-secret, mirroring
+  // supersededByArtifactId. The already-allow-listed artifactId (=target) / reason / correlationId
+  // keys carry the rest of the payload.
+  public static final String LINEAGE_ACTION = "lineageAction";
+  public static final String LINEAGE_REFERENCE_ARTIFACT_ID = "lineageReferenceArtifactId";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -225,7 +238,9 @@ public final class WorkflowEventDetailKeys {
           INVALIDATED_APPROVAL_IDS,
           TAXONOMY_VALUE,
           PRIOR_TAXONOMY_VALUE,
-          REPAIR_ACTION);
+          REPAIR_ACTION,
+          LINEAGE_ACTION,
+          LINEAGE_REFERENCE_ARTIFACT_ID);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

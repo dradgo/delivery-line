@@ -577,6 +577,51 @@ public class ApprovalService {
   }
 
   /**
+   * Story 4.16a [Review D3] — invalidate the currently-valid approval of ONE specific artifact
+   * version (identified by its {@code art_…} public id). Version-specific counterpart of {@link
+   * #invalidateCurrentApproval}: terminating an ambiguous lineage version must invalidate only that
+   * version's approval, never a healthy sibling version's (which the run+type keyed {@link
+   * #invalidateCurrentApproval} — resolving the highest approved version — could wrongly hit).
+   * Propagation.MANDATORY — joins the caller's prep tx so the invalidation commits (or rolls back)
+   * atomically with the lineage termination + the recovery event + the recovery_actions row.
+   *
+   * @param artifactPublicId the abandoned artifact's public id ({@code art_…})
+   * @param reason controlled reason token (e.g. {@code superseded_by_lineage_termination})
+   * @return the invalidated {@code apr_…} id, or {@code Optional.empty()} when the artifact has no
+   *     current approval (nothing to invalidate)
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<String> invalidateApprovalForArtifact(String artifactPublicId, String reason) {
+    PublicIdPrefixes.require(artifactPublicId, PublicIdPrefixes.ARTIFACT);
+    String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactPublicId);
+    try {
+      Optional<ApprovalSnapshot> current =
+          approvalReadPort.findLatestApprovedForArtifact(artifactPublicId);
+      if (current.isEmpty()) {
+        log.info(
+            "approval invalidateApprovalForArtifact no-op artifactId={} reason=no_current_approval",
+            artifactPublicId);
+        return Optional.empty();
+      }
+      ApprovalSnapshot snapshot = current.get();
+      String approvalPublicId = snapshot.publicId();
+      boolean flipped =
+          approvalWritePort.markInvalidated(
+              approvalPublicId, reason, OffsetDateTime.now(clock).toInstant());
+      log.info(
+          "approval invalidateApprovalForArtifact artifactId={} artifactVersion={} approvalId={} reason={} flipped={}",
+          artifactPublicId,
+          snapshot.artifactVersion(),
+          approvalPublicId,
+          reason,
+          flipped);
+      return flipped ? Optional.of(approvalPublicId) : Optional.empty();
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
+    }
+  }
+
+  /**
    * Story 4.22 (AC5) — the READ HALF of {@link #invalidateCurrentApproval}: resolve the public id
    * of the run's current approved artifact of the given type WITHOUT flipping it. Backs the
    * non-mutating rerun-from-step preview ({@code RecoveryService.previewRerunFromStep}) so the

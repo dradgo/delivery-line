@@ -92,6 +92,11 @@ class OperatorCliCommandRegistrationIT {
           assertTrue(
               commandNames.contains("deliveryline operator artifact-repair"),
               () -> "registered commands: " + commandNames);
+          // Story 4.16a (AC9) — the mutating reconcile-lineage command registers under the same
+          // group prefix.
+          assertTrue(
+              commandNames.contains("deliveryline operator reconcile-lineage"),
+              () -> "registered commands: " + commandNames);
         });
   }
 

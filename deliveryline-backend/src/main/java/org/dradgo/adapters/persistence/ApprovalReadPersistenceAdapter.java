@@ -62,6 +62,24 @@ public class ApprovalReadPersistenceAdapter implements ApprovalReadPort {
 
   @Override
   @Transactional(readOnly = true)
+  public Optional<ApprovalSnapshot> findLatestApprovedForArtifact(String artifactPublicId) {
+    log.info("approval read latest-approved-for-artifact entry artifactId={}", artifactPublicId);
+    List<ApprovalEntity> rows = approvalRepository.findLatestApprovedForArtifact(artifactPublicId);
+    if (rows.isEmpty()) {
+      log.info("approval read latest-approved-for-artifact miss artifactId={}", artifactPublicId);
+      return Optional.empty();
+    }
+    ApprovalSnapshot snapshot = approvalEntityMapper.toSnapshot(rows.get(0));
+    log.info(
+        "approval read latest-approved-for-artifact hit artifactId={} approvalId={} artifactVersion={}",
+        artifactPublicId,
+        snapshot.publicId(),
+        snapshot.artifactVersion());
+    return Optional.of(snapshot);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public List<ApprovalSnapshot> listByWorkflowRunAndArtifactType(
       String workflowRunPublicId, String artifactType) {
     log.info(

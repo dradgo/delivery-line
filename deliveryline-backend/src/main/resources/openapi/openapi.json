@@ -342,6 +342,86 @@
         },
         "type" : "object"
       },
+      "ArtifactLineageReconcileRequest" : {
+        "description" : "Apply an operator-driven lineage-recovery action to an ambiguous artifact.",
+        "properties" : {
+          "chosenParentArtifactId" : {
+            "description" : "Action-specific: the art_ id of the lineage leaf to re-parent onto. REQUIRED for reattach_to_existing_lineage (else MISSING_LINEAGE_RECOVERY_FIELD).",
+            "example" : "art_9f3b2c1d",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "lineageAction" : {
+            "description" : "Typed lineage-recovery action. Validated by the service (no @NotBlank) so the typed INVALID_LINEAGE_RECOVERY_ACTION code is reachable.",
+            "enum" : [
+              "reattach_to_existing_lineage",
+              "terminate_ambiguous_lineage",
+              "create_explicit_fork"
+            ],
+            "example" : "reattach_to_existing_lineage",
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reasonText" : {
+            "description" : "Optional operator note explaining the lineage-recovery decision.",
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "role" : {
+            "description" : "Governing role; must be 'workflow_owner'.",
+            "example" : "workflow_owner",
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "lineageAction",
+          "role"
+        ],
+        "type" : "object"
+      },
+      "ArtifactLineageReconcileResponse" : {
+        "properties" : {
+          "correlationId" : {
+            "type" : "string"
+          },
+          "lineageAction" : {
+            "type" : "string"
+          },
+          "lineageReferenceArtifactId" : {
+            "type" : "string"
+          },
+          "reconciledEventId" : {
+            "type" : "string"
+          },
+          "recoveryActionId" : {
+            "type" : "string"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          },
+          "targetArtifactId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "lineageAction",
+          "recoveryActionId",
+          "replayed",
+          "targetArtifactId"
+        ],
+        "type" : "object"
+      },
       "ArtifactRepairRequest" : {
         "description" : "Apply an operator-driven repair to a detected artifact drift.",
         "properties" : {
@@ -4394,6 +4474,94 @@
         "summary" : "Compute the typed revision delta between two artifact versions of one lineage",
         "tags" : [
           "Artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{artifactId}/reconcile-lineage" : {
+      "post" : {
+        "description" : "Operator (workflow_owner) recovery action that resolves ambiguous artifact lineage through an explicit, auditable decision (NFR19: no silent overwrite). One of reattach_to_existing_lineage (re-parents an orphan onto a chosen leaf), terminate_ambiguous_lineage (flips the lineage terminal so replay cannot revive it), or create_explicit_fork (starts a fresh lineage_recovery branch). Records a recovery_actions row + artifact.lineageReconciled event. Idempotent under Idempotency-Key. The transient ARTIFACT_OPERATION_INTENT_CONFLICT / ARTIFACT_LINEAGE_ALREADY_EXISTS (409) keeps firing on re-ingest until the operator picks one of these actions.",
+        "operationId" : "reconcileArtifactLineage",
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "artifactId",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "Idempotency-Key",
+            "required" : true,
+            "schema" : {
+              "type" : "string"
+            }
+          },
+          {
+            "in" : "header",
+            "name" : "X-Actor-Identity",
+            "required" : false,
+            "schema" : {
+              "type" : "string"
+            }
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ArtifactLineageReconcileRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ArtifactLineageReconcileResponse"
+                }
+              }
+            },
+            "description" : "Reconcile applied (or idempotent replay)."
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_LINEAGE_RECOVERY_ACTION, MISSING_LINEAGE_RECOVERY_FIELD, ARTIFACT_LINEAGE_MISMATCH."
+          },
+          "404" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "ARTIFACT_RECORD_NOT_FOUND."
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetailsResponse"
+                }
+              }
+            },
+            "description" : "ARTIFACT_INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL."
+          }
+        },
+        "summary" : "Apply an operator-driven lineage-recovery action to an ambiguous artifact (4.16a)",
+        "tags" : [
+          "Artifact Lineage"
         ]
       }
     },
@@ -8796,6 +8964,10 @@
     {
       "description" : "Operator fleet-view read surface for failed/stalled runs.",
       "name" : "Operator"
+    },
+    {
+      "description" : "Operator-driven lineage recovery for ambiguous artifact history (story 4.16a).",
+      "name" : "Artifact Lineage"
     },
     {
       "description" : "Audit history query by ticket and by run over workflow_events.",

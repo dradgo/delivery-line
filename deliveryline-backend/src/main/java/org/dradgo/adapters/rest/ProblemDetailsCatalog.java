@@ -738,6 +738,22 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Artifact lineage mismatch",
         false);
+    // Story 4.16a (AC2/AC9 / Reconciliation 5) — malformed lineage-recovery decisions. Both
+    // BAD_REQUEST + non-retryable (a malformed operator request, not a transient fault), mirroring
+    // MISSING_REPAIR_REQUIRED_FIELD. The type URIs auto-derive (invalid-lineage-recovery-action /
+    // missing-lineage-recovery-field).
+    register(
+        metadata,
+        DomainErrorCode.INVALID_LINEAGE_RECOVERY_ACTION,
+        HttpStatus.BAD_REQUEST,
+        "Invalid lineage recovery action",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_LINEAGE_RECOVERY_FIELD,
+        HttpStatus.BAD_REQUEST,
+        "Missing required lineage recovery field",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

@@ -42,6 +42,29 @@ public interface ApprovalRepository extends JpaRepository<ApprovalEntity, Long> 
       @Param("artifactType") String artifactType);
 
   /**
+   * Story 4.16a [Review D3] — latest currently-valid approved row for ONE specific artifact
+   * (identified by its {@code art_…} public id, which pins exactly one version — the composite FK
+   * {@code (artifact_id, artifact_version)}). Unlike {@link #findLatestApprovedForArtifactLineage},
+   * which returns the highest-version approval across the whole {@code (run, type)} lineage, this
+   * is version-specific: terminating an ambiguous version must never invalidate a healthy sibling
+   * version's approval. Same {@code archived_at IS NULL} + {@code invalidated_at IS NULL} filters.
+   */
+  @Query(
+      """
+      select a from ApprovalEntity a
+        join fetch a.workflowRun
+        join fetch a.artifact
+      where a.artifact.publicId = :artifactPublicId
+        and a.decision = 'approved'
+        and a.archivedAt is null
+        and a.invalidatedAt is null
+        and a.artifact.archivedAt is null
+      order by a.decidedAt desc, a.id desc
+      """)
+  List<ApprovalEntity> findLatestApprovedForArtifact(
+      @Param("artifactPublicId") String artifactPublicId);
+
+  /**
    * All non-archived decisions for the run + artifact-type filter, chronological ascending with an
    * {@code id} tie-breaker for deterministic ordering. Used by {@code getSpecHistory} (FR11). The
    * {@code join fetch} eliminates a lazy-load N+1 in {@code ApprovalEntityMapper.toSnapshot}, which

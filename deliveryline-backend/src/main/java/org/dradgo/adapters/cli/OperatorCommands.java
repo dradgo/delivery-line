@@ -10,6 +10,8 @@ import java.util.function.Supplier;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactReconciliationService;
 import org.dradgo.application.artifact.ArtifactRepairResult;
+import org.dradgo.application.artifact.LineageReconciliationResult;
+import org.dradgo.application.artifact.ReconcileLineageCommand;
 import org.dradgo.application.artifact.RepairArtifactDriftCommand;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.idempotency.UuidV7Generator;
@@ -70,6 +72,7 @@ public class OperatorCommands {
   private static final String COMMAND_NAME_PAUSE = "operator pause";
   private static final String COMMAND_NAME_CLASSIFY_FAILURE = "operator classify-failure";
   private static final String COMMAND_NAME_ARTIFACT_REPAIR = "operator artifact-repair";
+  private static final String COMMAND_NAME_RECONCILE_LINEAGE = "operator reconcile-lineage";
   private static final String OUTCOME_SUCCESS = "success";
   private static final String OUTCOME_FAILURE_PREFIX = "failure:";
   private static final String OUTCOME_UNKNOWN = "failure:unknown";
@@ -1210,6 +1213,149 @@ public class OperatorCommands {
         correlationId,
         COMMAND_NAME_ARTIFACT_REPAIR,
         MdcKeys.sanitizeForLog(driftId),
+        outcome,
+        elapsedMs);
+  }
+
+  @Command(
+      name = "reconcile-lineage",
+      description =
+          "Apply an operator-driven lineage-recovery action to an ambiguous artifact via --artifact"
+              + " + --action (story 4.16a — CLI/REST equivalence). Model A: acts directly on the"
+              + " ambiguous artifact id (no persisted conflict). --action is one of"
+              + " reattach_to_existing_lineage (needs --parent) | terminate_ambiguous_lineage |"
+              + " create_explicit_fork. Records a recovery_actions row + artifact.lineageReconciled"
+              + " event. Idempotent under --idempotency-key. The action + required fields are"
+              + " validated by the service (typed INVALID_LINEAGE_RECOVERY_ACTION /"
+              + " MISSING_LINEAGE_RECOVERY_FIELD). --format=json emits a stable-schema document.",
+      exitStatusExceptionMapper = WorkflowCliExitStatusExceptionMapper.BEAN_NAME)
+  public String reconcileLineage(
+      @Option(
+              longName = "artifact",
+              description = "Ambiguous/orphan artifact public id (art_...)",
+              required = false)
+          String artifact,
+      @Option(
+              longName = "action",
+              description =
+                  "Lineage action: reattach_to_existing_lineage | terminate_ambiguous_lineage |"
+                      + " create_explicit_fork (validated by the service)",
+              required = false)
+          String action,
+      @Option(
+              longName = "parent",
+              description =
+                  "Action-specific: chosen parent artifact id (art_...) to re-parent onto; required"
+                      + " for reattach_to_existing_lineage",
+              required = false)
+          String parent,
+      @Option(
+              longName = "reason",
+              description = "Optional operator note explaining the lineage-recovery decision",
+              required = false)
+          String reason,
+      @Option(longName = "idempotency-key", description = "Idempotency key", required = false)
+          String idempotencyKey,
+      @Option(longName = "actor-identity", description = "Actor identity", required = false)
+          String actorIdentity,
+      @Option(longName = "correlation-id", description = "Correlation ID", required = false)
+          String correlationId,
+      @Option(
+              longName = "format",
+              description = "Output format: text or json",
+              defaultValue = FORMAT_TEXT)
+          String format,
+      @Option(
+              longName = "verbose",
+              description = "Print additional command metadata",
+              required = false,
+              defaultValue = "false")
+          boolean verbose) {
+    long start = System.nanoTime();
+    CorrelationScope scope = pushCorrelation(correlationId);
+    String resolvedCorrelation = scope.resolved();
+    try {
+      boolean json = isJson(format);
+      String resolvedIdempotencyKey =
+          idempotencyKeyValidator.requireValid(resolveIdempotencyKey(idempotencyKey));
+      String resolvedActor = resolveActorIdentity(actorIdentity);
+      ActorContext actor = new ActorContext(resolvedActor, ActorType.HUMAN, resolvedCorrelation);
+      // artifact/action/parent/reason pass straight through: the service is the single source of
+      // validation (typed ARTIFACT_RECORD_NOT_FOUND / INVALID_LINEAGE_RECOVERY_ACTION /
+      // MISSING_LINEAGE_RECOVERY_FIELD / ARTIFACT_LINEAGE_MISMATCH), keeping the CLI symmetric with
+      // the REST surface.
+      LineageReconciliationResult result =
+          requireArtifactReconciliationService()
+              .reconcileLineage(
+                  new ReconcileLineageCommand(
+                      artifact, action, parent, reason, actor, resolvedIdempotencyKey));
+      String rendered =
+          json
+              ? outputs.renderOperatorReconcileLineageJson(result)
+              : renderReconcileLineageText(
+                  result,
+                  resolvedCorrelation,
+                  resolvedIdempotencyKey,
+                  idempotencyKey == null,
+                  verbose);
+      emitReconcileLineage(resolvedCorrelation, artifact, start, OUTCOME_SUCCESS);
+      log.info(
+          "operator reconcile-lineage applied correlationId={} targetArtifactId={} lineageAction={}"
+              + " reasonLength={}",
+          resolvedCorrelation,
+          MdcKeys.sanitizeForLog(artifact),
+          MdcKeys.sanitizeForLog(action),
+          reason == null ? 0 : reason.length());
+      return rendered;
+    } catch (DomainException de) {
+      emitReconcileLineage(resolvedCorrelation, artifact, start, codeFor(de));
+      throw de;
+    } catch (RuntimeException re) {
+      emitReconcileLineage(resolvedCorrelation, artifact, start, OUTCOME_UNKNOWN);
+      throw re;
+    } finally {
+      MdcKeys.endScope(MdcKeys.CORRELATION_ID, scope.prior());
+    }
+  }
+
+  // Text render for `operator reconcile-lineage` (JSON goes through
+  // WorkflowCommandOutputs.renderOperatorReconcileLineageJson). The verbose footer is appended to
+  // TEXT output only — gluing it onto JSON would break the operator-reconcile-lineage.v1 schema.
+  private static String renderReconcileLineageText(
+      LineageReconciliationResult result,
+      String resolvedCorrelation,
+      String resolvedIdempotencyKey,
+      boolean idempotencyKeyGenerated,
+      boolean verbose) {
+    StringBuilder output =
+        new StringBuilder()
+            .append(result.recoveryActionId())
+            .append(" lineage reconcile submitted (action: ")
+            .append(result.lineageAction());
+    if (result.lineageReferenceArtifactId() != null) {
+      output.append(", reference: ").append(result.lineageReferenceArtifactId());
+    }
+    output.append(')');
+    if (result.replayed()) {
+      output.append(" [replayed]");
+    }
+    if (verbose) {
+      output.append(" [correlation-id: ").append(resolvedCorrelation).append(']');
+      if (idempotencyKeyGenerated) {
+        output.append(" [generated-idempotency-key: ").append(resolvedIdempotencyKey).append(']');
+      }
+    }
+    return output.toString();
+  }
+
+  private static void emitReconcileLineage(
+      String correlationId, String artifactId, long start, String outcome) {
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+    log.info(
+        "operator command completed correlationId={} commandName={} artifactId={} outcome={} durationMs={}",
+        correlationId,
+        COMMAND_NAME_RECONCILE_LINEAGE,
+        MdcKeys.sanitizeForLog(artifactId),
         outcome,
         elapsedMs);
   }

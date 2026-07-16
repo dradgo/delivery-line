@@ -86,8 +86,17 @@ public class ArtifactReconciliationService {
   // action_type value is NOT a domain-registry enum (it is only an SQL CHECK + this constant); the
   // V46 migration widened ck_recovery_actions_action_type with 'artifact_repair'.
   static final String ACTION_TYPE_ARTIFACT_REPAIR = "artifact_repair";
+  // Story 4.16a (Reconciliation 2) — the recovery_actions action_type for the lineage-recovery
+  // path.
+  // NOT a domain-registry enum (SQL CHECK + this constant only); V47 widened
+  // ck_recovery_actions_action_type with 'artifact_lineage_reconcile'.
+  static final String ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE = "artifact_lineage_reconcile";
   static final String RESULT_STATUS_SUCCEEDED = "succeeded";
   static final String REVIEWER_ROLE_WORKFLOW_OWNER = "workflow_owner";
+  // Story 4.16a (OQ-8) — controlled reason token stamped on approvals invalidated when an ambiguous
+  // lineage is terminated (mirror INVALIDATED_REASON_MARK_CORRUPTED) so the cause is
+  // machine-readable.
+  static final String INVALIDATED_REASON_LINEAGE_TERMINATED = "superseded_by_lineage_termination";
   // Controlled reason tokens stamped on invalidated approvals (mirror 4.7's
   // superseded_by_rerun_from_step) so the invalidation cause is machine-readable.
   static final String INVALIDATED_REASON_MARK_CORRUPTED = "superseded_by_mark_corrupted";
@@ -1261,4 +1270,419 @@ public class ArtifactReconciliationService {
       };
     }
   }
+
+  // ================================================================================================
+  // Story 4.16a (AC1-AC7, AC9 / Reconciliation 1/10) — the operator-driven LINEAGE-recovery WRITE
+  // path. Model A: the operator acts DIRECTLY on an ambiguous/orphan artifact id (lineage conflicts
+  // are transient / never persisted — there is NO conflictId). A public coordinator
+  // (reconcileLineage)
+  // validates + dispatches inside ONE REQUIRES_NEW prep tx; the three typed methods are thin public
+  // wrappers over it (AC2) so validation + idempotency are single-sourced. Mirrors
+  // repairArtifactDrift
+  // exactly: replay-first with an action_type guard, succeeded-on-INSERT recovery_actions, the
+  // lineageAction payload on the RESULTING event (there is NO recovery_actions.details column). The
+  // three lineage-write methods live on the ALREADY-injected artifactRecordPort — ZERO new ctor
+  // deps.
+  // ================================================================================================
+
+  /** AC3 — re-parent an orphan/ambiguous artifact onto an operator-chosen lineage leaf. */
+  public LineageReconciliationResult reattachToExistingLineage(
+      String targetArtifactId,
+      String chosenParentArtifactId,
+      String reasonText,
+      ActorContext actor,
+      String idempotencyKey) {
+    return reconcileLineage(
+        new ReconcileLineageCommand(
+            targetArtifactId,
+            LineageAction.REATTACH_TO_EXISTING_LINEAGE.value(),
+            chosenParentArtifactId,
+            reasonText,
+            actor,
+            idempotencyKey));
+  }
+
+  /** AC4 — mark an ambiguous lineage terminal so replay cannot silently revive it. */
+  public LineageReconciliationResult terminateAmbiguousLineage(
+      String targetArtifactId, String reasonText, ActorContext actor, String idempotencyKey) {
+    return reconcileLineage(
+        new ReconcileLineageCommand(
+            targetArtifactId,
+            LineageAction.TERMINATE_AMBIGUOUS_LINEAGE.value(),
+            null,
+            reasonText,
+            actor,
+            idempotencyKey));
+  }
+
+  /**
+   * AC5 — create a fresh, disjoint lineage branch with the {@code lineage_recovery} discriminator.
+   */
+  public LineageReconciliationResult createExplicitFork(
+      String targetArtifactId, String reasonText, ActorContext actor, String idempotencyKey) {
+    return reconcileLineage(
+        new ReconcileLineageCommand(
+            targetArtifactId,
+            LineageAction.CREATE_EXPLICIT_FORK.value(),
+            null,
+            reasonText,
+            actor,
+            idempotencyKey));
+  }
+
+  /**
+   * Story 4.16a (AC1-AC6) — the single lineage-recovery coordinator the REST controller + CLI call.
+   * Runs the idempotency replay pre-check, resolves the target artifact, parses + validates the
+   * lineage action + required fields, then dispatches to the matching typed action inside ONE
+   * {@code REQUIRES_NEW} prep transaction (Reconciliation 7/10). All effects (lineage mutation,
+   * optional approval invalidation, {@code artifact.lineageReconciled} event, {@code
+   * recovery_actions} insert) commit atomically with no post-commit side-effect.
+   */
+  public LineageReconciliationResult reconcileLineage(ReconcileLineageCommand command) {
+    Objects.requireNonNull(command, "command");
+    ActorContext actor = Objects.requireNonNull(command.actor(), "actor");
+    requireLineageSeams();
+    validateLineageCommandShape(command);
+    String validatedIdempotencyKey = idempotencyKeyValidator.requireValid(command.idempotencyKey());
+    long start = System.nanoTime();
+    log.info(
+        "artifact reconcileLineage start targetArtifactId={} lineageAction={} actorIdentity={}"
+            + " idempotencyKey={}",
+        command.targetArtifactId(),
+        command.lineageAction(),
+        actor.actorIdentity(),
+        validatedIdempotencyKey);
+    try {
+      // Step 1 — replay pre-check BEFORE input validation (mirror repairArtifactDrift). Guard on
+      // ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE so a prior repair/retry/resume/… under the same key
+      // is
+      // a conflict, never a false lineage replay
+      // ([[transition-idempotencykey-is-not-a-dedupe-key]]).
+      Optional<RecoveryActionSnapshot> priorAction =
+          recoveryActionRecordPort.findByIdempotencyKey(validatedIdempotencyKey);
+      if (priorAction.isPresent()) {
+        RecoveryActionSnapshot prior = priorAction.get();
+        if (!ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE.equals(prior.actionType())
+            || !RESULT_STATUS_SUCCEEDED.equals(prior.resultStatus())
+            || prior.resultingEventPublicId() == null) {
+          throw idempotencyConflict(validatedIdempotencyKey, prior);
+        }
+        return replayLineageReconcile(
+            command.targetArtifactId(), validatedIdempotencyKey, actor, prior);
+      }
+
+      // Step 2 — target artifact lookup.
+      ArtifactRecordSnapshot target =
+          artifactRecordPort
+              .findByPublicId(command.targetArtifactId())
+              .orElseThrow(() -> artifactRecordNotFound(command.targetArtifactId()));
+
+      // Step 3 — lineage-action parse (no category legality — every action applies to any
+      // artifact).
+      LineageAction action =
+          LineageAction.fromWire(command.lineageAction())
+              .orElseThrow(() -> invalidLineageAction(command.lineageAction()));
+
+      // Step 4 — action-specific required fields.
+      validateLineageRequiredFields(action, command);
+
+      // Step 5 — dispatch, all inside ONE REQUIRES_NEW prep tx.
+      String correlationId = actor.correlationId();
+      LineagePrep prep;
+      try {
+        prep =
+            perItemTransactionTemplate.execute(
+                status ->
+                    performLineageReconcile(
+                        target, action, command, validatedIdempotencyKey, actor, correlationId));
+      } catch (DomainException prepError) {
+        if (prepError.errorCode() == DomainErrorCode.IDEMPOTENCY_KEY_CONFLICT) {
+          Optional<LineageReconciliationResult> raceReplay =
+              resolveConcurrentLineageReplay(
+                  command.targetArtifactId(), validatedIdempotencyKey, actor);
+          if (raceReplay.isPresent()) {
+            return raceReplay.get();
+          }
+        }
+        throw prepError;
+      }
+
+      long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+      log.info(
+          "artifact reconcileLineage success targetArtifactId={} lineageAction={} recoveryActionId={}"
+              + " reconciledEventId={} lineageReferenceArtifactId={} durationMs={}",
+          command.targetArtifactId(),
+          action.value(),
+          prep.recoveryActionId(),
+          prep.reconciledEventId(),
+          prep.lineageReferenceArtifactId(),
+          elapsedMs);
+      return new LineageReconciliationResult(
+          command.targetArtifactId(),
+          action.value(),
+          prep.recoveryActionId(),
+          prep.reconciledEventId(),
+          prep.lineageReferenceArtifactId(),
+          correlationId,
+          false);
+    } catch (DomainException rejected) {
+      log.warn(
+          "artifact reconcileLineage rejected targetArtifactId={} lineageAction={} reason={}",
+          command.targetArtifactId(),
+          command.lineageAction(),
+          rejected.errorCode());
+      throw rejected;
+    }
+  }
+
+  private LineagePrep performLineageReconcile(
+      ArtifactRecordSnapshot target,
+      LineageAction action,
+      ReconcileLineageCommand command,
+      String idempotencyKey,
+      ActorContext actor,
+      String correlationId) {
+    String priorArtifactMdc = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, target.publicId());
+    try {
+      String effectiveReason =
+          command.reasonText() == null || command.reasonText().isBlank()
+              ? null
+              : command.reasonText().trim();
+      String workflowRunId = target.workflowRunId();
+
+      // 1. Apply the typed lineage action. lineageReferenceArtifactId = the secondary artifact
+      //    involved (chosen parent for reattach, new fork id for create_explicit_fork).
+      String lineageReferenceArtifactId = null;
+      switch (action) {
+        case REATTACH_TO_EXISTING_LINEAGE -> {
+          artifactRecordPort.reattachToLineage(target.publicId(), command.chosenParentArtifactId());
+          lineageReferenceArtifactId = command.chosenParentArtifactId();
+        }
+        case TERMINATE_AMBIGUOUS_LINEAGE -> {
+          artifactRecordPort.markLineageTerminated(
+              target.publicId(), effectiveReason == null ? "lineage_terminated" : effectiveReason);
+          // Close any dangling pending operation so replay cannot re-drive the abandoned lineage.
+          artifactOperationPort
+              .findPendingByArtifactId(target.publicId())
+              .ifPresent(
+                  op ->
+                      artifactOperationPort.markFailedOrphan(
+                          op.publicId(), "lineage terminated by operator"));
+          // OQ-8 / Review D3 — invalidate any current approval on the abandoned artifact VERSION
+          // (artifact-keyed, not run+type keyed — never touches a healthy sibling version's
+          // approval).
+          invalidateApprovalsForLineageTermination(target.publicId());
+        }
+        case CREATE_EXPLICIT_FORK -> {
+          ArtifactRecordSnapshot fork =
+              artifactRecordPort.createLineageRecoveryFork(
+                  target.publicId(), actor, effectiveReason);
+          lineageReferenceArtifactId = fork.publicId();
+        }
+      }
+
+      // 2. Append the single state-neutral artifact.lineageReconciled event (pre-generated evt_ id
+      // ->
+      //    recovery_actions.resulting_event_id). details.lineageAction discriminates the action.
+      String reconciledEventPublicId = PublicIdPrefixes.WORKFLOW_EVENT.next();
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put(WorkflowEventDetailKeys.LINEAGE_ACTION, action.value());
+      details.put(WorkflowEventDetailKeys.ARTIFACT_ID, target.publicId());
+      if (lineageReferenceArtifactId != null) {
+        details.put(
+            WorkflowEventDetailKeys.LINEAGE_REFERENCE_ARTIFACT_ID, lineageReferenceArtifactId);
+      }
+      if (effectiveReason != null) {
+        details.put(WorkflowEventDetailKeys.REASON, effectiveReason);
+      }
+      if (correlationId != null) {
+        details.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+      }
+      // Server-only (stripped from CLI history render) — mirrors repair/classify.
+      details.put(WorkflowEventDetailKeys.IDEMPOTENCY_KEY, idempotencyKey);
+      OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
+      workflowEventWritePort.append(
+          new WorkflowEventRecord(
+              reconciledEventPublicId,
+              workflowRunId,
+              WorkflowEventType.ARTIFACT_LINEAGE_RECONCILED,
+              null,
+              null,
+              actor.actorIdentity(),
+              actor.actorType(),
+              effectiveReason,
+              null,
+              true,
+              now,
+              details));
+
+      // 3. Insert the recovery_actions row (succeeded-on-INSERT — single tx, no post-commit hook).
+      //    triggering_event_id = null (no persisted conflict/detection event to point at — OQ-5).
+      RecoveryActionSnapshot recoveryAction =
+          recoveryActionRecordPort.insert(
+              new RecoveryActionWriteCommand(
+                  workflowRunId,
+                  ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE,
+                  null,
+                  reconciledEventPublicId,
+                  actor.actorIdentity(),
+                  actor.actorType(),
+                  idempotencyKey,
+                  RESULT_STATUS_SUCCEEDED,
+                  REVIEWER_ROLE_WORKFLOW_OWNER));
+
+      log.info(
+          "artifact lineage reconciled targetArtifactId={} lineageAction={}"
+              + " lineageReferenceArtifactId={} correlationId={}",
+          target.publicId(),
+          action.value(),
+          lineageReferenceArtifactId,
+          correlationId);
+      return new LineagePrep(
+          recoveryAction.publicId(), reconciledEventPublicId, lineageReferenceArtifactId);
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactMdc);
+    }
+  }
+
+  private void invalidateApprovalsForLineageTermination(String targetArtifactId) {
+    // Propagation.MANDATORY — joins the enclosing prep tx (OQ-8 / Review D3). Version-specific:
+    // invalidates only the abandoned artifact version's approval (keyed on the artifact public id),
+    // never a healthy sibling version's approval of the same (run, type).
+    approvalService
+        .invalidateApprovalForArtifact(targetArtifactId, INVALIDATED_REASON_LINEAGE_TERMINATED)
+        .ifPresent(
+            approvalId ->
+                log.warn(
+                    "approval invalidated by lineage termination targetArtifactId={} approvalId={}"
+                        + " reason={}",
+                    targetArtifactId,
+                    approvalId,
+                    INVALIDATED_REASON_LINEAGE_TERMINATED));
+  }
+
+  // Max lengths mirror the REST ArtifactLineageReconcileRequest @Size caps so the CLI surface
+  // (which
+  // has no bean validation) enforces the same bounds — CLI/REST equivalence (AC9, the 4.16 F3
+  // lesson).
+  private static final int MAX_LINEAGE_ACTION_LENGTH = 64;
+  private static final int MAX_LINEAGE_ID_LENGTH = 64;
+  private static final int MAX_LINEAGE_TEXT_LENGTH = 512;
+
+  /**
+   * Validate the request shape before the replay pre-check: a present {@code targetArtifactId} and
+   * field lengths within the REST DTO's bounds. Runs on both surfaces so a blank {@code
+   * targetArtifactId} (reachable via the CLI's optional flag) surfaces a typed {@code
+   * INVALID_COMMAND_PAYLOAD} instead of an NPE 500, and an oversized CLI field is rejected exactly
+   * as the REST {@code @Size} would. A malformed request is never a legitimate replay, so
+   * validating shape ahead of Step 1 is safe.
+   */
+  private void validateLineageCommandShape(ReconcileLineageCommand command) {
+    if (isBlank(command.targetArtifactId())) {
+      throw invalidCommandPayload("targetArtifactId", "targetArtifactId is required");
+    }
+    requireWithinLength("lineageAction", command.lineageAction(), MAX_LINEAGE_ACTION_LENGTH);
+    requireWithinLength(
+        "chosenParentArtifactId", command.chosenParentArtifactId(), MAX_LINEAGE_ID_LENGTH);
+    requireWithinLength("reasonText", command.reasonText(), MAX_LINEAGE_TEXT_LENGTH);
+  }
+
+  private void validateLineageRequiredFields(
+      LineageAction action, ReconcileLineageCommand command) {
+    if (action == LineageAction.REATTACH_TO_EXISTING_LINEAGE
+        && isBlank(command.chosenParentArtifactId())) {
+      throw missingLineageField("chosenParentArtifactId", action);
+    }
+  }
+
+  private LineageReconciliationResult replayLineageReconcile(
+      String targetArtifactId,
+      String idempotencyKey,
+      ActorContext actor,
+      RecoveryActionSnapshot prior) {
+    // Reconstruct the prior result from its resulting event's details (mirror repair replay). A
+    // stored targetArtifactId that differs from the request is a conflict (same key, different
+    // artifact).
+    WorkflowEventRecord event =
+        workflowEventReadPort.listByWorkflowRunPublicId(prior.workflowRunPublicId(), null).stream()
+            .filter(candidate -> prior.resultingEventPublicId().equals(candidate.publicId()))
+            .findFirst()
+            .orElseThrow(() -> idempotencyConflict(idempotencyKey, prior));
+    Object storedTarget = event.details().get(WorkflowEventDetailKeys.ARTIFACT_ID);
+    if (targetArtifactId != null && !targetArtifactId.equals(storedTarget)) {
+      throw idempotencyConflict(idempotencyKey, prior);
+    }
+    Object storedAction = event.details().get(WorkflowEventDetailKeys.LINEAGE_ACTION);
+    Object storedReference =
+        event.details().get(WorkflowEventDetailKeys.LINEAGE_REFERENCE_ARTIFACT_ID);
+    log.info(
+        "artifact reconcileLineage replay targetArtifactId={} recoveryActionId={} lineageAction={}"
+            + " idempotencyKey={}",
+        targetArtifactId,
+        prior.publicId(),
+        storedAction,
+        idempotencyKey);
+    return new LineageReconciliationResult(
+        targetArtifactId,
+        storedAction == null ? null : storedAction.toString(),
+        prior.publicId(),
+        prior.resultingEventPublicId(),
+        storedReference == null ? null : storedReference.toString(),
+        actor.correlationId(),
+        true);
+  }
+
+  private Optional<LineageReconciliationResult> resolveConcurrentLineageReplay(
+      String targetArtifactId, String idempotencyKey, ActorContext actor) {
+    Optional<RecoveryActionSnapshot> prior =
+        recoveryActionRecordPort.findByIdempotencyKey(idempotencyKey);
+    if (prior.isEmpty()) {
+      return Optional.empty();
+    }
+    RecoveryActionSnapshot snapshot = prior.get();
+    if (!ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE.equals(snapshot.actionType())
+        || !RESULT_STATUS_SUCCEEDED.equals(snapshot.resultStatus())
+        || snapshot.resultingEventPublicId() == null) {
+      return Optional.empty();
+    }
+    return Optional.of(replayLineageReconcile(targetArtifactId, idempotencyKey, actor, snapshot));
+  }
+
+  private void requireLineageSeams() {
+    if (recoveryActionRecordPort == null
+        || approvalService == null
+        || workflowEventWritePort == null
+        || workflowEventReadPort == null
+        || idempotencyKeyValidator == null) {
+      throw new IllegalStateException(
+          "ArtifactReconciliationService lineage seams are required for reconcileLineage");
+    }
+  }
+
+  private static DomainException artifactRecordNotFound(String artifactId) {
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND,
+        "Artifact not found: " + artifactId,
+        Map.of("artifactId", artifactId == null ? "" : artifactId));
+  }
+
+  private static DomainException invalidLineageAction(String provided) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("provided", provided == null ? "" : provided);
+    details.put("allowableValues", LineageAction.allWireValues());
+    return new DomainException(
+        DomainErrorCode.INVALID_LINEAGE_RECOVERY_ACTION,
+        "Unknown lineage recovery action",
+        details);
+  }
+
+  private static DomainException missingLineageField(String field, LineageAction action) {
+    return new DomainException(
+        DomainErrorCode.MISSING_LINEAGE_RECOVERY_FIELD,
+        "Lineage action " + action.value() + " requires field: " + field,
+        Map.of("field", field, "lineageAction", action.value()));
+  }
+
+  private record LineagePrep(
+      String recoveryActionId, String reconciledEventId, String lineageReferenceArtifactId) {}
 }

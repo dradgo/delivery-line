@@ -281,4 +281,8 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule only_reconciliation_service_may_resolve_artifact_drift =
       ArchitectureRuleCatalog.ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT;
+
+  @ArchTest
+  static final ArchRule only_reconciliation_service_may_reconcile_artifact_lineage =
+      ArchitectureRuleCatalog.ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE;
 }

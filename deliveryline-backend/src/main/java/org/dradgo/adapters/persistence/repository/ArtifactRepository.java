@@ -120,6 +120,19 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
       @Param("lineageMemberPublicId") String lineageMemberPublicId);
 
   /**
+   * Story 4.16a [Review D1]: does the given parent artifact have any non-archived child? Used by
+   * {@code reattachToLineage} to reject re-parenting onto a NON-leaf — attaching to a parent that
+   * already has an active child would create two active leaves for the same {@code (run,
+   * artifact_type)}, re-introducing the very lineage ambiguity the reconcile action exists to
+   * resolve. Traverses the {@code parentArtifact} self-association by the parent's {@code
+   * public_id}; {@code archived_at IS NULL} keeps tombstoned children invisible.
+   */
+  @Query(
+      "select count(a) > 0 from ArtifactEntity a"
+          + " where a.parentArtifact.publicId = :parentPublicId and a.archivedAt is null")
+  boolean hasActiveChild(@Param("parentPublicId") String parentPublicId);
+
+  /**
    * Story 4.15 (AC1): bounded, KEYSET-PAGED oldest-first scan of {@code available} artifacts older
    * than {@code now() - minAgeMinutes}, for the artifact-drift-detection sweep. DB-side staleness
    * (both sides on the database clock — no JVM-derived cutoff) mirrors {@code

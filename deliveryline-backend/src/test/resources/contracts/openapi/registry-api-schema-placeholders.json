@@ -219,6 +219,8 @@
     "INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY": "https://deliveryline.local/problems/invalid-repair-action-for-drift-category",
     "MISSING_REPAIR_REQUIRED_FIELD": "https://deliveryline.local/problems/missing-repair-required-field",
     "REPAIR_ACTION_NOT_IMPLEMENTED": "https://deliveryline.local/problems/repair-action-not-implemented",
-    "ARTIFACT_LINEAGE_MISMATCH": "https://deliveryline.local/problems/artifact-lineage-mismatch"
+    "ARTIFACT_LINEAGE_MISMATCH": "https://deliveryline.local/problems/artifact-lineage-mismatch",
+    "INVALID_LINEAGE_RECOVERY_ACTION": "https://deliveryline.local/problems/invalid-lineage-recovery-action",
+    "MISSING_LINEAGE_RECOVERY_FIELD": "https://deliveryline.local/problems/missing-lineage-recovery-field"
   }
 }

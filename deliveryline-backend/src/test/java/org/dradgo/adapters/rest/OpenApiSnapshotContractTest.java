@@ -131,6 +131,9 @@ class OpenApiSnapshotContractTest {
         .as("OpenAPI must expose the story 4.16 artifact-drift repair command operation")
         .contains("repairArtifactDrift");
     assertThat(canonical)
+        .as("OpenAPI must expose the story 4.16a artifact-lineage reconcile command operation")
+        .contains("reconcileArtifactLineage");
+    assertThat(canonical)
         .as("OpenAPI must expose the story 4.19 compare-mode revision-delta read operation")
         .contains("compareArtifacts");
     assertThat(canonical)

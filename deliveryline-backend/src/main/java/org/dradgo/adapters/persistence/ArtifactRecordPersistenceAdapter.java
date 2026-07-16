@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +20,7 @@ import org.dradgo.adapters.persistence.mapper.ArtifactEntityMapper;
 import org.dradgo.adapters.persistence.repository.ArtifactRepository;
 import org.dradgo.adapters.persistence.repository.WorkflowEventRepository;
 import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactChecksum;
 import org.dradgo.application.artifact.ArtifactDraftRequest;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
@@ -462,6 +464,272 @@ public class ArtifactRecordPersistenceAdapter implements ArtifactRecordPort {
         persisted.version(),
         reason);
     return persisted;
+  }
+
+  @Override
+  @Transactional
+  public ArtifactRecordSnapshot reattachToLineage(
+      String orphanArtifactId, String chosenParentArtifactId) {
+    ArtifactEntity orphan = requireArtifact(orphanArtifactId);
+    ArtifactEntity chosenParent = requireArtifact(chosenParentArtifactId);
+    requireNotArchived(orphan, orphan.getStatus());
+    // Story 4.16a [Review D2] — the chosen parent must not be archived (soft-deleted); re-parenting
+    // onto a tombstoned node would leave the orphan an active leaf hanging off a dead parent.
+    requireNotArchived(chosenParent, chosenParent.getStatus());
+    // Story 4.16a [Review D1] — reattach is an ORPHAN-repair action. Refuse a target that already
+    // carries a parent lineage: re-parenting it would SILENTLY overwrite a healthy parent link
+    // (violates NFR19 "no silent overwrite"; AC3 preserves history unchanged).
+    if (orphan.getParentArtifact() != null) {
+      log.warn(
+          "reattachToLineage rejected: target already has a parent orphanArtifactId={}"
+              + " existingParentArtifactId={}",
+          orphanArtifactId,
+          orphan.getParentArtifact().getPublicId());
+      throw new DomainException(
+          DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION,
+          "Reattach applies only to orphaned (parentless) artifacts; target already has a parent"
+              + " lineage",
+          Map.of(
+              "artifactId",
+              orphanArtifactId,
+              "existingParentArtifactId",
+              orphan.getParentArtifact().getPublicId(),
+              "reason",
+              "target_already_parented"));
+    }
+    // Serialize against concurrent lineage writers (createDraft/createNextVersion hold the same
+    // advisory key via ArtifactOperationService). No terminal-run opinion here — lineage recovery
+    // legitimately runs on a failed run, so this uses the advisory lock rather than the run-row
+    // lock
+    // (whose terminal check would over-block recovery).
+    lockLineageForUpdate(orphan.getWorkflowRun().getPublicId(), orphan.getArtifactType().value());
+    // Same (run, type) — a reattach across lineages is a mismatch (story 4.19's code).
+    if (!orphan.getWorkflowRun().getPublicId().equals(chosenParent.getWorkflowRun().getPublicId())
+        || orphan.getArtifactType() != chosenParent.getArtifactType()) {
+      log.warn(
+          "reattachToLineage rejected: cross-lineage orphanArtifactId={} chosenParentArtifactId={}"
+              + " orphanRun={} orphanType={} parentRun={} parentType={}",
+          orphanArtifactId,
+          chosenParentArtifactId,
+          orphan.getWorkflowRun().getPublicId(),
+          orphan.getArtifactType().value(),
+          chosenParent.getWorkflowRun().getPublicId(),
+          chosenParent.getArtifactType().value());
+      throw lineageMismatch(orphanArtifactId, chosenParentArtifactId);
+    }
+    // Cycle guard: the chosen parent must not be the orphan itself nor a descendant of it (walking
+    // parent_artifact_id up from the chosen parent must never reach the orphan).
+    requireNoLineageCycle(orphan, chosenParent);
+    // Story 4.16a [Review D1] — the chosen parent must be a LEAF (no non-archived child). Attaching
+    // onto a parent that already has an active child would produce two active leaves for the same
+    // (run, artifact_type), recreating the exact ambiguity reattach exists to resolve.
+    if (artifactRepository.hasActiveChild(chosenParent.getPublicId())) {
+      log.warn(
+          "reattachToLineage rejected: chosen parent is not a leaf (already has an active child)"
+              + " orphanArtifactId={} chosenParentArtifactId={}",
+          orphanArtifactId,
+          chosenParentArtifactId);
+      throw new DomainException(
+          DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION,
+          "Chosen parent already has an active child; reattach requires a leaf parent",
+          Map.of(
+              "artifactId", orphanArtifactId,
+              "chosenParentArtifactId", chosenParentArtifactId,
+              "reason", "chosen_parent_not_leaf"));
+    }
+    orphan.setParentArtifact(chosenParent);
+    ArtifactRecordSnapshot persisted =
+        artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(orphan));
+    log.info(
+        "artifact reattached to lineage orphanArtifactId={} chosenParentArtifactId={}"
+            + " workflowRunId={} artifactType={} version={}",
+        persisted.publicId(),
+        chosenParentArtifactId,
+        persisted.workflowRunId(),
+        persisted.artifactType().value(),
+        persisted.version());
+    return persisted;
+  }
+
+  @Override
+  @Transactional
+  public ArtifactRecordSnapshot markLineageTerminated(String artifactId, String reason) {
+    ArtifactEntity artifact = requireArtifact(artifactId);
+    requireNotArchived(artifact, ArtifactStatus.FAILED);
+    lockLineageForUpdate(
+        artifact.getWorkflowRun().getPublicId(), artifact.getArtifactType().value());
+    ArtifactStatus current = artifact.getStatus();
+    // Story 4.16a (AC4 / OQ-2) — flip an ambiguous lineage head to the terminal FAILED status so
+    // hasActiveLineage excludes it and replay cannot revive it. The ambiguous head may be
+    // available/pending/late_or_stale/corrupted; the ONLY rejected source is already-FAILED (a
+    // repeat terminate on a settled lineage). This is a strictly broader source set than markFailed
+    // (pending/late_or_stale only).
+    if (current == ArtifactStatus.FAILED) {
+      log.warn(
+          "markLineageTerminated rejected: already terminal artifactId={} currentStatus={}",
+          artifactId,
+          current.value());
+      throw invalidArtifactTransition(artifactId, current, ArtifactStatus.FAILED);
+    }
+    // FAILED requires a paired failure_category/failure_reason
+    // (ck_artifacts_failure_reason_paired).
+    // ORPHAN is the closest category for an abandoned/ambiguous lineage (same choice as
+    // markPayloadUnavailable); the abandonment cause is fully captured on the
+    // artifact.lineageReconciled audit event the service appends.
+    String terminationReason = reason == null || reason.isBlank() ? "lineage_terminated" : reason;
+    artifact.setStatus(ArtifactStatus.FAILED);
+    artifact.setFailureCategory(FailureCategory.ORPHAN);
+    artifact.setFailureReason(terminationReason);
+    ArtifactRecordSnapshot persisted =
+        artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(artifact));
+    log.warn(
+        "artifact lineage terminated — transitioned to failed artifactId={} version={}"
+            + " priorStatus={} failureReason={}",
+        persisted.publicId(),
+        persisted.version(),
+        current.value(),
+        terminationReason);
+    return persisted;
+  }
+
+  @Override
+  @Transactional
+  public ArtifactRecordSnapshot createLineageRecoveryFork(
+      String sourceLineageMemberArtifactId, ActorContext actor, String reason) {
+    ArtifactEntity source = requireArtifact(sourceLineageMemberArtifactId);
+    // Story 4.16a [Review D2] — do not root a fresh lineage off an archived (soft-deleted) source.
+    requireNotArchived(source, source.getStatus());
+    String artifactTypeValue = source.getArtifactType().value();
+    // Story 4.16a [Review D4] — serialize the version-counter read+insert on the ADVISORY lineage
+    // lock (keyed on run+type — the same key createDraft/createNextVersion hold via
+    // ArtifactOperationService) rather than the run-row lock, whose terminal-run check would
+    // over-block fork recovery. A fork legitimately runs on a failed/terminal run — mirroring
+    // reattach/terminate — so lineage recovery is not refused on exactly the runs that need it.
+    lockLineageForUpdate(source.getWorkflowRun().getPublicId(), artifactTypeValue);
+    WorkflowRunEntity workflowRun = source.getWorkflowRun();
+    int nextVersion =
+        artifactRepository
+            .findFirstByWorkflowRunPublicIdAndArtifactTypeAndArchivedAtIsNullOrderByVersionDesc(
+                workflowRun.getPublicId(), artifactTypeValue)
+            .map(existing -> existing.getVersion() + 1)
+            .orElse(1);
+    String forkPublicId = PublicIdPrefixes.ARTIFACT.next();
+    // Every artifact row requires a linked_event_id — emit an artifact.draftCreated event for the
+    // new head (the recovery rationale + source ride the separate artifact.lineageReconciled audit
+    // event the service appends). Marked with lineageRecovery=true + the source reference.
+    Map<String, Object> eventDetails = new LinkedHashMap<>();
+    eventDetails.put("artifactType", artifactTypeValue);
+    eventDetails.put("artifactId", forkPublicId);
+    eventDetails.put("artifactVersion", nextVersion);
+    eventDetails.put("lineageRecovery", true);
+    eventDetails.put("lineageSourceArtifactId", sourceLineageMemberArtifactId);
+    if (actor.correlationId() != null && !actor.correlationId().isBlank()) {
+      eventDetails.put("correlationId", actor.correlationId());
+    }
+    WorkflowEventEntity linkedEvent =
+        workflowEventRepository.saveAndFlush(
+            newArtifactEvent(
+                workflowRun,
+                WorkflowEventType.ARTIFACT_DRAFT_CREATED,
+                actor.actorIdentity(),
+                actor.actorType(),
+                reason == null || reason.isBlank() ? "lineage recovery fork created" : reason,
+                eventDetails));
+    ArtifactEntity entity = new ArtifactEntity();
+    entity.setPublicId(forkPublicId);
+    entity.setWorkflowRun(workflowRun);
+    entity.setArtifactType(source.getArtifactType());
+    entity.setVersion(nextVersion);
+    // parent_artifact_id stays NULL — this is a fresh, disjoint lineage root.
+    entity.setClassification(source.getClassification());
+    entity.setStatus(ArtifactStatus.PENDING);
+    entity.setLineageRecovery(true);
+    entity.setLinkedEvent(linkedEvent);
+    ArtifactRecordSnapshot persisted;
+    try {
+      persisted = artifactEntityMapper.toSnapshot(artifactRepository.saveAndFlush(entity));
+    } catch (DataIntegrityViolationException collision) {
+      // Defense-in-depth around uq_artifacts_workflow_run_id_artifact_type_version. The run-row
+      // lock
+      // acquired above serializes concurrent lineage writers, but a typed conflict surfaces if the
+      // invariant is ever bypassed so callers see a stable error instead of a raw JDBC exception.
+      log.warn(
+          "createLineageRecoveryFork conflict on artifact version unique constraint workflowRunId={}"
+              + " artifactType={} attemptedVersion={} cause={}",
+          workflowRun.getPublicId(),
+          artifactTypeValue,
+          nextVersion,
+          collision.getMostSpecificCause().getClass().getSimpleName());
+      throw new DomainException(
+          DomainErrorCode.ARTIFACT_OPERATION_CONFLICT,
+          "Concurrent artifact lineage-recovery fork conflict for workflowRunId="
+              + workflowRun.getPublicId()
+              + ", artifactType="
+              + artifactTypeValue,
+          Map.of(
+              "workflowRunId", workflowRun.getPublicId(),
+              "artifactType", artifactTypeValue,
+              "sourceLineageMemberArtifactId", sourceLineageMemberArtifactId,
+              "attemptedVersion", nextVersion),
+          collision);
+    }
+    log.info(
+        "artifact lineage-recovery fork persisted artifactId={} sourceLineageMemberArtifactId={}"
+            + " workflowRunId={} artifactType={} version={} lineageRecovery=true status=pending",
+        persisted.publicId(),
+        sourceLineageMemberArtifactId,
+        persisted.workflowRunId(),
+        persisted.artifactType().value(),
+        persisted.version());
+    return persisted;
+  }
+
+  // Story 4.16a (AC3) — reject a reattach whose chosen parent is the orphan itself or a descendant
+  // of it (walking parent_artifact_id up from the chosen parent must never reach the orphan). The
+  // visited-set bounds the walk defensively even though ck_artifacts_no_self_parent + this guard
+  // prevent a cycle from ever being introduced.
+  private void requireNoLineageCycle(ArtifactEntity orphan, ArtifactEntity chosenParent) {
+    String orphanPublicId = orphan.getPublicId();
+    Set<String> visited = new HashSet<>();
+    ArtifactEntity cursor = chosenParent;
+    while (cursor != null) {
+      String cursorId = cursor.getPublicId();
+      if (cursorId.equals(orphanPublicId)) {
+        log.warn(
+            "reattachToLineage rejected: lineage cycle — chosen parent is the orphan or a"
+                + " descendant orphanArtifactId={} chosenParentArtifactId={}",
+            orphanPublicId,
+            chosenParent.getPublicId());
+        throw lineageCycle(orphanPublicId, chosenParent.getPublicId());
+      }
+      if (!visited.add(cursorId)) {
+        break;
+      }
+      cursor = cursor.getParentArtifact();
+    }
+  }
+
+  private DomainException lineageMismatch(String orphanArtifactId, String chosenParentArtifactId) {
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_LINEAGE_MISMATCH,
+        "Reattach target and chosen parent are not in the same lineage (workflow run + artifact"
+            + " type)",
+        Map.of(
+            "artifactId", orphanArtifactId,
+            "chosenParentArtifactId", chosenParentArtifactId,
+            "reason", "cross_lineage_reattach"));
+  }
+
+  private DomainException lineageCycle(String orphanArtifactId, String chosenParentArtifactId) {
+    return new DomainException(
+        DomainErrorCode.ARTIFACT_INVALID_STATE_TRANSITION,
+        "Reattach would introduce a lineage cycle: chosen parent "
+            + chosenParentArtifactId
+            + " is the orphan or a descendant of it",
+        Map.of(
+            "artifactId", orphanArtifactId,
+            "chosenParentArtifactId", chosenParentArtifactId,
+            "reason", "lineage_cycle"));
   }
 
   private WorkflowRunEntity requireWorkflowRunForUpdate(String workflowRunId) {

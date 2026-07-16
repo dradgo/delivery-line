@@ -343,7 +343,24 @@ public enum DomainErrorCode implements RegistryValue {
   // mirrors INVALID_COMMAND_PAYLOAD). Carries details{artifactIdA, artifactIdB, reason}. The other
   // two epic codes are REUSED: ARTIFACT_NOT_FOUND -> ARTIFACT_RECORD_NOT_FOUND (404),
   // ARTIFACT_PAYLOAD_UNAVAILABLE at its live 503 (NOT the epic's 409).
-  ARTIFACT_LINEAGE_MISMATCH("ARTIFACT_LINEAGE_MISMATCH");
+  ARTIFACT_LINEAGE_MISMATCH("ARTIFACT_LINEAGE_MISMATCH"),
+  // Story 4.16a (AC2/AC9 / Reconciliation 5) — two three-sites codes (enum + ProblemDetailsCatalog
+  // +
+  // problemTypeUris manifest) for the operator-driven artifact-lineage recovery path.
+  // INVALID_LINEAGE_RECOVERY_ACTION (400) is raised by
+  // ArtifactReconciliationService.reconcileLineage when the requested lineageAction is
+  // unknown/blank
+  // (mirror INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY, but lineage actions have no category-legality
+  // dimension — every typed action is always applicable to an artifact, so this fires only on an
+  // unparseable token). MISSING_LINEAGE_RECOVERY_FIELD (400) is raised when an action-specific
+  // required field is absent (reattach_to_existing_lineage's chosenParentArtifactId). Both are
+  // malformed-request 400s, mirroring MISSING_REPAIR_REQUIRED_FIELD. The "stable conflict error"
+  // for
+  // an unresolved lineage ambiguity (AC9) REUSES the existing transient ARTIFACT_OPERATION_INTENT_
+  // CONFLICT / ARTIFACT_LINEAGE_ALREADY_EXISTS (409) — no new code. There is NO generic
+  // ACTION_NOT_ALLOWED code — the endpoint role gate reuses INVALID_REVIEWER_ROLE_FOR_ENDPOINT.
+  INVALID_LINEAGE_RECOVERY_ACTION("INVALID_LINEAGE_RECOVERY_ACTION"),
+  MISSING_LINEAGE_RECOVERY_FIELD("MISSING_LINEAGE_RECOVERY_FIELD");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

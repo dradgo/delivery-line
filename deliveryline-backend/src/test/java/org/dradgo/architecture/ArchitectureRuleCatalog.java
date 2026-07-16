@@ -28,6 +28,7 @@ import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.reconciliation.spi.ArtifactDriftWritePort;
 import org.dradgo.application.artifact.reconciliation.spi.DriftRecordRequest;
+import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictWritePort;
 import org.dradgo.application.integration.conflict.spi.NewIntegrationConflict;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
@@ -588,6 +589,36 @@ final class ArchitectureRuleCatalog {
                   ArtifactDriftWritePort.class,
                   "updateLastKnownState",
                   String.class,
+                  String.class));
+
+  /**
+   * Story 4.16a (Reconciliation 12) — only {@code ArtifactReconciliationService} may perform a
+   * lineage-recovery WRITE (reattach / terminate / fork) via the record port. The three
+   * lineage-write methods live on the already-injected {@code ArtifactRecordPort} (shared by many
+   * services), so this class-scoped rule prevents any controller / adapter / other service from
+   * driving a lineage recovery around the auditable coordinator (mirrors {@link
+   * #ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT}). {@code callMethod} matches the
+   * interface owner, so the persistence adapter's own IMPLEMENTS body does not trip this.
+   */
+  static final ArchRule ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE =
+      namedRule(
+          "only ArtifactReconciliationService may reconcile artifact lineage via the record port",
+          "Remediation: route every lineage recovery (reattach / terminate / fork) through ArtifactReconciliationService in application.artifact; no controller or adapter may call ArtifactRecordPort.reattachToLineage / markLineageTerminated / createLineageRecoveryFork directly (story 4.16a).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.application.artifact.ArtifactReconciliationService")
+              .should()
+              .callMethod(ArtifactRecordPort.class, "reattachToLineage", String.class, String.class)
+              .orShould()
+              .callMethod(
+                  ArtifactRecordPort.class, "markLineageTerminated", String.class, String.class)
+              .orShould()
+              .callMethod(
+                  ArtifactRecordPort.class,
+                  "createLineageRecoveryFork",
+                  String.class,
+                  ActorContext.class,
                   String.class));
 
   /**

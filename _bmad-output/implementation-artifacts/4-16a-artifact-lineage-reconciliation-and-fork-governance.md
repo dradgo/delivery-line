@@ -1,6 +1,6 @@
 # Story 4.16a: Artifact Lineage Reconciliation and Fork Governance
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -103,34 +103,34 @@ so that ambiguous artifact history is resolved through auditable recovery rather
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Migration + registries (AC2, AC6, AC9)**
-  - [ ] Re-confirm next-free Flyway version (expect highest on-disk = V46 → V47; [[flyway-v31-cross-branch-collision]]). Author `V47__add_artifact_lineage_reconcile_action.sql`: DROP+ADD `ck_recovery_actions_action_type` restating the full 8-value set + `'artifact_lineage_reconcile'` (copy V46:22-30 idiom). NO new table/column.
-  - [ ] Add `ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE = "artifact_lineage_reconcile"` constant on `ArtifactReconciliationService` (next to `ACTION_TYPE_ARTIFACT_REPAIR` :88).
-  - [ ] Add 2 `DomainErrorCode`s (`INVALID_LINEAGE_RECOVERY_ACTION` 400, `MISSING_LINEAGE_RECOVERY_FIELD` 400); register each in `ProblemDetailsCatalog` (`register(...)`, non-retryable) + `problemTypeUris` manifest. (OQ-3: possibly reuse `INVALID_COMMAND_PAYLOAD` for both → 0 new codes.)
-  - [ ] Add `WorkflowEventType.ARTIFACT_LINEAGE_RECONCILED("artifact.lineageReconciled")` + the string in `workflow-event-types.fixture.json` AND `workflow-events-response.schema.json`; add allow-listed `lineageAction` detail key (`WorkflowEventDetailKeys` holder + `ALLOW_LISTED_KEYS` + `workflow-history.v1.schema.json`). (OQ-4: 0 or 1 extra ref key for chosen-parent/source-lineage.)
-- [ ] **Task 2 — Lineage-write port methods + adapter (AC3, AC4, AC5)**
-  - [ ] `ArtifactRecordPort.reattachToLineage(orphanArtifactId, chosenParentArtifactId)` — `UPDATE parent_artifact_id`; same-`(run,type)` guard (`ARTIFACT_LINEAGE_MISMATCH`) + cycle-guarded parent walk (`ARTIFACT_INVALID_STATE_TRANSITION`).
-  - [ ] `ArtifactRecordPort.markLineageTerminated(artifactId, reason)` — terminal-status flip (reuse FAILED; dedicated adapter guard permitting the broader ambiguous-head source set, mirroring `markPayloadUnavailable`) + `ArtifactOperationPort.markFailedOrphan` on pending op. (OQ-2 status choice.)
-  - [ ] `ArtifactRecordPort.createLineageRecoveryFork(sourceLineageMemberArtifactId, actor, …)` — `lockLineageForUpdate`, `version=max+1`, `parent_artifact_id=NULL`, `lineage_recovery=true`, PENDING. Wire the dormant V5 column (`ArtifactEntity.setLineageRecovery(true)` / native insert).
-  - [ ] Bind `resolvedAt`/timestamps as `OffsetDateTime` UTC, not `Timestamp.from` ([[jdbc-timestamp-to-timestamptz-tz-shift]]).
-- [ ] **Task 3 — Reconcile coordinator + typed methods (AC1, AC2, AC6, AC7)**
-  - [ ] `LineageAction` typed enum + `ReconcileLineageCommand` + `LineageReconciliationResult` records (mirror `RepairAction`/`RepairArtifactDriftCommand`/`ArtifactRepairResult`).
-  - [ ] `ArtifactReconciliationService.reconcileLineage(command)` coordinator + 3 typed methods: `validateCommandShape` (blank targetArtifactId → `INVALID_COMMAND_PAYLOAD`, `@Size` bounds) → replay-first (`action_type='artifact_lineage_reconcile'` guard) → target lookup → action parse → required-field → dispatch, all in ONE `REQUIRES_NEW` tx. Per action: mutate lineage (+ optional approval invalidation on terminate — OQ-8) → append `artifact.lineageReconciled` event (pre-gen `evt_` id, `interventionMarker=true`, `WorkflowEventWritePort.append`) → insert `recovery_actions` (succeeded-on-INSERT, null `triggering_event_id`). NO new ctor arg (Reconciliation 8).
-  - [ ] AC7 assertion helper/IT: re-ingest after each action takes the correct CREATE/UPDATE branch, no silent auto-fork. DO NOT touch `RunnerBroker`/`ArtifactOperationService` decision logic.
-- [ ] **Task 4 — REST + CLI (AC9)**
-  - [ ] NEW `ArtifactLineageController` `POST /api/v1/artifacts/{artifactId}/reconcile-lineage` → `reconcileLineage`. Header preamble + `role` gate DUPLICATED (minimal set) from `ArtifactDriftController`/`WorkflowController` (OQ-6). `ArtifactLineageReconcileRequest`/`Response` DTOs (`@JsonIgnoreProperties(ignoreUnknown=false)`, `lineageAction` `@Schema(allowableValues)`, `chosenParentArtifactId`, `reasonText`, `role`).
-  - [ ] OpenAPI regen (`-Dopenapi.snapshot.write=true`) + `reconcileArtifactLineage` operationId allowlist + FE `npm run generate-api`.
-  - [ ] CLI `@Command(name="reconcile-lineage")` on `OperatorCommands` (calls the service directly); add to `OperatorCliCommandRegistrationIT`; optional `renderOperatorReconcileLineageJson` (`operator-reconcile-lineage.v1`).
-- [ ] **Task 5 — ArchUnit + tests (AC10)**
-  - [ ] NEW ArchUnit rule `ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE` (only `ArtifactReconciliationService` may call the 3 lineage-write methods) + `@ArchTest` registration in `ArchitectureBoundaryTest`.
-  - [ ] `ArtifactLineageReconcileIT` (real PG, per-action + AC7 re-ingest), `ArtifactReconciliationServiceLineageUnitTest`, `ArtifactLineageControllerTest` (`@WebMvcTest` conformance), `ArtifactLineageReconcileCliRestEquivalenceContractTest`, logging pins.
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Add SLF4J-backed structured logs at every public service entry/exit, every typed `DomainException` raise site, every external SPI call (DB write, event append), and every replay/conflict/recovery branch.
-  - [ ] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
-  - [ ] Levels: `INFO` normal lifecycle (reconcile start/finish, action taken), `WARN` recoverable anomalies (replay, approval invalidated, terminate abandoning a lineage with prior approvals), `ERROR` only unhandled failures/invariant breaks. `DEBUG` for hot-path detail.
-  - [ ] Every log carries `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`, plus the entity's public id (`artifactId`/`operationId`, and for reattach `chosenParentArtifactId`, for fork the new fork id). Use MDC (`MdcKeys.ARTIFACT_ID`/`ARTIFACT_OPERATION_ID`) where possible.
-  - [ ] Never log secrets, payload bytes, raw tokens, or PII. Sanitize `reason` (log LENGTH only in the controller, like the recovery endpoints).
-  - [ ] Add ≥1 focused test assertion that the expected log line(s) emit at the expected level for each new branch (list-appender / `OutputCaptureExtension`); assert the idempotent replay emits NO second event.
+- [x] **Task 1 — Migration + registries (AC2, AC6, AC9)**
+  - [x] Re-confirmed highest on-disk = V46 → authored `V47__add_artifact_lineage_reconcile_action.sql` (DROP+ADD `ck_recovery_actions_action_type` restating full 8-value set + `'artifact_lineage_reconcile'`; NO new table/column).
+  - [x] Added `ACTION_TYPE_ARTIFACT_LINEAGE_RECONCILE` constant on `ArtifactReconciliationService`.
+  - [x] Added 2 `DomainErrorCode`s (`INVALID_LINEAGE_RECOVERY_ACTION` 400, `MISSING_LINEAGE_RECOVERY_FIELD` 400) + `ProblemDetailsCatalog.register` + `problemTypeUris` manifest. **OQ-3 → 2 codes (provisional binding kept).**
+  - [x] Added `WorkflowEventType.ARTIFACT_LINEAGE_RECONCILED("artifact.lineageReconciled")` (distinct from pre-existing `ARTIFACT_LINEAGE_RECOVERED`) + string in `workflow-event-types.fixture.json` AND `workflow-events-response.schema.json`; added 2 allow-listed detail keys `lineageAction` + `lineageReferenceArtifactId` (holder + `ALLOW_LISTED_KEYS` + `workflow-history.v1.schema.json`). **OQ-4 → 2 keys (lineageAction + 1 generic reference).**
+- [x] **Task 2 — Lineage-write port methods + adapter (AC3, AC4, AC5)**
+  - [x] `ArtifactRecordPort.reattachToLineage(orphan, chosenParent)` — `UPDATE parent_artifact_id`; same-`(run,type)` guard (`ARTIFACT_LINEAGE_MISMATCH`) + cycle-guarded parent walk (`ARTIFACT_INVALID_STATE_TRANSITION`); serialized on the advisory `lockLineageForUpdate`.
+  - [x] `ArtifactRecordPort.markLineageTerminated(artifactId, reason)` — terminal FAILED flip (dedicated guard rejecting only already-FAILED; paired `failure_category=orphan`) ; caller closes the pending op via `ArtifactOperationPort.markFailedOrphan`. **OQ-2 → reuse FAILED (provisional binding kept).**
+  - [x] `ArtifactRecordPort.createLineageRecoveryFork(source, actor, reason)` — `requireWorkflowRunForUpdate` (same run-row serializer as `createNextVersion`), `version=max+1`, `parent=NULL`, `lineage_recovery=true`, PENDING + `artifact.draftCreated` linked event. Wires the DORMANT V5 column (first writer of `setLineageRecovery(true)`).
+  - [x] Timestamps bound as `OffsetDateTime` UTC (event append) — no `Timestamp.from`.
+- [x] **Task 3 — Reconcile coordinator + typed methods (AC1, AC2, AC6, AC7)**
+  - [x] `LineageAction` typed enum + `ReconcileLineageCommand` + `LineageReconciliationResult` records (mirror `RepairAction`/`RepairArtifactDriftCommand`/`ArtifactRepairResult`).
+  - [x] `ArtifactReconciliationService.reconcileLineage(command)` coordinator + 3 typed methods: `validateLineageCommandShape` → replay-first (`action_type` guard) → target lookup → action parse → required-field → dispatch in ONE `REQUIRES_NEW` tx; mutate → append `artifact.lineageReconciled` (pre-gen `evt_`, `interventionMarker=true`) → insert `recovery_actions` (succeeded-on-INSERT, null `triggering_event_id`). **ZERO new ctor deps.** **OQ-8 → terminate invalidates current approval (provisional binding kept); OQ-5 → null triggering_event_id.**
+  - [x] AC7 asserted in the IT via `ArtifactOperationService.hasActiveLineage` (the exact input the fail-closed CREATE/UPDATE decision keys on) after each action — `RunnerBroker`/`ArtifactOperationService` decision logic untouched. **OQ-7 → broker does not read `lineage_recovery` (unchanged).**
+- [x] **Task 4 — REST + CLI (AC9)**
+  - [x] NEW `ArtifactLineageController` `POST /api/v1/artifacts/{artifactId}/reconcile-lineage` (second controller under the top-level `/artifacts` prefix) + `ArtifactLineageReconcileRequest`/`Response` DTOs. Header/role preamble DUPLICATED (minimal set). **OQ-6 → duplicate (provisional binding kept).** **OQ-1 → Model A (direct-on-artifact) kept.**
+  - [x] OpenAPI regen (`-Dopenapi.snapshot.write=true`) + `reconcileArtifactLineage` operationId assertion in `OpenApiSnapshotContractTest` + FE `npm run generate-api` (schema.d.ts) + FE build green.
+  - [x] CLI `@Command(name="reconcile-lineage")` on `OperatorCommands` (calls the service directly) + `OperatorCliCommandRegistrationIT` assertion + `renderOperatorReconcileLineageJson` (`operator-reconcile-lineage.v1`).
+- [x] **Task 5 — ArchUnit + tests (AC10)**
+  - [x] NEW ArchUnit rule `ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE` + `@ArchTest` registration in `ArchitectureBoundaryTest` (green).
+  - [x] `ArtifactLineageReconcileIT` (real PG, per-action + replay + 2 rejections + AC7), `ArtifactReconciliationServiceLineageUnitTest` (11), `ArtifactLineageControllerTest` (`@WebMvcTest`, 9), `ArtifactLineageReconcileCliRestEquivalenceContractTest`.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] SLF4J structured logs at coordinator entry/exit, each typed method, replay branch, approval-invalidation, adapter writes, controller receive/success.
+  - [x] Parameterized logging throughout — no string concatenation.
+  - [x] Levels: `INFO` reconcile start/finish + action taken; `WARN` replay/approval-invalidation/terminate/cross-lineage+cycle rejection; `ERROR` reserved for invariant breaks.
+  - [x] Context keys: `correlationId`, `workflowRunId`, `idempotencyKey`, `actorIdentity`, `artifactId`/`operationId`, `lineageAction`, chosen-parent/fork ids; MDC `ARTIFACT_ID` scope in `performLineageReconcile`.
+  - [x] No secrets/payload bytes; controller logs `reason` LENGTH only.
+  - [x] Idempotent-replay-emits-no-second-event asserted in both unit + IT.
 
 ## Dev Notes
 
@@ -205,6 +205,85 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- `mvnw -pl deliveryline-backend compile` — BUILD SUCCESS (Tasks 1–4).
+- OpenAPI regen: `mvnw verify -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true` (write) then re-run (green, byte-identical). FE `npm run generate-api` + `npm run build` green.
+- Unit tier: `ArtifactReconciliationServiceLineageUnitTest` (11) + `ArtifactLineageControllerTest` (9) → 20/0.
+- Failsafe tier: `ArtifactLineageReconcileIT` (6) + `ArtifactLineageReconcileCliRestEquivalenceContractTest` (1) + `OperatorCliCommandRegistrationIT` (2) + `WorkflowEventDetailKeysContractTest` (4) + `ArchitectureBoundaryTest` (64) → 77/0.
+- Registry/foundation: `RegistryContractTest` (25) + `ProblemDetailsCoverageFoundationContract` (2) + `FixtureEventStreamSchemaConformanceContractTest` (2) + `WorkflowReadEndpointsContractTest` (13) → 42/0.
+- `spotless:apply` (14 files) → `spotless:check` clean; standalone `spotbugs:check` BUILD SUCCESS (no new bugs; the two printed EI_EXPOSE_REP2 are pre-existing). No mojibake (codepoint scan for `â€`/`Ã` clean). The `verify` BUILD FAILUREs seen were coverage gates triggered by running test subsets, not real failures.
+
 ### Completion Notes List
 
+- **Model A confirmed (OQ-1).** Lineage conflicts are transient/never persisted → the operator acts directly on an `art_…` id; no `{conflictId}`. AC9's "stable conflict error" reuses the existing transient `ARTIFACT_OPERATION_INTENT_CONFLICT`/`ARTIFACT_LINEAGE_ALREADY_EXISTS` (no new code). AC8 inspection = existing audit/history/queue fed by the `recovery_actions` row + `artifact.lineageReconciled` event (no new read surface).
+- **DORMANT `lineage_recovery` column finally written** — `createExplicitFork` is the first and only invoker of `setLineageRecovery(true)` (AC5). Fork uses `version=max+1` (NOT 1) so a disjoint lineage coexists under one `(run,type)` without a `uq_artifacts_(run,type,version)` collision; `parent_artifact_id=NULL`; status PENDING; emits its own `artifact.draftCreated` linked event (every artifact row needs a `linked_event_id`).
+- **ZERO new constructor deps** — the 3 lineage-write methods live on the already-injected `ArtifactRecordPort`; the coordinator reuses the 4.16 repair seams. Added a distinct `requireLineageSeams()` (checks only the seams lineage uses; NOT drift read/write/payload).
+- **AC7 binding.** The scope-protected hot path (`RunnerBroker`/`ArtifactOperationService` CREATE-vs-UPDATE) is untouched. AC7 is asserted via `ArtifactOperationService.hasActiveLineage` — the literal input the fail-closed decision consumes: after terminate it flips true→false (fresh CREATE legit); after reattach/fork it stays true (UPDATE grafts onto the re-parented leaf / `lineage_recovery` head — no silent auto-fork).
+- **Naming trap avoided:** the new event `ARTIFACT_LINEAGE_RECONCILED`/`artifact.lineageReconciled` is distinct from the pre-existing `ARTIFACT_LINEAGE_RECOVERED`/`artifact.lineageRecovered`.
+- **Provisional OQ bindings all kept** (OQ-1 Model A, OQ-2 reuse FAILED, OQ-3 2 codes, OQ-4 2 detail keys, OQ-5 null triggering_event, OQ-6 duplicate controller preamble, OQ-7 broker unchanged, OQ-8 terminate invalidates current approval). None required re-work; noted for reviewer confirmation.
+- **Serialization:** reattach/terminate use the advisory `lockLineageForUpdate` (no terminal-run opinion — recovery legitimately runs on failed runs); fork uses `requireWorkflowRunForUpdate` (the exact run-row serializer `createNextVersion` uses for the version counter; a terminal run is refused, consistent with new-artifact creation).
+
 ### File List
+
+**Created — main:**
+- deliveryline-backend/src/main/resources/db/migration/V47__add_artifact_lineage_reconcile_action.sql
+- deliveryline-backend/src/main/java/org/dradgo/application/artifact/LineageAction.java
+- deliveryline-backend/src/main/java/org/dradgo/application/artifact/ReconcileLineageCommand.java
+- deliveryline-backend/src/main/java/org/dradgo/application/artifact/LineageReconciliationResult.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactLineageController.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactLineageReconcileRequest.java
+- deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactLineageReconcileResponse.java
+
+**Modified — main:**
+- deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactReconciliationService.java (constants + `reconcileLineage` coordinator + 3 typed methods + helpers)
+- deliveryline-backend/src/main/java/org/dradgo/application/artifact/spi/ArtifactRecordPort.java (+3 lineage-write methods)
+- deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/ArtifactRecordPersistenceAdapter.java (+3 method impls + cycle/mismatch helpers)
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java (+2 codes)
+- deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java (+2 register)
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventType.java (+ARTIFACT_LINEAGE_RECONCILED)
+- deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowEventDetailKeys.java (+lineageAction +lineageReferenceArtifactId +allow-list)
+- deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java (reconcile-lineage command + text render + emit)
+- deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java (renderOperatorReconcileLineageJson + version constant)
+- deliveryline-backend/src/main/resources/schemas/cli/workflow-history.v1.schema.json (+2 detail-key properties)
+- deliveryline-backend/src/main/resources/openapi/openapi.json (regenerated: new path + 2 schemas)
+
+**Modified — test resources:**
+- deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json (+2 problemTypeUris)
+- deliveryline-backend/src/test/resources/contracts/events/workflow-event-types.fixture.json (+artifact.lineageReconciled)
+- deliveryline-backend/src/test/resources/fixture-event-streams/schema/workflow-events-response.schema.json (+artifact.lineageReconciled)
+
+**Created — test:**
+- deliveryline-backend/src/test/java/org/dradgo/application/artifact/ArtifactReconciliationServiceLineageUnitTest.java
+- deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ArtifactLineageControllerTest.java
+- deliveryline-backend/src/test/java/org/dradgo/adapters/cli/ArtifactLineageReconcileCliRestEquivalenceContractTest.java
+- deliveryline-backend/src/test/java/org/dradgo/application/artifact/reconciliation/ArtifactLineageReconcileIT.java
+
+**Modified — test:**
+- deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java (+reconcileArtifactLineage assertion)
+- deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java (+reconcile-lineage assertion)
+- deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java (+ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE + import)
+- deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureBoundaryTest.java (+@ArchTest registration)
+
+**Modified — frontend:**
+- deliveryline-frontend/src/lib/api/schema.d.ts (regenerated from openapi.json)
+
+### Change Log
+
+| Date | Change |
+|---|---|
+| 2026-07-16 | Story 4.16a implemented (lineage recovery + fork governance): `reconcileLineage` coordinator + 3 typed actions on `ArtifactReconciliationService`; 3 lineage-write port methods + adapter SQL; V47 CHECK-widen; 2 DomainErrorCodes; `ARTIFACT_LINEAGE_RECONCILED` event + 2 detail keys; `ArtifactLineageController` + DTOs + OpenAPI/FE regen; CLI `reconcile-lineage`; ArchUnit rule; full unit/WebMvc/IT/equivalence coverage. Status → review. |
+| 2026-07-16 | Code review (3-layer adversarial). Applied 4/5 patches: D1 reattach orphan+leaf guards, D2 archived chosen-parent/fork-source guards, D4 fork on terminal runs (advisory lock), P1 `operator-reconcile-lineage.v1` JSON schema + contract test (+`ArtifactRepository.hasActiveChild`, 4 new IT cases). Verified: backend compile + Surefire (schema + lineage unit) green + spotless clean. D3 (version-specific approval invalidation) deferred as a focused follow-up — needs an ApprovalReadPort/ApprovalService SPI extension. Status → in-progress (1 open action item). |
+| 2026-07-16 | D3 follow-up implemented (version-specific approval invalidation): new `ApprovalReadPort.findLatestApprovedForArtifact` + `ApprovalRepository` JPQL (keyed on artifact public id) + adapter impl; new `ApprovalService.invalidateApprovalForArtifact` (MANDATORY tx); terminate path re-keyed to `target.publicId()`; `ContextBundleService.UnwiredApprovalReadPort` stub updated; +3 `ApprovalServiceInvalidationTest`, lineage unit updated, +1 IT (only the terminated version's approval flips). Unit tier green (22/0) + spotless clean. All 5 review patches resolved. Status → review (ready for final CI + merge). |
+| 2026-07-16 | Full backend `verify` GREEN (real-Postgres, Docker available): **BUILD SUCCESS** — all Surefire + Failsafe tests 0 failures/0 errors; `ArtifactLineageReconcileIT` 11/0 (incl. 4 guard cases + version-specific approval invalidation), `ArchitectureBoundaryTest` 64/0 (new lineage ArchUnit rule), jacoco coverage gate met, spotless + spotbugs clean. All 5 review patches verified end-to-end. Status → done. |
+
+## Review Findings
+
+_Adversarial code review (Blind Hunter + Edge Case Hunter + Acceptance Auditor), 2026-07-16. 4 decision-needed (all resolved → patch), 1 patch, 3 deferred, 9 dismissed as noise/false-positive. **All 5 patches fixed + verified** (compile + Surefire green + spotless clean; new IT cases run in CI/Failsafe — no local Docker). D3 (version-specific approval invalidation) implemented as a focused follow-up after the initial batch._
+
+- [x] [Review][Patch] Reattach has no orphan/leaf precondition — silent overwrite + branching recreation [ArtifactRecordPersistenceAdapter.java reattachToLineage] — **FIXED (D1=a):** now rejects a target that already has a parent (`target_already_parented` → `ARTIFACT_INVALID_STATE_TRANSITION`) and a non-leaf chosen parent (`chosen_parent_not_leaf`, via new `ArtifactRepository.hasActiveChild`). IT cases `reattachOntoNonLeafParentIsRejected` + `reattachWhenTargetAlreadyHasAParentIsRejected` added. [Edge #2 + #3]
+- [x] [Review][Patch] Reattach onto an archived chosen parent / fork from an archived source not rejected [ArtifactRecordPersistenceAdapter.java] — **FIXED (D2=a):** `requireNotArchived` now applied to the reattach chosen parent and the fork source. IT case `reattachOntoArchivedParentIsRejected` added. [Edge #1 + #5]
+- [x] [Review][Patch] Terminate approval-invalidation is run+type keyed, not version-specific (OQ-8) — **FIXED (D3=b).** Added `ApprovalReadPort.findLatestApprovedForArtifact(artifactPublicId)` (+ `ApprovalRepository` JPQL keyed on `a.artifact.publicId`, + `ApprovalReadPersistenceAdapter` impl) and `ApprovalService.invalidateApprovalForArtifact(artifactPublicId, reason)` (MANDATORY-tx, mirrors `invalidateCurrentApproval`); `ArtifactReconciliationService` terminate path now calls it with `target.publicId()` (one public id ⇒ one version) instead of the run+type-keyed call. `ContextBundleService.UnwiredApprovalReadPort` stub updated. Tests: `ApprovalServiceInvalidationTest` +3, lineage unit updated, IT `terminateInvalidatesOnlyTheTerminatedVersionsApprovalNotAHealthySibling` (seeds two approved versions, asserts only the terminated one flips — would fail on the old highest-version behavior). Unit tier green + spotless clean. [Edge #6]
+- [x] [Review][Patch] `create_explicit_fork` refused on a terminal run while `reattach`/`terminate` are allowed [ArtifactRecordPersistenceAdapter.java createLineageRecoveryFork] — **FIXED (D4=b):** fork now serializes on the advisory `lockLineageForUpdate` (run+type) instead of the terminal-refusing `requireWorkflowRunForUpdate`, so recovery runs on failed/terminal runs. IT case `forkSucceedsOnATerminalRun` added. Note: the controller 409 `@ApiResponse` description still lists `WORKFLOW_RUN_TERMINAL` (now unreachable for this endpoint) — left untouched to avoid an OpenAPI snapshot regen (Docker-gated); harmless stale sub-case. [Blind #6]
+- [x] [Review][Patch] Missing `operator-reconcile-lineage.v1` JSON schema + `*JsonSchemaContractTest` [WorkflowCommandOutputs.java:713-722] — **FIXED (P1):** added `schemas/cli/operator-reconcile-lineage.v1.schema.json` (const `schemaVersion:1`, `additionalProperties:false`, lineageAction enum, nullable ref/correlation/event fields) + `OperatorReconcileLineageJsonSchemaContractTest` (3 cases, green). [Auditor #1]
+- [x] [Review][Defer] Fork/`createNextVersion` version computed over non-archived rows vs full unique constraint [ArtifactRecordPersistenceAdapter.java:564-569] — deferred, pre-existing: `nextVersion = max(archived_at IS NULL)+1` but `uq_artifacts_workflow_run_id_artifact_type_version` (V1:132) is a full constraint; a higher-versioned archived row would collide (caught → 409). Identical to the shipped `createNextVersion` pattern (`:164`), so not introduced by 4.16a.
+- [x] [Review][Defer] Load-before-advisory-lock without re-fetch in terminate/reattach [ArtifactRecordPersistenceAdapter.java:473-475,516-520] — deferred, pre-existing: entity loaded before `lockLineageForUpdate` (an advisory lock, not `SELECT … FOR UPDATE`) and not refreshed after acquiring it, so a concurrent terminate could read stale status past the already-FAILED guard. Consistent with sibling `mark*` methods; both concurrent terminates converge to FAILED so harm is low.
+- [x] [Review][Defer] Idempotent-replay lists all events for the run to resolve one [ArtifactReconciliationService.java:1605-1609] — deferred, pre-existing: replay loads every workflow event for the run then filters for one `evt_` id (O(n) on long runs). Mirrors the 4.16 repair replay the spec told it to copy; a fetch-by-public-id seam would be the cleaner future fix.

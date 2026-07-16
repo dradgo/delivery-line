@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.artifact.ArtifactRepairResult;
+import org.dradgo.application.artifact.LineageReconciliationResult;
 import org.dradgo.application.audit.AuditQueryService.AuditEventRow;
 import org.dradgo.application.audit.AuditQueryService.AuditQueryResult;
 import org.dradgo.application.recovery.ClassifyFailureResult;
@@ -67,6 +68,7 @@ public class WorkflowCommandOutputs {
   static final int OPERATOR_PAUSE_SCHEMA_VERSION = 1;
   static final int OPERATOR_CLASSIFY_FAILURE_SCHEMA_VERSION = 1;
   static final int OPERATOR_ARTIFACT_REPAIR_SCHEMA_VERSION = 1;
+  static final int OPERATOR_RECONCILE_LINEAGE_SCHEMA_VERSION = 1;
   static final int TICKET_QUERY_SCHEMA_VERSION = 1;
 
   // Story 3.19 (AC3/AC7) — color thresholds for the queue-depth line. Defaults mirror the alert
@@ -702,6 +704,27 @@ public class WorkflowCommandOutputs {
     payload.put("recoveryActionId", result.recoveryActionId());
     payload.put("repairedEventId", result.repairedEventId());
     payload.put("resolved", result.resolved());
+    payload.put("correlationId", result.correlationId());
+    payload.put("replayed", result.replayed());
+    return writeJson(payload);
+  }
+
+  /**
+   * Story 4.16a — stable {@code operator-reconcile-lineage.v1} JSON document for {@code
+   * deliveryline operator reconcile-lineage --format json}. All fields come straight off {@link
+   * LineageReconciliationResult}: {@code lineageReferenceArtifactId} is the chosen new parent
+   * (reattach) or the new fork head (create_explicit_fork), null for terminate; {@code replayed} is
+   * {@code true} on an idempotent replay. {@code reconciledEventId} / {@code correlationId} are
+   * null-tolerant.
+   */
+  public String renderOperatorReconcileLineageJson(LineageReconciliationResult result) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("schemaVersion", OPERATOR_RECONCILE_LINEAGE_SCHEMA_VERSION);
+    payload.put("targetArtifactId", result.targetArtifactId());
+    payload.put("lineageAction", result.lineageAction());
+    payload.put("recoveryActionId", result.recoveryActionId());
+    payload.put("reconciledEventId", result.reconciledEventId());
+    payload.put("lineageReferenceArtifactId", result.lineageReferenceArtifactId());
     payload.put("correlationId", result.correlationId());
     payload.put("replayed", result.replayed());
     return writeJson(payload);

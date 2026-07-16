@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.artifact.ArtifactChecksum;
 import org.dradgo.application.artifact.ArtifactDraftRequest;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
@@ -122,6 +123,67 @@ public interface ArtifactRecordPort {
    * status); {@code reason} is recorded on {@code failure_reason}.
    */
   ArtifactRecordSnapshot markPayloadUnavailable(String artifactId, String reason);
+
+  /**
+   * Story 4.16a (AC3 / Reconciliation 4) — operator lineage recovery: re-parent an
+   * orphaned/ambiguous artifact onto an operator-chosen lineage. {@code UPDATE artifacts SET
+   * parent_artifact_id = <the chosen parent's internal id> WHERE public_id = <orphan>}. The orphan
+   * keeps its existing (already unique) {@code (workflow_run_id, artifact_type, version)}, so
+   * re-parenting alone attaches it as a proper child and PRESERVES the superseded/failed lineage
+   * history unchanged (no version churn, no status change).
+   *
+   * <p>Guards: the chosen parent MUST belong to the same {@code (workflow_run_id, artifact_type)}
+   * as the orphan, else {@code ARTIFACT_LINEAGE_MISMATCH} (400, reuse of story 4.19's code); and
+   * the chosen parent MUST NOT be the orphan itself nor a descendant of the orphan (walking {@code
+   * parent_artifact_id} up from the chosen parent must never reach the orphan), else {@code
+   * ARTIFACT_INVALID_STATE_TRANSITION} (409 — a re-parent that would introduce a cycle). Either
+   * artifact absent raises {@code ARTIFACT_RECORD_NOT_FOUND} (404). Serializes against concurrent
+   * lineage writers via the same run-row lock {@code createNextVersion} uses.
+   *
+   * @return the re-parented orphan snapshot (its {@code parentArtifactId} now the chosen parent)
+   */
+  ArtifactRecordSnapshot reattachToLineage(String orphanArtifactId, String chosenParentArtifactId);
+
+  /**
+   * Story 4.16a (AC4 / Reconciliation 4) — operator lineage recovery: mark an ambiguous artifact's
+   * lineage terminal so {@code hasActiveLineage} returns false and replay cannot silently revive
+   * it. Reuses the {@code FAILED} status (a terminal, {@code hasActiveLineage}-excluding status —
+   * story 4.16a OQ-2; no dedicated "terminated"/"abandoned" status is introduced). Because the
+   * ambiguous head may be {@code available} / {@code pending} / {@code late_or_stale} / {@code
+   * corrupted}, this dedicated guard permits a BROADER source set than {@link #markFailed} (which
+   * permits only {@code pending}/{@code late_or_stale}); the only rejected current status is {@code
+   * failed} (already terminal), else {@code ARTIFACT_INVALID_STATE_TRANSITION} (409). {@code
+   * reason} is recorded on {@code failure_reason} (paired with {@code failure_category = orphan} —
+   * the {@code ck_artifacts_failure_reason_paired} CHECK). Absent artifact raises {@code
+   * ARTIFACT_RECORD_NOT_FOUND} (404). Closing any dangling pending operation is the caller's job
+   * (via {@code ArtifactOperationPort.markFailedOrphan}).
+   *
+   * @return the terminated artifact snapshot ({@code status = failed})
+   */
+  ArtifactRecordSnapshot markLineageTerminated(String artifactId, String reason);
+
+  /**
+   * Story 4.16a (AC5 / Reconciliation 3/4) — operator lineage recovery: create a fresh, disjoint
+   * lineage branch ("explicit fork") rooted under the SAME {@code (workflow_run_id, artifact_type)}
+   * as the supplied source lineage member. Inserts a new head with {@code version = max(version)+1}
+   * for that {@code (run, type)} (NOT version 1 — that is how two disjoint lineages coexist without
+   * a {@code uq_artifacts_workflow_run_id_artifact_type_version} collision), {@code
+   * parent_artifact_id = NULL}, status {@code PENDING}, and — critically — the DORMANT V5 {@code
+   * lineage_recovery} discriminator set to {@code true} (the first and only writer of that column).
+   * Emits an {@code artifact.draftCreated} linked event for the new head (every artifact row
+   * requires a {@code linked_event_id}); the recovery rationale + source reference ride the
+   * separate {@code artifact.lineageReconciled} audit event the service appends. Serializes on the
+   * run row (mirrors {@code createNextVersion}); a terminal run raises {@code
+   * WORKFLOW_RUN_TERMINAL} (409). Absent source raises {@code ARTIFACT_RECORD_NOT_FOUND} (404).
+   *
+   * @param sourceLineageMemberArtifactId any member of the source lineage (resolves run/type/class)
+   * @param actor the resolved operator actor context stamped on the fork's creation event
+   * @param reason the operator note recorded on the fork's creation event
+   * @return the new fork head snapshot ({@code version = max+1}, {@code parentArtifactId = null},
+   *     {@code lineageRecovery = true}, {@code status = pending})
+   */
+  ArtifactRecordSnapshot createLineageRecoveryFork(
+      String sourceLineageMemberArtifactId, ActorContext actor, String reason);
 
   /**
    * Story 4.15 (AC1) — bounded, KEYSET-PAGED scan seam for the artifact-drift-detection sweep.

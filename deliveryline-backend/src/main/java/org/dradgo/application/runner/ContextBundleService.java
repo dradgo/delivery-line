@@ -202,6 +202,11 @@ public class ContextBundleService {
     }
 
     @Override
+    public Optional<ApprovalSnapshot> findLatestApprovedForArtifact(String artifactPublicId) {
+      throw unwired();
+    }
+
+    @Override
     public List<ApprovalSnapshot> listByWorkflowRunAndArtifactType(
         String workflowRunPublicId, String artifactType) {
       throw unwired();

@@ -49,6 +49,7 @@
     "recovery.paused",
     "recovery.failureClassified",
     "artifact.driftDetected",
-    "artifact.driftRepaired"
+    "artifact.driftRepaired",
+    "artifact.lineageReconciled"
   ]
 }
